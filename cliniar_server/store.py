@@ -532,6 +532,7 @@ class Store:
             "updatedAt": row.get("updated_at"), "dueDate": row.get("due_date"),
             "completedAt": row.get("completed_at"), "canceledAt": row.get("canceled_at"),
             "startedAt": row.get("started_at"), "snoozedUntilAt": row.get("snoozed_until_at"),
+            "stateChangedAt": row.get("state_changed_at"),
             # ids for lazy field resolvers
             "_state_id": row.get("state_id"), "_assignee_id": row.get("assignee_id"),
             "_creator_id": row.get("creator_id"), "_team_id": row.get("team_id"),
@@ -616,6 +617,53 @@ class Store:
                 created_at=now.isoformat(),
                 expires_at=(now + timedelta(hours=hours)).isoformat()))
         return raw
+
+    def pending_membership_invitations(self, org_id: str) -> list[dict]:
+        now = datetime.now(timezone.utc).isoformat()
+        with self.engine.connect() as conn:
+            stmt = select(user.c.id, user.c.name, user.c.email, membership_invitation.c.expires_at).select_from(
+                membership_invitation.join(user, user.c.id == membership_invitation.c.profile_user_id)
+            ).where(and_(
+                membership_invitation.c.organization_id == org_id,
+                membership_invitation.c.accepted_at.is_(None),
+                membership_invitation.c.expires_at > now,
+            )).order_by(user.c.name)
+            return [{"userId": r.id, "name": r.name, "email": r.email, "expiresAt": r.expires_at}
+                    for r in conn.execute(stmt).mappings().all()]
+
+    def revoke_membership_invitation(self, org_id: str, profile_user_id: str) -> bool:
+        with self.engine.begin() as conn:
+            result = conn.execute(membership_invitation.delete().where(and_(
+                membership_invitation.c.organization_id == org_id,
+                membership_invitation.c.profile_user_id == profile_user_id,
+                membership_invitation.c.accepted_at.is_(None),
+            )))
+            return result.rowcount > 0
+
+    def set_member_active(self, org_id: str, actor_id: str, user_id: str, active: bool) -> dict | None:
+        """Deactivate or reactivate a member. Refuses to strand the workspace."""
+        now = datetime.now(timezone.utc).isoformat()
+        with self.engine.begin() as conn:
+            target = conn.execute(select(user.c.id, user.c.admin, user.c.active).where(and_(
+                user.c.organization_id == org_id, user.c.id == user_id,
+                user.c.archived_at.is_(None),
+            ))).first()
+            if not target:
+                return None
+            if not active:
+                if user_id == actor_id:
+                    return None
+                if target.admin and target.active:
+                    other_admins = conn.execute(select(user.c.id).where(and_(
+                        user.c.organization_id == org_id, user.c.admin.is_(True),
+                        user.c.active.is_(True), user.c.archived_at.is_(None),
+                        user.c.id != user_id,
+                    ))).all()
+                    if not other_admins:
+                        return None
+            conn.execute(user.update().where(user.c.id == user_id).values(
+                active=bool(active), updated_at=now))
+        return self.get_user(org_id, user_id)
 
     def accept_membership_invitation(self, identity_id: str, raw: str,
                                      invitee_password: str) -> dict | None:

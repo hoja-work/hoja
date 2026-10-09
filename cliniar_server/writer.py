@@ -240,6 +240,72 @@ class Writer:
                 conn.execute(team_member.insert().values(team_id=tid, user_id=member_id))
             return tid
 
+    def _require_team_admin(self, conn, org_id: str, viewer_id: str) -> None:
+        admin = conn.execute(select(user.c.id).where(and_(
+            user.c.id == viewer_id, user.c.organization_id == org_id,
+            user.c.active.is_(True), user.c.archived_at.is_(None), user.c.admin.is_(True)
+        ))).first()
+        if not admin:
+            raise GraphQLError("Admin access required", extensions={"code": "FORBIDDEN"})
+
+    def _team_row(self, conn, org_id: str, team_id: str, *, include_archived: bool = False):
+        clauses = [team.c.id == team_id, team.c.organization_id == org_id]
+        if not include_archived:
+            clauses.append(team.c.archived_at.is_(None))
+        row = conn.execute(select(team).where(and_(*clauses))).first()
+        if not row:
+            raise GraphQLError("Team not found", extensions={"code": "BAD_USER_INPUT", "field": "id"})
+        return row
+
+    def team_update(self, org_id: str, viewer_id: str, team_id: str, inp: dict) -> str:
+        values: dict = {}
+        if "name" in inp:
+            if not isinstance(inp["name"], str) or not inp["name"].strip():
+                raise GraphQLError("Team name is required", extensions={"code": "BAD_USER_INPUT", "field": "name"})
+            values["name"] = inp["name"].strip()
+        if "key" in inp:
+            key = inp["key"]
+            if not isinstance(key, str) or not key.strip() or not key.strip().isalnum():
+                raise GraphQLError("Team key must be alphanumeric", extensions={"code": "BAD_USER_INPUT", "field": "key"})
+            values["key"] = key.strip().upper()
+        if "description" in inp:
+            values["description"] = inp["description"]
+        with self.engine.begin() as conn:
+            self._require_team_admin(conn, org_id, viewer_id)
+            self._team_row(conn, org_id, team_id)
+            if "key" in values and conn.execute(select(team.c.id).where(and_(
+                team.c.organization_id == org_id, team.c.key == values["key"], team.c.id != team_id
+            ))).first():
+                raise GraphQLError("Team key already exists", extensions={"code": "BAD_USER_INPUT", "field": "key"})
+            values["updated_at"] = now_iso()
+            conn.execute(team.update().where(team.c.id == team_id).values(**values))
+            return team_id
+
+    def team_archive(self, org_id: str, viewer_id: str, team_id: str) -> bool:
+        with self.engine.begin() as conn:
+            self._require_team_admin(conn, org_id, viewer_id)
+            self._team_row(conn, org_id, team_id)
+            conn.execute(team.update().where(team.c.id == team_id).values(archived_at=now_iso(), updated_at=now_iso()))
+            return True
+
+    def team_delete(self, org_id: str, viewer_id: str, team_id: str) -> bool:
+        with self.engine.begin() as conn:
+            self._require_team_admin(conn, org_id, viewer_id)
+            self._team_row(conn, org_id, team_id, include_archived=True)
+            blockers = []
+            for label, table in (("issues", issue), ("projects", project_team), ("cycles", cycle)):
+                if conn.execute(select(table.c.team_id).where(table.c.team_id == team_id).limit(1)).first():
+                    blockers.append(label)
+            if blockers:
+                raise GraphQLError(
+                    f"Team still has {', '.join(blockers)}. Archive it instead, or move or delete them first.",
+                    extensions={"code": "BAD_USER_INPUT", "field": "id"})
+            conn.execute(team_member.delete().where(team_member.c.team_id == team_id))
+            conn.execute(issue_label.delete().where(issue_label.c.team_id == team_id))
+            conn.execute(workflow_state.delete().where(workflow_state.c.team_id == team_id))
+            conn.execute(team.delete().where(team.c.id == team_id))
+            return True
+
     def enable_team_cadence(self, org_id: str, team_id: str, weekday: int, *, now=None) -> dict:
         """Enable once and reconcile the fixed one-week, two-upcoming policy."""
         from datetime import datetime, timezone
@@ -395,7 +461,7 @@ class Writer:
                 id=iid, organization_id=org_id, team_id=tid, number=n, identifier=ident,
                 title=inp["title"], description=inp.get("description"),
                 priority=prio, priority_label=PRIORITY_LABELS.get(prio, "No priority"),
-                estimate=inp.get("estimate"), state_id=state_id,
+                estimate=inp.get("estimate"), state_id=state_id, state_changed_at=ts,
                 assignee_id=inp.get("assigneeId"), creator_id=viewer_id,
                 project_id=inp.get("projectId"), cycle_id=inp.get("cycleId"),
                 parent_id=inp.get("parentId"),
@@ -440,6 +506,8 @@ class Writer:
                 values["priority_label"] = PRIORITY_LABELS.get(p, "No priority")
             if "stateId" in inp:
                 values["state_id"] = inp["stateId"]
+                if inp["stateId"] != issue_row.get("state_id"):
+                    values["state_changed_at"] = ts
             changes = {}
             for field, column in {"title": "title", "description": "description", "priority": "priority", "stateId": "state_id", "assigneeId": "assignee_id"}.items():
                 if field in inp and issue_row.get(column) != values.get(column):
@@ -597,6 +665,33 @@ class Writer:
                 color=inp.get("color"), description=inp.get("description"),
                 created_at=ts, updated_at=ts))
             return lid
+
+    def label_update(self, org_id: str, viewer_id: str, lid: str, inp: dict) -> bool:
+        values: dict = {}
+        if "name" in inp:
+            name = inp["name"]
+            if not isinstance(name, str) or not name.strip() or len(name.strip()) > 64:
+                raise GraphQLError("Label name must be 1–64 characters", extensions={"code": "BAD_USER_INPUT", "field": "name"})
+            values["name"] = name.strip()
+        for field in ("color", "description"):
+            if field in inp:
+                values[field] = inp[field]
+        with self.engine.begin() as conn:
+            admin = conn.execute(select(user.c.id).where(and_(
+                user.c.id == viewer_id, user.c.organization_id == org_id,
+                user.c.active.is_(True), user.c.archived_at.is_(None), user.c.admin.is_(True),
+            ))).first()
+            if not admin:
+                raise GraphQLError("Admin access required", extensions={"code": "FORBIDDEN"})
+            if not values:
+                return conn.execute(select(issue_label.c.id).where(and_(
+                    issue_label.c.id == lid, issue_label.c.organization_id == org_id,
+                    issue_label.c.archived_at.is_(None)))).first() is not None
+            values["updated_at"] = now_iso()
+            result = conn.execute(issue_label.update().where(and_(
+                issue_label.c.id == lid, issue_label.c.organization_id == org_id,
+                issue_label.c.archived_at.is_(None))).values(**values))
+            return result.rowcount > 0
 
     def label_delete(self, org_id: str, lid: str) -> bool:
         return self._soft_delete(issue_label, org_id, lid)

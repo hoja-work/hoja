@@ -319,6 +319,7 @@ issue = Table(
     Column("branch_name", String),
     Column("due_date", String),
     Column("started_at", String),
+    Column("state_changed_at", String),
     Column("completed_at", String),
     Column("canceled_at", String),
     Column("snoozed_until_at", String),
@@ -677,6 +678,10 @@ def _apply_team_cadence(conn) -> None:
     for name, sql_type in additions.items():
         if name not in existing:
             conn.exec_driver_sql(f"ALTER TABLE team ADD COLUMN {name} {sql_type}")
+    issue_columns = {column["name"] for column in inspect(conn).get_columns("issue")}
+    if "state_changed_at" not in issue_columns:
+        conn.exec_driver_sql("ALTER TABLE issue ADD COLUMN state_changed_at VARCHAR")
+        conn.exec_driver_sql("UPDATE issue SET state_changed_at = COALESCE(updated_at, created_at)")
     cycle_columns = {column["name"] for column in inspect(conn).get_columns("cycle")}
     if "cadence_boundary_at" not in cycle_columns:
         conn.exec_driver_sql("ALTER TABLE cycle ADD COLUMN cadence_boundary_at VARCHAR")

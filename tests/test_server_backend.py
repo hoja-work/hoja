@@ -1895,3 +1895,36 @@ def test_realtime_socket_rejects_out_of_range_cursors(tmp_path) -> None:
                 with client.websocket_connect(f"/ws?after={cursor}", headers={"Authorization": "Bearer cursor-seed"}) as ws:
                     ws.receive_json()
             assert closed.value.code == 4400, cursor
+
+
+def test_state_changed_at_moves_only_when_status_changes(tmp_path) -> None:
+    engine = make_engine(tmp_path / "state-changed.db")
+    migrate(engine)
+    seeded = _seed(engine, name="StateChanged", key="statechanged", email="user@example.test")
+    writer = Writer(engine)
+    issue_id = writer.issue_create(
+        seeded["org_id"], seeded["user_id"], {"teamId": "ENG", "title": "Track status"}
+    )
+    store = Store(engine)
+    first = store.issue_by_id_or_identifier(seeded["org_id"], issue_id)
+    assert first["stateChangedAt"]
+
+    with engine.connect() as conn:
+        states = conn.execute(
+            select(workflow_state.c.id, workflow_state.c.type).where(
+                workflow_state.c.team_id == seeded["team_id"]
+            )
+        ).all()
+    current = first["_state_id"]
+    other = next(s.id for s in states if s.id != current)
+
+    writer.issue_update(seeded["org_id"], issue_id, {"title": "Renamed"}, actor_id=seeded["user_id"])
+    after_rename = store.issue_by_id_or_identifier(seeded["org_id"], issue_id)
+    assert after_rename["stateChangedAt"] == first["stateChangedAt"]
+
+    writer.issue_update(seeded["org_id"], issue_id, {"stateId": other}, actor_id=seeded["user_id"])
+    after_move = store.issue_by_id_or_identifier(seeded["org_id"], issue_id)
+    assert after_move["stateChangedAt"] > first["stateChangedAt"]
+
+    writer.issue_update(seeded["org_id"], issue_id, {"stateId": other}, actor_id=seeded["user_id"])
+    assert store.issue_by_id_or_identifier(seeded["org_id"], issue_id)["stateChangedAt"] == after_move["stateChangedAt"]

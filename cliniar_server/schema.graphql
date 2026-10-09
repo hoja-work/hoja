@@ -89,6 +89,7 @@ type Query {
   issueLabelSettings: [IssueLabel!]!
   myWorkspaces: [WorkspaceMembership!]!
   organizationMembers(first: Int = 100): UserConnection
+  pendingMembershipInvitations: [PendingMembershipInvitation!]!
   workspace: Organization
   teams(first: Int = 50, after: String, filter: TeamFilter): TeamConnection
   team(id: String!): Team
@@ -119,9 +120,15 @@ type Mutation {
   notificationPreferenceSet(kind: String!, enabled: Boolean!): NotificationPreferencesPayload!
   workspaceCreate(input: WorkspaceCreateInput!): OrganizationPayload
   teamCreate(input: TeamCreateInput!): TeamPayload
+  teamUpdate(id: String!, input: TeamUpdateInput!): TeamPayload
+  teamArchive(id: String!): DeletePayload
+  teamDelete(id: String!): DeletePayload
   workspaceSwitch(organizationId: String!): OrganizationPayload
   membershipInvitationCreate(userId: String!): UserPayload
   membershipInvitationAccept(code: String!, inviteePassword: String!): OrganizationPayload
+  membershipInvitationRevoke(userId: String!): DeletePayload
+  memberDeactivate(userId: String!): UserPayload
+  memberReactivate(userId: String!): UserPayload
   workspaceUpdate(input: WorkspaceUpdateInput!): OrganizationPayload
   memberInvite(input: MemberInviteInput!): UserPayload
   memberRoleUpdate(userId: String!, admin: Boolean!): UserPayload
@@ -139,6 +146,7 @@ type Mutation {
   commentDelete(id: String!): DeletePayload
   issueLabelCreate(input: IssueLabelCreateInput!): IssueLabelPayload
   issueLabelDelete(id: String!): DeletePayload
+  issueLabelUpdate(id: String!, input: IssueLabelUpdateInput!): IssueLabelPayload
   projectCreate(input: ProjectCreateInput!): ProjectPayload
   projectUpdate(id: String!, input: ProjectUpdateInput!): ProjectPayload
   projectUpdateCreate(input: ProjectUpdateCreateInput!): ProjectUpdatePayload
@@ -301,6 +309,7 @@ type Issue {
   completedAt: DateTime
   canceledAt: DateTime
   startedAt: DateTime
+  stateChangedAt: DateTime
   snoozedUntilAt: DateTime
   state: WorkflowState
   assignee: User
@@ -338,6 +347,7 @@ type CommentPayload { success: Boolean! comment: Comment }
 type IssueLabelPayload { success: Boolean! issueLabel: IssueLabel }
 type ProjectPayload { success: Boolean! project: Project }
 type DeletePayload { success: Boolean! }
+type PendingMembershipInvitation { userId: ID! name: String email: String expiresAt: DateTime }
 type AttachmentPayload { success: Boolean! attachment: Attachment }
 type Attachment {
   id: ID!
@@ -403,6 +413,7 @@ input ProjectFilter { id: IDComparator slugId: StringComparator name: StringComp
 input IssueLabelFilter { team: TeamFilter name: StringComparator }
 
 # ---- Mutation inputs ----
+input TeamUpdateInput { name: String key: String description: String }
 input TeamCreateInput { name: String! key: String! description: String color: String icon: String private: Boolean timezone: String memberIds: [String!] }
 input IssueCreateInput {
   title: String!
@@ -433,6 +444,7 @@ input IssueUpdateInput {
 }
 input CommentCreateInput { issueId: String! body: String! }
 input CommentUpdateInput { body: String }
+input IssueLabelUpdateInput { name: String color: String description: String }
 input IssueLabelCreateInput { name: String! teamId: String color: String description: String }
 input ProjectCreateInput { name: String! description: String teamIds: [String!] leadId: String state: String color: String icon: String startDate: TimelessDate targetDate: TimelessDate }
 input ProjectUpdateInput { name: String description: String leadId: String state: String color: String icon: String startDate: TimelessDate targetDate: TimelessDate }

@@ -649,6 +649,25 @@ def m_team_create(_, info, input):
     return {"success": True, "team": store.ser_team(row)}
 
 
+@mutation.field("teamUpdate")
+def m_team_update(_, info, id, input):
+    store, writer, org, uid = _ctx(info)
+    tid = writer.team_update(org, uid, id, input)
+    return {"success": True, "team": store.ser_team(store.team_by_id_or_key(org, tid))}
+
+
+@mutation.field("teamArchive")
+def m_team_archive(_, info, id):
+    _s, writer, org, uid = _ctx(info)
+    return {"success": writer.team_archive(org, uid, id)}
+
+
+@mutation.field("teamDelete")
+def m_team_delete(_, info, id):
+    _s, writer, org, uid = _ctx(info)
+    return {"success": writer.team_delete(org, uid, id)}
+
+
 @mutation.field("workspaceUpdate")
 def m_workspace_update(_, info, input):
     store, _w, org, uid = _ctx(info)
@@ -722,6 +741,43 @@ def m_membership_invitation_create(_, info, userId):
     code = store.create_membership_invitation(org, userId, uid)
     return {"success": bool(code), "user": store.ser_user(store.get_user(org, userId), uid),
             "inviteCode": code}
+
+
+@query.field("pendingMembershipInvitations")
+def q_pending_membership_invitations(_, info):
+    store, _w, org, uid = _ctx(info)
+    actor = store.get_user(org, uid)
+    if not actor or not actor.get("admin"):
+        return []
+    return store.pending_membership_invitations(org)
+
+
+@mutation.field("membershipInvitationRevoke")
+def m_membership_invitation_revoke(_, info, userId):
+    store, _w, org, uid = _ctx(info)
+    actor = store.get_user(org, uid)
+    if not actor or not actor.get("admin"):
+        return {"success": False}
+    return {"success": store.revoke_membership_invitation(org, userId)}
+
+
+@mutation.field("memberDeactivate")
+def m_member_deactivate(_, info, userId):
+    return _set_member_active(info, userId, active=False)
+
+
+@mutation.field("memberReactivate")
+def m_member_reactivate(_, info, userId):
+    return _set_member_active(info, userId, active=True)
+
+
+def _set_member_active(info, user_id, *, active: bool):
+    store, _w, org, uid = _ctx(info)
+    actor = store.get_user(org, uid)
+    if not actor or not actor.get("admin"):
+        return {"success": False, "user": None}
+    target = store.set_member_active(org, uid, user_id, active)
+    return {"success": bool(target), "user": store.ser_user(target, uid)}
 
 
 @mutation.field("membershipInvitationAccept")
@@ -852,6 +908,15 @@ def m_label_create(_, info, input):
     labels = store.labels(org)
     node = next((label for label in labels if label["id"] == lid), None)
     return {"success": bool(lid), "issueLabel": node}
+
+
+@mutation.field("issueLabelUpdate")
+def m_label_update(_, info, id, input):
+    store, w, org, uid = _ctx(info)
+    if not w.label_update(org, uid, id, input):
+        return {"success": False, "issueLabel": None}
+    node = next((label for label in store.labels(org) if label["id"] == id), None)
+    return {"success": True, "issueLabel": node}
 
 
 @mutation.field("issueLabelDelete")
