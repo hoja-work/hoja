@@ -663,9 +663,9 @@ def m_team_archive(_, info, id):
 
 
 @mutation.field("teamDelete")
-def m_team_delete(_, info, id):
+def m_team_delete(_, info, id, deleteIssues=False):
     _s, writer, org, uid = _ctx(info)
-    return {"success": writer.team_delete(org, uid, id)}
+    return {"success": writer.team_delete(org, uid, id, delete_issues=bool(deleteIssues))}
 
 
 @mutation.field("workspaceUpdate")

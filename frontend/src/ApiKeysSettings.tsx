@@ -5,7 +5,7 @@ type Access='read'|'read_write';
 type StatusFilter='all'|'active'|'expired'|'revoked';
 
 async function gql(q:string, variables?:Record<string,unknown>){
-  const r=await fetch('/graphql',{method:'POST',credentials:'include',headers:{'content-type':'application/json'},body:JSON.stringify({query:q,variables})});
+  const r=await fetch('/graphql',{method:'POST',credentials:'include',headers:{'content-type':'application/json',...(localStorage.getItem('hoja_token')?{authorization:`Bearer ${localStorage.getItem('hoja_token')}`}:{})},body:JSON.stringify({query:q,variables})});
   const b=await r.json();
   if(b.errors?.length) throw Error(b.errors[0].message);
   return b.data;

@@ -122,7 +122,7 @@ type Mutation {
   teamCreate(input: TeamCreateInput!): TeamPayload
   teamUpdate(id: String!, input: TeamUpdateInput!): TeamPayload
   teamArchive(id: String!): DeletePayload
-  teamDelete(id: String!): DeletePayload
+  teamDelete(id: String!, deleteIssues: Boolean = false): DeletePayload
   workspaceSwitch(organizationId: String!): OrganizationPayload
   membershipInvitationCreate(userId: String!): UserPayload
   membershipInvitationAccept(code: String!, inviteePassword: String!): OrganizationPayload

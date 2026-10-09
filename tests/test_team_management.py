@@ -10,7 +10,10 @@ pytest.importorskip("starlette")
 from starlette.testclient import TestClient
 
 from cliniar_server.app import create_app
-from cliniar_server.db import issue, make_engine, migrate, new_id, now_iso, seed_tenant, team, workflow_state
+from cliniar_server.db import (
+    comment, issue, make_engine, migrate, new_id, now_iso, seed_tenant, team, workflow_state,
+    user as user_table,
+)
 
 
 def _setup(tmp_path):
@@ -106,3 +109,50 @@ def test_non_admin_cannot_update_archive_or_delete(tmp_path) -> None:
         for query, variables in ((UPDATE, {"id": team_id, "input": {"name": "x"}}), (ARCHIVE, {"id": team_id}), (DELETE, {"id": team_id})):
             res = _gql(client, admin["token"], query, variables)
             assert res.get("errors") and "Admin access required" in res["errors"][0]["message"], res
+
+
+DELETE_WITH_ISSUES = "mutation($id: String!) { teamDelete(id: $id, deleteIssues: true) { success } }"
+
+
+def _team_with_issue_and_comment(engine, admin, key):
+    from sqlalchemy import select
+    with TestClient(create_app(str(engine.url.database), open_mode=False)) as client:
+        team_id = _gql(client, admin["token"], CREATE, {"input": {"name": key, "key": key}})["data"]["teamCreate"]["team"]["id"]
+    with engine.begin() as conn:
+        state_id = conn.execute(select(workflow_state.c.id).where(workflow_state.c.team_id == team_id)).first()[0]
+        issue_id = new_id()
+        conn.execute(issue.insert().values(
+            id=issue_id, organization_id=admin["org_id"], team_id=team_id, number=1,
+            identifier=f"{key.upper()}-1", title="Doomed", state_id=state_id,
+            created_at=now_iso(), updated_at=now_iso(), priority=0, creator_id=admin["user_id"]))
+        conn.execute(comment.insert().values(
+            id=new_id(), organization_id=admin["org_id"], issue_id=issue_id,
+            body="bye", user_id=admin["user_id"], created_at=now_iso(), updated_at=now_iso()))
+    return team_id, issue_id
+
+
+def test_team_delete_with_issues_removes_team_issues_and_comments(tmp_path) -> None:
+    engine, app, admin = _setup(tmp_path)
+    team_id, issue_id = _team_with_issue_and_comment(engine, admin, "dwi")
+    from sqlalchemy import select
+    with TestClient(create_app(str(engine.url.database), open_mode=False)) as client:
+        assert _gql(client, admin["token"], DELETE, {"id": team_id}).get("errors")
+        done = _gql(client, admin["token"], DELETE_WITH_ISSUES, {"id": team_id})
+        assert done["data"]["teamDelete"]["success"] is True, done
+    with engine.connect() as conn:
+        assert conn.execute(select(team.c.id).where(team.c.id == team_id)).first() is None
+        assert conn.execute(select(issue.c.id).where(issue.c.id == issue_id)).first() is None
+        assert conn.execute(select(comment.c.id).where(comment.c.issue_id == issue_id)).first() is None
+
+
+def test_non_admin_cannot_delete_team_with_issues(tmp_path) -> None:
+    engine, app, admin = _setup(tmp_path)
+    team_id, issue_id = _team_with_issue_and_comment(engine, admin, "nad")
+    from sqlalchemy import update
+    with engine.begin() as conn:
+        conn.execute(update(user_table).where(user_table.c.id == admin["user_id"]).values(admin=False))
+    with TestClient(create_app(str(engine.url.database), open_mode=False)) as client:
+        denied = _gql(client, admin["token"], DELETE_WITH_ISSUES, {"id": team_id})
+        assert denied.get("errors") and "Admin access required" in denied["errors"][0]["message"], denied
+    with engine.connect() as conn:
+        assert conn.execute(issue.select().where(issue.c.id == issue_id)).first() is not None

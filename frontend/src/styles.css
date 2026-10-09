@@ -475,7 +475,7 @@ button.primary{color:#fff}
 .settings-sidebar nav{display:block}
 .settings-sidebar .nav-group>p{height:auto;margin:16px 10px 7px;color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
 .settings-sidebar .nav-item{height:34px;min-height:34px;padding:0 10px}
-.settings-sidebar{width:244px;overflow-y:auto;display:flex;flex-direction:column}.settings-sidebar nav{overflow-y:auto;flex:1}.settings-sidebar .nav-group .nav-item:focus-visible,.settings-back:focus-visible{outline:2px solid var(--accent);outline-offset:1px}.settings-search{display:flex;align-items:center;gap:8px;margin:0 6px 10px;padding:8px 9px;border:1px solid var(--border);border-radius:7px;color:var(--muted)}.settings-search input{min-width:0;width:100%;border:0;outline:0;background:transparent;color:var(--text);font-size:12px}.settings-page{width:min(100%,760px);margin:0 auto;padding:8px 0 56px}.settings-page-heading{margin:0 0 30px}.settings-page-heading h1{font-size:27px;letter-spacing:-.04em;margin:8px 0}.settings-page-heading>p{color:var(--muted);font-size:13px}.settings-page .eyebrow{color:var(--muted);font-size:11px}.settings-group{margin:0 0 22px;padding:18px 20px;border:1px solid var(--border);border-radius:10px;background:var(--panel)}.settings-group h2{font-size:14px;margin:0 0 12px}.setting-row{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:15px 0;border-top:1px solid var(--border)}.setting-row>div:first-child{min-width:0}.setting-row b{font-size:13px}.setting-row p,.setting-row small{display:block;color:var(--muted);font-size:12px;margin:4px 0 0}.setting-control{display:flex;gap:5px}.setting-control button{display:flex;align-items:center;gap:6px;padding:7px 10px;border:1px solid var(--border);border-radius:7px;background:var(--panel);color:var(--text);font-size:12px}.setting-control button.selected{background:var(--subtle);border-color:var(--accent);color:var(--accent)}.settings-group select{padding:7px 9px;border:1px solid var(--border);border-radius:7px;background:var(--panel);color:var(--text)}.settings-mobile-back{display:none}.settings-group>p{font-size:13px;line-height:1.6;color:var(--muted)}.settings-group form{display:grid;gap:12px}.settings-group form label{display:grid;gap:6px;font-size:12px}.settings-group form input{padding:9px;border:1px solid var(--border);border-radius:7px;background:var(--panel);color:var(--text)}.settings-group form .primary{justify-self:start}
+.settings-sidebar{width:244px;overflow-y:auto;display:flex;flex-direction:column}.settings-sidebar nav{overflow-y:auto;flex:1}.settings-sidebar .nav-group .nav-item:focus-visible,.settings-back:focus-visible{outline:2px solid var(--accent);outline-offset:1px}.settings-search{display:flex;align-items:center;gap:8px;margin:0 6px 10px;padding:8px 9px;border:1px solid var(--line);border-radius:7px;color:var(--muted)}.settings-search input{min-width:0;width:100%;border:0;outline:0;background:transparent;color:var(--text);font-size:12px}.settings-page{width:min(100%,760px);margin:0 auto;padding:8px 0 56px}.settings-page-heading{margin:0 0 30px}.settings-page-heading h1{font-size:27px;letter-spacing:-.04em;margin:8px 0}.settings-page-heading>p{color:var(--muted);font-size:13px}.settings-page .eyebrow{color:var(--muted);font-size:11px}.settings-group{margin:0 0 22px;padding:18px 20px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}.settings-group h2{font-size:14px;margin:0 0 12px}.setting-row{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:15px 0;border-top:1px solid var(--line)}.setting-row>div:first-child{min-width:0}.setting-row b{font-size:13px}.setting-row p,.setting-row small{display:block;color:var(--muted);font-size:12px;margin:4px 0 0}.setting-control{display:flex;gap:5px}.setting-control button{display:flex;align-items:center;gap:6px;padding:7px 10px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--text);font-size:12px}.setting-control button.selected{background:var(--subtle);border-color:var(--accent);color:var(--accent)}.settings-group select{padding:7px 9px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--text)}.settings-mobile-back{display:none}.settings-group>p{font-size:13px;line-height:1.6;color:var(--muted)}.settings-group form{display:grid;gap:12px}.settings-group form label{display:grid;gap:6px;font-size:12px}.settings-group form input{padding:9px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--text)}.settings-group form .primary{justify-self:start}
 html{font-size:calc(16px * var(--font-scale,1))}
 @media(min-width:701px){.app:has(.settings-sidebar){grid-template-columns:244px minmax(0,1fr)}.settings-sidebar{grid-column:1;grid-row:1 / span 2}.app:has(.settings-sidebar) .topbar{display:none}.app:has(.settings-sidebar) .workspace-content{grid-column:2;grid-row:1 / span 2}.app:has(.settings-sidebar) .main{padding:42px clamp(24px,5vw,72px)}}
 @media(max-width:700px){.settings-sidebar{position:fixed;z-index:36;top:0;bottom:0;left:0;width:min(290px,85vw);height:100dvh;transform:none}.settings-sidebar .sidebar-bottom{position:sticky;bottom:0}.settings-mobile-back{display:block;margin-bottom:12px;background:transparent;color:var(--muted)}.settings-page{padding-top:0}.settings-group{padding:15px}.setting-row{align-items:flex-start;flex-direction:column;gap:12px}}
@@ -604,6 +604,95 @@ html{font-size:calc(16px * var(--font-scale,1))}
 .my-issues-view .my-issue-row{cursor:pointer}
 .my-issues-view button.my-issue-title-open{background:none;border:0;padding:0;margin:0;font-family:inherit;color:inherit;text-align:left;cursor:pointer;display:block}
 
+/* Issue detail actions and comment controls: reuse shared .primary/.outline look */
+.issue-detail-danger{display:flex;align-items:center;gap:8px;margin-left:auto}
+.issue-detail-danger .outline{min-height:32px;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:550}
+.issue-detail-danger .outline:last-child{color:var(--danger)}
+.issue-detail-description{display:grid;gap:10px;justify-items:start}
+.issue-detail-description>button{min-height:34px;padding:7px 14px;border-radius:6px;font-size:12px}
+.issue-detail-comment .outline{min-height:28px;margin-top:8px;padding:4px 10px;font-size:12px}
+.issue-detail-comment-box button{width:auto;height:32px;padding:0 14px;border-radius:6px;background:var(--accent);color:#fff;font-size:12px;font-weight:600;white-space:nowrap}
+.issue-detail-comment-box button:disabled{opacity:.5;cursor:not-allowed}
+.issue-detail-property select{min-width:0;max-width:60%;height:30px;padding:0 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text);font-size:12px}
+
+/* Issue detail title, description, and property controls */
+.issue-detail-title{display:block;box-sizing:border-box;width:100%;max-width:920px;margin:0 0 26px;padding:4px 8px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--text);font:inherit;font-size:27px;font-weight:630;letter-spacing:-.035em;line-height:1.28;outline:none}
+.issue-detail-title:hover:not(:disabled){border-color:var(--line)}
+.issue-detail-title:focus-visible{border-color:var(--accent);outline:2px solid var(--accent);outline-offset:2px}
+.issue-detail-title:disabled{opacity:.6}
+.issue-detail-description{justify-items:stretch}
+.issue-detail-description textarea{display:block;box-sizing:border-box;width:100%;min-height:80px;padding:8px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--text);font:inherit;font-size:14px;line-height:1.65;resize:vertical}
+.issue-detail-description textarea:hover:not(:disabled){border-color:var(--line)}
+.issue-detail-description textarea::placeholder{color:var(--muted)}
+.issue-detail-description textarea:focus-visible{border-color:var(--accent);outline:2px solid var(--accent);outline-offset:1px;background:var(--panel)}
+.issue-detail-description>button{justify-self:start}
+
+/* Settings forms: stacked fields, consistent sizing */
+.settings-page .settings-group>form{display:grid;gap:14px;max-width:460px}
+.settings-page .settings-group form label{display:grid;gap:6px;font-size:12px;font-weight:550;color:var(--text)}
+.settings-page .settings-group form input:not([type=checkbox]):not([type=color]),.settings-page .settings-group form select{width:100%;height:36px;padding:0 10px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--text);font:inherit;font-size:13px}
+.settings-page .settings-group form input[readonly]{background:var(--subtle);color:var(--muted)}
+.settings-page .settings-group form input[type=color]{width:44px;height:36px;padding:3px;border:1px solid var(--line);border-radius:7px;background:var(--panel);cursor:pointer}
+.settings-page .settings-group form button{height:36px;min-width:120px;padding:0 16px;justify-self:start}
+.settings-page .settings-group form button:not(.primary){border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--text)}
+.settings-page .settings-group form button:disabled{opacity:.5;cursor:not-allowed}
+.settings-page .settings-group form label:has(input[type=checkbox]){display:flex;align-items:center;gap:8px;font-weight:500}
+.settings-page .settings-group form>p{margin:0;font-size:12px;color:var(--muted)}
+.settings-page .settings-group>.issue-card{margin-top:14px;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.settings-page .settings-group .issue-row{padding:12px 14px;border-top:1px solid var(--line)}
+
+/* Issue detail property selects */
+.issue-detail-property select{width:auto;min-width:130px;max-width:160px;height:30px;padding:0 26px 0 9px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text);font:inherit;font-size:12px;cursor:pointer;appearance:auto}
+.issue-detail-property select:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.issue-detail-property select:disabled{opacity:.5;cursor:not-allowed}
+
+/* Settings forms: correct selectors (the form itself can be the group), stacked fields */
+.settings-group:has(>label),.settings-group:has(>form),.settings-group>form{display:grid;gap:14px;max-width:460px}
+.settings-group>label{display:grid;gap:6px;font-size:12px;font-weight:550;color:var(--text)}
+.settings-group input:not([type=checkbox]):not([type=color]):not([type=search]),.settings-group select{width:100%;height:36px;padding:0 10px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--text);font:inherit;font-size:13px}
+.settings-group input[type=color]{width:44px;height:36px;padding:3px;border:1px solid var(--line);border-radius:7px;background:var(--panel);cursor:pointer}
+.settings-group input[readonly]{background:var(--subtle);color:var(--muted)}
+.settings-group>button,.settings-group form>button{height:36px;min-width:120px;padding:0 16px;justify-self:start;border-radius:7px}
+.settings-group>button:not(.primary),.settings-group form>button:not(.primary){border:1px solid var(--line);background:var(--panel);color:var(--text)}
+.settings-group button:disabled{opacity:.5;cursor:not-allowed}
+
+/* API key revoke action */
+.api-key-row button.danger{justify-self:start;width:auto;height:30px;padding:0 12px;border:1px solid var(--danger);border-radius:6px;background:transparent;color:var(--danger);font-size:12px;font-weight:550}
+.api-key-row button.danger:hover:not(:disabled){background:color-mix(in srgb,var(--danger) 10%,transparent)}
+.api-key-row button.danger:disabled{opacity:.5;cursor:not-allowed}
+
+/* API key row actions: intrinsic width, danger tone for revoke */
+.api-key-list li>button.outline{justify-self:start;width:auto;min-height:30px;padding:0 12px;border-radius:6px;font-size:12px;color:var(--danger);border-color:color-mix(in srgb,var(--danger) 45%,var(--line))}
+.api-key-confirm{display:flex;flex-wrap:wrap;align-items:center;gap:10px;font-size:12px;color:var(--text)}
+.api-key-confirm button{width:auto;min-height:30px;padding:0 12px;border-radius:6px;font-size:12px}
+
+/* Preference row controls keep intrinsic width; only form fields stretch */
+.setting-row select{width:auto;min-width:120px;height:34px;padding:0 26px 0 9px;font-size:12px}
+
+/* Members add-member form: stacked fields, labeled team checkboxes, real buttons */
+.workspace-settings-form{display:grid;gap:14px;max-width:560px;padding:22px 24px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+.workspace-settings-form h2{margin:0;font-size:16px}
+.workspace-settings-form>label{display:grid;gap:6px;font-size:12px;font-weight:550;color:var(--text)}
+.workspace-settings-form>label input,.workspace-settings-form>label select{width:100%;height:36px;padding:0 10px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--text);font:inherit;font-size:13px}
+.workspace-settings-form fieldset{display:grid;gap:8px;margin:0;padding:12px 14px;border:1px solid var(--line);border-radius:8px}
+.workspace-settings-form legend{padding:0 6px;font-size:12px;font-weight:550}
+.workspace-settings-form fieldset>p{margin:0;font-size:12px;color:var(--muted)}
+.workspace-settings-form fieldset>label{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text)}
+.workspace-settings-form>button{justify-self:start;height:36px;min-width:140px;padding:0 16px;border-radius:7px}
+.workspace-settings-form>button:disabled{opacity:.5;cursor:not-allowed}
+
+/* Team checkbox rows: intrinsic checkbox, label beside it */
+.workspace-settings-form fieldset>label{display:flex;flex-direction:row;justify-content:flex-start;align-items:center;gap:8px;width:auto;justify-self:start}
+.workspace-settings-form fieldset>label input[type=checkbox]{width:16px;height:16px;margin:0;flex:none}
+
+/* Projects header and empty-state actions use the shared outline button look */
+.projects-reference-head>button,.empty-projects button{height:30px;padding:0 12px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--text);font:inherit;font-size:12px;font-weight:550;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.projects-reference-head>button:hover,.empty-projects button:hover{background:var(--hover,#f2f2f2)}
+
+/* Board page title bar matches the other page headers */
+.board-page-head{height:45px;min-height:45px;display:flex;align-items:center;padding:0 18px;border-bottom:1px solid var(--line)}
+.board-page-head h1{margin:0;font-size:14px;font-weight:600;letter-spacing:-.01em}
+
 /* Agent chat: sit in the app grid like the other full-height pages, with the thread filling the content column. */
 .workspace-content:has(.agent-chat-page){grid-row:1 / span 2;min-width:0}
 .workspace-content:has(.agent-chat-page) .main{width:100%;max-width:none;min-height:calc(100dvh - 48px);margin:0;padding:0;overflow:hidden}
@@ -613,3 +702,112 @@ html{font-size:calc(16px * var(--font-scale,1))}
 .agent-chat-page .openui-agent-thread-composer{max-width:800px;margin:0 auto}
 .agent-chat-page .openui-agent-thread-chat-panel{width:100%;max-width:100%;left:0;right:0}
 .agent-chat-page .openui-agent-container{width:100%;height:100%;min-height:0}
+
+/* Agent composer: use the app's light input border instead of the default focus-black outline */
+.agent-chat-page .openui-agent-thread-composer textarea,.agent-chat-page .openui-agent-thread-composer input{border:1px solid var(--line);outline:none}
+.agent-chat-page .openui-agent-thread-composer textarea:focus,.agent-chat-page .openui-agent-thread-composer input:focus{border-color:var(--text-muted,#888);box-shadow:none}
+.agent-chat-page .openui-agent-thread-composer textarea{min-height:44px;padding:10px 12px;box-sizing:border-box;line-height:1.4}
+
+/* Unknown workspace path */
+.not-found-page{padding:64px 48px;max-width:640px}
+.not-found-page h1{margin:0 0 8px;font-size:24px}
+.not-found-page p{margin:0;color:var(--muted)}
+
+/* Initiatives empty-state docs link keeps its label width */
+.initiatives-empty a{justify-self:start;width:auto}
+
+/* Issue detail breadcrumb: single compact row */
+.issue-detail-crumb{gap:8px;height:44px;padding:0 16px;min-width:0;white-space:nowrap}
+.issue-detail-crumb>button{padding:0;border:0;background:transparent;color:var(--muted);font-size:13px;flex:none}
+.issue-detail-crumb>button:hover{color:var(--text)}
+.issue-detail-crumb-id{flex:none;color:var(--text);font-size:13px;font-weight:550}
+.issue-detail-crumb-title{min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:13px;color:var(--muted)}
+.issue-detail-crumb>span:nth-of-type(2){font-size:13px;color:var(--muted)}
+.issue-detail-crumb .issue-detail-danger{margin-left:auto;flex:none}
+.issue-detail-page .back-link{margin:0;padding:0;border:0;background:transparent;color:var(--muted);font-size:13px}
+.issue-detail-page .back-link:hover{color:var(--text)}
+.issue-detail-nav{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted)}
+.issue-detail-nav button{width:26px;height:26px;border:0;border-radius:6px;background:transparent;color:var(--muted);font-size:14px}
+.issue-detail-nav button:hover:not(:disabled){background:var(--subtle);color:var(--text)}
+.issue-detail-nav button:disabled{opacity:.35;cursor:default}
+.issue-detail-icons{display:flex;align-items:center;gap:2px;margin-right:8px}
+.issue-detail-icons button{width:28px;height:28px;border:0;border-radius:6px;background:transparent;color:var(--muted);font-size:14px}
+.issue-detail-icons button:hover{background:var(--subtle);color:var(--text)}
+.issue-detail-more{position:relative;margin-left:auto;flex:none}
+.issue-detail-more>button{width:28px;height:28px;border:0;border-radius:6px;background:transparent;color:var(--muted);font-size:16px}
+.issue-detail-more>button:hover,.issue-detail-more>button[aria-expanded=true]{background:var(--subtle);color:var(--text)}
+.issue-detail-more-menu{position:absolute;right:0;top:calc(100% + 4px);z-index:20;min-width:160px;padding:4px;border:1px solid var(--line);border-radius:8px;background:var(--panel);box-shadow:0 6px 20px rgba(0,0,0,.12)}
+.issue-detail-more-menu button{display:block;width:100%;padding:7px 10px;border:0;border-radius:5px;background:transparent;color:var(--text);font-size:13px;text-align:left}
+.issue-detail-more-menu button:hover{background:var(--subtle)}
+.issue-detail-more-menu button.danger{color:var(--danger)}
+.issue-detail-title{display:block;resize:none;overflow:hidden;font-size:24px;font-weight:600;line-height:1.3;letter-spacing:-.02em;white-space:pre-wrap;overflow-wrap:anywhere;field-sizing:content}
+.issue-detail-description textarea{font-size:15px;line-height:1.6;color:var(--text);min-height:0;field-sizing:content}
+.issue-detail-description{margin-bottom:24px}
+.issue-detail-desc-state{font-size:12px;color:var(--muted)}
+.issue-activity{margin-top:32px;padding-top:4px}
+.issue-activity>header{justify-content:space-between}
+.issue-activity-who{display:inline-flex}
+.issue-activity-entry{position:relative}
+.issue-detail-comment{position:relative;padding-left:30px}
+.issue-activity-time{margin-left:auto;font-size:12px;color:var(--muted)}
+.issue-detail-comment::before{content:"";position:absolute;left:9px;top:0;bottom:0;width:1px;background:var(--line)}
+.issue-detail-comment time{font-size:12px}
+.issue-detail-comment-box{display:flex;flex-direction:column;align-items:stretch;gap:8px;min-height:0;padding:10px 12px}
+.issue-detail-comment-box textarea{width:100%;border:0;outline:0;background:transparent;color:var(--text);font:inherit;font-size:14px;line-height:1.5;resize:vertical}
+.issue-detail-comment-actions{display:flex;justify-content:flex-end}
+.issue-detail-comment-box .issue-detail-comment-actions button{width:auto;height:30px;padding:0 12px;white-space:nowrap}
+.issue-detail-subactions{margin:4px 0 8px}
+.issue-detail-subactions button{padding:4px 0;border:0;background:transparent;color:var(--muted);font-size:13px}
+.issue-detail-subactions button:disabled{opacity:.6;cursor:default}
+.issue-detail-prop-label{display:inline-flex;align-items:center;gap:8px}
+.issue-detail-prop-label i{font-style:normal;width:14px;text-align:center;color:var(--muted)}
+.issue-detail-property{min-height:32px;padding:4px 6px}
+.issue-detail-label-chips{display:flex;flex-wrap:wrap;gap:6px}
+.issue-detail-label-chip{display:inline-flex;align-items:center;gap:6px;min-height:26px;padding:0 9px;border:1px solid var(--line);border-radius:999px;font-size:12px;color:var(--text);cursor:pointer}
+.issue-detail-label-chip input{position:absolute;opacity:0;width:0;height:0}
+.issue-detail-label-chip i{width:8px;height:8px;border-radius:50%}
+.issue-detail-label-chip[data-on=true]{background:var(--subtle)}
+.issue-detail-section-title{display:block;margin:20px 6px 8px;font-size:12px;font-weight:500;color:var(--muted)}
+.issue-detail-properties>.issue-detail-section-title:first-child{margin-top:4px}
+.issue-detail-properties{background:transparent;border-left:1px solid var(--line)}
+.issue-detail-columns{grid-template-columns:minmax(0,1fr) 260px}
+.issue-detail-main{max-width:720px;padding:32px 40px 56px}
+.issue-detail-main>.issue-detail-title{max-width:none}
+.issue-detail-toolbar{height:40px;padding:0 16px}
+.issue-activity>header{height:44px}
+.issue-detail-comment{padding:12px 0 12px 30px}
+.issue-detail-comment-box{min-height:0;border:1px solid var(--line);box-shadow:none;background:var(--panel);padding:8px 10px}
+.issue-detail-comment-box textarea{min-height:36px}
+.issue-detail-property{font-size:13px}
+.issue-detail-property b,.issue-detail-property select{font-size:13px}
+.issue-detail-prop-label{font-size:13px}
+.issue-detail-section-title{font-size:12px}
+.issue-detail-title,.issue-detail-description textarea{border-color:transparent}
+.issue-detail-comment-box{border:0;border-top:1px solid var(--line);border-radius:0;background:transparent;padding:12px 0 0}
+.issue-detail-prop-label i[data-p="1"]{color:#e5484d}
+.issue-detail-prop-label i[data-p="2"]{color:#f76b15}
+.issue-detail-prop-label i[data-p="3"]{color:#f5a524}
+.issue-detail-prop-label i[data-p="4"]{color:#8e8e93}
+.skeleton{display:block;border-radius:6px;background:var(--subtle);animation:skeleton-pulse 1.2s ease-in-out infinite}
+.skeleton-sm{width:160px;height:14px}
+.skeleton-title{width:70%;height:26px;margin-bottom:20px}
+.skeleton-line{height:12px;width:100%;margin-bottom:12px}
+.skeleton-line.short{width:55%}
+.issue-detail-properties .skeleton-line{height:16px;margin-bottom:14px}
+@keyframes skeleton-pulse{0%,100%{opacity:1}50%{opacity:.5}}
+@media (prefers-reduced-motion:reduce){.skeleton{animation:none}}
+.issue-detail-field-error{margin:0 6px 12px;font-size:12px}
+.issue-detail-page{height:auto;min-height:calc(100dvh - 48px)}
+main:has(>.issue-detail-page){padding:0}
+.issue-detail-crumb{position:sticky;top:0;z-index:5;background:var(--bg)}
+.sidebar-bottom{margin-bottom:0}
+.sidebar{box-sizing:border-box;padding-bottom:0}
+.sidebar{display:flex;flex-direction:column;overflow-y:auto}
+.sidebar>.sidebar-bottom,.sidebar .sidebar-bottom{position:sticky;bottom:0;margin:auto -14px 0;padding:8px 14px 12px;background:var(--panel)}
+.issue-detail-description textarea{resize:none}
+.issue-detail-star{flex:none;width:24px;height:24px;border:0;border-radius:5px;background:transparent;color:var(--muted);font-size:14px}
+.issue-detail-crumb-ws{color:var(--muted);white-space:nowrap}
+.issue-detail-label-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.issue-detail-label-add{width:auto;height:22px;padding:0 6px;border:1px solid var(--line);border-radius:5px;background:transparent;color:var(--muted);font-size:13px}
+.issue-detail-comment-attach{width:28px;height:28px;border:0;background:transparent;color:var(--muted);font-size:14px}
+.issue-detail-comment-send{width:28px;height:28px;border-radius:50%;padding:0;font-size:15px;line-height:1}

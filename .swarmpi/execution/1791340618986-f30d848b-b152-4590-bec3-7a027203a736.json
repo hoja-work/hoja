@@ -1,8 +1,0 @@
-{
-  "version": 1,
-  "at": "2026-10-07T02:36:58.986Z",
-  "event": "bootstrap-degraded",
-  "runId": "1791340594445-call_e549efd54c0c4484ae9590f9c17a0c97",
-  "status": "degraded",
-  "errorSummary": "Task dependency references unknown task"
-}

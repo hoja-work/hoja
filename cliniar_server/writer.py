@@ -19,6 +19,7 @@ from cliniar_server.db import (
     inbox_notification,
     issue_label,
     issue_label_link,
+    issue_subscriber,
     new_id,
     now_iso,
     organization,
@@ -293,18 +294,26 @@ class Writer:
             conn.execute(team.update().where(team.c.id == team_id).values(archived_at=now_iso(), updated_at=now_iso()))
             return True
 
-    def team_delete(self, org_id: str, viewer_id: str, team_id: str) -> bool:
+    def team_delete(self, org_id: str, viewer_id: str, team_id: str, *, delete_issues: bool = False) -> bool:
         with self.engine.begin() as conn:
             self._require_team_admin(conn, org_id, viewer_id)
             self._team_row(conn, org_id, team_id, include_archived=True)
             blockers = []
-            for label, table in (("issues", issue), ("projects", project_team), ("cycles", cycle)):
+            for label, table in (("projects", project_team), ("cycles", cycle)):
                 if conn.execute(select(table.c.team_id).where(table.c.team_id == team_id).limit(1)).first():
                     blockers.append(label)
+            if not delete_issues and conn.execute(select(issue.c.id).where(issue.c.team_id == team_id).limit(1)).first():
+                blockers.append("issues")
             if blockers:
                 raise GraphQLError(
                     f"Team still has {', '.join(blockers)}. Archive it instead, or move or delete them first.",
                     extensions={"code": "BAD_USER_INPUT", "field": "id"})
+            if delete_issues:
+                issue_ids = select(issue.c.id).where(issue.c.team_id == team_id)
+                for child in (attachment, comment, inbox_notification, issue_activity,
+                              issue_label_link, issue_subscriber):
+                    conn.execute(child.delete().where(child.c.issue_id.in_(issue_ids)))
+                conn.execute(issue.delete().where(issue.c.team_id == team_id))
             conn.execute(team_member.delete().where(team_member.c.team_id == team_id))
             conn.execute(issue_label.delete().where(issue_label.c.team_id == team_id))
             conn.execute(workflow_state.delete().where(workflow_state.c.team_id == team_id))
