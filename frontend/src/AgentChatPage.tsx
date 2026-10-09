@@ -1,6 +1,5 @@
 import React from 'react';
 import { AgentInterface, fetchLLM, openAIAdapter, openAIMessageFormat } from '@openuidev/react-ui';
-import { openuiChatLibrary } from '@openuidev/react-ui/genui-lib';
 import '@openuidev/react-ui/styles/index.css';
 
 const llm = fetchLLM({
@@ -15,12 +14,17 @@ const llm = fetchLLM({
   },
 });
 
+// The agent replies in plain text, not openui-lang, so render the message content directly.
+function PlainAssistantMessage({ message }: { message: { content?: string | null } }) {
+  return <div className="agent-chat-reply" style={{ whiteSpace: 'pre-wrap' }}>{message.content ?? ''}</div>;
+}
+
 export function AgentChatPage({ workspaceName }: { workspaceName: string }) {
   return (
     <section className="agent-chat-page" aria-label="Agent chat">
       <AgentInterface
         llm={llm}
-        componentLibrary={openuiChatLibrary}
+        components={{ AssistantMessage: PlainAssistantMessage }}
         agentName={`${workspaceName || 'Hoja'} agent`}
         theme={{ mode: 'light' }}
         starters={[
