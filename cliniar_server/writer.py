@@ -248,6 +248,11 @@ class Writer:
         if not admin:
             raise GraphQLError("Admin access required", extensions={"code": "FORBIDDEN"})
 
+    def _require_creator_or_admin(self, conn, org_id: str, viewer_id: str, creator_id: str | None) -> None:
+        if creator_id and creator_id == viewer_id:
+            return
+        self._require_team_admin(conn, org_id, viewer_id)
+
     def _team_row(self, conn, org_id: str, team_id: str, *, include_archived: bool = False):
         clauses = [team.c.id == team_id, team.c.organization_id == org_id]
         if not include_archived:
@@ -373,7 +378,13 @@ class Writer:
                 raise ValueError("Project must belong to the current organization.")
             conn.execute(initiative_project.insert().values(organization_id=org_id, initiative_id=ident, project_id=pid))
 
-    def initiative_update(self, org_id: str, ident: str, inp: dict) -> bool:
+    def initiative_update(self, org_id: str, viewer_id: str, ident: str, inp: dict) -> bool:
+        with self.engine.begin() as conn:
+            row = conn.execute(select(initiative.c.creator_id).where(and_(
+                initiative.c.id == ident, initiative.c.organization_id == org_id,
+                initiative.c.archived_at.is_(None)))).first()
+            if row:
+                self._require_creator_or_admin(conn, org_id, viewer_id, row[0])
         fields = {"name", "summary", "status", "priority", "ownerId", "targetDate"}
         values = {k: v for k, v in inp.items() if k in fields}
         if "name" in values:
@@ -399,8 +410,13 @@ class Writer:
             conn.execute(initiative.update().where(and_(initiative.c.id == ident, initiative.c.organization_id == org_id)).values(**values))
         return True
 
-    def initiative_archive(self, org_id: str, ident: str) -> bool:
+    def initiative_archive(self, org_id: str, viewer_id: str, ident: str) -> bool:
         with self.engine.begin() as conn:
+            row = conn.execute(select(initiative.c.creator_id).where(and_(
+                initiative.c.id == ident, initiative.c.organization_id == org_id,
+                initiative.c.archived_at.is_(None)))).first()
+            if row:
+                self._require_creator_or_admin(conn, org_id, viewer_id, row[0])
             result = conn.execute(initiative.update().where(and_(initiative.c.id == ident, initiative.c.organization_id == org_id, initiative.c.archived_at.is_(None))).values(archived_at=now_iso(), updated_at=now_iso()))
             return result.rowcount > 0
 
@@ -552,10 +568,21 @@ class Writer:
         if vals:
             conn.execute(issue.update().where(issue.c.id == iid).values(**vals))
 
-    def issue_archive(self, org_id: str, ident: str) -> bool:
+    def _authorize_issue_change(self, org_id: str, viewer_id: str, ident: str) -> None:
+        with self.engine.begin() as conn:
+            row = conn.execute(select(issue.c.creator_id).where(and_(
+                issue.c.organization_id == org_id,
+                (issue.c.id == ident) | (issue.c.identifier == ident.upper()),
+            ))).first()
+            if row:
+                self._require_creator_or_admin(conn, org_id, viewer_id, row[0])
+
+    def issue_archive(self, org_id: str, viewer_id: str, ident: str) -> bool:
+        self._authorize_issue_change(org_id, viewer_id, ident)
         return self._soft_delete(issue, org_id, ident, by_identifier=True, event_type="issueArchived")
 
-    def issue_delete(self, org_id: str, ident: str) -> bool:
+    def issue_delete(self, org_id: str, viewer_id: str, ident: str) -> bool:
+        self._authorize_issue_change(org_id, viewer_id, ident)
         return self._soft_delete(issue, org_id, ident, by_identifier=True)
 
     def _soft_delete(self, table, org_id, ident, by_identifier=False, event_type=None) -> bool:
@@ -605,7 +632,13 @@ class Writer:
             self._record_activity(conn, org_id, issue_id, None, "commentUpdated", {"commentId": cid}, vals["updated_at"])
             return cid
 
-    def comment_delete(self, org_id: str, cid: str) -> bool:
+    def comment_delete(self, org_id: str, viewer_id: str, cid: str) -> bool:
+        with self.engine.begin() as conn:
+            row = conn.execute(select(comment.c.user_id).where(and_(
+                comment.c.organization_id == org_id, comment.c.id == cid,
+                comment.c.archived_at.is_(None)))).first()
+            if row:
+                self._require_creator_or_admin(conn, org_id, viewer_id, row[0])
         return self._soft_delete(comment, org_id, cid)
 
     # -------------------------------------------------------------- attachments

@@ -860,14 +860,14 @@ def m_issue_update(_, info, id, input):
 
 @mutation.field("issueDelete")
 def m_issue_delete(_, info, id):
-    _s, w, org, _uid = _ctx(info)
-    return {"success": w.issue_delete(org, id)}
+    _s, w, org, uid = _ctx(info)
+    return {"success": w.issue_delete(org, uid, id)}
 
 
 @mutation.field("issueArchive")
 def m_issue_archive(_, info, id):
-    _s, w, org, _uid = _ctx(info)
-    return {"success": w.issue_archive(org, id)}
+    _s, w, org, uid = _ctx(info)
+    return {"success": w.issue_archive(org, uid, id)}
 
 
 @mutation.field("commentCreate")
@@ -890,8 +890,8 @@ def m_comment_update(_, info, id, input):
 
 @mutation.field("commentDelete")
 def m_comment_delete(_, info, id):
-    _s, w, org, _uid = _ctx(info)
-    return {"success": w.comment_delete(org, id)}
+    _s, w, org, uid = _ctx(info)
+    return {"success": w.comment_delete(org, uid, id)}
 
 
 @mutation.field("issueLabelCreate")
@@ -964,14 +964,14 @@ def m_initiative_create(_, info, input):
 
 @mutation.field("initiativeUpdate")
 def m_initiative_update(_, info, id, input):
-    store, writer, org, _uid = _ctx(info)
-    success = writer.initiative_update(org, id, input)
+    store, writer, org, uid = _ctx(info)
+    success = writer.initiative_update(org, uid, id, input)
     return {"success": success, "initiative": store.initiative_by_id(org, id) if success else None}
 
 @mutation.field("initiativeArchive")
 def m_initiative_archive(_, info, id):
-    _store, writer, org, _uid = _ctx(info)
-    return {"success": writer.initiative_archive(org, id)}
+    _store, writer, org, uid = _ctx(info)
+    return {"success": writer.initiative_archive(org, uid, id)}
 
 
 @mutation.field("attachmentCreate")
