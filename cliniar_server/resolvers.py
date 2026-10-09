@@ -999,8 +999,11 @@ def _get_comment(store, org, cid):
 def build_schema():
     from pathlib import Path
     sdl = (Path(__file__).parent / "schema.graphql").read_text()
+    from cliniar_server.model_providers import SDL as PROVIDER_SDL
+    from cliniar_server import model_providers
     return make_executable_schema(
-        sdl, query, mutation, Team, Initiative, Issue, IssueActivity, MyIssueActivity, Project, ProjectUpdate, Comment,
+        [sdl, PROVIDER_SDL], query, mutation, model_providers.query, model_providers.mutation,
+        model_providers.model_provider_type, Team, Initiative, Issue, IssueActivity, MyIssueActivity, Project, ProjectUpdate, Comment,
         WorkflowState, Cycle, Attachment,
         datetime_scalar, timeless_scalar, json_scalar, InboxNotification,
     )

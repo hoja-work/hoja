@@ -30,7 +30,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 19
+CURRENT_SCHEMA_REVISION = 20
 
 
 def now_iso() -> str:
@@ -215,6 +215,21 @@ user_preference = Table(
     Column("user_id", String, ForeignKey("user.id"), primary_key=True),
     Column("preference_key", String, primary_key=True),
     Column("value", Text, nullable=False),
+    Column("updated_at", String, nullable=False),
+)
+
+model_provider = Table(
+    "model_provider",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, nullable=False, index=True),
+    Column("name", String, nullable=False),
+    Column("provider", String, nullable=False),
+    Column("model_id", String, nullable=False),
+    Column("base_url", String),
+    Column("encrypted_api_key", String, nullable=False),
+    Column("enabled", Boolean, nullable=False, default=True),
+    Column("created_at", String, nullable=False),
     Column("updated_at", String, nullable=False),
 )
 
@@ -838,6 +853,7 @@ _MIGRATIONS = {
     17: _apply_api_key_lifecycle,
     18: lambda conn: change_event.create(conn, checkfirst=True),
     19: _apply_realtime_capture,
+    20: lambda conn: model_provider.create(conn, checkfirst=True),
 }
 
 
