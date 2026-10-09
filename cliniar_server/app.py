@@ -318,6 +318,41 @@ def create_app(
         except WebSocketDisconnect:
             return
 
+    async def agent_chat_server(request: Request):
+        uid, org, _identity_id, _is_browser = _auth(request)
+        if not uid:
+            return JSONResponse(
+                {"errors": [{"message": "Authentication required", "extensions": {"code": "AUTHENTICATION_ERROR"}}]},
+                status_code=401,
+            )
+        body = await request.json()
+        messages = body.get("messages") if isinstance(body, dict) else None
+        if not isinstance(messages, list) or not messages:
+            return JSONResponse({"error": "messages is required"}, status_code=400)
+        from cliniar_server.agent_chat import stream_reply, sse_response
+        from cliniar_server.schema_sdl import SCHEMA_SDL
+        base_context = {
+            "request": request,
+            "store": store,
+            "writer": writer,
+            "org_id": org,
+            "user_id": uid,
+            "identity_id": _identity_id,
+            "browser_session": _is_browser,
+        }
+        try:
+            gen = stream_reply(store, org, uid, messages, _schema, SCHEMA_SDL, base_context)
+            first = await gen.__anext__()
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+        async def _resume():
+            yield first
+            async for chunk in gen:
+                yield chunk
+
+        return sse_response(_resume())
+
     async def graphql_server(request: Request):
         uid, org, identity_id, is_browser_session = _auth(request)
         if not uid:
@@ -786,6 +821,7 @@ def create_app(
     app = Starlette(
         routes=[
             Route("/graphql", graphql_server, methods=["POST", "GET"]),
+            Route("/api/agent/chat", agent_chat_server, methods=["POST"]),
             WebSocketRoute("/ws", realtime_socket),
             Route("/auth/setup", auth_setup, methods=["GET", "POST"]),
             Route("/auth/invite/accept", auth_invite_accept, methods=["POST"]),
