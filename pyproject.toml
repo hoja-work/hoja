@@ -58,6 +58,9 @@ server = [
 saas = [
     "asyncpg>=0.29",
 ]
+agent = [
+    "pydantic-ai-slim[dbos]>=2.54,<3.0",
+]
 
 [project.scripts]
 cliniar = "cliniar.cli:app"

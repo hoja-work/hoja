@@ -771,7 +771,17 @@ def create_app(
         )
         mcp_asgi = runtime_app
         async with runtime_app.router.lifespan_context(runtime_app):
-            yield
+            if agent_dbos_url := os.environ.get("CLINIAR_AGENT_DBOS_URL"):
+                from dbos import DBOS
+
+                DBOS(config={"name": "cliniar-agent", "system_database_url": agent_dbos_url})
+                DBOS.launch()
+                try:
+                    yield
+                finally:
+                    DBOS.destroy()
+            else:
+                yield
 
     app = Starlette(
         routes=[
