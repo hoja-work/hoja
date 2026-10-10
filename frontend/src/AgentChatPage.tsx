@@ -1,6 +1,8 @@
 import React from 'react';
 import { AgentInterface, fetchLLM, openAIAdapter, openAIMessageFormat } from '@openuidev/react-ui';
 import '@openuidev/react-ui/styles/index.css';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 const llm = fetchLLM({
   url: '/api/agent/chat',
@@ -14,9 +16,22 @@ const llm = fetchLLM({
   },
 });
 
-// The agent replies in plain text, not openui-lang, so render the message content directly.
+// The agent replies in Markdown. Links are rendered as anchors; react-markdown escapes raw HTML by default.
 function PlainAssistantMessage({ message }: { message: { content?: string | null } }) {
-  return <div className="agent-chat-reply" style={{ whiteSpace: 'pre-wrap' }}>{message.content ?? ''}</div>;
+  return (
+    <div className="agent-chat-reply">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ href, children }) => (
+            <a href={href} target={href?.startsWith('/') ? undefined : '_blank'} rel="noopener noreferrer">{children}</a>
+          ),
+        }}
+      >
+        {message.content ?? ''}
+      </ReactMarkdown>
+    </div>
+  );
 }
 
 export function AgentChatPage({ workspaceName }: { workspaceName: string }) {
