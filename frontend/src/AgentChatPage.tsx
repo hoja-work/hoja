@@ -17,6 +17,15 @@ const llm = fetchLLM({
 });
 
 // The agent replies in Markdown. Links are rendered as anchors; react-markdown escapes raw HTML by default.
+// Rewrites bare issue identifiers (TREBOL-12) outside code spans, fences, and existing links.
+const ISSUE_ID = /\b([A-Z][A-Z0-9]{1,9}-\d+)\b/g;
+export function linkIssueIds(markdown: string): string {
+  return markdown
+    .split(/(```[\s\S]*?```|`[^`\n]*`|\[[^\]]*\]\([^)]*\))/)
+    .map((part, i) => (i % 2 === 1 ? part : part.replace(ISSUE_ID, (id) => `[${id}](/workspace/issue/${id})`)))
+    .join('');
+}
+
 function PlainAssistantMessage({ message }: { message: { content?: string | null } }) {
   return (
     <div className="agent-chat-reply">
@@ -28,7 +37,7 @@ function PlainAssistantMessage({ message }: { message: { content?: string | null
           ),
         }}
       >
-        {message.content ?? ''}
+        {linkIssueIds(message.content ?? '')}
       </ReactMarkdown>
     </div>
   );
