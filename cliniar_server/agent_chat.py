@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 
 from ariadne import graphql
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -32,7 +33,7 @@ class AgentDeps:
 
 
 def build_agent(model, schema_sdl: str) -> Agent:
-    agent = Agent(model, deps_type=AgentDeps, instructions=INSTRUCTIONS)
+    agent = Agent(model, deps_type=AgentDeps, instructions=INSTRUCTIONS, retries=3)
 
     @agent.tool
     async def schema(ctx: RunContext[AgentDeps]) -> str:
@@ -41,7 +42,8 @@ def build_agent(model, schema_sdl: str) -> Agent:
 
     @agent.tool
     async def graphql(ctx: RunContext[AgentDeps], query: str, variables: dict | None = None) -> dict:
-        """Run a GraphQL query or mutation against Hoja as the signed-in user."""
+        """Run a GraphQL query or mutation against Hoja as the signed-in user.
+        `query` is REQUIRED and must be a non-empty GraphQL string. Call `schema` first if you need field names."""
         _ok, result = await graphql_run(ctx.deps.schema, query, variables or {}, ctx.deps.context)
         return result
 
@@ -103,9 +105,12 @@ async def stream_reply(store, org_id: str, uid: str, messages: list[dict], schem
     agent = build_agent(OpenAIChatModel(row["model_id"], provider=provider), schema_sdl)
     yield _chunk(completion_id, {"role": "assistant"})
     deps = AgentDeps(schema, dict(base_context))
-    async with agent.run_stream(prompt, message_history=history, deps=deps) as result:
-        async for text in result.stream_text(delta=True):
-            yield _chunk(completion_id, {"content": text})
+    try:
+        async with agent.run_stream(prompt, message_history=history, deps=deps) as result:
+            async for text in result.stream_text(delta=True):
+                yield _chunk(completion_id, {"content": text})
+    except UnexpectedModelBehavior:
+        yield _chunk(completion_id, {"content": "The assistant could not complete that request. Please try again."})
     yield _chunk(completion_id, {}, "stop")
     yield "data: [DONE]\n\n"
 

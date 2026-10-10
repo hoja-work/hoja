@@ -115,6 +115,37 @@ def test_rejects_request_without_user_message(tmp_path) -> None:
 
 
 
+def test_agent_recovers_from_empty_graphql_call(tmp_path) -> None:
+    from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    from cliniar_server.agent_chat import AgentDeps, build_agent
+    from cliniar_server.resolvers import build_schema
+    from cliniar_server.schema_sdl import SCHEMA_SDL
+    from cliniar_server.store import Store
+
+    engine, _app, admin = _setup(tmp_path)
+    calls = []
+
+    def scripted(messages, info: AgentInfo):
+        if len(calls) < 2:
+            calls.append("empty")
+            return ModelResponse(parts=[ToolCallPart("graphql", {})])
+        if len(calls) == 2:
+            calls.append("valid")
+            return ModelResponse(parts=[ToolCallPart("graphql", {"query": "{ viewer { id } }", "variables": {}})])
+        return ModelResponse(parts=[TextPart("done")])
+
+    context = {
+        "store": Store(engine), "writer": None, "org_id": admin["org_id"],
+        "user_id": admin["user_id"], "identity_id": None, "browser_session": False,
+    }
+    agent = build_agent(FunctionModel(scripted), SCHEMA_SDL)
+    result = agent.run_sync("who am i", deps=AgentDeps(build_schema(), context))
+    assert result.output == "done"
+    assert calls == ["empty", "empty", "valid"]
+
+
 def test_agent_graphql_tool_runs_as_signed_in_user(tmp_path) -> None:
     from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
     from pydantic_ai.models.function import AgentInfo, FunctionModel
