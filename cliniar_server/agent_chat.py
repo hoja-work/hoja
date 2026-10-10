@@ -16,6 +16,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from sqlalchemy import and_, select
 from starlette.responses import StreamingResponse
 
+from cliniar_server.agent_conversations import save_message, start_conversation
 from cliniar_server.db import model_provider
 from cliniar_server.secrets_box import decrypt_secret
 
@@ -29,6 +30,7 @@ How to work:
 - Before creating anything, search for an existing issue or project with the same title to avoid duplicates.
 - When creating a task, set title, teamId, and projectId when the user names a project. Add a short description with acceptance criteria when the request is vague.
 - Assign people only after confirming they are members of the team.
+- To filter to the signed-in user, first run `{ viewer { id } }`, then use the returned id, e.g. `issues(filter: { assignee: { id: { eq: "<id>" } } })`. `UserFilter` has only id, email, displayName, and name; there is no `isMe` field.
 - After a write, read it back to confirm it exists and is linked to the right project.
 
 How to answer:
@@ -118,12 +120,20 @@ async def stream_reply(store, org_id: str, uid: str, messages: list[dict], schem
     agent = build_agent(OpenAIChatModel(row["model_id"], provider=provider), schema_sdl)
     yield _chunk(completion_id, {"role": "assistant"})
     deps = AgentDeps(schema, dict(base_context))
+    with store.engine.begin() as conn:
+        conversation_id = start_conversation(conn, org_id, uid)
+        save_message(conn, conversation_id, "user", prompt)
+    reply_parts: list[str] = []
     try:
         async with agent.run_stream(prompt, message_history=history, deps=deps) as result:
             async for text in result.stream_text(delta=True):
+                reply_parts.append(text)
                 yield _chunk(completion_id, {"content": text})
     except UnexpectedModelBehavior:
-        yield _chunk(completion_id, {"content": "The assistant could not complete that request. Please try again."})
+        reply_parts = ["The assistant could not complete that request. Please try again."]
+        yield _chunk(completion_id, {"content": reply_parts[0]})
+    with store.engine.begin() as conn:
+        save_message(conn, conversation_id, "assistant", "".join(reply_parts))
     yield _chunk(completion_id, {}, "stop")
     yield "data: [DONE]\n\n"
 

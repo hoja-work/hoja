@@ -171,3 +171,34 @@ def test_agent_graphql_tool_runs_as_signed_in_user(tmp_path) -> None:
     agent = build_agent(FunctionModel(scripted), SCHEMA_SDL)
     agent.run_sync("who am i", deps=AgentDeps(build_schema(), context))
     assert admin["user_id"] in seen["tool_result"]
+
+
+def test_agent_prompt_filters_assignee_by_viewer_id(tmp_path) -> None:
+    from cliniar_server.agent_chat import INSTRUCTIONS
+    from cliniar_server.resolvers import build_schema
+    from cliniar_server.schema_sdl import SCHEMA_SDL
+
+    assert "isMe: {" not in INSTRUCTIONS
+    assert "viewer { id }" in INSTRUCTIONS
+    assert "assignee: { id: { eq:" in INSTRUCTIONS
+    assert "isMe" not in SCHEMA_SDL.split("input UserFilter", 1)[1].split("}", 1)[0]
+    assert build_schema() is not None
+
+
+def test_agent_reply_is_saved_and_listed_with_size(tmp_path, stub_base_url) -> None:
+    engine, app, admin = _setup(tmp_path)
+    client = TestClient(app)
+    token = admin["token"]
+    _gql(client, token, CREATE, {"k": SECRET, "u": stub_base_url})
+
+    with client.stream("POST", "/api/agent/chat", json=MESSAGES, headers={"authorization": f"Bearer {token}"}) as resp:
+        assert resp.status_code == 200
+        body = "".join(resp.iter_text())
+    assert "[DONE]" in body
+
+    data = _gql(client, token, "{ agentConversations { count totalBytes conversations { id messageCount bytes } } }", {})
+    summary = data["data"]["agentConversations"]
+    assert summary["count"] == 1
+    assert summary["conversations"][0]["messageCount"] == 2
+    assert summary["totalBytes"] > 0
+    assert summary["totalBytes"] == summary["conversations"][0]["bytes"]

@@ -30,7 +30,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 20
+CURRENT_SCHEMA_REVISION = 21
 
 
 def now_iso() -> str:
@@ -231,6 +231,26 @@ model_provider = Table(
     Column("enabled", Boolean, nullable=False, default=True),
     Column("created_at", String, nullable=False),
     Column("updated_at", String, nullable=False),
+)
+
+agent_conversation = Table(
+    "agent_conversation",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, nullable=False, index=True),
+    Column("user_id", String, nullable=False, index=True),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+)
+
+agent_message = Table(
+    "agent_message",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("conversation_id", String, ForeignKey("agent_conversation.id"), nullable=False, index=True),
+    Column("role", String, nullable=False),
+    Column("content", Text, nullable=False),
+    Column("created_at", String, nullable=False),
 )
 
 schema_revision = Table(
@@ -854,6 +874,10 @@ _MIGRATIONS = {
     18: lambda conn: change_event.create(conn, checkfirst=True),
     19: _apply_realtime_capture,
     20: lambda conn: model_provider.create(conn, checkfirst=True),
+    21: lambda conn: (
+        agent_conversation.create(conn, checkfirst=True),
+        agent_message.create(conn, checkfirst=True),
+    ),
 }
 
 
