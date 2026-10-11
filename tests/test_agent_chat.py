@@ -202,3 +202,47 @@ def test_agent_reply_is_saved_and_listed_with_size(tmp_path, stub_base_url) -> N
     assert summary["conversations"][0]["messageCount"] == 2
     assert summary["totalBytes"] > 0
     assert summary["totalBytes"] == summary["conversations"][0]["bytes"]
+
+
+def test_threaded_turns_stay_in_one_conversation(tmp_path, stub_base_url) -> None:
+    engine, app, admin = _setup(tmp_path)
+    client = TestClient(app)
+    token = admin["token"]
+    auth = {"authorization": f"Bearer {token}"}
+    _gql(client, token, CREATE, {"k": SECRET, "u": stub_base_url})
+
+    created = client.post("/api/agent/threads/create", headers=auth, json={"messages": [{"role": "user", "content": "first"}]})
+    assert created.status_code == 200
+    thread_id = created.json()["id"]
+
+    for text in ("one", "two"):
+        with client.stream("POST", "/api/agent/chat", headers=auth,
+                           json={"threadId": thread_id, "messages": [{"role": "user", "content": text}]}) as resp:
+            "".join(resp.iter_text())
+
+    listed = client.get("/api/agent/threads/get", headers=auth).json()
+    assert [t["id"] for t in listed["threads"]] == [thread_id]
+
+    detail = client.get(f"/api/agent/threads/get/{thread_id}", headers=auth).json()
+    roles = [m["role"] for m in detail]
+    assert roles.count("user") == 3 and roles.count("assistant") == 2
+
+
+def test_thread_rename_and_delete_are_scoped_to_owner(tmp_path) -> None:
+    engine, app, admin = _setup(tmp_path)
+    client = TestClient(app)
+    auth = {"authorization": f"Bearer {admin['token']}"}
+    thread_id = client.post("/api/agent/threads/create", headers=auth,
+                            json={"messages": [{"role": "user", "content": "hi"}]}).json()["id"]
+
+    renamed = client.patch(f"/api/agent/threads/update/{thread_id}", headers=auth, json={"id": thread_id, "title": "Renamed"})
+    assert renamed.status_code == 200 and renamed.json()["title"] == "Renamed"
+
+    assert client.delete(f"/api/agent/threads/delete/{thread_id}", headers=auth).status_code == 200
+    assert client.get("/api/agent/threads/get", headers=auth).json()["threads"] == []
+
+
+def test_thread_endpoints_require_auth(tmp_path) -> None:
+    engine, app, admin = _setup(tmp_path)
+    client = TestClient(app)
+    assert client.get("/api/agent/threads/get").status_code == 401

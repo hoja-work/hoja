@@ -32,11 +32,11 @@ SDL = gql(
 query = QueryType()
 
 
-def start_conversation(conn, org_id: str, user_id: str) -> str:
+def start_conversation(conn, org_id: str, user_id: str, title: str | None = None) -> str:
     cid = new_id()
     ts = now_iso()
     conn.execute(agent_conversation.insert().values(
-        id=cid, organization_id=org_id, user_id=user_id, created_at=ts, updated_at=ts))
+        id=cid, organization_id=org_id, user_id=user_id, title=title, created_at=ts, updated_at=ts))
     return cid
 
 

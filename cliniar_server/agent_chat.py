@@ -17,6 +17,7 @@ from sqlalchemy import and_, select
 from starlette.responses import StreamingResponse
 
 from cliniar_server.agent_conversations import save_message, start_conversation
+from cliniar_server.agent_threads import _owned as _owned_thread, _title_from
 from cliniar_server.db import model_provider
 from cliniar_server.secrets_box import decrypt_secret
 
@@ -108,7 +109,7 @@ def _chunk(completion_id: str, delta: dict, finish: str | None = None) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
 
-async def stream_reply(store, org_id: str, uid: str, messages: list[dict], schema, schema_sdl: str, base_context: dict) -> AsyncIterator[str]:
+async def stream_reply(store, org_id: str, uid: str, messages: list[dict], schema, schema_sdl: str, base_context: dict, thread_id: str | None = None) -> AsyncIterator[str]:
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     prompt, history = _history(messages)
     row = _enabled_provider(store, org_id)
@@ -121,7 +122,10 @@ async def stream_reply(store, org_id: str, uid: str, messages: list[dict], schem
     yield _chunk(completion_id, {"role": "assistant"})
     deps = AgentDeps(schema, dict(base_context))
     with store.engine.begin() as conn:
-        conversation_id = start_conversation(conn, org_id, uid)
+        if thread_id and _owned_thread(conn, org_id, uid, thread_id):
+            conversation_id = thread_id
+        else:
+            conversation_id = start_conversation(conn, org_id, uid, title=_title_from(prompt))
         save_message(conn, conversation_id, "user", prompt)
     reply_parts: list[str] = []
     try:

@@ -30,7 +30,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 21
+CURRENT_SCHEMA_REVISION = 22
 
 
 def now_iso() -> str:
@@ -239,6 +239,7 @@ agent_conversation = Table(
     Column("id", String, primary_key=True),
     Column("organization_id", String, nullable=False, index=True),
     Column("user_id", String, nullable=False, index=True),
+    Column("title", String),
     Column("created_at", String, nullable=False),
     Column("updated_at", String, nullable=False),
 )
@@ -842,6 +843,11 @@ def _apply_api_key_lifecycle(conn):
         if name not in existing:
             conn.exec_driver_sql(f"ALTER TABLE api_key ADD COLUMN {name} {sql_type}")
 
+def _apply_agent_conversation_title(conn) -> None:
+    if "title" not in {c["name"] for c in inspect(conn).get_columns("agent_conversation")}:
+        conn.exec_driver_sql("ALTER TABLE agent_conversation ADD COLUMN title VARCHAR")
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -878,6 +884,7 @@ _MIGRATIONS = {
         agent_conversation.create(conn, checkfirst=True),
         agent_message.create(conn, checkfirst=True),
     ),
+    22: _apply_agent_conversation_title,
 }
 
 

@@ -341,7 +341,8 @@ def create_app(
             "browser_session": _is_browser,
         }
         try:
-            gen = stream_reply(store, org, uid, messages, _schema, SCHEMA_SDL, base_context)
+            thread_id = body.get("threadId") if isinstance(body, dict) else None
+            gen = stream_reply(store, org, uid, messages, _schema, SCHEMA_SDL, base_context, thread_id)
             first = await gen.__anext__()
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
@@ -352,6 +353,64 @@ def create_app(
                 yield chunk
 
         return sse_response(_resume())
+
+    async def _agent_auth(request: Request):
+        uid, org, _identity_id, _is_browser = _auth(request)
+        if not uid:
+            return None, None, JSONResponse(
+                {"errors": [{"message": "Authentication required", "extensions": {"code": "AUTHENTICATION_ERROR"}}]},
+                status_code=401,
+            )
+        return uid, org, None
+
+    async def agent_threads_list(request: Request):
+        from cliniar_server import agent_threads
+        uid, org, err = await _agent_auth(request)
+        if err:
+            return err
+        return JSONResponse(agent_threads.list_threads(store, org, uid))
+
+    async def agent_threads_create(request: Request):
+        from cliniar_server import agent_threads
+        uid, org, err = await _agent_auth(request)
+        if err:
+            return err
+        body = await request.json()
+        messages = body.get("messages") if isinstance(body, dict) else None
+        if not isinstance(messages, list):
+            return JSONResponse({"error": "messages is required"}, status_code=400)
+        return JSONResponse(agent_threads.create_thread(store, org, uid, messages))
+
+    async def agent_thread_get(request: Request):
+        from cliniar_server import agent_threads
+        uid, org, err = await _agent_auth(request)
+        if err:
+            return err
+        messages = agent_threads.get_messages(store, org, uid, request.path_params["thread_id"])
+        if messages is None:
+            return JSONResponse({"error": "Thread not found"}, status_code=404)
+        return JSONResponse(messages)
+
+    async def agent_thread_update(request: Request):
+        from cliniar_server import agent_threads
+        uid, org, err = await _agent_auth(request)
+        if err:
+            return err
+        body = await request.json()
+        title = body.get("title") if isinstance(body, dict) else None
+        thread = agent_threads.update_thread(store, org, uid, request.path_params["thread_id"], title if isinstance(title, str) else None)
+        if thread is None:
+            return JSONResponse({"error": "Thread not found"}, status_code=404)
+        return JSONResponse(thread)
+
+    async def agent_thread_delete(request: Request):
+        from cliniar_server import agent_threads
+        uid, org, err = await _agent_auth(request)
+        if err:
+            return err
+        if not agent_threads.delete_thread(store, org, uid, request.path_params["thread_id"]):
+            return JSONResponse({"error": "Thread not found"}, status_code=404)
+        return JSONResponse({"success": True})
 
     async def graphql_server(request: Request):
         uid, org, identity_id, is_browser_session = _auth(request)
@@ -822,6 +881,11 @@ def create_app(
         routes=[
             Route("/graphql", graphql_server, methods=["POST", "GET"]),
             Route("/api/agent/chat", agent_chat_server, methods=["POST"]),
+            Route("/api/agent/threads/get", agent_threads_list, methods=["GET"]),
+            Route("/api/agent/threads/create", agent_threads_create, methods=["POST"]),
+            Route("/api/agent/threads/get/{thread_id}", agent_thread_get, methods=["GET"]),
+            Route("/api/agent/threads/update/{thread_id}", agent_thread_update, methods=["PATCH"]),
+            Route("/api/agent/threads/delete/{thread_id}", agent_thread_delete, methods=["DELETE"]),
             WebSocketRoute("/ws", realtime_socket),
             Route("/auth/setup", auth_setup, methods=["GET", "POST"]),
             Route("/auth/invite/accept", auth_invite_accept, methods=["POST"]),

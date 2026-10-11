@@ -425,6 +425,21 @@ button.primary{color:#fff}
 .project-overview-description{width:calc(62% - 87px);margin:36px auto 0 43px;padding:14px 15px;border-top:1px solid var(--line)}.project-overview-description h2{font-size:12px;font-weight:500;color:var(--muted)}.project-overview-description p{font-size:13px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}
 @media(max-width:900px){.project-reference>header,.project-reference>.project-update-entry,.project-overview-description{width:auto;margin-left:14px;margin-right:14px}.project-reference>.project-update-entry{width:calc(100% - 28px)}}
 
+/* Keep the properties panel in flow: long descriptions and expanded editors
+   cannot paint underneath it. The columns share grid rows instead of offsets. */
+@media(min-width:901px){
+  .project-reference:has(>.project-reference-properties){display:grid;grid-template-columns:minmax(0,1fr) minmax(260px,38%);column-gap:24px;align-content:start}
+  .project-reference:has(>.project-reference-properties)>.project-reference-head,.project-reference:has(>.project-reference-properties)>.project-reference-tabs{grid-column:1 / -1}
+  .project-reference:has(>.project-reference-properties)>.project-add-view{grid-column:2;grid-row:2;justify-self:end;position:relative;right:auto;top:auto;align-self:center}
+  .project-reference:has(>.project-reference-properties)>header{grid-column:1;grid-row:3;width:auto;margin:60px 0 0 43px}
+  .project-reference:has(>.project-reference-properties)>.project-reference-properties{grid-column:2;grid-row:3 / span 6;position:static;width:auto;min-width:0;max-width:none;margin:36px 11px 0 0;align-self:start}
+  .project-reference:has(>.project-reference-properties)>.project-update-entry{grid-column:1;grid-row:4;width:auto;margin:32px 0 0 43px}
+  .project-reference:has(>.project-reference-properties)>.project-overview-description{grid-column:1;grid-row:5;width:auto;min-width:0;margin:36px 0 0 43px}
+  .project-reference:has(>.project-reference-properties)>.project-editor{grid-column:1;grid-row:6;width:auto;min-width:0;margin:28px 0 22px 43px}
+  .project-reference:has(>.project-reference-properties)>.project-detail-stats{grid-column:1;grid-row:7;width:auto;min-width:0;margin:25px 0 26px 43px}
+  .project-reference:has(>.project-reference-properties)>.issue-card{grid-column:1;grid-row:8;width:auto;min-width:0;margin:20px 0 40px 43px}
+}
+
 /* Narrow Projects detail keeps the observed reference properties-first reading order. */
 @media(max-width:700px){.project-reference{display:flex;flex-direction:column}.project-reference-head{order:0}.project-reference-tabs{order:1}.project-reference-properties{order:2;margin:0 10px 18px;padding:13px}.project-reference>header{order:3;margin:18px 14px 0}.project-reference>.project-update-entry{order:4}.project-overview-description{order:5}.project-reference>.project-editor{order:6}.project-reference>.project-detail-stats{order:7}.project-reference>.issue-card{order:8}.project-reference>header h1{margin-top:7px}.project-reference-properties>div{grid-template-columns:92px minmax(0,1fr)}.project-reference-activity,.project-reference-issues{order:2}.project-reference .modal-backdrop{order:9}}
 /* Project Issues uses the same Inter/type tokens, compact rows and quiet grouping as the project shell. */
@@ -697,16 +712,8 @@ html{font-size:calc(16px * var(--font-scale,1))}
 .workspace-content:has(.agent-chat-page){grid-row:1 / span 2;min-width:0}
 .workspace-content:has(.agent-chat-page) .main{width:100%;max-width:none;min-height:calc(100dvh - 48px);margin:0;padding:0;overflow:hidden}
 .agent-chat-page{height:calc(100dvh - 48px);min-height:420px}
-.agent-chat-reply{padding:4px 0;line-height:1.55}
-.agent-chat-page .openui-agent-composer-slot{max-width:100%;min-width:0;width:100%}
-.agent-chat-page .openui-agent-thread-composer{max-width:800px;margin:0 auto}
-.agent-chat-page .openui-agent-thread-chat-panel{width:100%;max-width:100%;left:0;right:0}
-.agent-chat-page .openui-agent-container{width:100%;height:100%;min-height:0}
 
 /* Agent composer: use the app's light input border instead of the default focus-black outline */
-.agent-chat-page .openui-agent-thread-composer textarea,.agent-chat-page .openui-agent-thread-composer input{border:1px solid var(--line);outline:none}
-.agent-chat-page .openui-agent-thread-composer textarea:focus,.agent-chat-page .openui-agent-thread-composer input:focus{border-color:var(--text-muted,#888);box-shadow:none}
-.agent-chat-page .openui-agent-thread-composer textarea{min-height:44px;padding:10px 12px;box-sizing:border-box;line-height:1.4}
 
 /* Unknown workspace path */
 .not-found-page{padding:64px 48px;max-width:640px}
@@ -811,3 +818,52 @@ main:has(>.issue-detail-page){padding:0}
 .issue-detail-label-add{width:auto;height:22px;padding:0 6px;border:1px solid var(--line);border-radius:5px;background:transparent;color:var(--muted);font-size:13px}
 .issue-detail-comment-attach{width:28px;height:28px;border:0;background:transparent;color:var(--muted);font-size:14px}
 .issue-detail-comment-send{width:28px;height:28px;border-radius:50%;padding:0;font-size:15px;line-height:1}
+
+/* Agent chat: ChatGPT-style layout. Scoped to .agent-chat-page only. */
+.agent-chat-page{--ag-max:760px;--ag-radius:22px;--ag-bubble:var(--subtle);--ag-ring:color-mix(in srgb,var(--text) 14%,transparent);font-size:15px;color:var(--text)}
+.agent-chat-page .openui-agent-container{width:100%;height:100%;min-height:0;background:var(--bg)}
+.agent-chat-page .openui-agent-thread-chat-panel{width:100%;max-width:100%;left:0;right:0}
+
+/* Message list */
+.agent-chat-page .openui-agent-thread-messages,.agent-chat-page .openui-agent-thread-scroll{padding-inline:clamp(12px,4vw,24px)}
+.agent-msg{display:flex;gap:12px;width:100%;max-width:var(--ag-max);margin:0 auto;padding:14px 0;align-items:flex-start}
+.agent-msg-user{justify-content:flex-end}
+.agent-msg-bubble{max-width:min(85%,560px);padding:10px 16px;border-radius:var(--ag-radius);background:var(--ag-bubble);color:var(--text);white-space:pre-wrap;line-height:1.55;overflow-wrap:anywhere}
+.agent-msg-avatar{flex:0 0 28px;height:28px;border-radius:999px;display:grid;place-items:center;background:var(--text);color:var(--bg);font-size:12px;font-weight:650;margin-top:2px}
+.agent-msg-body{min-width:0;flex:1;line-height:1.65;overflow-wrap:anywhere}
+.agent-chat-reply{padding:0}
+.agent-chat-reply p{margin:0 0 .75em}
+.agent-chat-reply p:last-child{margin-bottom:0}
+.agent-chat-reply ul,.agent-chat-reply ol{margin:.25em 0 .75em;padding-left:1.25em}
+.agent-chat-reply li+li{margin-top:.2em}
+.agent-chat-reply code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em;padding:.1em .35em;border-radius:6px;background:var(--subtle)}
+.agent-chat-reply pre{overflow-x:auto;padding:12px 14px;border-radius:12px;background:var(--subtle);border:1px solid var(--line)}
+.agent-chat-reply pre code{padding:0;background:none}
+.agent-chat-reply a{color:var(--text);text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--line)}
+.agent-chat-reply a:hover{text-decoration-color:var(--text)}
+.agent-chat-reply table{border-collapse:collapse;margin:.5em 0;font-size:.92em}
+.agent-chat-reply th,.agent-chat-reply td{padding:6px 10px;border:1px solid var(--line);text-align:left}
+
+/* Composer: single rounded field, send button inside */
+.agent-chat-page .openui-agent-composer-slot{max-width:100%;min-width:0;width:100%;padding:0 clamp(12px,4vw,24px) 18px;background:linear-gradient(to top,var(--bg) 70%,transparent)}
+.agent-chat-page .openui-agent-thread-composer{position:relative;max-width:var(--ag-max);margin:0 auto;display:flex;align-items:flex-end;gap:8px;padding:10px 10px 10px 16px;border-radius:26px;background:var(--panel);box-shadow:0 1px 2px rgb(0 0 0 / .04),0 8px 24px -12px rgb(0 0 0 / .18);border:1px solid var(--ag-ring);transition:box-shadow .15s ease,border-color .15s ease}
+.agent-chat-page .openui-agent-thread-composer:focus-within{border-color:color-mix(in srgb,var(--text) 28%,transparent);box-shadow:0 1px 2px rgb(0 0 0 / .04),0 10px 30px -10px rgb(0 0 0 / .26)}
+.agent-chat-page .openui-agent-thread-composer__input{flex:1;min-width:0;min-height:24px;max-height:200px;resize:none;border:0;outline:none;background:transparent;padding:8px 0;box-sizing:border-box;font:inherit;line-height:1.5;color:var(--text)}
+.agent-chat-page .openui-agent-thread-composer__input::placeholder{color:var(--muted)}
+.agent-chat-page .openui-agent-thread-composer__submit-button{flex:0 0 auto;width:34px;height:34px;border-radius:999px;display:grid;place-items:center;border:0;background:var(--text);color:var(--bg);cursor:pointer;transition:opacity .15s ease,transform .1s ease}
+.agent-chat-page .openui-agent-thread-composer__submit-button:hover:not(:disabled){opacity:.85}
+.agent-chat-page .openui-agent-thread-composer__submit-button:active:not(:disabled){transform:scale(.96)}
+.agent-chat-page .openui-agent-thread-composer__submit-button:disabled{opacity:.3;cursor:not-allowed}
+.agent-chat-page .openui-agent-thread-composer__submit-button:focus-visible,.agent-chat-page .openui-agent-thread-composer__input:focus-visible{outline:2px solid var(--muted);outline-offset:2px}
+
+/* Starters and welcome */
+.agent-chat-page .openui-agent-welcome{max-width:var(--ag-max);margin:0 auto;padding-top:clamp(40px,12vh,120px);text-align:center}
+.agent-chat-page .openui-agent-welcome h1,.agent-chat-page .openui-agent-welcome h2{font-size:clamp(22px,3vw,30px);font-weight:600;letter-spacing:-.01em;margin:0 0 8px}
+.agent-chat-page .openui-agent-welcome p{color:var(--muted);margin:0 0 20px}
+.agent-chat-page .openui-agent-conversation-starter{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;max-width:var(--ag-max);margin:0 auto 16px}
+.agent-chat-page .openui-agent-conversation-starter button{padding:8px 14px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--text);font-size:13px;cursor:pointer;transition:background .15s ease,border-color .15s ease}
+.agent-chat-page .openui-agent-conversation-starter button:hover{background:var(--subtle);border-color:var(--ag-ring)}
+
+/* Thread list sidebar */
+.agent-chat-page .openui-agent-thread-button{border-radius:10px}
+.agent-chat-page .openui-agent-thread-button--selected{background:var(--subtle)}
