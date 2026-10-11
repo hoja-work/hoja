@@ -193,6 +193,50 @@ requiring optional services or drivers may skip when those dependencies are not
 installed. The live API matrix in `scripts/e2e-test.sh` is separate and requires
 `LINEAR_TOKEN`, `CLINIAR_TEST_TEAM`, and `CLINIAR_TEST_ISSUE`.
 
+### UI styling checks
+
+Run `cd frontend && npm ci && npm run lint:styles && npm run build` for UI changes.
+Stylelint checks structural CSS errors (invalid properties/units/colors, duplicate
+declarations and malformed selectors), not whether rendered elements overlap.
+The pre-commit hook lints **staged** `frontend/src/*.css` using the index; install
+dependencies with `npm ci` before committing CSS. Run browser layout checks with
+`cd frontend && npm run test:layout` after installing the local-only
+Playwright tooling (`cd local-e2e && npm ci && npx playwright install chromium`).
+They test project detail, settings panels and provider cards, issue breadcrumbs and
+touch board cards against the actual stylesheet at desktop and mobile widths, including
+long content, tall properties, navigation open/closed, and form controls. CSS-backed
+fixtures are not authenticated app journeys. These checks
+are not part of the fast pre-commit hook and do not require a backend.
+
+### UI audit method: define what a component must never do
+
+Before adding or changing a view, inventory its components (inputs, cards, menus,
+navigation, actions) and write down **negative invariants** for each. A textbox
+must not extend beyond its card, hide entered text, or obscure its label. A card
+must not overlap the next card or clip its actions. A menu must not open outside
+the visible scroll area. Tabs and buttons must not be covered by another control.
+Touch interactions must not disable scrolling unless an equivalent gesture works.
+Keep intentional scrolling and truncation, but never truncate a required action.
+
+For each invariant, specify route/component, viewport **width and height**, long
+or unbroken content, open/closed/focused state, and expected visible result.
+Reproduce the failure in a browser before changing CSS. Trace markup → parent
+layout/overflow → child dimensions/position → rendered bounding boxes. Prefer
+bounding-box nonintersection, visible-area and control-reachability assertions
+over screenshots or tests that only check a CSS class. Check breakpoint neighbors
+(for example 700px and 701px), desktop and narrow mobile, short-height screens,
+long text, scroll edges, keyboard focus, and touch where relevant. Prove a new
+check fails against the old or deliberately faulty styling, then passes after
+the fix. Add the narrow check to `npm run test:layout` only once it passes; do
+not turn a known failing exploratory probe into a blocking check. Run style lint
+and the frontend build afterward. CSS fixtures cannot prove authenticated route
+behavior: report that gap and run an app journey when the state needs one.
+
+When parallelizing, assign each agent an independent component/route and its
+own worktree. Record its reproduction and invariant, reserve shared CSS/tests
+for one integrator, and re-run combined checks after merging. Keep the audit
+inventory honest: distinguish fixed, reproduced but pending, and uninspected.
+
 ---
 
 ## Versioning

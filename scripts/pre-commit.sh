@@ -26,7 +26,10 @@ yellow() { printf '\033[33m%s\033[0m\n' "$*" >&2; }
 green()  { printf '\033[32m%s\033[0m\n' "$*" >&2; }
 
 # Get list of staged files (added/copied/modified only)
-mapfile -t staged < <(git diff --cached --name-only --diff-filter=ACM)
+staged=()
+while IFS= read -r f; do
+    staged+=("$f")
+done < <(git diff --cached --name-only --diff-filter=ACM)
 
 if [ ${#staged[@]} -eq 0 ]; then
     exit 0
@@ -48,19 +51,20 @@ done
 # ----- 2. Content scans (skip binary blobs) -----
 
 # Pattern => human description
-declare -A patterns=(
-    ['lin_api_[A-Za-z0-9]{20,}']='Linear API token (lin_api_...)'
-    ['pypi-[A-Za-z0-9_-]{16,}']='PyPI API token (pypi-...)'
-    ['AKIA[0-9A-Z]{16}']='AWS Access Key ID (AKIA...)'
-    ['ghp_[A-Za-z0-9]{30,}']='GitHub personal access token (ghp_...)'
-    ['ghs_[A-Za-z0-9]{30,}']='GitHub server-to-server token (ghs_...)'
-    ['gho_[A-Za-z0-9]{30,}']='GitHub OAuth token (gho_...)'
-    ['ghu_[A-Za-z0-9]{30,}']='GitHub user-to-server token (ghu_...)'
-    ['ghr_[A-Za-z0-9]{30,}']='GitHub refresh token (ghr_...)'
-    ['xox[abpr]-[A-Za-z0-9-]{10,}']='Slack token (xox...)'
-    ['"type":[[:space:]]*"service_account"']='Google service account JSON'
-    ['-----BEGIN (RSA |OPENSSH |EC |PGP |DSA |ENCRYPTED )?PRIVATE KEY']='Private key block'
+patterns=(
+    'lin_api_[A-Za-z0-9]{20,}'
+    'pypi-[A-Za-z0-9_-]{16,}'
+    'AKIA[0-9A-Z]{16}'
+    'ghp_[A-Za-z0-9]{30,}'
+    'ghs_[A-Za-z0-9]{30,}'
+    'gho_[A-Za-z0-9]{30,}'
+    'ghu_[A-Za-z0-9]{30,}'
+    'ghr_[A-Za-z0-9]{30,}'
+    'xox[abpr]-[A-Za-z0-9-]{10,}'
+    '"type":[[:space:]]*"service_account"'
+    '-----BEGIN (RSA |OPENSSH |EC |PGP |DSA |ENCRYPTED )?PRIVATE KEY'
 )
+descriptions=('Linear API token' 'PyPI API token' 'AWS Access Key ID' 'GitHub personal access token' 'GitHub server-to-server token' 'GitHub OAuth token' 'GitHub user-to-server token' 'GitHub refresh token' 'Slack token' 'Google service account JSON' 'Private key block')
 
 for f in "${staged[@]}"; do
     [ -f "$f" ] || continue
@@ -77,10 +81,10 @@ for f in "${staged[@]}"; do
     case "$f" in
         scripts/pre-commit.sh|scripts/install-hooks.sh|scripts/ship.sh) continue ;;
     esac
-    for pat in "${!patterns[@]}"; do
-        if matches=$(grep -nP --color=never "$pat" "$f" 2>/dev/null); then
+    for i in "${!patterns[@]}"; do
+        if matches=$(grep -nE -- "${patterns[$i]}" "$f" 2>/dev/null); then
             red "SECRET DETECTED in $f"
-            yellow "  Pattern: ${patterns[$pat]}"
+            yellow "  Pattern: ${descriptions[$i]}"
             echo "$matches" | head -3 | sed 's/^/    /' >&2
             errors=$((errors + 1))
         fi
@@ -95,5 +99,31 @@ if [ "$errors" -gt 0 ]; then
     exit 1
 fi
 
-green "pre-commit OK (${#staged[@]} files scanned, no secrets / forbidden paths)"
+# Lint only staged frontend styles, including newly added files. Use the index
+# content rather than the worktree so unstaged fixes cannot mask a bad commit.
+styles=()
+for f in "${staged[@]}"; do
+    case "$f" in frontend/src/*.css) styles+=("$f") ;; esac
+done
+if [ "${#styles[@]}" -gt 0 ]; then
+    root=$(git rev-parse --show-toplevel)
+    if [ ! -x "$root/frontend/node_modules/.bin/stylelint" ]; then
+        red "Stylelint is not installed. Run: cd frontend && npm ci"
+        exit 1
+    fi
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' EXIT
+    for f in "${styles[@]}"; do
+        mkdir -p "$tmp/$(dirname "$f")"
+        git show ":$f" > "$tmp/$f" || exit 1
+    done
+    staged_styles=()
+    for f in "${styles[@]}"; do staged_styles+=("$tmp/$f"); done
+    if ! "$root/frontend/node_modules/.bin/stylelint" --config "$root/frontend/stylelint.config.mjs" "${staged_styles[@]}"; then
+        red "Commit refused: staged UI CSS failed style lint. Run: cd frontend && npm run lint:styles"
+        exit 1
+    fi
+fi
+
+green "pre-commit OK (${#staged[@]} files scanned, no secrets / forbidden paths or style errors)"
 exit 0
