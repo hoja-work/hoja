@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "at": "2026-10-10T18:41:42.676Z",
+  "event": "task-stop-reconciliation",
+  "stopReason": "stop",
+  "openTaskIds": [
+    "3",
+    "4",
+    "5",
+    "6",
+    "7"
+  ],
+  "sawWork": true,
+  "spent": false,
+  "deferred": false,
+  "pendingWorkers": 0,
+  "triggered": true
+}
