@@ -2,13 +2,14 @@
 // Verifies the brand mark route returns SVG content (not the SPA shell) from a built web root.
 const { spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 
 const repo = path.resolve(__dirname, '..');
+const repoScratch = path.join(repo, 'local-e2e/artifacts');
+fs.mkdirSync(repoScratch, { recursive: true });
 const python = path.join(repo, '.venv/bin/python');
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'brand-route-'));
+const dir = fs.mkdtempSync(path.join(repoScratch, 'brand-route-'));
 const web = path.join(dir, 'dist');
 fs.mkdirSync(path.join(web, 'assets'), { recursive: true });
 fs.writeFileSync(path.join(web, 'index.html'), '<!doctype html><title>SPA</title>');

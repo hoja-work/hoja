@@ -6,14 +6,15 @@
 const { chromium } = require('../local-e2e/node_modules/playwright');
 const { spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 
 const repo = path.resolve(__dirname, '..');
+const repoScratch = path.join(repo, 'local-e2e/artifacts');
+fs.mkdirSync(repoScratch, { recursive: true });
 const web = path.join(repo, 'frontend/dist');
 assert.ok(fs.existsSync(path.join(web, 'index.html')), 'build the frontend first: cd frontend && npm run build');
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'page-invariants-'));
+const dir = fs.mkdtempSync(path.join(repoScratch, 'page-invariants-'));
 const db = path.join(dir, 'pages.db');
 const token = 'cliniar_page_invariant_token';
 const py = path.join(repo, '.venv/bin/python');
