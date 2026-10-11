@@ -23,10 +23,11 @@ from graphql import GraphQLError, OperationDefinitionNode, OperationType, parse
 from sqlalchemy import select, text
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.websockets import WebSocket, WebSocketDisconnect
 from starlette.responses import FileResponse, JSONResponse
 from starlette.routing import Route, WebSocketRoute
+from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from cliniar_server.connectors_api import connector_binding_for, connector_routes
 from cliniar_server.db import (
     _seed_demo_issues,
     api_key,
@@ -329,7 +330,7 @@ def create_app(
         messages = body.get("messages") if isinstance(body, dict) else None
         if not isinstance(messages, list) or not messages:
             return JSONResponse({"error": "messages is required"}, status_code=400)
-        from cliniar_server.agent_chat import stream_reply, sse_response
+        from cliniar_server.agent_chat import sse_response, stream_reply
         from cliniar_server.schema_sdl import SCHEMA_SDL
         base_context = {
             "request": request,
@@ -342,7 +343,8 @@ def create_app(
         }
         try:
             thread_id = body.get("threadId") if isinstance(body, dict) else None
-            gen = stream_reply(store, org, uid, messages, _schema, SCHEMA_SDL, base_context, thread_id)
+            connector = connector_binding_for(engine, org, uid)
+            gen = stream_reply(store, org, uid, messages, _schema, SCHEMA_SDL, base_context, thread_id, connector)
             first = await gen.__anext__()
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
@@ -840,6 +842,13 @@ def create_app(
             return JSONResponse({"error": "Not found"}, status_code=404)
         return FileResponse(asset)
 
+    async def web_brand_mark(request: Request):
+        root = _WEB_ROOT.resolve()
+        asset = (root / "hoja-clover.svg").resolve()
+        if root not in asset.parents or not asset.is_file():
+            return JSONResponse({"error": "Not found"}, status_code=404)
+        return FileResponse(asset, media_type="image/svg+xml")
+
     async def web_fallback(request: Request):
         index = _WEB_ROOT / "index.html"
         if not index.is_file():
@@ -886,6 +895,7 @@ def create_app(
             Route("/api/agent/threads/get/{thread_id}", agent_thread_get, methods=["GET"]),
             Route("/api/agent/threads/update/{thread_id}", agent_thread_update, methods=["PATCH"]),
             Route("/api/agent/threads/delete/{thread_id}", agent_thread_delete, methods=["DELETE"]),
+            *connector_routes(engine, store, _auth),
             WebSocketRoute("/ws", realtime_socket),
             Route("/auth/setup", auth_setup, methods=["GET", "POST"]),
             Route("/auth/invite/accept", auth_invite_accept, methods=["POST"]),
@@ -910,6 +920,7 @@ def create_app(
             Mount("/mcp", app=mcp_endpoint),
             Route("/", web_index, methods=["GET"]),
             Route("/assets/{name:path}", web_asset, methods=["GET"]),
+            Route("/hoja-clover.svg", web_brand_mark, methods=["GET"]),
             Route("/{path:path}", web_fallback, methods=["GET"]),
         ],
         lifespan=lifespan,

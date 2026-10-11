@@ -934,3 +934,11 @@ main:has(>.issue-detail-page){padding:0}
 .agent-issue-chip-id{color:var(--muted);font-variant-numeric:tabular-nums}
 .agent-issue-chip-title{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .agent-chat-page .agent-chat-reply .agent-issue-chip{text-decoration:none}
+.agent-chat-page .openui-agent-desktop-welcome-composer{position:relative;max-width:var(--ag-max);margin:0 auto;display:flex;flex-direction:column;gap:6px;padding:10px 10px 10px 16px;border-radius:26px;background:var(--panel);box-shadow:0 1px 2px rgb(0 0 0 / .04),0 8px 24px -12px rgb(0 0 0 / .18);border:1px solid var(--ag-ring)}
+.agent-chat-page .openui-agent-desktop-welcome-composer:focus-within{border-color:color-mix(in srgb,var(--text) 28%,transparent)}
+.agent-chat-page .openui-agent-desktop-welcome-composer__input{width:100%;min-height:24px;max-height:200px;resize:none;border:0;outline:none;background:transparent;padding:8px 0;box-sizing:border-box;font:inherit;line-height:1.5;color:var(--text)}
+.agent-chat-page .openui-agent-desktop-welcome-composer__input::placeholder{color:var(--muted)}
+.agent-chat-page .openui-agent-desktop-welcome-composer__input:focus-visible{outline:none}
+.agent-chat-page .openui-agent-desktop-welcome-composer__action-bar{display:flex;justify-content:flex-end}
+.agent-chat-page .openui-agent-desktop-welcome-composer__submit-button{flex:0 0 auto;width:34px;height:34px;border-radius:999px;display:grid;place-items:center;border:0;background:var(--text);color:var(--bg);cursor:pointer}
+.agent-chat-page .openui-agent-desktop-welcome-composer__submit-button:disabled{opacity:.3;cursor:not-allowed}

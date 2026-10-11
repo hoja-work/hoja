@@ -30,7 +30,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 22
+CURRENT_SCHEMA_REVISION = 23
 
 
 def now_iso() -> str:
@@ -216,6 +216,37 @@ user_preference = Table(
     Column("preference_key", String, primary_key=True),
     Column("value", Text, nullable=False),
     Column("updated_at", String, nullable=False),
+)
+
+connector_account = Table(
+    "connector_account",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, nullable=False, index=True),
+    Column("owner_user_id", String, index=True),
+    Column("provider", String, nullable=False),
+    Column("external_account", String, nullable=False),
+    Column("scopes", Text, nullable=False),
+    Column("encrypted_refresh_token", Text, nullable=False),
+    Column("status", String, nullable=False),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+    Column("revoked_at", String),
+)
+
+connector_action = Table(
+    "connector_action",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, nullable=False, index=True),
+    Column("account_id", String, ForeignKey("connector_account.id"), nullable=False, index=True),
+    Column("requested_by_user_id", String, nullable=False),
+    Column("tool", String, nullable=False),
+    Column("args_json", Text, nullable=False),
+    Column("status", String, nullable=False),
+    Column("result_summary", Text),
+    Column("created_at", String, nullable=False),
+    Column("resolved_at", String),
 )
 
 model_provider = Table(
@@ -885,6 +916,10 @@ _MIGRATIONS = {
         agent_message.create(conn, checkfirst=True),
     ),
     22: _apply_agent_conversation_title,
+    23: lambda conn: (
+        connector_account.create(conn, checkfirst=True),
+        connector_action.create(conn, checkfirst=True),
+    ),
 }
 
 

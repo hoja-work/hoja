@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "google-workspace-connector"
+version = "0.1.0"
+description = "Google Workspace (Gmail, Drive, Calendar, Docs) connector for Cliniar agents"
+requires-python = ">=3.10"
+dependencies = [
+    "httpx>=0.28",
+    "pydantic>=2.10",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/google_workspace"]

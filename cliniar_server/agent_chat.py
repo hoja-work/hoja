@@ -6,10 +6,14 @@ import json
 import time
 import uuid
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 
 from ariadne import graphql
+from fastmcp.client.transports import StreamableHttpTransport
+from google_workspace.mcp_server import PRINCIPAL_HEADER
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -17,7 +21,8 @@ from sqlalchemy import and_, select
 from starlette.responses import StreamingResponse
 
 from cliniar_server.agent_conversations import save_message, start_conversation
-from cliniar_server.agent_threads import _owned as _owned_thread, _title_from
+from cliniar_server.agent_threads import _owned as _owned_thread
+from cliniar_server.agent_threads import _title_from
 from cliniar_server.db import model_provider
 from cliniar_server.secrets_box import decrypt_secret
 
@@ -48,8 +53,9 @@ class AgentDeps:
         self.context = context
 
 
-def build_agent(model, schema_sdl: str) -> Agent:
-    agent = Agent(model, deps_type=AgentDeps, instructions=INSTRUCTIONS, retries=3)
+def build_agent(model, schema_sdl: str, connector: ConnectorBinding | None = None) -> Agent:
+    toolsets = [connector_toolset(connector)] if connector is not None else []
+    agent = Agent(model, deps_type=AgentDeps, instructions=INSTRUCTIONS, retries=3, toolsets=toolsets)
 
     @agent.tool
     async def schema(ctx: RunContext[AgentDeps]) -> str:
@@ -64,6 +70,22 @@ def build_agent(model, schema_sdl: str) -> Agent:
         return result
 
     return agent
+
+
+@dataclass(frozen=True)
+class ConnectorBinding:
+    """Where the Google Workspace MCP server lives and the signed principal for this request."""
+
+    url: str
+    principal: str
+
+
+def connector_toolset(binding: ConnectorBinding) -> MCPToolset:
+    transport = StreamableHttpTransport(
+        binding.url,
+        headers={PRINCIPAL_HEADER: binding.principal},
+    )
+    return MCPToolset(transport, id="google-workspace")
 
 
 async def graphql_run(schema, query: str, variables: dict, context: dict):
@@ -109,7 +131,7 @@ def _chunk(completion_id: str, delta: dict, finish: str | None = None) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
 
-async def stream_reply(store, org_id: str, uid: str, messages: list[dict], schema, schema_sdl: str, base_context: dict, thread_id: str | None = None) -> AsyncIterator[str]:
+async def stream_reply(store, org_id: str, uid: str, messages: list[dict], schema, schema_sdl: str, base_context: dict, thread_id: str | None = None, connector: ConnectorBinding | None = None) -> AsyncIterator[str]:
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     prompt, history = _history(messages)
     row = _enabled_provider(store, org_id)
@@ -118,7 +140,7 @@ async def stream_reply(store, org_id: str, uid: str, messages: list[dict], schem
         yield "data: [DONE]\n\n"
         return
     provider = OpenAIProvider(base_url=row["base_url"], api_key=decrypt_secret(row["encrypted_api_key"]))
-    agent = build_agent(OpenAIChatModel(row["model_id"], provider=provider), schema_sdl)
+    agent = build_agent(OpenAIChatModel(row["model_id"], provider=provider), schema_sdl, connector)
     yield _chunk(completion_id, {"role": "assistant"})
     deps = AgentDeps(schema, dict(base_context))
     with store.engine.begin() as conn:

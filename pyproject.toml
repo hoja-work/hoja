@@ -59,8 +59,12 @@ saas = [
     "asyncpg>=0.29",
 ]
 agent = [
-    "pydantic-ai-slim[dbos,openai]>=2.54,<3.0",
+    "pydantic-ai-slim[dbos,openai,mcp]>=2.54,<3.0",
+    "google-workspace-connector",
 ]
+
+[tool.uv.sources]
+google-workspace-connector = { path = "connectors/google_workspace", editable = true }
 
 [project.scripts]
 cliniar = "cliniar.cli:app"
@@ -79,6 +83,7 @@ artifacts = ["VERSION"]
 [tool.hatch.build.targets.wheel.force-include]
 "VERSION" = "VERSION"
 "cliniar_server/schema.graphql" = "cliniar_server/schema.graphql"
+"connectors/google_workspace/src/google_workspace" = "google_workspace"
 
 [tool.ruff]
 target-version = "py310"
