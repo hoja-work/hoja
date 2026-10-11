@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "lint:styles": "stylelint 'src/**/*.css'",
-    "test:layout": "node ../scripts/test-project-layout.cjs && node ../scripts/test-settings-layout.cjs && node ../scripts/test-issue-layout.cjs && node ../scripts/test-work-surface-layout.cjs && node ../scripts/test-agent-chat-layout.cjs",
+    "test:layout": "node ../scripts/test-project-layout.cjs && node ../scripts/test-settings-layout.cjs && node ../scripts/test-issue-layout.cjs && node ../scripts/test-work-surface-layout.cjs && node ../scripts/test-agent-chat-layout.cjs && node ../scripts/test-overflow-layout.cjs",
     "preview": "vite preview",
     "check:production": "python3 ../scripts/verify-web-production.py"
   },

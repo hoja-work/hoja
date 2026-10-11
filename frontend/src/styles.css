@@ -926,3 +926,5 @@ main:has(>.issue-detail-page){padding:0}
    expose them even when the last card is at the bottom. */
 .kanban-card-wrap .status-picker{position:static;display:flex;flex-direction:column;align-items:flex-start;align-self:flex-start;max-width:100%}
 .kanban-card-wrap .status-menu{position:static;min-width:180px;margin:6px 0 0;box-shadow:none}
+.issue-row-open .issue-copy{min-width:0}.issue-row-open .issue-copy :is(b,small){display:block;min-width:0;overflow-wrap:anywhere}
+.app-error span{min-width:0;overflow-wrap:anywhere}
