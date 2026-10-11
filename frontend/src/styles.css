@@ -928,3 +928,9 @@ main:has(>.issue-detail-page){padding:0}
 .kanban-card-wrap .status-menu{position:static;min-width:180px;margin:6px 0 0;box-shadow:none}
 .issue-row-open .issue-copy{min-width:0}.issue-row-open .issue-copy :is(b,small){display:block;min-width:0;overflow-wrap:anywhere}
 .app-error span{min-width:0;overflow-wrap:anywhere}
+.agent-issue-chip{display:inline-flex;align-items:center;gap:6px;max-width:100%;vertical-align:middle;padding:2px 10px 2px 8px;margin:0 2px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--text);font-size:13px;line-height:1.5;text-decoration:none;white-space:nowrap}
+.agent-issue-chip:hover{background:var(--subtle)}
+.agent-issue-chip svg{flex:none}
+.agent-issue-chip-id{color:var(--muted);font-variant-numeric:tabular-nums}
+.agent-issue-chip-title{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.agent-chat-page .agent-chat-reply .agent-issue-chip{text-decoration:none}
