@@ -949,3 +949,6 @@ main:has(>.issue-detail-page){padding:0}
 .agent-chat-page .openui-agent-desktop-welcome-composer__action-bar{display:flex;justify-content:flex-end}
 .agent-chat-page .openui-agent-desktop-welcome-composer__submit-button{flex:0 0 auto;width:34px;height:34px;border-radius:999px;display:grid;place-items:center;border:0;background:var(--text);color:var(--bg);cursor:pointer}
 .agent-chat-page .openui-agent-desktop-welcome-composer__submit-button:disabled{opacity:.3;cursor:not-allowed}
+/* My issues: the list owns vertical scrolling inside the fixed view height. The page shell clips
+   (main/workspace-content are overflow:hidden), so without this the rows past the fold are unreachable. */
+.my-issues-view>.my-issues-list{overflow-y:auto;overscroll-behavior:contain}

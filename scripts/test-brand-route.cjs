@@ -13,7 +13,7 @@ const dir = fs.mkdtempSync(path.join(repoScratch, 'brand-route-'));
 const web = path.join(dir, 'dist');
 fs.mkdirSync(path.join(web, 'assets'), { recursive: true });
 fs.writeFileSync(path.join(web, 'index.html'), '<!doctype html><title>SPA</title>');
-fs.writeFileSync(path.join(web, 'hoja-clover.svg'), '<svg xmlns="http://www.w3.org/2000/svg"></svg>');
+fs.writeFileSync(path.join(web, 'hoja-clover.8371400e.svg'), '<svg xmlns="http://www.w3.org/2000/svg"></svg>');
 const db = path.join(dir, 'brand.db');
 const port = 18700 + Math.floor(Math.random() * 200);
 const migrate = spawnSync(python, ['-c', `from cliniar_server.db import make_engine,migrate; e=make_engine(${JSON.stringify(db)}); migrate(e); e.dispose()`], { cwd: repo, env: { ...process.env, PYTHONPATH: repo }, encoding: 'utf8' });
@@ -28,12 +28,12 @@ const server = spawn(path.join(repo, '.venv/bin/cliniar-serve'), ['serve', '--db
       if (!up) await new Promise(r => setTimeout(r, 250));
     }
     assert.ok(up, 'server did not start');
-    const logo = await fetch(`http://127.0.0.1:${port}/hoja-clover.svg`);
+    const logo = await fetch(`http://127.0.0.1:${port}/hoja-clover.8371400e.svg`);
     assert.match(logo.headers.get('content-type') || '', /image\/svg\+xml/, 'brand mark must be served as SVG');
     assert.match(await logo.text(), /<svg/, 'brand mark body must be SVG');
     const spa = await fetch(`http://127.0.0.1:${port}/some/unknown/path`);
     assert.match(await spa.text(), /SPA/, 'unknown paths must still fall back to index.html');
-    console.log('Brand route: /hoja-clover.svg serves SVG; SPA fallback preserved');
+    console.log('Brand route: /hoja-clover.8371400e.svg serves SVG; SPA fallback preserved');
   } finally {
     server.kill();
     fs.rmSync(dir, { recursive: true, force: true });

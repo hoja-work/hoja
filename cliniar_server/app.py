@@ -60,6 +60,10 @@ _WEB_ROOT = Path(
 )
 
 
+# Content-hashed brand mark: the URL changes with the bytes, so CDN caches cannot pin an old response.
+BRAND_MARK = "hoja-clover.8371400e.svg"
+
+
 def _first_identity(engine):
     """Offline convenience for an unambiguous isolated SQLite database."""
     if engine.dialect.name != "sqlite":
@@ -844,7 +848,7 @@ def create_app(
 
     async def web_brand_mark(request: Request):
         root = _WEB_ROOT.resolve()
-        asset = (root / "hoja-clover.svg").resolve()
+        asset = (root / BRAND_MARK).resolve()
         if root not in asset.parents or not asset.is_file():
             return JSONResponse({"error": "Not found"}, status_code=404)
         return FileResponse(asset, media_type="image/svg+xml")
@@ -920,7 +924,7 @@ def create_app(
             Mount("/mcp", app=mcp_endpoint),
             Route("/", web_index, methods=["GET"]),
             Route("/assets/{name:path}", web_asset, methods=["GET"]),
-            Route("/hoja-clover.svg", web_brand_mark, methods=["GET"]),
+            Route(f"/{BRAND_MARK}", web_brand_mark, methods=["GET"]),
             Route("/{path:path}", web_fallback, methods=["GET"]),
         ],
         lifespan=lifespan,
