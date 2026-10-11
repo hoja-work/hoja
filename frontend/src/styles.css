@@ -899,12 +899,19 @@ main:has(>.issue-detail-page){padding:0}
 .agent-chat-reply table{border-collapse:collapse;margin:.5em 0;font-size:.92em}
 .agent-chat-reply th,.agent-chat-reply td{padding:6px 10px;border:1px solid var(--line);text-align:left}
 
-/* Composer: single rounded field, send button inside */
+/* Composer: single rounded field, send button inside.
+   The library wraps the textarea + action bar in an inner
+   `__input-wrapper` element — that inner element (not the outer
+   `.openui-agent-thread-composer`) is the one that must carry the
+   pill chrome, or it shrink-wraps to its content instead of filling
+   the available width. */
 .agent-chat-page .openui-agent-composer-slot{max-width:100%;min-width:0;width:100%;padding:0 clamp(12px,4vw,24px) 18px;background:linear-gradient(to top,var(--bg) 70%,transparent)}
-.agent-chat-page .openui-agent-thread-composer{position:relative;max-width:var(--ag-max);margin:0 auto;display:flex;align-items:flex-end;gap:8px;padding:10px 10px 10px 16px;border-radius:26px;background:var(--panel);box-shadow:0 1px 2px rgb(0 0 0 / .04),0 8px 24px -12px rgb(0 0 0 / .18);border:1px solid var(--ag-ring);transition:box-shadow .15s ease,border-color .15s ease}
-.agent-chat-page .openui-agent-thread-composer:focus-within{border-color:color-mix(in srgb,var(--text) 28%,transparent);box-shadow:0 1px 2px rgb(0 0 0 / .04),0 10px 30px -10px rgb(0 0 0 / .26)}
-.agent-chat-page .openui-agent-thread-composer__input{flex:1;min-width:0;min-height:24px;max-height:200px;resize:none;border:0;outline:none;background:transparent;padding:8px 0;box-sizing:border-box;font:inherit;line-height:1.5;color:var(--text)}
+.agent-chat-page .openui-agent-thread-composer{position:relative;max-width:var(--ag-max);width:100%;margin:0 auto;padding:0}
+.agent-chat-page .openui-agent-thread-composer__input-wrapper{display:flex;flex-direction:column;gap:6px;width:100%;padding:12px 12px 10px 16px;border-radius:26px;background:var(--panel);box-shadow:0 1px 2px rgb(0 0 0 / .04),0 8px 24px -12px rgb(0 0 0 / .18);border:1px solid var(--ag-ring);transition:box-shadow .15s ease,border-color .15s ease}
+.agent-chat-page .openui-agent-thread-composer__input-wrapper:focus-within{border-color:color-mix(in srgb,var(--text) 28%,transparent);box-shadow:0 1px 2px rgb(0 0 0 / .04),0 10px 30px -10px rgb(0 0 0 / .26)}
+.agent-chat-page .openui-agent-thread-composer__input{width:100%;min-width:0;min-height:24px;max-height:200px;resize:none;border:0;outline:none;background:transparent;padding:8px 0;box-sizing:border-box;font:inherit;line-height:1.5;color:var(--text)}
 .agent-chat-page .openui-agent-thread-composer__input::placeholder{color:var(--muted)}
+.agent-chat-page .openui-agent-thread-composer__action-bar{display:flex;align-items:center;justify-content:flex-end}
 .agent-chat-page .openui-agent-thread-composer__submit-button{flex:0 0 auto;width:34px;height:34px;border-radius:999px;display:grid;place-items:center;border:0;background:var(--text);color:var(--bg);cursor:pointer;transition:opacity .15s ease,transform .1s ease}
 .agent-chat-page .openui-agent-thread-composer__submit-button:hover:not(:disabled){opacity:.85}
 .agent-chat-page .openui-agent-thread-composer__submit-button:active:not(:disabled){transform:scale(.96)}
