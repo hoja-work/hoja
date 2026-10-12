@@ -20,3 +20,11 @@ docs
 swarmos_debug.log
 frontend/node_modules
 frontend/dist
+.github
+dist
+scripts
+skills
+vendor
+*-plan.md
+AGENTS.md
+CHANGELOG.md
