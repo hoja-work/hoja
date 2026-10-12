@@ -370,11 +370,12 @@ def test_mcp_streamable_http_lifecycle_and_host_validation(tmp_path) -> None:
         assert listed.status_code == 200, listed.text
         assert any(item["name"] == "hoja_viewer" for item in listed.json()["result"]["tools"])
         call_headers = {**session_headers, "Mcp-Method": "tools/call", "Mcp-Name": "hoja_viewer"}
-        called = client.post("/mcp/", headers=call_headers, json={**base, "id": 3, "method": "tools/call", "params": {**envelope, "name": "hoja_viewer", "arguments": {"arguments": {}}}})
+        called = client.post("/mcp/", headers=call_headers, json={**base, "id": 3, "method": "tools/call", "params": {**envelope, "name": "hoja_viewer", "arguments": {}}})
         assert called.status_code == 200, called.text
         assert not called.json()["result"].get("isError"), called.json()
-        denied = client.post("/mcp/", headers={**session_headers, "Mcp-Method": "tools/call", "Mcp-Name": "hoja_teamCreate"}, json={**base, "id": 4, "method": "tools/call", "params": {**envelope, "name": "hoja_teamCreate", "arguments": {"arguments": {"name": "No"}}}})
+        denied = client.post("/mcp/", headers={**session_headers, "Mcp-Method": "tools/call", "Mcp-Name": "hoja_teamCreate"}, json={**base, "id": 4, "method": "tools/call", "params": {**envelope, "name": "hoja_teamCreate", "arguments": {"name": "No"}}})
         assert denied.status_code == 200 and denied.json()["result"].get("isError")
+        assert "hoja:write" in denied.json()["result"]["content"][0]["text"], denied.json()
         wrong_host = client.post("/mcp/", headers={**session_headers, "Host": "attacker.invalid"}, json={**base, "id": 5, "method": "tools/list", "params": envelope})
         assert wrong_host.status_code == 421
 
