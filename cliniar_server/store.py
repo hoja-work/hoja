@@ -12,7 +12,8 @@ import hmac
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import and_, or_, select
+from graphql import GraphQLError
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.engine import Engine
 
 from cliniar_server.db import (
@@ -62,6 +63,9 @@ def _normalize_expiry(value: str | None):
     """Return a UTC ISO timestamp, None for no expiry, or False when invalid or already past."""
     if value is None:
         return None
+    if not isinstance(value, str):
+        raise GraphQLError("expiresAt must be an ISO 8601 datetime string.",
+                           extensions={"code": "BAD_USER_INPUT", "field": "expiresAt"})
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
@@ -70,6 +74,58 @@ def _normalize_expiry(value: str | None):
         parsed = parsed.replace(tzinfo=timezone.utc)
     parsed = parsed.astimezone(timezone.utc)
     return parsed.isoformat() if parsed > datetime.now(timezone.utc) else False
+
+
+_MAX_SEARCH_TERM = 256
+_PBKDF2_ITERATIONS = 600_000
+_LEGACY_PBKDF2_ITERATIONS = 310_000
+
+
+def _check_search_term(value) -> str:
+    if not isinstance(value, str):
+        raise GraphQLError("Search term must be a string.", extensions={"code": "BAD_USER_INPUT"})
+    if len(value) > _MAX_SEARCH_TERM:
+        raise GraphQLError(f"Search term must be at most {_MAX_SEARCH_TERM} characters.",
+                           extensions={"code": "BAD_USER_INPUT"})
+    return value
+
+
+def _like_contains(value: str) -> str:
+    """Escape LIKE wildcards so user text matches literally (pair with escape="\\")."""
+    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def visible_team_clause(conn, org_id: str, viewer_id: str, team_id_col):
+    """Restrict team_id_col to teams the viewer may see. None means unrestricted (admin)."""
+    is_admin = conn.execute(select(user.c.admin).where(and_(
+        user.c.id == viewer_id, user.c.organization_id == org_id))).scalar()
+    if is_admin:
+        return None
+    vt = team.alias("visible_team")
+    member_teams = select(team_member.c.team_id).where(team_member.c.user_id == viewer_id)
+    visible = select(vt.c.id).where(and_(
+        vt.c.organization_id == org_id,
+        or_(vt.c.private.is_not(True), vt.c.id.in_(member_teams))))
+    return team_id_col.in_(visible)
+
+
+def team_visible(conn, org_id: str, viewer_id: str, team_id: str) -> bool:
+    stmt = select(team.c.id).where(and_(team.c.id == team_id, team.c.organization_id == org_id))
+    clause = visible_team_clause(conn, org_id, viewer_id, team.c.id)
+    if clause is not None:
+        stmt = stmt.where(clause)
+    return conn.execute(stmt).first() is not None
+
+
+def _scope_teams(conn, stmt, org_id, viewer_id, team_id_col, *, nullable=False):
+    """Apply team visibility when a viewer is given. viewer_id=None is an internal, unscoped call."""
+    if viewer_id is None:
+        return stmt
+    clause = visible_team_clause(conn, org_id, viewer_id, team_id_col)
+    if clause is None:
+        return stmt
+    return stmt.where(or_(team_id_col.is_(None), clause) if nullable else clause)
 
 
 class Store:
@@ -120,14 +176,17 @@ class Store:
         return True
 
     # ------------------------------------------------------------------ auth
-    def change_events_after(self, org_id: str, after_seq: int, limit: int = 200) -> list[dict]:
+    def change_events_after(self, org_id: str, after_seq: int, limit: int = 200,
+                            viewer_id: str | None = None) -> list[dict]:
+        """Events for teams the viewer can see. Without a viewer only team-less events are returned."""
         with self.engine.connect() as conn:
-            rows = conn.execute(
-                select(change_event)
-                .where(and_(change_event.c.organization_id == org_id, change_event.c.seq > after_seq))
-                .order_by(change_event.c.seq)
-                .limit(limit)
-            ).mappings().all()
+            stmt = select(change_event).where(and_(
+                change_event.c.organization_id == org_id, change_event.c.seq > after_seq))
+            if viewer_id is None:
+                stmt = stmt.where(change_event.c.team_id.is_(None))
+            else:
+                stmt = _scope_teams(conn, stmt, org_id, viewer_id, change_event.c.team_id, nullable=True)
+            rows = conn.execute(stmt.order_by(change_event.c.seq).limit(limit)).mappings().all()
         return [
             {"seq": r["seq"], "entity": r["entity"], "entityId": r["entity_id"],
              "action": r["action"], "teamId": r["team_id"]}
@@ -237,8 +296,31 @@ class Store:
 
     @staticmethod
     def _password_digest(password: str, salt: bytes) -> str:
-        digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 310_000)
-        return f"pbkdf2_sha256${salt.hex()}${digest.hex()}"
+        digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, _PBKDF2_ITERATIONS)
+        return f"pbkdf2_sha256${_PBKDF2_ITERATIONS}${salt.hex()}${digest.hex()}"
+
+    @staticmethod
+    def _verify_password(password: str, stored) -> bool:
+        """Verify iteration-tagged hashes and legacy 3-part hashes (implicit 310k iterations)."""
+        parts = stored.split("$") if isinstance(stored, str) else []
+        try:
+            if len(parts) == 4 and parts[0] == "pbkdf2_sha256":
+                iterations, salt_hex, digest_hex = int(parts[1]), parts[2], parts[3]
+            elif len(parts) == 3 and parts[0] == "pbkdf2_sha256":
+                iterations, salt_hex, digest_hex = _LEGACY_PBKDF2_ITERATIONS, parts[1], parts[2]
+            else:
+                return False
+            if not 1 <= iterations <= 10_000_000:
+                return False
+            digest = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt_hex), iterations)
+            return hmac.compare_digest(digest, bytes.fromhex(digest_hex))
+        except (ValueError, TypeError):
+            return False
+
+    @staticmethod
+    def _reject_unverified(password: str) -> None:
+        """Burn one PBKDF2 round when no credential exists, so unknown accounts take as long as wrong passwords."""
+        hashlib.pbkdf2_hmac("sha256", password.encode(), b"\x00" * 16, _PBKDF2_ITERATIONS)
 
     def set_password(self, api_token: str, password: str) -> bool:
         if len(password) < 12:
@@ -274,6 +356,13 @@ class Store:
                         password_hash=encoded, updated_at=now.isoformat()))
             else:
                 conn.execute(credential_table.insert().values(**values))
+            # A password change ends every browser session for this identity's profiles.
+            profile_ids = ([row[0] for row in conn.execute(select(organization_membership.c.profile_user_id).where(
+                organization_membership.c.identity_id == member[0]))]
+                if member else [identity["user_id"]])
+            conn.execute(browser_session.update().where(and_(
+                browser_session.c.user_id.in_(profile_ids),
+                browser_session.c.revoked_at.is_(None))).values(revoked_at=now.isoformat()))
         return True
 
     def workspaces_for_email(self, email: str) -> list[dict]:
@@ -329,6 +418,7 @@ class Store:
             # workspace selects the profile only after membership is verified.
             if not selected_workspace:
                 if candidates or not organization_ref:
+                    self._reject_unverified(password)
                     return None
             else:
                 identity_id = selected_workspace["identity_id"]
@@ -337,13 +427,9 @@ class Store:
                         identity_credential.c.identity_id == identity_id
                     )).mappings().first()
                 if not credential:
+                    self._reject_unverified(password)
                     return None
-                try:
-                    _scheme, salt_hex, _digest = credential["password_hash"].split("$")
-                    candidate = self._password_digest(password, bytes.fromhex(salt_hex))
-                except (ValueError, TypeError):
-                    return None
-                if not hmac.compare_digest(candidate, credential["password_hash"]):
+                if not self._verify_password(password, credential["password_hash"]):
                     return None
                 raw = secrets.token_urlsafe(48)
                 now = datetime.now(timezone.utc)
@@ -365,18 +451,14 @@ class Store:
                     user.c.email, organization.c.url_key)
                     .join(user, user.c.id == password_credential.c.user_id)
                     .join(organization, organization.c.id == user.c.organization_id)
-                    .where(and_(user.c.email.ilike(email), user.c.active.is_(True),
+                    .where(and_(func.lower(user.c.email) == email.strip().lower(), user.c.active.is_(True),
                                 user.c.archived_at.is_(None),
                                 or_(user.c.organization_id == organization_ref,
                                     organization.c.url_key == organization_ref)))).mappings().first()
             if not legacy:
+                self._reject_unverified(password)
                 return None
-            try:
-                _scheme, salt_hex, _digest = legacy["password_hash"].split("$")
-                candidate = self._password_digest(password, bytes.fromhex(salt_hex))
-            except (ValueError, TypeError):
-                return None
-            if not hmac.compare_digest(candidate, legacy["password_hash"]):
+            if not self._verify_password(password, legacy["password_hash"]):
                 return None
             raw = secrets.token_urlsafe(48)
             now = datetime.now(timezone.utc)
@@ -397,13 +479,9 @@ class Store:
                 credential = conn.execute(select(password_credential).where(
                     password_credential.c.user_id == selected["profile_user_id"])).mappings().first()
         if not credential:
+            self._reject_unverified(password)
             return None
-        try:
-            _scheme, salt_hex, _digest = credential["password_hash"].split("$")
-            candidate = self._password_digest(password, bytes.fromhex(salt_hex))
-        except (ValueError, TypeError):
-            return None
-        if not hmac.compare_digest(candidate, credential["password_hash"]):
+        if not self._verify_password(password, credential["password_hash"]):
             return None
         raw = secrets.token_urlsafe(48)
         now = datetime.now(timezone.utc)
@@ -658,7 +736,7 @@ class Store:
                         user.c.organization_id == org_id, user.c.admin.is_(True),
                         user.c.active.is_(True), user.c.archived_at.is_(None),
                         user.c.id != user_id,
-                    ))).all()
+                    )).with_for_update()).all()
                     if not other_admins:
                         return None
             conn.execute(user.update().where(user.c.id == user_id).values(
@@ -701,12 +779,7 @@ class Store:
                     identity_email.strip().lower() != profile_email.strip().lower() or
                     not target_credential):
                 return None
-            try:
-                _scheme, salt_hex, _digest = target_credential["password_hash"].split("$")
-                candidate = self._password_digest(invitee_password, bytes.fromhex(salt_hex))
-            except (ValueError, TypeError):
-                return None
-            if not hmac.compare_digest(candidate, target_credential["password_hash"]):
+            if not self._verify_password(invitee_password, target_credential["password_hash"]):
                 return None
             conn.execute(organization_membership.update().where(
                 organization_membership.c.profile_user_id == profile[0]).values(
@@ -743,7 +816,7 @@ class Store:
                 user.c.id == invite["profile_user_id"],
                 user.c.organization_id == invite["organization_id"],
                 user.c.active.is_(True), user.c.archived_at.is_(None),
-                user.c.email.ilike(normalized_email),
+                func.lower(user.c.email) == normalized_email,
             ))).mappings().first()
             if not profile:
                 return None
@@ -798,7 +871,7 @@ class Store:
                 admins = conn.execute(select(user.c.id).where(and_(
                     user.c.organization_id == org_id, user.c.admin.is_(True),
                     user.c.archived_at.is_(None),
-                ))).all()
+                )).with_for_update()).all()
                 if len(admins) <= 1:
                     return None
             result = conn.execute(user.update().where(and_(
@@ -826,7 +899,7 @@ class Store:
                 return None
             if conn.execute(select(user.c.id).where(and_(
                 user.c.organization_id == org_id,
-                user.c.email.ilike(normalized_email),
+                func.lower(user.c.email) == normalized_email,
                 user.c.archived_at.is_(None),
             ))).first():
                 return None
@@ -881,36 +954,47 @@ class Store:
         """Compatibility alias for the existing workspace settings update."""
         return self.update_workspace(org_id, values)
 
-    def teams(self, org_id: str, key: str | None = None) -> list[dict]:
+    def teams(self, org_id: str, key: str | None = None, viewer_id: str | None = None) -> list[dict]:
         with self.engine.connect() as conn:
             stmt = select(team).where(and_(
                 team.c.organization_id == org_id, team.c.archived_at.is_(None)))
+            stmt = _scope_teams(conn, stmt, org_id, viewer_id, team.c.id)
             if key:
                 stmt = stmt.where(team.c.key == key.upper())
             stmt = stmt.order_by(team.c.key)
             return [self.ser_team(r) for r in _conn_rows(conn, stmt)]
 
-    def team_by_id_or_key(self, org_id: str, ident: str) -> dict | None:
+    def team_by_id_or_key(self, org_id: str, ident: str, viewer_id: str | None = None) -> dict | None:
         with self.engine.connect() as conn:
-            row = _one(conn, select(team).where(and_(
+            stmt = select(team).where(and_(
                 team.c.organization_id == org_id,
-                or_(team.c.id == ident, team.c.key == ident.upper()))))
-            return row  # raw row (field resolvers need _id / active_cycle_id)
+                or_(team.c.id == ident, team.c.key == ident.upper())))
+            stmt = _scope_teams(conn, stmt, org_id, viewer_id, team.c.id)
+            return _one(conn, stmt)  # raw row (field resolvers need _id / active_cycle_id)
 
-    def team_states(self, org_id: str, team_id: str) -> list[dict]:
+    def team_visible_for(self, org_id: str, viewer_id: str | None, team_id: str | None) -> bool:
+        if not team_id:
+            return True
         with self.engine.connect() as conn:
+            return team_visible(conn, org_id, viewer_id, team_id)
+
+    def team_states(self, org_id: str, team_id: str, viewer_id: str | None = None) -> list[dict]:
+        with self.engine.connect() as conn:
+            if viewer_id is not None and not team_visible(conn, org_id, viewer_id, team_id):
+                return []
             stmt = select(workflow_state).where(and_(
                 workflow_state.c.organization_id == org_id,
                 workflow_state.c.team_id == team_id,
                 workflow_state.c.archived_at.is_(None))).order_by(workflow_state.c.position)
             return [self.ser_state(r) for r in _conn_rows(conn, stmt)]
 
-    def workflow_states(self, org_id: str, flt: dict | None = None) -> list[dict]:
+    def workflow_states(self, org_id: str, flt: dict | None = None, viewer_id: str | None = None) -> list[dict]:
         with self.engine.connect() as conn:
             stmt = select(workflow_state).where(and_(
                 workflow_state.c.organization_id == org_id,
                 workflow_state.c.archived_at.is_(None),
             ))
+            stmt = _scope_teams(conn, stmt, org_id, viewer_id, workflow_state.c.team_id)
             if flt:
                 if "team" in flt:
                     team_ids = _resolve_team_ids(conn, org_id, flt["team"])
@@ -940,22 +1024,27 @@ class Store:
                 conn.execute(team_member.delete().where(and_(
                     team_member.c.team_id == team_id, team_member.c.user_id == user_id)))
 
-    def team_members(self, org_id: str, team_id: str) -> list[dict]:
+    def team_members(self, org_id: str, team_id: str, viewer_id: str | None = None) -> list[dict]:
         with self.engine.connect() as conn:
+            if viewer_id is not None and not team_visible(conn, org_id, viewer_id, team_id):
+                return []
             stmt = select(user).select_from(
                 user.join(team_member, team_member.c.user_id == user.c.id)
             ).where(and_(team_member.c.team_id == team_id, user.c.organization_id == org_id))
             return [self.ser_user(r) for r in _conn_rows(conn, stmt)]
 
-    def team_cycles(self, org_id: str, team_id: str) -> list[dict]:
+    def team_cycles(self, org_id: str, team_id: str, viewer_id: str | None = None) -> list[dict]:
         with self.engine.connect() as conn:
+            if viewer_id is not None and not team_visible(conn, org_id, viewer_id, team_id):
+                return []
             stmt = select(cycle).where(and_(
                 cycle.c.organization_id == org_id, cycle.c.team_id == team_id)).order_by(cycle.c.number)
             return [self.ser_cycle(r) for r in _conn_rows(conn, stmt)]
 
-    def cycles(self, org_id: str, flt: dict | None = None) -> list[dict]:
+    def cycles(self, org_id: str, flt: dict | None = None, viewer_id: str | None = None) -> list[dict]:
         with self.engine.connect() as conn:
             stmt = select(cycle).where(cycle.c.organization_id == org_id)
+            stmt = _scope_teams(conn, stmt, org_id, viewer_id, cycle.c.team_id)
             if flt:
                 if "team" in flt:
                     team_ids = _resolve_team_ids(conn, org_id, flt["team"])
@@ -973,12 +1062,32 @@ class Store:
                 for r in _conn_rows(conn, stmt.order_by(cycle.c.number))
             ]
 
-    def issue_by_id_or_identifier(self, org_id: str, ident: str) -> dict | None:
+    def team_cadence_snapshot(self, org_id: str, team_id: str, viewer_id: str) -> dict:
+        """Cadence view for read-only API keys: reads persisted state and never reconciles."""
         with self.engine.connect() as conn:
-            row = _one(conn, select(issue).where(and_(
+            if not team_visible(conn, org_id, viewer_id, team_id):
+                raise ValueError("Team not found in this workspace.")
+            row = _one(conn, select(team).where(and_(team.c.organization_id == org_id, team.c.id == team_id)))
+            cycle_rows = _conn_rows(conn, select(cycle).where(and_(
+                cycle.c.organization_id == org_id, cycle.c.team_id == team_id)).order_by(cycle.c.number))
+        zone_name = row.get("timezone") or "UTC"
+        if not row.get("cadence_enabled"):
+            return {"enabled": False, "weekday": None, "timezone": zone_name, "policyVersion": 1,
+                    "activeCycle": None, "upcomingCycles": []}
+        active = next((c for c in cycle_rows if c["id"] == row.get("active_cycle_id")), None)
+        after_number = active["number"] if active else 0
+        upcoming = [c for c in cycle_rows if c["number"] > after_number][:2]
+        return {"enabled": True, "weekday": row.get("cadence_weekday"), "timezone": zone_name,
+                "policyVersion": row.get("cadence_policy_version"),
+                "activeCycle": self.ser_cycle(active), "upcomingCycles": [self.ser_cycle(c) for c in upcoming]}
+
+    def issue_by_id_or_identifier(self, org_id: str, ident: str, viewer_id: str | None = None) -> dict | None:
+        with self.engine.connect() as conn:
+            stmt = select(issue).where(and_(
                 issue.c.organization_id == org_id,
-                or_(issue.c.id == ident, issue.c.identifier == ident.upper()))))
-            return self.ser_issue(row)
+                or_(issue.c.id == ident, issue.c.identifier == ident.upper())))
+            stmt = _scope_teams(conn, stmt, org_id, viewer_id, issue.c.team_id)
+            return self.ser_issue(_one(conn, stmt))
 
     def inbox_notifications(self, org_id: str, user_id: str, after=None, limit=51,
                             unread_only=False, archived=False) -> list[dict]:
@@ -1105,10 +1214,12 @@ class Store:
                 row["changes"] = json.loads(row["changes"]) if row.get("changes") else None
             return rows
 
-    def labels(self, org_id: str, team_id: str | None = None, name: str | None = None) -> list[dict]:
+    def labels(self, org_id: str, team_id: str | None = None, name: str | None = None,
+               viewer_id: str | None = None) -> list[dict]:
         with self.engine.connect() as conn:
             stmt = select(issue_label).where(and_(
                 issue_label.c.organization_id == org_id, issue_label.c.archived_at.is_(None)))
+            stmt = _scope_teams(conn, stmt, org_id, viewer_id, issue_label.c.team_id, nullable=True)
             if team_id:
                 stmt = stmt.where(issue_label.c.team_id == team_id)
             if name:
@@ -1225,7 +1336,7 @@ class Store:
             ).where(and_(project_member.c.project_id == project_id, user.c.organization_id == org_id))
             return [self.ser_user(r) for r in _conn_rows(conn, stmt)]
 
-    def project_teams(self, org_id: str, project_id: str) -> list[dict]:
+    def project_teams(self, org_id: str, project_id: str, viewer_id: str | None = None) -> list[dict]:
         with self.engine.connect() as conn:
             stmt = select(team).select_from(
                 team.join(project_team, project_team.c.team_id == team.c.id)
@@ -1234,6 +1345,7 @@ class Store:
                 team.c.organization_id == org_id,
                 team.c.archived_at.is_(None),
             ))
+            stmt = _scope_teams(conn, stmt, org_id, viewer_id, team.c.id)
             return [self.ser_team(r) for r in _conn_rows(conn, stmt)]
 
     def state_by_id(self, org_id: str, sid: str) -> dict | None:
@@ -1241,10 +1353,11 @@ class Store:
             return self.ser_state(_one(conn, select(workflow_state).where(and_(
                 workflow_state.c.organization_id == org_id, workflow_state.c.id == sid))))
 
-    def raw_team(self, org_id: str, tid: str) -> dict | None:
+    def raw_team(self, org_id: str, tid: str, viewer_id: str | None = None) -> dict | None:
         with self.engine.connect() as conn:
-            return _one(conn, select(team).where(and_(
-                team.c.organization_id == org_id, team.c.id == tid)))
+            stmt = select(team).where(and_(team.c.organization_id == org_id, team.c.id == tid))
+            stmt = _scope_teams(conn, stmt, org_id, viewer_id, team.c.id)
+            return _one(conn, stmt)
 
     # --------------------------------------------------------------- issue list
     def issues(self, org_id: str, viewer_id: str, flt: dict | None,
@@ -1253,6 +1366,7 @@ class Store:
         with self.engine.connect() as conn:
             stmt = select(issue).where(and_(
                 issue.c.organization_id == org_id, issue.c.archived_at.is_(None)))
+            stmt = _scope_teams(conn, stmt, org_id, viewer_id, issue.c.team_id)
             stmt = _apply_issue_filter(conn, stmt, org_id, viewer_id, flt)
             col = issue.c.updated_at if order_by == "updatedAt" else issue.c.created_at
             stmt = stmt.order_by(col.desc(), issue.c.id.desc())
@@ -1263,13 +1377,16 @@ class Store:
                 stmt = stmt.limit(limit)
             return [self.ser_issue(r) for r in _conn_rows(conn, stmt)]
 
-    def search_issues(self, org_id: str, term: str) -> list[dict]:
+    def search_issues(self, org_id: str, term: str, viewer_id: str | None = None) -> list[dict]:
+        needle = _like_contains(_check_search_term(term))
         with self.engine.connect() as conn:
-            like = f"%{term}%"
             stmt = select(issue).where(and_(
                 issue.c.organization_id == org_id, issue.c.archived_at.is_(None),
-                or_(issue.c.title.ilike(like), issue.c.description.ilike(like),
-                    issue.c.identifier.ilike(like)))).order_by(issue.c.updated_at.desc())
+                or_(issue.c.title.ilike(needle, escape="\\"),
+                    issue.c.description.ilike(needle, escape="\\"),
+                    issue.c.identifier.ilike(needle, escape="\\"))))
+            stmt = _scope_teams(conn, stmt, org_id, viewer_id, issue.c.team_id)
+            stmt = stmt.order_by(issue.c.updated_at.desc())
             return [self.ser_issue(r) for r in _conn_rows(conn, stmt)]
 
 
@@ -1285,11 +1402,11 @@ def _apply_str_cmp(col, cmp: dict):
     if "nin" in cmp:
         clauses.append(col.notin_(cmp["nin"]))
     if "contains" in cmp:
-        clauses.append(col.ilike(f"%{cmp['contains']}%"))
+        clauses.append(col.ilike(_like_contains(_check_search_term(cmp["contains"])), escape="\\"))
     if "containsIgnoreCase" in cmp:
-        clauses.append(col.ilike(f"%{cmp['containsIgnoreCase']}%"))
+        clauses.append(col.ilike(_like_contains(_check_search_term(cmp["containsIgnoreCase"])), escape="\\"))
     if "eqIgnoreCase" in cmp:
-        clauses.append(col.ilike(cmp["eqIgnoreCase"]))
+        clauses.append(func.lower(col) == _check_search_term(cmp["eqIgnoreCase"]).lower())
     return and_(*clauses) if clauses else None
 
 

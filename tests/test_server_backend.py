@@ -959,7 +959,7 @@ def test_health_and_readiness(tmp_path) -> None:
         ready = client.get("/ready")
 
     assert health.status_code == 200
-    assert health.json() == {"status": "ok", "open_mode": False}
+    assert health.json() == {"status": "ok"}
     assert ready.status_code == 200
     assert ready.json() == {"status": "ready"}
 
@@ -1401,7 +1401,9 @@ def test_global_identity_can_switch_only_to_its_explicit_memberships(tmp_path) -
     need_choice = client.post("/auth/login", json={"email": "shared-switch@example.test",
                               "password": "correct horse battery"})
     assert need_choice.status_code == 409
-    available = client.post("/auth/workspaces", json={"email": "shared-switch@example.test"}).json()
+    assert client.post("/auth/workspaces", json={"email": "shared-switch@example.test"}).status_code == 401
+    available = client.post("/auth/workspaces", json={"email": "shared-switch@example.test",
+                            "password": "correct horse battery"}).json()
     assert {w["organizationId"] for w in available["workspaces"]} == {one["org_id"], two["org_id"]}
     login = client.post("/auth/login", json={"email": "shared-switch@example.test",
         "password": "correct horse battery", "organizationId": one["org_id"]})

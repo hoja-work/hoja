@@ -8,6 +8,7 @@ from graphql import GraphQLError
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.engine import Engine
 
+from cliniar_server.store import team_visible
 from cliniar_server.db import (
     PRIORITY_LABELS,
     attachment,
@@ -254,6 +255,11 @@ class Writer:
             return
         self._require_team_admin(conn, org_id, viewer_id)
 
+    def _require_team_visible(self, conn, org_id: str, viewer_id: str, team_id: str | None) -> None:
+        """Private teams are writable only by their members (or admins); never leak existence."""
+        if team_id and not team_visible(conn, org_id, viewer_id, team_id):
+            raise InvalidReferenceError("teamId")
+
     def _team_row(self, conn, org_id: str, team_id: str, *, include_archived: bool = False):
         clauses = [team.c.id == team_id, team.c.organization_id == org_id]
         if not include_archived:
@@ -355,7 +361,7 @@ class Writer:
             fresh = conn.execute(select(team).where(team.c.id == team_id)).mappings().one()
             return reconcile_team_cadence(conn, org_id, fresh, instant)
 
-    def reconcile_team_cadence(self, org_id: str, team_id: str, *, now=None) -> dict:
+    def reconcile_team_cadence(self, org_id: str, team_id: str, *, now=None, viewer_id: str | None = None) -> dict:
         from datetime import datetime, timezone
         from cliniar_server.cadence import reconcile_team_cadence
         instant = now or datetime.now(timezone.utc)
@@ -366,6 +372,8 @@ class Writer:
                 team.c.id == team_id, team.c.archived_at.is_(None))).with_for_update()).mappings().first()
             if not row:
                 raise ValueError("Team not found in this workspace.")
+            if viewer_id is not None:
+                self._require_team_visible(conn, org_id, viewer_id, team_id)
             return reconcile_team_cadence(conn, org_id, row, instant)
 
     def initiative_create(self, org_id: str, actor_id: str, inp: dict) -> str:
@@ -457,6 +465,7 @@ class Writer:
                 return None
             trow = dict(trow._mapping)
             tid = trow["id"]
+            self._require_team_visible(conn, org_id, viewer_id, tid)
             _validate_issue_references(
                 conn,
                 org_id,
@@ -512,6 +521,10 @@ class Writer:
                 return None
             issue_row = dict(row._mapping)
             iid = issue_row["id"]
+            if actor_id is not None:
+                self._require_team_visible(conn, org_id, actor_id, issue_row["team_id"])
+                if inp.get("teamId") is not None:
+                    raise InvalidReferenceError("teamId")
             _validate_issue_references(
                 conn, org_id, issue_row["team_id"], inp, issue_id=iid
             )
@@ -579,11 +592,12 @@ class Writer:
 
     def _authorize_issue_change(self, org_id: str, viewer_id: str, ident: str) -> None:
         with self.engine.begin() as conn:
-            row = conn.execute(select(issue.c.creator_id).where(and_(
+            row = conn.execute(select(issue.c.creator_id, issue.c.team_id).where(and_(
                 issue.c.organization_id == org_id,
                 (issue.c.id == ident) | (issue.c.identifier == ident.upper()),
             ))).first()
             if row:
+                self._require_team_visible(conn, org_id, viewer_id, row[1])
                 self._require_creator_or_admin(conn, org_id, viewer_id, row[0])
 
     def issue_archive(self, org_id: str, viewer_id: str, ident: str) -> bool:
@@ -618,6 +632,7 @@ class Writer:
             if not irow:
                 return None
             irow = dict(irow._mapping)
+            self._require_team_visible(conn, org_id, viewer_id, irow.get("team_id"))
             ts = now_iso()
             cid = new_id()
             conn.execute(comment.insert().values(
@@ -627,12 +642,15 @@ class Writer:
             self._record_activity(conn, org_id, irow["id"], viewer_id, "commentCreated", {"commentId": cid}, ts)
             return cid
 
-    def comment_update(self, org_id: str, cid: str, inp: dict) -> str | None:
+    def comment_update(self, org_id: str, viewer_id: str, cid: str, inp: dict) -> str | None:
         with self.engine.begin() as conn:
-            row = conn.execute(select(comment.c.id).where(and_(
+            row = conn.execute(select(comment.c.id, comment.c.user_id, comment.c.issue_id).where(and_(
                 comment.c.organization_id == org_id, comment.c.id == cid))).first()
             if not row:
                 return None
+            self._require_creator_or_admin(conn, org_id, viewer_id, row[1])
+            issue_team = conn.execute(select(issue.c.team_id).where(issue.c.id == row[2])).scalar()
+            self._require_team_visible(conn, org_id, viewer_id, issue_team)
             vals = {"updated_at": now_iso()}
             if "body" in inp:
                 vals["body"] = inp["body"]
@@ -761,6 +779,9 @@ class Writer:
                 )
                 if found != team_ids:
                     raise InvalidReferenceError("teamIds")
+                for tid in team_ids:
+                    if not team_visible(conn, org_id, viewer_id, tid):
+                        raise InvalidReferenceError("teamIds")
             ts = now_iso()
             pid = new_id()
             slug = _slug(inp["name"])
@@ -800,11 +821,25 @@ class Writer:
             ))
             return update_id
 
-    def project_update(self, org_id: str, pid: str, inp: dict) -> str | None:
+    def _require_project_owner(self, conn, org_id: str, viewer_id: str, pid: str) -> bool:
+        """Creator, lead, or admin may edit/archive a project. Returns False when the project is absent."""
+        row = conn.execute(select(project.c.creator_id, project.c.lead_id).where(and_(
+            project.c.organization_id == org_id, project.c.id == pid,
+            project.c.archived_at.is_(None)))).first()
+        if not row:
+            return False
+        if viewer_id in (row[0], row[1]):
+            return True
+        self._require_team_admin(conn, org_id, viewer_id)
+        return True
+
+    def project_update(self, org_id: str, viewer_id: str, pid: str, inp: dict) -> str | None:
         with self.engine.begin() as conn:
             row = conn.execute(select(project.c.id).where(and_(
                 project.c.organization_id == org_id, project.c.id == pid))).first()
             if not row:
+                return None
+            if not self._require_project_owner(conn, org_id, viewer_id, pid):
                 return None
             if lead_id := inp.get("leadId"):
                 _require_org_reference(
@@ -821,5 +856,8 @@ class Writer:
             conn.execute(project.update().where(project.c.id == pid).values(**vals))
             return pid
 
-    def project_archive(self, org_id: str, pid: str) -> bool:
+    def project_archive(self, org_id: str, viewer_id: str, pid: str) -> bool:
+        with self.engine.begin() as conn:
+            if not self._require_project_owner(conn, org_id, viewer_id, pid):
+                return False
         return self._soft_delete(project, org_id, pid)

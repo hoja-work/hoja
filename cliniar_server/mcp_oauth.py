@@ -10,19 +10,12 @@ from __future__ import annotations
 import hashlib
 import json
 import secrets
+import threading
+import time
+from collections import deque
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
-from graphql import (
-    GraphQLList,
-    GraphQLNonNull,
-    GraphQLObjectType,
-    execute,
-    parse,
-    print_ast,
-    validate,
-)
-from graphql.language.ast import FieldNode, OperationDefinitionNode
 from mcp.server.auth.provider import (
     AccessToken,
     AuthorizationCode,
@@ -36,11 +29,12 @@ from mcp.server.auth.provider import (
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
 from mcp.server.mcpserver import MCPServer
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from cliniar_server import db
+from cliniar_server.mcp_tools import INSTRUCTIONS as MCP_INSTRUCTIONS
 
 READ_SCOPE = "hoja:read"
 WRITE_SCOPE = "hoja:write"
@@ -48,21 +42,27 @@ ALL_SCOPES = [READ_SCOPE, WRITE_SCOPE]
 ACCESS_TTL = 900
 REFRESH_TTL = 60 * 60 * 24 * 30
 CODE_TTL = 300
+MAX_REDIRECT_URIS = 5
+MAX_REDIRECT_URI_LENGTH = 2048
+MAX_CLIENT_NAME_LENGTH = 200
+MAX_OAUTH_CLIENTS = 10_000
+MAX_REGISTRATIONS_PER_HOUR = 100
+_REGISTRATION_WINDOW_SECONDS = 3600
+_registration_times: deque[float] = deque()
+_registration_lock = threading.Lock()
 
 
-def _minimal_selection(output_type) -> str:
-    """Select a fixed scalar leaf, never a caller-provided GraphQL fragment."""
-    while isinstance(output_type, (GraphQLNonNull, GraphQLList)):
-        output_type = output_type.of_type
-    if not isinstance(output_type, GraphQLObjectType):
-        raise ValueError("Unsupported MCP operation output type.")
-    for name, field in output_type.fields.items():
-        leaf = field.type
-        while isinstance(leaf, (GraphQLNonNull, GraphQLList)):
-            leaf = leaf.of_type
-        if not isinstance(leaf, GraphQLObjectType):
-            return name
-    raise ValueError("No safe scalar output is available for this operation.")
+def _take_registration_slot() -> None:
+    """Process-wide sliding-window limit on dynamic client registrations."""
+    now = time.monotonic()
+    with _registration_lock:
+        while _registration_times and now - _registration_times[0] > _REGISTRATION_WINDOW_SECONDS:
+            _registration_times.popleft()
+        if len(_registration_times) >= MAX_REGISTRATIONS_PER_HOUR:
+            raise RegistrationError(
+                "invalid_client_metadata", "Too many client registrations; try again later."
+            )
+        _registration_times.append(now)
 
 
 def _now() -> datetime:
@@ -110,12 +110,18 @@ class HojaOAuthProvider(OAuthAuthorizationServerProvider):
             raise RegistrationError(
                 "invalid_redirect_uri", "At least one redirect URI is required."
             )
+        if len(client_info.redirect_uris) > MAX_REDIRECT_URIS:
+            raise RegistrationError("invalid_redirect_uri", "Too many redirect URIs.")
+        if client_info.client_name and len(client_info.client_name) > MAX_CLIENT_NAME_LENGTH:
+            raise RegistrationError("invalid_client_metadata", "client_name is too long.")
         if client_info.token_endpoint_auth_method not in (None, "none"):
             raise RegistrationError(
                 "invalid_client_metadata", "Only public OAuth clients are supported."
             )
         for uri in client_info.redirect_uris:
             text = str(uri)
+            if len(text) > MAX_REDIRECT_URI_LENGTH:
+                raise RegistrationError("invalid_redirect_uri", "Redirect URI is too long.")
             if uri.scheme != "https" and not _is_loopback_uri(text):
                 raise RegistrationError(
                     "invalid_redirect_uri", "Redirect URI must use HTTPS or native loopback."
@@ -131,7 +137,13 @@ class HojaOAuthProvider(OAuthAuthorizationServerProvider):
         clean = client_info.model_copy(
             update={"client_secret": None, "token_endpoint_auth_method": "none"}
         )
+        _take_registration_slot()
         with self.engine.begin() as conn:
+            total = conn.execute(select(func.count()).select_from(db.oauth_client)).scalar_one()
+            if total >= MAX_OAUTH_CLIENTS:
+                raise RegistrationError(
+                    "invalid_client_metadata", "Client registration limit reached."
+                )
             conn.execute(
                 db.oauth_client.insert().values(
                     client_id=clean.client_id,
@@ -235,18 +247,28 @@ class HojaOAuthProvider(OAuthAuthorizationServerProvider):
             )
 
     async def load_refresh_token(self, client, refresh_token: str):
-        with self.engine.connect() as conn:
+        with self.engine.begin() as conn:
             row = (
                 conn.execute(
                     select(db.oauth_refresh_token).where(
                         db.oauth_refresh_token.c.token_hash == _digest(refresh_token),
                         db.oauth_refresh_token.c.client_id == client.client_id,
-                        db.oauth_refresh_token.c.revoked_at.is_(None),
                     )
                 )
                 .mappings()
                 .first()
             )
+            if row and row["revoked_at"] is not None:
+                # The SDK rejects revoked tokens before exchange_refresh_token runs, so
+                # reuse of a rotated/revoked token must be handled here.
+                now = _iso(_now())
+                for target in (db.oauth_access_token, db.oauth_refresh_token):
+                    conn.execute(
+                        update(target)
+                        .where(target.c.grant_id == row["grant_id"], target.c.revoked_at.is_(None))
+                        .values(revoked_at=now)
+                    )
+                return None
         if not row or row["expires_at"] <= _iso(_now()):
             return None
         subject = json.dumps({"user_id": row["user_id"], "org_id": row["organization_id"], "grant_id": row["grant_id"]})
@@ -476,7 +498,7 @@ def build_server(provider: HojaOAuthProvider, public_host: str | None = None) ->
     issuer = public_origin + "/mcp"
     server = MCPServer(
         name="hoja",
-        instructions="Hoja work management MCP. Authenticate with Hoja OAuth. OAuth scopes limit operation classes; Hoja role checks still apply.",
+        instructions=MCP_INSTRUCTIONS,
         version=__version__,
         auth_server_provider=provider,
         auth=AuthSettings(
@@ -491,98 +513,45 @@ def build_server(provider: HojaOAuthProvider, public_host: str | None = None) ->
         ),
     )
 
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    from cliniar_server.mcp_tools import build_tools
     from cliniar_server.resolvers import build_schema
 
-    schema = build_schema()
+    def principal(write: bool) -> dict:
+        from mcp.server.auth.middleware.auth_context import get_access_token
 
-    def register_operations(root_name: str, is_write: bool) -> None:
-        root = schema.get_type(root_name)
-        assert isinstance(root, GraphQLObjectType)
-        for field_name, field in root.fields.items():
-            if root_name == "Mutation" and field_name == "workspaceSwitch":
-                # This resolver deliberately requires a browser session.
-                continue
-
-            def make_handler(operation_name: str, field_def, write: bool):
-                async def operation(arguments: dict) -> str:
-                    from mcp.server.auth.middleware.auth_context import get_access_token
-
-                    access = get_access_token()
-                    if access is None or not access.subject:
-                        raise ValueError("OAuth authentication is required.")
-                    granted = set(access.scopes)
-                    required = WRITE_SCOPE if write else READ_SCOPE
-                    if required not in granted:
-                        raise ValueError(f"OAuth scope {required} is required.")
-                    try:
-                        principal = json.loads(access.subject)
-                        user_id, org_id = principal["user_id"], principal["org_id"]
-                    except (ValueError, KeyError, TypeError) as exc:
-                        raise ValueError("OAuth identity is invalid.") from exc
-                    member = provider.store.membership_for_profile(org_id, user_id)
-                    if not member:
-                        raise ValueError("Active organization membership is required.")
-
-                    arg_defs = []
-                    variable_values = {}
-                    for arg_name, arg_value in arguments.items():
-                        if arg_name not in field_def.args:
-                            raise ValueError(f"Unknown argument {arg_name!r} for {operation_name}.")
-                        variable_name = "v_" + arg_name
-                        arg_defs.append(
-                            f"${variable_name}: {print_ast(field_def.args[arg_name].type)}"
-                        )
-                        variable_values[variable_name] = arg_value
-                    arg_use = (
-                        "(" + ", ".join(f"{name}: ${'v_' + name}" for name in arguments) + ")"
-                        if arguments
-                        else ""
-                    )
-                    selection_set = ""
-                    if not str(field_def.type).endswith(("Boolean!", "Int!", "Int", "Float", "String")):
-                        selection_set = " { " + _minimal_selection(field_def.type) + " }"
-                    query = f"{'mutation' if write else 'query'} HojaOperation{'(' + ', '.join(arg_defs) + ')' if arg_defs else ''} {{ {operation_name}{arg_use}{selection_set} }}"
-                    document = parse(query)
-                    root_fields = [node for definition in document.definitions
-                                   if isinstance(definition, OperationDefinitionNode)
-                                   for node in definition.selection_set.selections]
-                    if len(root_fields) != 1 or not isinstance(root_fields[0], FieldNode) or root_fields[0].name.value != operation_name:
-                        raise ValueError("Selection may only request fields from this Hoja operation.")
-                    errors = validate(schema, document)
-                    if errors:
-                        raise ValueError("Invalid selection for this operation.")
-                    context = {
-                        "store": provider.store,
-                        "writer": provider.writer,
-                        "org_id": org_id,
-                        "user_id": user_id,
-                        "identity_id": None,
-                        "browser_session": False,
-                    }
-                    result = execute(
-                        schema, document, variable_values=variable_values, context_value=context
-                    )
-                    if result.errors:
-                        # Avoid reflecting resolver internals or database details.
-                        raise ValueError("Hoja operation failed authorization or validation.")
-                    return json.dumps(result.data, ensure_ascii=False, default=str)
-
-                operation.__name__ = "hoja_" + operation_name
-                return operation
-
-            tool_name = "hoja_" + field_name
-            server.add_tool(
-                make_handler(field_name, field, is_write),
-                name=tool_name,
-                description=(
-                    "Execute Hoja GraphQL "
-                    + ("mutation" if is_write else "query")
-                        + f" `{field_name}` using server-defined minimal output fields. `arguments` maps schema arguments to values."
-                ),
+        access = get_access_token()
+        if access is None or not access.subject:
+            raise ToolError("OAuth authentication is required.")
+        granted = set(access.scopes)
+        if write and WRITE_SCOPE not in granted:
+            raise ToolError(
+                f"This connection is read-only: the {WRITE_SCOPE} scope was not granted, so nothing was changed. "
+                "Ask the user to reconnect the Hoja MCP with write access."
             )
+        if READ_SCOPE not in granted:
+            raise ToolError(f"OAuth scope {READ_SCOPE} is required.")
+        try:
+            identity = json.loads(access.subject)
+            user_id, org_id = identity["user_id"], identity["org_id"]
+        except (ValueError, KeyError, TypeError) as exc:
+            raise ToolError("OAuth identity is invalid.") from exc
+        if not provider.store.membership_for_profile(org_id, user_id):
+            raise ToolError("Active organization membership is required.")
+        return {
+            "store": provider.store,
+            "writer": provider.writer,
+            "org_id": org_id,
+            "user_id": user_id,
+            "identity_id": None,
+            "browser_session": False,
+            # Read-only grants must not trigger resolver-side reconciliation writes.
+            "read_only": WRITE_SCOPE not in granted,
+        }
 
-    register_operations("Query", False)
-    register_operations("Mutation", True)
+    for tool in build_tools(build_schema(), principal):
+        server._tool_manager._tools[tool.name] = tool
 
     @server.custom_route("/oauth/consent", methods=["GET", "POST"])
     async def consent(request: Request):

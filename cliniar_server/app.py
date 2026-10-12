@@ -12,16 +12,31 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import json
+import logging
 import os
 import secrets
+import threading
+import time
+from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
-from ariadne import graphql
-from graphql import GraphQLError, OperationDefinitionNode, OperationType, parse
+from ariadne import format_error, graphql
+from graphql import (
+    FieldNode,
+    FragmentDefinitionNode,
+    FragmentSpreadNode,
+    GraphQLError,
+    InlineFragmentNode,
+    OperationDefinitionNode,
+    parse,
+)
 from sqlalchemy import select, text
 from starlette.applications import Starlette
+from starlette.datastructures import MutableHeaders
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse
 from starlette.routing import Route, WebSocketRoute
@@ -41,6 +56,7 @@ from cliniar_server.db import (
     now_iso,
     organization,
     organization_membership,
+    password_credential,
     resolve_database_target,
     resolve_token_identity,
     schema_is_current,
@@ -51,6 +67,7 @@ from cliniar_server.db import (
     user,
 )
 from cliniar_server.resolvers import build_schema
+from cliniar_server.secrets_box import SecretBoxError
 from cliniar_server.store import Store
 from cliniar_server.writer import Writer
 
@@ -97,6 +114,177 @@ def _valid_public_host(value: str) -> bool:
 
 
 _MAX_SEQ = 2**63 - 1
+_MAX_GRAPHQL_BODY = 1_000_000
+_MAX_QUERY_DEPTH = 15
+_MAX_QUERY_FIELDS = 100
+_MAX_QUERY_VISITS = 10_000
+_WS_REVALIDATE_SECONDS = 5
+_LOGIN_FAILURE_LIMIT = 10
+_LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60
+_CSP_HTML = "frame-ancestors 'none'; object-src 'none'; base-uri 'self'"
+_graphql_log = logging.getLogger("cliniar_server.graphql")
+
+
+def _bad_request(message: str) -> JSONResponse:
+    return JSONResponse(
+        {"errors": [{"message": message, "extensions": {"code": "BAD_REQUEST"}}]}, status_code=400
+    )
+
+
+def _too_large() -> JSONResponse:
+    return JSONResponse(
+        {"errors": [{"message": "Request body is too large.", "extensions": {"code": "PAYLOAD_TOO_LARGE"}}]},
+        status_code=413,
+    )
+
+
+def _query_problem(query: str) -> str | None:
+    """Return a user-facing rejection for over-deep or over-wide documents, else None."""
+    try:
+        document = parse(query)
+    except GraphQLError:
+        return None  # syntax errors are reported by graphql() itself
+    except RecursionError:
+        return "Query is nested too deeply."
+    fragments = {d.name.value: d for d in document.definitions if isinstance(d, FragmentDefinitionNode)}
+    counts = {"aliases": 0, "deepest": 0, "visits": 0}
+
+    def walk(selection_set, depth, spreads):
+        counts["deepest"] = max(counts["deepest"], depth)
+        for selection in selection_set.selections:
+            counts["visits"] += 1
+            if isinstance(selection, FieldNode):
+                if selection.alias:
+                    counts["aliases"] += 1
+                if selection.selection_set:
+                    walk(selection.selection_set, depth + 1, spreads)
+            elif isinstance(selection, InlineFragmentNode):
+                walk(selection.selection_set, depth, spreads)
+            elif isinstance(selection, FragmentSpreadNode):
+                name = selection.name.value
+                if name in fragments and name not in spreads:
+                    walk(fragments[name].selection_set, depth, spreads | {name})
+
+    roots = 0
+    for definition in document.definitions:
+        if isinstance(definition, OperationDefinitionNode):
+            roots += sum(isinstance(s, FieldNode) for s in definition.selection_set.selections)
+            walk(definition.selection_set, 1, frozenset())
+    if counts["deepest"] > _MAX_QUERY_DEPTH:
+        return f"Query depth exceeds {_MAX_QUERY_DEPTH}."
+    if roots > _MAX_QUERY_FIELDS or counts["aliases"] > _MAX_QUERY_FIELDS:
+        return f"Query exceeds {_MAX_QUERY_FIELDS} root fields or aliases."
+    if counts["visits"] > _MAX_QUERY_VISITS:
+        return "Query is too complex."
+    return None
+
+
+async def _read_json_object(request: Request, limit: int):
+    declared = request.headers.get("content-length")
+    if declared is not None:
+        if not declared.isdigit():
+            return None, _bad_request("Invalid Content-Length.")
+        if int(declared) > limit:
+            return None, _too_large()
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > limit:
+            return None, _too_large()
+    try:
+        data = json.loads(body)
+    except (ValueError, RecursionError):
+        return None, _bad_request("Request body must be valid JSON.")
+    if not isinstance(data, dict):
+        return None, _bad_request("Request body must be a JSON object.")
+    return data, None
+
+
+def _format_graphql_error(error, debug=False):
+    """Surface GraphQL and intentional ValueError messages; mask unexpected server exceptions."""
+    original = error.original_error
+    if original is None or isinstance(original, (GraphQLError, ValueError, SecretBoxError)):
+        return format_error(error, debug)
+    _graphql_log.error("GraphQL resolver failed", exc_info=original)
+    return {"message": "Internal error", "extensions": {"code": "INTERNAL_SERVER_ERROR"}}
+
+
+def _password_matches(stored: str, candidate: str) -> bool:
+    return Store._verify_password(candidate, stored)
+
+
+class _FailureLimiter:
+    """Thread-safe sliding window of failed sign-ins, keyed by client IP and by email."""
+
+    def __init__(self, limit: int, window_seconds: float, max_keys: int = 10_000):
+        self._limit = limit
+        self._window = window_seconds
+        self._max_keys = max_keys
+        self._events: dict[str, deque[float]] = {}
+        self._lock = threading.Lock()
+
+    def _recent(self, key: str, now: float) -> deque[float] | None:
+        events = self._events.get(key)
+        if events is None:
+            return None
+        while events and now - events[0] > self._window:
+            events.popleft()
+        if not events:
+            del self._events[key]
+            return None
+        return events
+
+    def blocked(self, keys: list[str]) -> bool:
+        now = time.monotonic()
+        with self._lock:
+            for key in keys:
+                events = self._recent(key, now)
+                if events and len(events) >= self._limit:
+                    return True
+        return False
+
+    def record(self, keys: list[str]) -> None:
+        now = time.monotonic()
+        with self._lock:
+            if len(self._events) >= self._max_keys:
+                for key in list(self._events):
+                    self._recent(key, now)
+                while len(self._events) >= self._max_keys:
+                    self._events.pop(next(iter(self._events)))
+            for key in keys:
+                self._events.setdefault(key, deque()).append(now)
+
+
+def _too_many_attempts() -> JSONResponse:
+    return JSONResponse(
+        {"error": "Too many failed sign-in attempts. Try again later."},
+        status_code=429,
+        headers={"Retry-After": str(_LOGIN_FAILURE_WINDOW_SECONDS)},
+    )
+
+
+class _SecurityHeaders:
+    """Adds baseline security headers to every HTTP response."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                headers["X-Content-Type-Options"] = "nosniff"
+                headers["X-Frame-Options"] = "DENY"
+                headers["Referrer-Policy"] = "same-origin"
+                if headers.get("content-type", "").startswith("text/html"):
+                    headers["Content-Security-Policy"] = _CSP_HTML
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
 
 
 def create_app(
@@ -115,9 +303,91 @@ def create_app(
     if open_mode is None:
         open_mode = os.environ.get("CLINIAR_SERVER_OPEN", "0") == "1"
 
+    limiter = _FailureLimiter(_LOGIN_FAILURE_LIMIT, _LOGIN_FAILURE_WINDOW_SECONDS)
+
+    def _same_origin(origin: str | None, headers) -> bool:
+        if origin is None:
+            return True
+        parts = urlsplit(origin)
+        if parts.scheme not in ("http", "https") or not parts.netloc:
+            return False
+        allowed = {(headers.get("host") or "").strip().lower()}
+        if public_host.strip():
+            allowed.add(public_host.strip().lower())
+        return parts.netloc.lower() in allowed
+
+    def _cookie_csrf_error(request: Request, *, json_only: bool):
+        """Cookie-authenticated writes must come from the same origin (and be JSON for API routes)."""
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            return None
+        if request.headers.get("authorization") or not request.cookies.get("hoja_session"):
+            return None
+        if not _same_origin(request.headers.get("origin"), request.headers):
+            return JSONResponse(
+                {"errors": [{"message": "Cross-site request rejected.", "extensions": {"code": "FORBIDDEN"}}]},
+                status_code=403,
+            )
+        content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+        if json_only and content_type != "application/json":
+            return JSONResponse(
+                {"errors": [{"message": "Content-Type must be application/json.", "extensions": {"code": "FORBIDDEN"}}]},
+                status_code=403,
+            )
+        return None
+
+    def _cookie_secure(request: Request) -> bool:
+        if request.url.scheme == "https":
+            return True
+        if _request_from_trusted_proxy(request):
+            forwarded = request.headers.get("x-forwarded-proto", "").split(",")[-1].strip().lower()
+            if forwarded == "https":
+                return True
+        return request.url.hostname not in ("localhost", "127.0.0.1", "::1")
+
+    def _is_loopback(request: Request) -> bool:
+        host = request.client.host if request.client else ""
+        if host == "localhost":
+            return True
+        try:
+            return ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            return False
+
+    def _client_ip(request: Request) -> str:
+        peer = request.client.host if request.client else "unknown"
+        if _request_from_trusted_proxy(request):
+            forwarded = request.headers.get("x-forwarded-for", "").split(",")[-1].strip()
+            if forwarded:
+                return forwarded
+        return peer
+
+    def _limit_keys(request: Request, email: str) -> list[str]:
+        keys = [f"ip:{_client_ip(request)}"]
+        if email:
+            keys.append(f"email:{email}")
+        return keys
+
+    def _open_mode_identity(request: Request):
+        if not open_mode or not _is_loopback(request):
+            return None, None, None, False
+        uid, org = _first_identity(engine)
+        if uid:
+            request.state.api_key_access = "read_write"
+            return uid, org, None, False
+        return None, None, None, False
+
     def _auth(request: Request):
         raw = request.headers.get("authorization", "") or request.headers.get("Authorization", "")
         token = raw[7:].strip() if raw.lower().startswith("bearer ") else raw.strip()
+        if raw:
+            # A presented Authorization header is authoritative; cookies are not consulted.
+            if token:
+                key = store.resolve_token(token)
+                if key:
+                    store.touch_api_key(key["id"])
+                    request.state.api_key_access = key["access"]
+                    return key["user_id"], key["organization_id"], None, False
+            return _open_mode_identity(request)
         session_token = request.cookies.get("hoja_session")
         if session_token:
             session = store.resolve_browser_session(session_token)
@@ -125,23 +395,63 @@ def create_app(
                 member = store.membership_for_profile(
                     session["organization_id"], session["user_id"]
                 )
+                request.state.api_key_access = "read_write"
                 return (
                     session["user_id"],
                     session["organization_id"],
                     (member or {}).get("identity_id"),
                     True,
                 )
-        if token:
-            key = store.resolve_token(token)
-            if key:
-                store.touch_api_key(key["id"])
-                request.state.api_key_access = key["access"]
-                return key["user_id"], key["organization_id"], None, False
-        if open_mode:
-            uid, org = _first_identity(engine)
-            if uid:
-                return uid, org, None, False
-        return None, None, None, False
+        return _open_mode_identity(request)
+
+    def _credential_slot(uid: str, org: str):
+        """Return (table, key column, key value, stored hash) for the account's password."""
+        member = store.membership_for_profile(org, uid)
+        with engine.connect() as conn:
+            if member and member.get("identity_id"):
+                stored = conn.execute(
+                    select(identity_credential.c.password_hash).where(
+                        identity_credential.c.identity_id == member["identity_id"])
+                ).scalar_one_or_none()
+                return identity_credential, identity_credential.c.identity_id, member["identity_id"], stored
+            stored = conn.execute(
+                select(password_credential.c.password_hash).where(password_credential.c.user_id == uid)
+            ).scalar_one_or_none()
+        return password_credential, password_credential.c.user_id, uid, stored
+
+    def _password_on_file(uid: str, org: str) -> bool:
+        return _credential_slot(uid, org)[3] is not None
+
+    def _password_matches_account(uid: str, org: str, candidate: str) -> bool:
+        stored = _credential_slot(uid, org)[3]
+        return stored is not None and _password_matches(stored, candidate)
+
+    def _replace_password(uid: str, org: str, password: str) -> None:
+        if len(password) < 12:
+            raise ValueError("Password must be at least 12 characters.")
+        table, key_column, key_value, _stored = _credential_slot(uid, org)
+        encoded = Store._password_digest(password, secrets.token_bytes(16))
+        revoked_at = now_iso()
+        with engine.begin() as conn:
+            conn.execute(table.update().where(key_column == key_value).values(
+                password_hash=encoded, updated_at=revoked_at))
+            # A password change ends every browser session of the identity's profiles.
+            member = store.membership_for_profile(org, uid)
+            profile_ids = [uid]
+            if member and member.get("identity_id"):
+                profile_ids = [row[0] for row in conn.execute(
+                    select(organization_membership.c.profile_user_id).where(
+                        organization_membership.c.identity_id == member["identity_id"]))] or [uid]
+            conn.execute(browser_session.update().where(
+                browser_session.c.user_id.in_(profile_ids),
+                browser_session.c.revoked_at.is_(None)).values(revoked_at=revoked_at))
+
+    def _email_password_ok(email: str, password: str) -> bool:
+        for row in store.workspaces_for_email(email):
+            stored = _credential_slot(row["profile_user_id"], row["organization_id"])[3]
+            if stored is not None and _password_matches(stored, password):
+                return True
+        return False
 
     def _mcp_oauth_auth(request: Request):
         """Resolve a valid MCP access token to the same pinned Hoja identity."""
@@ -289,6 +599,12 @@ def create_app(
     from starlette.routing import Mount
 
     async def realtime_socket(websocket: WebSocket):
+        from starlette.datastructures import Headers
+
+        raw_headers = Headers(scope=websocket.scope)
+        if not _same_origin(raw_headers.get("origin"), raw_headers):
+            await websocket.close(code=1008)
+            return
         offered = websocket.scope.get("subprotocols") or []
         subprotocol = "bearer" if "bearer" in offered else None
         token_header = ""
@@ -312,9 +628,16 @@ def create_app(
             await websocket.close(code=4400)
             return
         last_seq = cursor
+        last_check = time.monotonic()
         try:
             while True:
-                events = await asyncio.to_thread(store.change_events_after, org, last_seq)
+                if time.monotonic() - last_check >= _WS_REVALIDATE_SECONDS:
+                    last_check = time.monotonic()
+                    current_uid, current_org, _i, _s = await asyncio.to_thread(_auth, websocket)
+                    if current_uid != uid or current_org != org:
+                        await websocket.close(code=4401)
+                        return
+                events = await asyncio.to_thread(store.change_events_after, org, last_seq, viewer_id=uid)
                 for event in events:
                     await websocket.send_json(event)
                     last_seq = event["seq"]
@@ -330,6 +653,9 @@ def create_app(
                 {"errors": [{"message": "Authentication required", "extensions": {"code": "AUTHENTICATION_ERROR"}}]},
                 status_code=401,
             )
+        csrf = _cookie_csrf_error(request, json_only=True)
+        if csrf:
+            return csrf
         body = await request.json()
         messages = body.get("messages") if isinstance(body, dict) else None
         if not isinstance(messages, list) or not messages:
@@ -344,6 +670,7 @@ def create_app(
             "user_id": uid,
             "identity_id": _identity_id,
             "browser_session": _is_browser,
+            "access": getattr(request.state, "api_key_access", "read_write"),
         }
         try:
             thread_id = body.get("threadId") if isinstance(body, dict) else None
@@ -367,6 +694,14 @@ def create_app(
                 {"errors": [{"message": "Authentication required", "extensions": {"code": "AUTHENTICATION_ERROR"}}]},
                 status_code=401,
             )
+        if request.method != "GET" and getattr(request.state, "api_key_access", "read_write") == "read":
+            return None, None, JSONResponse(
+                {"errors": [{"message": "This API key is read-only.", "extensions": {"code": "FORBIDDEN"}}]},
+                status_code=403,
+            )
+        csrf = _cookie_csrf_error(request, json_only=True)
+        if csrf:
+            return None, None, csrf
         return uid, org, None
 
     async def agent_threads_list(request: Request):
@@ -432,30 +767,26 @@ def create_app(
                 },
                 status_code=401,
             )
-        try:
-            data = await request.json()
-        except ValueError:
-            return JSONResponse(
-                {"errors": [{"message": "Request body must be valid JSON.",
-                             "extensions": {"code": "BAD_REQUEST"}}]},
-                status_code=400,
-            )
-        if not isinstance(data, dict):
-            return JSONResponse(
-                {"errors": [{"message": "Request body must be a JSON object.",
-                             "extensions": {"code": "BAD_REQUEST"}}]},
-                status_code=400,
-            )
-        if getattr(request.state, "api_key_access", "read_write") == "read":
-            try:
-                document = parse(data.get("query") or "")
-            except GraphQLError:
-                document = None
-            if document is not None and any(
-                isinstance(definition, OperationDefinitionNode)
-                and definition.operation == OperationType.MUTATION
-                for definition in document.definitions
-            ):
+        csrf = _cookie_csrf_error(request, json_only=True)
+        if csrf:
+            return csrf
+        data, error = await _read_json_object(request, _MAX_GRAPHQL_BODY)
+        if error:
+            return error
+        query = data.get("query")
+        variables = data.get("variables")
+        if query is not None and not isinstance(query, str):
+            return _bad_request("query must be a string.")
+        if variables is not None and not isinstance(variables, dict):
+            return _bad_request("variables must be an object.")
+        access = getattr(request.state, "api_key_access", "read_write")
+        if isinstance(query, str):
+            problem = _query_problem(query)
+            if problem:
+                return _bad_request(problem)
+            from cliniar_server.agent_chat import read_only_violation
+
+            if read_only_violation(query, access):
                 return JSONResponse(
                     {"errors": [{"message": "This API key is read-only.",
                                  "extensions": {"code": "FORBIDDEN"}}]},
@@ -469,11 +800,13 @@ def create_app(
             "user_id": uid,
             "identity_id": identity_id,
             "browser_session": is_browser_session,
+            "access": access,
         }
         _success, result = await graphql(
             _schema,
             data,
             context_value=context,
+            error_formatter=_format_graphql_error,
             debug=(os.environ.get("CLINIAR_SERVER_DEBUG", "0") == "1"),
         )
         target = context.get("switch_target")
@@ -493,7 +826,7 @@ def create_app(
                 "hoja_session",
                 session_token,
                 httponly=True,
-                secure=request.url.scheme == "https",
+                secure=_cookie_secure(request),
                 samesite="lax",
                 max_age=14 * 24 * 60 * 60,
                 path="/",
@@ -506,11 +839,29 @@ def create_app(
             return JSONResponse(
                 {"setup": True, "message": "Set a password using a valid local API token."}
             )
+        csrf = _cookie_csrf_error(request, json_only=False)
+        if csrf:
+            return csrf
         body = await request.json()
+        password = str(body.get("password", ""))
+        setup_token = str(body.get("token", ""))
+        setup_email = str(body.get("email", "")).strip().lower()
+        session_token = request.cookies.get("hoja_session")
+        session = store.resolve_browser_session(session_token) if session_token else None
         try:
-            setup_token = str(body.get("token", ""))
-            setup_email = str(body.get("email", "")).strip().lower()
+            if session and _password_on_file(session["user_id"], session["organization_id"]):
+                if not _password_matches_account(
+                    session["user_id"], session["organization_id"], str(body.get("currentPassword", ""))
+                ):
+                    return JSONResponse({"error": "Current password is incorrect."}, status_code=401)
+                _replace_password(session["user_id"], session["organization_id"], password)
+                return JSONResponse({"status": "password_set"}, status_code=201)
             identity = store.resolve_token(setup_token)
+            if identity and _password_on_file(identity["user_id"], identity["organization_id"]):
+                return JSONResponse(
+                    {"error": "A password is already set. Sign in and change it with your current password."},
+                    status_code=403,
+                )
             if identity and identity["access"] == "read":
                 return JSONResponse(
                     {"error": "Read-only API keys cannot set a password."}, status_code=403
@@ -524,7 +875,7 @@ def create_app(
                     return JSONResponse(
                         {"error": "This invite does not match that email address."}, status_code=401
                     )
-            ok = store.set_password(setup_token, str(body.get("password", "")))
+            ok = store.set_password(setup_token, password)
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         if not ok:
@@ -550,7 +901,7 @@ def create_app(
             "hoja_session",
             session_token,
             httponly=True,
-            secure=request.url.scheme == "https",
+            secure=_cookie_secure(request),
             samesite="lax",
             max_age=14 * 24 * 60 * 60,
             path="/",
@@ -710,7 +1061,7 @@ def create_app(
             "hoja_session",
             session_token,
             httponly=True,
-            secure=request.url.scheme == "https",
+            secure=_cookie_secure(request),
             samesite="lax",
             max_age=14 * 24 * 60 * 60,
             path="/",
@@ -718,6 +1069,16 @@ def create_app(
         return response
 
     async def auth_login(request: Request):
+        body = await request.json()
+        keys = _limit_keys(request, str(body.get("email", "")).strip().lower())
+        if limiter.blocked(keys):
+            return _too_many_attempts()
+        response = await _login(request)
+        if response.status_code == 401:
+            limiter.record(keys)
+        return response
+
+    async def _login(request: Request):
         body = await request.json()
         email = str(body.get("email", ""))
         password = str(body.get("password", ""))
@@ -742,6 +1103,8 @@ def create_app(
                     status_code=503,
                 )
             if len(matches) > 1:
+                if not _email_password_ok(email, password):
+                    return JSONResponse({"error": "Invalid credentials"}, status_code=401)
                 return JSONResponse(
                     {"error": "Choose a workspace", "workspaces": matches}, status_code=409
                 )
@@ -786,7 +1149,7 @@ def create_app(
             "hoja_session",
             session_token,
             httponly=True,
-            secure=request.url.scheme == "https",
+            secure=_cookie_secure(request),
             samesite="lax",
             max_age=14 * 24 * 60 * 60,
             path="/",
@@ -795,11 +1158,19 @@ def create_app(
 
     async def auth_workspaces(request: Request):
         body = await request.json()
-        return JSONResponse(
-            {"workspaces": store.matching_login_workspaces(str(body.get("email", "")))}
-        )
+        email = str(body.get("email", "")).strip().lower()
+        keys = _limit_keys(request, email)
+        if limiter.blocked(keys):
+            return _too_many_attempts()
+        if not _email_password_ok(email, str(body.get("password", ""))):
+            limiter.record(keys)
+            return JSONResponse({"error": "Invalid credentials"}, status_code=401)
+        return JSONResponse({"workspaces": store.matching_login_workspaces(email)})
 
     async def auth_logout(request: Request):
+        csrf = _cookie_csrf_error(request, json_only=False)
+        if csrf:
+            return csrf
         session_token = request.cookies.get("hoja_session")
         if session_token:
             store.revoke_browser_session(session_token)
@@ -814,7 +1185,7 @@ def create_app(
         return JSONResponse({"userId": uid, "organizationId": org})
 
     async def health(request: Request):
-        return JSONResponse({"status": "ok", "open_mode": open_mode})
+        return JSONResponse({"status": "ok"})
 
     async def ready(request: Request):
         try:
@@ -929,4 +1300,5 @@ def create_app(
         ],
         lifespan=lifespan,
     )
+    app.add_middleware(_SecurityHeaders)
     return app

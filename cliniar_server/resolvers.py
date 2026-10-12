@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import base64
+import binascii
 import json
 
 from graphql import GraphQLError
@@ -59,6 +60,25 @@ def _ctx(info):
     return info.context["store"], info.context["writer"], info.context["org_id"], info.context["user_id"]
 
 
+_MAX_PAGE = 250
+
+
+def _read_only(info) -> bool:
+    return info.context.get("access") == "read"
+
+_DEFAULT_PAGE = 50
+
+
+def _page_size(value, default=_DEFAULT_PAGE) -> int:
+    """Clamp first/last to 1..250; null means the default. Out-of-range values are rejected."""
+    if value is None:
+        return default
+    if type(value) is not int or not 1 <= value <= _MAX_PAGE:
+        raise GraphQLError(f"first must be an integer from 1 to {_MAX_PAGE}.",
+                           extensions={"code": "BAD_USER_INPUT", "field": "first"})
+    return value
+
+
 def _conn(nodes: list) -> dict:
     return {
         "nodes": nodes,
@@ -85,8 +105,8 @@ def _decode_issue_cursor(cursor: str | None):
         if not isinstance(value, list) or len(value) != 2 or not all(isinstance(part, str) and part for part in value):
             raise ValueError
         return value[0], value[1]
-    except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError("Invalid issue cursor.") from exc
+    except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError, binascii.Error) as exc:
+        raise GraphQLError("Invalid issue cursor.", extensions={"code": "BAD_USER_INPUT", "field": "after"}) from exc
 
 
 def _activity_cursor(row):
@@ -102,8 +122,8 @@ def _decode_activity_cursor(cursor):
         if not isinstance(value, list) or len(value) != 2 or not all(isinstance(x, str) for x in value):
             raise ValueError
         return value
-    except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError("Invalid activity cursor.") from exc
+    except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError, binascii.Error) as exc:
+        raise GraphQLError("Invalid activity cursor.", extensions={"code": "BAD_USER_INPUT", "field": "after"}) from exc
 
 
 def _project_update_cursor(row):
@@ -111,7 +131,7 @@ def _project_update_cursor(row):
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
-def _decode_project_update_cursor(cursor):
+def _decode_project_update_cursor(cursor, label="project update"):
     if cursor is None:
         return None
     try:
@@ -119,16 +139,15 @@ def _decode_project_update_cursor(cursor):
         if not isinstance(value, list) or len(value) != 2 or not all(isinstance(x, str) and x for x in value):
             raise ValueError
         return value
-    except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError("Invalid project update cursor.") from exc
+    except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError, binascii.Error) as exc:
+        raise GraphQLError(f"Invalid {label} cursor.", extensions={"code": "BAD_USER_INPUT", "field": "after"}) from exc
 
 
 # ----------------------------------------------------------------- Query
 @query.field("inboxNotifications")
 def r_inbox_notifications(_, info, first=50, after=None, unreadOnly=False, archived=False):
     store, _w, org, uid = _ctx(info)
-    if first < 0:
-        raise ValueError("first must be non-negative.")
+    first = _page_size(first)
     cursor = _decode_activity_cursor(after)
     rows = store.inbox_notifications(org, uid, cursor, first + 1,
                                      unread_only=unreadOnly, archived=archived)
@@ -171,8 +190,8 @@ InboxNotification = ObjectType("InboxNotification")
 
 @InboxNotification.field("issue")
 def inbox_issue(obj, info):
-    store, _w, org, _uid = _ctx(info)
-    return store.issue_by_id_or_identifier(org, obj["_issue_id"])
+    store, _w, org, uid = _ctx(info)
+    return store.issue_by_id_or_identifier(org, obj["_issue_id"], viewer_id=uid)
 
 
 @InboxNotification.field("actor")
@@ -237,6 +256,7 @@ def r_my_workspaces(_, info):
 @query.field("organizationMembers")
 def r_organization_members(_, info, first=100):
     store, _w, org, uid = _ctx(info)
+    first = _page_size(first, 100)
     return _conn([store.ser_user(member, uid) for member in store.organization_members(org)[:first]])
 
 
@@ -248,17 +268,18 @@ def r_workspace(_, info):
 
 @query.field("teams")
 def r_teams(_, info, first=50, after=None, filter=None):
-    store, _w, org, _uid = _ctx(info)
+    store, _w, org, uid = _ctx(info)
+    first = _page_size(first)
     key = None
     if filter and "key" in filter and "eq" in filter["key"]:
         key = filter["key"]["eq"]
-    return _conn(store.teams(org, key=key)[:first])
+    return _conn(store.teams(org, key=key, viewer_id=uid)[:first])
 
 
 @query.field("team")
 def r_team(_, info, id):
-    store, _w, org, _uid = _ctx(info)
-    row = store.team_by_id_or_key(org, id)
+    store, _w, org, uid = _ctx(info)
+    row = store.team_by_id_or_key(org, id, viewer_id=uid)
     if not row:
         return None
     t = store.ser_team(row)
@@ -272,8 +293,7 @@ def r_issues(_, info, filter=None, first=50, after=None, orderBy="updatedAt"):  
     order_by = orderBy or "updatedAt"
     if order_by not in ("updatedAt", "createdAt"):
         raise ValueError("Unsupported issue ordering.")
-    if first < 0:
-        raise ValueError("first must be non-negative.")
+    first = _page_size(first)
     cursor = _decode_issue_cursor(after)
     rows = store.issues(org, uid, filter, order_by=order_by, after=cursor, limit=first + 1)
     nodes = rows[:first]
@@ -289,15 +309,14 @@ def r_issues(_, info, filter=None, first=50, after=None, orderBy="updatedAt"):  
 
 @query.field("issue")
 def r_issue(_, info, id):
-    store, _w, org, _uid = _ctx(info)
-    return store.issue_by_id_or_identifier(org, id)
+    store, _w, org, uid = _ctx(info)
+    return store.issue_by_id_or_identifier(org, id, viewer_id=uid)
 
 
 @query.field("projects")
 def r_projects(_, info, filter=None, first=50, after=None):
     store, _w, org, _uid = _ctx(info)
-    if first < 0:
-        raise ValueError("first must be non-negative.")
+    first = _page_size(first)
     cursor = _decode_project_update_cursor(after)
     rows = store.projects(org, filter, after=cursor, limit=first + 1)
     nodes = rows[:first]
@@ -313,8 +332,8 @@ def r_projects(_, info, filter=None, first=50, after=None):
 @query.field("initiatives")
 def r_initiatives(_, info, first=50, after=None, status=None):
     store, _w, org, _uid = _ctx(info)
-    if first < 0: raise ValueError("first must be non-negative.")
-    cursor = _decode_project_update_cursor(after)
+    first = _page_size(first)
+    cursor = _decode_project_update_cursor(after, "initiative")
     rows = store.initiatives(org, after=cursor, status=status, limit=first + 1)
     nodes = rows[:first]
     result = _conn(nodes)
@@ -330,8 +349,7 @@ def r_initiative(_, info, id):
 @query.field("projectUpdates")
 def r_project_updates(_, info, first=50, after=None, filter=None):
     store, _w, org, _uid = _ctx(info)
-    if first < 0:
-        raise ValueError("first must be non-negative.")
+    first = _page_size(first)
     project_filter = (filter or {}).get("project") or {}
     project_id = (project_filter.get("id") or {}).get("eq")
     cursor = _decode_project_update_cursor(after)
@@ -354,22 +372,26 @@ def r_project(_, info, id):
 
 @query.field("workflowStates")
 def r_workflow_states(_, info, filter=None, first=100, after=None):
-    store, _w, org, _uid = _ctx(info)
-    return _conn(store.workflow_states(org, filter)[:first])
+    store, _w, org, uid = _ctx(info)
+    first = _page_size(first, 100)
+    return _conn(store.workflow_states(org, filter, viewer_id=uid)[:first])
 
 
 @query.field("cycles")
 def r_cycles(_, info, filter=None, first=100, after=None):
-    store, writer, org, _uid = _ctx(info)
-    if filter and "team" in filter and "id" in filter["team"] and "eq" in filter["team"]["id"]:
-        writer.reconcile_team_cadence(org, filter["team"]["id"]["eq"])
-    return _conn(store.cycles(org, filter)[:first])
+    store, writer, org, uid = _ctx(info)
+    first = _page_size(first, 100)
+    if not _read_only(info) and filter and "team" in filter and "id" in filter["team"] and "eq" in filter["team"]["id"]:
+        writer.reconcile_team_cadence(org, filter["team"]["id"]["eq"], viewer_id=uid)
+    return _conn(store.cycles(org, filter, viewer_id=uid)[:first])
 
 
 @query.field("teamCycleCadence")
 def r_team_cycle_cadence(_, info, teamId):
-    store, writer, org, _uid = _ctx(info)
-    return writer.reconcile_team_cadence(org, teamId)
+    store, writer, org, uid = _ctx(info)
+    if _read_only(info):
+        return store.team_cadence_snapshot(org, teamId, uid)
+    return writer.reconcile_team_cadence(org, teamId, viewer_id=uid)
 
 
 @mutation.field("teamCycleCadenceEnable")
@@ -389,7 +411,8 @@ def r_cycle(_, info, id):
 
 @query.field("issueLabels")
 def r_labels(_, info, filter=None, first=100, after=None):
-    store, _w, org, _uid = _ctx(info)
+    store, _w, org, uid = _ctx(info)
+    first = _page_size(first, 100)
     team_id = None
     name = None
     if filter:
@@ -397,13 +420,14 @@ def r_labels(_, info, filter=None, first=100, after=None):
             team_id = filter["team"]["id"]["eq"]
         if "name" in filter and "eq" in filter["name"]:
             name = filter["name"]["eq"]
-    return _conn(store.labels(org, team_id=team_id, name=name)[:first])
+    return _conn(store.labels(org, team_id=team_id, name=name, viewer_id=uid)[:first])
 
 
 @query.field("searchIssues")
 def r_search(_, info, term, first=20):
-    store, _w, org, _uid = _ctx(info)
-    return _conn(store.search_issues(org, term)[:first])
+    store, _w, org, uid = _ctx(info)
+    first = _page_size(first, 20)
+    return _conn(store.search_issues(org, term, viewer_id=uid)[:first])
 
 
 @query.field("rateLimitStatus")
@@ -419,42 +443,49 @@ def r_rate_limit(_, info):
 # ----------------------------------------------------------------- Team fields
 @Team.field("states")
 def t_states(obj, info, first=100):
-    store, _w, org, _uid = _ctx(info)
-    return _conn(store.team_states(org, obj["id"])[:first])
+    store, _w, org, uid = _ctx(info)
+    first = _page_size(first, 100)
+    return _conn(store.team_states(org, obj["id"], viewer_id=uid)[:first])
 
 
 @Team.field("members")
 def t_members(obj, info, first=100):
-    store, _w, org, _uid = _ctx(info)
-    return _conn(store.team_members(org, obj["id"])[:first])
+    store, _w, org, uid = _ctx(info)
+    first = _page_size(first, 100)
+    return _conn(store.team_members(org, obj["id"], viewer_id=uid)[:first])
 
 
 @Team.field("cycles")
 def t_cycles(obj, info, first=50):
-    store, writer, org, _uid = _ctx(info)
-    writer.reconcile_team_cadence(org, obj["id"])
-    return _conn(store.team_cycles(org, obj["id"])[:first])
+    store, writer, org, uid = _ctx(info)
+    first = _page_size(first)
+    if not _read_only(info):
+        writer.reconcile_team_cadence(org, obj["id"], viewer_id=uid)
+    return _conn(store.team_cycles(org, obj["id"], viewer_id=uid)[:first])
 
 
 @Team.field("activeCycle")
 def t_active_cycle(obj, info):
-    store, _w, org, _uid = _ctx(info)
+    store, writer, org, uid = _ctx(info)
     cid = obj.get("_active_cycle_id")
     if not cid:
         return None
-    status = info.context["writer"].reconcile_team_cadence(org, obj["id"])
-    return status["activeCycle"] if status["enabled"] else next((c for c in store.team_cycles(org, obj["id"]) if c["id"] == cid), None)
+    if _read_only(info):
+        status = store.team_cadence_snapshot(org, obj["id"], uid)
+    else:
+        status = writer.reconcile_team_cadence(org, obj["id"], viewer_id=uid)
+    return status["activeCycle"] if status["enabled"] else next((c for c in store.team_cycles(org, obj["id"], viewer_id=uid) if c["id"] == cid), None)
 
 
 # ----------------------------------------------------------------- State/cycle fields
 @WorkflowState.field("team")
 @Cycle.field("team")
 def reference_team(obj, info):
-    store, _w, org, _uid = _ctx(info)
+    store, _w, org, uid = _ctx(info)
     tid = obj.get("_team_id")
     if not tid:
         return None
-    return store.ser_team(store.raw_team(org, tid))
+    return store.ser_team(store.raw_team(org, tid, viewer_id=uid))
 
 
 # ----------------------------------------------------------------- Issue fields
@@ -478,8 +509,8 @@ def i_creator(obj, info):
 
 @Issue.field("team")
 def i_team(obj, info):
-    store, _w, org, _uid = _ctx(info)
-    row = store.raw_team(org, obj["_team_id"]) if obj.get("_team_id") else None
+    store, _w, org, uid = _ctx(info)
+    row = store.raw_team(org, obj["_team_id"], viewer_id=uid) if obj.get("_team_id") else None
     if not row:
         return None
     t = store.ser_team(row)
@@ -495,7 +526,7 @@ def i_project(obj, info):
 
 @Issue.field("cycle")
 def i_cycle(obj, info):
-    store, _w, org, _uid = _ctx(info)
+    store, _w, org, uid = _ctx(info)
     if not obj.get("_cycle_id"):
         return None
     with store.engine.connect() as conn:
@@ -503,38 +534,44 @@ def i_cycle(obj, info):
 
         from cliniar_server.db import cycle as cyc
         r = conn.execute(select(cyc).where(and_(cyc.c.organization_id == org, cyc.c.id == obj["_cycle_id"]))).first()
-        return store.ser_cycle(dict(r._mapping)) if r else None
+        if not r:
+            return None
+        if not store.team_visible_for(org, uid, r._mapping["team_id"]):
+            return None
+        return store.ser_cycle(dict(r._mapping))
 
 
 @Issue.field("parent")
 def i_parent(obj, info):
-    store, _w, org, _uid = _ctx(info)
-    return store.issue_by_id_or_identifier(org, obj["_parent_id"]) if obj.get("_parent_id") else None
+    store, _w, org, uid = _ctx(info)
+    return store.issue_by_id_or_identifier(org, obj["_parent_id"], viewer_id=uid) if obj.get("_parent_id") else None
 
 
 @Issue.field("labels")
 def i_labels(obj, info, first=50):
     store, _w, org, _uid = _ctx(info)
+    first = _page_size(first)
     return _conn(store.issue_labels_for(org, obj["id"])[:first])
 
 
 @Issue.field("subscribers")
 def i_subscribers(obj, info, first=50):
     store, _w, org, _uid = _ctx(info)
+    first = _page_size(first)
     return _conn(store.issue_subscribers_for(org, obj["id"])[:first])
 
 
 @Issue.field("comments")
 def i_comments(obj, info, first=50):
     store, _w, org, _uid = _ctx(info)
+    first = _page_size(first)
     return _conn(store.comments_for(org, obj["id"])[:first])
 
 
 @query.field("myIssueActivity")
 def r_my_issue_activity(_, info, first=50, after=None):
     store, _w, org, uid = _ctx(info)
-    if first < 0:
-        raise ValueError("first must be non-negative.")
+    first = _page_size(first)
     cursor = _decode_activity_cursor(after)
     rows = store.my_issue_activity(org, uid, cursor, first + 1)
     nodes = [dict(row, eventType=row["event_type"], createdAt=row["created_at"]) for row in rows[:first]]
@@ -547,8 +584,8 @@ def r_my_issue_activity(_, info, first=50, after=None):
 
 @MyIssueActivity.field("issue")
 def mia_issue(obj, info):
-    store, _w, org, _uid = _ctx(info)
-    return store.issue_by_id_or_identifier(org, obj["issue_id"])
+    store, _w, org, uid = _ctx(info)
+    return store.issue_by_id_or_identifier(org, obj["issue_id"], viewer_id=uid)
 
 
 @MyIssueActivity.field("actor")
@@ -560,8 +597,7 @@ def mia_actor(obj, info):
 @Issue.field("activity")
 def i_activity(obj, info, first=50, after=None):
     store, _w, org, _uid = _ctx(info)
-    if first < 0:
-        raise ValueError("first must be non-negative.")
+    first = _page_size(first)
     cursor = _decode_activity_cursor(after)
     rows = store.issue_activity_for(org, obj["id"], cursor, first + 1)
     nodes = [dict(row, eventType=row["event_type"], createdAt=row["created_at"]) for row in rows[:first]]
@@ -606,13 +642,15 @@ def p_creator(obj, info):
 @Project.field("members")
 def p_members(obj, info, first=100):
     store, _w, org, _uid = _ctx(info)
+    first = _page_size(first, 100)
     return _conn(store.project_members(org, obj["id"])[:first])
 
 
 @Project.field("teams")
 def p_teams(obj, info, first=100):
-    store, _w, org, _uid = _ctx(info)
-    return _conn(store.project_teams(org, obj["id"])[:first])
+    store, _w, org, uid = _ctx(info)
+    first = _page_size(first, 100)
+    return _conn(store.project_teams(org, obj["id"], viewer_id=uid)[:first])
 
 
 # ----------------------------------------------------------------- Comment fields
@@ -645,7 +683,7 @@ def m_workspace_create(_, info, input):
 def m_team_create(_, info, input):
     store, writer, org, uid = _ctx(info)
     tid = writer.team_create(org, uid, input)
-    row = store.team_by_id_or_key(org, tid)
+    row = store.team_by_id_or_key(org, tid, viewer_id=uid)
     return {"success": True, "team": store.ser_team(row)}
 
 
@@ -806,7 +844,7 @@ def m_member_invite(_, info, input):
         return {"success": False, "user": None, "apiKey": None}
     team_ids = input.get("teamIds") or []
     for team_id in team_ids:
-        if not store.team_by_id_or_key(org, team_id):
+        if not store.team_by_id_or_key(org, team_id, viewer_id=uid):
             raise GraphQLError("Team not found", extensions={"code": "BAD_USER_INPUT", "field": "teamIds"})
     created = store.invite_member(org, input.get("name", ""), input.get("email", ""),
                                   bool(input.get("admin", False)), team_ids)
@@ -821,7 +859,7 @@ def _set_team_membership(info, team_id, user_id, *, add: bool):
     actor = store.get_user(org, uid)
     if not actor or not actor.get("admin"):
         return {"success": False, "user": None, "apiKey": None}
-    if not store.team_by_id_or_key(org, team_id):
+    if not store.team_by_id_or_key(org, team_id, viewer_id=uid):
         raise GraphQLError("Team not found", extensions={"code": "BAD_USER_INPUT", "field": "teamId"})
     target = store.get_user(org, user_id)
     if not target:
@@ -846,16 +884,16 @@ def m_issue_create(_, info, input):
     iid = w.issue_create(org, uid, input)
     if not iid:
         return {"success": False, "issue": None}
-    return {"success": True, "issue": store.issue_by_id_or_identifier(org, iid)}
+    return {"success": True, "issue": store.issue_by_id_or_identifier(org, iid, viewer_id=uid)}
 
 
 @mutation.field("issueUpdate")
 def m_issue_update(_, info, id, input):
-    store, w, org, _uid = _ctx(info)
-    iid = w.issue_update(org, id, input, actor_id=_uid)
+    store, w, org, uid = _ctx(info)
+    iid = w.issue_update(org, id, input, actor_id=uid)
     if not iid:
         return {"success": False, "issue": None}
-    return {"success": True, "issue": store.issue_by_id_or_identifier(org, iid)}
+    return {"success": True, "issue": store.issue_by_id_or_identifier(org, iid, viewer_id=uid)}
 
 
 @mutation.field("issueDelete")
@@ -881,8 +919,8 @@ def m_comment_create(_, info, input):
 
 @mutation.field("commentUpdate")
 def m_comment_update(_, info, id, input):
-    store, w, org, _uid = _ctx(info)
-    cid = w.comment_update(org, id, input)
+    store, w, org, uid = _ctx(info)
+    cid = w.comment_update(org, uid, id, input)
     if not cid:
         return {"success": False, "comment": None}
     return {"success": True, "comment": _get_comment(store, org, cid)}
@@ -937,8 +975,8 @@ def m_project_create(_, info, input):
 
 @mutation.field("projectUpdate")
 def m_project_update(_, info, id, input):
-    store, w, org, _uid = _ctx(info)
-    pid = w.project_update(org, id, input)
+    store, w, org, uid = _ctx(info)
+    pid = w.project_update(org, uid, id, input)
     return {"success": bool(pid), "project": store.project_by_id(org, pid) if pid else None}
 
 
@@ -953,8 +991,8 @@ def m_project_update_create(_, info, input):
 
 @mutation.field("projectArchive")
 def m_project_archive(_, info, id):
-    _s, w, org, _uid = _ctx(info)
-    return {"success": w.project_archive(org, id)}
+    _s, w, org, uid = _ctx(info)
+    return {"success": w.project_archive(org, uid, id)}
 
 @mutation.field("initiativeCreate")
 def m_initiative_create(_, info, input):
@@ -983,8 +1021,8 @@ def m_attachment_create(_, info, input):
 
 @Attachment.field("issue")
 def a_issue(obj, info):
-    store, _w, org, _uid = _ctx(info)
-    return store.issue_by_id_or_identifier(org, obj["_issue_id"])
+    store, _w, org, uid = _ctx(info)
+    return store.issue_by_id_or_identifier(org, obj["_issue_id"], viewer_id=uid)
 
 
 def _get_comment(store, org, cid):
