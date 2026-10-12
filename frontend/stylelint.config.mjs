@@ -1,8 +1,9 @@
 // Structural errors rather than formatting: legacy CSS is intentionally compact.
 import noUnstretchedChromeWrapper from './stylelint-plugins/no-unstretched-chrome-wrapper.mjs';
+import noLightTextWithoutDarkGround from './stylelint-plugins/no-light-text-without-dark-ground.mjs';
 
 export default {
-  plugins: [noUnstretchedChromeWrapper],
+  plugins: [noUnstretchedChromeWrapper, noLightTextWithoutDarkGround],
   rules: {
     'block-no-empty': true,
     'color-no-invalid-hex': true,
@@ -16,5 +17,6 @@ export default {
     'selector-pseudo-element-no-unknown': true,
     'unit-no-unknown': true,
     'clinear/no-unstretched-chrome-wrapper': true,
+    'clinear/no-light-text-without-dark-ground': true,
   },
 };
