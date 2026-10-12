@@ -66,6 +66,7 @@ from cliniar_server.db import (
     token_hash,
     user,
 )
+from cliniar_server.denials import DENY_HINT, hint_for
 from cliniar_server.resolvers import build_schema
 from cliniar_server.secrets_box import SecretBoxError
 from cliniar_server.store import Store
@@ -123,6 +124,7 @@ _LOGIN_FAILURE_LIMIT = 10
 _LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60
 _CSP_HTML = "frame-ancestors 'none'; object-src 'none'; base-uri 'self'"
 _graphql_log = logging.getLogger("cliniar_server.graphql")
+_security_log = logging.getLogger("cliniar_server.security")
 
 
 def _bad_request(message: str) -> JSONResponse:
@@ -204,7 +206,11 @@ def _format_graphql_error(error, debug=False):
     """Surface GraphQL and intentional ValueError messages; mask unexpected server exceptions."""
     original = error.original_error
     if original is None or isinstance(original, (GraphQLError, ValueError, SecretBoxError)):
-        return format_error(error, debug)
+        formatted = format_error(error, debug)
+        extensions = formatted.get("extensions") or {}
+        if extensions.get("code") in ("FORBIDDEN", "AUTHENTICATION_ERROR"):
+            formatted["extensions"] = {**extensions, "agentHint": DENY_HINT}
+        return formatted
     _graphql_log.error("GraphQL resolver failed", exc_info=original)
     return {"message": "Internal error", "extensions": {"code": "INTERNAL_SERVER_ERROR"}}
 
@@ -240,6 +246,22 @@ def _too_many_attempts() -> JSONResponse:
     )
 
 
+def _with_agent_hint(body: bytes, status: int) -> bytes:
+    """Attach the model-facing denial hint to a JSON error body (GraphQL-shaped or plain)."""
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return body
+    if not isinstance(data, dict):
+        return body
+    if "errors" in data:
+        extensions = data.get("extensions")
+        data["extensions"] = {**(extensions if isinstance(extensions, dict) else {}), "agentHint": hint_for(status)}
+    else:
+        data["agentHint"] = hint_for(status)
+    return json.dumps(data).encode()
+
+
 class _SecurityHeaders:
     """Adds baseline security headers to every HTTP response."""
 
@@ -251,7 +273,11 @@ class _SecurityHeaders:
             await self.app(scope, receive, send)
             return
 
+        denied_start = None
+        denied_body = b""
+
         async def send_with_headers(message):
+            nonlocal denied_start, denied_body
             if message["type"] == "http.response.start":
                 headers = MutableHeaders(scope=message)
                 headers["X-Content-Type-Options"] = "nosniff"
@@ -259,6 +285,21 @@ class _SecurityHeaders:
                 headers["Referrer-Policy"] = "same-origin"
                 if headers.get("content-type", "").startswith("text/html"):
                     headers["Content-Security-Policy"] = _CSP_HTML
+                if message["status"] in (401, 403, 429):
+                    _security_log.warning("denied status=%s method=%s path=%s",
+                                          message["status"], scope.get("method"), scope.get("path"))
+                    if headers.get("content-type", "").startswith("application/json"):
+                        denied_start = message
+                        return
+            elif message["type"] == "http.response.body" and denied_start is not None:
+                denied_body += message.get("body", b"")
+                if message.get("more_body"):
+                    return
+                denied_body = _with_agent_hint(denied_body, denied_start["status"])
+                MutableHeaders(scope=denied_start)["content-length"] = str(len(denied_body))
+                await send(denied_start)
+                await send({"type": "http.response.body", "body": denied_body})
+                return
             await send(message)
 
         await self.app(scope, receive, send_with_headers)

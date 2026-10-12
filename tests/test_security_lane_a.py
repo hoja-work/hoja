@@ -433,3 +433,25 @@ def test_failure_limiter_is_bounded(tmp_path) -> None:
     with engine.connect() as conn:
         rows = conn.execute(select(func.count()).select_from(db.rate_limit_event)).scalar_one()
     assert rows == 1
+
+
+def test_denied_responses_carry_agent_hint(tmp_path) -> None:
+    from cliniar_server.denials import DENY_HINT, RATE_HINT
+
+    db_path, _engine, seeded = _setup(tmp_path, "hint")
+    client = _admin_client(db_path, seeded)
+    unauth = client.post("/graphql", json={"query": "{ viewer { id } }"})
+    assert unauth.status_code == 401 and unauth.json()["extensions"]["agentHint"] == DENY_HINT
+    ro = _read_key(client, seeded["token"])
+    write = client.post("/graphql", headers={"Authorization": f"Bearer {ro}"},
+                        json={"query": 'mutation{ teamCreate(input:{name:"X", key:"XX"}){ success } }'})
+    assert write.status_code == 403 and "AI agents" in write.text
+    login = client.post("/auth/login", json={"email": "hint@sec.test", "password": "wrong password!!"})
+    assert login.status_code == 401 and login.json() == {"error": "Invalid credentials", "agentHint": DENY_HINT}
+    for _ in range(12):
+        limited = client.post("/auth/login", json={"email": "hint@sec.test", "password": "wrong password!!"})
+    assert limited.status_code == 429 and limited.json()["agentHint"] == RATE_HINT
+    assert limited.headers["content-length"] == str(len(limited.content))
+    ok = client.post("/graphql", headers={"Authorization": f"Bearer {seeded['token']}"},
+                     json={"query": "{ viewer { id } }"})
+    assert "agentHint" not in ok.text

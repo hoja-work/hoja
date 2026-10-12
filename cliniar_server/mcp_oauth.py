@@ -32,6 +32,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from cliniar_server import db
+from cliniar_server.denials import DENY_HINT
 from cliniar_server.mcp_tools import INSTRUCTIONS as MCP_INSTRUCTIONS
 
 READ_SCOPE = "hoja:read"
@@ -531,22 +532,22 @@ def build_server(provider: HojaOAuthProvider, public_host: str | None = None) ->
 
         access = get_access_token()
         if access is None or not access.subject:
-            raise ToolError("OAuth authentication is required.")
+            raise ToolError("OAuth authentication is required. " + DENY_HINT)
         granted = set(access.scopes)
         if write and WRITE_SCOPE not in granted:
             raise ToolError(
                 f"This connection is read-only: the {WRITE_SCOPE} scope was not granted, so nothing was changed. "
-                "Ask the user to reconnect the Hoja MCP with write access."
+                "Ask the user to reconnect the Hoja MCP with write access. " + DENY_HINT
             )
         if READ_SCOPE not in granted:
-            raise ToolError(f"OAuth scope {READ_SCOPE} is required.")
+            raise ToolError(f"OAuth scope {READ_SCOPE} is required. " + DENY_HINT)
         try:
             identity = json.loads(access.subject)
             user_id, org_id = identity["user_id"], identity["org_id"]
         except (ValueError, KeyError, TypeError) as exc:
-            raise ToolError("OAuth identity is invalid.") from exc
+            raise ToolError("OAuth identity is invalid. " + DENY_HINT) from exc
         if not provider.store.membership_for_profile(org_id, user_id):
-            raise ToolError("Active organization membership is required.")
+            raise ToolError("Active organization membership is required. " + DENY_HINT)
         return {
             "store": provider.store,
             "writer": provider.writer,

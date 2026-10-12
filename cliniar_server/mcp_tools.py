@@ -37,6 +37,8 @@ from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase, FuncMetad
 from mcp.types import ToolAnnotations
 from pydantic import ConfigDict
 
+from cliniar_server.denials import DENY_HINT
+
 log = logging.getLogger("hoja.mcp")
 
 READ_TOOLS: dict[str, str] = {
@@ -486,7 +488,10 @@ def _error_text(op: str, errors: list[GraphQLError]) -> str:
         elif field and field not in message:
             message += f" (field: {field})"
         messages.append(message)
-    return f"hoja_{op} failed: " + "; ".join(dict.fromkeys(messages))
+    text = f"hoja_{op} failed: " + "; ".join(dict.fromkeys(messages))
+    if any((err.extensions or {}).get("code") in ("FORBIDDEN", "AUTHENTICATION_ERROR") for err in errors):
+        text += " " + DENY_HINT
+    return text
 
 
 def build_tools(schema: GraphQLSchema, principal: Callable[[bool], dict]) -> list[Tool]:

@@ -28,6 +28,7 @@ from cliniar_server.agent_prompt import compose_prompt, workspace_snapshot
 from cliniar_server.agent_threads import _owned as _owned_thread
 from cliniar_server.agent_threads import _title_from
 from cliniar_server.db import model_provider
+from cliniar_server.denials import DENY_HINT
 from cliniar_server.model_providers import validate_model_base_url
 from cliniar_server.secrets_box import decrypt_secret
 
@@ -85,7 +86,7 @@ def build_agent(model, schema_sdl: str, connector: ConnectorBinding | None = Non
         """Run a GraphQL query or mutation against Hoja as the signed-in user.
         `query` is REQUIRED and must be a non-empty GraphQL string. Call `schema` first if you need field names."""
         if read_only_violation(query, ctx.deps.context.get("access", "read")):
-            return {"errors": [{"message": "This API key is read-only.", "extensions": {"code": "FORBIDDEN"}}]}
+            return {"errors": [{"message": "This API key is read-only.", "extensions": {"code": "FORBIDDEN", "agentHint": DENY_HINT}}]}
         _ok, result = await graphql_run(ctx.deps.schema, query, variables or {}, ctx.deps.context)
         return result
 
