@@ -10,7 +10,7 @@ import smtplib
 import ssl
 from dataclasses import dataclass
 from email.message import EmailMessage
-from email.utils import parseaddr
+from email.utils import formataddr, parseaddr
 
 
 class EmailAdapterError(RuntimeError):
@@ -39,13 +39,18 @@ class SMTPConfig:
             raise ValueError("SMTP username and password must be supplied together")
 
 
+_DISPLAY_NAME_FORBIDDEN = set('<>@,;:"\\')
+
+
 def _validated_address(value: str, field: str) -> str:
-    if not isinstance(value, str):
-        raise EmailAdapterError(f"{field} must be an email address")
-    display_name, address = parseaddr(value)
-    if not address or "@" not in address or "\r" in value or "\n" in value:
+    if not isinstance(value, str) or not value.isprintable():
         raise EmailAdapterError(f"{field} must be a valid email address")
-    return f"{display_name} <{address}>" if display_name else address
+    display_name, address = parseaddr(value)
+    if not address or address.count("@") != 1 or any(ch.isspace() for ch in address):
+        raise EmailAdapterError(f"{field} must be a valid email address")
+    if any(ch in _DISPLAY_NAME_FORBIDDEN for ch in display_name):
+        raise EmailAdapterError(f"{field} display name contains disallowed characters")
+    return formataddr((display_name, address))
 
 
 def send_email(
@@ -63,7 +68,7 @@ def send_email(
     """
     if not isinstance(config, SMTPConfig):
         raise EmailAdapterError("config must be an SMTPConfig")
-    if not isinstance(subject, str) or "\r" in subject or "\n" in subject:
+    if not isinstance(subject, str) or not subject.isprintable():
         raise EmailAdapterError("subject must be a single-line string")
     if not isinstance(text, str):
         raise EmailAdapterError("text body must be a string")

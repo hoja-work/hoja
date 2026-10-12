@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
+import openai
 from ariadne import graphql
 from fastmcp.client.transports import StreamableHttpTransport
 from google_workspace.mcp_server import PRINCIPAL_HEADER
@@ -26,6 +28,7 @@ from cliniar_server.agent_prompt import compose_prompt, workspace_snapshot
 from cliniar_server.agent_threads import _owned as _owned_thread
 from cliniar_server.agent_threads import _title_from
 from cliniar_server.db import model_provider
+from cliniar_server.model_providers import validate_model_base_url
 from cliniar_server.secrets_box import decrypt_secret
 
 INSTRUCTIONS = """You are the Hoja workspace agent for Clover. Hoja is a Linear-compatible issue tracker.
@@ -171,8 +174,24 @@ async def stream_reply(store, org_id: str, uid: str, messages: list[dict], schem
         yield "data: [DONE]\n\n"
         return
     provider = OpenAIProvider(base_url=row["base_url"], api_key=decrypt_secret(row["encrypted_api_key"]))
-    agent = build_agent(OpenAIChatModel(row["model_id"], provider=provider), schema_sdl, connector)
     yield _chunk(completion_id, {"role": "assistant"})
+    try:
+        base_url = await asyncio.to_thread(validate_model_base_url, row["base_url"])
+    except ValueError:
+        yield _chunk(completion_id, {"content": "The configured model URL is not allowed. Ask a workspace admin to fix it."}, "stop")
+        yield "data: [DONE]\n\n"
+        return
+    if not base_url:
+        base_url = None
+    http_client = openai.DefaultAsyncHttpxClient(follow_redirects=False)
+    provider = OpenAIProvider(
+        openai_client=openai.AsyncOpenAI(
+            base_url=base_url,
+            api_key=decrypt_secret(row["encrypted_api_key"]),
+            http_client=http_client,
+        )
+    )
+    agent = build_agent(OpenAIChatModel(row["model_id"], provider=provider), schema_sdl, connector)
     deps = AgentDeps(schema, dict(base_context))
     with store.engine.begin() as conn:
         if thread_id and _owned_thread(conn, org_id, uid, thread_id):
