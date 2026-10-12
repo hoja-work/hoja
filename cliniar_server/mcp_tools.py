@@ -71,7 +71,8 @@ WRITE_TOOLS: dict[str, str] = {
     "issueCreate": "Create an issue. Returns the created issue including its identifier.",
     "issueUpdate": (
         "Update an issue: title, description, priority, state (by name), assignee "
-        "('me', email or name), project, cycle, labels, estimate, due date. Returns the updated issue."
+        "('me', email or name), project, cycle, labels, estimate, due date. Send ONLY the fields to change; "
+        "every field you send is written (labelIds replaces all labels). Returns the updated issue."
     ),
     "issueArchive": "Archive an issue (reversible; prefer this over delete).",
     "issueDelete": "Permanently delete an issue. Confirm with the user first.",
@@ -117,7 +118,7 @@ FIELD_HINTS = {
     "projectIds": "Project names or ids.",
     "issueId": "Issue identifier (e.g. ENG-12) or id.",
     "parentId": "Parent issue id.",
-    "priority": "0 none, 1 urgent, 2 high, 3 medium, 4 low.",
+    "priority": "1 urgent, 2 high, 3 medium, 4 low (or those names). On updates use \"none\" to clear; 0 is ignored.",
     "first": "Page size.",
     "after": "Cursor from a previous pageInfo.endCursor.",
     "dueDate": "ISO-8601 date-time.",
@@ -255,6 +256,22 @@ class _RawArgs(ArgModelBase):
         return {"args": dict(self.model_extra or {})}
 
 
+def _prune(value):
+    """Drop placeholder values some clients send for every optional field.
+
+    Removes "", [] and {} and comparator objects with eq == neq, which can never match.
+    """
+    if isinstance(value, dict):
+        pruned = {k: _prune(v) for k, v in value.items()}
+        pruned = {k: v for k, v in pruned.items() if v not in ("", [], {})}
+        if "eq" in pruned and "neq" in pruned and pruned["eq"] == pruned["neq"]:
+            return {}
+        return pruned
+    if isinstance(value, list):
+        return [_prune(v) for v in value]
+    return value
+
+
 class _Spec:
     def __init__(self, schema: GraphQLSchema, op: str, write: bool, description: str):
         self.op, self.write = op, write
@@ -310,9 +327,12 @@ class _Spec:
                 f"Unknown argument(s) {', '.join(unknown)} for hoja_{self.op}. "
                 f"Valid arguments: {', '.join(sorted(self.parameters['properties'])) or '(none)'}."
             )
-        flat = dict(args)
+        flat = _prune(args)
         if self.flat_input is not None and isinstance(flat.get("input"), dict):
             flat = {**flat.pop("input"), **flat}
+        if self.op.endswith("Update"):
+            # Clients that fill every field send 0 for untouched numbers; clearing needs an explicit "none".
+            flat = {k: v for k, v in flat.items() if not (k in ("priority", "estimate") and v == 0 and v is not False)}
         for key, value in list(flat.items()):
             gtype = self._type_of(key)
             if isinstance(value, str) and gtype is not None and (
@@ -532,7 +552,9 @@ INSTRUCTIONS = (
     "accept friendly values: teamId takes a team key; assigneeId/leadId/userId take 'me', an email or an exact "
     "member name; stateId takes a state name like 'In Progress'; labelIds and projectId take names. Results "
     "contain the affected entity, so read them to confirm what changed. Errors name the argument that was "
-    "wrong; fix it instead of guessing other parameters. If a person, team or state does not exist, tell the "
+    "wrong; fix it instead of guessing other parameters. Omit optional arguments you do not need: empty "
+    "strings/lists and 0 for priority/estimate on updates are ignored (use priority \"none\" to clear it). "
+    "If a person, team or state does not exist, tell the "
     "user rather than substituting another. Write tools require the hoja:write scope; confirm with the user "
     "before deleting anything."
 )

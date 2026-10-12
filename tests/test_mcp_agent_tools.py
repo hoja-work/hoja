@@ -146,6 +146,20 @@ def test_writes_accept_friendly_references_and_return_entity(hoja) -> None:
     assert ok and nested["issueUpdate"]["issue"]["title"] == "Renamed"
 
 
+def test_empty_placeholder_arguments_are_ignored(hoja) -> None:
+    mcp = hoja()
+    blank = {"eq": "", "in": [], "neq": ""}
+    ok, issues = mcp.call("hoja_issues", after="", filter={"team": {"key": {**blank, "eq": "ENG"}}, "id": blank,
+        "priority": {"eq": -1, "neq": -1}})
+    assert ok and issues["issues"]["nodes"], issues
+    ok, created = mcp.call("hoja_issueCreate", teamId="ENG", title="Blank fields", assigneeId="", projectId="", labelIds=[])
+    assert ok and created["issueCreate"]["issue"]["assignee"] is None, created
+    ok, updated = mcp.call("hoja_issueUpdate", id="ENG-1", priority=0, estimate=0, title="", stateId="In Progress")
+    assert ok and updated["issueUpdate"]["issue"]["priority"] == 2, updated
+    ok, cleared = mcp.call("hoja_issueUpdate", id="ENG-1", priority="none")
+    assert ok and cleared["issueUpdate"]["issue"]["priority"] == 0, cleared
+
+
 def test_errors_are_specific_and_actionable(hoja) -> None:
     mcp = hoja()
     ok, err = mcp.call("hoja_teams", workspaceId="x")
