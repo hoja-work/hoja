@@ -2,13 +2,29 @@
 
 from __future__ import annotations
 
-from sqlalchemy import and_, delete, func, select, update
-from starlette.responses import JSONResponse
+from sqlalchemy import and_, delete, select, update
 
-from cliniar_server.agent_conversations import save_message, start_conversation
+from cliniar_server.agent_conversations import MAX_MESSAGE_BYTES, save_message, start_conversation
 from cliniar_server.db import agent_conversation, agent_message, now_iso
 
 TITLE_LIMIT = 60
+MAX_MESSAGES_PER_THREAD = 500
+MAX_TITLE_INPUT = 1000
+
+
+def validate_thread_messages(messages: list) -> None:
+    """Raise ValueError when a thread payload exceeds the size bounds."""
+    if len(messages) > MAX_MESSAGES_PER_THREAD:
+        raise ValueError(f"A thread may contain at most {MAX_MESSAGES_PER_THREAD} messages.")
+    for m in messages:
+        content = m.get("content") if isinstance(m, dict) else None
+        if isinstance(content, str) and len(content.encode("utf-8")) > MAX_MESSAGE_BYTES:
+            raise ValueError(f"Each message must be at most {MAX_MESSAGE_BYTES} bytes.")
+
+
+def validate_title(title: str) -> None:
+    if len(title) > MAX_TITLE_INPUT:
+        raise ValueError(f"Title must be at most {MAX_TITLE_INPUT} characters.")
 
 
 def _owned(conn, org_id: str, uid: str, thread_id: str):
@@ -38,6 +54,7 @@ def list_threads(store, org_id: str, uid: str) -> dict:
 
 
 def create_thread(store, org_id: str, uid: str, messages: list[dict]) -> dict:
+    validate_thread_messages(messages)
     first = next((m.get("content") for m in messages if m.get("role") == "user" and isinstance(m.get("content"), str)), "")
     with store.engine.begin() as conn:
         cid = start_conversation(conn, org_id, uid, title=_title_from(first))
@@ -58,6 +75,8 @@ def get_messages(store, org_id: str, uid: str, thread_id: str) -> list[dict] | N
 
 
 def update_thread(store, org_id: str, uid: str, thread_id: str, title: str | None) -> dict | None:
+    if title is not None:
+        validate_title(title)
     with store.engine.begin() as conn:
         if _owned(conn, org_id, uid, thread_id) is None:
             return None

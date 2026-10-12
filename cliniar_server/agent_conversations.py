@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from ariadne import MutationType, QueryType, gql
+from ariadne import QueryType, gql
 from sqlalchemy import func, select
 
 from cliniar_server.db import agent_conversation, agent_message, new_id, now_iso
+
+MAX_MESSAGE_BYTES = 32 * 1024
 
 SDL = gql(
     """
@@ -41,6 +43,8 @@ def start_conversation(conn, org_id: str, user_id: str, title: str | None = None
 
 
 def save_message(conn, conversation_id: str, role: str, content: str) -> None:
+    if len(content.encode("utf-8")) > MAX_MESSAGE_BYTES:
+        raise ValueError(f"Each message must be at most {MAX_MESSAGE_BYTES} bytes.")
     ts = now_iso()
     conn.execute(agent_message.insert().values(
         id=new_id(), conversation_id=conversation_id, role=role, content=content, created_at=ts))

@@ -60,6 +60,8 @@ def stub_base_url():
 @pytest.fixture(autouse=True)
 def _secret_key(monkeypatch):
     monkeypatch.setenv("HOJA_SECRET_KEY", "test-master-key")
+    # The stub provider listens on plain http://127.0.0.1; allow loopback http for these tests only.
+    monkeypatch.setenv("CLINIAR_ALLOW_INSECURE_MODEL_URL", "1")
 
 
 def _setup(tmp_path):

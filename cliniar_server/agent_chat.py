@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from ariadne import graphql
 from fastmcp.client.transports import StreamableHttpTransport
 from google_workspace.mcp_server import PRINCIPAL_HEADER
+from graphql import GraphQLError, OperationDefinitionNode, OperationType, parse
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.mcp import MCPToolset
@@ -21,6 +22,7 @@ from sqlalchemy import and_, select
 from starlette.responses import StreamingResponse
 
 from cliniar_server.agent_conversations import save_message, start_conversation
+from cliniar_server.agent_prompt import compose_prompt, workspace_snapshot
 from cliniar_server.agent_threads import _owned as _owned_thread
 from cliniar_server.agent_threads import _title_from
 from cliniar_server.db import model_provider
@@ -51,11 +53,24 @@ class AgentDeps:
     def __init__(self, schema, context: dict):
         self.schema = schema
         self.context = context
+        self.snapshot: str | None = None
 
 
 def build_agent(model, schema_sdl: str, connector: ConnectorBinding | None = None) -> Agent:
     toolsets = [connector_toolset(connector)] if connector is not None else []
-    agent = Agent(model, deps_type=AgentDeps, instructions=INSTRUCTIONS, retries=3, toolsets=toolsets)
+    agent = Agent(model, deps_type=AgentDeps, retries=3, toolsets=toolsets)
+
+    @agent.instructions
+    async def workspace_instructions(ctx: RunContext[AgentDeps]) -> str:
+        """Compose the system prompt per run from the fixed working examples and the user's live workspace state."""
+        # Instructions are re-evaluated on every model step; load the snapshot once per run.
+        if ctx.deps.snapshot is None:
+            async def fetch(query: str, variables: dict) -> dict:
+                _ok, result = await graphql_run(ctx.deps.schema, query, variables, ctx.deps.context)
+                return result.get("data") or {}
+
+            ctx.deps.snapshot = await workspace_snapshot(fetch, ctx.deps.context.get("user_id"))
+        return compose_prompt(INSTRUCTIONS, ctx.deps.snapshot)
 
     @agent.tool
     async def schema(ctx: RunContext[AgentDeps]) -> str:
@@ -66,6 +81,8 @@ def build_agent(model, schema_sdl: str, connector: ConnectorBinding | None = Non
     async def graphql(ctx: RunContext[AgentDeps], query: str, variables: dict | None = None) -> dict:
         """Run a GraphQL query or mutation against Hoja as the signed-in user.
         `query` is REQUIRED and must be a non-empty GraphQL string. Call `schema` first if you need field names."""
+        if read_only_violation(query, ctx.deps.context.get("access", "read")):
+            return {"errors": [{"message": "This API key is read-only.", "extensions": {"code": "FORBIDDEN"}}]}
         _ok, result = await graphql_run(ctx.deps.schema, query, variables or {}, ctx.deps.context)
         return result
 
@@ -86,6 +103,20 @@ def connector_toolset(binding: ConnectorBinding) -> MCPToolset:
         headers={PRINCIPAL_HEADER: binding.principal},
     )
     return MCPToolset(transport, id="google-workspace")
+
+
+def read_only_violation(query: str, access: str) -> bool:
+    """True when a read-only credential submits any operation other than a query."""
+    if access != "read":
+        return False
+    try:
+        document = parse(query)
+    except GraphQLError:
+        return False  # syntax errors are reported by graphql() without executing anything
+    return any(
+        isinstance(definition, OperationDefinitionNode) and definition.operation != OperationType.QUERY
+        for definition in document.definitions
+    )
 
 
 async def graphql_run(schema, query: str, variables: dict, context: dict):
