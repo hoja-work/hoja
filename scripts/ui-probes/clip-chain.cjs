@@ -1,14 +1,14 @@
 // Run from repo root. Lists every ancestor that clips (overflow other than visible) above a given selector at a viewport width.
-// Usage: PROBE_TOKEN=... node scripts/ui-probes/clip-chain.cjs <label> <width>
+// Usage: PROBE_TOKEN=... node scripts/ui-probes/clip-chain.cjs <label> <width> [height]
 const { chromium } = require('../../local-e2e/node_modules/playwright');
 const url = process.env.PROBE_URL || 'http://127.0.0.1:8797';
 const token = process.env.PROBE_TOKEN;
-const [label, widthArg] = [process.argv[2] || 'My issues', Number(process.argv[3] || 390)];
+const [label, widthArg, heightArg] = [process.argv[2] || 'My issues', Number(process.argv[3] || 390), Number(process.argv[4] || 800)];
 if (!token) { console.error('set PROBE_TOKEN'); process.exit(2); }
 (async () => {
   const browser = await chromium.launch({ headless: true });
   try {
-    const page = await browser.newPage({ viewport: { width: widthArg, height: 800 } });
+    const page = await browser.newPage({ viewport: { width: widthArg, height: heightArg } });
     await page.addInitScript(t => localStorage.setItem('hoja_token', t), token);
     await page.goto(url + '/');
     await page.waitForTimeout(900);
