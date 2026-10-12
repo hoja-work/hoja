@@ -101,7 +101,6 @@ def test_registration_global_rate_limit(tmp_path, monkeypatch) -> None:
 
     _, engine, _ = _tenant(tmp_path, "rate")
     provider = mcp_oauth.HojaOAuthProvider(engine, Store(engine), True)
-    monkeypatch.setattr(mcp_oauth, "_registration_times", mcp_oauth.deque())
     monkeypatch.setattr(mcp_oauth, "MAX_REGISTRATIONS_PER_HOUR", 2)
     for i in range(2):
         asyncio.run(provider.register_client(

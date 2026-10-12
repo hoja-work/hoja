@@ -10,9 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import secrets
-import threading
 import time
-from collections import deque
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
@@ -48,21 +46,31 @@ MAX_CLIENT_NAME_LENGTH = 200
 MAX_OAUTH_CLIENTS = 10_000
 MAX_REGISTRATIONS_PER_HOUR = 100
 _REGISTRATION_WINDOW_SECONDS = 3600
-_registration_times: deque[float] = deque()
-_registration_lock = threading.Lock()
 
 
-def _take_registration_slot() -> None:
-    """Process-wide sliding-window limit on dynamic client registrations."""
-    now = time.monotonic()
-    with _registration_lock:
-        while _registration_times and now - _registration_times[0] > _REGISTRATION_WINDOW_SECONDS:
-            _registration_times.popleft()
-        if len(_registration_times) >= MAX_REGISTRATIONS_PER_HOUR:
+def _take_registration_slot(engine) -> None:
+    """Database-wide sliding-window limit on dynamic client registrations (shared across workers)."""
+    now = time.time()
+    key_hash = db.rate_limit_key_hash("global")
+    with engine.begin() as conn:
+        conn.execute(
+            db.rate_limit_event.delete().where(
+                db.rate_limit_event.c.bucket == "oauth_dcr",
+                db.rate_limit_event.c.created_at <= now - _REGISTRATION_WINDOW_SECONDS,
+            )
+        )
+        count = conn.execute(
+            select(func.count())
+            .select_from(db.rate_limit_event)
+            .where(db.rate_limit_event.c.bucket == "oauth_dcr")
+        ).scalar_one()
+        if count >= MAX_REGISTRATIONS_PER_HOUR:
             raise RegistrationError(
                 "invalid_client_metadata", "Too many client registrations; try again later."
             )
-        _registration_times.append(now)
+        conn.execute(
+            db.rate_limit_event.insert().values(bucket="oauth_dcr", key_hash=key_hash, created_at=now)
+        )
 
 
 def _now() -> datetime:
@@ -137,7 +145,7 @@ class HojaOAuthProvider(OAuthAuthorizationServerProvider):
         clean = client_info.model_copy(
             update={"client_secret": None, "token_endpoint_auth_method": "none"}
         )
-        _take_registration_slot()
+        _take_registration_slot(self.engine)
         with self.engine.begin() as conn:
             total = conn.execute(select(func.count()).select_from(db.oauth_client)).scalar_one()
             if total >= MAX_OAUTH_CLIENTS:

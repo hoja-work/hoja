@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 pytest.importorskip("starlette")
@@ -321,7 +323,9 @@ def test_login_rate_limit_per_email(tmp_path) -> None:
 def test_limiter_does_not_block_other_accounts_or_successful_logins(tmp_path) -> None:
     from cliniar_server.app import _FailureLimiter
 
-    limiter = _FailureLimiter(limit=2, window_seconds=60)
+    engine = make_engine(tmp_path / "limiter.db")
+    migrate(engine)
+    limiter = _FailureLimiter(engine, "test", limit=2, window_seconds=60)
     limiter.record(["email:a@x"]); limiter.record(["email:a@x"])
     assert limiter.blocked(["email:a@x"]) is True
     assert limiter.blocked(["email:b@x"]) is False
@@ -413,10 +417,19 @@ def test_websocket_bearer_subprotocol_authenticates(tmp_path) -> None:
         ws.close()
 
 
-def test_failure_limiter_is_bounded() -> None:
+def test_failure_limiter_is_bounded(tmp_path) -> None:
+    from sqlalchemy import func, select
+
+    from cliniar_server import db
     from cliniar_server.app import _FailureLimiter
 
-    limiter = _FailureLimiter(limit=10, window_seconds=900, max_keys=50)
+    engine = make_engine(tmp_path / "bounded.db")
+    migrate(engine)
+    limiter = _FailureLimiter(engine, "test", limit=10, window_seconds=0.05)
     for i in range(500):
         limiter.record([f"ip:{i}"])
-    assert len(limiter._events) <= 50
+    time.sleep(0.1)
+    limiter.record(["ip:final"])
+    with engine.connect() as conn:
+        rows = conn.execute(select(func.count()).select_from(db.rate_limit_event)).scalar_one()
+    assert rows == 1

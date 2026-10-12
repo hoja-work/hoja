@@ -1,11 +1,12 @@
 """Google Workspace connector routes: connect, callback, list, and revoke connected accounts.
 
 Pending OAuth state (user, org, scope, PKCE verifier, expiry) is carried in an AES-GCM sealed
-`state` value, so no extra table is needed and the callback cannot be forged or replayed past expiry.
+`state` value, so the callback cannot be forged; a hashed nonce in `oauth_state_nonce` makes each state single-use.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
@@ -24,18 +25,32 @@ from google_workspace.oauth import (
 from google_workspace.principal import sign_principal
 from sqlalchemy import and_, or_, select, update
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse
 from starlette.routing import Route
 
 from cliniar_server.connector_actions import Executor, approve_action, reject_action
-from cliniar_server.db import connector_account, connector_action
+from cliniar_server.db import connector_account, connector_action, oauth_state_nonce
 from cliniar_server.secrets_box import SecretBoxError, decrypt_secret, encrypt_secret
 
 PROVIDER = "google_workspace"
 STATE_TTL_SECONDS = 600
 GMAIL_PROFILE_URL = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
 GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
+
+def _consume_state(engine: Engine, nonce: str, expires_at: int) -> bool:
+    """Mark an OAuth state nonce as used. False if it was already used (by any worker)."""
+    if not nonce:
+        return False
+    try:
+        with engine.begin() as conn:
+            conn.execute(oauth_state_nonce.delete().where(oauth_state_nonce.c.expires_at < time.time()))
+            conn.execute(oauth_state_nonce.insert().values(
+                nonce_hash=hashlib.sha256(nonce.encode()).hexdigest(), expires_at=float(expires_at)))
+    except IntegrityError:
+        return False
+    return True
 
 
 def _now() -> str:
@@ -196,6 +211,8 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
             return _error("Connection request belongs to a different session.", 403)
         if pending["scope"] == "org" and not _is_admin(org, uid):
             return _error("Only workspace admins can connect organization accounts.", 403)
+        if not _consume_state(engine, str(pending.get("nonce", "")), int(pending["exp"])):
+            return _error("Connection request was already used. Start again.", 400)
 
         async with httpx.AsyncClient(timeout=15) as http:
             try:

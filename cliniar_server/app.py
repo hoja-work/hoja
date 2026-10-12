@@ -16,9 +16,7 @@ import json
 import logging
 import os
 import secrets
-import threading
 import time
-from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -57,6 +55,8 @@ from cliniar_server.db import (
     organization,
     organization_membership,
     password_credential,
+    rate_limit_blocked,
+    rate_limit_record,
     resolve_database_target,
     resolve_token_identity,
     schema_is_current,
@@ -214,45 +214,22 @@ def _password_matches(stored: str, candidate: str) -> bool:
 
 
 class _FailureLimiter:
-    """Thread-safe sliding window of failed sign-ins, keyed by client IP and by email."""
+    """Sliding window of failed sign-ins per client IP and email, persisted in rate_limit_event.
 
-    def __init__(self, limit: int, window_seconds: float, max_keys: int = 10_000):
+    Shared across workers and restarts because state lives in the database.
+    """
+
+    def __init__(self, engine, bucket: str, limit: int, window_seconds: float):
+        self._engine = engine
+        self._bucket = bucket
         self._limit = limit
         self._window = window_seconds
-        self._max_keys = max_keys
-        self._events: dict[str, deque[float]] = {}
-        self._lock = threading.Lock()
-
-    def _recent(self, key: str, now: float) -> deque[float] | None:
-        events = self._events.get(key)
-        if events is None:
-            return None
-        while events and now - events[0] > self._window:
-            events.popleft()
-        if not events:
-            del self._events[key]
-            return None
-        return events
 
     def blocked(self, keys: list[str]) -> bool:
-        now = time.monotonic()
-        with self._lock:
-            for key in keys:
-                events = self._recent(key, now)
-                if events and len(events) >= self._limit:
-                    return True
-        return False
+        return rate_limit_blocked(self._engine, self._bucket, keys, self._limit, self._window)
 
     def record(self, keys: list[str]) -> None:
-        now = time.monotonic()
-        with self._lock:
-            if len(self._events) >= self._max_keys:
-                for key in list(self._events):
-                    self._recent(key, now)
-                while len(self._events) >= self._max_keys:
-                    self._events.pop(next(iter(self._events)))
-            for key in keys:
-                self._events.setdefault(key, deque()).append(now)
+        rate_limit_record(self._engine, self._bucket, keys, self._window)
 
 
 def _too_many_attempts() -> JSONResponse:
@@ -303,7 +280,7 @@ def create_app(
     if open_mode is None:
         open_mode = os.environ.get("CLINIAR_SERVER_OPEN", "0") == "1"
 
-    limiter = _FailureLimiter(_LOGIN_FAILURE_LIMIT, _LOGIN_FAILURE_WINDOW_SECONDS)
+    limiter = _FailureLimiter(engine, "login_failure", _LOGIN_FAILURE_LIMIT, _LOGIN_FAILURE_WINDOW_SECONDS)
 
     def _same_origin(origin: str | None, headers) -> bool:
         if origin is None:

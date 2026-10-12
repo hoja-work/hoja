@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import secrets
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,7 +31,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 23
+CURRENT_SCHEMA_REVISION = 25
 
 
 def now_iso() -> str:
@@ -290,6 +291,22 @@ schema_revision = Table(
     metadata,
     Column("revision", Integer, primary_key=True),
     Column("applied_at", String, nullable=False),
+)
+
+rate_limit_event = Table(
+    "rate_limit_event",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("bucket", String, nullable=False, index=True),
+    Column("key_hash", String, nullable=False, index=True),
+    Column("created_at", Float, nullable=False, index=True),
+)
+
+oauth_state_nonce = Table(
+    "oauth_state_nonce",
+    metadata,
+    Column("nonce_hash", String, primary_key=True),
+    Column("expires_at", Float, nullable=False, index=True),
 )
 
 user = Table(
@@ -879,6 +896,49 @@ def _apply_agent_conversation_title(conn) -> None:
         conn.exec_driver_sql("ALTER TABLE agent_conversation ADD COLUMN title VARCHAR")
 
 
+def rate_limit_key_hash(key: str) -> str:
+    """Rate-limit keys (emails, IPs) are stored only as SHA-256 digests."""
+    return hashlib.sha256(key.encode()).hexdigest()
+
+
+def rate_limit_blocked(
+    engine: Engine, bucket: str, keys: list[str], limit: int, window_seconds: float
+) -> bool:
+    """True when any key has `limit` or more events inside the sliding window."""
+    hashes = [rate_limit_key_hash(key) for key in keys]
+    cutoff = time.time() - window_seconds
+    with engine.connect() as conn:
+        counts = conn.execute(
+            select(rate_limit_event.c.key_hash, func.count())
+            .where(
+                rate_limit_event.c.bucket == bucket,
+                rate_limit_event.c.key_hash.in_(hashes),
+                rate_limit_event.c.created_at > cutoff,
+            )
+            .group_by(rate_limit_event.c.key_hash)
+        ).all()
+    return any(count >= limit for _, count in counts)
+
+
+def rate_limit_record(engine: Engine, bucket: str, keys: list[str], window_seconds: float) -> None:
+    """Record one event per key and prune this bucket's expired events."""
+    now = time.time()
+    with engine.begin() as conn:
+        conn.execute(
+            rate_limit_event.delete().where(
+                rate_limit_event.c.bucket == bucket,
+                rate_limit_event.c.created_at <= now - window_seconds,
+            )
+        )
+        conn.execute(
+            rate_limit_event.insert(),
+            [
+                {"bucket": bucket, "key_hash": rate_limit_key_hash(key), "created_at": now}
+                for key in keys
+            ],
+        )
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -920,6 +980,8 @@ _MIGRATIONS = {
         connector_account.create(conn, checkfirst=True),
         connector_action.create(conn, checkfirst=True),
     ),
+    24: lambda conn: rate_limit_event.create(conn, checkfirst=True),
+    25: lambda conn: oauth_state_nonce.create(conn, checkfirst=True),
 }
 
 
