@@ -15,7 +15,7 @@ from fastmcp.client.transports import StreamableHttpTransport
 from google_workspace.mcp_server import PRINCIPAL_HEADER
 from graphql import GraphQLError, OperationDefinitionNode, OperationType, parse
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.openai import OpenAIChatModel
@@ -219,6 +219,11 @@ async def stream_reply(store, org_id: str, uid: str, messages: list[dict], schem
             async for text in result.stream_text(delta=True):
                 reply_parts.append(text)
                 yield _chunk(completion_id, {"content": text})
+    except (ModelAPIError, openai.APIError, asyncio.TimeoutError):
+        # The SSE response is already open; return a safe assistant message rather
+        # than letting provider details escape through an unhandled stream error.
+        reply_parts = ["The assistant couldn't reach its model provider. Please try again shortly."]
+        yield _chunk(completion_id, {"content": reply_parts[0]})
     except UnexpectedModelBehavior:
         reply_parts = ["The assistant could not complete that request. Please try again."]
         yield _chunk(completion_id, {"content": reply_parts[0]})
