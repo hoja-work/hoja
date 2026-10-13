@@ -92,8 +92,6 @@ def test_run_sends_snapshot_and_examples_to_model(tmp_path) -> None:
     }
     agent = build_agent(FunctionModel(scripted), SCHEMA_SDL)
     agent.run_sync("Create a bug for the login page", deps=AgentDeps(build_schema(), context))
-    assert "## Live workspace snapshot" in seen["system"]
-    assert "Signed-in user" in seen["system"]
     assert "Create an issue" in seen["system"]
     assert "Summarize a team's work" in seen["system"]
 
@@ -146,9 +144,83 @@ def test_snapshot_is_fetched_once_per_run(tmp_path) -> None:
     import cliniar_server.agent_chat as chat
     chat.graphql_run = counting
     try:
+        run_prompt = asyncio.run(chat.with_snapshot(build_schema(), context, "hi"))
         agent = build_agent(FunctionModel(scripted), SCHEMA_SDL)
-        agent.run_sync("hi", deps=AgentDeps(build_schema(), context))
+        agent.run_sync(run_prompt, deps=AgentDeps(build_schema(), context))
     finally:
         chat.graphql_run = real
     assert len(steps) == 2
     assert sum("AgentSnapshot" in q for q in calls) == 1
+def test_signed_in_prompt_lists_assigned_open_issue(tmp_path) -> None:
+    from pydantic_ai.messages import ModelResponse, TextPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    from cliniar_server.agent_chat import AgentDeps, build_agent
+    from cliniar_server.resolvers import build_schema
+    from cliniar_server.schema_sdl import SCHEMA_SDL
+    from cliniar_server.store import Store
+    from cliniar_server.writer import Writer
+    from tests.test_agent_chat import _setup
+
+    engine, _app, admin = _setup(tmp_path)
+    writer = Writer(engine)
+    team_key = "ENG"
+    issue_id = writer.issue_create(
+        admin["org_id"], admin["user_id"],
+        {"teamId": team_key, "title": "Fix login redirect", "assigneeId": admin["user_id"]},
+    )
+    assert issue_id is not None
+
+    seen: dict[str, str] = {}
+
+    def scripted(messages, info: AgentInfo):
+        seen["user"] = "\n".join(str(p.content) for m in messages for p in getattr(m, "parts", []) if hasattr(p, "content"))
+        seen["system"] = info.instructions or ""
+        return ModelResponse(parts=[TextPart("ok")])
+
+    context = {
+        "store": Store(engine), "writer": writer, "org_id": admin["org_id"],
+        "user_id": admin["user_id"], "identity_id": None, "browser_session": False,
+    }
+    from cliniar_server.agent_chat import with_snapshot
+    run_prompt = asyncio.run(with_snapshot(build_schema(), context, "What should I do?"))
+    agent = build_agent(FunctionModel(scripted), SCHEMA_SDL)
+    agent.run_sync(run_prompt, deps=AgentDeps(build_schema(), context))
+
+    assert "(0 shown)" not in seen["user"]
+    assert "Fix login redirect" in seen["user"]
+    assert "Answer open-issue, priority, status" in seen["system"]
+
+def test_snapshot_is_sent_in_user_turn(tmp_path) -> None:
+    from pydantic_ai.messages import ModelResponse, TextPart, UserPromptPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    from cliniar_server.agent_chat import AgentDeps, build_agent
+    from cliniar_server.resolvers import build_schema
+    from cliniar_server.schema_sdl import SCHEMA_SDL
+    from cliniar_server.store import Store
+    from cliniar_server.writer import Writer
+    from tests.test_agent_chat import _setup
+
+    engine, _app, admin = _setup(tmp_path)
+    Writer(engine).issue_create(admin["org_id"], admin["user_id"],
+        {"teamId": "ENG", "title": "Fix login redirect", "assigneeId": admin["user_id"]})
+    seen: dict[str, list] = {}
+
+    def scripted(messages, info: AgentInfo):
+        seen["user"] = [p.content for m in messages for p in m.parts if isinstance(p, UserPromptPart)]
+        return ModelResponse(parts=[TextPart("ok")])
+
+    context = {
+        "store": Store(engine), "writer": Writer(engine), "org_id": admin["org_id"],
+        "user_id": admin["user_id"], "identity_id": None, "browser_session": False,
+    }
+    from cliniar_server.agent_chat import with_snapshot
+
+    run_prompt = asyncio.run(with_snapshot(build_schema(), context, "What should I do?"))
+    agent = build_agent(FunctionModel(scripted), SCHEMA_SDL)
+    agent.run_sync(run_prompt, deps=AgentDeps(build_schema(), context))
+    user_text = "\n".join(str(c) for c in seen["user"])
+    assert "Fix login redirect" in user_text
+    assert "What should I do?" in user_text
+

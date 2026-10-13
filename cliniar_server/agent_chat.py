@@ -24,9 +24,10 @@ from sqlalchemy import and_, select
 from starlette.responses import StreamingResponse
 
 from cliniar_server.agent_conversations import save_message, start_conversation
-from cliniar_server.agent_prompt import compose_prompt, workspace_snapshot
+from cliniar_server.agent_prompt import WORKING_EXAMPLES, workspace_snapshot
 from cliniar_server.agent_threads import _owned as _owned_thread
 from cliniar_server.agent_threads import _title_from
+from cliniar_server.agent_uploads import prompt_with_attachments
 from cliniar_server.db import model_provider
 from cliniar_server.denials import DENY_HINT
 from cliniar_server.model_providers import validate_model_base_url
@@ -37,12 +38,14 @@ INSTRUCTIONS = """You are the Hoja workspace agent for Clover. Hoja is a Linear-
 Entities: teams (keys like TREBOL), projects, issues (identifiers like TREBOL-12), cycles, and users.
 
 How to work:
+- The "Live workspace snapshot" at the end of this prompt lists the signed-in user's open issues, teams, active cycles, and recent activity. Answer open-issue, priority, status, and "what should I do" questions from the snapshot directly, without any tool call.
+- Call tools only for data not in the snapshot, for issue details, or for changes.
 - Use the `schema` tool once per conversation before writing a mutation you have not used before, so you use real field names.
 - Use the `graphql` tool to read and change data. Always pass a non-empty `query` string.
 - Before creating anything, search for an existing issue or project with the same title to avoid duplicates.
 - When creating a task, set title, teamId, and projectId when the user names a project. Add a short description with acceptance criteria when the request is vague.
 - Assign people only after confirming they are members of the team.
-- To filter to the signed-in user, first run `{ viewer { id } }`, then use the returned id, e.g. `issues(filter: { assignee: { id: { eq: "<id>" } } })`. `UserFilter` has only id, email, displayName, and name; there is no `isMe` field.
+- To filter to the signed-in user, use the id from the snapshot in `issues(filter: { assignee: { id: { eq: "<id>" } } })`. If the snapshot is unavailable, first run `{ viewer { id } }`. `UserFilter` has only id, email, displayName, and name; there is no `isMe` field.
 - After a write, read it back to confirm it exists and is linked to the right project.
 
 How to answer:
@@ -57,7 +60,6 @@ class AgentDeps:
     def __init__(self, schema, context: dict):
         self.schema = schema
         self.context = context
-        self.snapshot: str | None = None
 
 
 def build_agent(model, schema_sdl: str, connector: ConnectorBinding | None = None) -> Agent:
@@ -66,15 +68,8 @@ def build_agent(model, schema_sdl: str, connector: ConnectorBinding | None = Non
 
     @agent.instructions
     async def workspace_instructions(ctx: RunContext[AgentDeps]) -> str:
-        """Compose the system prompt per run from the fixed working examples and the user's live workspace state."""
-        # Instructions are re-evaluated on every model step; load the snapshot once per run.
-        if ctx.deps.snapshot is None:
-            async def fetch(query: str, variables: dict) -> dict:
-                _ok, result = await graphql_run(ctx.deps.schema, query, variables, ctx.deps.context)
-                return result.get("data") or {}
-
-            ctx.deps.snapshot = await workspace_snapshot(fetch, ctx.deps.context.get("user_id"))
-        return compose_prompt(INSTRUCTIONS, ctx.deps.snapshot)
+        """Fixed rules and worked examples. The live snapshot is sent in the user turn (see with_snapshot)."""
+        return INSTRUCTIONS + "\n\n" + WORKING_EXAMPLES
 
     @agent.tool
     async def schema(ctx: RunContext[AgentDeps]) -> str:
@@ -127,6 +122,17 @@ async def graphql_run(schema, query: str, variables: dict, context: dict):
     return await graphql(schema, {"query": query, "variables": variables}, context_value=context)
 
 
+async def with_snapshot(schema, context: dict, prompt: str) -> str:
+    """Prefix the user's question with the live workspace snapshot, fetched once per run."""
+
+    async def fetch(query: str, variables: dict) -> dict:
+        _ok, result = await graphql_run(schema, query, variables, context)
+        return result.get("data") or {}
+
+    snapshot = await workspace_snapshot(fetch, context.get("user_id"))
+    return f"Workspace context (live, from Hoja):\n{snapshot}\n\nQuestion: {prompt}"
+
+
 def _enabled_provider(store, org_id: str) -> dict | None:
     with store.engine.connect() as conn:
         row = conn.execute(
@@ -166,9 +172,15 @@ def _chunk(completion_id: str, delta: dict, finish: str | None = None) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
 
-async def stream_reply(store, org_id: str, uid: str, messages: list[dict], schema, schema_sdl: str, base_context: dict, thread_id: str | None = None, connector: ConnectorBinding | None = None) -> AsyncIterator[str]:
+async def stream_reply(store, org_id: str, uid: str, messages: list[dict], schema, schema_sdl: str, base_context: dict, thread_id: str | None = None, connector: ConnectorBinding | None = None, attachments: list[dict] | None = None) -> AsyncIterator[str]:
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     prompt, history = _history(messages)
+    attachments = attachments or []
+    if attachments:
+        names = ", ".join(f["name"] for f in attachments)
+        visible_prompt = f"{prompt}\n\n[Attached: {names}]"
+    else:
+        visible_prompt = prompt
     row = _enabled_provider(store, org_id)
     if row is None:
         yield _chunk(completion_id, {"role": "assistant", "content": "No model is configured. Ask a workspace admin to add one."}, "stop")
@@ -192,17 +204,18 @@ async def stream_reply(store, org_id: str, uid: str, messages: list[dict], schem
             http_client=http_client,
         )
     )
-    agent = build_agent(OpenAIChatModel(row["model_id"], provider=provider), schema_sdl, connector)
     deps = AgentDeps(schema, dict(base_context))
+    run_prompt = await with_snapshot(schema, dict(base_context), prompt_with_attachments(prompt, attachments))
+    agent = build_agent(OpenAIChatModel(row["model_id"], provider=provider), schema_sdl, connector)
     with store.engine.begin() as conn:
         if thread_id and _owned_thread(conn, org_id, uid, thread_id):
             conversation_id = thread_id
         else:
             conversation_id = start_conversation(conn, org_id, uid, title=_title_from(prompt))
-        save_message(conn, conversation_id, "user", prompt)
+        save_message(conn, conversation_id, "user", visible_prompt)
     reply_parts: list[str] = []
     try:
-        async with agent.run_stream(prompt, message_history=history, deps=deps) as result:
+        async with agent.run_stream(run_prompt, message_history=history, deps=deps) as result:
             async for text in result.stream_text(delta=True):
                 reply_parts.append(text)
                 yield _chunk(completion_id, {"content": text})

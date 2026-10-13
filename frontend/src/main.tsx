@@ -103,7 +103,7 @@ const pageContent = view === 'Issue detail' ? <IssueDetailPage workspaceName={wo
   : view === 'Pulse' ? <PulsePage key={workspace.id} path={window.location.pathname} onOpenProject={p=>{navigate('Project detail',`/workspace/project/${p.id}`);setActiveProject(p)}} revision={revision}/>
   : view === 'Initiatives' ? <InitiativesPage key={workspace.id} viewer={viewer} path={window.location.pathname} projects={projects} onOpenProject={p=>{navigate('Project detail',`/workspace/project/${p.id}`);setActiveProject(p)}} revision={revision}/>
   : view === 'Favorite views' ? <ViewsPage key={`favorites-${workspace.id}`} orgId={workspace.id} issues={issues} projects={projects} path={window.location.pathname} onNavigate={navigate} onSelect={openIssue} favoriteOnly/>
-  : view === 'Agent' ? <AgentChatPage workspaceName={workspace.name}/>
+  : view === 'Agent' ? <AgentChatPage workspaceName={workspace.name} themeMode={theme==='dark'?'dark':'light'}/>
   : view === 'Views' ? <ViewsPage key={workspace.id} orgId={workspace.id} issues={issues} projects={projects} path={window.location.pathname} onNavigate={navigate} onSelect={openIssue}/>
   : view === 'Board' ? dashboardContent
   : view === 'Not found' ? <section className="not-found-page" role="alert"><h1>Page not found</h1><p>This page does not exist.</p></section>

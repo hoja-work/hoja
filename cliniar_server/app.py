@@ -690,10 +690,12 @@ def create_app(
             "browser_session": _is_browser,
             "access": getattr(request.state, "api_key_access", "read_write"),
         }
+        from cliniar_server import agent_uploads
         try:
             thread_id = body.get("threadId") if isinstance(body, dict) else None
+            attachments = agent_uploads.load_uploads(org, uid, body.get("attachmentIds", []) if isinstance(body, dict) else [])
             connector = connector_binding_for(engine, org, uid)
-            gen = stream_reply(store, org, uid, messages, _schema, SCHEMA_SDL, base_context, thread_id, connector)
+            gen = stream_reply(store, org, uid, messages, _schema, SCHEMA_SDL, base_context, thread_id, connector, attachments)
             first = await gen.__anext__()
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
@@ -728,6 +730,18 @@ def create_app(
         if err:
             return err
         return JSONResponse(agent_threads.list_threads(store, org, uid))
+
+    async def agent_upload_create(request: Request):
+        from cliniar_server import agent_uploads
+        uid, org, err = await _agent_auth(request)
+        if err:
+            return err
+        body = await request.json()
+        try:
+            record = agent_uploads.save_upload(org, uid, body.get("name") if isinstance(body, dict) else None, body.get("content") if isinstance(body, dict) else None)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return JSONResponse(record, status_code=201)
 
     async def agent_threads_create(request: Request):
         from cliniar_server import agent_threads
@@ -1283,6 +1297,7 @@ def create_app(
         routes=[
             Route("/graphql", graphql_server, methods=["POST", "GET"]),
             Route("/api/agent/chat", agent_chat_server, methods=["POST"]),
+            Route("/api/agent/uploads", agent_upload_create, methods=["POST"]),
             Route("/api/agent/threads/get", agent_threads_list, methods=["GET"]),
             Route("/api/agent/threads/create", agent_threads_create, methods=["POST"]),
             Route("/api/agent/threads/get/{thread_id}", agent_thread_get, methods=["GET"]),

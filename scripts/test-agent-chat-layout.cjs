@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const css = fs.readFileSync(path.resolve(__dirname, process.env.UI_LAYOUT_CSS || '../frontend/src/styles.css'), 'utf8');
-const fixture = `<div class="app"><header class="topbar"><button class="mobile-nav-toggle">Navigation</button></header><div class="app-body"><aside class="sidebar"></aside><div class="workspace-content"><main class="main"><section class="agent-chat-page"><div class="openui-agent-container" style="display:flex;flex-direction:column"><div class="openui-agent-thread-scroll" style="flex:1;min-height:0;overflow:auto">Messages</div><div class="openui-agent-composer-slot"><div class="openui-agent-thread-composer"><textarea class="openui-agent-thread-composer__input" placeholder="Ask anything"></textarea><button class="openui-agent-thread-composer__submit-button">↑</button></div></div></div></section></main></div></div></div>`;
+const fixture = `<div class="app"><header class="topbar"><button class="mobile-nav-toggle">Navigation</button></header><div class="app-body"><aside class="sidebar"></aside><div class="workspace-content"><main class="main"><section class="agent-chat-page"><div class="openui-agent-container" style="display:flex;flex-direction:column"><div class="openui-agent-thread-scroll" style="flex:1;min-height:0;overflow:auto">Messages</div><div class="openui-agent-composer-slot"><div class="agent-composer"><textarea class="agent-composer-input" placeholder="Ask anything"></textarea><button class="agent-composer-send">↑</button></div></div></div></section></main></div></div></div>`;
 (async () => {
   const browser = await chromium.launch();
   try {
@@ -14,13 +14,15 @@ const fixture = `<div class="app"><header class="topbar"><button class="mobile-n
       await page.addStyleTag({ content: css });
       const boxes = await page.evaluate(() => {
         const box = selector => document.querySelector(selector).getBoundingClientRect().toJSON();
-        return { composer: box('.openui-agent-thread-composer'), input: box('.openui-agent-thread-composer__input'),
-          send: box('.openui-agent-thread-composer__submit-button') };
+        return { composer: box('.agent-composer'), input: box('.agent-composer-input'),
+          send: box('.agent-composer-send') };
       });
       for (const [name, box] of Object.entries(boxes)) assert.ok(box.left >= 0 && box.right <= width && box.top >= 0 && box.bottom <= height,
         `${width}x${height}: ${name} clipped outside visible viewport`);
+      const scroll = await page.evaluate(() => document.documentElement.scrollWidth);
+      assert.ok(scroll <= width, `${width}x${height}: horizontal overflow (${scroll}px)`);
       await page.close();
     }
-    console.log('Agent chat composer: 4 viewports passed');
+    console.log('Agent chat composer: 4 viewports passed, no horizontal overflow');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });
