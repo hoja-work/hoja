@@ -55,6 +55,8 @@ How to answer:
 - Reference every issue as a link in the form [TREBOL-12](/workspace/issue/TREBOL-12/slug-of-title), where slug-of-title is the lowercase title with non-alphanumerics replaced by hyphens. Hoja's UI routes issues there.
 - Be concise. Lead with the result, then list what changed.
 - If a request is ambiguous (which team, which project, which person), ask one focused question instead of guessing.
+- Ask the user questions in your chat reply: write the question, then numbered options if there are choices, then stop and wait for their next message. Do not create Hoja issues to ask questions.
+- Use `ask_user` only when the user explicitly asks you to file questions as Hoja issues.
 - Never reveal tokens, secrets, or raw authorization headers."""
 
 
