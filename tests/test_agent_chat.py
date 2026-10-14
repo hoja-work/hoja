@@ -248,3 +248,34 @@ def test_thread_endpoints_require_auth(tmp_path) -> None:
     engine, app, admin = _setup(tmp_path)
     client = TestClient(app)
     assert client.get("/api/agent/threads/get").status_code == 401
+
+
+def test_ask_user_ends_turn_with_question_block(tmp_path) -> None:
+    from pydantic_ai.messages import ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    from cliniar_server.agent_chat import AgentDeps, AskUser, ask_block, build_agent
+    from cliniar_server.resolvers import build_schema
+    from cliniar_server.schema_sdl import SCHEMA_SDL
+    from cliniar_server.store import Store
+
+    engine, _app, admin = _setup(tmp_path)
+    context = {
+        "store": Store(engine), "writer": None, "org_id": admin["org_id"],
+        "user_id": admin["user_id"], "identity_id": None, "browser_session": False,
+    }
+
+    calls: list[str] = []
+
+    def scripted(messages, info: AgentInfo) -> ModelResponse:
+        calls.append("model")
+        return ModelResponse(parts=[ToolCallPart("ask_user", {"questions": [
+            {"question": "Which team?", "options": [{"label": "TREBOL"}, {"label": "CORE"}], "multiple": False},
+        ]})])
+
+    agent = build_agent(FunctionModel(scripted), SCHEMA_SDL)
+    result = agent.run_sync("Create a bug", deps=AgentDeps(build_schema(), context))
+    assert isinstance(result.output, AskUser)
+    assert calls == ["model"]  # the run stops; no workspace tool runs to ask
+    block = ask_block(result.output)
+    assert block.strip().startswith("```hoja-ask") and '"Which team?"' in block

@@ -14,7 +14,8 @@ from ariadne import graphql
 from fastmcp.client.transports import StreamableHttpTransport
 from google_workspace.mcp_server import PRINCIPAL_HEADER
 from graphql import GraphQLError, OperationDefinitionNode, OperationType, parse
-from pydantic_ai import Agent, RunContext
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent, RunContext, ToolOutput
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.messages import ModelRequest, ModelResponse, PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta, UserPromptPart
@@ -51,8 +52,35 @@ How to answer:
 - Reference every issue as a link in the form [TREBOL-12](/workspace/issue/TREBOL-12/slug-of-title), where slug-of-title is the lowercase title with non-alphanumerics replaced by hyphens. Hoja's UI routes issues there.
 - Be concise. Lead with the result, then list what changed.
 - If a request is ambiguous (which team, which project, which person), ask one focused question instead of guessing.
-- Ask the user questions in your chat reply: write the question, then numbered options if there are choices, then stop and wait for their next message. Do not create Hoja issues to ask questions.
+- To ask the user something, call the `ask_user` tool with one to four questions, each with short options when there are sensible choices. It ends your turn; the user's answers arrive as their next message. Set `multiple` when several options may apply and `allow_other` when they may write their own answer. Never create, comment on, or change Hoja issues to ask questions.
 - Never reveal tokens, secrets, or raw authorization headers."""
+
+
+ASK_FENCE = "hoja-ask"
+
+
+class AskOption(BaseModel):
+    label: str = Field(min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=300)
+
+
+class AskQuestion(BaseModel):
+    question: str = Field(min_length=1, max_length=500)
+    header: str | None = Field(default=None, max_length=40, description="Very short label for the question, e.g. 'Team'.")
+    options: list[AskOption] = Field(default_factory=list, max_length=8, description="Choices to pick from. Leave empty for a free-text question.")
+    multiple: bool = Field(default=False, description="Allow selecting more than one option.")
+    allow_other: bool = Field(default=True, description="Let the user write their own answer instead of an option.")
+
+
+class AskUser(BaseModel):
+    """Ask the user one or more questions in the chat UI and wait for their answers."""
+
+    questions: list[AskQuestion] = Field(min_length=1, max_length=4)
+
+
+def ask_block(ask: AskUser) -> str:
+    """Fenced block the chat UI renders as an interactive question card."""
+    return f"\n\n```{ASK_FENCE}\n{ask.model_dump_json(exclude_none=True)}\n```\n"
 
 
 class AgentDeps:
@@ -64,7 +92,14 @@ class AgentDeps:
 
 def build_agent(model, schema_sdl: str, connector: ConnectorBinding | None = None) -> Agent:
     toolsets = [connector_toolset(connector)] if connector is not None else []
-    agent = Agent(model, deps_type=AgentDeps, retries=3, toolsets=toolsets)
+    # ask_user is an output tool: it ends the run and never receives deps, so it cannot read or change workspace data.
+    agent = Agent(
+        model,
+        deps_type=AgentDeps,
+        retries=3,
+        toolsets=toolsets,
+        output_type=[str, ToolOutput(AskUser, name="ask_user", description=AskUser.__doc__)],
+    )
 
     @agent.instructions
     async def workspace_instructions(ctx: RunContext[AgentDeps]) -> str:
@@ -219,6 +254,10 @@ async def stream_reply(store, org_id: str, uid: str, messages: list[dict], schem
                             if text:
                                 reply_parts.append(text)
                                 yield _chunk(completion_id, {"content": text})
+        if run.result is not None and isinstance(run.result.output, AskUser):
+            block = ask_block(run.result.output)
+            reply_parts.append(block)
+            yield _chunk(completion_id, {"content": block})
     except UnexpectedModelBehavior:
         reply_parts = ["The assistant could not complete that request. Please try again."]
         yield _chunk(completion_id, {"content": reply_parts[0]})

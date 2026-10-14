@@ -1,5 +1,6 @@
 import React from 'react';
 import { AgentInterface, fetchLLM, openAIAdapter, openAIMessageFormat, restStorage } from '@openuidev/react-ui';
+import { useThread } from '@openuidev/react-headless';
 import '@openuidev/react-ui/styles/index.css';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -67,7 +68,130 @@ function IssueChip({ identifier }: { identifier: string }) {
   );
 }
 
-function AssistantMessage({ message }: { message: { content?: string | null } }) {
+type AskOption = { label: string; description?: string };
+type AskQuestion = { question: string; header?: string; options?: AskOption[]; multiple?: boolean; allow_other?: boolean };
+
+// The agent's ask_user tool arrives as a ```hoja-ask fenced JSON block at the end of the reply.
+const ASK_BLOCK = /```hoja-ask\n([\s\S]*?)\n```/;
+
+export function splitAsk(content: string): { text: string; questions: AskQuestion[] | null } {
+  const match = content.match(ASK_BLOCK);
+  if (!match) return { text: content, questions: null };
+  try {
+    const parsed = JSON.parse(match[1]) as { questions?: AskQuestion[] };
+    if (!Array.isArray(parsed.questions) || parsed.questions.length === 0) return { text: content, questions: null };
+    return { text: content.replace(ASK_BLOCK, '').trim(), questions: parsed.questions };
+  } catch {
+    return { text: content.replace(ASK_BLOCK, '').trim(), questions: null };
+  }
+}
+
+type AskAnswer = { picked: string[]; other: string; otherOn: boolean; note: string };
+const EMPTY_ANSWER: AskAnswer = { picked: [], other: '', otherOn: false, note: '' };
+
+function answerText(q: AskQuestion, a: AskAnswer): string {
+  const values = [...a.picked];
+  if ((a.otherOn || !q.options?.length) && a.other.trim()) values.push(a.other.trim());
+  let line = values.join(', ');
+  if (a.note.trim()) line += line ? ` (${a.note.trim()})` : a.note.trim();
+  return line;
+}
+
+function AskCard({ questions, active }: { questions: AskQuestion[]; active: boolean }) {
+  const processMessage = useThread((s) => s.processMessage);
+  const [answers, setAnswers] = useState<AskAnswer[]>(() => questions.map(() => ({ ...EMPTY_ANSWER })));
+  const [sent, setSent] = useState(false);
+  const locked = !active || sent;
+  const update = (i: number, patch: Partial<AskAnswer>) =>
+    setAnswers((prev) => prev.map((a, j) => (j === i ? { ...a, ...patch } : a)));
+  const toggle = (i: number, q: AskQuestion, label: string) => {
+    const a = answers[i];
+    if (q.multiple) update(i, { picked: a.picked.includes(label) ? a.picked.filter((x) => x !== label) : [...a.picked, label] });
+    else update(i, { picked: [label], otherOn: false });
+  };
+  const ready = questions.every((q, i) => answerText(q, answers[i]) !== '');
+  const submit = () => {
+    if (!ready || locked) return;
+    setSent(true);
+    const body = questions.length === 1
+      ? answerText(questions[0], answers[0])
+      : questions.map((q, i) => `${q.header || q.question}: ${answerText(q, answers[i])}`).join('\n');
+    void processMessage({ role: 'user', content: body });
+  };
+  return (
+    <form className="agent-ask" aria-label="Agent question" onSubmit={(e) => { e.preventDefault(); submit(); }}>
+      {questions.map((q, i) => {
+        const a = answers[i];
+        const options = q.options ?? [];
+        const allowOther = options.length === 0 || q.allow_other !== false;
+        return (
+          <fieldset key={i} className="agent-ask-q" disabled={locked}>
+            <legend>
+              {q.header && <span className="agent-ask-header">{q.header}</span>}
+              <span className="agent-ask-question">{q.question}</span>
+              {q.multiple && <span className="agent-ask-hint">Select all that apply</span>}
+            </legend>
+            {options.map((o) => (
+              <label key={o.label} className={`agent-ask-option${a.picked.includes(o.label) ? ' is-picked' : ''}`}>
+                <input
+                  type={q.multiple ? 'checkbox' : 'radio'}
+                  name={`ask-${i}`}
+                  checked={a.picked.includes(o.label)}
+                  onChange={() => toggle(i, q, o.label)}
+                />
+                <span>
+                  <span className="agent-ask-label">{o.label}</span>
+                  {o.description && <span className="agent-ask-desc">{o.description}</span>}
+                </span>
+              </label>
+            ))}
+            {allowOther && options.length > 0 && (
+              <label className={`agent-ask-option${a.otherOn ? ' is-picked' : ''}`}>
+                <input
+                  type={q.multiple ? 'checkbox' : 'radio'}
+                  name={`ask-${i}`}
+                  checked={a.otherOn}
+                  onChange={() => update(i, q.multiple ? { otherOn: !a.otherOn } : { otherOn: true, picked: [] })}
+                />
+                <span className="agent-ask-label">Other</span>
+              </label>
+            )}
+            {allowOther && (options.length === 0 || a.otherOn) && (
+              <textarea
+                className="agent-ask-input"
+                rows={2}
+                placeholder="Write your answer…"
+                value={a.other}
+                autoFocus={options.length > 0}
+                onChange={(e) => update(i, { other: e.target.value })}
+              />
+            )}
+            {options.length > 0 && (
+              <input
+                className="agent-ask-input"
+                type="text"
+                placeholder="Add details (optional)"
+                value={a.note}
+                onChange={(e) => update(i, { note: e.target.value })}
+              />
+            )}
+          </fieldset>
+        );
+      })}
+      {!locked && (
+        <div className="agent-ask-actions">
+          <button type="submit" className="primary" disabled={!ready}>Send answers</button>
+        </div>
+      )}
+      {locked && <p className="agent-ask-done">{sent ? 'Answers sent.' : 'This question is closed.'}</p>}
+    </form>
+  );
+}
+
+function AssistantMessage({ message }: { message: { id?: string; content?: string | null } }) {
+  const { text, questions } = splitAsk(message.content ?? '');
+  // Only the latest reply's question is answerable; earlier ones were already answered in the thread.
+  const active = useThread((s) => !s.isRunning && s.messages[s.messages.length - 1]?.id === message.id);
   return (
     <div className="agent-msg agent-msg-assistant">
       <div className="agent-msg-body agent-chat-reply">
@@ -82,8 +206,9 @@ function AssistantMessage({ message }: { message: { content?: string | null } })
             },
           }}
         >
-          {linkIssueIds(message.content ?? '')}
+          {linkIssueIds(text)}
         </ReactMarkdown>
+        {questions && <AskCard questions={questions} active={active} />}
       </div>
     </div>
   );
