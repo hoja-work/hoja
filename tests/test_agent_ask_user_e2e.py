@@ -156,6 +156,13 @@ def test_near_miss_extra_keys_still_create_the_issue(tmp_path) -> None:
     assert "Pick a colour" in turn["after"]
 
 
+def test_option_objects_become_readable_labels(tmp_path) -> None:
+    question = {"text": "Which region?", "options": [{"label": "US East", "description": "us-east-1"}, {"label": "EU"}]}
+    (turn,) = _run(tmp_path, {"teamId": "ENG", "questions": [question]})
+    assert [s["status"] for s in _statuses(turn)] == ["created"]
+    assert "Which region?" in turn["after"]
+
+
 def test_unknown_team_fails_without_creating_anything(tmp_path) -> None:
     (turn,) = _run(tmp_path, {"teamId": "NOPE", "questions": [VALID]})
     (status,) = _statuses(turn)
@@ -171,7 +178,7 @@ def test_repeating_the_same_call_creates_nothing_new(tmp_path) -> None:
 
 
 def _fuzz_case(rng: random.Random) -> dict:
-    bad_items = [None, 7, 3.5, True, [], {}, "", "   ", {"text": None}, {"text": 42}, {"text": "   "},
+    bad_items = [{"text": "Dict options?", "options": [{"label": "A"}, {"x": 1}, {"label": " "}]}, None, 7, 3.5, True, [], {}, "", "   ", {"text": None}, {"text": 42}, {"text": "   "},
                  {"question": "Alternate key works?"}, {"text": "x" * 5000},
                  {"text": "line one\nline two \"quoted\" 'single'; DROP TABLE issue; --"},
                  {"text": "ask-user-key: 0123456789abcdef"}, {"text": "Options as string?", "options": "only one"},

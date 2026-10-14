@@ -91,6 +91,18 @@ def _repair_json(raw: str):
         raise ValueError("questions must be a JSON list of questions") from None
 
 
+def _option_text(option) -> str:
+    if isinstance(option, dict):
+        label = option.get("label") or option.get("text") or option.get("value")
+        detail = option.get("description")
+        if isinstance(label, str) and label.strip():
+            return f"{label.strip()} ({detail.strip()})" if isinstance(detail, str) and detail.strip() else label.strip()
+        return ""
+    if isinstance(option, (str, int, float)) and not isinstance(option, bool):
+        return str(option).strip()
+    return ""
+
+
 def _normalize_question(raw) -> tuple[dict | None, str | None]:
     if isinstance(raw, str):
         raw = {"text": raw}
@@ -105,7 +117,8 @@ def _normalize_question(raw) -> tuple[dict | None, str | None]:
         options = [options]
     if not isinstance(options, list):
         return None, "options must be a list of strings"
-    options = [str(o).strip()[:ASK_USER_OPTION_TEXT_LIMIT] for o in options if o is not None and str(o).strip()]
+    options = [_option_text(o) for o in options]
+    options = [o[:ASK_USER_OPTION_TEXT_LIMIT] for o in options if o]
     context = raw.get("context") if isinstance(raw.get("context"), str) else ""
     return {"text": text, "options": options[:ASK_USER_OPTION_LIMIT], "context": context[:ASK_USER_CONTEXT_LIMIT]}, None
 
