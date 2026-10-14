@@ -2,15 +2,10 @@
 
 from __future__ import annotations
 
-import ast
 import asyncio
-import hashlib
 import json
-import logging
-import re
 import time
 import uuid
-from typing import Any
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
@@ -57,7 +52,6 @@ How to answer:
 - Be concise. Lead with the result, then list what changed.
 - If a request is ambiguous (which team, which project, which person), ask one focused question instead of guessing.
 - Ask the user questions in your chat reply: write the question, then numbered options if there are choices, then stop and wait for their next message. Do not create Hoja issues to ask questions.
-- Use `ask_user` only when the user explicitly asks you to file questions as Hoja issues.
 - Never reveal tokens, secrets, or raw authorization headers."""
 
 
@@ -66,94 +60,6 @@ class AgentDeps:
         self.schema = schema
         self.context = context
         self.snapshot: str | None = None
-
-
-ASK_USER_QUESTION_LIMIT = 10
-ASK_USER_TEXT_LIMIT = 250
-ASK_USER_CONTEXT_LIMIT = 2000
-ASK_USER_OPTION_LIMIT = 10
-ASK_USER_OPTION_TEXT_LIMIT = 200
-ASK_USER_FIND = "query($teamId: ID!, $marker: String!) { issues(first: 1, filter: { team: { id: { eq: $teamId } }, description: { contains: $marker } }) { nodes { identifier } } }"
-ASK_USER_CREATE = "mutation($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { identifier } } }"
-ASK_USER_TEAMS = "{ teams(first: 100) { nodes { id key } } }"
-log = logging.getLogger(__name__)
-
-
-def _repair_json(raw: str):
-    """Parse JSON the model wrote almost correctly: code fences, single quotes, trailing commas."""
-    text = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", raw.strip())
-    no_trailing = re.sub(r",\s*([\]}])", r"\1", text)
-    for candidate in (text, no_trailing):
-        try:
-            return json.loads(candidate)
-        except (ValueError, RecursionError):
-            pass
-    try:
-        return ast.literal_eval(no_trailing)
-    except (ValueError, SyntaxError, MemoryError, RecursionError):
-        raise ValueError("questions must be a JSON list of questions") from None
-
-
-def _option_text(option) -> str:
-    if isinstance(option, dict):
-        label = option.get("label") or option.get("text") or option.get("value")
-        detail = option.get("description")
-        if isinstance(label, str) and label.strip():
-            return f"{label.strip()} ({detail.strip()})" if isinstance(detail, str) and detail.strip() else label.strip()
-        return ""
-    if isinstance(option, (str, int, float)) and not isinstance(option, bool):
-        return str(option).strip()
-    return ""
-
-
-def _normalize_question(raw) -> tuple[dict | None, str | None]:
-    if isinstance(raw, str):
-        raw = {"text": raw}
-    if not isinstance(raw, dict):
-        return None, "each question must be a string or an object with text"
-    text = next((raw[key] for key in ("text", "question", "title") if isinstance(raw.get(key), str)), "")
-    text = " ".join(text.split())[:ASK_USER_TEXT_LIMIT]
-    if not text:
-        return None, "question text is required"
-    options = raw.get("options") or []
-    if isinstance(options, str):
-        options = [options]
-    if not isinstance(options, list):
-        return None, "options must be a list of strings"
-    options = [_option_text(o) for o in options]
-    options = [o[:ASK_USER_OPTION_TEXT_LIMIT] for o in options if o]
-    context = raw.get("context") if isinstance(raw.get("context"), str) else ""
-    return {"text": text, "options": options[:ASK_USER_OPTION_LIMIT], "context": context[:ASK_USER_CONTEXT_LIMIT]}, None
-
-
-async def _resolve_team_id(ctx, team: str) -> tuple[str | None, str | None]:
-    _ok, result = await graphql_run(ctx.deps.schema, ASK_USER_TEAMS, {}, ctx.deps.context)
-    if result.get("errors"):
-        return None, result["errors"][0]["message"]
-    for node in ((result.get("data") or {}).get("teams") or {}).get("nodes", []):
-        if team == node["id"] or team.lower() == node["key"].lower():
-            return node["id"], None
-    return None, f"no team matches '{team}'"
-
-
-async def _ask_one(ctx, team_id: str, question: dict) -> dict:
-    text = question["text"]
-    marker = "ask-user-key: " + hashlib.sha256(f"{team_id}\n{text}".encode()).hexdigest()[:16]
-    _ok, found = await graphql_run(ctx.deps.schema, ASK_USER_FIND, {"teamId": team_id, "marker": marker}, ctx.deps.context)
-    if found.get("errors"):
-        return {"status": "failed", "text": text, "error": found["errors"][0]["message"]}
-    existing = (((found.get("data") or {}).get("issues") or {}).get("nodes")) or []
-    if existing:
-        return {"status": "skipped", "text": text, "identifier": existing[0]["identifier"]}
-    description = "\n".join(filter(None, [question["context"], *(f"- {o}" for o in question["options"]), marker]))
-    _ok, result = await graphql_run(ctx.deps.schema, ASK_USER_CREATE, {"input": {"title": text, "teamId": team_id, "description": description}}, ctx.deps.context)
-    if result.get("errors"):
-        return {"status": "failed", "text": text, "error": result["errors"][0]["message"]}
-    payload = (result.get("data") or {}).get("issueCreate") or {}
-    identifier = (payload.get("issue") or {}).get("identifier")
-    if payload.get("success") and identifier:
-        return {"status": "created", "text": text, "identifier": identifier}
-    return {"status": "failed", "text": text, "error": "issueCreate did not confirm the issue"}
 
 
 def build_agent(model, schema_sdl: str, connector: ConnectorBinding | None = None) -> Agent:
@@ -185,43 +91,6 @@ def build_agent(model, schema_sdl: str, connector: ConnectorBinding | None = Non
             return {"errors": [{"message": "This API key is read-only.", "extensions": {"code": "FORBIDDEN", "agentHint": DENY_HINT}}]}
         _ok, result = await graphql_run(ctx.deps.schema, query, variables or {}, ctx.deps.context)
         return result
-
-    @agent.tool
-    async def ask_user(ctx: RunContext[AgentDeps], teamId: str, questions: Any) -> list[dict]:
-        """Ask the user questions as Hoja issues in team `teamId` (a key such as TREBOL, or an id), so they can answer
-        by commenting on each issue. `questions` is a list of up to 10 objects {"text": required string,
-        "options": optional list of strings, "context": optional string}; a plain string per question also works.
-        Questions already asked are skipped. Returns one status per question: created (identifier), skipped (identifier),
-        or failed (error). Read answers back via `issue { comments }`."""
-        if ctx.deps.context.get("access", "read") == "read":
-            return [{"status": "failed", "error": "This API key is read-only."}]
-        if not isinstance(teamId, str) or not teamId.strip():
-            return [{"status": "failed", "error": "teamId is required"}]
-        try:
-            items = _repair_json(questions) if isinstance(questions, str) else questions
-        except ValueError as exc:
-            return [{"status": "failed", "error": str(exc)}]
-        if isinstance(items, dict):
-            items = [items]
-        if not isinstance(items, list) or not items:
-            return [{"status": "failed", "error": "questions must be a non-empty list"}]
-        if len(items) > ASK_USER_QUESTION_LIMIT:
-            return [{"status": "failed", "error": f"at most {ASK_USER_QUESTION_LIMIT} questions per call; send the rest in another call"}]
-        team_id, problem = await _resolve_team_id(ctx, teamId.strip())
-        if team_id is None:
-            return [{"status": "failed", "error": problem}]
-        statuses = []
-        for raw in items:
-            question, problem = _normalize_question(raw)
-            if question is None:
-                statuses.append({"status": "failed", "error": problem})
-                continue
-            try:
-                statuses.append(await _ask_one(ctx, team_id, question))
-            except Exception as exc:  # one bad question must not end the agent run
-                log.exception("ask_user failed for one question")
-                statuses.append({"status": "failed", "text": question["text"], "error": f"unexpected {type(exc).__name__}"})
-        return statuses
 
     return agent
 
