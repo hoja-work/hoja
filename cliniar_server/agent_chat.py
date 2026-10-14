@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
+import hashlib
 import json
+import logging
+import re
 import time
 import uuid
-import hashlib
+from typing import Any
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
@@ -61,6 +65,81 @@ class AgentDeps:
         self.snapshot: str | None = None
 
 
+ASK_USER_QUESTION_LIMIT = 10
+ASK_USER_TEXT_LIMIT = 250
+ASK_USER_CONTEXT_LIMIT = 2000
+ASK_USER_OPTION_LIMIT = 10
+ASK_USER_OPTION_TEXT_LIMIT = 200
+ASK_USER_FIND = "query($teamId: ID!, $marker: String!) { issues(first: 1, filter: { team: { id: { eq: $teamId } }, description: { contains: $marker } }) { nodes { identifier } } }"
+ASK_USER_CREATE = "mutation($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { identifier } } }"
+ASK_USER_TEAMS = "{ teams(first: 100) { nodes { id key } } }"
+log = logging.getLogger(__name__)
+
+
+def _repair_json(raw: str):
+    """Parse JSON the model wrote almost correctly: code fences, single quotes, trailing commas."""
+    text = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", raw.strip())
+    no_trailing = re.sub(r",\s*([\]}])", r"\1", text)
+    for candidate in (text, no_trailing):
+        try:
+            return json.loads(candidate)
+        except (ValueError, RecursionError):
+            pass
+    try:
+        return ast.literal_eval(no_trailing)
+    except (ValueError, SyntaxError, MemoryError, RecursionError):
+        raise ValueError("questions must be a JSON list of questions") from None
+
+
+def _normalize_question(raw) -> tuple[dict | None, str | None]:
+    if isinstance(raw, str):
+        raw = {"text": raw}
+    if not isinstance(raw, dict):
+        return None, "each question must be a string or an object with text"
+    text = next((raw[key] for key in ("text", "question", "title") if isinstance(raw.get(key), str)), "")
+    text = " ".join(text.split())[:ASK_USER_TEXT_LIMIT]
+    if not text:
+        return None, "question text is required"
+    options = raw.get("options") or []
+    if isinstance(options, str):
+        options = [options]
+    if not isinstance(options, list):
+        return None, "options must be a list of strings"
+    options = [str(o).strip()[:ASK_USER_OPTION_TEXT_LIMIT] for o in options if o is not None and str(o).strip()]
+    context = raw.get("context") if isinstance(raw.get("context"), str) else ""
+    return {"text": text, "options": options[:ASK_USER_OPTION_LIMIT], "context": context[:ASK_USER_CONTEXT_LIMIT]}, None
+
+
+async def _resolve_team_id(ctx, team: str) -> tuple[str | None, str | None]:
+    _ok, result = await graphql_run(ctx.deps.schema, ASK_USER_TEAMS, {}, ctx.deps.context)
+    if result.get("errors"):
+        return None, result["errors"][0]["message"]
+    for node in ((result.get("data") or {}).get("teams") or {}).get("nodes", []):
+        if team == node["id"] or team.lower() == node["key"].lower():
+            return node["id"], None
+    return None, f"no team matches '{team}'"
+
+
+async def _ask_one(ctx, team_id: str, question: dict) -> dict:
+    text = question["text"]
+    marker = "ask-user-key: " + hashlib.sha256(f"{team_id}\n{text}".encode()).hexdigest()[:16]
+    _ok, found = await graphql_run(ctx.deps.schema, ASK_USER_FIND, {"teamId": team_id, "marker": marker}, ctx.deps.context)
+    if found.get("errors"):
+        return {"status": "failed", "text": text, "error": found["errors"][0]["message"]}
+    existing = (((found.get("data") or {}).get("issues") or {}).get("nodes")) or []
+    if existing:
+        return {"status": "skipped", "text": text, "identifier": existing[0]["identifier"]}
+    description = "\n".join(filter(None, [question["context"], *(f"- {o}" for o in question["options"]), marker]))
+    _ok, result = await graphql_run(ctx.deps.schema, ASK_USER_CREATE, {"input": {"title": text, "teamId": team_id, "description": description}}, ctx.deps.context)
+    if result.get("errors"):
+        return {"status": "failed", "text": text, "error": result["errors"][0]["message"]}
+    payload = (result.get("data") or {}).get("issueCreate") or {}
+    identifier = (payload.get("issue") or {}).get("identifier")
+    if payload.get("success") and identifier:
+        return {"status": "created", "text": text, "identifier": identifier}
+    return {"status": "failed", "text": text, "error": "issueCreate did not confirm the issue"}
+
+
 def build_agent(model, schema_sdl: str, connector: ConnectorBinding | None = None) -> Agent:
     toolsets = [connector_toolset(connector)] if connector is not None else []
     agent = Agent(model, deps_type=AgentDeps, retries=3, toolsets=toolsets)
@@ -92,43 +171,40 @@ def build_agent(model, schema_sdl: str, connector: ConnectorBinding | None = Non
         return result
 
     @agent.tool
-    async def ask_user(ctx: RunContext[AgentDeps], teamId: str, questions: list[dict]) -> list[dict]:
-        """Ask the user questions as Hoja issues in `teamId`, so they can answer by commenting on each issue.
-        Each question is {"text": required string, "options": optional list of strings, "context": optional string}.
-        Questions already asked (same team and text) are skipped. Returns one status per question:
-        created (with identifier), skipped, or failed (with error). Read answers back via `issue { comments }`."""
+    async def ask_user(ctx: RunContext[AgentDeps], teamId: str, questions: Any) -> list[dict]:
+        """Ask the user questions as Hoja issues in team `teamId` (a key such as TREBOL, or an id), so they can answer
+        by commenting on each issue. `questions` is a list of up to 10 objects {"text": required string,
+        "options": optional list of strings, "context": optional string}; a plain string per question also works.
+        Questions already asked are skipped. Returns one status per question: created (identifier), skipped (identifier),
+        or failed (error). Read answers back via `issue { comments }`."""
         if ctx.deps.context.get("access", "read") == "read":
             return [{"status": "failed", "error": "This API key is read-only."}]
+        if not isinstance(teamId, str) or not teamId.strip():
+            return [{"status": "failed", "error": "teamId is required"}]
+        try:
+            items = _repair_json(questions) if isinstance(questions, str) else questions
+        except ValueError as exc:
+            return [{"status": "failed", "error": str(exc)}]
+        if isinstance(items, dict):
+            items = [items]
+        if not isinstance(items, list) or not items:
+            return [{"status": "failed", "error": "questions must be a non-empty list"}]
+        if len(items) > ASK_USER_QUESTION_LIMIT:
+            return [{"status": "failed", "error": f"at most {ASK_USER_QUESTION_LIMIT} questions per call; send the rest in another call"}]
+        team_id, problem = await _resolve_team_id(ctx, teamId.strip())
+        if team_id is None:
+            return [{"status": "failed", "error": problem}]
         statuses = []
-        for q in questions:
-            marker = "ask-user-key: " + hashlib.sha256(f"{teamId}\n{q['text']}".encode()).hexdigest()[:16]
-            _ok, found = await graphql_run(
-                ctx.deps.schema,
-                "query($teamId: ID!, $marker: String!) { issues(first: 1, filter: { team: { id: { eq: $teamId } }, description: { contains: $marker } }) { nodes { identifier } } }",
-                {"teamId": teamId, "marker": marker},
-                ctx.deps.context,
-            )
-            if found.get("errors"):
-                statuses.append({"status": "failed", "error": found["errors"][0]["message"]})
+        for raw in items:
+            question, problem = _normalize_question(raw)
+            if question is None:
+                statuses.append({"status": "failed", "error": problem})
                 continue
-            if (found.get("data") or {}).get("issues", {}).get("nodes"):
-                statuses.append({"status": "skipped", "text": q["text"]})
-                continue
-            description = "\n".join(filter(None, [q.get("context"), *(f"- {o}" for o in q.get("options", [])), marker]))
-            _ok, result = await graphql_run(
-                ctx.deps.schema,
-                "mutation($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { identifier } } }",
-                {"input": {"title": q["text"], "teamId": teamId, "description": description}},
-                ctx.deps.context,
-            )
-            if result.get("errors"):
-                statuses.append({"status": "failed", "text": q["text"], "error": result["errors"][0]["message"]})
-                continue
-            payload = (result.get("data") or {}).get("issueCreate") or {}
-            if payload.get("success"):
-                statuses.append({"status": "created", "text": q["text"], "identifier": payload["issue"]["identifier"]})
-            else:
-                statuses.append({"status": "failed", "text": q["text"], "error": "issueCreate returned success=false"})
+            try:
+                statuses.append(await _ask_one(ctx, team_id, question))
+            except Exception as exc:  # one bad question must not end the agent run
+                log.exception("ask_user failed for one question")
+                statuses.append({"status": "failed", "text": question["text"], "error": f"unexpected {type(exc).__name__}"})
         return statuses
 
     return agent
