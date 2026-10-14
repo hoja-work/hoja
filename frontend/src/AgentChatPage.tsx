@@ -97,101 +97,87 @@ function answerText(q: AskQuestion, a: AskAnswer): string {
   return line;
 }
 
-function AskCard({ questions, active }: { questions: AskQuestion[]; active: boolean }) {
+// Shows one question at a time in place of the composer; answers are sent together as one user message.
+function AskWizard({ questions }: { questions: AskQuestion[] }) {
   const processMessage = useThread((s) => s.processMessage);
+  const [step, setStep] = useState(0);
   const [answers, setAnswers] = useState<AskAnswer[]>(() => questions.map(() => ({ ...EMPTY_ANSWER })));
-  const [sent, setSent] = useState(false);
-  const locked = !active || sent;
-  const update = (i: number, patch: Partial<AskAnswer>) =>
-    setAnswers((prev) => prev.map((a, j) => (j === i ? { ...a, ...patch } : a)));
-  const toggle = (i: number, q: AskQuestion, label: string) => {
-    const a = answers[i];
-    if (q.multiple) update(i, { picked: a.picked.includes(label) ? a.picked.filter((x) => x !== label) : [...a.picked, label] });
-    else update(i, { picked: [label], otherOn: false });
+  const q = questions[step];
+  const a = answers[step];
+  const options = q.options ?? [];
+  const allowOther = options.length === 0 || q.allow_other !== false;
+  const last = step === questions.length - 1;
+  const answered = answerText(q, a) !== '';
+  const update = (patch: Partial<AskAnswer>) =>
+    setAnswers((prev) => prev.map((x, j) => (j === step ? { ...x, ...patch } : x)));
+  const toggle = (label: string) => {
+    if (q.multiple) update({ picked: a.picked.includes(label) ? a.picked.filter((x) => x !== label) : [...a.picked, label] });
+    else update({ picked: [label], otherOn: false });
   };
-  const ready = questions.every((q, i) => answerText(q, answers[i]) !== '');
-  const submit = () => {
-    if (!ready || locked) return;
-    setSent(true);
+  const next = () => {
+    if (!answered) return;
+    if (!last) { setStep(step + 1); return; }
     const body = questions.length === 1
-      ? answerText(questions[0], answers[0])
-      : questions.map((q, i) => `${q.header || q.question}: ${answerText(q, answers[i])}`).join('\n');
+      ? answerText(q, a)
+      : questions.map((x, i) => `${x.header || x.question}: ${answerText(x, answers[i])}`).join('\n');
     void processMessage({ role: 'user', content: body });
   };
   return (
-    <form className="agent-ask" aria-label="Agent question" onSubmit={(e) => { e.preventDefault(); submit(); }}>
-      {questions.map((q, i) => {
-        const a = answers[i];
-        const options = q.options ?? [];
-        const allowOther = options.length === 0 || q.allow_other !== false;
-        return (
-          <fieldset key={i} className="agent-ask-q" disabled={locked}>
-            <legend>
-              {q.header && <span className="agent-ask-header">{q.header}</span>}
-              <span className="agent-ask-question">{q.question}</span>
-              {q.multiple && <span className="agent-ask-hint">Select all that apply</span>}
-            </legend>
-            {options.map((o) => (
-              <label key={o.label} className={`agent-ask-option${a.picked.includes(o.label) ? ' is-picked' : ''}`}>
-                <input
-                  type={q.multiple ? 'checkbox' : 'radio'}
-                  name={`ask-${i}`}
-                  checked={a.picked.includes(o.label)}
-                  onChange={() => toggle(i, q, o.label)}
-                />
-                <span>
-                  <span className="agent-ask-label">{o.label}</span>
-                  {o.description && <span className="agent-ask-desc">{o.description}</span>}
-                </span>
-              </label>
-            ))}
-            {allowOther && options.length > 0 && (
-              <label className={`agent-ask-option${a.otherOn ? ' is-picked' : ''}`}>
-                <input
-                  type={q.multiple ? 'checkbox' : 'radio'}
-                  name={`ask-${i}`}
-                  checked={a.otherOn}
-                  onChange={() => update(i, q.multiple ? { otherOn: !a.otherOn } : { otherOn: true, picked: [] })}
-                />
-                <span className="agent-ask-label">Other</span>
-              </label>
-            )}
-            {allowOther && (options.length === 0 || a.otherOn) && (
-              <textarea
-                className="agent-ask-input"
-                rows={2}
-                placeholder="Write your answer…"
-                value={a.other}
-                autoFocus={options.length > 0}
-                onChange={(e) => update(i, { other: e.target.value })}
-              />
-            )}
-            {options.length > 0 && (
-              <input
-                className="agent-ask-input"
-                type="text"
-                placeholder="Add details (optional)"
-                value={a.note}
-                onChange={(e) => update(i, { note: e.target.value })}
-              />
-            )}
-          </fieldset>
-        );
-      })}
-      {!locked && (
-        <div className="agent-ask-actions">
-          <button type="submit" className="primary" disabled={!ready}>Send answers</button>
-        </div>
-      )}
-      {locked && <p className="agent-ask-done">{sent ? 'Answers sent.' : 'This question is closed.'}</p>}
+    <form className="agent-ask" aria-label="Agent question" onSubmit={(e) => { e.preventDefault(); next(); }}>
+      <div className="agent-ask-top">
+        {q.header && <span className="agent-ask-header">{q.header}</span>}
+        {questions.length > 1 && <span className="agent-ask-step">{step + 1} of {questions.length}</span>}
+      </div>
+      <fieldset key={step} className="agent-ask-q">
+        <legend>
+          <span className="agent-ask-question">{q.question}</span>
+          {q.multiple && <span className="agent-ask-hint">Select all that apply</span>}
+        </legend>
+        {options.map((o) => (
+          <label key={o.label} className={`agent-ask-option${a.picked.includes(o.label) ? ' is-picked' : ''}`}>
+            <input type={q.multiple ? 'checkbox' : 'radio'} name={`ask-${step}`} checked={a.picked.includes(o.label)} onChange={() => toggle(o.label)} />
+            <span>
+              <span className="agent-ask-label">{o.label}</span>
+              {o.description && <span className="agent-ask-desc">{o.description}</span>}
+            </span>
+          </label>
+        ))}
+        {allowOther && options.length > 0 && (
+          <label className={`agent-ask-option${a.otherOn ? ' is-picked' : ''}`}>
+            <input
+              type={q.multiple ? 'checkbox' : 'radio'}
+              name={`ask-${step}`}
+              checked={a.otherOn}
+              onChange={() => update(q.multiple ? { otherOn: !a.otherOn } : { otherOn: true, picked: [] })}
+            />
+            <span className="agent-ask-label">Other</span>
+          </label>
+        )}
+        {allowOther && (options.length === 0 || a.otherOn) && (
+          <textarea
+            className="agent-ask-input"
+            rows={2}
+            placeholder="Write your answer…"
+            value={a.other}
+            autoFocus
+            onChange={(e) => update({ other: e.target.value })}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); next(); } }}
+          />
+        )}
+        {options.length > 0 && (
+          <input className="agent-ask-input" type="text" placeholder="Add details (optional)" value={a.note} onChange={(e) => update({ note: e.target.value })} />
+        )}
+      </fieldset>
+      <div className="agent-ask-actions">
+        {step > 0 && <button type="button" className="agent-ask-back" onClick={() => setStep(step - 1)}>Back</button>}
+        <button type="submit" className="primary" disabled={!answered}>{last ? 'Send' : 'Next'}</button>
+      </div>
     </form>
   );
 }
 
 function AssistantMessage({ message }: { message: { id?: string; content?: string | null } }) {
   const { text, questions } = splitAsk(message.content ?? '');
-  // Only the latest reply's question is answerable; earlier ones were already answered in the thread.
-  const active = useThread((s) => !s.isRunning && s.messages[s.messages.length - 1]?.id === message.id);
   return (
     <div className="agent-msg agent-msg-assistant">
       <div className="agent-msg-body agent-chat-reply">
@@ -208,7 +194,11 @@ function AssistantMessage({ message }: { message: { id?: string; content?: strin
         >
           {linkIssueIds(text)}
         </ReactMarkdown>
-        {questions && <AskCard questions={questions} active={active} />}
+        {questions && (
+          <ul className="agent-ask-summary">
+            {questions.map((q, i) => <li key={i}>{q.question}</li>)}
+          </ul>
+        )}
       </div>
     </div>
   );
@@ -228,6 +218,19 @@ function UserMessage({ message }: { message: { content?: unknown } }) {
       <div className="agent-msg-bubble">{userText(message.content)}</div>
     </div>
   );
+}
+
+// While the latest reply is an unanswered ask_user question, the wizard replaces the input box.
+function ComposerSwitch() {
+  const pending = useThread((s) => {
+    const lastMsg = s.messages[s.messages.length - 1];
+    if (s.isRunning || lastMsg?.role !== 'assistant' || typeof lastMsg.content !== 'string') return null;
+    return lastMsg.content;
+  });
+  const questions = pending ? splitAsk(pending).questions : null;
+  if (questions) return <AskWizard key={pending} questions={questions} />;
+  // Nested default composer keeps the library's input and starters; CSS removes the doubled slot padding.
+  return <AgentInterface.Composer placeholder="Ask about issues, projects, or cycles…" />;
 }
 
 const STARTERS = [
@@ -258,7 +261,9 @@ export function AgentChatPage({ workspaceName }: { workspaceName: string }) {
           </AgentInterface.SidebarContent>
         </AgentInterface.Sidebar>
         <AgentInterface.Welcome title={`Ask the ${name} agent`} description="Search, summarize, and update issues in your workspace." />
-        <AgentInterface.Composer placeholder="Ask about issues, projects, or cycles…" />
+        <AgentInterface.Composer>
+          <ComposerSwitch />
+        </AgentInterface.Composer>
       </AgentInterface>
     </section>
   );
