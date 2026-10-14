@@ -6,6 +6,7 @@ import asyncio
 import json
 import time
 import uuid
+import hashlib
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
@@ -89,6 +90,46 @@ def build_agent(model, schema_sdl: str, connector: ConnectorBinding | None = Non
             return {"errors": [{"message": "This API key is read-only.", "extensions": {"code": "FORBIDDEN", "agentHint": DENY_HINT}}]}
         _ok, result = await graphql_run(ctx.deps.schema, query, variables or {}, ctx.deps.context)
         return result
+
+    @agent.tool
+    async def ask_user(ctx: RunContext[AgentDeps], teamId: str, questions: list[dict]) -> list[dict]:
+        """Ask the user questions as Hoja issues in `teamId`, so they can answer by commenting on each issue.
+        Each question is {"text": required string, "options": optional list of strings, "context": optional string}.
+        Questions already asked (same team and text) are skipped. Returns one status per question:
+        created (with identifier), skipped, or failed (with error). Read answers back via `issue { comments }`."""
+        if ctx.deps.context.get("access", "read") == "read":
+            return [{"status": "failed", "error": "This API key is read-only."}]
+        statuses = []
+        for q in questions:
+            marker = "ask-user-key: " + hashlib.sha256(f"{teamId}\n{q['text']}".encode()).hexdigest()[:16]
+            _ok, found = await graphql_run(
+                ctx.deps.schema,
+                "query($teamId: ID!, $marker: String!) { issues(first: 1, filter: { team: { id: { eq: $teamId } }, description: { contains: $marker } }) { nodes { identifier } } }",
+                {"teamId": teamId, "marker": marker},
+                ctx.deps.context,
+            )
+            if found.get("errors"):
+                statuses.append({"status": "failed", "error": found["errors"][0]["message"]})
+                continue
+            if (found.get("data") or {}).get("issues", {}).get("nodes"):
+                statuses.append({"status": "skipped", "text": q["text"]})
+                continue
+            description = "\n".join(filter(None, [q.get("context"), *(f"- {o}" for o in q.get("options", [])), marker]))
+            _ok, result = await graphql_run(
+                ctx.deps.schema,
+                "mutation($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { identifier } } }",
+                {"input": {"title": q["text"], "teamId": teamId, "description": description}},
+                ctx.deps.context,
+            )
+            if result.get("errors"):
+                statuses.append({"status": "failed", "text": q["text"], "error": result["errors"][0]["message"]})
+                continue
+            payload = (result.get("data") or {}).get("issueCreate") or {}
+            if payload.get("success"):
+                statuses.append({"status": "created", "text": q["text"], "identifier": payload["issue"]["identifier"]})
+            else:
+                statuses.append({"status": "failed", "text": q["text"], "error": "issueCreate returned success=false"})
+        return statuses
 
     return agent
 
