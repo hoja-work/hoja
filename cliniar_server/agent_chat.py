@@ -45,6 +45,7 @@ How to work:
 - Use the `schema` tool once per conversation before writing a mutation you have not used before, so you use real field names.
 - Use the `graphql` tool to read and change data. Always pass a non-empty `query` string.
 - Before creating anything, search for an existing issue or project with the same title to avoid duplicates.
+- Lists, counts, and summaries: the default page size is 50, so pass `first: 250` and, while `pageInfo.hasNextPage` is true, repeat the query with `after` set to `pageInfo.endCursor`. Report totals only after the last page. If you stop early, say how many you saw and that more exist.
 - When creating a task, set title, teamId, and projectId when the user names a project. Add a short description with acceptance criteria when the request is vague.
 - Assign people only after confirming they are members of the team.
 - To filter to the signed-in user, first run `{ viewer { id } }`, then use the returned id, e.g. `issues(filter: { assignee: { id: { eq: "<id>" } } })`. `UserFilter` has only id, email, displayName, and name; there is no `isMe` field.
