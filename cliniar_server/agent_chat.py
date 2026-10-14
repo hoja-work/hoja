@@ -18,7 +18,7 @@ from graphql import GraphQLError, OperationDefinitionNode, OperationType, parse
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.mcp import MCPToolset
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import ModelRequest, ModelResponse, PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta, UserPromptPart
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from sqlalchemy import and_, select
@@ -243,10 +243,21 @@ async def stream_reply(store, org_id: str, uid: str, messages: list[dict], schem
         save_message(conn, conversation_id, "user", prompt)
     reply_parts: list[str] = []
     try:
-        async with agent.run_stream(prompt, message_history=history, deps=deps) as result:
-            async for text in result.stream_text(delta=True):
-                reply_parts.append(text)
-                yield _chunk(completion_id, {"content": text})
+        # Stream every model turn: run_stream/stream_text stops after the first text response,
+        # so text written after a tool call (the final answer) was never sent to the user.
+        async with agent.iter(prompt, message_history=history, deps=deps) as run:
+            async for node in run:
+                if Agent.is_model_request_node(node):
+                    async with node.stream(run.ctx) as stream:
+                        async for event in stream:
+                            text = None
+                            if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                                text = event.part.content
+                            elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+                                text = event.delta.content_delta
+                            if text:
+                                reply_parts.append(text)
+                                yield _chunk(completion_id, {"content": text})
     except UnexpectedModelBehavior:
         reply_parts = ["The assistant could not complete that request. Please try again."]
         yield _chunk(completion_id, {"content": reply_parts[0]})
