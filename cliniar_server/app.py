@@ -374,7 +374,14 @@ def create_app(
     def _client_ip(request: Request) -> str:
         peer = request.client.host if request.client else "unknown"
         if _request_from_trusted_proxy(request):
-            forwarded = request.headers.get("x-forwarded-for", "").split(",")[-1].strip()
+            # Behind Cloudflare the connecting client's real address is carried
+            # in CF-Connecting-IP (set by the edge, overriding any client-supplied
+            # value). X-Forwarded-For's FIRST entry is the original client; the
+            # last entry is only the most recent proxy hop (a shared address).
+            client_ip = request.headers.get("cf-connecting-ip", "").strip()
+            if client_ip:
+                return client_ip
+            forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
             if forwarded:
                 return forwarded
         return peer

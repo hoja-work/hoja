@@ -1331,6 +1331,45 @@ def test_browser_password_session_setup_login_graphql_and_logout(tmp_path) -> No
     assert client.post("/graphql", json={"query": "{ viewer { id } }"}).status_code == 401
 
 
+def test_login_rate_limit_attributes_per_client_behind_trusted_proxy(tmp_path) -> None:
+    """Regression: without trusted-proxy IP resolution every visitor shared the
+    reverse proxy's container IP, so 10 failed logins from ANY source locked out
+    ALL users (site-wide login DoS). With trust enabled, the edge's
+    CF-Connecting-IP must be the limiter key and per-client buckets independent."""
+    from starlette.testclient import TestClient
+
+    db_path = tmp_path / "proxy-client-ip.db"
+    engine = make_engine(db_path)
+    migrate(engine)
+    seeded = seed_tenant(engine, org_name="Proxy IP Workspace", org_url_key="proxy-ip-test",
+                         user_name="Proxy User", user_email="proxy-ip@example.test",
+                         demo_issues=False)
+    app = create_app(str(db_path), trusted_proxy_cidrs="172.18.0.0/16",
+                     trusted_public_host="hoja.clover4.app", open_mode=False)
+    attacker = {"cf-connecting-ip": "198.51.100.7", "x-forwarded-for": "198.51.100.7, 172.18.0.2"}
+    victim = {"cf-connecting-ip": "198.51.100.8", "x-forwarded-for": "198.51.100.8, 172.18.0.2"}
+    with TestClient(app, client=("172.18.0.2", 5000)) as client:
+        # The attacker brute-forces a throwaway email: this must burn ONLY the
+        # attacker's IP bucket (and that throwaway email), never the shared
+        # proxy IP and never the victim's email bucket.
+        for i in range(10):
+            r = client.post("/auth/login", headers=attacker,
+                            json={"email": "throwaway-target@nowhere.test", "password": f"bad-{i}"})
+            assert r.status_code == 401, (i, r.status_code)
+        blocked = client.post("/auth/login", headers=attacker,
+                              json={"email": "throwaway-target@nowhere.test", "password": "bad-more"})
+        assert blocked.status_code == 429
+        other = client.post("/auth/login", headers=victim,
+                            json={"email": "proxy-ip@example.test", "password": "also-wrong"})
+        assert other.status_code == 401, "victim client IP must not share the attacker's bucket"
+        # Forwarded headers from an UNTRUSTED peer must not influence the key.
+        with TestClient(app, client=("198.51.100.99", 5000)) as direct:
+            r = direct.post("/auth/login", headers={"cf-connecting-ip": "1.2.3.4",
+                            "x-forwarded-for": "1.2.3.4"},
+                            json={"email": "proxy-ip@example.test", "password": "bad-direct"})
+            assert r.status_code == 401
+
+
 def test_malformed_json_body_returns_400_not_500(tmp_path) -> None:
     from starlette.testclient import TestClient
 
