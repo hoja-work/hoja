@@ -397,15 +397,16 @@ def create_app(
     def _auth(request: Request):
         raw = request.headers.get("authorization", "") or request.headers.get("Authorization", "")
         token = raw[7:].strip() if raw.lower().startswith("bearer ") else raw.strip()
-        if raw:
-            # A presented Authorization header is authoritative; cookies are not consulted.
-            if token:
-                key = store.resolve_token(token)
-                if key:
-                    store.touch_api_key(key["id"])
-                    request.state.api_key_access = key["access"]
-                    return key["user_id"], key["organization_id"], None, False
-            return _open_mode_identity(request)
+        if raw and token:
+            # A valid Authorization header is authoritative; cookies are not consulted.
+            key = store.resolve_token(token)
+            if key:
+                store.touch_api_key(key["id"])
+                request.state.api_key_access = key["access"]
+                return key["user_id"], key["organization_id"], None, False
+            # The presented credential did not resolve (e.g. the browser SPA's
+            # "session" sentinel). Fall through to the browser session cookie
+            # instead of rejecting the request outright.
         session_token = request.cookies.get("hoja_session")
         if session_token:
             session = store.resolve_browser_session(session_token)

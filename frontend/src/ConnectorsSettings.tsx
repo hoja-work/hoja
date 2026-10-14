@@ -17,7 +17,7 @@ type PendingAction = {
 
 function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('hoja_token');
-  return token ? { authorization: `Bearer ${token}` } : {};
+  return token && token !== 'session' ? { authorization: `Bearer ${token}` } : {};
 }
 
 async function api<T>(path: string, init: RequestInit = {}): Promise<T> {

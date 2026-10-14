@@ -9,7 +9,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('hoja_token');
-  return token ? { authorization: `Bearer ${token}` } : {};
+  return token && token !== 'session' ? { authorization: `Bearer ${token}` } : {};
 }
 
 // Upload IDs for the next chat turn. The library builds the request body, so the fetch wrapper adds them once.

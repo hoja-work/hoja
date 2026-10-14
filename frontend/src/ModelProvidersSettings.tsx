@@ -20,7 +20,7 @@ async function call(query: string, variables: Record<string, unknown> = {}) {
   const token = localStorage.getItem('hoja_token');
   const res = await fetch('/graphql', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    headers: { 'content-type': 'application/json', ...(token && token !== 'session' ? { authorization: `Bearer ${token}` } : {}) },
     credentials: 'include',
     body: JSON.stringify({ query, variables }),
   });

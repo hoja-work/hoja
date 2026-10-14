@@ -1331,6 +1331,46 @@ def test_browser_password_session_setup_login_graphql_and_logout(tmp_path) -> No
     assert client.post("/graphql", json={"query": "{ viewer { id } }"}).status_code == 401
 
 
+def test_browser_session_survives_invalid_bearer_sentinel_header(tmp_path) -> None:
+    """Regression: the SPA used to send 'Authorization: Bearer session' (the
+    cookie-session sentinel) after password login. The server must fall back to
+    the browser session cookie instead of rejecting with AUTHENTICATION_ERROR."""
+    from starlette.testclient import TestClient
+
+    db_path = tmp_path / "bearer-sentinel-fallback.db"
+    engine = make_engine(db_path)
+    migrate(engine)
+    seeded = seed_tenant(engine, org_name="Sentinel Workspace", org_url_key="sentinel-test",
+                         user_name="Sentinel User", user_email="sentinel@example.test",
+                         demo_issues=False)
+    client = TestClient(create_app(str(db_path), open_mode=False))
+    assert client.post("/auth/setup", json={"token": seeded["token"],
+        "password": "correct horse battery"}).status_code == 201
+    login = client.post("/auth/login", json={"email": "sentinel@example.test",
+                                             "password": "correct horse battery"})
+    assert login.status_code == 200
+    assert "hoja_session" in login.cookies
+
+    sentinel = {"authorization": "Bearer session"}
+    me = client.get("/auth/me", headers=sentinel)
+    assert me.status_code == 200
+    assert me.json()["organizationId"] == seeded["org_id"]
+    graph = client.post("/graphql", headers=sentinel, json={"query": "{ viewer { email } }"})
+    assert graph.status_code == 200
+    assert graph.json()["data"]["viewer"]["email"] == "sentinel@example.test"
+
+    # A truly invalid bearer with no session cookie must still be rejected.
+    client2 = TestClient(create_app(str(db_path), open_mode=False))
+    assert client2.post("/graphql", headers={"authorization": "Bearer garbage-token-not-real"},
+                        json={"query": "{ viewer { id } }"}).status_code == 401
+    # And header-authoritative behavior for a VALID key is unchanged (org scope follows the key).
+    client3 = TestClient(create_app(str(db_path), open_mode=False))
+    ok = client3.post("/graphql", headers={"authorization": f"Bearer {seeded['token']}"},
+                      json={"query": "{ viewer { email } }"})
+    assert ok.status_code == 200
+    assert ok.json()["data"]["viewer"]["email"] == "sentinel@example.test"
+
+
 def test_browser_password_login_accepts_api_key_and_rejects_invalid_password(tmp_path) -> None:
     from starlette.testclient import TestClient
 
