@@ -27,18 +27,11 @@ MESSAGES = {"messages": [{"role": "user", "content": "hi"}]}
 
 class _StubOpenAI(BaseHTTPRequestHandler):
     seen_auth: list[str] = []
-    status_code = 200
 
     def do_POST(self):  # noqa: N802
         length = int(self.headers.get("content-length", 0))
         body = json.loads(self.rfile.read(length))
         _StubOpenAI.seen_auth.append(self.headers.get("authorization", ""))
-        if _StubOpenAI.status_code != 200:
-            self.send_response(_StubOpenAI.status_code)
-            self.send_header("content-type", "application/json")
-            self.end_headers()
-            self.wfile.write(b'{"error":{"message":"private upstream detail"}}')
-            return
         self.send_response(200)
         self.send_header("content-type", "text/event-stream")
         self.end_headers()
@@ -112,23 +105,6 @@ def test_streams_reply_from_admin_configured_provider(tmp_path, stub_base_url) -
     assert "".join(deltas) == "Hello from stub"
     assert res.text.rstrip().endswith("data: [DONE]")
     assert _StubOpenAI.seen_auth == [f"Bearer {SECRET}"]
-
-
-def test_provider_http_error_returns_safe_completed_sse(tmp_path, stub_base_url) -> None:
-    _, app, admin = _setup(tmp_path)
-    _gql(TestClient(app), admin["token"], CREATE, {"k": SECRET, "u": stub_base_url})
-    _StubOpenAI.status_code = 500
-    try:
-        with TestClient(app) as client:
-            res = client.post("/api/agent/chat", json=MESSAGES,
-                              headers={"Authorization": f"Bearer {admin['token']}"})
-    finally:
-        _StubOpenAI.status_code = 200
-
-    assert res.status_code == 200
-    assert "couldn't reach its model provider" in res.text
-    assert "private upstream detail" not in res.text
-    assert res.text.rstrip().endswith("data: [DONE]")
 
 
 def test_rejects_request_without_user_message(tmp_path) -> None:

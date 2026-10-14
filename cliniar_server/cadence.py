@@ -86,6 +86,36 @@ def validate_timezone(name: str) -> ZoneInfo:
         raise CadenceInputError(f"Unknown IANA timezone: {name!r}.") from exc
 
 
+def _rollover_cycle_issues(conn, org_id: str, team_id: str,
+                           from_cycle_ids: list, to_cycle_id: str, timestamp: str) -> int:
+    """Move unfinished issues from just-closed cycles into the new active cycle.
+
+    Mirrors Linear's "Issues rollover": open issues (unstarted/started states)
+    carry forward automatically; backlog, triage, completed, and canceled
+    issues stay behind. There is no way to keep an unfinished issue in a
+    closed cycle. Returns the number of issues moved.
+    """
+    from sqlalchemy import and_, select, update
+    from cliniar_server.db import issue, workflow_state
+    movable = (
+        select(issue.c.id)
+        .select_from(issue.join(workflow_state, workflow_state.c.id == issue.c.state_id))
+        .where(and_(
+            issue.c.organization_id == org_id,
+            issue.c.team_id == team_id,
+            issue.c.cycle_id.in_(from_cycle_ids),
+            issue.c.archived_at.is_(None),
+            workflow_state.c.type.in_(("unstarted", "started")),
+        ))
+    )
+    result = conn.execute(
+        update(issue)
+        .where(issue.c.id.in_(movable))
+        .values(cycle_id=to_cycle_id, updated_at=timestamp)
+    )
+    return result.rowcount or 0
+
+
 def reconcile_team_cadence(conn, org_id: str, row, now: datetime) -> dict:
     """Within a caller-held team write transaction, ensure Current and two Upcoming.
 
@@ -178,9 +208,14 @@ def reconcile_team_cadence(conn, org_id: str, row, now: datetime) -> dict:
     active = (conn.execute(select(cycle).where(and_(cycle.c.team_id == team_id,
         cycle.c.number == active_number))).mappings().one() if active_number else None)
     if active:
+        newly_completed = []
         for past in persisted:
             if past["number"] < active_number and not past["completed_at"]:
                 conn.execute(cycle.update().where(cycle.c.id == past["id"]).values(completed_at=past["ends_at"], updated_at=timestamp))
+                newly_completed.append(past["id"])
+        if newly_completed:
+            # Linear-style rollover: unfinished issues follow the active pointer.
+            _rollover_cycle_issues(conn, org_id, team_id, newly_completed, active["id"], timestamp)
     if row.get("active_cycle_id") != (active["id"] if active else None):
         conn.execute(team.update().where(and_(team.c.organization_id == org_id,
             team.c.id == team_id)).values(active_cycle_id=active["id"] if active else None, updated_at=timestamp))

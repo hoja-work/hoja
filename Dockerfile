@@ -10,9 +10,8 @@ RUN groupadd --system cliniar && useradd --system --gid cliniar --home /app --sh
 WORKDIR /app
 COPY . .
 COPY --from=frontend-build /frontend/dist /app/web
-RUN pip install --no-cache-dir ./connectors/google_workspace '.[server,mcp,agent]' \
+RUN pip install --no-cache-dir '.[server,mcp]' \
     && chown -R cliniar:cliniar /app
-RUN mkdir -p /app/data/agent-uploads && chown -R cliniar:cliniar /app/data
 ENV CLINIAR_WEB_ROOT=/app/web
 USER cliniar
 EXPOSE 8787

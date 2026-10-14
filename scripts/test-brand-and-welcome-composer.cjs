@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const css = fs.readFileSync(path.resolve(__dirname, process.env.UI_LAYOUT_CSS || '../frontend/src/styles.css'), 'utf8');
-const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><section class="agent-chat-page"><div class="openui-agent-welcome-screen"><div class="openui-agent-welcome-screen__desktop-composer"><div class="agent-composer"><textarea class="agent-composer-input" placeholder="Type your query here"></textarea><div class="agent-composer__action-bar"><button class="agent-composer-send" aria-label="Send">↑</button></div></div></div></div></section></body></html>`;
+const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><section class="agent-chat-page"><div class="openui-agent-welcome-screen"><div class="openui-agent-welcome-screen__desktop-composer"><div class="openui-agent-desktop-welcome-composer"><textarea class="openui-agent-desktop-welcome-composer__input" placeholder="Type your query here"></textarea><div class="openui-agent-desktop-welcome-composer__action-bar"><button class="openui-agent-desktop-welcome-composer__submit-button" aria-label="Send">↑</button></div></div></div></div></section></body></html>`;
 (async () => {
   const browser = await chromium.launch({ headless: true });
   try {
@@ -14,10 +14,10 @@ const html = `<!doctype html><html><head><meta name="viewport" content="width=de
       await page.setContent(html);
       await page.addStyleTag({ content: css });
       const r = await page.evaluate(() => {
-        const card = document.querySelector('.agent-composer').getBoundingClientRect();
-        const btn = document.querySelector('.agent-composer-send').getBoundingClientRect();
-        const input = getComputedStyle(document.querySelector('.agent-composer-input'));
-        return { cardRight: card.right, btnRight: btn.right, inputBorder: input.borderTopWidth, cardRadius: getComputedStyle(document.querySelector('.agent-composer')).borderTopLeftRadius, scroll: document.documentElement.scrollWidth };
+        const card = document.querySelector('.openui-agent-desktop-welcome-composer').getBoundingClientRect();
+        const btn = document.querySelector('.openui-agent-desktop-welcome-composer__submit-button').getBoundingClientRect();
+        const input = getComputedStyle(document.querySelector('.openui-agent-desktop-welcome-composer__input'));
+        return { cardRight: card.right, btnRight: btn.right, inputBorder: input.borderTopWidth, cardRadius: getComputedStyle(document.querySelector('.openui-agent-desktop-welcome-composer')).borderTopLeftRadius, scroll: document.documentElement.scrollWidth };
       });
       assert.ok(r.btnRight <= r.cardRight + 1, `${width}px: welcome send button outside composer card`);
       assert.equal(r.inputBorder, '0px', `${width}px: welcome input must not draw its own border`);

@@ -141,6 +141,8 @@ type Mutation {
   notificationMarkAllRead: Boolean!
   issueDelete(id: String!): DeletePayload
   issueArchive(id: String!): DeletePayload
+  issueSubscribe(id: String!): Boolean!
+  issueUnsubscribe(id: String!): Boolean!
   commentCreate(input: CommentCreateInput!): CommentPayload
   commentUpdate(id: String!, input: CommentUpdateInput!): CommentPayload
   commentDelete(id: String!): DeletePayload
@@ -152,6 +154,7 @@ type Mutation {
   projectUpdateCreate(input: ProjectUpdateCreateInput!): ProjectUpdatePayload
   projectArchive(id: String!): DeletePayload
   teamCycleCadenceEnable(teamId: String!, weekday: Int!): TeamCycleCadence!
+  cycleUpdate(id: String!, input: CycleUpdateInput!): CyclePayload
   initiativeCreate(input: InitiativeCreateInput!): InitiativePayload
   initiativeUpdate(id: String!, input: InitiativeUpdateInput!): InitiativePayload
   initiativeArchive(id: String!): DeletePayload
@@ -210,6 +213,9 @@ type Team {
   members(first: Int = 100): UserConnection
   cycles(first: Int = 50): CycleConnection
   activeCycle: Cycle
+  autoAddStarted: Boolean
+  autoAddCompleted: Boolean
+  autoAddBacklog: Boolean
 }
 
 type WorkflowState {
@@ -238,6 +244,7 @@ type TeamCycleCadence { enabled: Boolean! weekday: Int timezone: String! policyV
 type Cycle {
   id: ID!
   name: String
+  description: String
   number: Int
   startsAt: DateTime
   endsAt: DateTime
@@ -321,6 +328,7 @@ type Issue {
   labels(first: Int = 50): IssueLabelConnection
   subscribers(first: Int = 50): UserConnection
   comments(first: Int = 50): CommentConnection
+  attachments(first: Int = 50): AttachmentConnection
   activity(first: Int = 50, after: String): IssueActivityConnection
 }
 
@@ -349,6 +357,7 @@ type ProjectPayload { success: Boolean! project: Project }
 type DeletePayload { success: Boolean! }
 type PendingMembershipInvitation { userId: ID! name: String email: String expiresAt: DateTime }
 type AttachmentPayload { success: Boolean! attachment: Attachment }
+type AttachmentConnection { nodes: [Attachment!]! pageInfo: PageInfo! }
 type Attachment {
   id: ID!
   url: String!
@@ -397,6 +406,7 @@ input IssueFilter {
   creator: UserFilter
   project: ProjectRelFilter
   cycle: CycleFilter
+  parent: IssueParentFilter
   labels: LabelRelFilter
   priority: NumberComparator
   number: NumberComparator
@@ -410,10 +420,13 @@ input IssueFilter {
 }
 
 input ProjectFilter { id: IDComparator slugId: StringComparator name: StringComparator state: StringComparator team: TeamFilter }
+input IssueParentFilter { id: IDComparator }
 input IssueLabelFilter { team: TeamFilter name: StringComparator }
 
 # ---- Mutation inputs ----
-input TeamUpdateInput { name: String key: String description: String }
+input TeamUpdateInput { name: String key: String description: String autoAddStarted: Boolean autoAddCompleted: Boolean autoAddBacklog: Boolean }
+input CycleUpdateInput { name: String description: String startsAt: DateTime endsAt: DateTime }
+type CyclePayload { success: Boolean! cycle: Cycle }
 input TeamCreateInput { name: String! key: String! description: String color: String icon: String private: Boolean timezone: String memberIds: [String!] }
 input IssueCreateInput {
   title: String!

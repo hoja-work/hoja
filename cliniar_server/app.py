@@ -691,12 +691,10 @@ def create_app(
             "browser_session": _is_browser,
             "access": getattr(request.state, "api_key_access", "read_write"),
         }
-        from cliniar_server import agent_uploads
         try:
             thread_id = body.get("threadId") if isinstance(body, dict) else None
-            attachments = agent_uploads.load_uploads(org, uid, body.get("attachmentIds", []) if isinstance(body, dict) else [])
             connector = connector_binding_for(engine, org, uid)
-            gen = stream_reply(store, org, uid, messages, _schema, SCHEMA_SDL, base_context, thread_id, connector, attachments)
+            gen = stream_reply(store, org, uid, messages, _schema, SCHEMA_SDL, base_context, thread_id, connector)
             first = await gen.__anext__()
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
@@ -731,18 +729,6 @@ def create_app(
         if err:
             return err
         return JSONResponse(agent_threads.list_threads(store, org, uid))
-
-    async def agent_upload_create(request: Request):
-        from cliniar_server import agent_uploads
-        uid, org, err = await _agent_auth(request)
-        if err:
-            return err
-        body = await request.json()
-        try:
-            record = agent_uploads.save_upload(org, uid, body.get("name") if isinstance(body, dict) else None, body.get("content") if isinstance(body, dict) else None)
-        except ValueError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=400)
-        return JSONResponse(record, status_code=201)
 
     async def agent_threads_create(request: Request):
         from cliniar_server import agent_threads
@@ -1217,6 +1203,75 @@ def create_app(
             return JSONResponse({"error": "Authentication required"}, status_code=401)
         return JSONResponse({"userId": uid, "organizationId": org})
 
+    # ---- Attachment file uploads (images/files/videos for issue attachments)
+    _UPLOAD_MAX_BYTES = 10 * 1024 * 1024
+    _UPLOAD_TYPE_PREFIXES = ("image/", "video/")
+    _UPLOAD_TYPE_EXACT = {"application/pdf", "text/plain", "text/markdown"}
+
+    def _uploads_dir() -> Path:
+        from cliniar_server.db import default_db_dir
+        d = default_db_dir() / "uploads"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    async def upload_create(request: Request):
+        uid, org, _identity_id, _browser_session = _auth(request)
+        if not uid:
+            return JSONResponse({"error": "Authentication required"}, status_code=401)
+        csrf = _cookie_csrf_error(request, json_only=False)
+        if csrf:
+            return csrf
+        try:
+            form = await request.form()
+        except Exception:
+            return JSONResponse({"error": "Invalid multipart body"}, status_code=400)
+        upload = form.get("file")
+        if upload is None or not hasattr(upload, "read"):
+            return JSONResponse({"error": "Missing 'file' field"}, status_code=400)
+        content_type = (getattr(upload, "content_type", "") or "").split(";")[0].strip().lower()
+        allowed = content_type in _UPLOAD_TYPE_EXACT or any(
+            content_type.startswith(p) for p in _UPLOAD_TYPE_PREFIXES)
+        if not allowed:
+            return JSONResponse({"error": "File type not allowed"}, status_code=415)
+        body = await upload.read()
+        if len(body) > _UPLOAD_MAX_BYTES:
+            return JSONResponse({"error": "File too large (10 MB max)"}, status_code=413)
+        original = (getattr(upload, "filename", "") or "file").split("/")[-1].split("\\")[-1]
+        ext = "".join(c for c in Path(original).suffix.lower() if c.isalnum() or c == ".")[:12]
+        file_id = secrets.token_hex(16)
+        stored = _uploads_dir() / f"{file_id}{ext}"
+        stored.write_bytes(body)
+        (_uploads_dir() / f"{file_id}.json").write_text(
+            json.dumps({"org": org, "filename": original[:120],
+                        "content_type": content_type, "size": len(body)}))
+        return JSONResponse({"url": f"/api/uploads/{file_id}",
+                             "title": original[:120] or "file"})
+
+    async def upload_serve(request: Request):
+        uid, org, _identity_id, _browser_session = _auth(request)
+        if not uid:
+            return JSONResponse({"error": "Authentication required"}, status_code=401)
+        file_id = request.path_params.get("file_id", "")
+        if not file_id.replace("_", "").replace("-", "").isalnum() or len(file_id) > 64:
+            return JSONResponse({"error": "Not found"}, status_code=404)
+        meta_path = _uploads_dir() / f"{file_id}.json"
+        try:
+            meta = json.loads(meta_path.read_text())
+        except (OSError, ValueError):
+            return JSONResponse({"error": "Not found"}, status_code=404)
+        if meta.get("org") != org:
+            return JSONResponse({"error": "Not found"}, status_code=404)
+        candidates = [p for p in _uploads_dir().glob(f"{file_id}.*")
+                      if p.suffix != ".json" and p.name != f"{file_id}.json"]
+        if not candidates:
+            return JSONResponse({"error": "Not found"}, status_code=404)
+        return FileResponse(
+            candidates[0],
+            media_type=meta.get("content_type") or "application/octet-stream",
+            filename=meta.get("filename") or "file",
+            content_disposition_type="inline",
+        )
+
     async def health(request: Request):
         return JSONResponse({"status": "ok"})
 
@@ -1298,7 +1353,6 @@ def create_app(
         routes=[
             Route("/graphql", graphql_server, methods=["POST", "GET"]),
             Route("/api/agent/chat", agent_chat_server, methods=["POST"]),
-            Route("/api/agent/uploads", agent_upload_create, methods=["POST"]),
             Route("/api/agent/threads/get", agent_threads_list, methods=["GET"]),
             Route("/api/agent/threads/create", agent_threads_create, methods=["POST"]),
             Route("/api/agent/threads/get/{thread_id}", agent_thread_get, methods=["GET"]),
@@ -1314,6 +1368,8 @@ def create_app(
             Route("/auth/workspaces", auth_workspaces, methods=["POST"]),
             Route("/auth/logout", auth_logout, methods=["POST"]),
             Route("/auth/me", auth_me, methods=["GET"]),
+            Route("/api/uploads", upload_create, methods=["POST"]),
+            Route("/api/uploads/{file_id}", upload_serve, methods=["GET"]),
             Route("/health", health, methods=["GET"]),
             Route("/ready", ready, methods=["GET"]),
             Route(

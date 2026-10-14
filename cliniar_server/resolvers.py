@@ -282,9 +282,7 @@ def r_team(_, info, id):
     row = store.team_by_id_or_key(org, id, viewer_id=uid)
     if not row:
         return None
-    t = store.ser_team(row)
-    t["_active_cycle_id"] = row.get("active_cycle_id")
-    return t
+    return store.ser_team(row)
 
 
 @query.field("issues")
@@ -513,9 +511,7 @@ def i_team(obj, info):
     row = store.raw_team(org, obj["_team_id"], viewer_id=uid) if obj.get("_team_id") else None
     if not row:
         return None
-    t = store.ser_team(row)
-    t["_active_cycle_id"] = row.get("active_cycle_id")
-    return t
+    return store.ser_team(row)
 
 
 @Issue.field("project")
@@ -566,6 +562,13 @@ def i_comments(obj, info, first=50):
     store, _w, org, _uid = _ctx(info)
     first = _page_size(first)
     return _conn(store.comments_for(org, obj["id"])[:first])
+
+
+@Issue.field("attachments")
+def i_attachments(obj, info, first=50):
+    store, _w, org, _uid = _ctx(info)
+    first = _page_size(first)
+    return _conn(store.issue_attachments_for(org, obj["id"])[:first])
 
 
 @query.field("myIssueActivity")
@@ -1017,6 +1020,25 @@ def m_attachment_create(_, info, input):
     _store, w, org, uid = _ctx(info)
     created = w.attachment_create(org, uid, input)
     return {"success": bool(created), "attachment": created}
+
+
+@mutation.field("issueSubscribe")
+def m_issue_subscribe(_, info, id):
+    _store, w, org, uid = _ctx(info)
+    return bool(w.issue_subscribe(org, uid, id))
+
+
+@mutation.field("issueUnsubscribe")
+def m_issue_unsubscribe(_, info, id):
+    _store, w, org, uid = _ctx(info)
+    return bool(w.issue_unsubscribe(org, uid, id))
+
+
+@mutation.field("cycleUpdate")
+def m_cycle_update(_, info, id, input):
+    _store, w, org, _uid = _ctx(info)
+    updated = w.cycle_update(org, id, input)
+    return {"success": bool(updated), "cycle": updated}
 
 
 @Attachment.field("issue")

@@ -31,7 +31,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 25
+CURRENT_SCHEMA_REVISION = 27
 
 
 def now_iso() -> str:
@@ -350,6 +350,9 @@ team = Table(
     Column("cadence_upcoming_count", Integer, nullable=False, default=2),
     Column("issue_counter", Integer, default=0),
     Column("active_cycle_id", String),
+    Column("auto_add_started", Boolean, nullable=False, default=True),
+    Column("auto_add_completed", Boolean, nullable=False, default=True),
+    Column("auto_add_backlog", Boolean, nullable=False, default=True),
     Column("default_state_id", String),
     Column("created_at", String),
     Column("updated_at", String),
@@ -779,6 +782,17 @@ def _apply_team_cadence(conn) -> None:
         )
 
 
+def _apply_team_auto_add_backlog(conn) -> None:
+    """Add the backlog auto-add-to-cycle toggle on the team table.
+
+    Requested by the workspace owner: backlog issues should join the
+    current cycle automatically, like started/completed ones. Defaults on.
+    """
+    inspector = inspect(conn)
+    existing = {column["name"] for column in inspector.get_columns("team")}
+    if "auto_add_backlog" not in existing:
+        conn.exec_driver_sql("ALTER TABLE team ADD COLUMN auto_add_backlog BOOLEAN NOT NULL DEFAULT TRUE")
+
 
 def _apply_oauth_security(conn):
     oauth_pending.create(conn, checkfirst=True)
@@ -939,6 +953,23 @@ def rate_limit_record(engine: Engine, bucket: str, keys: list[str], window_secon
         )
 
 
+def _apply_team_cycle_automations(conn) -> None:
+    """Add Linear-style auto-add-to-cycle toggles on the team table.
+
+    Defaults match Linear (both on). Structured so a future cooldown
+    attribution rule can read the same flags.
+    """
+    inspector = inspect(conn)
+    existing = {column["name"] for column in inspector.get_columns("team")}
+    additions = {
+        "auto_add_started": "BOOLEAN NOT NULL DEFAULT TRUE",
+        "auto_add_completed": "BOOLEAN NOT NULL DEFAULT TRUE",
+    }
+    for name, sql_type in additions.items():
+        if name not in existing:
+            conn.exec_driver_sql(f"ALTER TABLE team ADD COLUMN {name} {sql_type}")
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -982,6 +1013,8 @@ _MIGRATIONS = {
     ),
     24: lambda conn: rate_limit_event.create(conn, checkfirst=True),
     25: lambda conn: oauth_state_nonce.create(conn, checkfirst=True),
+    26: _apply_team_cycle_automations,
+    27: _apply_team_auto_add_backlog,
 }
 
 

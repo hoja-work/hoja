@@ -282,6 +282,13 @@ class Writer:
             values["key"] = key.strip().upper()
         if "description" in inp:
             values["description"] = inp["description"]
+        for key, column in (("autoAddStarted", "auto_add_started"),
+                            ("autoAddCompleted", "auto_add_completed"),
+                            ("autoAddBacklog", "auto_add_backlog")):
+            if key in inp:
+                if not isinstance(inp[key], bool):
+                    raise GraphQLError(f"{key} must be a boolean", extensions={"code": "BAD_USER_INPUT", "field": key})
+                values[column] = inp[key]
         with self.engine.begin() as conn:
             self._require_team_admin(conn, org_id, viewer_id)
             self._team_row(conn, org_id, team_id)
@@ -455,6 +462,35 @@ class Writer:
             ))
 
     # -------------------------------------------------------------- issues
+    @staticmethod
+    def _automation_flag(team_row: dict, key: str) -> bool:
+        """Team auto-add toggles default to on (Linear's defaults); NULL reads as on."""
+        value = team_row.get(key, True)
+        return True if value is None else bool(value)
+
+    def _auto_add_cycle_id(self, conn, org_id: str, team_row: dict, state_id: str | None) -> str | None:
+        """Linear-style "auto-add active issues to current cycle".
+
+        Returns the team's active cycle id when an issue with no cycle
+        qualifies (started-type with auto_add_started, completed-type with
+        auto_add_completed, backlog-type with auto_add_backlog), else None.
+        Cooldown is always 0 in Hoja, so the previous-cycle attribution
+        nuance does not apply yet.
+        """
+        active_id = team_row.get("active_cycle_id")
+        if not active_id or not state_id:
+            return None
+        stype = conn.execute(select(workflow_state.c.type).where(and_(
+            workflow_state.c.organization_id == org_id,
+            workflow_state.c.id == state_id))).scalar()
+        if stype == "started" and self._automation_flag(team_row, "auto_add_started"):
+            return active_id
+        if stype == "completed" and self._automation_flag(team_row, "auto_add_completed"):
+            return active_id
+        if stype == "backlog" and self._automation_flag(team_row, "auto_add_backlog"):
+            return active_id
+        return None
+
     def issue_create(self, org_id: str, viewer_id: str, inp: dict) -> str | None:
         with self.engine.begin() as conn:
             team_ref = inp["teamId"]
@@ -488,6 +524,7 @@ class Writer:
             ident = f"{trow['key']}-{n}"
             prio = int(inp.get("priority", 0) or 0)
             state_id = inp.get("stateId") or trow.get("default_state_id")
+            cycle_id = inp.get("cycleId") or self._auto_add_cycle_id(conn, org_id, trow, state_id)
             ts = now_iso()
             url_key = _org_url_key(conn, org_id)
             iid = new_id()
@@ -497,7 +534,7 @@ class Writer:
                 priority=prio, priority_label=PRIORITY_LABELS.get(prio, "No priority"),
                 estimate=inp.get("estimate"), state_id=state_id, state_changed_at=ts,
                 assignee_id=inp.get("assigneeId"), creator_id=viewer_id,
-                project_id=inp.get("projectId"), cycle_id=inp.get("cycleId"),
+                project_id=inp.get("projectId"), cycle_id=cycle_id,
                 parent_id=inp.get("parentId"),
                 url=entity_url(url_key, "issue", ident),
                 branch_name=f"{viewer_id[:8]}/{ident.lower()}-{_slug(inp['title'])}",
@@ -546,6 +583,18 @@ class Writer:
                 values["state_id"] = inp["stateId"]
                 if inp["stateId"] != issue_row.get("state_id"):
                     values["state_changed_at"] = ts
+                    # Linear-style auto-add: a transition into Started/Completed
+                    # pulls a cycle-less issue into the active cycle, unless the
+                    # caller explicitly set (or cleared) the cycle.
+                    if "cycleId" not in inp and not issue_row.get("cycle_id"):
+                        team_row = conn.execute(select(team).where(and_(
+                            team.c.organization_id == org_id,
+                            team.c.id == issue_row["team_id"]))).mappings().first()
+                        if team_row:
+                            auto_id = self._auto_add_cycle_id(
+                                conn, org_id, dict(team_row), inp["stateId"])
+                            if auto_id:
+                                values["cycle_id"] = auto_id
             changes = {}
             for field, column in {"title": "title", "description": "description", "priority": "priority", "stateId": "state_id", "assigneeId": "assignee_id"}.items():
                 if field in inp and issue_row.get(column) != values.get(column):
@@ -672,7 +721,12 @@ class Writer:
     def attachment_create(self, org_id: str, viewer_id: str, inp: dict) -> dict | None:
         with self.engine.begin() as conn:
             parsed_url = urlparse(inp["url"])
-            if (
+            relative_upload = (
+                not parsed_url.scheme
+                and not parsed_url.netloc
+                and (parsed_url.path or "").startswith("/api/uploads/")
+            )
+            if not relative_upload and (
                 parsed_url.scheme not in {"http", "https"}
                 or not parsed_url.netloc
                 or parsed_url.username
@@ -706,6 +760,64 @@ class Writer:
                 "createdAt": created_at,
                 "_issue_id": irow[0],
             }
+
+    # ---------------------------------------------------------- subscribers
+    def _issue_row_for(self, conn, org_id: str, issue_id: str):
+        return conn.execute(select(issue.c.id).where(and_(
+            issue.c.organization_id == org_id,
+            (issue.c.id == issue_id) | (issue.c.identifier == str(issue_id).upper()),
+        ))).first()
+
+    def issue_subscribe(self, org_id: str, user_id: str, issue_id: str) -> bool:
+        """Subscribe a user to an issue (idempotent)."""
+        with self.engine.begin() as conn:
+            irow = self._issue_row_for(conn, org_id, issue_id)
+            if not irow:
+                return False
+            exists = conn.execute(select(issue_subscriber.c.user_id).where(and_(
+                issue_subscriber.c.issue_id == irow[0],
+                issue_subscriber.c.user_id == user_id))).first()
+            if not exists:
+                conn.execute(issue_subscriber.insert().values(
+                    issue_id=irow[0], user_id=user_id))
+            return True
+
+    def issue_unsubscribe(self, org_id: str, user_id: str, issue_id: str) -> bool:
+        """Remove a user's subscription to an issue (idempotent)."""
+        with self.engine.begin() as conn:
+            irow = self._issue_row_for(conn, org_id, issue_id)
+            if not irow:
+                return False
+            conn.execute(issue_subscriber.delete().where(and_(
+                issue_subscriber.c.issue_id == irow[0],
+                issue_subscriber.c.user_id == user_id)))
+            return True
+
+    # ---------------------------------------------------------------- cycles
+    def cycle_update(self, org_id: str, cycle_id: str, inp: dict) -> dict | None:
+        """Update a cycle's name, description, or dates (manual override)."""
+        from cliniar_server.store import Store
+        with self.engine.begin() as conn:
+            row = conn.execute(select(cycle).where(and_(
+                cycle.c.organization_id == org_id, cycle.c.id == cycle_id))).first()
+            if not row:
+                return None
+            values: dict = {}
+            if inp.get("name") is not None:
+                values["name"] = inp["name"]
+            if inp.get("description") is not None:
+                values["description"] = inp["description"]
+            if inp.get("startsAt") is not None:
+                values["starts_at"] = inp["startsAt"]
+            if inp.get("endsAt") is not None:
+                values["ends_at"] = inp["endsAt"]
+            if values:
+                from datetime import datetime, timezone
+                values["updated_at"] = datetime.now(timezone.utc).isoformat()
+                conn.execute(cycle.update().where(cycle.c.id == cycle_id).values(**values))
+            fresh = conn.execute(select(cycle).where(cycle.c.id == cycle_id)).first()
+            store = Store(self.engine)
+            return store.ser_cycle(dict(fresh._mapping)) if fresh else None
 
     # -------------------------------------------------------------- labels
     def label_create(self, org_id: str, inp: dict) -> str | None:

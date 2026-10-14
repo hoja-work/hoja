@@ -1363,7 +1363,7 @@ def test_browser_session_survives_invalid_bearer_sentinel_header(tmp_path) -> No
     client2 = TestClient(create_app(str(db_path), open_mode=False))
     assert client2.post("/graphql", headers={"authorization": "Bearer garbage-token-not-real"},
                         json={"query": "{ viewer { id } }"}).status_code == 401
-    # And header-authoritative behavior for a VALID key is unchanged (org scope follows the key).
+    # Valid-key header auth is unchanged (and remains authoritative).
     client3 = TestClient(create_app(str(db_path), open_mode=False))
     ok = client3.post("/graphql", headers={"authorization": f"Bearer {seeded['token']}"},
                       json={"query": "{ viewer { email } }"})

@@ -18,6 +18,7 @@ from sqlalchemy.engine import Engine
 
 from cliniar_server.db import (
     api_key,
+    attachment,
     change_event,
     browser_session,
     comment,
@@ -548,12 +549,19 @@ class Store:
     def ser_team(self, row: dict | None) -> dict | None:
         if not row:
             return None
+        auto_started = row.get("auto_add_started", True)
+        auto_completed = row.get("auto_add_completed", True)
+        auto_backlog = row.get("auto_add_backlog", True)
         return {
             "id": row["id"], "name": row["name"], "key": row["key"],
             "description": row.get("description"), "color": row.get("color"),
             "icon": row.get("icon"), "private": bool(row.get("private", False)),
             "timezone": row.get("timezone"), "createdAt": row.get("created_at"),
             "updatedAt": row.get("updated_at"), "_id": row["id"],
+            "autoAddStarted": True if auto_started is None else bool(auto_started),
+            "autoAddCompleted": True if auto_completed is None else bool(auto_completed),
+            "autoAddBacklog": True if auto_backlog is None else bool(auto_backlog),
+            "_active_cycle_id": row.get("active_cycle_id"),
         }
 
     def ser_label(self, row: dict | None) -> dict | None:
@@ -570,6 +578,7 @@ class Store:
             return None
         return {
             "id": row["id"], "name": row.get("name"), "number": row.get("number"),
+            "description": row.get("description"),
             "startsAt": row.get("starts_at"), "endsAt": row.get("ends_at"),
             "completedAt": row.get("completed_at"), "progress": row.get("progress"),
             "createdAt": row.get("created_at"), "updatedAt": row.get("updated_at"),
@@ -596,6 +605,15 @@ class Store:
             "id": row["id"], "body": row["body"], "url": row.get("url"),
             "createdAt": row.get("created_at"), "updatedAt": row.get("updated_at"),
             "_user_id": row.get("user_id"),
+        }
+
+    def ser_attachment(self, row: dict | None) -> dict | None:
+        if not row:
+            return None
+        return {
+            "id": row["id"], "url": row.get("url"), "title": row.get("title"),
+            "subtitle": row.get("subtitle"), "createdAt": row.get("created_at"),
+            "_issue_id": row.get("issue_id"),
         }
 
     def ser_issue(self, row: dict | None) -> dict | None:
@@ -1248,6 +1266,13 @@ class Store:
                 comment.c.archived_at.is_(None))).order_by(comment.c.created_at)
             return [self.ser_comment(r) for r in _conn_rows(conn, stmt)]
 
+    def issue_attachments_for(self, org_id: str, issue_id: str) -> list[dict]:
+        with self.engine.connect() as conn:
+            stmt = select(attachment).where(and_(
+                attachment.c.organization_id == org_id,
+                attachment.c.issue_id == issue_id)).order_by(attachment.c.created_at)
+            return [self.ser_attachment(r) for r in _conn_rows(conn, stmt)]
+
     def projects(self, org_id: str, flt: dict | None = None,
                  after: tuple[str, str] | None = None, limit: int | None = None) -> list[dict]:
         with self.engine.connect() as conn:
@@ -1610,6 +1635,12 @@ def _apply_issue_filter(conn, stmt, org_id, viewer_id, flt: dict | None):
         if boolean_ids is not None:
             cycle_ids.intersection_update(boolean_ids)
         stmt = stmt.where(issue.c.cycle_id.in_(cycle_ids or ["__none__"]))
+    if "parent" in flt:
+        cmp = flt["parent"] or {}
+        if "id" in cmp:
+            c = _apply_str_cmp(issue.c.parent_id, cmp["id"])
+            if c is not None:
+                stmt = stmt.where(c)
     if "priority" in flt:
         c = _apply_num_cmp(issue.c.priority, flt["priority"])
         if c is not None:
