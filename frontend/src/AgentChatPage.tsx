@@ -1,10 +1,11 @@
 import React from 'react';
 import { AgentInterface, fetchLLM, openAIAdapter, openAIMessageFormat, restStorage } from '@openuidev/react-ui';
-import { useThread } from '@openuidev/react-headless';
+import { useThread, useThreadList } from '@openuidev/react-headless';
 import '@openuidev/react-ui/styles/index.css';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { History, SquarePen } from 'lucide-react';
 
 function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('hoja_token');
@@ -176,6 +177,16 @@ function AskWizard({ questions }: { questions: AskQuestion[] }) {
   );
 }
 
+// Stable across renders: an inline `a` component would be a new type per streamed token, remounting every chip.
+const MARKDOWN_COMPONENTS: Components = {
+  a: ({ href, children }) => {
+    if (href?.startsWith('hoja-issue:')) return <IssueChip identifier={href.slice('hoja-issue:'.length)} />;
+    const issue = href?.match(/^\/workspace\/issue\/([A-Z][A-Z0-9]{1,9}-\d+)(\/|$)/);
+    if (issue) return <IssueChip identifier={issue[1]} />;
+    return <a href={href} target={href?.startsWith('/') ? undefined : '_blank'} rel="noopener noreferrer">{children}</a>;
+  },
+};
+
 function AssistantMessage({ message }: { message: { id?: string; content?: string | null } }) {
   const { text, questions } = splitAsk(message.content ?? '');
   return (
@@ -183,14 +194,7 @@ function AssistantMessage({ message }: { message: { id?: string; content?: strin
       <div className="agent-msg-body agent-chat-reply">
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
-          components={{
-            a: ({ href, children }) => {
-              if (href?.startsWith('hoja-issue:')) return <IssueChip identifier={href.slice('hoja-issue:'.length)} />;
-              const issue = href?.match(/^\/workspace\/issue\/([A-Z][A-Z0-9]{1,9}-\d+)(\/|$)/);
-              if (issue) return <IssueChip identifier={issue[1]} />;
-              return <a href={href} target={href?.startsWith('/') ? undefined : '_blank'} rel="noopener noreferrer">{children}</a>;
-            },
-          }}
+          components={MARKDOWN_COMPONENTS}
         >
           {linkIssueIds(text)}
         </ReactMarkdown>
@@ -233,6 +237,93 @@ function ComposerSwitch() {
   return <AgentInterface.Composer placeholder="Ask about issues, projects, or cycles…" />;
 }
 
+// History opens as a panel inside the chat column instead of a second sidebar next to the app navigation.
+function ChatToolbar() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const switchToNewThread = useThreadList((s) => s.switchToNewThread);
+  const title = useThreadList((s) => s.threads.find((t) => t.id === s.selectedThreadId)?.title);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => {
+      const target = e.target as Element;
+      // Radix renders the thread actions menu in a portal outside the panel.
+      if (ref.current?.contains(target) || target.closest('.openui-agent-thread-button-dropdown-menu')) return;
+      setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('pointerdown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('pointerdown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+  return (
+    <div className="agent-toolbar" ref={ref}>
+      <span className="agent-toolbar-title">{title || 'New chat'}</span>
+      <button type="button" className="agent-toolbar-button" aria-expanded={open} aria-controls="agent-history" onClick={() => setOpen((v) => !v)}>
+        <History size={16} aria-hidden="true" /> History
+      </button>
+      <button type="button" className="agent-toolbar-button" onClick={() => { switchToNewThread(); setOpen(false); }}>
+        <SquarePen size={16} aria-hidden="true" /> New chat
+      </button>
+      {open && (
+        <div
+          id="agent-history"
+          className="agent-history"
+          role="dialog"
+          aria-label="Chat history"
+          onClick={(e) => { if ((e.target as Element).closest('.openui-agent-thread-button-title')) setOpen(false); }}
+        >
+          <AgentInterface.ThreadList />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The library's auto-scroll never matches our custom user messages and uses competing smooth scrolls, so we own it:
+// open each thread at the bottom, then stay pinned while content grows unless the user has scrolled away.
+function ScrollFollower() {
+  const isRunning = useThread((s) => s.isRunning);
+  const isLoadingMessages = useThread((s) => s.isLoadingMessages);
+  const threadId = useThreadList((s) => s.selectedThreadId);
+  const stick = useRef(true);
+  const area = () => document.querySelector<HTMLElement>('.agent-chat-page .openui-agent-thread-scroll-area');
+
+  useLayoutEffect(() => {
+    const el = area();
+    if (!el || isLoadingMessages) return;
+    stick.current = true;
+    el.scrollTop = el.scrollHeight;
+  }, [threadId, isLoadingMessages]);
+
+  useEffect(() => {
+    if (!isRunning) return;
+    stick.current = true;
+    const el = area();
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [isRunning]);
+
+  useEffect(() => {
+    const el = area();
+    const content = el?.firstElementChild;
+    if (!el || !content) return;
+    let last = el.scrollTop;
+    const onScroll = () => {
+      // Only an upward move is the user leaving the bottom; growth below never unsticks.
+      if (el.scrollTop < last - 2) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+      else if (el.scrollHeight - el.scrollTop - el.clientHeight < 80) stick.current = true;
+      last = el.scrollTop;
+    };
+    const observer = new ResizeObserver(() => {
+      if (stick.current) { el.scrollTop = el.scrollHeight; last = el.scrollTop; }
+    });
+    observer.observe(content);
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => { observer.disconnect(); el.removeEventListener('scroll', onScroll); };
+  }, []);
+  return null;
+}
+
 const STARTERS = [
   { displayText: 'Summarize my open issues', prompt: 'Summarize my open issues.' },
   { displayText: 'What is in progress this cycle?', prompt: 'What is in progress in the active cycle?' },
@@ -251,18 +342,15 @@ export function AgentChatPage({ workspaceName }: { workspaceName: string }) {
         agentName={`${name} agent`}
         theme={{ mode: 'light' }}
         starters={STARTERS}
+        scrollOnLoad={false}
       >
-        <AgentInterface.Sidebar>
-          <AgentInterface.SidebarHeader>
-            <AgentInterface.NewChatButton />
-          </AgentInterface.SidebarHeader>
-          <AgentInterface.SidebarContent>
-            <AgentInterface.ThreadList />
-          </AgentInterface.SidebarContent>
-        </AgentInterface.Sidebar>
+        <AgentInterface.Sidebar>{null}</AgentInterface.Sidebar>
+        <AgentInterface.ThreadHeader><ChatToolbar /></AgentInterface.ThreadHeader>
+        <AgentInterface.MobileHeader><ChatToolbar /></AgentInterface.MobileHeader>
         <AgentInterface.Welcome title={`Ask the ${name} agent`} description="Search, summarize, and update issues in your workspace." />
         <AgentInterface.Composer>
           <ComposerSwitch />
+          <ScrollFollower />
         </AgentInterface.Composer>
       </AgentInterface>
     </section>

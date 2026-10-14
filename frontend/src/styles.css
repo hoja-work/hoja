@@ -758,8 +758,24 @@ html{font-size:calc(16px * var(--font-scale,1))}
 
 /* Agent chat: sit in the app grid like the other full-height pages, with the thread filling the content column. */
 .workspace-content:has(.agent-chat-page){grid-row:1 / span 2;min-width:0}
-.workspace-content:has(.agent-chat-page) .main{width:100%;max-width:none;min-height:calc(100dvh - 48px);margin:0;padding:0;overflow:hidden}
-.agent-chat-page{height:calc(100dvh - 48px);min-height:0}
+.workspace-content:has(.agent-chat-page) .main{width:100%;max-width:none;min-height:100dvh;margin:0;padding:0;overflow:hidden}
+.agent-chat-page{height:100dvh;min-height:0}
+@media(min-width:701px){.topbar:has(+ .app-body .agent-chat-page){display:none}}
+@media(max-width:700px){.workspace-content:has(.agent-chat-page) .main{min-height:calc(100dvh - 60px)}.agent-chat-page{height:calc(100dvh - 60px)}}
+/* Agent chat history lives in the toolbar panel, not a second sidebar beside the app navigation. */
+.agent-chat-page .openui-agent-sidebar-container,.agent-chat-page .openui-agent-sidebar-container__overlay{display:none}
+.agent-chat-page .openui-agent-container:not(.openui-agent-container--mobile) .openui-agent-thread-header,.agent-chat-page .openui-agent-container--mobile .openui-agent-mobile-header{display:block;padding:0;background:var(--bg)}
+.agent-chat-page .openui-agent-thread-header__title{display:none}
+.agent-chat-page .openui-agent-thread-header__actions{display:block;min-height:0}
+.agent-toolbar{position:relative;display:flex;align-items:center;gap:6px;height:48px;padding:0 clamp(12px,4vw,24px);border-bottom:1px solid var(--line)}
+.agent-toolbar-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:500;color:var(--text)}
+.agent-toolbar-button{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;border-radius:7px;background:transparent;color:var(--muted);font-size:13px}
+.agent-toolbar-button:hover,.agent-toolbar-button[aria-expanded=true]{background:var(--subtle);color:var(--text)}
+.agent-history{position:absolute;top:calc(100% + 4px);right:clamp(12px,4vw,24px);z-index:50;display:flex;flex-direction:column;width:min(340px,calc(100% - 24px));max-height:min(60vh,480px);padding:6px;border:1px solid var(--line);border-radius:10px;background:var(--panel);box-shadow:var(--shadow);overflow:hidden}
+.agent-history .openui-agent-thread-list{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+/* No smooth scrolling and no scroll anchoring while replies stream: both fight the library's scroll-to-bottom and cause jitter. */
+.agent-chat-page .openui-agent-thread-scroll-area{scroll-behavior:auto;overflow-anchor:none;overscroll-behavior:contain}
+.agent-chat-page .openui-agent-thread-scroll-area--user-message-anchor .openui-agent-thread-messages>*:last-child{min-height:0}
 
 /* Agent composer: use the app's light input border instead of the default focus-black outline */
 
