@@ -1349,6 +1349,9 @@ def create_app(
             else:
                 yield
 
+    async def _malformed_json_handler(request: Request, exc: Exception):
+        return JSONResponse({"error": "Malformed JSON body."}, status_code=400)
+
     app = Starlette(
         routes=[
             Route("/graphql", graphql_server, methods=["POST", "GET"]),
@@ -1391,4 +1394,5 @@ def create_app(
         lifespan=lifespan,
     )
     app.add_middleware(_SecurityHeaders)
+    app.add_exception_handler(json.JSONDecodeError, _malformed_json_handler)
     return app

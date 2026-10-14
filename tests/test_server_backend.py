@@ -1331,6 +1331,25 @@ def test_browser_password_session_setup_login_graphql_and_logout(tmp_path) -> No
     assert client.post("/graphql", json={"query": "{ viewer { id } }"}).status_code == 401
 
 
+def test_malformed_json_body_returns_400_not_500(tmp_path) -> None:
+    from starlette.testclient import TestClient
+
+    db_path = tmp_path / "malformed-json.db"
+    engine = make_engine(db_path)
+    migrate(engine)
+    seed_tenant(engine, org_name="Malformed Workspace", org_url_key="malformed-test",
+                user_name="Malformed User", user_email="malformed@example.test",
+                demo_issues=False)
+    client = TestClient(create_app(str(db_path), open_mode=False))
+    bad = client.post("/auth/login", content=b'{"email": bad', headers={"content-type": "application/json"})
+    assert bad.status_code == 400
+    assert "error" in bad.json()
+    # /graphql checks auth before parsing the body, so an unauthenticated
+    # malformed body is 401; either way it must never be an unhandled 500.
+    bad2 = client.post("/graphql", content=b'{"query": bad', headers={"content-type": "application/json"})
+    assert bad2.status_code in (400, 401)
+
+
 def test_browser_session_survives_invalid_bearer_sentinel_header(tmp_path) -> None:
     """Regression: the SPA used to send 'Authorization: Bearer session' (the
     cookie-session sentinel) after password login. The server must fall back to
