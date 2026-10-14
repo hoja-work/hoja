@@ -1331,6 +1331,24 @@ def test_browser_password_session_setup_login_graphql_and_logout(tmp_path) -> No
     assert client.post("/graphql", json={"query": "{ viewer { id } }"}).status_code == 401
 
 
+def test_graphql_errors_do_not_leak_schema_suggestions(tmp_path) -> None:
+    from starlette.testclient import TestClient
+
+    db_path = tmp_path / "suggestion-leak.db"
+    engine = make_engine(db_path)
+    migrate(engine)
+    seeded = seed_tenant(engine, org_name="Suggestion Workspace", org_url_key="suggestion-test",
+                         user_name="Suggestion User", user_email="suggestion@example.test",
+                         demo_issues=False)
+    client = TestClient(create_app(str(db_path), open_mode=False))
+    login = client.post("/auth/login", json={"apiKey": seeded["token"]})
+    assert login.status_code == 200
+    for probe in ('{ viewerz { id } }', '{ issu { id } }', '{ team { id } }'):
+        r = client.post("/graphql", json={"query": probe})
+        body = r.text
+        assert "Did you mean" not in body, probe
+
+
 def test_login_rate_limit_attributes_per_client_behind_trusted_proxy(tmp_path) -> None:
     """Regression: without trusted-proxy IP resolution every visitor shared the
     reverse proxy's container IP, so 10 failed logins from ANY source locked out

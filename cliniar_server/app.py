@@ -207,6 +207,13 @@ def _format_graphql_error(error, debug=False):
     original = error.original_error
     if original is None or isinstance(original, (GraphQLError, ValueError, SecretBoxError)):
         formatted = format_error(error, debug)
+        message = formatted.get("message", "")
+        suggestion = message.find(" Did you mean")
+        if suggestion != -1:
+            # graphql-core embeds schema hints ("Did you mean 'viewer'?") into
+            # validation error messages; strip them so errors do not enumerate
+            # the schema to probing clients.
+            formatted["message"] = message[:suggestion] + "."
         extensions = formatted.get("extensions") or {}
         if extensions.get("code") in ("FORBIDDEN", "AUTHENTICATION_ERROR"):
             formatted["extensions"] = {**extensions, "agentHint": DENY_HINT}
