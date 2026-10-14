@@ -3,6 +3,13 @@ import {Bell, Check, ChevronDown, ChevronRight, Copy, ExternalLink, Link2, ListF
 import {gql, relTime, stateKey} from '../main';
 import type {Cycle, Issue, IssueActivityEvent, IssueLabel, IssueState, Project, Team, Viewer} from '../main';
 import {Avatar, CycleChip, CycleGlyph, DueChip, FavStar, IconBtn, LabelChip, LinMenu, LinearStatusIcon, PriorityIcon, ProjectChip, Ring, SubIssuePill, Tip, cx, fmtDate, fmtFullDate, useDismiss, useFavorite} from './shared';
+import {tr} from '../i18n';
+
+const MUTED_COLOR = 'var(--muted)';
+const LAYOUT_BOARD = 'board';
+const LAYOUT_LIST = 'list';
+const DUE_KEYS: {from: keyof LinFilters; to: keyof LinFilters} = {from: 'dueFrom', to: 'dueTo'};
+const CREATED_KEYS: {from: keyof LinFilters; to: keyof LinFilters} = {from: 'createdFrom', to: 'createdTo'};
 
 /* Linear 1:1 Issues list + board + detail. */
 
@@ -17,7 +24,8 @@ export type LinIssue = Omit<Issue, 'subscribers'> & {
   activity?: {nodes: IssueActivityEvent[]};
 };
 
-export const linIssueFields = `{ id identifier title description createdAt updatedAt stateChangedAt dueDate priority priorityLabel estimate branchName url state { id name color type } team { id key name } project { id name } assignee { id name } creator { id name } cycle { id name number } parent { id identifier title } labels { nodes { id name color } } }`;
+export // eslint-disable-next-line i18next/no-literal-string -- GraphQL document
+const linIssueFields = `{ id identifier title description createdAt updatedAt stateChangedAt dueDate priority priorityLabel estimate branchName url state { id name color type } team { id key name } project { id name } assignee { id name } creator { id name } cycle { id name number } parent { id identifier title } labels { nodes { id name color } } }`;
 
 /* ---------------- filter + display models ---------------- */
 
@@ -104,18 +112,18 @@ export function groupLinIssues(issues: LinIssue[], d: LinDisplay, states: IssueS
   const keyOf = (i: LinIssue): {key: string; name: string; state?: IssueState} => {
     if (d.grouping === 'status') {
       const s = i.state;
-      return s ? {key: stateKey(s), name: s.name, state: s} : {key: 'none', name: 'No status'};
+      return s ? {key: stateKey(s), name: s.name, state: s} : {key: 'none', name: tr("No status")};
     }
     if (d.grouping === 'priority') {
-      const names = ['No priority', 'Urgent', 'High', 'Medium', 'Low'];
-      return {key: String(i.priority || 0), name: names[i.priority || 0] || 'No priority'};
+      const names = [tr('No priority'), tr('Urgent'), tr('High'), tr('Medium'), tr('Low')];
+      return {key: String(i.priority || 0), name: names[i.priority || 0] || tr('No priority')};
     }
-    if (d.grouping === 'assignee') return {key: i.assignee?.id || 'unassigned', name: i.assignee?.name || 'Unassigned'};
+    if (d.grouping === 'assignee') return {key: i.assignee?.id || 'unassigned', name: i.assignee?.name || tr("Unassigned")};
     if (d.grouping === 'labels') {
       const l = i.labels?.nodes[0];
-      return {key: l?.id || 'none', name: l?.name || 'No labels'};
+      return {key: l?.id || 'none', name: l?.name || tr("No labels")};
     }
-    if (d.grouping === 'project') return {key: i.project?.id || 'none', name: i.project?.name || 'No project'};
+    if (d.grouping === 'project') return {key: i.project?.id || 'none', name: i.project?.name || tr("No project")};
     return {key: 'all', name: ''};
   };
   for (const i of issues) {
@@ -184,20 +192,20 @@ export function FilterMenu({filters, setFilters, team, teams, projects, labels, 
     </div>
   );
   return (
-    <div ref={ref} className={cx('lin-popover lin-filtermenu', anchorClass)} role="dialog" aria-label="Add filter">
+    <div ref={ref} className={cx('lin-popover lin-filtermenu', anchorClass)} role="dialog" aria-label={tr("Add filter")}>
       {!sub && <>
-        <div className="fm-search"><input autoFocus placeholder="Add filter…" value={search} onChange={e => setSearch(e.target.value)} /></div>
+        <div className="fm-search"><input autoFocus placeholder={tr("Add filter…")} value={search} onChange={e => setSearch(e.target.value)} /></div>
         <div style={{padding: '4px 0'}}>
           {FILTER_DEFS.filter(d => d.label.toLowerCase().includes(search.toLowerCase())).map(d => (
             <button type="button" key={d.key} className="fm-item" onClick={() => setSub(d.key)}>
               <span className="fm-ic">{d.icon}</span>
               <span style={{flex: 1}}>{d.label}</span>
               <span className="fm-val">{d.key === 'status' ? summary('status', states.length) : d.key === 'assignee' ? summary('assignee', members.length) : d.key === 'labels' ? summary('labels', labels.length) : d.key === 'project' ? summary('projects', projects.length) : d.key === 'cycle' ? summary('cycles', cycles.length) : ''}</span>
-              <ChevronRight size={14} color="var(--muted)" />
+              <ChevronRight size={14} color={MUTED_COLOR} />
             </button>
           ))}
           {FILTER_UNAVAILABLE.filter(l => l.toLowerCase().includes(search.toLowerCase())).map(l => (
-            <Tip key={l} label="Not available in Hoja yet" className="fm-item" >
+            <Tip key={l} label={tr("Not available in Hoja yet")} className="fm-item" >
               <span className="fm-item" style={{opacity: .45, cursor: 'not-allowed', width: '100%'}}>
                 <span className="fm-ic">○</span><span style={{flex: 1}}>{l}</span>
               </span>
@@ -206,24 +214,24 @@ export function FilterMenu({filters, setFilters, team, teams, projects, labels, 
         </div>
         <div style={{padding: 10, borderTop: '1px solid var(--line)'}}>
           <button type="button" className="lin-btn" style={{width: '100%', justifyContent: 'center'}}
-            onClick={() => setFilters({...emptyFilters})}>Clear all filters</button>
+            onClick={() => setFilters({...emptyFilters})}>{tr("Clear all filters")}</button>
         </div>
       </>}
       {sub && <>
         <button type="button" className="fm-back" onClick={() => setSub(null)}>‹ {FILTER_DEFS.find(d => d.key === sub)?.label}</button>
         <div className="fm-sub">
           {sub === 'status' && states.map(s => opt('status', stateKey(s), <span style={{display: 'inline-flex', alignItems: 'center', gap: 8}}><LinearStatusIcon state={s} />{s.name}</span>))}
-          {sub === 'assignee' && <>{opt('assignee', 'unassigned', 'Unassigned')}{members.map(m => opt('assignee', m.id, <span style={{display: 'inline-flex', alignItems: 'center', gap: 8}}><Avatar name={m.name} size={18} />{m.name || m.email}</span>))}</>}
+          {sub === 'assignee' && <>{opt('assignee', 'unassigned', tr("Unassigned"))}{members.map(m => opt('assignee', m.id, <span style={{display: 'inline-flex', alignItems: 'center', gap: 8}}><Avatar name={m.name} size={18} />{m.name || m.email}</span>))}</>}
           {sub === 'creator' && members.map(m => opt('creators', m.id, <span style={{display: 'inline-flex', alignItems: 'center', gap: 8}}><Avatar name={m.name} size={18} />{m.name || m.email}</span>))}
-          {sub === 'priority' && [['1', 'Urgent'], ['2', 'High'], ['3', 'Medium'], ['4', 'Low'], ['0', 'No priority']].map(([v, l]) => opt('priority', Number(v), <span style={{display: 'inline-flex', alignItems: 'center', gap: 8}}><PriorityIcon priority={Number(v)} />{l}</span>))}
+          {sub === 'priority' && [['1', tr("Urgent")], ['2', tr("High")], ['3', tr("Medium")], ['4', tr("Low")], ['0', tr("No priority")]].map(([v, l]) => opt('priority', Number(v), <span style={{display: 'inline-flex', alignItems: 'center', gap: 8}}><PriorityIcon priority={Number(v)} />{l}</span>))}
           {sub === 'labels' && labels.map(l => opt('labels', l.id, <LabelChip label={l} />))}
-          {sub === 'dates' && <>{dateRow('Due date', 'dueFrom', 'dueTo')}{dateRow('Created', 'createdFrom', 'createdTo')}</>}
+          {sub === 'dates' && <>{dateRow(tr('Due date'), DUE_KEYS.from, DUE_KEYS.to)}{dateRow(tr('Created'), CREATED_KEYS.from, CREATED_KEYS.to)}</>}
           {sub === 'project' && projects.map(p => opt('projects', p.id, p.name))}
-          {sub === 'cycle' && <>{opt('cycles', 'none', 'No cycle')}{cycles.filter(c => c.team?.id === team?.id).map(c => opt('cycles', c.id, c.name || `Cycle ${c.number}`))}</>}
+          {sub === 'cycle' && <>{opt('cycles', 'none', tr("No cycle"))}{cycles.filter(c => c.team?.id === team?.id).map(c => opt('cycles', c.id, c.name || tr("Cycle {{v0}}", {v0: c.number})))}</>}
           {sub === 'subscribers' && members.map(m => opt('subscribers', m.id, <span style={{display: 'inline-flex', alignItems: 'center', gap: 8}}><Avatar name={m.name} size={18} />{m.name || m.email}</span>))}
           {sub === 'content' && (
             <div style={{padding: 8}}>
-              <input placeholder="Search title or identifier…" value={filters.q} onChange={e => setFilters({...filters, q: e.target.value})}
+              <input placeholder={tr("Search title or identifier…")} value={filters.q} onChange={e => setFilters({...filters, q: e.target.value})}
                 style={{width: '100%', border: '1px solid var(--line)', borderRadius: 6, padding: '7px 10px', fontSize: 13}} />
             </div>
           )}
@@ -248,64 +256,64 @@ export function DisplayPanel({display, setDisplay, onClose, anchorClass}: {
   ];
   const UNAVAILABLE_PROPS = ['Milestone', 'Links', 'Customers', 'Customer revenue', 'Time in status'];
   return (
-    <div ref={ref} className={cx('lin-popover lin-display', anchorClass)} role="dialog" aria-label="Display options">
+    <div ref={ref} className={cx('lin-popover lin-display', anchorClass)} role="dialog" aria-label={tr("Display options")}>
       <div className="dp-sec">
-        <div className="dp-title">View</div>
-        <div className="dp-seg" role="group" aria-label="List or board">
-          {(['List', 'Board'] as const).map(v => (
+        <div className="dp-title">{tr("View")}</div>
+        <div className="dp-seg" role="group" aria-label={tr("List or board")}>
+          {([tr("List"), tr("Board")] as const).map(v => (
             <button key={v} type="button" aria-pressed={(display as unknown as {layout: string}).layout !== 'Board' ? v === 'List' : v === 'Board'}
-              onClick={() => set({...(display as object), layout: v} as Partial<LinDisplay>)}>{v}</button>
+              onClick={() => set({...(display as object), layout: v} as Partial<LinDisplay>)}>{tr(v)}</button>
           ))}
         </div>
       </div>
       <div className="dp-sec">
-        <div className="dp-title">Grouping</div>
-        <select aria-label="Group issues by" value={display.grouping}
+        <div className="dp-title">{tr("Grouping")}</div>
+        <select aria-label={tr("Group issues by")} value={display.grouping}
           onChange={e => set({grouping: e.target.value as LinDisplay['grouping']})}>
-          <option value="none">No grouping</option>
-          <option value="status">Status</option>
-          <option value="priority">Priority</option>
-          <option value="assignee">Assignee</option>
-          <option value="labels">Labels</option>
-          <option value="project">Project</option>
+          <option value="none">{tr("No grouping")}</option>
+          <option value="status">{tr("Status")}</option>
+          <option value="priority">{tr("Priority")}</option>
+          <option value="assignee">{tr("Assignee")}</option>
+          <option value="labels">{tr("Labels")}</option>
+          <option value="project">{tr("Project")}</option>
         </select>
       </div>
       <div className="dp-sec">
-        <div className="dp-title">Ordering</div>
+        <div className="dp-title">{tr("Ordering")}</div>
         <div className="dp-row">
-          <select aria-label="Order issues by" value={display.ordering}
+          <select aria-label={tr("Order issues by")} value={display.ordering}
             onChange={e => set({ordering: e.target.value as LinDisplay['ordering']})}>
-            <option value="updated">Updated</option>
-            <option value="created">Created</option>
-            <option value="priority">Priority</option>
+            <option value="updated">{tr("Updated")}</option>
+            <option value="created">{tr("Created")}</option>
+            <option value="priority">{tr("Priority")}</option>
           </select>
           <div className="dp-seg">
-            <button type="button" aria-pressed={display.direction === 'desc'} onClick={() => set({direction: 'desc'})}>Desc</button>
-            <button type="button" aria-pressed={display.direction === 'asc'} onClick={() => set({direction: 'asc'})}>Asc</button>
+            <button type="button" aria-pressed={display.direction === 'desc'} onClick={() => set({direction: 'desc'})}>{tr("Desc")}</button>
+            <button type="button" aria-pressed={display.direction === 'asc'} onClick={() => set({direction: 'asc'})}>{tr("Asc")}</button>
           </div>
         </div>
         <div className="dp-row"><label><input type="checkbox" className="lin-check" checked={display.hideCompleted}
-          onChange={e => set({hideCompleted: e.target.checked})} /> Hide completed issues</label></div>
+          onChange={e => set({hideCompleted: e.target.checked})} /> {tr("Hide completed issues")}</label></div>
         <div className="dp-row"><label><input type="checkbox" className="lin-check" checked={display.showSubIssues}
-          onChange={e => set({showSubIssues: e.target.checked})} /> Show sub-issues</label></div>
+          onChange={e => set({showSubIssues: e.target.checked})} /> {tr("Show sub-issues")}</label></div>
         <div className="dp-row"><label><input type="checkbox" className="lin-check" checked={display.showEmptyColumns}
-          onChange={e => set({showEmptyColumns: e.target.checked})} /> Show empty columns</label></div>
+          onChange={e => set({showEmptyColumns: e.target.checked})} /> {tr("Show empty columns")}</label></div>
       </div>
       <div className="dp-sec">
-        <div className="dp-title">Display properties</div>
+        <div className="dp-title">{tr("Display properties")}</div>
         {PROP_LABELS.map(([k, label]) => (
           <div className="dp-row" key={k}><label><input type="checkbox" className="lin-check"
             checked={display.props[k]} onChange={() => toggleProp(k)} /> {label}</label></div>
         ))}
         {UNAVAILABLE_PROPS.map(label => (
           <div className="dp-row" key={label} style={{opacity: .45}}>
-            <Tip label="Not available in Hoja yet"><label style={{cursor: 'not-allowed'}}><input type="checkbox" className="lin-check" disabled /> {label}</label></Tip>
+            <Tip label={tr("Not available in Hoja yet")}><label style={{cursor: 'not-allowed'}}><input type="checkbox" className="lin-check" disabled /> {label}</label></Tip>
           </div>
         ))}
       </div>
       <div className="dp-foot">
-        <button type="button" onClick={() => set({...defaultDisplay, layout: (display as unknown as {layout: 'List' | 'Board'}).layout} as LinDisplay)}>Reset to team default</button>
-        <button type="button" onClick={onClose}>Done</button>
+        <button type="button" onClick={() => set({...defaultDisplay, layout: (display as unknown as {layout: 'list' | 'board'}).layout} as LinDisplay)}>{tr("Reset to team default")}</button>
+        <button type="button" onClick={onClose}>{tr("Done")}</button>
       </div>
     </div>
   );
@@ -323,7 +331,7 @@ export function IssueRow({issue, display, selected, onSelect, onOpen, childCount
     <div className={cx('lin-row', selected && 'selected')}>
       {showCheckbox && (
         <span className="rowcheck">
-          <input type="checkbox" aria-label={`Select ${issue.identifier}`} checked={selected}
+          <input type="checkbox" aria-label={tr("Select {{v0}}", {v0: issue.identifier})} checked={selected}
             onChange={e => onSelect(issue.id, e.target.checked)} onClick={e => e.stopPropagation()} />
         </span>
       )}
@@ -338,8 +346,8 @@ export function IssueRow({issue, display, selected, onSelect, onOpen, childCount
         {p.cycle && issue.cycle && <CycleChip number={issue.cycle.number} name={issue.cycle.name} />}
         {p.dueDate && issue.dueDate && <DueChip iso={issue.dueDate} />}
         {p.assignee && (issue.assignee ? <Avatar name={issue.assignee.name} /> : <span className="date">—</span>)}
-        {p.created && <span className="date" title={`Created ${fmtFullDate(issue.createdAt)}`} aria-label={`Created ${fmtFullDate(issue.createdAt)}`}>{fmtDate(issue.createdAt)}</span>}
-        {p.updated && <span className="date" title={`Updated ${fmtFullDate(issue.updatedAt)}`} aria-label={`Updated ${fmtFullDate(issue.updatedAt)}`}>{fmtDate(issue.updatedAt)}</span>}
+        {p.created && <span className="date" title={tr("Created {{v0}}", {v0: fmtFullDate(issue.createdAt)})} aria-label={tr("Created {{v0}}", {v0: fmtFullDate(issue.createdAt)})}>{fmtDate(issue.createdAt)}</span>}
+        {p.updated && <span className="date" title={tr("Updated {{v0}}", {v0: fmtFullDate(issue.updatedAt)})} aria-label={tr("Updated {{v0}}", {v0: fmtFullDate(issue.updatedAt)})}>{fmtDate(issue.updatedAt)}</span>}
       </span>
     </div>
   );
@@ -368,7 +376,7 @@ function BoardCard({issue, onOpen, onDragStart}: {issue: LinIssue; onOpen: (i: L
       )}
       <span className="row">
         {issue.assignee ? <Avatar name={issue.assignee.name} size={18} /> : null}
-        <span className="assignee-name">{issue.assignee?.name || 'Unassigned'}</span>
+        <span className="assignee-name">{issue.assignee?.name || tr("Unassigned")}</span>
         <span>{fmtDate(issue.createdAt)}</span>
       </span>
     </button>
@@ -395,7 +403,7 @@ function LinearBoard({issues, states, onOpen, onMoved, onNew, display, setDispla
     try { await onMoved(issue.id, state); } catch (e) { setError((e as Error).message); }
   };
   return (
-    <div className="lin-board" role="list" aria-label="Board">
+    <div className="lin-board" role="list" aria-label={tr("Board")}>
       {visible.map(({state, items}) => (
         <section key={stateKey(state)} className="lin-bcol" aria-label={state.name}
           onDragOver={e => { e.preventDefault(); setDropCol(stateKey(state)); }}
@@ -406,12 +414,12 @@ function LinearBoard({issues, states, onOpen, onMoved, onNew, display, setDispla
             <LinearStatusIcon state={state} size={13} />
             <span>{state.name}</span><span className="count">{items.length}</span>
             <span className="sp" />
-            <button type="button" aria-label={`Add issue to ${state.name}`} onClick={onNew}><Plus size={14} /></button>
+            <button type="button" aria-label={tr("Add issue to {{v0}}", {v0: state.name})} onClick={onNew}><Plus size={14} /></button>
             <span style={{position: 'relative'}}>
-              <button type="button" aria-label={`${state.name} column options`} onClick={() => setColMenu(m => m === stateKey(state) ? null : stateKey(state))}>···</button>
+              <button type="button" aria-label={tr("{{v0}} column options", {v0: state.name})} onClick={() => setColMenu(m => m === stateKey(state) ? null : stateKey(state))}>···</button>
               {colMenu === stateKey(state) && (
                 <LinMenu onClose={() => setColMenu(null)} className="lin-dd-panel" items={[
-                  {key: 'hide', label: 'Hide column', onSelect: () => setDisplay({...display, hiddenColumns: [...display.hiddenColumns, stateKey(state)]})},
+                  {key: 'hide', label: tr('Hide column'), onSelect: () => setDisplay({...display, hiddenColumns: [...display.hiddenColumns, stateKey(state)]})},
                 ]} />
               )}
             </span>
@@ -419,29 +427,29 @@ function LinearBoard({issues, states, onOpen, onMoved, onNew, display, setDispla
           <div className="lin-bcards">
             {items.map(i => <BoardCard key={i.id} issue={i} onOpen={onOpen}
               onDragStart={(e, it) => { dragIssue.current = it; e.dataTransfer.effectAllowed = 'move'; }} />)}
-            {!items.length && <div className="lin-bempty">No issues</div>}
+            {!items.length && <div className="lin-bempty">{tr("No issues")}</div>}
           </div>
         </section>
       ))}
       {hidden.length > 0 && (
         <div className="lin-bcol lin-bcol-hidden">
-          <header><span className="count">{hidden.length} hidden</span><span className="sp" />
-            <button type="button" onClick={() => setDisplay({...display, hiddenColumns: []})}>Show all</button>
+          <header><span className="count">{hidden.length} {tr("hidden")}</span><span className="sp" />
+            <button type="button" onClick={() => setDisplay({...display, hiddenColumns: []})}>{tr("Show all")}</button>
           </header>
           <div className="lin-bcards">
             {hidden.map(({state}) => (
               <button key={stateKey(state)} type="button" className="lin-hidden-col"
-                title={`Show ${state.name} column`}
+                title={tr("Show {{v0}} column", {v0: state.name})}
                 onClick={() => setDisplay({...display, hiddenColumns: display.hiddenColumns.filter(k => k !== stateKey(state))})}>
                 <LinearStatusIcon state={state} size={13} />
                 <span className="grow">{state.name}</span>
-                <span className="show">Show</span>
+                <span className="show">{tr("Show")}</span>
               </button>
             ))}
           </div>
         </div>
       )}
-      {error && <p className="lin-error" role="alert">{error} <button type="button" onClick={() => setError('')}>Dismiss</button></p>}
+      {error && <p className="lin-error" role="alert">{error} <button type="button" onClick={() => setError('')}>{tr("Dismiss")}</button></p>}
     </div>
   );
 }
@@ -462,7 +470,7 @@ function BulkBar({selected, issues, team, teams, cycles, labels, onClear, onDone
       for (const id of selected) {
         const d = await gql(`mutation($id:String!,$input:IssueUpdateInput!){issueUpdate(id:$id,input:$input){success}}`,
           {id, input: labelIds ? {labelIds} : input});
-        if (!d.issueUpdate?.success) throw new Error('Update was rejected');
+        if (!d.issueUpdate?.success) throw new Error(tr("Update was rejected"));
       }
       onDone();
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
@@ -471,37 +479,37 @@ function BulkBar({selected, issues, team, teams, cycles, labels, onClear, onDone
   const members = team?.members?.nodes || [];
   const teamCycles = cycles.filter(c => c.team?.id === team?.id);
   return (
-    <div className="lin-multibar" role="toolbar" aria-label="Bulk actions">
-      <span className="n">{selected.length} selected</span>
+    <div className="lin-multibar" role="toolbar" aria-label={tr("Bulk actions")}>
+      <span className="n">{selected.length} {tr("selected")}</span>
       <span className="div" />
       <span style={{position: 'relative'}} ref={ref}>
-        <button type="button" onClick={() => setAction(a => a ? null : 'menu')} disabled={busy}>Actions <ChevronDown size={13} /></button>
+        <button type="button" onClick={() => setAction(a => a ? null : 'menu')} disabled={busy}>{tr("Actions")} <ChevronDown size={13} /></button>
         {action && (
           <div className="lin-popover" style={{bottom: 'calc(100% + 8px)', left: 0, minWidth: 240, padding: 5}}>
             {!action || action === 'menu' ? <>
               {(['status', 'priority', 'assignee', 'cycle', 'label'] as const).map(a => (
                 <button key={a} type="button" className="lin-menu-item" onClick={() => setAction(a)}>
-                  <span className="lin-menu-label">{a === 'status' ? 'Set status…' : a === 'priority' ? 'Set priority…' : a === 'assignee' ? 'Set assignee…' : a === 'cycle' ? 'Add to cycle…' : 'Add label…'}</span>
+                  <span className="lin-menu-label">{a === 'status' ? tr("Set status…") : a === 'priority' ? tr("Set priority…") : a === 'assignee' ? tr("Set assignee…") : a === 'cycle' ? tr("Add to cycle…") : tr("Add label…")}</span>
                   <ChevronRight size={13} />
                 </button>
               ))}
               <div className="lin-menu-divider" />
-              <button type="button" className="lin-menu-item" onClick={() => { setAction(null); void (async () => { setBusy(true); try { for (const id of selected) await gql(`mutation($id:String!){issueArchive(id:$id){success}}`, {id}); onDone(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } })(); }}>Archive</button>
-              <button type="button" className="lin-menu-item danger" onClick={() => { if (window.confirm(`Delete ${selected.length} issues? This cannot be undone.`)) { setAction(null); void (async () => { setBusy(true); try { for (const id of selected) await gql(`mutation($id:String!){issueDelete(id:$id){success}}`, {id}); onDone(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } })(); } }}>Delete</button>
+              <button type="button" className="lin-menu-item" onClick={() => { setAction(null); void (async () => { setBusy(true); try { for (const id of selected) await gql(`mutation($id:String!){issueArchive(id:$id){success}}`, {id}); onDone(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } })(); }}>{tr("Archive")}</button>
+              <button type="button" className="lin-menu-item danger" onClick={() => { if (window.confirm(tr("Delete {{v0}} issues? This cannot be undone.", {v0: selected.length}))) { setAction(null); void (async () => { setBusy(true); try { for (const id of selected) await gql(`mutation($id:String!){issueDelete(id:$id){success}}`, {id}); onDone(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } })(); } }}>{tr("Delete")}</button>
             </> : <>
-              <button type="button" className="lin-menu-item" onClick={() => setAction('menu')}>‹ Back</button>
+              <button type="button" className="lin-menu-item" onClick={() => setAction('menu')}>{tr("‹ Back")}</button>
               <div className="lin-menu-divider" />
               <div style={{maxHeight: 260, overflowY: 'auto'}}>
                 {action === 'status' && states.map(s => (
                   <button key={s.id} type="button" className="lin-menu-item" disabled={busy}
                     onClick={() => void run({stateId: s.id})}><LinearStatusIcon state={s} /><span className="lin-menu-label">{s.name}</span></button>))}
-                {action === 'priority' && [[1, 'Urgent'], [2, 'High'], [3, 'Medium'], [4, 'Low'], [0, 'No priority']].map(([v, l]) => (
+                {action === 'priority' && [[1, tr("Urgent")], [2, tr("High")], [3, tr("Medium")], [4, tr("Low")], [0, tr("No priority")]].map(([v, l]) => (
                   <button key={v} type="button" className="lin-menu-item" disabled={busy}
                     onClick={() => void run({priority: v})}><PriorityIcon priority={v as number} /><span className="lin-menu-label">{l}</span></button>))}
-                {action === 'assignee' && <><button type="button" className="lin-menu-item" disabled={busy} onClick={() => void run({assigneeId: null})}>Unassigned</button>
+                {action === 'assignee' && <><button type="button" className="lin-menu-item" disabled={busy} onClick={() => void run({assigneeId: null})}>{tr("Unassigned")}</button>
                   {members.map(m => <button key={m.id} type="button" className="lin-menu-item" disabled={busy} title={m.name || m.email} onClick={() => void run({assigneeId: m.id})}><Avatar name={m.name} size={18} /><span className="lin-menu-label">{m.name || m.email}</span></button>)}</>}
-                {action === 'cycle' && <><button type="button" className="lin-menu-item" disabled={busy} onClick={() => void run({cycleId: null})}>Remove from cycle</button>
-                  {teamCycles.map(c => <button key={c.id} type="button" className="lin-menu-item" disabled={busy} onClick={() => void run({cycleId: c.id})}><CycleGlyph /><span className="lin-menu-label">{c.name || `Cycle ${c.number}`}</span></button>)}</>}
+                {action === 'cycle' && <><button type="button" className="lin-menu-item" disabled={busy} onClick={() => void run({cycleId: null})}>{tr("Remove from cycle")}</button>
+                  {teamCycles.map(c => <button key={c.id} type="button" className="lin-menu-item" disabled={busy} onClick={() => void run({cycleId: c.id})}><CycleGlyph /><span className="lin-menu-label">{c.name || tr("Cycle {{v0}}", {v0: c.number})}</span></button>)}</>}
                 {action === 'label' && labels.map(l => (
                   <button key={l.id} type="button" className="lin-menu-item" disabled={busy}
                     onClick={() => { const first = issues.find(i => selected.includes(i.id)); const ids = [...new Set([...(first?.labels?.nodes || []).map(x => x.id), l.id])]; void run({}, ids); }}>
@@ -512,7 +520,7 @@ function BulkBar({selected, issues, team, teams, cycles, labels, onClear, onDone
           </div>
         )}
       </span>
-      <button type="button" onClick={onClear} aria-label="Clear selection"><X size={14} /></button>
+      <button type="button" onClick={onClear} aria-label={tr("Clear selection")}><X size={14} /></button>
     </div>
   );
 }
@@ -527,7 +535,7 @@ export function LinearTeamIssues({team, teams, viewer, orgId, workspaceName, pro
   onIssue: (issue: LinIssue) => void;
   onMoved: (issueId: string, state: IssueState) => Promise<void>;
   onNew: () => void; revision: number;
-  layout: 'List' | 'Board'; onLayoutChange: (l: 'List' | 'Board') => void;
+  layout: 'list' | 'board'; onLayoutChange: (l: 'list' | 'board') => void;
   onNavigate: (view: string, path?: string) => void;
 }) {
   const [rows, setRows] = useState<LinIssue[]>([]);
@@ -593,7 +601,7 @@ export function LinearTeamIssues({team, teams, viewer, orgId, workspaceName, pro
         {filter: {team: {id: {eq: team.id}}}, after: cursor});
       const page = d.issues;
       if (page.pageInfo?.hasNextPage && (!page.pageInfo.endCursor || page.pageInfo.endCursor === cursor || !page.nodes.length))
-        throw new Error('Issue pagination did not advance.');
+        throw new Error(tr("Issue pagination did not advance."));
       setRows(old => {
         const ids = new Set(old.map(i => i.id));
         return [...old, ...page.nodes.filter((i: LinIssue) => !ids.has(i.id))];
@@ -630,7 +638,7 @@ export function LinearTeamIssues({team, teams, viewer, orgId, workspaceName, pro
     setViewsOpen(false);
   };
   const saveCurrentView = () => {
-    const name = window.prompt('Name this view:');
+    const name = window.prompt(tr("Name this view:"));
     if (!name?.trim()) return;
     const v = {id: `v${Date.now()}`, name: name.trim(), query: filters.q, state: filters.status[0] || '', kind: 'issues'};
     const next = [...views, v];
@@ -638,31 +646,31 @@ export function LinearTeamIssues({team, teams, viewer, orgId, workspaceName, pro
     try { localStorage.setItem(`hoja_saved_views_${orgId}`, JSON.stringify(next)); } catch { /* ignore */ }
   };
 
-  if (!team) return <section className="lin-page"><p className="lin-error" role="alert">Team not found in this workspace.</p></section>;
+  if (!team) return <section className="lin-page"><p className="lin-error" role="alert">{tr("Team not found in this workspace.")}</p></section>;
 
   const filterChips: {label: string; clear: () => void}[] = [];
   if (filters.q) filterChips.push({label: `“${filters.q}”`, clear: () => setFilters({...filters, q: ''})});
   filters.status.forEach(s => filterChips.push({label: team.states.nodes.find(x => stateKey(x) === s)?.name || s, clear: () => setFilters({...filters, status: filters.status.filter(x => x !== s)})}));
-  filters.priority.forEach(p => filterChips.push({label: ['No priority', 'Urgent', 'High', 'Medium', 'Low'][p], clear: () => setFilters({...filters, priority: filters.priority.filter(x => x !== p)})}));
-  if (filters.dueFrom || filters.dueTo) filterChips.push({label: `Due ${filters.dueFrom || '…'} → ${filters.dueTo || '…'}`, clear: () => setFilters({...filters, dueFrom: '', dueTo: ''})});
+  filters.priority.forEach(p => filterChips.push({label: [tr("No priority"), tr("Urgent"), tr("High"), tr("Medium"), tr("Low")][p], clear: () => setFilters({...filters, priority: filters.priority.filter(x => x !== p)})}));
+  if (filters.dueFrom || filters.dueTo) filterChips.push({label: tr("Due {{v0}} → {{v1}}", {v0: filters.dueFrom || '…', v1: filters.dueTo || '…'}), clear: () => setFilters({...filters, dueFrom: '', dueTo: ''})});
 
   return (
     <section className="lin-page" aria-label={`${team.name} issues`}>
       <header className="lin-head">
-        <nav className="lin-crumb" aria-label="Breadcrumb">
+        <nav className="lin-crumb" aria-label={tr("Breadcrumb")}>
           <button type="button" className="crumb-link" onClick={() => onNavigate('Team Home', `/workspace/team/${team.key.toLowerCase()}/home`)}>{workspaceName}</button>
           <span className="sep">›</span>
-          <span className="current">Issues</span>
+          <span className="current">{tr("Issues")}</span>
         </nav>
         <div className="lin-head-actions">
           <FavStar kind="issues" id={`team-issues-${team.id}`} label={`${team.name} issues`} />
           <span style={{position: 'relative'}}>
-            <IconBtn label="Team notifications" title="Notification settings" onClick={() => setNotifOpen(v => !v)}><Bell size={15} /></IconBtn>
+            <IconBtn label={tr("Team notifications")} title={tr("Notification settings")} onClick={() => setNotifOpen(v => !v)}><Bell size={15} /></IconBtn>
             {notifOpen && (
               <div className="lin-popover" style={{right: 0, top: 'calc(100% + 6px)', padding: 14, width: 260}}>
-                <b style={{fontSize: 13}}>Team notifications</b>
-                <p className="lin-note" style={{margin: '8px 0 0'}}>Per-team notification preferences live in workspace Settings → Notifications.</p>
-                <button type="button" className="lin-btn" style={{marginTop: 10}} onClick={() => { setNotifOpen(false); onNavigate('Settings', '/workspace/settings/notifications'); }}>Open settings</button>
+                <b style={{fontSize: 13}}>{tr("Team notifications")}</b>
+                <p className="lin-note" style={{margin: '8px 0 0'}}>{tr("Per-team notification preferences live in workspace Settings → Notifications.")}</p>
+                <button type="button" className="lin-btn" style={{marginTop: 10}} onClick={() => { setNotifOpen(false); onNavigate('Settings', '/workspace/settings/notifications'); }}>{tr("Open settings")}</button>
               </div>
             )}
           </span>
@@ -670,28 +678,28 @@ export function LinearTeamIssues({team, teams, viewer, orgId, workspaceName, pro
       </header>
 
       <div className="lin-viewbar">
-        <div className="lin-tabs" role="tablist" aria-label="Issue scope">
+        <div className="lin-tabs" role="tablist" aria-label={tr("Issue scope")}>
           {(['active', 'backlog', 'all'] as const).map(t => (
             <button key={t} type="button" role="tab" aria-selected={tab === t} className="lin-tab"
-              onClick={() => setTab(t)}>{t === 'all' ? 'All issues' : t[0].toUpperCase() + t.slice(1)}</button>
+              onClick={() => setTab(t)}>{t === 'all' ? tr("All issues") : t[0].toUpperCase() + t.slice(1)}</button>
           ))}
         </div>
         <div className="lin-viewchips">
           {views.map(v => (
-            <button key={v.id} type="button" className="lin-chipbtn" onClick={() => applyView(v)} title={v.query || 'Saved view'}>{v.name}</button>
+            <button key={v.id} type="button" className="lin-chipbtn" onClick={() => applyView(v)} title={v.query || tr("Saved view")}>{v.name}</button>
           ))}
-          <Tip label="Save current filters as a view">
-            <button type="button" className="lin-chipbtn" aria-label="Add new view" onClick={saveCurrentView}><Plus size={13} /></button>
+          <Tip label={tr("Save current filters as a view")}>
+            <button type="button" className="lin-chipbtn" aria-label={tr("Add new view")} onClick={saveCurrentView}><Plus size={13} /></button>
           </Tip>
         </div>
       </div>
 
       <div className="lin-toolbar">
-        <label className="lin-search"><Search size={14} /><input placeholder="Search issues…" value={filters.q}
-          onChange={e => setFilters({...filters, q: e.target.value})} aria-label="Search issues" /></label>
+        <label className="lin-search"><Search size={14} /><input placeholder={tr("Search issues…")} value={filters.q}
+          onChange={e => setFilters({...filters, q: e.target.value})} aria-label={tr("Search issues")} /></label>
         <span className="spacer" />
         <span style={{position: 'relative'}}>
-          <IconBtn label="Add filter" title="Add filter" active={filterOpen} onClick={() => { setFilterOpen(v => !v); setDisplayOpen(false); }}>
+          <IconBtn label={tr("Add filter")} title={tr("Add filter")} active={filterOpen} onClick={() => { setFilterOpen(v => !v); setDisplayOpen(false); }}>
             <ListFilter size={15} />
             {activeFilterCount > 0 && <span style={{position: 'absolute', top: -4, right: -4, background: '#5e6ad2', color: '#fff', fontSize: 9, borderRadius: 99, minWidth: 15, height: 15, display: 'grid', placeItems: 'center', fontWeight: 700}}>{activeFilterCount}</span>}
           </IconBtn>
@@ -700,31 +708,31 @@ export function LinearTeamIssues({team, teams, viewer, orgId, workspaceName, pro
             anchorClass="" />}
         </span>
         <span style={{position: 'relative'}}>
-          <IconBtn label="Display options" title="Display options" active={displayOpen} onClick={() => { setDisplayOpen(v => !v); setFilterOpen(false); }}><SlidersHorizontal size={15} /></IconBtn>
+          <IconBtn label={tr("Display options")} title={tr("Display options")} active={displayOpen} onClick={() => { setDisplayOpen(v => !v); setFilterOpen(false); }}><SlidersHorizontal size={15} /></IconBtn>
           {displayOpen && <DisplayPanel display={effDisplay} setDisplay={d => setDisplay({...d, layout} as LinDisplay)} onClose={() => setDisplayOpen(false)} />}
         </span>
-        <IconBtn label={layout === 'List' ? 'Switch to board view' : 'Switch to list view'}
-          title={layout === 'List' ? 'Board view' : 'List view'}
-          onClick={() => onLayoutChange(layout === 'List' ? 'Board' : 'List')}>
-          {layout === 'List'
+        <IconBtn label={layout === 'list' ? tr("Switch to board view") : tr("Switch to list view")}
+          title={layout === 'list' ? tr("Board view") : tr("List view")}
+          onClick={() => onLayoutChange(layout === 'list' ? LAYOUT_BOARD : LAYOUT_LIST)}>
+          {layout === 'list'
             ? <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1.5" y="2.5" width="5.5" height="11" rx="1.5" /><rect x="9" y="2.5" width="5.5" height="7" rx="1.5" /></svg>
             : <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 4h12M2 8h12M2 12h12" strokeLinecap="round" /></svg>}
         </IconBtn>
       </div>
 
       {filterChips.length > 0 && (
-        <div className="lin-filterbar" aria-label="Active filters">
+        <div className="lin-filterbar" aria-label={tr("Active filters")}>
           {filterChips.map((c, ix) => (
-            <span key={ix} className="lin-fchip">{c.label}<button type="button" aria-label={`Remove filter ${c.label}`} onClick={c.clear}>×</button></span>
+            <span key={ix} className="lin-fchip">{c.label}<button type="button" aria-label={tr("Remove filter {{v0}}", {v0: c.label})} onClick={c.clear}>×</button></span>
           ))}
-          <button type="button" className="lin-addrow" onClick={() => setFilters({...emptyFilters})}>Clear all</button>
+          <button type="button" className="lin-addrow" onClick={() => setFilters({...emptyFilters})}>{tr("Clear all")}</button>
         </div>
       )}
 
       <div className="lin-scroll">
-        {loading && <p className="lin-loading" role="status">Loading issues…</p>}
+        {loading && <p className="lin-loading" role="status">{tr("Loading issues…")}</p>}
         {error && <p className="lin-error" role="alert">{error}</p>}
-        {!loading && !error && (layout === 'Board'
+        {!loading && !error && (layout === 'board'
           ? <LinearBoard issues={scoped} states={team.states.nodes} onOpen={onIssue}
               onMoved={async (id, s) => { await onMoved(id, s); setRows(old => old.map(i => i.id === id ? {...i, state: s} : i)); }}
               onNew={onNew} display={effDisplay} setDisplay={d => setDisplay({...d, layout} as LinDisplay)} />
@@ -733,7 +741,7 @@ export function LinearTeamIssues({team, teams, viewer, orgId, workspaceName, pro
                 <section key={g.key} className="lin-group">
                   {g.name && (
                     <header className="lin-group-head">
-                      <button type="button" className="chev" aria-label={`${collapsed.includes(g.key) ? 'Expand' : 'Collapse'} ${g.name}`}
+                      <button type="button" className="chev" aria-label={`${collapsed.includes(g.key) ? tr("Expand") : tr("Collapse")} ${g.name}`}
                         aria-expanded={!collapsed.includes(g.key)}
                         onClick={() => setCollapsed(c => c.includes(g.key) ? c.filter(x => x !== g.key) : [...c, g.key])}>
                         <ChevronDown size={14} style={{transform: collapsed.includes(g.key) ? 'rotate(-90deg)' : undefined}} />
@@ -741,8 +749,8 @@ export function LinearTeamIssues({team, teams, viewer, orgId, workspaceName, pro
                       {g.state && <LinearStatusIcon state={g.state} size={13} />}
                       <b>{g.name}</b><span className="count">{g.items.length}</span>
                       <span className="grow" />
-                      <Tip label={`Create issue in ${g.name}`}>
-                        <button type="button" className="add" aria-label={`Create issue in ${g.name}`} onClick={onNew}><Plus size={14} /></button>
+                      <Tip label={tr("Create issue in {{v0}}", {v0: g.name})}>
+                        <button type="button" className="add" aria-label={tr("Create issue in {{v0}}", {v0: g.name})} onClick={onNew}><Plus size={14} /></button>
                       </Tip>
                     </header>
                   )}
@@ -758,19 +766,19 @@ export function LinearTeamIssues({team, teams, viewer, orgId, workspaceName, pro
               {!scoped.length && (
                 <div className="lin-empty">
                   <ListFilter size={30} strokeWidth={1.4} />
-                  <h2>No issues match</h2>
-                  <p>Try clearing filters or create a new issue.</p>
-                  <button type="button" className="lin-btn primary" onClick={onNew}><Plus size={14} /> New issue</button>
+                  <h2>{tr("No issues match")}</h2>
+                  <p>{tr("Try clearing filters or create a new issue.")}</p>
+                  <button type="button" className="lin-btn primary" onClick={onNew}><Plus size={14} /> {tr("New issue")}</button>
                 </div>
               )}
               {(hasMore || moreError) && !loading && (
                 <div className="lin-loadmore">
                   {hasMore && (
                     <button type="button" className="lin-btn" onClick={() => void loadMore()} disabled={loadingMore}>
-                      {loadingMore ? 'Loading…' : `Load more issues (${rows.length} shown)`}
+                      {loadingMore ? tr("Loading…") : tr("Load more issues ({{v0}} shown)", {v0: rows.length})}
                     </button>
                   )}
-                  {moreError && <span className="lin-error" role="alert">{moreError} <button type="button" className="lin-btn" onClick={() => void loadMore()}>Retry</button></span>}
+                  {moreError && <span className="lin-error" role="alert">{moreError} <button type="button" className="lin-btn" onClick={() => void loadMore()}>{tr("Retry")}</button></span>}
                 </div>
               )}
             </div>)}
@@ -819,24 +827,19 @@ function PropDropdown({label, icon, value, onPick, options, disabled}: {
 
 /* ---------------- issue detail ---------------- */
 
-const detailFields = `{ id identifier title description createdAt updatedAt dueDate priority priorityLabel estimate branchName url
-  state{id name color type} team{id key name} project{id name} assignee{id name} creator{id name}
-  cycle{id name number} parent{id identifier title}
-  labels{nodes{id name color}} subscribers{nodes{id name}}
-  attachments{nodes{id url title subtitle createdAt}}
-  activity(first:50){nodes{id eventType createdAt actor{name} changes}}
-  comments{nodes{id body createdAt user{id name}}} }`;
+// eslint-disable-next-line i18next/no-literal-string -- GraphQL document
+const detailFields = `{ id identifier title description createdAt updatedAt dueDate priority priorityLabel estimate branchName url\n  state{id name color type} team{id key name} project{id name} assignee{id name} creator{id name}\n  cycle{id name number} parent{id identifier title}\n  labels{nodes{id name color}} subscribers{nodes{id name}}\n  attachments{nodes{id url title subtitle createdAt}}\n  activity(first:50){nodes{id eventType createdAt actor{name} changes}}\n  comments{nodes{id body createdAt user{id name}}} }`;
 
 function describeEvent(e: {eventType: string; actor?: {name?: string}; changes?: Record<string, unknown>}, states: IssueState[]): string {
-  const actor = e.actor?.name || 'Someone';
+  const actor = e.actor?.name || tr("Someone");
   const ch = (e.changes || {}) as Record<string, {from?: string | null; to?: string | null}>;
-  if (e.eventType === 'issueCreated' || e.eventType === 'created') return `${actor} created the issue`;
-  const sname = (id?: string | null) => (id && states.find(s => s.id === id)?.name) || 'Unknown';
-  if (ch.stateId) return `${actor} moved from ${sname(ch.stateId.from)} to ${sname(ch.stateId.to)}`;
-  if (ch.assigneeId) return `${actor} assigned the issue`;
-  if (ch.cycleId) return `${actor} changed the cycle`;
-  if (ch.priority) return `${actor} changed the priority`;
-  return `${actor} updated the issue`;
+  if (e.eventType === 'issueCreated' || e.eventType === 'created') return tr("{{v0}} created the issue", {v0: actor});
+  const sname = (id?: string | null) => (id && states.find(s => s.id === id)?.name) || tr("Unknown");
+  if (ch.stateId) return tr("{{v0}} moved from {{v1}} to {{v2}}", {v0: actor, v1: sname(ch.stateId.from), v2: sname(ch.stateId.to)});
+  if (ch.assigneeId) return tr("{{v0}} assigned the issue", {v0: actor});
+  if (ch.cycleId) return tr("{{v0}} changed the cycle", {v0: actor});
+  if (ch.priority) return tr("{{v0}} changed the priority", {v0: actor});
+  return tr("{{v0}} updated the issue", {v0: actor});
 }
 
 export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOpenIssue, loading, error, onArchive, onDelete, onDeleteComment, teams, projects, labels, cycles, onUpdate, onBack, backLabel, onRetry, onComment}: {
@@ -883,12 +886,12 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
     let live = true;
     setLoadError('');
     const detailTimeout = setTimeout(() => {
-      if (live) setLoadError('Loading the issue timed out. Check your connection and retry.');
+      if (live) setLoadError(tr("Loading the issue timed out. Check your connection and retry."));
     }, 20000);
     gql(`query($id:String!){issue(id:$id)${detailFields}}`, {id: issue?.identifier || issueId})
       .then(d => {
         if (!live) return;
-        if (!d.issue) throw new Error('Issue not found');
+        if (!d.issue) throw new Error(tr("Issue not found"));
         setDetail(d.issue);
         setTitle(d.issue.title);
         setSubscribed(!!(d.issue.subscribers?.nodes || []).some((s: {id: string}) => s.id === viewer.id));
@@ -911,11 +914,11 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
     return () => clearTimeout(t);
   }, [parentQuery, parentSearch]);
 
-  if (loading) return <section className="lin-page"><p className="lin-loading" role="status">Loading issue…</p></section>;
+  if (loading) return <section className="lin-page"><p className="lin-loading" role="status">{tr("Loading issue…")}</p></section>;
   if (error || loadError || !detail) {
-    return <section className="lin-page"><div className="lin-scroll"><p className="lin-error" role="alert">{error || loadError || 'Issue not found'}</p>
+    return <section className="lin-page"><div className="lin-scroll"><p className="lin-error" role="alert">{error || loadError || tr("Issue not found")}</p>
       <div style={{display: 'flex', gap: 8, margin: '0 24px'}}>
-        {onRetry && <button type="button" className="lin-btn primary" onClick={onRetry}>Retry</button>}
+        {onRetry && <button type="button" className="lin-btn primary" onClick={onRetry}>{tr("Retry")}</button>}
         <button type="button" className="lin-btn" onClick={onBack}>← {backLabel}</button>
       </div></div></section>;
   }
@@ -936,7 +939,7 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
   };
   const copyText = async (text: string) => { try { await navigator.clipboard.writeText(text); } catch { /* ignore */ } };
   const branchName = detail.branchName || `${(detail.team?.key || 'hoja').toLowerCase()}-${detail.identifier.split('-')[1] || ''}`;
-  const asPrompt = `${detail.identifier}: ${detail.title}\n\n${detail.description || ''}`.trim();
+  const asPrompt = tr("{{v0}}: {{v1}}\n\n{{v2}}", {v0: detail.identifier, v1: detail.title, v2: detail.description || ''}).trim();
 
   const idx = issueList.findIndex(i => i.id === detail.id);
   const prev = idx > 0 ? issueList[idx - 1] : null;
@@ -970,7 +973,7 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
       if (!r.ok) throw new Error(b.error || 'Upload failed');
       const d = await gql(`mutation($input:AttachmentCreateInput!){attachmentCreate(input:$input){success attachment{id url title subtitle createdAt}}}`,
         {input: {issueId: detail.id, url: b.url, title: b.title || file.name}});
-      if (!d.attachmentCreate?.success) throw new Error('Attachment was rejected');
+      if (!d.attachmentCreate?.success) throw new Error(tr("Attachment was rejected"));
       setDetail(cur => cur ? {...cur, attachments: {nodes: [...(cur.attachments?.nodes || []), d.attachmentCreate.attachment]}} : cur);
     } catch (e) { setUpdateError((e as Error).message); } finally { setUploading(false); }
   };
@@ -981,7 +984,7 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
     try {
       const d = await gql(`mutation($input:AttachmentCreateInput!){attachmentCreate(input:$input){success attachment{id url title subtitle createdAt}}}`,
         {input: {issueId: detail.id, url: attachUrl.trim(), title: attachTitle.trim() || attachUrl.trim()}});
-      if (!d.attachmentCreate?.success) throw new Error('Attachment was rejected');
+      if (!d.attachmentCreate?.success) throw new Error(tr("Attachment was rejected"));
       setDetail(cur => cur ? {...cur, attachments: {nodes: [...(cur.attachments?.nodes || []), d.attachmentCreate.attachment]}} : cur);
       setAttachUrl(''); setAttachTitle(''); setAttachMenu(false);
     } catch (e) { setUpdateError((e as Error).message); } finally { setUploading(false); }
@@ -994,7 +997,7 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
     try {
       const d = await gql(`mutation($input:IssueCreateInput!){issueCreate(input:$input){success issue{id}}}`,
         {input: {title: t, teamId: detail.team.id, parentId: detail.id}});
-      if (!d.issueCreate?.success) throw new Error('Sub-issue was rejected');
+      if (!d.issueCreate?.success) throw new Error(tr("Sub-issue was rejected"));
       setNewSubTitle('');
       const s = await gql(`query($filter:IssueFilter){issues(first:100,filter:$filter){nodes ${linIssueFields}}}`, {filter: {parent: {id: {eq: detail.id}}}});
       setSubs(s.issues.nodes);
@@ -1005,14 +1008,14 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
   const toggleSubscribe = async () => {
     try {
       const d = await gql(`mutation($id:String!){${subscribed ? 'issueUnsubscribe' : 'issueSubscribe'}(id:$id)}`, {id: detail.id});
-      if (d[subscribed ? 'issueUnsubscribe' : 'issueSubscribe']) setSubscribed(!subscribed);
+      if (d[subscribed ? "issueUnsubscribe" : "issueSubscribe" /* eslint-disable-line i18next/no-literal-string -- GraphQL mutation name */]) setSubscribed(!subscribed);
     } catch (e) { setUpdateError((e as Error).message); }
   };
 
   return (
     <section className="lin-page" aria-label={`${detail.identifier}: ${detail.title}`}>
       <header className="lin-head">
-        <nav className="lin-crumb" aria-label="Breadcrumb">
+        <nav className="lin-crumb" aria-label={tr("Breadcrumb")}>
           <button type="button" className="crumb-link" onClick={onBack}>← {backLabel}</button>
           <span className="sep">›</span>
           <span>{workspaceName}</span>
@@ -1023,42 +1026,42 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
         <div className="lin-head-actions">
           <FavStar kind="issues" id={detail.id} label={detail.identifier} />
           <span style={{position: 'relative'}} ref={moreRef}>
-            <IconBtn label="Issue options" title="Issue options" onClick={() => setMoreOpen(v => !v)}><span style={{fontWeight: 700}}>···</span></IconBtn>
+            <IconBtn label={tr("Issue options")} title={tr("Issue options")} onClick={() => setMoreOpen(v => !v)}><span style={{fontWeight: 700}}>···</span></IconBtn>
             {moreOpen && <LinMenu onClose={() => setMoreOpen(false)} className="lin-dd-panel" items={[
-              {key: 'copy', label: 'Copy as prompt', icon: <Copy size={14} />, onSelect: () => void copyText(asPrompt)},
-              {key: 'branch', label: 'Copy branch name', icon: <Copy size={14} />, onSelect: () => void copyText(branchName)},
+              {key: 'copy', label: tr('Copy as prompt'), icon: <Copy size={14} />, onSelect: () => void copyText(asPrompt)},
+              {key: 'branch', label: tr('Copy branch name'), icon: <Copy size={14} />, onSelect: () => void copyText(branchName)},
               {key: 'div', divider: true},
-              {key: 'archive', label: 'Archive issue', onSelect: () => { if (window.confirm(`Archive ${detail.identifier}?`)) void onArchive(); }},
-              {key: 'delete', label: 'Delete issue', danger: true, onSelect: () => { if (window.confirm(`Permanently delete ${detail.identifier}? This cannot be undone.`)) void onDelete(); }},
+              {key: 'archive', label: tr('Archive issue'), onSelect: () => { if (window.confirm(`Archive ${detail.identifier}?`)) void onArchive(); }},
+              {key: 'delete', label: tr('Delete issue'), danger: true, onSelect: () => { if (window.confirm(tr("Permanently delete {{v0}}? This cannot be undone.", {v0: detail.identifier}))) void onDelete(); }},
             ]} />}
           </span>
           {idx >= 0 && <>
             <span className="lin-nav-count">{idx + 1} / {issueList.length}</span>
-            <IconBtn label="Previous issue" title="Previous issue" disabled={!prev} onClick={() => prev && onOpenIssue(prev)}>
+            <IconBtn label={tr("Previous issue")} title={tr("Previous issue")} disabled={!prev} onClick={() => prev && onOpenIssue(prev)}>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M8 13V3M4 7l4-4 4 4" strokeLinecap="round" strokeLinejoin="round" /></svg>
             </IconBtn>
-            <IconBtn label="Next issue" title="Next issue" disabled={!next} onClick={() => next && onOpenIssue(next)}>
+            <IconBtn label={tr("Next issue")} title={tr("Next issue")} disabled={!next} onClick={() => next && onOpenIssue(next)}>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M8 3v10M4 9l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" /></svg>
             </IconBtn>
           </>}
         </div>
       </header>
       <div className="lin-toolbar" style={{justifyContent: 'flex-end'}}>
-        <IconBtn label="Copy link" title="Copy link" onClick={() => void copyText(window.location.href)}><Link2 size={15} /></IconBtn>
-        <IconBtn label="Create copy of issue" title="Create copy of issue"
+        <IconBtn label={tr("Copy link")} title={tr("Copy link")} onClick={() => void copyText(window.location.href)}><Link2 size={15} /></IconBtn>
+        <IconBtn label={tr("Create copy of issue")} title={tr("Create copy of issue")}
           onClick={() => { void (async () => {
             try {
               const d = await gql(`mutation($input:IssueCreateInput!){issueCreate(input:$input){success issue{id identifier}}}`,
-                {input: {title: `Copy of ${detail.title}`, teamId: detail.team?.id, description: detail.description, priority: detail.priority, projectId: detail.project?.id, labelIds}});
-              if (d.issueCreate?.success) onOpenIssue({...detail, id: d.issueCreate.issue.id, identifier: d.issueCreate.issue.identifier, title: `Copy of ${detail.title}`});
+                {input: {title: tr("Copy of {{v0}}", {v0: detail.title}), teamId: detail.team?.id, description: detail.description, priority: detail.priority, projectId: detail.project?.id, labelIds}});
+              if (d.issueCreate?.success) onOpenIssue({...detail, id: d.issueCreate.issue.id, identifier: d.issueCreate.issue.identifier, title: tr("Copy of {{v0}}", {v0: detail.title})});
             } catch (e) { setUpdateError((e as Error).message); }
           })(); }}>
           <Copy size={15} />
         </IconBtn>
-        <Tip label="Hoja has no public share links — copies the private URL">
-          <span><IconBtn label="Share issue externally" title="Share issue externally" onClick={() => void copyText(window.location.href)}><ExternalLink size={15} /></IconBtn></span>
+        <Tip label={tr("Hoja has no public share links — copies the private URL")}>
+          <span><IconBtn label={tr("Share issue externally")} title={tr("Share issue externally")} onClick={() => void copyText(window.location.href)}><ExternalLink size={15} /></IconBtn></span>
         </Tip>
-        <IconBtn label="Archive issue" title="Archive issue"
+        <IconBtn label={tr("Archive issue")} title={tr("Archive issue")}
           onClick={() => { if (window.confirm(`Archive ${detail.identifier}?`)) void onArchive().catch(e => setUpdateError((e as Error).message)); }}>
           <Trash2 size={15} />
         </IconBtn>
@@ -1066,45 +1069,45 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
 
       <div className="lin-detail">
         <main className="lin-detail-main">
-          <textarea className="lin-detail-title" aria-label="Title" rows={1} value={title}
+          <textarea className="lin-detail-title" aria-label={tr("Title")} rows={1} value={title}
             onChange={e => { setTitle(e.target.value); e.currentTarget.style.height = 'auto'; e.currentTarget.style.height = e.currentTarget.scrollHeight + 'px'; }}
             onBlur={() => { const t = title.trim(); if (t && t !== detail.title) void change({title: t}); else setTitle(detail.title); }}
             onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }} />
           {updateError && <p className="lin-error" role="alert">{updateError}</p>}
           {descEdit ? (
             <div>
-              <textarea aria-label="Description" value={desc ?? ''} rows={6} autoFocus
+              <textarea aria-label={tr("Description")} value={desc ?? ''} rows={6} autoFocus
                 onChange={e => setDesc(e.target.value)}
                 style={{width: '100%', border: '1px solid var(--line)', borderRadius: 8, padding: 10, font: 'inherit', fontSize: 14}} />
               <div style={{display: 'flex', gap: 8, marginTop: 8}}>
-                <button type="button" className="lin-btn primary" disabled={saving} onClick={() => { void change({description: (desc ?? '').trim() || null}).then(() => setDescEdit(false)); }}>Save</button>
-                <button type="button" className="lin-btn" onClick={() => { setDescEdit(false); setDesc(detail.description || ''); }}>Cancel</button>
+                <button type="button" className="lin-btn primary" disabled={saving} onClick={() => { void change({description: (desc ?? '').trim() || null}).then(() => setDescEdit(false)); }}>{tr("Save")}</button>
+                <button type="button" className="lin-btn" onClick={() => { setDescEdit(false); setDesc(detail.description || ''); }}>{tr("Cancel")}</button>
               </div>
             </div>
           ) : (
             <p className={cx('lin-detail-desc', !detail.description && 'empty')}
               onClick={() => { setDesc(detail.description || ''); setDescEdit(true); }}
-              title="Click to edit description" style={{cursor: 'text'}}>
-              {detail.description || 'Add description…'}
+              title={tr("Click to edit description")} style={{cursor: 'text'}}>
+              {detail.description || tr("Add description…")}
             </p>
           )}
 
-          <section className="lin-subsec" aria-label="Sub-issues">
+          <section className="lin-subsec" aria-label={tr("Sub-issues")}>
             <header>
-              <ChevronDown size={14} color="var(--muted)" />
-              <span>Sub-Issues</span>
+              <ChevronDown size={14} color={MUTED_COLOR} />
+              <span>{tr("Sub-Issues")}</span>
               <SubIssuePill done={subsDone} total={subs.length} />
               <span className="grow" />
-              <IconBtn label="Sub-issue display settings" title="Display settings"><SlidersHorizontal size={14} /></IconBtn>
-              <IconBtn label="Add sub-issue" title="Add sub-issue" onClick={() => setAddingSub(v => !v)}><Plus size={14} /></IconBtn>
+              <IconBtn label={tr("Sub-issue display settings")} title={tr("Display settings")}><SlidersHorizontal size={14} /></IconBtn>
+              <IconBtn label={tr("Add sub-issue")} title={tr("Add sub-issue")} onClick={() => setAddingSub(v => !v)}><Plus size={14} /></IconBtn>
             </header>
             {addingSub && (
               <div style={{display: 'flex', gap: 8, margin: '4px 0 8px'}}>
-                <input placeholder="Sub-issue title…" value={newSubTitle} autoFocus
+                <input placeholder={tr("Sub-issue title…")} value={newSubTitle} autoFocus
                   onChange={e => setNewSubTitle(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') void createSub(); }}
                   style={{flex: 1, border: '1px solid var(--line)', borderRadius: 7, padding: '8px 10px', fontSize: 13}} />
-                <button type="button" className="lin-btn primary" disabled={!newSubTitle.trim()} onClick={() => void createSub()}>Add</button>
+                <button type="button" className="lin-btn primary" disabled={!newSubTitle.trim()} onClick={() => void createSub()}>{tr("Add")}</button>
               </div>
             )}
             {subs.map(s => (
@@ -1113,39 +1116,39 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
                 <button type="button" className="t" onClick={() => onOpenIssue(s)} title={s.title}>{s.title}</button>
                 {s.labels?.nodes.map(l => <LabelChip key={l.id} label={l} />)}
                 {s.assignee && <Avatar name={s.assignee.name} size={18} />}
-                <IconBtn label={`Open sub-issue ${s.identifier}`} title="Open sub-issue" onClick={() => onOpenIssue(s)}>
+                <IconBtn label={tr("Open sub-issue {{v0}}", {v0: s.identifier})} title={tr("Open sub-issue")} onClick={() => onOpenIssue(s)}>
                   <ExternalLink size={13} />
                 </IconBtn>
               </div>
             ))}
-            {!subs.length && !addingSub && <p className="lin-note">No sub-issues yet.</p>}
+            {!subs.length && !addingSub && <p className="lin-note">{tr("No sub-issues yet.")}</p>}
           </section>
 
-          <section className="lin-subsec" aria-label="Attachments">
+          <section className="lin-subsec" aria-label={tr("Attachments")}>
             <header>
-              <ChevronDown size={14} color="var(--muted)" />
-              <span>Attachments</span>
+              <ChevronDown size={14} color={MUTED_COLOR} />
+              <span>{tr("Attachments")}</span>
               <span className="count" style={{color: 'var(--muted)', fontWeight: 500, fontSize: 12}}>{(detail.attachments?.nodes || []).length}</span>
               <span className="grow" />
               <span style={{position: 'relative'}} ref={attachRef}>
-                <IconBtn label="Attach file or link" title="Attach" onClick={() => setAttachMenu(v => !v)}><Plus size={14} /></IconBtn>
+                <IconBtn label={tr("Attach file or link")} title={tr("Attach")} onClick={() => setAttachMenu(v => !v)}><Plus size={14} /></IconBtn>
                 {attachMenu && (
                   <div className="lin-popover" style={{right: 0, top: 'calc(100% + 6px)', width: 300, padding: 12}}>
-                    <b style={{fontSize: 13}}>Attach</b>
+                    <b style={{fontSize: 13}}>{tr("Attach")}</b>
                     <div style={{display: 'flex', gap: 8, marginTop: 10}}>
                       <button type="button" className="lin-btn" disabled={uploading} onClick={() => fileRef.current?.click()}>
-                        {uploading ? 'Uploading…' : 'Upload file'}
+                        {uploading ? tr("Uploading…") : tr("Upload file")}
                       </button>
                       <input ref={fileRef} type="file" hidden accept="image/*,video/*,.pdf,.txt,.md"
                         onChange={e => { const f = e.target.files?.[0]; if (f) void doUpload(f); e.target.value = ''; }} />
                     </div>
                     <div className="lin-menu-divider" />
-                    <input placeholder="Paste link URL…" value={attachUrl} onChange={e => setAttachUrl(e.target.value)}
+                    <input placeholder={tr("Paste link URL…")} value={attachUrl} onChange={e => setAttachUrl(e.target.value)}
                       style={{width: '100%', border: '1px solid var(--line)', borderRadius: 6, padding: '7px 10px', fontSize: 13, marginBottom: 8}} />
-                    <input placeholder="Link title (optional)" value={attachTitle} onChange={e => setAttachTitle(e.target.value)}
+                    <input placeholder={tr("Link title (optional)")} value={attachTitle} onChange={e => setAttachTitle(e.target.value)}
                       style={{width: '100%', border: '1px solid var(--line)', borderRadius: 6, padding: '7px 10px', fontSize: 13, marginBottom: 8}} />
                     <button type="button" className="lin-btn primary" style={{width: '100%', justifyContent: 'center'}}
-                      disabled={!attachUrl.trim() || uploading} onClick={() => void attachLink()}>Attach link</button>
+                      disabled={!attachUrl.trim() || uploading} onClick={() => void attachLink()}>{tr("Attach link")}</button>
                   </div>
                 )}
               </span>
@@ -1155,7 +1158,7 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
                 const isImg = /\.(png|jpe?g|gif|webp|svg)$/i.test(a.url);
                 return (
                   <div key={a.id} className="lin-attach">
-                    {isImg ? <img className="thumb" src={a.url} alt="" /> : <Link2 size={16} color="var(--muted)" />}
+                    {isImg ? <img className="thumb" src={a.url} alt="" /> : <Link2 size={16} color={MUTED_COLOR} />}
                     <a href={a.url} target="_blank" rel="noopener noreferrer">{a.title}</a>
                     {a.subtitle && <small>{a.subtitle}</small>}
                     <small style={{marginLeft: 'auto'}}>{relTime(a.createdAt)}</small>
@@ -1163,15 +1166,15 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
                 );
               })}
             </div>
-            {!(detail.attachments?.nodes || []).length && <p className="lin-note">No attachments yet.</p>}
+            {!(detail.attachments?.nodes || []).length && <p className="lin-note">{tr("No attachments yet.")}</p>}
           </section>
 
-          <section className="lin-activity" aria-label="Activity">
+          <section className="lin-activity" aria-label={tr("Activity")}>
             <header>
-              <b>Activity</b>
+              <b>{tr("Activity")}</b>
               <span className="grow" />
               <button type="button" className="lin-subscribe-btn" onClick={() => void toggleSubscribe()} aria-pressed={subscribed}>
-                {subscribed ? 'Subscribed' : 'Subscribe'}
+                {subscribed ? tr("Subscribed") : tr("Subscribe")}
               </button>
               <span className="lin-sublist">
                 {(detail.subscribers?.nodes || []).slice(0, 5).map(s => <Avatar key={s.id} name={s.name} size={20} />)}
@@ -1180,31 +1183,31 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
             {(detail.activity?.nodes || []).map(e => (
               <div key={e.id} className="lin-event">
                 <Avatar name={e.actor?.name} size={18} />
-                <span><b>{e.actor?.name || 'Someone'}</b> {describeEvent(e, states).replace(/^.*? (created|moved|assigned|changed|updated)/, '$1')}</span>
+                <span><b>{e.actor?.name || tr("Someone")}</b> {describeEvent(e, states).replace(/^.*? (created|moved|assigned|changed|updated)/, '$1')}</span>
                 <time>{relTime(e.createdAt)}</time>
               </div>
             ))}
             {(detail.comments?.nodes || []).map(c => (
               <article key={c.id} className="lin-comment">
-                <header><Avatar name={c.user?.name} size={18} /><b>{c.user?.name || 'User'}</b><time>{relTime(c.createdAt)}</time></header>
+                <header><Avatar name={c.user?.name} size={18} /><b>{c.user?.name || tr("User")}</b><time>{relTime(c.createdAt)}</time></header>
                 <p>{c.body}</p>
                 {(viewer.admin || (viewer.id && c.user?.id === viewer.id)) && (
-                  <button type="button" className="lin-addrow del" onClick={() => { if (window.confirm('Delete this comment?')) void onDeleteComment(c.id).catch(e => setCommentError((e as Error).message)); }}>Delete comment</button>
+                  <button type="button" className="lin-addrow del" onClick={() => { if (window.confirm(tr("Delete this comment?"))) void onDeleteComment(c.id).catch(e => setCommentError((e as Error).message)); }}>{tr("Delete comment")}</button>
                 )}
               </article>
             ))}
             <form className="lin-commentbox" onSubmit={submitComment}>
-              <textarea rows={2} value={comment} aria-label="Leave a comment" placeholder="Leave a comment…"
+              <textarea rows={2} value={comment} aria-label={tr("Leave a comment")} placeholder={tr("Leave a comment…")}
                 disabled={commentBusy}
                 onChange={e => { setComment(e.target.value); if (commentError) setCommentError(''); }}
                 onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} />
               <footer>
-                <Tip label="Attach a file">
-                  <button type="button" className="lin-icon-btn" aria-label="Attach a file" onClick={() => { setAttachMenu(true); }}>
+                <Tip label={tr("Attach a file")}>
+                  <button type="button" className="lin-icon-btn" aria-label={tr("Attach a file")} onClick={() => { setAttachMenu(true); }}>
                     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M11.5 8.5l-4.7 4.7a2.4 2.4 0 0 1-3.4-3.4l5.4-5.4a1.6 1.6 0 0 1 2.3 2.3L5.7 12" strokeLinecap="round" /></svg>
                   </button>
                 </Tip>
-                <button type="submit" className="lin-icon-btn" aria-label="Submit comment" title="Submit comment (⌘↵)"
+                <button type="submit" className="lin-icon-btn" aria-label={tr("Submit comment")} title={tr("Submit comment (⌘↵)")}
                   disabled={commentBusy || !comment.trim()}>
                   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M8 13V3M4 7l4-4 4 4" strokeLinecap="round" strokeLinejoin="round" /></svg>
                 </button>
@@ -1214,88 +1217,88 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
           </section>
         </main>
 
-        <aside className="lin-props" aria-label="Properties">
-          <h3>Properties</h3>
-          <PropDropdown label="Status" icon={<LinearStatusIcon state={detail.state} size={14} />}
-            value={<span style={{display: 'inline-flex', alignItems: 'center', gap: 7}}>{detail.state?.name || 'No status'}</span>}
+        <aside className="lin-props" aria-label={tr("Properties")}>
+          <h3>{tr("Properties")}</h3>
+          <PropDropdown label={tr("Status")} icon={<LinearStatusIcon state={detail.state} size={14} />}
+            value={<span style={{display: 'inline-flex', alignItems: 'center', gap: 7}}>{detail.state?.name || tr("No status")}</span>}
             onPick={id => { if (id) void change({stateId: id}); }}
             options={states.map(s => ({id: s.id, selected: s.id === detail.state?.id, label: <span style={{display: 'inline-flex', alignItems: 'center', gap: 8}}><LinearStatusIcon state={s} />{s.name}</span>}))} />
-          <PropDropdown label="Priority" icon={<PriorityIcon priority={detail.priority} />}
-            value={['No priority', 'Urgent', 'High', 'Medium', 'Low'][detail.priority || 0]}
+          <PropDropdown label={tr("Priority")} icon={<PriorityIcon priority={detail.priority} />}
+            value={[tr("No priority"), tr("Urgent"), tr("High"), tr("Medium"), tr("Low")][detail.priority || 0]}
             onPick={id => void change({priority: Number(id)})}
-            options={[[0, 'No priority'], [1, 'Urgent'], [2, 'High'], [3, 'Medium'], [4, 'Low']].map(([v, l]) => ({
+            options={[[0, tr("No priority")], [1, tr("Urgent")], [2, tr("High")], [3, tr("Medium")], [4, tr("Low")]].map(([v, l]) => ({
               id: String(v), selected: (detail.priority || 0) === v,
               label: <span style={{display: 'inline-flex', alignItems: 'center', gap: 8}}><PriorityIcon priority={v as number} />{l}</span>,
             }))} />
-          <PropDropdown label="Assignee" icon={<Avatar name={detail.assignee?.name} size={16} />}
-            value={detail.assignee?.name || 'Unassigned'}
+          <PropDropdown label={tr("Assignee")} icon={<Avatar name={detail.assignee?.name} size={16} />}
+            value={detail.assignee?.name || tr("Unassigned")}
             onPick={id => void change({assigneeId: id})}
-            options={[{id: null, selected: !detail.assignee, label: 'Unassigned', hint: 'Unassigned'},
+            options={[{id: null, selected: !detail.assignee, label: tr("Unassigned"), hint: tr("Unassigned")},
               ...members.map(m => ({id: m.id as string | null, selected: m.id === detail.assignee?.id,
                 hint: m.name || m.email || undefined,
                 label: <span style={{display: 'inline-flex', alignItems: 'center', gap: 8}}><Avatar name={m.name} size={18} />{m.name || m.email}</span>}))]} />
-          <PropDropdown label="Cycle" icon={<CycleGlyph />}
-            value={detail.cycle ? (detail.cycle.name || `Cycle ${detail.cycle.number}`) : 'No cycle'}
+          <PropDropdown label={tr("Cycle")} icon={<CycleGlyph />}
+            value={detail.cycle ? (detail.cycle.name || tr("Cycle {{v0}}", {v0: detail.cycle.number})) : tr("No cycle")}
             onPick={id => void change({cycleId: id})}
-            options={[{id: null, selected: !detail.cycle, label: 'No cycle'},
-              ...teamCycles.map(c => ({id: c.id as string | null, selected: c.id === detail.cycle?.id, label: c.name || `Cycle ${c.number}`}))]} />
-          <PropDropdown label="Project" icon={<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 1.8l5.6 3.2v6.4L8 14.6l-5.6-3.2V5L8 1.8Z" strokeLinejoin="round" /></svg>}
-            value={detail.project?.name || 'No project'}
+            options={[{id: null, selected: !detail.cycle, label: tr('No cycle')},
+              ...teamCycles.map(c => ({id: c.id as string | null, selected: c.id === detail.cycle?.id, label: c.name || tr("Cycle {{v0}}", {v0: c.number})}))]} />
+          <PropDropdown label={tr("Project")} icon={<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 1.8l5.6 3.2v6.4L8 14.6l-5.6-3.2V5L8 1.8Z" strokeLinejoin="round" /></svg>}
+            value={detail.project?.name || tr("No project")}
             onPick={id => void change({projectId: id})}
-            options={[{id: null, selected: !detail.project, label: 'No project'},
+            options={[{id: null, selected: !detail.project, label: tr('No project')},
               ...projects.map(p => ({id: p.id as string | null, selected: p.id === detail.project?.id, label: p.name}))]} />
 
-          <div className="sec">Labels</div>
+          <div className="sec">{tr("Labels")}</div>
           <div style={{display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6}}>
             {(detail.labels?.nodes || []).map(l => <LabelChip key={l.id} label={l} onRemove={() => void change({labelIds: labelIds.filter(id => id !== l.id)})} />)}
           </div>
           <span style={{position: 'relative'}} ref={labelRef}>
             <button type="button" className="lin-addrow" onClick={() => setLabelOpen(v => !v)}>
               <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2.5 2.5h5.2l5.8 5.8-5.2 5.2-5.8-5.8V2.5Z" strokeLinejoin="round" /><circle cx="6" cy="6" r="1.2" fill="currentColor" /></svg>
-              Add label
+              {tr("Add label")}
             </button>
             {labelOpen && (
-              <div className="lin-menu lin-dd-panel" role="listbox" aria-label="Add label">
+              <div className="lin-menu lin-dd-panel" role="listbox" aria-label={tr("Add label")}>
                 {labels.filter(l => !labelIds.includes(l.id)).map(l => (
                   <button key={l.id} type="button" className="lin-dd-opt" onClick={() => { setLabelOpen(false); void change({labelIds: [...labelIds, l.id]}); }}>
                     <LabelChip label={l} />
                   </button>
                 ))}
-                {!labels.filter(l => !labelIds.includes(l.id)).length && <p className="lin-note" style={{padding: '8px 10px'}}>All labels added.</p>}
+                {!labels.filter(l => !labelIds.includes(l.id)).length && <p className="lin-note" style={{padding: '8px 10px'}}>{tr("All labels added.")}</p>}
               </div>
             )}
           </span>
 
-          <div className="sec">Estimate</div>
+          <div className="sec">{tr("Estimate")}</div>
           <div className="lin-prop">
-            <span className="k">⧗ Estimate</span>
-            <span className="v"><input type="number" min={0} step={1} aria-label="Estimate (points)" value={detail.estimate ?? ''}
+            <span className="k">{tr("⧗ Estimate")}</span>
+            <span className="v"><input type="number" min={0} step={1} aria-label={tr("Estimate (points)")} value={detail.estimate ?? ''}
               onChange={e => { const v = e.target.value === '' ? null : Number(e.target.value); void change({estimate: v}); }}
               style={{width: 90, border: '1px solid var(--line)', borderRadius: 6, padding: '5px 8px', fontSize: 13}} /></span>
           </div>
           <div className="lin-prop" style={{marginTop: 4}}>
-            <span className="k">◷ Due date</span>
-            <span className="v"><input type="date" aria-label="Due date" value={(detail.dueDate || '').slice(0, 10)}
+            <span className="k">{tr("◷ Due date")}</span>
+            <span className="v"><input type="date" aria-label={tr("Due date")} value={(detail.dueDate || '').slice(0, 10)}
               onChange={e => void change({dueDate: e.target.value || null})}
               style={{border: '1px solid var(--line)', borderRadius: 6, padding: '5px 8px', fontSize: 13}} /></span>
           </div>
 
-          <div className="sec">Parent</div>
+          <div className="sec">{tr("Parent")}</div>
           {detail.parent ? (
             <div className="lin-prop">
               <span className="v">
                 <button type="button" className="plain" onClick={() => onOpenIssue({...(detail.parent as LinIssue), id: detail.parent!.id})}>
                   <span className="trunc"><b>{detail.parent.identifier}</b> {detail.parent.title}</span>
                 </button>
-                <IconBtn label="Remove parent" title="Remove parent" onClick={() => void change({parentId: null})}><X size={13} /></IconBtn>
+                <IconBtn label={tr("Remove parent")} title={tr("Remove parent")} onClick={() => void change({parentId: null})}><X size={13} /></IconBtn>
               </span>
             </div>
           ) : (
             <span style={{position: 'relative'}} ref={parentRef}>
-              <button type="button" className="lin-addrow" onClick={() => setParentSearch(v => !v)}>Set parent…</button>
+              <button type="button" className="lin-addrow" onClick={() => setParentSearch(v => !v)}>{tr("Set parent…")}</button>
               {parentSearch && (
                 <div className="lin-popover" style={{left: 0, top: 'calc(100% + 4px)', width: 300, padding: 8}}>
-                  <input autoFocus placeholder="Search issues…" value={parentQuery} onChange={e => setParentQuery(e.target.value)}
+                  <input autoFocus placeholder={tr("Search issues…")} value={parentQuery} onChange={e => setParentQuery(e.target.value)}
                     style={{width: '100%', border: '1px solid var(--line)', borderRadius: 6, padding: '7px 10px', fontSize: 13, marginBottom: 6}} />
                   {parentResults.map(r => (
                     <button key={r.id} type="button" className="lin-dd-opt"
@@ -1308,19 +1311,19 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
             </span>
           )}
 
-          <div className="sec">Subscribers</div>
+          <div className="sec">{tr("Subscribers")}</div>
           <div className="lin-sublist">
             {(detail.subscribers?.nodes || []).map(s => <Avatar key={s.id} name={s.name} size={22} />)}
-            {!detail.subscribers?.nodes.length && <span className="lin-note">No subscribers</span>}
+            {!detail.subscribers?.nodes.length && <span className="lin-note">{tr("No subscribers")}</span>}
           </div>
 
-          <div className="sec">Timestamps</div>
-          <div className="lin-ts">Created {detail.createdAt ? new Date(detail.createdAt).toLocaleString() : '—'}</div>
-          <div className="lin-ts">Updated {detail.updatedAt ? new Date(detail.updatedAt).toLocaleString() : '—'}</div>
+          <div className="sec">{tr("Timestamps")}</div>
+          <div className="lin-ts">{tr("Created")} {detail.createdAt ? new Date(detail.createdAt).toLocaleString() : '—'}</div>
+          <div className="lin-ts">{tr("Updated")} {detail.updatedAt ? new Date(detail.updatedAt).toLocaleString() : '—'}</div>
 
-          <div className="sec">Related</div>
-          <Tip label="Issue relations are not available in Hoja yet">
-            <button type="button" className="lin-addrow" disabled style={{opacity: .5, cursor: 'not-allowed'}}>Add relationship…</button>
+          <div className="sec">{tr("Related")}</div>
+          <Tip label={tr("Issue relations are not available in Hoja yet")}>
+            <button type="button" className="lin-addrow" disabled style={{opacity: .5, cursor: 'not-allowed'}}>{tr("Add relationship…")}</button>
           </Tip>
         </aside>
       </div>
