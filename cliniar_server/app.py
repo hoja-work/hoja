@@ -213,7 +213,8 @@ def _format_graphql_error(error, debug=False):
             # graphql-core embeds schema hints ("Did you mean 'viewer'?") into
             # validation error messages; strip them so errors do not enumerate
             # the schema to probing clients.
-            formatted["message"] = message[:suggestion] + "."
+            stripped = message[:suggestion].rstrip()
+            formatted["message"] = stripped if stripped.endswith(".") else stripped + "."
         extensions = formatted.get("extensions") or {}
         if extensions.get("code") in ("FORBIDDEN", "AUTHENTICATION_ERROR"):
             formatted["extensions"] = {**extensions, "agentHint": DENY_HINT}
@@ -361,12 +362,13 @@ def create_app(
         return None
 
     def _cookie_secure(request: Request) -> bool:
+        if _request_from_trusted_proxy(request):
+            # The trusted proxy terminates TLS; the proxy-to-app hop never
+            # leaves the host. Do not let a forwarded proto value downgrade
+            # the Secure flag on session cookies.
+            return True
         if request.url.scheme == "https":
             return True
-        if _request_from_trusted_proxy(request):
-            forwarded = request.headers.get("x-forwarded-proto", "").split(",")[-1].strip().lower()
-            if forwarded == "https":
-                return True
         return request.url.hostname not in ("localhost", "127.0.0.1", "::1")
 
     def _is_loopback(request: Request) -> bool:

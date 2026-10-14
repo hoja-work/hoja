@@ -1331,6 +1331,34 @@ def test_browser_password_session_setup_login_graphql_and_logout(tmp_path) -> No
     assert client.post("/graphql", json={"query": "{ viewer { id } }"}).status_code == 401
 
 
+def test_session_cookie_secure_flag_behind_trusted_proxy(tmp_path) -> None:
+    """Behind a trusted proxy the Secure cookie flag must follow the EDGE scheme
+    (X-Forwarded-Proto), not be flippable by a client-supplied header value."""
+    from starlette.testclient import TestClient
+
+    db_path = tmp_path / "secure-flag-proxy.db"
+    engine = make_engine(db_path)
+    migrate(engine)
+    seeded = seed_tenant(engine, org_name="SecureFlag Workspace", org_url_key="secure-flag",
+                         user_name="Secure User", user_email="secure@example.test",
+                         demo_issues=False)
+    app = create_app(str(db_path), trusted_proxy_cidrs="172.18.0.0/16",
+                     trusted_public_host="hoja.clover4.app", open_mode=False)
+    payload = {"email": "secure@example.test", "password": "correct horse battery"}
+    with TestClient(app, client=("172.18.0.2", 5000)) as client:
+        good = client.post("/auth/setup", json={"token": seeded["token"], "password": "correct horse battery"})
+        assert good.status_code == 201
+        r_https = client.post("/auth/login", headers={"x-forwarded-proto": "https"}, json=payload)
+        assert r_https.status_code == 200
+        assert "secure" in r_https.headers.get("set-cookie", "").lower()
+        r_http = client.post("/auth/login", headers={"x-forwarded-proto": "http"}, json=payload)
+        assert r_http.status_code == 200
+        # Edge scheme http must not silently produce a non-Secure session cookie:
+        # the cookie must remain Secure (fetch/backend scheme is still https in prod
+        # via Cloudflare -> Traefik TLS termination).
+        assert "secure" in r_http.headers.get("set-cookie", "").lower(), r_http.headers.get("set-cookie")
+
+
 def test_graphql_errors_do_not_leak_schema_suggestions(tmp_path) -> None:
     from starlette.testclient import TestClient
 
