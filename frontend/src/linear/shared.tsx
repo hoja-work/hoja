@@ -1,6 +1,5 @@
 import React, {useEffect, useRef, useState} from 'react';
 import type {IssueLabel} from '../main';
-import {tr} from '../i18n';
 
 /* Shared Linear-style primitives for the 1:1 Issues/Cycles rebuild. */
 
@@ -27,7 +26,7 @@ export function Avatar({name, size = 20, title}: {name?: string | null; size?: n
   return (
     <span
       className="lin-avatar"
-      title={title || name || tr('Unassigned')}
+      title={title || name || 'Unassigned'}
       style={{width: size, height: size, fontSize: Math.max(8, size * 0.42), background: name ? avatarColor(name) : 'var(--subtle)', color: name ? '#5b4a52' : 'var(--muted)'}}
     >
       {name ? initials(name) : '?'}
@@ -40,7 +39,7 @@ export function PriorityIcon({priority, size = 14}: {priority?: number | null; s
   const p = priority || 0;
   if (p === 1) {
     return (
-      <svg width={size} height={size} viewBox="0 0 16 16" aria-label={tr("Urgent")} className="lin-priority">
+      <svg width={size} height={size} viewBox="0 0 16 16" aria-label="Urgent" className="lin-priority">
         <rect x="1.5" y="1.5" width="13" height="13" rx="3.5" fill="#f2994a" />
         <path d="M8 4.2v4.4" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" />
         <circle cx="8" cy="11.4" r="1.05" fill="#fff" />
@@ -49,7 +48,7 @@ export function PriorityIcon({priority, size = 14}: {priority?: number | null; s
   }
   const color = p === 2 ? '#f2994a' : p === 3 ? '#e5b800' : p === 4 ? '#8a94a6' : '#c4c4c9';
   return (
-    <svg width={size} height={size} viewBox="0 0 16 16" aria-label={['No priority', 'Urgent', 'High', 'Medium', 'Low'][p] || tr('No priority')} className="lin-priority">
+    <svg width={size} height={size} viewBox="0 0 16 16" aria-label={['No priority', 'Urgent', 'High', 'Medium', 'Low'][p] || 'No priority'} className="lin-priority">
       <rect x="2" y="9.5" width="2.6" height="4.5" rx="1" fill={color} opacity={p === 0 ? 0.45 : 1} />
       <rect x="6.7" y="6" width="2.6" height="8" rx="1" fill={color} opacity={p === 0 ? 0.45 : p >= 3 ? 1 : 0.35} />
       <rect x="11.4" y="2.5" width="2.6" height="11.5" rx="1" fill={color} opacity={p === 0 ? 0.45 : p >= 2 && p !== 3 ? 1 : p === 3 ? 0.35 : 0.35} />
@@ -89,7 +88,7 @@ export function LabelChip({label, onClick, onRemove}: {label: IssueLabel; onClic
       onKeyDown={onClick ? e => { if (e.key === 'Enter') onClick(e as unknown as React.MouseEvent); } : undefined}>
       <i style={{background: label.color || '#8a94a6'}} />
       {label.name}
-      {onRemove && <button type="button" className="lin-chip-x" aria-label={tr("Remove label {{v0}}", {v0: label.name})} onClick={e => { e.stopPropagation(); onRemove(); }}>×</button>}
+      {onRemove && <button type="button" className="lin-chip-x" aria-label={`Remove label ${label.name}`} onClick={e => { e.stopPropagation(); onRemove(); }}>×</button>}
     </span>
   );
 }
@@ -97,7 +96,7 @@ export function LabelChip({label, onClick, onRemove}: {label: IssueLabel; onClic
 export function ProjectChip({name}: {name?: string | null}) {
   if (!name) return null;
   return (
-    <span className="lin-chip lin-project-chip" title={tr('Project: {{v0}}', {v0: name})}>
+    <span className="lin-chip lin-project-chip" title={`Project: ${name}`}>
       <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M8 1.8l5.6 3.2v6.4L8 14.6l-5.6-3.2V5L8 1.8Z" strokeLinejoin="round" /><path d="M8 1.8V8m0 0l5.6-3M8 8L2.4 5" /></svg>
       {name}
     </span>
@@ -107,7 +106,7 @@ export function ProjectChip({name}: {name?: string | null}) {
 export function CycleChip({number, name}: {number?: number | null; name?: string | null}) {
   if (number == null && !name) return null;
   return (
-    <span className="lin-chip lin-cycle-chip" title={name || tr('Cycle {{v0}}', {v0: number})}>
+    <span className="lin-chip lin-cycle-chip" title={name || `Cycle ${number}`}>
       <CycleGlyph size={12} />
       {number ?? name}
     </span>
@@ -120,7 +119,7 @@ export function SubIssuePill({done, total}: {done: number; total: number}) {
   const frac = done / total;
   const r = 5, circ = 2 * Math.PI * r;
   return (
-    <span className="lin-subissue-pill" title={tr("{{v0}} of {{v1}} sub-issues complete", {v0: done, v1: total})}>
+    <span className="lin-subissue-pill" title={`${done} of ${total} sub-issues complete`}>
       <svg width="13" height="13" viewBox="0 0 14 14" aria-hidden="true">
         <circle cx="7" cy="7" r={r} fill="none" stroke="#d4d4d8" strokeWidth="1.6" />
         <circle cx="7" cy="7" r={r} fill="none" stroke="#5e6ad2" strokeWidth="1.6"
@@ -139,7 +138,7 @@ export function DueChip({iso}: {iso?: string | null}) {
   const overdue = d.getTime() < Date.now();
   const label = d.toLocaleDateString(undefined, {month: 'short', day: 'numeric'});
   return (
-    <span className={cx('lin-chip lin-due-chip', overdue && 'overdue')} title={tr('Due {{v0}}', {v0: d.toLocaleDateString()})}>
+    <span className={cx('lin-chip lin-due-chip', overdue && 'overdue')} title={`Due ${d.toLocaleDateString()}`}>
       <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="2" /><path d="M2 6.5h12M5.5 1.5V4M10.5 1.5V4" strokeLinecap="round" /></svg>
       {label}
     </span>
@@ -247,8 +246,8 @@ export function FavStar({kind, id, label}: {kind: 'issues' | 'cycles'; id: strin
     return () => window.removeEventListener('keydown', onKey);
   }, [toggle]);
   return (
-    <Tip label={fav ? tr('Remove from favorites') : tr('Add to favorites (Alt+F)')}>
-      <button type="button" className={cx('lin-icon-btn', fav && 'active')} aria-label={fav ? tr('Remove from favorites: {{v0}}', {v0: label}) : tr('Add to favorites: {{v0}}', {v0: label})}
+    <Tip label={fav ? 'Remove from favorites' : 'Add to favorites (Alt+F)'}>
+      <button type="button" className={cx('lin-icon-btn', fav && 'active')} aria-label={`${fav ? 'Remove from favorites: ' : 'Add to favorites: '}${label}`}
         aria-pressed={fav} onClick={toggle}>
         <svg width="15" height="15" viewBox="0 0 16 16" fill={fav ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
           <path d="M8 1.8l2 4.1 4.5.6-3.3 3.1.8 4.5L8 11.9l-4 2.2.8-4.5L1.5 6.5l4.5-.6z" strokeLinejoin="round" />

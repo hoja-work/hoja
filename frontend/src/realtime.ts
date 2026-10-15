@@ -12,7 +12,6 @@ export function connectRealtime(token: string | null, onChange: (event: ChangeEv
     const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
     const after = Number(localStorage.getItem(CURSOR_KEY) || '0');
     const protocols = token && token !== 'session' ? ['bearer', token] : undefined;
-    // eslint-disable-next-line i18next/no-literal-string -- WebSocket URL, not UI text
     return {href: `${scheme}://${location.host}/ws?after=${after}`, protocols};
   };
 

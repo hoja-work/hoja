@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import {tr} from './i18n';
 
 type Conversation = { id: string; messageCount: number; bytes: number; updatedAt: string };
 type Summary = { count: number; totalBytes: number; conversations: Conversation[] };
@@ -38,23 +37,23 @@ export function AgentConversationsSettings() {
     };
   }, []);
 
-  if (error) return <p role="alert">{tr("Could not load conversations:")} {error}</p>;
-  if (!summary) return <p role="status">{tr("Loading conversations…")}</p>;
+  if (error) return <p role="alert">Could not load conversations: {error}</p>;
+  if (!summary) return <p role="status">Loading conversations…</p>;
 
   return (
-    <section className="settings-page" aria-label={tr("Agent conversations")}>
+    <section className="settings-page" aria-label="Agent conversations">
       <header className="settings-page-heading">
-        <h1>{tr("Agent conversations")}</h1>
+        <h1>Agent conversations</h1>
         <p>
-          {summary.count} {tr("saved")} {summary.count === 1 ? 'conversation' : 'conversations'} · {formatBytes(summary.totalBytes)} {tr("total")}
+          {summary.count} saved {summary.count === 1 ? 'conversation' : 'conversations'} · {formatBytes(summary.totalBytes)} total
         </p>
       </header>
       <table>
         <thead>
           <tr>
-            <th>{tr("Updated")}</th>
-            <th>{tr("Messages")}</th>
-            <th>{tr("Size")}</th>
+            <th>Updated</th>
+            <th>Messages</th>
+            <th>Size</th>
           </tr>
         </thead>
         <tbody>

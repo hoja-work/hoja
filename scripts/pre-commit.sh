@@ -125,30 +125,5 @@ if [ "${#styles[@]}" -gt 0 ]; then
     fi
 fi
 
-# Block hardcoded user-facing text in staged frontend TS/TSX. Lints the index
-# content via --stdin so unstaged fixes cannot mask a bad commit.
-i18n_files=()
-for f in "${staged[@]}"; do
-    case "$f" in frontend/src/*.ts|frontend/src/*.tsx) i18n_files+=("$f") ;; esac
-done
-if [ "${#i18n_files[@]}" -gt 0 ]; then
-    root=$(git rev-parse --show-toplevel)
-    if [ ! -x "$root/frontend/node_modules/.bin/eslint" ]; then
-        red "ESLint is not installed. Run: cd frontend && npm ci"
-        exit 1
-    fi
-    i18n_failed=0
-    for f in "${i18n_files[@]}"; do
-        # ESLint resolves --stdin-filename relative to frontend/, so drop the prefix.
-        if ! git show ":$f" | (cd "$root/frontend" && ./node_modules/.bin/eslint --stdin --stdin-filename "${f#frontend/}" >&2); then
-            i18n_failed=1
-        fi
-    done
-    if [ "$i18n_failed" -ne 0 ]; then
-        red "Commit refused: staged UI text has hardcoded strings. Wrap them in t() and add en+es catalog keys (see frontend/src/i18n)."
-        exit 1
-    fi
-fi
-
-green "pre-commit OK (${#staged[@]} files scanned, no secrets / forbidden paths, style, or i18n errors)"
+green "pre-commit OK (${#staged[@]} files scanned, no secrets / forbidden paths or style errors)"
 exit 0

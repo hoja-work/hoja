@@ -6,11 +6,9 @@ import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { History, SquarePen } from 'lucide-react';
-import {tr} from './i18n';
 
 function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('hoja_token');
-  // eslint-disable-next-line i18next/no-literal-string -- HTTP authorization header value, not UI text
   return token && token !== 'session' ? { authorization: `Bearer ${token}` } : {};
 }
 
@@ -126,15 +124,15 @@ function AskWizard({ questions }: { questions: AskQuestion[] }) {
     void processMessage({ role: 'user', content: body });
   };
   return (
-    <form className="agent-ask" aria-label={tr("Agent question")} onSubmit={(e) => { e.preventDefault(); next(); }}>
+    <form className="agent-ask" aria-label="Agent question" onSubmit={(e) => { e.preventDefault(); next(); }}>
       <div className="agent-ask-top">
         {q.header && <span className="agent-ask-header">{q.header}</span>}
-        {questions.length > 1 && <span className="agent-ask-step">{step + 1} {tr("of")} {questions.length}</span>}
+        {questions.length > 1 && <span className="agent-ask-step">{step + 1} of {questions.length}</span>}
       </div>
       <fieldset key={step} className="agent-ask-q">
         <legend>
           <span className="agent-ask-question">{q.question}</span>
-          {q.multiple && <span className="agent-ask-hint">{tr("Select all that apply")}</span>}
+          {q.multiple && <span className="agent-ask-hint">Select all that apply</span>}
         </legend>
         {options.map((o) => (
           <label key={o.label} className={`agent-ask-option${a.picked.includes(o.label) ? ' is-picked' : ''}`}>
@@ -153,14 +151,14 @@ function AskWizard({ questions }: { questions: AskQuestion[] }) {
               checked={a.otherOn}
               onChange={() => update(q.multiple ? { otherOn: !a.otherOn } : { otherOn: true, picked: [] })}
             />
-            <span className="agent-ask-label">{tr("Other")}</span>
+            <span className="agent-ask-label">Other</span>
           </label>
         )}
         {allowOther && (options.length === 0 || a.otherOn) && (
           <textarea
             className="agent-ask-input"
             rows={2}
-            placeholder={tr("Write your answer…")}
+            placeholder="Write your answer…"
             value={a.other}
             autoFocus
             onChange={(e) => update({ other: e.target.value })}
@@ -168,12 +166,12 @@ function AskWizard({ questions }: { questions: AskQuestion[] }) {
           />
         )}
         {options.length > 0 && (
-          <input className="agent-ask-input" type="text" placeholder={tr("Add details (optional)")} value={a.note} onChange={(e) => update({ note: e.target.value })} />
+          <input className="agent-ask-input" type="text" placeholder="Add details (optional)" value={a.note} onChange={(e) => update({ note: e.target.value })} />
         )}
       </fieldset>
       <div className="agent-ask-actions">
-        {step > 0 && <button type="button" className="agent-ask-back" onClick={() => setStep(step - 1)}>{tr("Back")}</button>}
-        <button type="submit" className="primary" disabled={!answered}>{last ? tr('Send') : tr('Next')}</button>
+        {step > 0 && <button type="button" className="agent-ask-back" onClick={() => setStep(step - 1)}>Back</button>}
+        <button type="submit" className="primary" disabled={!answered}>{last ? 'Send' : 'Next'}</button>
       </div>
     </form>
   );
@@ -236,7 +234,7 @@ function ComposerSwitch() {
   const questions = pending ? splitAsk(pending).questions : null;
   if (questions) return <AskWizard key={pending} questions={questions} />;
   // Nested default composer keeps the library's input and starters; CSS removes the doubled slot padding.
-  return <AgentInterface.Composer placeholder={tr("Ask about issues, projects, or cycles…")} />;
+  return <AgentInterface.Composer placeholder="Ask about issues, projects, or cycles…" />;
 }
 
 // History opens as a panel inside the chat column instead of a second sidebar next to the app navigation.
@@ -260,19 +258,19 @@ function ChatToolbar() {
   }, [open]);
   return (
     <div className="agent-toolbar" ref={ref}>
-      <span className="agent-toolbar-title">{title || tr('New chat')}</span>
+      <span className="agent-toolbar-title">{title || 'New chat'}</span>
       <button type="button" className="agent-toolbar-button" aria-expanded={open} aria-controls="agent-history" onClick={() => setOpen((v) => !v)}>
-        <History size={16} aria-hidden="true" /> {tr("History")}
+        <History size={16} aria-hidden="true" /> History
       </button>
       <button type="button" className="agent-toolbar-button" onClick={() => { switchToNewThread(); setOpen(false); }}>
-        <SquarePen size={16} aria-hidden="true" /> {tr("New chat")}
+        <SquarePen size={16} aria-hidden="true" /> New chat
       </button>
       {open && (
         <div
           id="agent-history"
           className="agent-history"
           role="dialog"
-          aria-label={tr("Chat history")}
+          aria-label="Chat history"
           onClick={(e) => { if ((e.target as Element).closest('.openui-agent-thread-button-title')) setOpen(false); }}
         >
           <AgentInterface.ThreadList />
@@ -334,9 +332,9 @@ const STARTERS = [
 ];
 
 export function AgentChatPage({ workspaceName }: { workspaceName: string }) {
-  const name = workspaceName || tr('Hoja');
+  const name = workspaceName || 'Hoja';
   return (
-    <section className="agent-chat-page" aria-label={tr("Agent chat")}>
+    <section className="agent-chat-page" aria-label="Agent chat">
       <AgentInterface
         llm={llm}
         storage={storage}
@@ -349,7 +347,7 @@ export function AgentChatPage({ workspaceName }: { workspaceName: string }) {
         <AgentInterface.Sidebar>{null}</AgentInterface.Sidebar>
         <AgentInterface.ThreadHeader><ChatToolbar /></AgentInterface.ThreadHeader>
         <AgentInterface.MobileHeader><ChatToolbar /></AgentInterface.MobileHeader>
-        <AgentInterface.Welcome title={tr("Ask the {{v0}} agent", {v0: name})} description={tr("Search, summarize, and update issues in your workspace.")} />
+        <AgentInterface.Welcome title={`Ask the ${name} agent`} description="Search, summarize, and update issues in your workspace." />
         <AgentInterface.Composer>
           <ComposerSwitch />
           <ScrollFollower />

@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import {tr} from './i18n';
 
 type ConnectorAccount = {
   id: string;
@@ -18,7 +17,6 @@ type PendingAction = {
 
 function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('hoja_token');
-  // eslint-disable-next-line i18next/no-literal-string -- HTTP authorization header value, not UI text
   return token && token !== 'session' ? { authorization: `Bearer ${token}` } : {};
 }
 
@@ -29,7 +27,7 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     headers: { ...authHeaders(), ...(init.headers as Record<string, string> | undefined) },
   });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.error || tr('Request failed ({{v0}})',{v0:res.status}));
+  if (!res.ok) throw new Error(body.error || `Request failed (${res.status})`);
   return body as T;
 }
 
@@ -79,50 +77,50 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
   return (
     <section className="settings-page">
       <header className="settings-page-heading">
-        <h1>{tr("Connections")}</h1>
-        <p>{tr("Connect Google Workspace so the assistant can read your Gmail, Drive, Calendar, and Docs.")}</p>
+        <h1>Connections</h1>
+        <p>Connect Google Workspace so the assistant can read your Gmail, Drive, Calendar, and Docs.</p>
       </header>
 
       <div className="settings-group">
-        <h2>{tr("Google Workspace")}</h2>
+        <h2>Google Workspace</h2>
         {message && <p role="alert">{message}</p>}
         <div className="setting-row">
           <div>
-            <b>{tr("Your account")}</b>
-            <p>{tr("Read-only access. Writes always need your approval.")}</p>
+            <b>Your account</b>
+            <p>Read-only access. Writes always need your approval.</p>
           </div>
-          <a className="primary" href="/api/connectors/google/start?scope=user">{tr("Connect Google")}</a>
+          <a className="primary" href="/api/connectors/google/start?scope=user">Connect Google</a>
         </div>
         {isAdmin && (
           <div className="setting-row">
             <div>
-              <b>{tr("Organization account")}</b>
-              <p>{tr("Shared with everyone in this workspace. Admins only.")}</p>
+              <b>Organization account</b>
+              <p>Shared with everyone in this workspace. Admins only.</p>
             </div>
-            <a href="/api/connectors/google/start?scope=org">{tr("Connect organization account")}</a>
+            <a href="/api/connectors/google/start?scope=org">Connect organization account</a>
           </div>
         )}
-        <ul aria-label={tr("Connected accounts")}>
-          {accounts.length === 0 && <li>{tr("No Google accounts connected.")}</li>}
+        <ul aria-label="Connected accounts">
+          {accounts.length === 0 && <li>No Google accounts connected.</li>}
           {accounts.map((a) => (
             <li key={a.id}>
-              {a.externalAccount} · {a.scope === 'org' ? tr('Organization') : tr('Personal')}
-              <button onClick={() => revoke(a.id)}>{tr("Disconnect")}</button>
+              {a.externalAccount} · {a.scope === 'org' ? 'Organization' : 'Personal'}
+              <button onClick={() => revoke(a.id)}>Disconnect</button>
             </li>
           ))}
         </ul>
       </div>
 
       <div className="settings-group">
-        <h2>{tr("Pending actions")}</h2>
-        <ul aria-label={tr("Pending actions")}>
-          {actions.length === 0 && <li>{tr("Nothing waiting for approval.")}</li>}
+        <h2>Pending actions</h2>
+        <ul aria-label="Pending actions">
+          {actions.length === 0 && <li>Nothing waiting for approval.</li>}
           {actions.map((a) => (
             <li key={a.id}>
               <b>{a.tool}</b>
               <pre>{JSON.stringify(a.args, null, 2)}</pre>
-              <button onClick={() => decide(a.id, 'approve')}>{tr("Approve")}</button>
-              <button onClick={() => decide(a.id, 'reject')}>{tr("Reject")}</button>
+              <button onClick={() => decide(a.id, 'approve')}>Approve</button>
+              <button onClick={() => decide(a.id, 'reject')}>Reject</button>
             </li>
           ))}
         </ul>

@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import {tr} from './i18n';
 
 type ModelProvider = {
   id: string;
@@ -35,11 +34,9 @@ export function ModelProvidersSettings() {
   const [name, setName] = useState('');
   const [provider, setProvider] = useState('openai');
   const [modelId, setModelId] = useState('');
-  // eslint-disable-next-line i18next/no-literal-string -- default API endpoint URL, not UI text
   const [baseUrl, setBaseUrl] = useState('https://api.openai.com/v1');
   const [apiKey, setApiKey] = useState('');
   const [message, setMessage] = useState('');
-  const [messageIsError, setMessageIsError] = useState(false);
   const [busy, setBusy] = useState(false);
   const [refresh, setRefresh] = useState(0);
 
@@ -47,7 +44,7 @@ export function ModelProvidersSettings() {
     let live = true;
     call(LIST)
       .then((d) => live && setProviders(d.modelProviders))
-      .catch((e) => { if (live) { setMessage((e as Error).message); setMessageIsError(true); } });
+      .catch((e) => live && setMessage((e as Error).message));
     return () => {
       live = false;
     };
@@ -57,18 +54,15 @@ export function ModelProvidersSettings() {
     e.preventDefault();
     setBusy(true);
     setMessage('');
-    setMessageIsError(false);
     try {
       await call(CREATE, { name, provider, modelId, baseUrl: baseUrl || null, apiKey });
       setName('');
       setModelId('');
       setApiKey('');
-      setMessage(tr('Model added. The key is stored encrypted and cannot be viewed again.'));
-      setMessageIsError(false);
+      setMessage('Model added. The key is stored encrypted and cannot be viewed again.');
       setRefresh((x) => x + 1);
     } catch (err) {
       setMessage((err as Error).message);
-      setMessageIsError(true);
     } finally {
       setBusy(false);
     }
@@ -80,73 +74,71 @@ export function ModelProvidersSettings() {
       setRefresh((x) => x + 1);
     } catch (err) {
       setMessage((err as Error).message);
-      setMessageIsError(true);
     }
   };
 
   const remove = async (p: ModelProvider) => {
-    if (!window.confirm(tr("Delete {{v0}}? The agent will stop using this model.", {v0: p.name}))) return;
+    if (!window.confirm(`Delete ${p.name}? The agent will stop using this model.`)) return;
     try {
       await call(DELETE, { id: p.id });
       setRefresh((x) => x + 1);
     } catch (err) {
       setMessage((err as Error).message);
-      setMessageIsError(true);
     }
   };
 
   return (
     <section className="settings-page">
       <header className="settings-page-heading">
-        <span className="eyebrow">{tr("Administration")}</span>
-        <h1>{tr("Model providers")}</h1>
-        <p>{tr("Models available to the workspace agent. Users never supply their own keys.")}</p>
+        <span className="eyebrow">Administration</span>
+        <h1>Model providers</h1>
+        <p>Models available to the workspace agent. Users never supply their own keys.</p>
       </header>
       <div className="settings-group">
         <form onSubmit={create}>
           <label>
-            {tr("Display name")}
-            <input aria-label={tr("Model display name")} required maxLength={80} value={name} onChange={(e) => setName(e.target.value)} />
+            Display name
+            <input aria-label="Model display name" required maxLength={80} value={name} onChange={(e) => setName(e.target.value)} />
           </label>
           <label>
-            {tr("Provider")}
-            <input aria-label={tr("Provider")} required value={provider} onChange={(e) => setProvider(e.target.value)} />
+            Provider
+            <input aria-label="Provider" required value={provider} onChange={(e) => setProvider(e.target.value)} />
           </label>
           <label>
-            {tr("Model ID")}
-            <input aria-label={tr("Model ID")} required value={modelId} onChange={(e) => setModelId(e.target.value)} />
+            Model ID
+            <input aria-label="Model ID" required value={modelId} onChange={(e) => setModelId(e.target.value)} />
           </label>
           <label>
-            {tr("Base URL (OpenAI-compatible)")}
-            <input aria-label={tr("Base URL")} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
+            Base URL (OpenAI-compatible)
+            <input aria-label="Base URL" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
           </label>
           <label>
-            {tr("API key")}
-            <input aria-label={tr("API key")} type="password" required value={apiKey} onChange={(e) => setApiKey(e.target.value)} autoComplete="off" />
+            API key
+            <input aria-label="API key" type="password" required value={apiKey} onChange={(e) => setApiKey(e.target.value)} autoComplete="off" />
           </label>
           <button className="primary" disabled={busy || !name.trim() || !modelId.trim() || !apiKey}>
-            {busy ? tr('Saving…') : tr('Add model')}
+            {busy ? 'Saving…' : 'Add model'}
           </button>
         </form>
-        {message && <p role={messageIsError ? 'alert' : 'status'}>{message}</p>}
+        {message && <p role={message.startsWith('Model added') ? 'status' : 'alert'}>{message}</p>}
         <div className="issue-card">
           {providers.map((p) => (
             <div className="issue-row" key={p.id}>
               <span className="issue-copy">
                 <b>{p.name}</b>
                 <small>
-                  {p.provider} · {p.modelId} · {p.hasApiKey ? tr('key stored') : tr('no key')}
+                  {p.provider} · {p.modelId} · {p.hasApiKey ? 'key stored' : 'no key'}
                 </small>
               </span>
               <button type="button" className="outline" onClick={() => void toggle(p)}>
-                {p.enabled ? tr('Disable') : tr('Enable')}
+                {p.enabled ? 'Disable' : 'Enable'}
               </button>
               <button type="button" className="outline danger" onClick={() => void remove(p)}>
-                {tr("Delete")}
+                Delete
               </button>
             </div>
           ))}
-          {!providers.length && <p>{tr("No models configured. The agent will say so until one is added.")}</p>}
+          {!providers.length && <p>No models configured. The agent will say so until one is added.</p>}
         </div>
       </div>
     </section>
