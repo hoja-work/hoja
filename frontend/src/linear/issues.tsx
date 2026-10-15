@@ -260,8 +260,7 @@ export function DisplayPanel({display, setDisplay, onClose, anchorClass}: {
       <div className="dp-sec">
         <div className="dp-title">{tr("View")}</div>
         <div className="dp-seg" role="group" aria-label={tr("List or board")}>
-          {/* eslint-disable-next-line i18next/no-literal-string -- stored layout keys, not display text */}
-          {(['List', 'Board'] as const).map(v => (
+          {([tr("List"), tr("Board")] as const).map(v => (
             <button key={v} type="button" aria-pressed={(display as unknown as {layout: string}).layout !== 'Board' ? v === 'List' : v === 'Board'}
               onClick={() => set({...(display as object), layout: v} as Partial<LinDisplay>)}>{tr(v)}</button>
           ))}

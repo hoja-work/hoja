@@ -562,8 +562,7 @@ export function LinearCycleDetail({cycle: initial, team, teams, viewer, orgId, w
             </span>
             <span style={{position: 'relative'}}>
               <IconBtn label={tr("Display options")} title={tr("Display options")} active={displayOpen} onClick={() => { setDisplayOpen(v => !v); setFilterOpen(false); }}><SlidersHorizontal size={15} /></IconBtn>
-              {/* eslint-disable-next-line i18next/no-literal-string -- stored layout key, not display text */}
-              {displayOpen && <_DP display={{...display, layout: 'List'} as LinDisplay} setDisplay={() => {}} onClose={() => setDisplayOpen(false)} />}
+              {displayOpen && <_DP display={{...display, layout: tr("List")} as LinDisplay} setDisplay={() => {}} onClose={() => setDisplayOpen(false)} />}
             </span>
             <IconBtn label={paneOpen ? tr("Close cycle details") : tr("Open cycle details")} title={tr("Toggle details pane")}
               active={paneOpen} onClick={() => setPaneOpen(v => !v)}>
