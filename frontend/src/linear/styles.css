@@ -167,6 +167,7 @@
 .lin-subrow:hover{background:var(--subtle);}
 .lin-subrow .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .lin-subrow.done .t{text-decoration:line-through;color:var(--muted);}
+.lin-subrow.pending{opacity:.62;}
 .lin-activity{border-top:1px solid var(--line);padding-top:16px;margin-top:6px;}
 .lin-activity > header{display:flex;align-items:center;margin-bottom:12px;}
 .lin-activity > header b{font-size:14px;}
@@ -182,6 +183,9 @@
 .lin-comment > header time{color:var(--muted);font-size:12px;}
 .lin-comment p{margin:0;white-space:pre-wrap;word-break:break-word;}
 .lin-comment .del{margin-top:8px;}
+.lin-comment.pending{opacity:.62;}
+.lin-comment.pending > header time{font-style:italic;}
+.lin-comment > .lin-commentbox{margin-top:4px;}
 .lin-commentbox{border:1px solid var(--line);border-radius:9px;margin-top:14px;background:var(--panel);}
 .lin-commentbox textarea{width:100%;border:0;background:transparent;resize:vertical;min-height:64px;padding:12px 14px;font:inherit;font-size:13px;color:var(--text);}
 .lin-commentbox textarea:focus{outline:none;}

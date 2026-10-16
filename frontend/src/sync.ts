@@ -35,6 +35,8 @@ export type SyncHandle = {
   /** Remove issues locally (archive/delete). settle(true, ids?) keeps them hidden until a pull
    *  has removed them; settle(false, ids?) brings them back. ids defaults to all hidden here. */
   hide: (ids: string[]) => (accepted: boolean, ids?: string[]) => void;
+  /** Show a not-yet-created issue (never persisted); settle with the server's issue or null. */
+  addLocal: (issue: Issue) => (real: Issue | null) => void;
 };
 
 type Row = unknown[];
@@ -107,8 +109,7 @@ export function useTeamIssues(teamId: string | null | undefined): Issue[] {
 
 export function useIssue(idOrIdentifier: string | null | undefined): Issue | undefined {
   const issues = useIssues();
-  return useMemo(() => (idOrIdentifier ? issues.find(i => i.id === idOrIdentifier || i.identifier === idOrIdentifier) : undefined),
-    [issues, idOrIdentifier]);
+  return useMemo(() => (idOrIdentifier ? issueIndex(issues).get(idOrIdentifier) : undefined), [issues, idOrIdentifier]);
 }
 
 type EntityListener = {entities: Set<string>; ids?: Set<string>; cb: (events: ChangeEvent[]) => void};
@@ -256,6 +257,7 @@ export function startSync(opts: {
   const hydrated = new Map<string, {row: Row; parentRow: Row | undefined; issue: Issue}>();
   const overlays = new Map<string, Partial<Issue>[]>();
   const hidden = new Map<string, number>(); // id → number of outstanding hide() calls
+  const locals = new Map<string, Issue>(); // optimistic creates awaiting the server
   let emitQueued = false;
 
   const fetchJson = async (url: string, extra: Record<string, string> = {}) => {
@@ -296,6 +298,7 @@ export function startSync(opts: {
       issues.push(layers ? Object.assign({}, entry.issue, ...layers) : entry.issue);
     }
     for (const id of hydrated.keys()) if (!(id in snap.rows)) hydrated.delete(id);
+    for (const local of locals.values()) if (!hidden.has(local.id)) issues.push(local);
     issues.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
     setStore({issues, meta: snap.meta, ready: true, closedCutoff: snap.closedCutoff});
     opts.onView({meta: snap.meta, issues, closedCutoff: snap.closedCutoff, reset});
@@ -403,6 +406,18 @@ export function startSync(opts: {
       persist();
       requestEmit();
     },
+    addLocal: issue => {
+      locals.set(issue.id, issue);
+      requestEmit();
+      let done = false;
+      return real => {
+        if (done) return;
+        done = true;
+        locals.delete(issue.id);
+        if (real) handle.adopt([real]);
+        requestEmit();
+      };
+    },
     hide: ids => {
       for (const id of ids) hidden.set(id, (hidden.get(id) || 0) + 1);
       requestEmit();
@@ -424,4 +439,65 @@ export function startSync(opts: {
   };
   currentHandle = handle;
   return handle;
+}
+
+/* ---------------- optimistic create/remove + single-issue lookups ----------------
+ *   addLocalIssue(issue)      show a temporary issue now; settle with the server's issue or null.
+ *   hideIssueLocally(id)      hide an issue now (archive/delete); settle with whether the server
+ *                             accepted. Accepted hides last until a pull has removed the row.
+ *   peekIssue(idOrIdentifier) non-hook lookup through an id/identifier index.
+ *   useIssueSelect(idOrIdentifier)  like useIssue but only re-renders when that issue changes.
+ */
+
+const NOOP = () => undefined;
+let localSeq = 0;
+export const isLocalIssueId = (id: string | null | undefined) => Boolean(id && id.startsWith('local-'));
+export function localIssueId(): string { localSeq += 1; return `local-${Date.now().toString(36)}-${localSeq}`; }
+
+export function addLocalIssue(issue: Issue): (real: Issue | null) => void {
+  return currentHandle ? currentHandle.addLocal(issue) : NOOP;
+}
+
+export function hideIssueLocally(issueId: string): (accepted: boolean) => void {
+  const settle = currentHandle?.hide([issueId]);
+  return settle ? accepted => settle(accepted) : NOOP;
+}
+
+const issueIndexCache = new WeakMap<Issue[], Map<string, Issue>>();
+function issueIndex(issues: Issue[]): Map<string, Issue> {
+  let index = issueIndexCache.get(issues);
+  if (!index) {
+    index = new Map();
+    for (const i of issues) { index.set(i.id, i); index.set(i.identifier, i); }
+    issueIndexCache.set(issues, index);
+  }
+  return index;
+}
+
+export function peekIssue(idOrIdentifier: string | null | undefined): Issue | undefined {
+  if (!idOrIdentifier) return undefined;
+  return issueIndex(storeState.issues).get(idOrIdentifier);
+}
+export function useIssueSelect(idOrIdentifier: string | null | undefined): Issue | undefined {
+  return useSyncExternalStore(subscribeStore, () => peekIssue(idOrIdentifier));
+}
+/** Calls cb once when the store first holds that issue (e.g. after the IndexedDB snapshot loads); returns unsubscribe. */
+export function onStoreIssue(idOrIdentifier: string, cb: (issue: Issue) => void): () => void {
+  const hit = peekIssue(idOrIdentifier);
+  if (hit) { cb(hit); return () => undefined; }
+  const listener = () => {
+    const found = peekIssue(idOrIdentifier);
+    if (found) { storeListeners.delete(listener); cb(found); }
+  };
+  storeListeners.add(listener);
+  return () => { storeListeners.delete(listener); };
+}
+/** Placeholder identifier for an optimistic issue: the team's highest synced number + 1 (the server assigns the real one). */
+export function guessNextIdentifier(teamKey: string): string {
+  const prefix = `${teamKey}-`;
+  let max = 0;
+  for (const i of storeState.issues) {
+    if (i.identifier.startsWith(prefix)) { const n = Number(i.identifier.slice(prefix.length)); if (n > max) max = n; }
+  }
+  return `${prefix}${max + 1}`;
 }
