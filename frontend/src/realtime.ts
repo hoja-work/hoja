@@ -20,9 +20,12 @@ export function connectRealtime(token: string | null, onChange: (event: ChangeEv
     socket = target.protocols ? new WebSocket(target.href, target.protocols) : new WebSocket(target.href);
     socket.onopen = () => { retry = 0; };
     socket.onmessage = (message) => {
-      const event: ChangeEvent = JSON.parse(message.data);
-      localStorage.setItem(CURSOR_KEY, String(event.seq));
-      onChange(event);
+      const parsed = JSON.parse(message.data);
+      const events: ChangeEvent[] = Array.isArray(parsed) ? parsed : [parsed];
+      for (const event of events) {
+        localStorage.setItem(CURSOR_KEY, String(event.seq));
+        onChange(event);
+      }
     };
     socket.onclose = (close) => {
       socket = null;

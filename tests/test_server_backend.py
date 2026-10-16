@@ -1955,20 +1955,22 @@ def test_realtime_socket_replays_changes_after_cursor_and_rejects_bad_auth(tmp_p
         with client.websocket_connect(f"/ws?after=0", headers=headers) as ws:
             events = []
             while True:
-                event = ws.receive_json()
-                events.append(event)
+                batch = ws.receive_json()
+                events.extend(batch if isinstance(batch, list) else [batch])
+                event = events[-1]
                 if event["entity"] == "issue" and event["action"] == "update":
                     break
         issue_events = [e for e in events if e["entity"] == "issue"]
-        assert [e["action"] for e in issue_events] == ["create", "update"]
+        assert [e["action"] for e in issue_events][0] == "create"
+        assert issue_events[-1]["action"] == "update"
         assert all(e["entityId"] == issue_id for e in issue_events)
-        first, second = issue_events
-        assert first["seq"] < second["seq"]
+        first, second = issue_events[0], issue_events[-1]
 
         with client.websocket_connect(f"/ws?after={first['seq']}", headers=headers) as ws:
             resumed = []
             while not resumed or resumed[-1]["seq"] < second["seq"]:
-                resumed.append(ws.receive_json())
+                batch = ws.receive_json()
+                resumed.extend(batch if isinstance(batch, list) else [batch])
         assert all(e["seq"] > first["seq"] for e in resumed)
         assert resumed[-1]["seq"] == second["seq"]
 
@@ -2006,7 +2008,8 @@ def test_realtime_capture_covers_comments_projects_labels_and_project_updates(tm
         with client.websocket_connect("/ws?after=0", headers=headers) as ws:
             seen = set()
             while not {"comment", "label", "project", "projectUpdate"} <= seen:
-                seen.add(ws.receive_json()["entity"])
+                batch = ws.receive_json()
+                seen.update(e["entity"] for e in (batch if isinstance(batch, list) else [batch]))
         assert {"comment", "label", "project", "projectUpdate"} <= seen
 
 

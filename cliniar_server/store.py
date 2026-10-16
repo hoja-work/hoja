@@ -205,6 +205,14 @@ class Store:
             ).all()
         return [{"seq": r[0], "organization_id": r[1]} for r in rows]
 
+    def latest_change_seq(self, org_id: str) -> int:
+        """Newest change_event seq for an org (0 when none)."""
+        with self.engine.connect() as conn:
+            return int(conn.execute(
+                select(func.max(change_event.c.seq))
+                .where(change_event.c.organization_id == org_id)
+            ).scalar() or 0)
+
     def resolve_token(self, token: str) -> dict | None:
         """token → {user_id, organization_id} or None."""
         th = token_hash(token)

@@ -122,6 +122,7 @@ _MAX_QUERY_FIELDS = 100
 _MAX_QUERY_VISITS = 10_000
 _WS_REVALIDATE_SECONDS = 5
 _WS_BROADCAST_INTERVAL = 0.25
+_WS_MAX_REPLAY = 500
 _org_wake: dict = {}
 _broadcaster_seq = {"last": 0}
 _LOGIN_FAILURE_LIMIT = 10
@@ -687,15 +688,21 @@ def create_app(
         if not 0 <= cursor <= _MAX_SEQ:
             await websocket.close(code=4400)
             return
+        # Clamp ancient cursors: replaying the full history floods the event
+        # loop with per-event JSON encodes/sends; browser clients refetch
+        # state on any event anyway, so skip stale history beyond a window.
+        latest = await asyncio.to_thread(store.latest_change_seq, org)
+        if latest - cursor > _WS_MAX_REPLAY:
+            cursor = max(0, latest - _WS_MAX_REPLAY)
         last_seq = cursor
         last_check = time.monotonic()
         wake = _org_wake.setdefault(org, asyncio.Event())
         try:
             # Deliver any backlog immediately on connect, then wait for wakes.
             events = await asyncio.to_thread(store.change_events_after, org, last_seq, viewer_id=uid)
-            for event in events:
-                await websocket.send_json(event)
-                last_seq = event["seq"]
+            if events:
+                await websocket.send_text(json.dumps(events))
+                last_seq = events[-1]["seq"]
             while True:
                 try:
                     await asyncio.wait_for(wake.wait(), timeout=_WS_REVALIDATE_SECONDS)
@@ -709,12 +716,12 @@ def create_app(
                         await websocket.close(code=4401)
                         return
                 events = await asyncio.to_thread(store.change_events_after, org, last_seq, viewer_id=uid)
-                for event in events:
+                if events:
                     try:
-                        await websocket.send_json(event)
+                        await websocket.send_text(json.dumps(events))
                     except RuntimeError:
                         return
-                    last_seq = event["seq"]
+                    last_seq = events[-1]["seq"]
         except WebSocketDisconnect:
             return
 
