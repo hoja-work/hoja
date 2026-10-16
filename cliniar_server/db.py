@@ -31,7 +31,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 29
+CURRENT_SCHEMA_REVISION = 30
 
 
 def now_iso() -> str:
@@ -902,6 +902,45 @@ def _apply_realtime_capture(conn):
             raise RuntimeError(f"Realtime capture is not implemented for {dialect}")
 
 
+# Link tables publish as an update of their parent issue. The event row is
+# selected from the issue itself, so a link removed alongside (or after) its
+# issue emits nothing instead of violating change_event's NOT NULL columns.
+_LINK_CAPTURE = ("issue_label_link", "issue_subscriber")
+
+
+def _apply_issue_link_capture(conn):
+    dialect = conn.dialect.name
+    for table_name in _LINK_CAPTURE:
+        if dialect == "sqlite":
+            for op in ("insert", "delete"):
+                row = "OLD" if op == "delete" else "NEW"
+                conn.exec_driver_sql(
+                    f"CREATE TRIGGER IF NOT EXISTS trg_chg_{table_name}_{op} "
+                    f"AFTER {op.upper()} ON {table_name} FOR EACH ROW BEGIN "
+                    "INSERT INTO change_event (organization_id, entity, entity_id, action, team_id, created_at) "
+                    "SELECT organization_id, 'issue', id, 'update', team_id, "
+                    f"strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM issue WHERE id = {row}.issue_id; END;"
+                )
+        elif dialect == "postgresql":
+            conn.exec_driver_sql(f"""CREATE OR REPLACE FUNCTION chg_{table_name}() RETURNS trigger LANGUAGE plpgsql AS $fn$
+DECLARE v_issue_id TEXT;
+BEGIN
+  v_issue_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.issue_id ELSE NEW.issue_id END;
+  INSERT INTO change_event (organization_id, entity, entity_id, action, team_id, created_at)
+  SELECT i.organization_id, 'issue', i.id, 'update', i.team_id,
+         to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"+00:00"')
+  FROM issue i WHERE i.id = v_issue_id;
+  RETURN NULL;
+END;
+$fn$;""")
+            conn.exec_driver_sql(f'DROP TRIGGER IF EXISTS trg_chg_{table_name} ON "{table_name}";')
+            conn.exec_driver_sql(
+                f'CREATE TRIGGER trg_chg_{table_name} AFTER INSERT OR UPDATE OR DELETE ON "{table_name}" '
+                f"FOR EACH ROW EXECUTE FUNCTION chg_{table_name}();")
+        else:
+            raise RuntimeError(f"Realtime capture is not implemented for {dialect}")
+
+
 def _apply_change_event_org_seq_index(conn):
     conn.exec_driver_sql(
         "CREATE INDEX IF NOT EXISTS ix_change_event_org_seq "
@@ -1042,6 +1081,7 @@ _MIGRATIONS = {
     27: _apply_team_auto_add_backlog,
     28: _apply_change_event_org_seq_index,
     29: _apply_issue_scale_indexes,
+    30: _apply_issue_link_capture,
 }
 
 

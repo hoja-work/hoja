@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+import gzip
 import ipaddress
 import json
 import logging
@@ -18,7 +19,7 @@ import os
 import secrets
 import time
 from collections import deque
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -36,8 +37,9 @@ from graphql import (
 from sqlalchemy import select, text
 from starlette.applications import Starlette
 from starlette.datastructures import MutableHeaders
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.requests import Request
-from starlette.responses import FileResponse, JSONResponse
+from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Route, WebSocketRoute
 from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocket, WebSocketDisconnect
@@ -72,6 +74,7 @@ from cliniar_server.denials import DENY_HINT, hint_for
 from cliniar_server.resolvers import build_schema
 from cliniar_server.secrets_box import SecretBoxError
 from cliniar_server.store import Store
+from cliniar_server import sync
 from cliniar_server.writer import Writer
 
 _schema = build_schema()
@@ -337,10 +340,15 @@ def create_app(
     writer = Writer(engine)
     broadcaster_task = None
     gql_slots = asyncio.Semaphore(8)
+    # Set after a local write so the broadcaster polls now instead of at its next tick.
+    broadcaster_kick = asyncio.Event()
+    issue_snapshots = sync.SingleFlightCache(8)
+    body_snapshots = sync.SingleFlightCache(32)
 
     async def _change_broadcaster():
         """Single global poller feeding an in-memory ring; wakes per-org waiters."""
         while True:
+            broadcaster_kick.clear()
             try:
                 events = await asyncio.to_thread(
                     store.change_events_after_global, _broadcaster_seq["last"])
@@ -359,7 +367,8 @@ def create_app(
                         ev.set()
             except Exception:
                 pass
-            await asyncio.sleep(_WS_BROADCAST_INTERVAL)
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(broadcaster_kick.wait(), timeout=_WS_BROADCAST_INTERVAL)
 
     if open_mode is None:
         open_mode = os.environ.get("CLINIAR_SERVER_OPEN", "0") == "1"
@@ -921,6 +930,8 @@ def create_app(
                 error_formatter=_format_graphql_error,
                 debug=(os.environ.get("CLINIAR_SERVER_DEBUG", "0") == "1"),
             )
+        if isinstance(query, str) and "mutation" in query:
+            broadcaster_kick.set()
         target = context.get("switch_target")
         if target:
             session_token, _details = store.create_session_for_membership(
@@ -1365,6 +1376,91 @@ def create_app(
             content_disposition_type="inline",
         )
 
+    def _sync_meta(request: Request, uid: str, org: str, identity_id, is_browser: bool) -> dict:
+        context = {"request": request, "store": store, "cache": {}, "writer": writer,
+                   "org_id": org, "user_id": uid, "identity_id": identity_id,
+                   "browser_session": is_browser,
+                   "access": getattr(request.state, "api_key_access", "read_write")}
+        _ok, result = graphql_sync(_schema, {"query": sync.META_QUERY}, context_value=context,
+                                   error_formatter=_format_graphql_error)
+        if result.get("errors"):
+            raise RuntimeError(result["errors"][0].get("message", "metadata query failed"))
+        return {**result["data"], "users": sync.org_users(store, org)}
+
+    def _sync_json(body: dict, **kwargs) -> Response:
+        return Response(json.dumps(body, separators=(",", ":")), media_type="application/json", **kwargs)
+
+    async def sync_bootstrap(request: Request):
+        uid, org, identity_id, is_browser = await run_in_threadpool(_auth, request)
+        if not uid:
+            return JSONResponse({"error": "Authentication required"}, status_code=401)
+        try:
+            closed_days = int(request.query_params.get("closedDays", sync.DEFAULT_CLOSED_DAYS))
+        except ValueError:
+            return _bad_request("closedDays must be an integer.")
+        if not 0 <= closed_days <= sync.MAX_CLOSED_DAYS:
+            return _bad_request(f"closedDays must be between 0 and {sync.MAX_CLOSED_DAYS}.")
+
+        def validator():
+            # Seq first: anything committed while the snapshot is read is replayed by the next delta.
+            seq = store.latest_change_seq(org)
+            cutoff = sync.closed_cutoff(closed_days)
+            key = sync.issues_key(org, seq, cutoff, store.visible_team_ids(org, uid))
+            return seq, cutoff, key, sync.snapshot_etag(uid, key)
+
+        seq, cutoff, key, etag = await run_in_threadpool(validator)
+        headers = {"ETag": etag, "Cache-Control": "private, no-cache",
+                   "Vary": "Cookie, Authorization, Accept-Encoding"}
+        if_none_match = request.headers.get("if-none-match") or ""
+        if etag in [t.strip() for t in if_none_match.split(",")]:
+            return Response(status_code=304, headers=headers)
+
+        async def build_issues():
+            async with gql_slots:
+                return await run_in_threadpool(lambda: json.dumps(
+                    sync.bootstrap_issues(store, org, uid, cutoff), separators=(",", ":")).encode())
+
+        async def build_body():
+            issues_json = await issue_snapshots.get(key, build_issues)
+
+            def assemble():
+                head = {"v": sync.SYNC_VERSION, "seq": seq, "closedCutoff": cutoff,
+                        "scope": sync.sync_scope(org, uid),
+                        "meta": _sync_meta(request, uid, org, identity_id, is_browser),
+                        "columns": sync.ISSUE_COLUMNS}
+                raw = json.dumps(head, separators=(",", ":")).encode()[:-1] + b',"issues":' + issues_json + b"}"
+                return raw, gzip.compress(raw, 6)
+
+            async with gql_slots:
+                return await run_in_threadpool(assemble)
+
+        raw, packed = await body_snapshots.get(etag, build_body)
+        if "gzip" in request.headers.get("accept-encoding", ""):
+            return Response(packed, media_type="application/json",
+                            headers={**headers, "Content-Encoding": "gzip"})
+        return Response(raw, media_type="application/json", headers=headers)
+
+    async def sync_delta(request: Request):
+        uid, org, identity_id, is_browser = await run_in_threadpool(_auth, request)
+        if not uid:
+            return JSONResponse({"error": "Authentication required"}, status_code=401)
+        try:
+            after = int(request.query_params.get("after", ""))
+        except ValueError:
+            return _bad_request("after must be an integer.")
+        if not 0 <= after <= _MAX_SEQ:
+            return _bad_request("after is out of range.")
+
+        def build():
+            delta = sync.build_delta(store, org, uid, after, request.query_params.get("scope"))
+            if delta.get("meta"):
+                delta["meta"] = _sync_meta(request, uid, org, identity_id, is_browser)
+            return delta
+
+        async with gql_slots:
+            delta = await run_in_threadpool(build)
+        return _sync_json(delta, headers={"Cache-Control": "no-store"})
+
     async def health(request: Request):
         return JSONResponse({"status": "ok"})
 
@@ -1473,6 +1569,8 @@ def create_app(
             Route("/auth/me", auth_me, methods=["GET"]),
             Route("/api/uploads", upload_create, methods=["POST"]),
             Route("/api/uploads/{file_id}", upload_serve, methods=["GET"]),
+            Route("/sync/bootstrap", sync_bootstrap, methods=["GET"]),
+            Route("/sync/delta", sync_delta, methods=["GET"]),
             Route("/health", health, methods=["GET"]),
             Route("/ready", ready, methods=["GET"]),
             Route(
@@ -1494,5 +1592,7 @@ def create_app(
         lifespan=lifespan,
     )
     app.add_middleware(_SecurityHeaders)
+    # Compress JSON and static assets; SSE streams are excluded by Starlette.
+    app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
     app.add_exception_handler(json.JSONDecodeError, _malformed_json_handler)
     return app

@@ -11,9 +11,10 @@ import pytest
 pytest.importorskip("sqlalchemy")
 pytest.importorskip("psycopg")
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from cliniar_server.db import (
+    change_event,
     issue,
     issue_label_link,
     issue_subscriber,
@@ -129,6 +130,33 @@ def test_postgres_shared_database_isolation_tokens_and_atomic_identifiers() -> N
             f"ENG-{number}" for number in range(1, 21)
         }
         assert Store(engine).issues(beta["org_id"], beta["user_id"], None) == []
+    finally:
+        try:
+            if org_ids:
+                _cleanup(engine, org_ids)
+        finally:
+            engine.dispose()
+
+
+def test_postgres_issue_link_changes_publish_issue_updates() -> None:
+    assert POSTGRES_URL is not None
+    engine = make_engine(POSTGRES_URL)
+    migrate(engine)
+    suffix = uuid.uuid4().hex[:12]
+    org_ids: list[str] = []
+    try:
+        seeded = seed_tenant(engine, org_name="Links", org_url_key=f"links-{suffix}",
+                             user_email=f"links-{suffix}@example.test", demo_issues=True)
+        org_ids.append(seeded["org_id"])
+        with engine.begin() as conn:
+            issue_id = conn.execute(select(issue.c.id).where(
+                issue.c.organization_id == seeded["org_id"])).scalars().first()
+            before = conn.execute(select(func.max(change_event.c.seq))).scalar()
+            conn.execute(issue_subscriber.insert().values(issue_id=issue_id, user_id=seeded["user_id"]))
+            conn.execute(delete(issue_subscriber).where(issue_subscriber.c.issue_id == issue_id))
+            events = conn.execute(select(change_event.c.entity, change_event.c.entity_id, change_event.c.action)
+                                  .where(change_event.c.seq > before)).all()
+        assert [tuple(e) for e in events] == [("issue", issue_id, "update")] * 2
     finally:
         try:
             if org_ids:
