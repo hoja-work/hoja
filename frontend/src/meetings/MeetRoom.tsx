@@ -4,8 +4,9 @@ import {
   PhoneOff, Pin, Radio, Send, Smile, UserPlus, Users, X,
 } from 'lucide-react';
 import {
-  ApiError, apiToken, initials, joinUrl, loadGuest, meetingsApi, saveGuest, useGuestToken, fmtWhen,
-  type Meeting, type Participant, type Person, type Preview,
+  ApiError, apiToken, deviceId, deviceLabel, fmtDuration, fmtTime, fmtWhen, initials, joinUrl, loadGuest, loadSeat, meetingsApi,
+  saveGuest, saveSeat, useGuestToken, useSeatToken,
+  type Meeting, type Participant, type Person, type Preview, type Recap,
 } from './api';
 import {connectInbox, useInbox} from './inbox';
 import {CAM_CONSTRAINTS, MIC_CONSTRAINTS, ridForWidth} from './rtc';
@@ -95,6 +96,7 @@ function Lobby({code, boot, leftTitle, onJoined}: {
   code: string; boot: Extract<Boot, {kind: 'ready'}>; leftTitle: string | null;
   onJoined: (seed: LocalSeed, auth: RoomAuth, meeting: Meeting, you: Participant) => void;
 }) {
+  const status = boot.meeting?.status || boot.preview?.status;
   const title = boot.meeting?.title || boot.preview?.title || 'Meeting';
   const hostName = boot.meeting?.hostName || boot.preview?.hostName;
   const needsPasscode = boot.member ? false : !!boot.preview?.passcodeRequired;
@@ -111,6 +113,7 @@ function Lobby({code, boot, leftTitle, onJoined}: {
   const [mediaNote, setMediaNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [conflict, setConflict] = useState<{device: string; canCompanion: boolean} | null>(null);
   const video = useRef<HTMLVideoElement>(null);
   const held = useRef<{mic: MediaStreamTrack | null; cam: MediaStreamTrack | null; handedOff: boolean}>({mic: null, cam: null, handedOff: false});
 
@@ -162,13 +165,18 @@ function Lobby({code, boot, leftTitle, onJoined}: {
     } catch { setMediaNote('That device is not available.'); }
   };
 
-  const join = async () => {
+  const join = async (mode?: 'switch' | 'companion') => {
     setError('');
+    setConflict(null);
     if (!boot.member && !name.trim()) { setError('Enter your name so others know who you are.'); return; }
     setBusy(true);
     try {
       if (!boot.member && seat) useGuestToken(seat.token);
-      const res = await meetingsApi.join(code, {name: name.trim() || undefined, passcode: passcode || undefined});
+      // A refreshed companion device presents the seat it was given; a fresh choice starts clean.
+      const savedSeat = boot.member && !mode ? loadSeat(code) : null;
+      useSeatToken(savedSeat);
+      const res = await meetingsApi.join(code, {name: name.trim() || undefined, passcode: passcode || undefined,
+        deviceId: deviceId(), deviceLabel: deviceLabel(), mode});
       let auth: RoomAuth = {kind: 'member'};
       if (res.participant.kind === 'guest') {
         const token = res.guestToken || seat?.token;
@@ -176,12 +184,24 @@ function Lobby({code, boot, leftTitle, onJoined}: {
         saveGuest(code, {token, name: name.trim()});
         useGuestToken(token);
         auth = {kind: 'guest', token};
+      } else if (res.seatToken || (res.participant.deviceOf && savedSeat)) {
+        const token = res.seatToken || savedSeat!;
+        saveSeat(code, token);
+        useSeatToken(token);
+        auth = {kind: 'member', seat: token};
+      } else {
+        saveSeat(code, null);
+        useSeatToken(null);
       }
       held.current.handedOff = true;
       if (mic) mic.enabled = micOn;
       onJoined({mic, cam, micOn, camOn}, auth, res.meeting, res.participant);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not join.');
+      if (err instanceof ApiError && err.code === 'already_joined') {
+        setConflict({device: String(err.data.device || 'another device'), canCompanion: !!err.data.canCompanion});
+      } else {
+        setError(err instanceof Error ? err.message : 'Could not join.');
+      }
     } finally {
       setBusy(false);
     }
@@ -190,6 +210,16 @@ function Lobby({code, boot, leftTitle, onJoined}: {
   const verb = boot.meeting?.isHost ? 'Start meeting' : waitingRoom && !boot.member ? 'Ask to join' : 'Join now';
   const mics = devices.filter((d) => d.kind === 'audioinput');
   const cams = devices.filter((d) => d.kind === 'videoinput');
+
+  if (status === 'ended' || status === 'cancelled') {
+    return (
+      <EndedView
+        title={title} status={status} endedAt={boot.meeting?.endedAt ?? boot.preview?.endedAt ?? null}
+        durationSeconds={boot.meeting?.durationSeconds ?? boot.preview?.durationSeconds ?? null}
+        recap={boot.meeting?.recap} member={boot.member}
+      />
+    );
+  }
 
   return (
     <main className="mr-screen mr-lobby">
@@ -243,6 +273,19 @@ function Lobby({code, boot, leftTitle, onJoined}: {
         )}
         {error && <p className="mr-error" role="alert">{error}</p>}
         <button type="button" className="mr-btn mr-primary mr-wide" onClick={() => void join()} disabled={busy}>{busy ? 'Joining…' : verb}</button>
+        {conflict && (
+          <div className="mr-dialog-backdrop" role="presentation">
+            <div className="mr-dialog" role="alertdialog" aria-modal="true" aria-labelledby="mr-conflict-title">
+              <h2 id="mr-conflict-title">You're already in this meeting</h2>
+              <p>You joined from your <b>{conflict.device}</b>. What should this device do?</p>
+              <button type="button" className="mr-btn mr-primary mr-wide" disabled={busy} onClick={() => void join('switch')}>Use this device instead</button>
+              <small>Moves the call here. Your {conflict.device} leaves the meeting.</small>
+              <button type="button" className="mr-btn mr-wide" disabled={busy || !conflict.canCompanion} onClick={() => void join('companion')}>Join also with this device</button>
+              <small>Keeps your {conflict.device} in the call and adds this one, handy to talk from your phone when your computer has no microphone, or to share your screen from one device while speaking from the other.</small>
+              <button type="button" className="mr-btn mr-ghost mr-wide" onClick={() => setConflict(null)}>Cancel</button>
+            </div>
+          </div>
+        )}
         {waitingRoom && !boot.meeting?.isHost && <p className="mr-hint">The host may need to let you in.</p>}
         {boot.member && <a className="mr-link" href="/workspace/meetings">Back to Hoja</a>}
       </section>
@@ -302,16 +345,17 @@ function Room({code, seed, auth, meeting: m0, you: y0, member, onExit}: {
     try { await navigator.clipboard.writeText(joinUrl(code)); room.notify('Invite link copied'); } catch { room.notify(joinUrl(code)); }
   };
 
-  if (phase === 'ended' || phase === 'removed' || phase === 'denied' || phase === 'lost') {
+  if (phase === 'ended') return <EndedRoom code={code} title={meeting.title} member={member} />;
+  if (phase === 'removed' || phase === 'denied' || phase === 'lost' || phase === 'moved') {
     const text = {
-      ended: ['The meeting has ended', 'The host ended this meeting for everyone.'],
+      moved: ['You moved this meeting to another device', 'This device left the call. You can bring it back here at any time.'],
       removed: ['You were removed', 'The host removed you from this meeting.'],
       denied: ['Entry was declined', 'The host did not let you in.'],
       lost: ['Connection lost', 'We could not stay connected to the meeting.'],
     }[phase];
     return (
       <main className="mr-screen"><div className="mr-card mr-center"><h1>{text[0]}</h1><p>{text[1]}</p>
-        {phase === 'lost' && <button type="button" className="mr-btn mr-primary" onClick={() => location.reload()}>Reconnect</button>}
+        {(phase === 'lost' || phase === 'moved') && <button type="button" className="mr-btn mr-primary" onClick={() => location.reload()}>{phase === 'moved' ? 'Use this device again' : 'Reconnect'}</button>}
         <a className="mr-btn mr-ghost" href={member ? '/workspace/meetings' : '/'}>{member ? 'Back to Hoja' : 'Done'}</a></div></main>
     );
   }
@@ -353,6 +397,7 @@ function Room({code, seed, auth, meeting: m0, you: y0, member, onExit}: {
       <header className="mr-top">
         <div className="mr-top-left">
           <strong className="mr-title" title={meeting.title}>{meeting.title}</strong>
+          {you.deviceOf && <span className="mr-chip" title="This device joined as a second device for you">{you.device || 'Companion'} companion</span>}
           {meeting.settings.locked && <span className="mr-chip" title="The meeting is locked"><Lock size={12} /> Locked</span>}
           {room.recording && <span className="mr-chip mr-rec"><Radio size={12} /> Recording</span>}
           {!room.online && <span className="mr-chip mr-warn">Reconnecting…</span>}
@@ -409,7 +454,7 @@ function Room({code, seed, auth, meeting: m0, you: y0, member, onExit}: {
         <div className="mr-controls-main">
           <Ctl icon={micOn ? <Mic size={18} /> : <MicOff size={18} />} label={micOn ? 'Mute' : 'Unmute'} off={!micOn} onClick={() => void room.toggleMic()} />
           <Ctl icon={camOn ? <Camera size={18} /> : <CameraOff size={18} />} label={camOn ? 'Stop video' : 'Start video'} off={!camOn} onClick={() => void room.toggleCam()} />
-          <Ctl icon={<MonitorUp size={18} />} label={sharing ? 'Stop sharing' : 'Share'} active={sharing} onClick={() => void room.toggleShare()} hidden={meeting.settings.screenShare === 'host' && !isMod} />
+          <Ctl icon={<MonitorUp size={18} />} label={sharing ? 'Stop sharing' : 'Share'} active={sharing} onClick={() => void room.toggleShare()} hidden={(meeting.settings.screenShare === 'host' && !isMod) || !navigator.mediaDevices?.getDisplayMedia} />
           <Ctl icon={<Hand size={18} />} label={you.handRaised ? 'Lower hand' : 'Raise hand'} active={you.handRaised} onClick={() => void room.hand(!you.handRaised).catch(() => undefined)} />
           <div className="mr-pop-wrap">
             <Ctl icon={<Smile size={18} />} label="React" onClick={() => setPopover(popover === 'react' ? null : 'react')} />
@@ -690,3 +735,58 @@ function useSpeaking(streams: Streams, admitted: Participant[], me: string): Map
   return levels;
 }
 
+
+// ============================================================================ after the call
+/** What a finished meeting looks like to anyone who opens its link: it is over, how long it ran, who came. */
+function EndedView({title, status, endedAt, durationSeconds, recap, member}: {
+  title: string; status: string; endedAt: string | null; durationSeconds: number | null; recap?: Recap; member: boolean;
+}) {
+  const cancelled = status === 'cancelled';
+  const people = recap?.attendees ?? [];
+  return (
+    <main className="mr-screen">
+      <div className="mr-card mr-ended" role="status">
+        <p className="mr-eyebrow">{cancelled ? 'Cancelled' : 'Meeting ended'}</p>
+        <h1>{title}</h1>
+        {cancelled ? <p>This meeting was cancelled, so there is nothing to join.</p> : (
+          <p className="mr-sub">
+            {endedAt ? `Ended ${fmtTime(endedAt, {weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'})}` : 'This meeting is over'}
+            {durationSeconds != null ? ` · lasted ${fmtDuration(durationSeconds)}` : ''}
+          </p>
+        )}
+        {!cancelled && recap && (
+          people.length === 0 ? <p>Nobody joined.</p> : (
+            <>
+              <p className="mr-sec-title">Who joined · {recap.peopleCount}</p>
+              <ul className="mr-recap">
+                {people.map((p, i) => (
+                  <li key={`${p.name}-${p.joinedAt}-${i}`}>
+                    <span className="mr-av">{initials(p.name)}</span>
+                    <span className="mr-pname" title={p.name}>{p.name}{p.device ? ` · ${p.device}` : ''}{p.kind === 'guest' ? ' · Guest' : ''}</span>
+                    <small>{fmtTime(p.joinedAt)}{p.seconds != null ? ` · ${fmtDuration(p.seconds)}` : ''}</small>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )
+        )}
+        <p className="mr-hint">This link can't be used to rejoin.</p>
+        <div className="mr-row-actions">
+          <a className="mr-btn" href={member ? '/workspace/meetings' : '/'}>{member ? 'Back to Hoja' : 'Done'}</a>
+        </div>
+      </div>
+    </main>
+  );
+}
+
+/** The in-call "meeting ended" screen: same facts as the link shows, fetched fresh. */
+function EndedRoom({code, title, member}: {code: string; title: string; member: boolean}) {
+  const [meeting, setMeeting] = useState<Meeting | null>(null);
+  useEffect(() => { void meetingsApi.get(code).then((r) => setMeeting(r.meeting)).catch(() => undefined); }, [code]);
+  return (
+    <EndedView
+      title={meeting?.title || title} status={meeting?.status || 'ended'} endedAt={meeting?.endedAt ?? null}
+      durationSeconds={meeting?.durationSeconds ?? null} recap={meeting?.recap} member={member}
+    />
+  );
+}

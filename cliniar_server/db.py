@@ -32,7 +32,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 33
+CURRENT_SCHEMA_REVISION = 34
 
 
 def now_iso() -> str:
@@ -1203,6 +1203,9 @@ meeting_participant = Table(
     Column("token_hash", String, unique=True, index=True),
     Column("sfu_session_id", String),
     Column("sfu_sub_session_id", String),
+    Column("device_id", String),
+    Column("device_of", String),
+    Column("device_label", String),
     Column("tracks", Text),
     Column("muted_by_host", Boolean, nullable=False, default=False),
     Column("hand_raised", Boolean, nullable=False, default=False),
@@ -1265,6 +1268,14 @@ def _apply_meeting_extras(conn) -> None:
                 conn.exec_driver_sql(f"ALTER TABLE {table_name} ADD COLUMN {name} {sql_type}")
 
 
+def _apply_meeting_devices(conn) -> None:
+    """Per-device seats: a person may hold a main seat plus companion seats (phone as mic, etc.)."""
+    existing = {column["name"] for column in inspect(conn).get_columns("meeting_participant")}
+    for name in ("device_id", "device_of", "device_label"):
+        if name not in existing:
+            conn.exec_driver_sql(f"ALTER TABLE meeting_participant ADD COLUMN {name} VARCHAR")
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -1321,6 +1332,7 @@ _MIGRATIONS = {
         meeting_chat.create(conn, checkfirst=True),
     ),
     33: _apply_meeting_extras,
+    34: lambda conn: _apply_meeting_devices(conn),
 }
 
 

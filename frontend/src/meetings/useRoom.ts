@@ -4,15 +4,16 @@ import {useCallback, useEffect, useRef, useState} from 'react';
 import {apiToken, meetingsApi, type ChatMessage, type Meeting, type Participant} from './api';
 import {CAM_CONSTRAINTS, MIC_CONSTRAINTS, MeetingMedia, type MediaKind, type MediaStats, type Rid} from './rtc';
 
-export type Phase = 'connecting' | 'waiting' | 'in' | 'ended' | 'removed' | 'denied' | 'left' | 'lost';
+export type Phase = 'connecting' | 'waiting' | 'in' | 'ended' | 'removed' | 'denied' | 'left' | 'lost' | 'moved';
 export type Streams = Record<string, Partial<Record<MediaKind, MediaStream>>>;
 export type Notice = {id: number; text: string};
 export type Reaction = {id: number; emoji: string; from: string};
 
-export type RoomAuth = {kind: 'member'} | {kind: 'guest'; token: string};
+/** `seat` is set on a companion device (a member's second device); the main device needs none. */
+export type RoomAuth = {kind: 'member'; seat?: string} | {kind: 'guest'; token: string};
 export type LocalSeed = {mic: MediaStreamTrack | null; cam: MediaStreamTrack | null; micOn: boolean; camOn: boolean};
 
-const CLOSE_PHASE: Record<number, Phase> = {4410: 'ended', 4411: 'removed', 4412: 'denied', 4403: 'denied', 4404: 'lost', 4401: 'lost'};
+const CLOSE_PHASE: Record<number, Phase> = {4410: 'ended', 4411: 'removed', 4412: 'denied', 4413: 'moved', 4403: 'denied', 4404: 'lost', 4401: 'lost'};
 let nextId = 1;
 
 export function useRoom(code: string, auth: RoomAuth, seed: LocalSeed, initialMeeting: Meeting, initialYou: Participant) {
@@ -119,8 +120,12 @@ export function useRoom(code: string, auth: RoomAuth, seed: LocalSeed, initialMe
     const ids = new Set(participants.map((p) => p.id));
     for (const id of [...known.current]) if (!ids.has(id)) { eng.forget(id); known.current.delete(id); }
     participants.forEach((p) => known.current.add(p.id));
-    void eng.syncRemote(participants).catch((e) => notify(e instanceof Error ? e.message : 'Could not receive video.'));
-  }, [participants, phase, notify, online, you.state]);
+    // My other device (laptop <-> phone) is me: showing its video is fine, hearing its mic would echo.
+    const mine = you.deviceOf || you.id;
+    const hearable = participants.map((p) => ((p.deviceOf || p.id) === mine && p.id !== you.id
+      ? {...p, tracks: p.tracks.filter((t) => t.kind !== 'mic')} : p));
+    void eng.syncRemote(hearable).catch((e) => notify(e instanceof Error ? e.message : 'Could not receive video.'));
+  }, [participants, phase, notify, online, you.state, you.deviceOf, you.id]);
 
   useEffect(() => {
     if (phase === 'in' && you.state === 'admitted' && !engine.current) void startEngine(you);
@@ -200,6 +205,7 @@ export function useRoom(code: string, auth: RoomAuth, seed: LocalSeed, initialMe
         case 'ended': setPhase('ended'); break;
         case 'removed': setPhase('removed'); break;
         case 'denied': setPhase('denied'); break;
+        case 'taken_over': setPhase('moved'); break;
         case 'emptied': notify('Everyone left the meeting'); break;
       }
     };
@@ -207,9 +213,10 @@ export function useRoom(code: string, auth: RoomAuth, seed: LocalSeed, initialMe
     const open = () => {
       const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
       const token = apiToken();
-      const protocols = auth.kind === 'guest' ? ['guest', auth.token] : token ? ['bearer', token] : undefined;
+      const protocols = auth.kind === 'guest' ? ['guest', auth.token]
+        : [...(token ? ['bearer', token] : []), ...(auth.seat ? ['seat', auth.seat] : [])];
       const url = `${scheme}://${location.host}/ws/meetings/${encodeURIComponent(code)}`;
-      const sock = protocols ? new WebSocket(url, protocols) : new WebSocket(url);
+      const sock = protocols.length ? new WebSocket(url, protocols) : new WebSocket(url);
       ws.current = sock;
       sock.onopen = () => { retry = 0; setOnline(true); };
       sock.onmessage = (e) => { try { apply(JSON.parse(e.data)); } catch { /* ignore */ } };
@@ -326,7 +333,7 @@ export function useRoom(code: string, auth: RoomAuth, seed: LocalSeed, initialMe
 
   // Tear media down whenever the call is over for any reason.
   useEffect(() => {
-    if (['ended', 'removed', 'denied', 'left', 'lost'].includes(phase)) void shutdown();
+    if (['ended', 'removed', 'denied', 'left', 'lost', 'moved'].includes(phase)) void shutdown();
   }, [phase, shutdown]);
   useEffect(() => () => { void shutdown(); }, [shutdown]);
 

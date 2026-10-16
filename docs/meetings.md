@@ -30,8 +30,29 @@ the Python process never touches audio or video.
 | `CLINIAR_APP_URL` | Public base URL used to build join links. Falls back to the request host. |
 | `CLINIAR_MEETING_MAX_PARTICIPANTS` | Hard cap on a meeting's `maxParticipants` (default 100; per-meeting default 25). |
 
-Schema revisions 32–33 add `meeting`, `meeting_invitee`, `meeting_participant`, `meeting_chat`,
-`meeting_ring` (+ RSVP, reminder, media-flag and usage columns). Run `cliniar-serve migrate` first.
+Schema revisions 32–34 add `meeting`, `meeting_invitee`, `meeting_participant`, `meeting_chat`,
+`meeting_ring` (+ RSVP, reminder, media-flag, usage and per-device seat columns). Run `cliniar-serve migrate` first.
+
+## Second devices (phone as mic, screen from the laptop)
+
+A person normally has one seat per meeting. Joining from another device returns **409 `already_joined`**
+(`{device, since, canCompanion}`) and the lobby asks:
+
+* **Use this device instead** (`mode: "switch"`): the seat moves; the old device is told (`taken_over`, close
+  code 4413) and shows "You moved this meeting to another device".
+* **Join also with this device** (`mode: "companion"`): a second seat, labelled e.g. "Hana Host (Phone)", admitted
+  straight away (the waiting room does not apply to your own second device), with its own mic/camera/screen.
+  It never has moderation powers. The server returns a `seatToken`; the device sends it as `X-Hoja-Seat`
+  (REST) or the `seat` WebSocket subprotocol. Each device never pulls the other's microphone, so there is no echo.
+
+Devices are told apart by a per-browser `deviceId` (`localStorage`), so a refresh on the same device is not a conflict.
+
+## After the meeting
+
+An ended meeting is never joinable. `GET /api/meetings/{code}` adds `durationSeconds` and a `recap`
+(when it ran, who joined, from which device, for how long); the public preview reports `status: "ended"` with the
+duration (no names). The link, the calendar chip ("ended · lasted …"), the Past list and the drawer all show
+"Meeting ended · lasted N min · Who joined".
 
 ## Authorization (ABAC)
 
@@ -45,7 +66,8 @@ Schema revisions 32–33 add `meeting`, `meeting_invitee`, `meeting_participant`
 * **Resource** – status, `access` (`invited` | `team` | `org`), locked, `linkEnabled`, waiting room,
   join-before-host, passcode, capacity, host present, screen-share policy, chat, recording.
 * **Defaults are closed**: invite-only, waiting room on, public link off, host-muted on entry,
-  a public link without a waiting room auto-generates a passcode.
+  a public link without a waiting room auto-generates a passcode (the passcode guards the public link; workspace
+  members are authorized by the access rules and are never asked for it).
 * Read-only API keys can never mutate. Guests can never manage, invite, moderate or call.
 * Public-link misses and disabled links are indistinguishable (404) and rate limited per IP.
   Passcode failures are limited per IP+meeting (8 / 10 min).

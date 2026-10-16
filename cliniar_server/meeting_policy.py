@@ -15,6 +15,7 @@ subject
     role           participant role: host / cohost / attendee, else None
     state          participant state: waiting / admitted / left / denied / removed, else None
     was_admitted   participant was admitted earlier in this meeting (a rejoin)
+    companion      this join adds a second device for a person who is already admitted
     passcode_ok    the supplied passcode matches
     forced_mute    host muted the participant and the meeting disallows self-unmute
 resource
@@ -93,7 +94,7 @@ RULES = [
          "This API key is read-only."),
     deny("d-cross-org", ALL_ACTIONS - {PREVIEW}, lambda c: c.s.kind == "member" and not c.s.same_org,
          "Meeting belongs to another workspace."),
-    deny("d-over", ALL_ACTIONS - {VIEW, LIST, CREATE, USAGE}, lambda c: not _live(c),
+    deny("d-over", ALL_ACTIONS - {VIEW, PREVIEW, LIST, CREATE, USAGE}, lambda c: not _live(c),
          "This meeting has ended or was cancelled."),
     deny("d-excluded", ALL_ACTIONS - {VIEW, PREVIEW, LIST, CREATE, USAGE}, lambda c: c.s.state in ("removed", "denied"),
          "You were removed from this meeting."),
@@ -103,13 +104,13 @@ RULES = [
          "This meeting is full."),
     deny("d-passcode", JOIN,
          lambda c: bool(c.r.passcode_required) and not c.s.passcode_ok and not c.s.is_host and not c.s.bound
-         and not (c.s.kind == "member" and c.s.invited),
+         and c.s.kind != "member",  # members are authorized by the access rules; the passcode guards the public link
          "A valid passcode is required."),
     deny("d-guest-link-off", JOIN, lambda c: c.s.kind == "guest" and not c.r.link_enabled,
          "Guest links are disabled for this meeting."),
     deny("d-wait-for-host", ENTER,
          lambda c: not c.r.host_present and not c.r.join_before_host and not c.s.is_host
-         and c.s.role not in ("host", "cohost"),
+         and c.s.role not in ("host", "cohost") and not c.s.companion,
          "Waiting for the host to start the meeting."),
     deny("d-screen-host-only", SCREEN, lambda c: c.r.screen_share == "host" and c.s.role not in ("host", "cohost"),
          "Only hosts can share their screen."),
@@ -125,7 +126,7 @@ RULES = [
     deny("d-recording-off", RECORD, lambda c: c.r.recording == "off", "Recording is not enabled for this meeting."),
 
     # ---- read ----
-    permit("p-preview", PREVIEW, lambda c: bool(c.r.link_enabled) and _live(c), "Public link preview."),
+    permit("p-preview", PREVIEW, lambda c: bool(c.r.link_enabled), "Public link preview (also tells visitors it ended)."),
     permit("p-list", LIST, lambda c: c.s.kind == "member" and bool(c.s.same_org), "Members list their meetings."),
     permit("p-view-involved", VIEW, lambda c: _member(c) and (c.s.is_host or c.s.admin or c.s.invited
                                                                or c.s.role is not None),
@@ -158,6 +159,7 @@ RULES = [
     permit("p-join-bound", JOIN, lambda c: bool(c.s.bound) and c.s.role is not None, "Rejoin."),
     permit("p-enter-moderator", ENTER, lambda c: bool(c.s.is_host) or c.s.invite_role == "cohost"
            or c.s.role in ("host", "cohost"), "Hosts skip the waiting room."),
+    permit("p-enter-companion", ENTER, lambda c: bool(c.s.companion), "Another device of someone already in."),
     permit("p-enter-open", ENTER, lambda c: not c.r.waiting_room, "No waiting room."),
     permit("p-enter-rejoin", ENTER, lambda c: bool(c.s.was_admitted), "Previously admitted."),
 

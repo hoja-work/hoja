@@ -250,3 +250,104 @@ def test_usage_can_be_reported_after_the_meeting_ends(world):
     assert world.req("GET", f"/api/meetings/{code}", "host-token").json()["meeting"]["usage"]["egressBytes"] == 5
     _, stranger = world.member("who@meet.test")
     assert world.req("POST", f"/api/meetings/{code}/usage", stranger, json={"bytesIn": 5}).status_code == 403
+
+
+# --------------------------------------------------------------------------- second device
+def _device_join(world, code, key, device, mode=None, label="Phone", seat=None, **extra):
+    headers = _h(key)
+    if seat:
+        headers["X-Hoja-Seat"] = seat
+    body = {"deviceId": device, "deviceLabel": label, **({"mode": mode} if mode else {}), **extra}
+    return world.client.post(f"/api/meetings/{code}/join", headers=headers, json=body)
+
+
+def test_second_device_must_choose_and_same_device_just_rejoins(world):
+    code, _ = _create(world, access="org", waitingRoom=False)
+    first = _device_join(world, code, "host-token", "laptop", label="Computer")
+    assert first.json()["state"] == "admitted"
+    assert _device_join(world, code, "host-token", "laptop", label="Computer").status_code == 200  # a refresh
+    blocked = _device_join(world, code, "host-token", "phone")
+    assert blocked.status_code == 409
+    body = blocked.json()
+    assert body["code"] == "already_joined" and body["device"] == "Computer" and body["canCompanion"] is True
+    assert _device_join(world, code, "host-token", "phone", mode="nonsense").status_code == 400
+    assert _join(world, code, "host-token").status_code == 409  # clients that send no device id are asked too
+    _join(world, code, "host-token", deviceId="laptop")
+
+
+def test_switch_moves_the_seat_and_tells_the_old_device(world):
+    code, _ = _create(world, access="org", waitingRoom=False)
+    first = _device_join(world, code, "host-token", "laptop", label="Computer").json()["participant"]
+    with world.client.websocket_connect(f"/ws/meetings/{code}", subprotocols=["bearer", "host-token"]) as old:
+        old.receive_json()
+        moved = _device_join(world, code, "host-token", "phone", mode="switch")
+        assert moved.status_code == 200 and moved.json()["participant"]["id"] == first["id"]
+        assert old.receive_json() == {"t": "taken_over"}
+    # the phone is now the device of record, so a refresh on it is not a conflict, but the laptop would be
+    assert _device_join(world, code, "host-token", "phone", label="Phone").status_code == 200
+    assert _device_join(world, code, "host-token", "laptop").status_code == 409
+
+
+def test_companion_device_is_its_own_seat_without_moderation_powers(world):
+    code, _ = _create(world, access="org", waitingRoom=True)  # the waiting room must not hold a second device back
+    laptop = _device_join(world, code, "host-token", "laptop", label="Computer").json()["participant"]
+    res = _device_join(world, code, "host-token", "phone", mode="companion", label="Phone")
+    assert res.status_code == 200
+    out = res.json()
+    phone, seat = out["participant"], out["seatToken"]
+    assert seat and out["state"] == "admitted"
+    assert phone["id"] != laptop["id"] and phone["role"] == "attendee" and phone["name"].endswith("(Phone)")
+    assert phone["deviceOf"] == laptop["id"] and phone["device"] == "Phone"
+    # the phone acts as itself, the laptop stays the host
+    assert _act(world, code, "hand", "host-token").status_code == 200  # (laptop seat)
+    h = {**_h("host-token"), "X-Hoja-Seat": seat}
+    assert world.client.post(f"/api/meetings/{code}/act", headers=h, json={"action": "media", "payload": {"audio": True}}).status_code == 200
+    assert world.client.post(f"/api/meetings/{code}/act", headers=h, json={"action": "mute_all", "payload": {}}).status_code == 403
+    with world.client.websocket_connect(f"/ws/meetings/{code}", subprotocols=["bearer", "host-token"]) as ws:
+        roster = {p["id"]: p for p in ws.receive_json()["participants"]}
+        assert roster[laptop["id"]]["role"] == "host" and roster[laptop["id"]]["audio"] is False
+        assert roster[phone["id"]]["audio"] is True and roster[phone["id"]]["handRaised"] is False
+    with world.client.websocket_connect(f"/ws/meetings/{code}", subprotocols=["bearer", "host-token", "seat", seat]) as ws:
+        snap = ws.receive_json()
+        assert snap["you"]["id"] == phone["id"]
+    # the phone can publish mic through the SFU on its own session
+    pub = world.client.post(f"/api/meetings/{code}/sfu/pub/session", headers=h, json={})
+    assert pub.status_code == 200
+    track = {"tracks": [{"location": "local", "mid": "0", "trackName": "mic-phone1234"}]}
+    assert world.client.post(f"/api/meetings/{code}/sfu/pub/tracks", headers=h, json=track).status_code == 200
+    # leaving the phone leaves the laptop in the call
+    assert world.client.post(f"/api/meetings/{code}/act", headers=h, json={"action": "leave", "payload": {}}).status_code == 200
+    assert world.req("GET", f"/api/meetings/{code}", "host-token").json()["meeting"]["participantCount"] == 1
+    # without a seat header the API key still means the main seat
+    assert _act(world, code, "hand", "host-token").status_code == 200
+
+
+def test_companion_needs_the_main_device_in_first(world):
+    code, _ = _create(world, access="org", waitingRoom=False)
+    assert _device_join(world, code, "host-token", "phone", mode="companion").status_code == 400
+    _device_join(world, code, "host-token", "laptop")
+    again = _device_join(world, code, "host-token", "phone", mode="companion")
+    seat = again.json()["seatToken"]
+    # refreshing the phone with its seat is a rejoin, not a third device
+    back = _device_join(world, code, "host-token", "phone", seat=seat)
+    assert back.status_code == 200 and back.json()["participant"]["id"] == again.json()["participant"]["id"]
+
+
+def test_ended_meeting_reports_who_came_and_for_how_long(world):
+    _, key = world.member("recap@meet.test")
+    code, _ = _create(world, access="org", waitingRoom=False, linkEnabled=True)
+    _join(world, code, "host-token")
+    _join(world, code, key)
+    guest = _join(world, code, name="Gus Guest", passcode=None)
+    assert guest.status_code in (200, 403)  # a passcode may be required; the recap must work either way
+    _act(world, code, "end", "host-token")
+    detail = world.req("GET", f"/api/meetings/{code}", key).json()["meeting"]
+    assert detail["status"] == "ended" and detail["durationSeconds"] is not None
+    recap = detail["recap"]
+    assert recap["durationSeconds"] == detail["durationSeconds"] and recap["peopleCount"] >= 2
+    assert {a["name"] for a in recap["attendees"]} >= {"Local User", "recap"}
+    assert all(a["joinedAt"] and a["leftAt"] for a in recap["attendees"])
+    # visitors with the link are told it ended instead of "invalid link"
+    prev = world.req("GET", f"/api/meetings/{code}/preview").json()["meeting"]
+    assert prev["status"] == "ended" and prev["durationSeconds"] == detail["durationSeconds"] and "attendees" not in prev
+    assert _join(world, code, "host-token").status_code == 403  # and there is no rejoining

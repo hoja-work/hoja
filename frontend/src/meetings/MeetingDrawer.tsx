@@ -1,6 +1,6 @@
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {CalendarDays, Copy, Download, Link2, Pencil, Phone, Trash2, Users, Video, X} from 'lucide-react';
-import {fmtWhen, googleCalendarUrl, joinUrl, meetingsApi, type Invitee, type Meeting, type Person, type Rsvp} from './api';
+import {fmtDuration, fmtTime, fmtWhen, googleCalendarUrl, joinUrl, meetingsApi, type Invitee, type Meeting, type Person, type Rsvp} from './api';
 import {PeoplePicker, ScheduleDialog} from './ScheduleDialog';
 import './meetings-page.css';
 
@@ -35,8 +35,9 @@ export function MeetingDrawer({meeting: initial, viewer, onClose, onChanged}: {
       const {meeting: fresh} = await meetingsApi.get(initial.code);
       setMeeting((m) => ({...m, ...fresh, isHost: m.isHost, myResponse: fresh.myResponse ?? m.myResponse}));
     } catch { /* keep what the list gave us */ }
+    if (initial.status === 'ended' || initial.status === 'cancelled') return; // the recap replaces the guest list
     try { setInvitees(await meetingsApi.invitees(initial.code)); } catch { setInvitees(null); }
-  }, [initial.code]);
+  }, [initial.code, initial.status]);
 
   useEffect(() => { void reload(); }, [reload]);
   useEffect(() => { void meetingsApi.people().then(setPeople).catch(() => setPeople([])); }, []);
@@ -133,7 +134,10 @@ export function MeetingDrawer({meeting: initial, viewer, onClose, onChanged}: {
 
           {meeting.description && <p className="mt-description">{meeting.description}</p>}
 
-          <section className="mt-section">
+          {meeting.status === 'ended' && <Recap meeting={meeting} />}
+          {meeting.status === 'cancelled' && <p className="mt-note" role="status">This meeting was cancelled.</p>}
+
+          {!over && <section className="mt-section">
             <h3>Join link</h3>
             <div className="mt-copy-row">
               <input readOnly value={joinUrl(meeting.code)} aria-label="Meeting link" onFocus={(e) => e.currentTarget.select()} />
@@ -146,9 +150,9 @@ export function MeetingDrawer({meeting: initial, viewer, onClose, onChanged}: {
               </label>
             )}
             {passcode && <p className="mt-note">New passcode: <b className="mt-code">{passcode}</b>. Share it with guests; it is not shown again.</p>}
-          </section>
+          </section>}
 
-          <section className="mt-section">
+          {!over && <section className="mt-section">
             <div className="mt-section-head">
               <h3><Users size={14} aria-hidden="true" /> People{invitees ? ` · ${invitees.length}` : ''}</h3>
               {canManage && !over && <button type="button" className="mt-btn mt-btn-small" onClick={() => setAdding((v) => !v)}>{adding ? 'Close' : 'Invite people'}</button>}
@@ -178,7 +182,7 @@ export function MeetingDrawer({meeting: initial, viewer, onClose, onChanged}: {
                 ))}
               </ul>
             )}
-          </section>
+          </section>}
 
           {canManage && meeting.usage && (
             <p className="mt-muted mt-usage">~${meeting.usage.estimatedCostUsd.toFixed(2)} · {gb < 0.1 ? `${(gb * 1000).toFixed(0)} MB` : `${gb.toFixed(1)} GB`} streamed</p>
@@ -212,5 +216,40 @@ export function MeetingDrawer({meeting: initial, viewer, onClose, onChanged}: {
         />
       )}
     </div>
+  );
+}
+
+function Recap({meeting}: {meeting: Meeting}) {
+  const recap = meeting.recap;
+  const people = recap?.attendees ?? [];
+  return (
+    <section className="mt-section mt-recap" aria-label="Meeting recap">
+      <p className="mt-recap-line">
+        <b>Meeting ended</b>
+        {meeting.endedAt ? ` · ${fmtTime(meeting.endedAt, {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'})}` : ''}
+        {meeting.durationSeconds != null ? ` · lasted ${fmtDuration(meeting.durationSeconds)}` : ''}
+      </p>
+      {people.length === 0 ? (
+        <p className="mt-muted">Nobody joined this meeting.</p>
+      ) : (
+        <>
+          <h3><Users size={14} aria-hidden="true" /> Who joined · {recap?.peopleCount ?? people.length}</h3>
+          <ul className="mt-people-list">
+            {people.map((p, i) => (
+              <li key={`${p.name}-${p.joinedAt}-${i}`}>
+                <span className="mt-avatar" aria-hidden="true">{(p.name || '?')[0]?.toUpperCase()}</span>
+                <span className="mt-person">
+                  <b>{p.name}</b>
+                  <small>{fmtTime(p.joinedAt)}{p.leftAt ? ` – ${fmtTime(p.leftAt)}` : ''}{p.seconds != null ? ` · ${fmtDuration(p.seconds)}` : ''}</small>
+                </span>
+                {p.role === 'host' && <span className="mt-rsvp">Host</span>}
+                {p.kind === 'guest' && <span className="mt-rsvp">Guest</span>}
+                {p.device && <span className="mt-rsvp">{p.device}</span>}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </section>
   );
 }

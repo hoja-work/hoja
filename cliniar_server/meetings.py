@@ -81,6 +81,16 @@ class Invalid(MeetingError):
     status = 400
 
 
+class Conflict(MeetingError):
+    """The request is fine but needs a decision first (e.g. already in the meeting on another device)."""
+
+    status = 409
+
+    def __init__(self, message: str, payload: dict) -> None:
+        super().__init__(message)
+        self.payload = payload
+
+
 class Denied(MeetingError):
     status = 403
 
@@ -96,6 +106,7 @@ class Principal:
     org_id: str | None = None
     key_access: str | None = None
     guest_token: str | None = None
+    seat_token: str | None = None  # a member's companion-device seat (their main seat needs none)
 
 
 @dataclass
@@ -153,6 +164,15 @@ def _clean_text(value, limit: int, field: str, *, required=False) -> str | None:
     return text
 
 
+def _seconds(start: str | None, end: str | None) -> int | None:
+    if not start or not end:
+        return None
+    try:
+        return max(0, int((datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds()))
+    except ValueError:
+        return None
+
+
 def _ics_text(value: str) -> str:
     return (str(value).replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,")
             .replace("\r", "").replace("\n", "\\n"))
@@ -196,8 +216,13 @@ class MeetingService:
 
     def _me(self, conn, m, principal: Principal):
         if principal.kind == "member":
-            return conn.execute(select(mp).where(and_(mp.c.meeting_id == m["id"], mp.c.user_id == principal.user_id))
-                                ).mappings().first()
+            if principal.seat_token:  # a companion device presents the seat it was given
+                return conn.execute(select(mp).where(and_(
+                    mp.c.meeting_id == m["id"], mp.c.user_id == principal.user_id,
+                    mp.c.token_hash == token_hash(principal.seat_token)))).mappings().first()
+            return conn.execute(select(mp).where(and_(
+                mp.c.meeting_id == m["id"], mp.c.user_id == principal.user_id, mp.c.device_of.is_(None)))
+                .order_by(mp.c.created_at).limit(1)).mappings().first()
         if principal.guest_token:
             return conn.execute(select(mp).where(and_(mp.c.meeting_id == m["id"],
                                                       mp.c.token_hash == token_hash(principal.guest_token)))
@@ -263,7 +288,8 @@ class MeetingService:
         return {"id": p["id"], "name": p["display_name"], "kind": p["kind"], "role": p["role"], "state": p["state"],
                 "muted": bool(p["muted_by_host"]), "handRaised": bool(p["hand_raised"]),
                 "audio": bool(p["audio_on"]), "video": bool(p["video_on"]), "screen": bool(p["screen_on"]),
-                "sessionId": p["sfu_session_id"], "tracks": json.loads(p["tracks"] or "[]")}
+                "sessionId": p["sfu_session_id"], "tracks": json.loads(p["tracks"] or "[]"),
+                "deviceOf": p["device_of"], "device": p["device_label"]}
 
     def ser_meeting(self, conn, m, *, detail: bool = True) -> dict:
         host = conn.execute(select(user.c.name, user.c.display_name).where(user.c.id == m["host_id"])
@@ -273,7 +299,8 @@ class MeetingService:
                "teamId": m["team_id"], "issueId": m["issue_id"], "projectId": m["project_id"],
                "access": m["access"], "linkEnabled": bool(m["link_enabled"]), "hasPasscode": bool(m["passcode_hash"]),
                "status": m["status"], "scheduledStart": m["scheduled_start"], "durationMinutes": m["duration_minutes"],
-               "startedAt": m["started_at"], "endedAt": m["ended_at"], "createdAt": m["created_at"], "joinPath": f"/meet/{m['code']}",
+               "startedAt": m["started_at"], "endedAt": m["ended_at"], "createdAt": m["created_at"],
+               "durationSeconds": _seconds(m["started_at"], m["ended_at"]), "joinPath": f"/meet/{m['code']}",
                "settings": {"waitingRoom": bool(m["waiting_room"]), "joinBeforeHost": bool(m["join_before_host"]),
                             "muteOnEntry": bool(m["mute_on_entry"]), "allowUnmute": bool(m["allow_unmute"]),
                             "screenShare": m["screen_share"], "chatEnabled": bool(m["chat_enabled"]),
@@ -381,6 +408,8 @@ class MeetingService:
             subject = self._subject(conn, m, principal, me)
             self._require(P.VIEW, subject, self._resource(conn, m))
             out = self.ser_meeting(conn, m)
+            if m["status"] in ("ended", "cancelled"):
+                out["recap"] = self._recap(conn, m)
             if subject.get("is_host") or subject.get("admin"):
                 out["usage"] = self._usage(conn, m)
             out["isHost"] = bool(subject.get("is_host"))
@@ -388,6 +417,21 @@ class MeetingService:
                 out["myResponse"] = "accepted" if subject.get("is_host") else self._my_responses(
                     conn, principal).get(m["id"])
             return out
+
+    def _recap(self, conn, m) -> dict:
+        """After a meeting: when it ran, for how long and who came (each device listed once)."""
+        rows = conn.execute(select(mp).where(and_(mp.c.meeting_id == m["id"], mp.c.joined_at.is_not(None)))
+                            .order_by(mp.c.joined_at)).mappings().all()
+        end = m["ended_at"]
+        people = []
+        for r in rows:
+            left = r["left_at"] or end
+            people.append({"name": r["display_name"], "kind": r["kind"], "role": r["role"],
+                           "device": r["device_label"] if r["device_of"] else None,
+                           "joinedAt": r["joined_at"], "leftAt": left, "seconds": _seconds(r["joined_at"], left)})
+        return {"startedAt": m["started_at"], "endedAt": end, "durationSeconds": _seconds(m["started_at"], end),
+                "attendees": people,
+                "peopleCount": len({r["user_id"] or r["id"] for r in rows})}
 
     def _usage(self, conn, m) -> dict:
         """What this meeting cost: Cloudflare bills the bytes it sends *to* participants."""
@@ -405,6 +449,7 @@ class MeetingService:
             host = conn.execute(select(user.c.name, user.c.display_name).where(user.c.id == m["host_id"])
                                 ).mappings().first() or {}
             return {"code": m["code"], "title": m["title"], "status": m["status"],
+                    "endedAt": m["ended_at"], "durationSeconds": _seconds(m["started_at"], m["ended_at"]),
                     "hostName": host.get("display_name") or host.get("name"),
                     "scheduledStart": m["scheduled_start"], "passcodeRequired": bool(m["passcode_hash"]),
                     "waitingRoom": bool(m["waiting_room"])}
@@ -631,7 +676,14 @@ class MeetingService:
 
     # ------------------------------------------------------------------ join / leave
     def join(self, code: str, principal: Principal, *, display_name: str | None = None,
-             passcode: str | None = None) -> dict:
+             passcode: str | None = None, device_id: str | None = None, device_label: str | None = None,
+             mode: str | None = None) -> dict:
+        """Join (or rejoin). A member already in on another device must choose: ``switch`` takes the seat
+        over, ``companion`` adds this device as a second seat (e.g. a phone for the mic)."""
+        if mode not in (None, "switch", "companion"):
+            raise Invalid("mode must be 'switch' or 'companion'.")
+        device_id = (device_id or "")[:64] or None
+        device_label = _clean_text(device_label, 24, "deviceLabel") or None
         with self.engine.begin() as conn:
             m = self._meeting(conn, code)
             if principal.kind == "member" and principal.org_id != m["organization_id"]:
@@ -640,16 +692,43 @@ class MeetingService:
             subject = self._subject(conn, m, principal, me, passcode=passcode)
             resource = self._resource(conn, m)
             self._require(P.JOIN, subject, resource)
+            events: list[Event] = []
+            primary = None
+            if principal.kind == "member" and me is not None and me["device_of"] is None and not principal.seat_token:
+                active = me["state"] in ("admitted", "waiting")
+                if active and me["device_id"] != device_id:  # another device holds the seat
+                    if mode is None:
+                        raise Conflict("You are already in this meeting on another device.", {
+                            "code": "already_joined", "device": me["device_label"] or "another device",
+                            "since": me["joined_at"] or me["created_at"], "canCompanion": me["state"] == "admitted"})
+                    if mode == "companion":
+                        if me["state"] != "admitted":
+                            raise Invalid("Wait to be admitted on your main device first.")
+                        primary, me = me, None
+                        subject = {**subject, "companion": True, "bound": False, "role": None, "state": None}
+                    else:  # switch: the old device is told to stand down
+                        events.append(Event(frozenset({me["id"]}), {"t": "taken_over"}))
+                elif mode == "companion" and not active:
+                    raise Invalid("Join on your main device first, then add this one.")
+            elif principal.kind == "member" and me is None and mode == "companion":
+                raise Invalid("Join on your main device first, then add this one.")
             entered = bool(P.decide(P.ENTER, subject, resource))
             if principal.kind == "member":
-                name = (conn.execute(select(user.c.display_name, user.c.name).where(user.c.id == principal.user_id))
-                        .mappings().first() or {})
-                name = name.get("display_name") or name.get("name") or "Member"
+                if me is not None and me["device_of"]:
+                    name = me["display_name"]  # a companion keeps its label
+                else:
+                    row = conn.execute(select(user.c.display_name, user.c.name).where(
+                        user.c.id == principal.user_id)).mappings().first() or {}
+                    name = row.get("display_name") or row.get("name") or "Member"
+                    if primary is not None:
+                        name = f"{name} ({device_label or 'Other device'})"
             else:
                 name = _clean_text(display_name, MAX_NAME, "name") or (me["display_name"] if me else None)
                 if not name:
                     raise Invalid("A display name is required.")
-            if subject.get("is_host"):
+            if primary is not None or (me is not None and me["device_of"]):
+                role = "attendee"  # companions never carry moderation powers
+            elif subject.get("is_host"):
                 role = "host"
             elif subject.get("invite_role") == "cohost" or (me and me["role"] in ("host", "cohost")):
                 role = "cohost"
@@ -661,21 +740,22 @@ class MeetingService:
             raw_token = None
             if me is None:
                 pid = new_id()
-                if principal.kind == "guest":
+                if principal.kind == "guest" or primary is not None:
                     raw_token = secrets.token_urlsafe(32)
                 conn.execute(mp.insert().values(
                     id=pid, meeting_id=m["id"], user_id=principal.user_id if principal.kind == "member" else None,
                     kind=principal.kind, display_name=name, role=role, state=state,
                     token_hash=token_hash(raw_token) if raw_token else None, muted_by_host=False,
-                    hand_raised=False, created_at=ts))
+                    hand_raised=False, created_at=ts,
+                    device_of=primary["id"] if primary is not None else None))
             else:
                 pid = me["id"]
             first_entry = state == "admitted" and (me is None or me["joined_at"] is None)
             conn.execute(update(mp).where(mp.c.id == pid).values(
                 state=state, role=role, display_name=name, left_at=None, hand_raised=False,
+                device_id=device_id, device_label=device_label,
                 **({"joined_at": ts, "muted_by_host": bool(m["mute_on_entry"]) and role == "attendee"}
                    if first_entry else {})))
-            events: list[Event] = []
             released: list[str] = []
             if state == "admitted":
                 self._go_live(conn, m, ts)
@@ -691,7 +771,8 @@ class MeetingService:
             events.extend(Event(audience["room"] - {r}, {"t": "joined", "participant": self.pub(
                 conn.execute(select(mp).where(mp.c.id == r)).mappings().first())}) for r in released)
             m = conn.execute(select(meeting).where(meeting.c.id == m["id"])).mappings().first()
-            return {"participant": self.pub(me_row), "guestToken": raw_token, "state": state,
+            return {"participant": self.pub(me_row), "guestToken": raw_token if principal.kind == "guest" else None,
+                    "seatToken": raw_token if primary is not None else None, "state": state,
                     "meeting": self.ser_meeting(conn, m), "events": events,
                     "reason": None if entered else (P.decide(P.ENTER, subject, resource).reason)}
 

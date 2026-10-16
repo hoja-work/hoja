@@ -1,6 +1,6 @@
 import {useCallback, useEffect, useState} from 'react';
 import {Calendar as CalendarIcon, Check, ChevronRight, Phone, Plus, Video} from 'lucide-react';
-import {fmtWhen, meetingsApi, type Meeting, type Person} from './api';
+import {fmtWhen, meetingsApi, type Meeting, type Person, fmtDuration} from './api';
 import {Calendar} from './Calendar';
 import {useInbox} from './inbox';
 import {MeetingDrawer} from './MeetingDrawer';
@@ -20,7 +20,7 @@ function MeetingRow({meeting, onOpen}: {meeting: Meeting; onOpen: () => void}) {
         <span className={`mt-status mt-status-${meeting.status}`}>{meeting.status === 'live' ? 'Live' : meeting.status}</span>
         <span className="mt-row-text">
           <b>{meeting.title}</b>
-          <small>{fmtWhen(meeting)}{meeting.hostName ? ` · ${meeting.isHost ? 'You' : meeting.hostName}` : ''}{pending ? ' · awaiting your reply' : ''}</small>
+          <small>{meeting.status === 'ended' ? `Ended${meeting.durationSeconds ? ` · lasted ${fmtDuration(meeting.durationSeconds)}` : ''} · ` : ''}{fmtWhen(meeting)}{meeting.hostName ? ` · ${meeting.isHost ? 'You' : meeting.hostName}` : ''}{pending ? ' · awaiting your reply' : ''}</small>
         </span>
         <ChevronRight size={14} aria-hidden="true" />
       </button>

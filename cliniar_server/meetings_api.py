@@ -33,6 +33,7 @@ from cliniar_server.meetings import (
     RING_SECONDS,
     TRACK_ACTION,
     TRACK_RE,
+    Conflict,
     Denied,
     Event,
     Invalid,
@@ -56,7 +57,7 @@ WS_RATE = (12, 5.0)  # messages per window per connection
 TRACK_KEYS = {"location", "mid", "trackName", "sessionId", "simulcast", "kind"}
 SIMULCAST_KEYS = {"preferredRid", "priorityOrdering", "ridNotAvailable"}
 REMINDER_POLL_SECONDS = 30.0
-END_CODES = {"ended": 4410, "removed": 4411, "denied": 4412}
+END_CODES = {"ended": 4410, "removed": 4411, "denied": 4412, "taken_over": 4413}
 
 
 class _Conn:
@@ -287,6 +288,8 @@ class MeetingHub:
 
 
 def _err(exc: MeetingError) -> JSONResponse:
+    if isinstance(exc, Conflict):
+        return JSONResponse({"error": str(exc), **exc.payload}, status_code=409)
     if isinstance(exc, Denied):
         audit.info("denied rule=%s reason=%s", exc.decision.rule, exc.decision.reason)
         return JSONResponse({"error": str(exc), "rule": exc.decision.rule}, status_code=403)
@@ -345,7 +348,8 @@ def meeting_routes(engine, service: MeetingService, hub: MeetingHub, *, auth: Ca
     async def who(request: Request) -> Principal | None:
         uid, org, _identity, _browser = await run_in_threadpool(auth, request)
         if uid:
-            return Principal("member", uid, org, getattr(request.state, "api_key_access", None))
+            return Principal("member", uid, org, getattr(request.state, "api_key_access", None),
+                             seat_token=request.headers.get("x-hoja-seat", "").strip() or None)
         token = request.headers.get("x-hoja-guest-token", "").strip()
         return Principal("guest", guest_token=token) if token else None
 
@@ -513,7 +517,9 @@ def meeting_routes(engine, service: MeetingService, hub: MeetingHub, *, auth: Ca
         try:
             out = await run_in_threadpool(
                 lambda: service.join(code, principal, display_name=data.get("name"),
-                                     passcode=str(data["passcode"]) if data.get("passcode") else None))
+                                     passcode=str(data["passcode"]) if data.get("passcode") else None,
+                                     device_id=str(data["deviceId"]) if data.get("deviceId") else None,
+                                     device_label=data.get("deviceLabel"), mode=data.get("mode")))
         except Denied as exc:
             if exc.decision.rule == "d-passcode":
                 rate_limit_record(engine, "meeting_passcode", keys, PASSCODE_FAILURES[1])
@@ -796,18 +802,25 @@ def meeting_routes(engine, service: MeetingService, hub: MeetingHub, *, auth: Ca
             await websocket.close(code=1008)
             return
         offered = websocket.scope.get("subprotocols") or []
+
+        def after(marker: str) -> str | None:
+            return offered[offered.index(marker) + 1] if marker in offered and offered.index(marker) + 1 < len(offered) else None
+
         principal: Principal | None = None
         subprotocol = None
-        if offered[:1] == ["guest"] and len(offered) > 1:
-            principal, subprotocol = Principal("guest", guest_token=offered[1]), "guest"
+        if after("guest"):
+            principal, subprotocol = Principal("guest", guest_token=after("guest")), "guest"
         else:
-            if "bearer" in offered and len(offered) > 1:
+            if after("bearer"):
                 subprotocol = "bearer"
                 websocket.scope["headers"] = [*websocket.scope["headers"],
-                                              (b"authorization", f"Bearer {offered[1]}".encode())]
+                                              (b"authorization", f"Bearer {after('bearer')}".encode())]
+            elif after("seat"):
+                subprotocol = "seat"
             uid, org, _identity, _browser = await run_in_threadpool(auth, websocket)
             if uid:
-                principal = Principal("member", uid, org, getattr(websocket.state, "api_key_access", None))
+                principal = Principal("member", uid, org, getattr(websocket.state, "api_key_access", None),
+                                      seat_token=after("seat"))
         if principal is None:
             await websocket.accept(subprotocol=subprotocol)
             await websocket.close(code=4401)

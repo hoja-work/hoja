@@ -1,6 +1,6 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {ChevronLeft, ChevronRight, Plus} from 'lucide-react';
-import {fmtTime, meetingsApi, type Meeting} from './api';
+import {fmtTime, meetingsApi, type Meeting, fmtDuration} from './api';
 import './meetings-page.css';
 
 type View = 'month' | 'week';
@@ -22,6 +22,7 @@ function eventStart(m: Meeting): Date {
 function eventClass(m: Meeting): string {
   const parts = ['mt-event'];
   if (m.status === 'live') parts.push('mt-ev-live');
+  if (m.status === 'ended') parts.push('mt-ev-ended');
   if (m.isHost) parts.push('mt-ev-host');
   if (m.myResponse === 'declined') parts.push('mt-ev-declined');
   if (m.myResponse === 'needsAction' && !m.isHost) parts.push('mt-ev-pending');
@@ -31,7 +32,7 @@ function eventClass(m: Meeting): string {
 
 function eventLabel(m: Meeting): string {
   const when = m.scheduledStart ? fmtTime(m.scheduledStart) : m.status === 'live' ? 'live now' : 'instant';
-  const state = m.status === 'live' ? ', live' : m.isHost ? ', hosted by you' : m.myResponse && m.myResponse !== 'accepted' ? `, ${m.myResponse === 'needsAction' ? 'no reply yet' : m.myResponse}` : '';
+  const state = m.status === 'ended' ? `, ended${m.durationSeconds ? `, lasted ${fmtDuration(m.durationSeconds)}` : ''}` : m.status === 'live' ? ', live' : m.isHost ? ', hosted by you' : m.myResponse && m.myResponse !== 'accepted' ? `, ${m.myResponse === 'needsAction' ? 'no reply yet' : m.myResponse}` : '';
   return `${m.title}, ${when}${state}`;
 }
 

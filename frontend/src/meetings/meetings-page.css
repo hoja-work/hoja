@@ -271,3 +271,10 @@
 @media(prefers-reduced-motion:reduce){
   .mt-drawer,.mt-toast,.mt-call,.mt-call-pulse{animation:none}
 }
+
+.mt-ev-ended{opacity:.7}
+.mt-ev-ended .mt-dot{background:var(--muted)}
+.mt-status-ended{background:var(--subtle);color:var(--muted)}
+.mt-recap{display:grid;gap:10px;padding:12px;border:1px solid var(--line);border-radius:9px;background:var(--subtle)}
+.mt-recap-line{margin:0;overflow-wrap:anywhere}
+.mt-recap h3{display:flex;align-items:center;gap:6px;margin:0}
