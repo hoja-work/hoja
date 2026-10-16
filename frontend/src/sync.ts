@@ -360,3 +360,12 @@ export function startSync(opts: {
   currentHandle = handle;
   return handle;
 }
+
+/* ---------------- realtime cursor (appended for realtime.ts) ----------------
+ * The seq of the persisted IndexedDB snapshot. realtime.ts connects from
+ * max(this, its own cursor) so the server never replays history the snapshot
+ * already covers. Resolves to 0 when there is no snapshot. */
+export async function storedSyncSeq(): Promise<number> {
+  const snap = await loadSnapshot();
+  return snap && typeof snap.seq === 'number' ? snap.seq : 0;
+}

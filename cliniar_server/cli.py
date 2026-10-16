@@ -36,18 +36,38 @@ def _database_target(args) -> str:
     )
 
 
+def _worker_app():
+    """uvicorn factory for --workers > 1 (each worker process builds its own app)."""
+    import os
+
+    from cliniar_server.app import create_app
+    return create_app(database_url=os.environ["CLINIAR_SERVE_TARGET"],
+                      open_mode=os.environ.get("CLINIAR_SERVE_OPEN") == "1")
+
+
 def _cmd_serve(args):
+    import os
+
     import uvicorn
 
     from cliniar_server.app import create_app
     target = _database_target(args)
-    app = create_app(database_url=target, open_mode=args.open)
     print(f"cliniar-serve v{__version__}")
     print(f"  tenant : {args.tenant}")
     print(f"  db     : {display_database_target(target)}")
     print(f"  url    : http://{args.host}:{args.port}/graphql")
     print(f"  open   : {args.open}")
-    uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level)
+    options = {"host": args.host, "port": args.port, "log_level": args.log_level,
+               "ws_per_message_deflate": args.ws_deflate, "backlog": 4096}
+    if args.workers > 1:
+        # Realtime fan-out is per process; workers share change events through the
+        # database (PostgreSQL LISTEN/NOTIFY, or polling the SQLite change log).
+        print(f"  workers: {args.workers}")
+        os.environ["CLINIAR_SERVE_TARGET"] = target
+        os.environ["CLINIAR_SERVE_OPEN"] = "1" if args.open else "0"
+        uvicorn.run("cliniar_server.cli:_worker_app", factory=True, workers=args.workers, **options)
+        return
+    uvicorn.run(create_app(database_url=target, open_mode=args.open), **options)
 
 
 def _cmd_migrate(args):
@@ -126,6 +146,10 @@ def main(argv=None):
     s.add_argument("--port", type=int, default=8787)
     s.add_argument("--open", action="store_true", help="offline open mode: any token → first identity")
     s.add_argument("--log-level", default="warning")
+    s.add_argument("--workers", type=int, default=1,
+                   help="server processes; realtime clients are spread across them")
+    s.add_argument("--no-ws-deflate", dest="ws_deflate", action="store_false",
+                   help="disable WebSocket compression (less CPU per client on large fan-outs)")
     s.set_defaults(func=_cmd_serve)
 
     mg = sub.add_parser("migrate", help="apply outstanding database schema revisions")

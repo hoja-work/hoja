@@ -370,8 +370,21 @@ class Writer:
 
     def reconcile_team_cadence(self, org_id: str, team_id: str, *, now=None, viewer_id: str | None = None) -> dict:
         from datetime import datetime, timezone
-        from cliniar_server.cadence import reconcile_team_cadence
+        from cliniar_server.cadence import reconcile_team_cadence, validate_timezone
         instant = now or datetime.now(timezone.utc)
+        # Read paths (teams/activeCycle/cycles) call this on every request. Without a
+        # cadence there is nothing to reconcile, so answer without the write lock
+        # (BEGIN IMMEDIATE on SQLite serializes every page load with every write).
+        with self.engine.connect() as conn:
+            peek = conn.execute(select(team.c.cadence_enabled, team.c.timezone).where(and_(
+                team.c.organization_id == org_id, team.c.id == team_id,
+                team.c.archived_at.is_(None)))).first()
+            if peek is not None and not peek.cadence_enabled:
+                if viewer_id is not None:
+                    self._require_team_visible(conn, org_id, viewer_id, team_id)
+                validate_timezone(peek.timezone or "UTC")
+                return {"enabled": False, "weekday": None, "timezone": peek.timezone or "UTC",
+                        "policyVersion": 1, "activeCycle": None, "upcomingCycles": []}
         with self.engine.begin() as conn:
             if conn.dialect.name == "sqlite":
                 conn.exec_driver_sql("BEGIN IMMEDIATE")

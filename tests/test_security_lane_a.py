@@ -288,10 +288,10 @@ def test_websocket_rejects_foreign_origin(tmp_path) -> None:
 
 
 def test_websocket_closes_when_key_revoked(tmp_path, monkeypatch) -> None:
-    import cliniar_server.app as app_module
+    import cliniar_server.realtime as realtime_module
 
     db_path, engine, seeded = _setup(tmp_path, "wsrevoke")
-    monkeypatch.setattr(app_module, "_WS_REVALIDATE_SECONDS", 0)
+    monkeypatch.setattr(realtime_module, "REVALIDATE_SECONDS", 0.05)
     client = _admin_client(db_path, seeded)
     from sqlalchemy import delete
 

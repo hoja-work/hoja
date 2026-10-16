@@ -51,6 +51,17 @@ from cliniar_server.db import (
 )
 
 
+def change_event_dict(r, *, with_org: bool = False) -> dict:
+    """change_event row → ChangeEvent; recipientId only for per-user events (notifications)."""
+    out = {"seq": r["seq"], "entity": r["entity"], "entityId": r["entity_id"],
+           "action": r["action"], "teamId": r["team_id"]}
+    if r.get("recipient_id") is not None:
+        out["recipientId"] = r["recipient_id"]
+    if with_org:
+        out["organization_id"] = r["organization_id"]
+    return out
+
+
 def _conn_rows(conn, stmt) -> list[dict]:
     return [dict(r._mapping) for r in conn.execute(stmt)]
 
@@ -184,15 +195,15 @@ class Store:
             stmt = select(change_event).where(and_(
                 change_event.c.organization_id == org_id, change_event.c.seq > after_seq))
             if viewer_id is None:
-                stmt = stmt.where(change_event.c.team_id.is_(None))
+                stmt = stmt.where(and_(change_event.c.team_id.is_(None),
+                                       change_event.c.recipient_id.is_(None)))
             else:
                 stmt = _scope_teams(conn, stmt, org_id, viewer_id, change_event.c.team_id, nullable=True)
+                # Per-user events (notifications) reach only their recipient.
+                stmt = stmt.where(or_(change_event.c.recipient_id.is_(None),
+                                      change_event.c.recipient_id == viewer_id))
             rows = conn.execute(stmt.order_by(change_event.c.seq).limit(limit)).mappings().all()
-        return [
-            {"seq": r["seq"], "entity": r["entity"], "entityId": r["entity_id"],
-             "action": r["action"], "teamId": r["team_id"]}
-            for r in rows
-        ]
+        return [change_event_dict(r) for r in rows]
 
     def change_org_ids_after(self, after_seq: int, limit: int = 1000) -> list[dict]:
         """Cheap global change scan for the realtime broadcaster: seq + org only."""
@@ -222,11 +233,7 @@ class Store:
                 .order_by(change_event.c.seq)
                 .limit(limit)
             ).mappings().all()
-        return [
-            {"seq": r["seq"], "organization_id": r["organization_id"], "entity": r["entity"],
-             "entityId": r["entity_id"], "action": r["action"], "teamId": r["team_id"]}
-            for r in rows
-        ]
+        return [change_event_dict(r, with_org=True) for r in rows]
 
     def visible_team_ids(self, org_id: str, viewer_id: str) -> frozenset | None:
         """Viewer-visible team ids, or None when unrestricted (admin)."""
@@ -241,6 +248,104 @@ class Store:
                 vt.c.organization_id == org_id,
                 or_(vt.c.private.is_not(True), vt.c.id.in_(member_teams))))).all()
             return frozenset(r[0] for r in rows)
+
+    def max_change_seq(self) -> int:
+        """Newest change_event seq across every org (0 when none)."""
+        with self.engine.connect() as conn:
+            return int(conn.execute(select(func.max(change_event.c.seq))).scalar() or 0)
+
+    def change_events_after_orgs(self, heads: dict[str, int], limit: int = 5000) -> list[dict]:
+        """Raw events newer than a per-org cursor (gap-free when seqs are commit-ordered per org)."""
+        out: list[dict] = []
+        items = list(heads.items())
+        with self.engine.connect() as conn:
+            for start in range(0, len(items), 200):
+                chunk = items[start:start + 200]
+                clause = or_(*[and_(change_event.c.organization_id == org,
+                                    change_event.c.seq > seq) for org, seq in chunk])
+                rows = conn.execute(select(change_event).where(clause)
+                                    .order_by(change_event.c.seq).limit(limit)).mappings().all()
+                out.extend(change_event_dict(r, with_org=True) for r in rows)
+        out.sort(key=lambda e: e["seq"])
+        return out
+
+    def visibility_map(self, org_id: str, user_ids) -> dict[str, frozenset | None]:
+        """visible_team_ids for many viewers with three queries instead of one per viewer.
+
+        Mirrors visible_team_clause: admins see everything (None); everyone else sees
+        non-private teams plus private teams they belong to.
+        """
+        uids = list(dict.fromkeys(user_ids))
+        if not uids:
+            return {}
+        with self.engine.connect() as conn:
+            admins: set[str] = set()
+            known: set[str] = set()
+            for start in range(0, len(uids), 500):
+                chunk = uids[start:start + 500]
+                for uid, admin in conn.execute(select(user.c.id, user.c.admin).where(and_(
+                        user.c.organization_id == org_id, user.c.id.in_(chunk)))):
+                    known.add(uid)
+                    if admin:
+                        admins.add(uid)
+            public = frozenset(r[0] for r in conn.execute(select(team.c.id).where(and_(
+                team.c.organization_id == org_id, team.c.private.is_not(True)))))
+            private_member: dict[str, set[str]] = {}
+            for start in range(0, len(uids), 500):
+                chunk = uids[start:start + 500]
+                for uid, tid in conn.execute(
+                        select(team_member.c.user_id, team.c.id)
+                        .join(team, team.c.id == team_member.c.team_id)
+                        .where(and_(team.c.organization_id == org_id, team.c.private.is_(True),
+                                    team_member.c.user_id.in_(chunk)))):
+                    private_member.setdefault(uid, set()).add(tid)
+        out: dict[str, frozenset | None] = {}
+        for uid in uids:
+            if uid in admins:
+                out[uid] = None
+            elif uid not in known:
+                out[uid] = frozenset()
+            else:
+                out[uid] = public | frozenset(private_member.get(uid, ()))
+        return out
+
+    def validate_credentials(self, key_hashes, session_hashes) -> dict[tuple[str, str], tuple[str, str]]:
+        """Still-valid credentials → (user_id, organization_id), in a couple of batched queries.
+
+        Used to revalidate every open realtime socket at once instead of one auth
+        lookup (and api-key touch write) per socket per interval.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        out: dict[tuple[str, str], tuple[str, str]] = {}
+        keys, sessions = list(set(key_hashes)), list(set(session_hashes))
+        with self.engine.connect() as conn:
+            for start in range(0, len(keys), 500):
+                chunk = keys[start:start + 500]
+                for th, uid, org in conn.execute(
+                        select(api_key.c.token_hash, api_key.c.user_id, api_key.c.organization_id)
+                        .join(user, and_(user.c.id == api_key.c.user_id,
+                                         user.c.organization_id == api_key.c.organization_id))
+                        .where(and_(api_key.c.token_hash.in_(chunk), api_key.c.revoked_at.is_(None),
+                                    or_(api_key.c.expires_at.is_(None), api_key.c.expires_at > now),
+                                    user.c.active.is_(True), user.c.archived_at.is_(None)))):
+                    out[("key", th)] = (uid, org)
+            for start in range(0, len(sessions), 500):
+                chunk = sessions[start:start + 500]
+                for th, uid, org in conn.execute(
+                        select(browser_session.c.token_hash, browser_session.c.user_id,
+                               browser_session.c.organization_id)
+                        .join(user, and_(user.c.id == browser_session.c.user_id,
+                                         user.c.organization_id == browser_session.c.organization_id))
+                        .join(organization_membership, and_(
+                            organization_membership.c.profile_user_id == browser_session.c.user_id,
+                            organization_membership.c.organization_id == browser_session.c.organization_id,
+                            organization_membership.c.active.is_(True)))
+                        .where(and_(browser_session.c.token_hash.in_(chunk),
+                                    browser_session.c.revoked_at.is_(None),
+                                    browser_session.c.expires_at > now,
+                                    user.c.active.is_(True), user.c.archived_at.is_(None)))):
+                    out[("session", th)] = (uid, org)
+        return out
 
     def resolve_token(self, token: str) -> dict | None:
         """token → {user_id, organization_id} or None."""
@@ -269,10 +374,12 @@ class Store:
             )
             return row
 
-    def touch_api_key(self, key_id: str) -> None:
+    def touch_api_key(self, key_id: str, last_used_at: str | None = None) -> None:
         """Record use, at most once per hour, to avoid a write on every request."""
         now = datetime.now(timezone.utc)
         threshold = (now - timedelta(hours=1)).isoformat()
+        if last_used_at is not None and last_used_at >= threshold:
+            return  # recent enough: skip the write transaction (a global lock on SQLite)
         with self.engine.begin() as conn:
             conn.execute(api_key.update().where(and_(
                 api_key.c.id == key_id,
@@ -1172,7 +1279,7 @@ class Store:
                 stmt = stmt.where(inbox_notification.c.read_at.is_(None))
             if after:
                 ts, notification_id = after
-                stmt = stmt.where(or_(inbox_notification.c.created_at < ts,
+                stmt = stmt.where(inbox_notification.c.created_at <= ts).where(or_(inbox_notification.c.created_at < ts,
                     and_(inbox_notification.c.created_at == ts, inbox_notification.c.id < notification_id)))
             return _conn_rows(conn, stmt.order_by(
                 inbox_notification.c.created_at.desc(), inbox_notification.c.id.desc()).limit(limit))
@@ -1256,7 +1363,7 @@ class Store:
             ))
             if after:
                 ts, event_id = after
-                stmt = stmt.where(or_(issue_activity.c.created_at < ts,
+                stmt = stmt.where(issue_activity.c.created_at <= ts).where(or_(issue_activity.c.created_at < ts,
                     and_(issue_activity.c.created_at == ts, issue_activity.c.id < event_id)))
             rows = _conn_rows(conn, stmt.order_by(
                 issue_activity.c.created_at.desc(), issue_activity.c.id.desc()).limit(limit))
@@ -1272,7 +1379,7 @@ class Store:
             ))
             if after:
                 ts, event_id = after
-                stmt = stmt.where(or_(issue_activity.c.created_at < ts,
+                stmt = stmt.where(issue_activity.c.created_at <= ts).where(or_(issue_activity.c.created_at < ts,
                     and_(issue_activity.c.created_at == ts, issue_activity.c.id < event_id)))
             rows = _conn_rows(conn, stmt.order_by(
                 issue_activity.c.created_at.desc(), issue_activity.c.id.desc()).limit(limit))
@@ -1299,6 +1406,84 @@ class Store:
             ).where(and_(issue_label_link.c.issue_id == issue_id,
                          issue_label.c.organization_id == org_id))
             return [self.ser_label(r) for r in _conn_rows(conn, stmt)]
+
+    # ------------------------------------------------------------ batch loaders
+    # One query per list page instead of one per row (GraphQL resolvers prime them).
+    def issue_labels_for_many(self, org_id: str, issue_ids: list[str]) -> dict[str, list[dict]]:
+        out: dict[str, list[dict]] = {i: [] for i in issue_ids}
+        with self.engine.connect() as conn:
+            for start in range(0, len(issue_ids), 500):
+                chunk = issue_ids[start:start + 500]
+                rows = conn.execute(select(issue_label_link.c.issue_id, issue_label).select_from(
+                    issue_label.join(issue_label_link, issue_label_link.c.label_id == issue_label.c.id)
+                ).where(and_(issue_label_link.c.issue_id.in_(chunk),
+                             issue_label.c.organization_id == org_id))).mappings().all()
+                for r in rows:
+                    row = dict(r)
+                    out[row.pop("issue_id")].append(self.ser_label(row))
+        return out
+
+    def issue_subscribers_for_many(self, org_id: str, issue_ids: list[str]) -> dict[str, list[dict]]:
+        out: dict[str, list[dict]] = {i: [] for i in issue_ids}
+        with self.engine.connect() as conn:
+            for start in range(0, len(issue_ids), 500):
+                chunk = issue_ids[start:start + 500]
+                rows = conn.execute(select(issue_subscriber.c.issue_id.label("_issue_id"), user).select_from(
+                    user.join(issue_subscriber, issue_subscriber.c.user_id == user.c.id)
+                ).where(and_(issue_subscriber.c.issue_id.in_(chunk),
+                             user.c.organization_id == org_id))).mappings().all()
+                for r in rows:
+                    row = dict(r)
+                    out[row.pop("_issue_id")].append(self.ser_user(row))
+        return out
+
+    def users_by_ids(self, org_id: str, user_ids: list[str]) -> dict[str, dict]:
+        out: dict[str, dict] = {}
+        with self.engine.connect() as conn:
+            for start in range(0, len(user_ids), 500):
+                chunk = user_ids[start:start + 500]
+                for row in _conn_rows(conn, select(user).where(and_(
+                        user.c.organization_id == org_id, user.c.id.in_(chunk)))):
+                    out[row["id"]] = row
+        return out
+
+    def issues_by_ids(self, org_id: str, issue_ids: list[str], viewer_id: str | None = None) -> dict[str, dict]:
+        out: dict[str, dict] = {}
+        with self.engine.connect() as conn:
+            for start in range(0, len(issue_ids), 500):
+                chunk = issue_ids[start:start + 500]
+                stmt = select(issue).where(and_(issue.c.organization_id == org_id, issue.c.id.in_(chunk)))
+                stmt = _scope_teams(conn, stmt, org_id, viewer_id, issue.c.team_id)
+                for row in _conn_rows(conn, stmt):
+                    out[row["id"]] = self.ser_issue(row)
+        return out
+
+    def projects_by_ids(self, org_id: str, project_ids: list[str]) -> dict[str, dict]:
+        out: dict[str, dict] = {}
+        with self.engine.connect() as conn:
+            for start in range(0, len(project_ids), 500):
+                chunk = project_ids[start:start + 500]
+                for row in _conn_rows(conn, select(project).where(and_(
+                        project.c.organization_id == org_id, project.c.id.in_(chunk),
+                        project.c.archived_at.is_(None)))):
+                    out[row["id"]] = self.ser_project(row)
+        return out
+
+    def project_teams_many(self, org_id: str, project_ids: list[str],
+                           viewer_id: str | None = None) -> dict[str, list[dict]]:
+        out: dict[str, list[dict]] = {p: [] for p in project_ids}
+        with self.engine.connect() as conn:
+            for start in range(0, len(project_ids), 500):
+                chunk = project_ids[start:start + 500]
+                stmt = select(project_team.c.project_id.label("_project_id"), team).select_from(
+                    team.join(project_team, project_team.c.team_id == team.c.id)
+                ).where(and_(project_team.c.project_id.in_(chunk), team.c.organization_id == org_id,
+                             team.c.archived_at.is_(None)))
+                stmt = _scope_teams(conn, stmt, org_id, viewer_id, team.c.id)
+                for r in conn.execute(stmt).mappings().all():
+                    row = dict(r)
+                    out[row.pop("_project_id")].append(self.ser_team(row))
+        return out
 
     def issue_subscribers_for(self, org_id: str, issue_id: str, limit: int | None = None) -> list[dict]:
         with self.engine.connect() as conn:
@@ -1334,7 +1519,7 @@ class Store:
                 project.c.organization_id == org_id, project.c.archived_at.is_(None)))
             stmt = _apply_project_filter(stmt, flt, conn, org_id)
             if after:
-                stmt = stmt.where((project.c.created_at > after[0]) |
+                stmt = stmt.where(project.c.created_at >= after[0]).where((project.c.created_at > after[0]) |
                                   ((project.c.created_at == after[0]) & (project.c.id > after[1])))
             stmt = stmt.order_by(project.c.created_at, project.c.id)
             if limit is not None:
@@ -1358,7 +1543,7 @@ class Store:
         if status:
             stmt = stmt.where(initiative.c.status == status)
         if after:
-            stmt = stmt.where((initiative.c.created_at < after[0]) | ((initiative.c.created_at == after[0]) & (initiative.c.id < after[1])))
+            stmt = stmt.where(initiative.c.created_at <= after[0]).where((initiative.c.created_at < after[0]) | ((initiative.c.created_at == after[0]) & (initiative.c.id < after[1])))
         with self.engine.connect() as conn:
             rows = _conn_rows(conn, stmt.order_by(initiative.c.created_at.desc(), initiative.c.id.desc()).limit(limit))
             return [self.ser_initiative(conn, row) for row in rows]
@@ -1391,7 +1576,7 @@ class Store:
             stmt = stmt.where(project_update.c.project_id == project_id)
         if after:
             created_at, update_id = after
-            stmt = stmt.where(or_(project_update.c.created_at < created_at,
+            stmt = stmt.where(project_update.c.created_at <= created_at).where(or_(project_update.c.created_at < created_at,
                                   and_(project_update.c.created_at == created_at,
                                        project_update.c.id < update_id)))
         stmt = stmt.order_by(project_update.c.created_at.desc(), project_update.c.id.desc()).limit(limit)
@@ -1451,7 +1636,7 @@ class Store:
             stmt = stmt.order_by(col.desc(), issue.c.id.desc())
             if after:
                 from sqlalchemy import or_
-                stmt = stmt.where(or_(col < after[0], and_(col == after[0], issue.c.id < after[1])))
+                stmt = stmt.where(col <= after[0]).where(or_(col < after[0], and_(col == after[0], issue.c.id < after[1])))
             if limit is not None:
                 stmt = stmt.limit(limit)
             return [self.ser_issue(r) for r in _conn_rows(conn, stmt)]

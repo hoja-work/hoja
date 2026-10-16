@@ -31,7 +31,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 30
+CURRENT_SCHEMA_REVISION = 31
 
 
 def now_iso() -> str:
@@ -468,6 +468,8 @@ change_event = Table(
     Column("action", String, nullable=False),
     Column("team_id", String),
     Column("created_at", String, nullable=False),
+    # Set for per-user events (notifications): only this user is told about them.
+    Column("recipient_id", String),
 )
 
 issue_activity = Table(
@@ -941,6 +943,112 @@ $fn$;""")
             raise RuntimeError(f"Realtime capture is not implemented for {dialect}")
 
 
+CHANGE_NOTIFY_CHANNEL = "cliniar_change"
+_PG_CHANGE_TS = "to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"+00:00\"')"
+
+
+def _pg_publish_body(org: str, entity: str, entity_id: str, action: str, team: str,
+                     recipient: str = "NULL") -> str:
+    """PL/pgSQL that records one change event and notifies listeners, commit-ordered per org.
+
+    It runs from a DEFERRED constraint trigger, i.e. at COMMIT after every
+    statement of the transaction, and takes a per-org transaction advisory lock
+    before allocating the seq. Concurrent writers of one org therefore get seqs in
+    commit order, so a reader holding "everything up to seq N" never misses a
+    lower seq that commits later. The lock is held only while committing, after
+    all row locks were taken, so it cannot deadlock with them.
+    """
+    return f"""
+  v_org := {org};
+  -- Evaluated at commit: the org (or a link's issue) may be gone by then.
+  IF v_org IS NULL OR NOT EXISTS (SELECT 1 FROM organization WHERE id = v_org) THEN RETURN NULL; END IF;
+  PERFORM pg_advisory_xact_lock(hashtext('cliniar.change:' || v_org));
+  INSERT INTO change_event (organization_id, entity, entity_id, action, team_id, created_at, recipient_id)
+  VALUES (v_org, {entity}, {entity_id}, {action}, {team}, {_PG_CHANGE_TS}, {recipient})
+  RETURNING seq INTO v_seq;
+  PERFORM pg_notify('{CHANGE_NOTIFY_CHANNEL}',
+                    json_build_array(v_seq, v_org, {entity}, {entity_id}, {action}, {team}, {recipient})::text);"""
+
+
+# Updates that are not changes clients care about (issue number allocation).
+_PG_SKIP = {"team": "  IF TG_OP = 'UPDATE' AND OLD.issue_counter IS DISTINCT FROM NEW.issue_counter "
+                    "THEN RETURN NULL; END IF;"}
+# Per-user entities: the event carries the recipient and only that user receives it.
+_RECIPIENT_CAPTURE = {"inbox_notification": "{row}.recipient_id"}
+
+
+def _apply_realtime_v2_capture(conn):
+    """Recipient-scoped notification events; on PostgreSQL also deferred,
+    commit-ordered capture with LISTEN/NOTIFY wakeups."""
+    if "recipient_id" not in {c["name"] for c in inspect(conn).get_columns("change_event")}:
+        conn.exec_driver_sql("ALTER TABLE change_event ADD COLUMN recipient_id VARCHAR")
+    if conn.dialect.name == "sqlite":
+        # SQLite serializes writers, so its seqs are already commit-ordered; only
+        # notification events change, to carry their recipient.
+        for op, label in (("insert", "create"), ("update", "update"), ("delete", "delete")):
+            row = "OLD" if op == "delete" else "NEW"
+            conn.exec_driver_sql(f"DROP TRIGGER IF EXISTS trg_chg_inbox_notification_{label}")
+            conn.exec_driver_sql(
+                f"CREATE TRIGGER trg_chg_inbox_notification_{label} AFTER {op.upper()} ON inbox_notification "
+                "FOR EACH ROW BEGIN INSERT INTO change_event "
+                "(organization_id, entity, entity_id, action, team_id, created_at, recipient_id) "
+                f"VALUES ({row}.organization_id, 'notification', CAST({row}.id AS TEXT), '{label}', NULL, "
+                f"strftime('%Y-%m-%dT%H:%M:%fZ','now'), {row}.recipient_id); END;")
+        # Allocating an issue number bumps team.issue_counter; that is not a team
+        # change, and publishing it made every client re-bootstrap on issue create.
+        conn.exec_driver_sql("DROP TRIGGER IF EXISTS trg_chg_team_update")
+        conn.exec_driver_sql(
+            "CREATE TRIGGER trg_chg_team_update AFTER UPDATE ON team FOR EACH ROW "
+            "WHEN OLD.issue_counter IS NEW.issue_counter BEGIN INSERT INTO change_event "
+            "(organization_id, entity, entity_id, action, team_id, created_at) "
+            "VALUES (NEW.organization_id, 'team', CAST(NEW.id AS TEXT), 'update', NEW.id, "
+            "strftime('%Y-%m-%dT%H:%M:%fZ','now')); END;")
+        return
+    if conn.dialect.name != "postgresql":
+        raise RuntimeError(f"Realtime capture is not implemented for {conn.dialect.name}")
+    for table_name, entity, pk, team_expr, org_expr in _CHANGE_CAPTURE:
+        team_new = team_expr.format(row="NEW") if team_expr else "NULL"
+        team_old = team_expr.format(row="OLD") if team_expr else "NULL"
+        rcpt = _RECIPIENT_CAPTURE.get(table_name)
+        rcpt_new = rcpt.format(row="NEW") if rcpt else "NULL"
+        rcpt_old = rcpt.format(row="OLD") if rcpt else "NULL"
+        conn.exec_driver_sql(f"""CREATE OR REPLACE FUNCTION chg_{table_name}() RETURNS trigger LANGUAGE plpgsql AS $fn$
+DECLARE v_org TEXT; v_seq BIGINT;
+BEGIN
+{_PG_SKIP.get(table_name, "")}
+  IF TG_OP = 'DELETE' THEN
+{_pg_publish_body(org_expr.format(row="OLD"), f"'{entity}'", f"CAST(OLD.{pk} AS TEXT)", "'delete'",
+                  team_old, rcpt_old)}
+  ELSE
+{_pg_publish_body(org_expr.format(row="NEW"), f"'{entity}'", f"CAST(NEW.{pk} AS TEXT)",
+                  "CASE WHEN TG_OP = 'INSERT' THEN 'create' ELSE 'update' END", team_new, rcpt_new)}
+  END IF;
+  RETURN NULL;
+END;
+$fn$;""")
+        _pg_deferred_trigger(conn, table_name)
+    for table_name in _LINK_CAPTURE:
+        # A link publishes as an update of its issue, read at commit time; a link
+        # removed together with its issue emits nothing (the issue delete does).
+        conn.exec_driver_sql(f"""CREATE OR REPLACE FUNCTION chg_{table_name}() RETURNS trigger LANGUAGE plpgsql AS $fn$
+DECLARE v_org TEXT; v_seq BIGINT; v_issue_id TEXT; v_team TEXT;
+BEGIN
+  v_issue_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.issue_id ELSE NEW.issue_id END;
+  SELECT i.organization_id, i.team_id INTO v_org, v_team FROM issue i WHERE i.id = v_issue_id;
+{_pg_publish_body("v_org", "'issue'", "v_issue_id", "'update'", "v_team")}
+  RETURN NULL;
+END;
+$fn$;""")
+        _pg_deferred_trigger(conn, table_name)
+
+
+def _pg_deferred_trigger(conn, table_name: str) -> None:
+    conn.exec_driver_sql(f'DROP TRIGGER IF EXISTS trg_chg_{table_name} ON "{table_name}";')
+    conn.exec_driver_sql(
+        f'CREATE CONSTRAINT TRIGGER trg_chg_{table_name} AFTER INSERT OR UPDATE OR DELETE ON "{table_name}" '
+        f"DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION chg_{table_name}();")
+
+
 def _apply_change_event_org_seq_index(conn):
     conn.exec_driver_sql(
         "CREATE INDEX IF NOT EXISTS ix_change_event_org_seq "
@@ -1082,6 +1190,7 @@ _MIGRATIONS = {
     28: _apply_change_event_org_seq_index,
     29: _apply_issue_scale_indexes,
     30: _apply_issue_link_capture,
+    31: _apply_realtime_v2_capture,
 }
 
 

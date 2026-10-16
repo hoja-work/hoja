@@ -154,6 +154,8 @@ def test_postgres_issue_link_changes_publish_issue_updates() -> None:
             before = conn.execute(select(func.max(change_event.c.seq))).scalar()
             conn.execute(issue_subscriber.insert().values(issue_id=issue_id, user_id=seeded["user_id"]))
             conn.execute(delete(issue_subscriber).where(issue_subscriber.c.issue_id == issue_id))
+        # Change events are captured at commit (commit-ordered per org).
+        with engine.connect() as conn:
             events = conn.execute(select(change_event.c.entity, change_event.c.entity_id, change_event.c.action)
                                   .where(change_event.c.seq > before)).all()
         assert [tuple(e) for e in events] == [("issue", issue_id, "update")] * 2
@@ -161,5 +163,106 @@ def test_postgres_issue_link_changes_publish_issue_updates() -> None:
         try:
             if org_ids:
                 _cleanup(engine, org_ids)
+        finally:
+            engine.dispose()
+
+
+def test_postgres_notify_wakes_another_node_without_polling(monkeypatch) -> None:
+    """A write through one engine reaches a second node's feed via LISTEN/NOTIFY, with rows."""
+    import asyncio
+    import time
+
+    from cliniar_server import realtime
+
+    assert POSTGRES_URL is not None
+    monkeypatch.setattr(realtime, "PG_SAFETY_POLL_INTERVAL", 3600)  # prove it is not the poll
+    writer_engine = make_engine(POSTGRES_URL)
+    node_engine = make_engine(POSTGRES_URL)
+    migrate(writer_engine)
+    suffix = uuid.uuid4().hex[:12]
+    seeded = seed_tenant(writer_engine, org_name="Notify", org_url_key=f"notify-{suffix}",
+                         user_email=f"notify-{suffix}@example.test", demo_issues=False)
+
+    async def scenario():
+        hub = realtime.RealtimeHub(Store(node_engine))
+        await hub.ensure_started()
+        try:
+            for _ in range(100):
+                if hub.listening:
+                    break
+                await asyncio.sleep(0.05)
+            assert hub.listening
+            await asyncio.sleep(0.1)  # let the post-LISTEN catch-up poll finish
+            feed = await hub.feed(seeded["org_id"])
+            feed.conns.add(realtime.Conn(uid=seeded["user_id"], org=seeded["org_id"], cred=None,
+                                         websocket=None))
+            head = feed.head
+            t0 = time.perf_counter()
+            issue_id = await asyncio.to_thread(
+                Writer(writer_engine).issue_create, seeded["org_id"], seeded["user_id"],
+                {"teamId": "ENG", "title": "Cross-node"})
+            while feed.head == head and time.perf_counter() - t0 < 5:
+                await asyncio.wait_for(asyncio.shield(feed.waiter), timeout=5)
+            elapsed = time.perf_counter() - t0
+            assert feed.head > head, "no notification arrived"
+            assert elapsed < 1.0
+            batch = feed.ring[-1]
+            assert issue_id in batch.issue_ids and batch.rows[issue_id][2] == "Cross-node"
+            assert hub.stats["notifies"] > 0
+        finally:
+            await hub.stop()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        try:
+            _cleanup(writer_engine, [seeded["org_id"]])
+        finally:
+            writer_engine.dispose()
+            node_engine.dispose()
+
+
+def test_postgres_seqs_are_commit_ordered_per_org() -> None:
+    """A transaction that wrote first but commits last still gets the higher seq."""
+    import threading
+
+    from sqlalchemy import text
+
+    assert POSTGRES_URL is not None
+    engine = make_engine(POSTGRES_URL)
+    migrate(engine)
+    suffix = uuid.uuid4().hex[:12]
+    seeded = seed_tenant(engine, org_name="Order", org_url_key=f"order-{suffix}",
+                         user_email=f"order-{suffix}@example.test", demo_issues=True)
+    try:
+        with engine.connect() as conn:
+            ids = list(conn.execute(select(issue.c.id).where(
+                issue.c.organization_id == seeded["org_id"]).limit(2)).scalars())
+        slow_written = threading.Event()
+        release = threading.Event()
+
+        def slow():
+            with engine.begin() as conn:
+                conn.execute(text("UPDATE issue SET title = 'slow' WHERE id = :i"), {"i": ids[0]})
+                slow_written.set()
+                release.wait(5)
+
+        thread = threading.Thread(target=slow)
+        thread.start()
+        slow_written.wait(5)
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE issue SET title = 'fast' WHERE id = :i"), {"i": ids[1]})
+        release.set()
+        thread.join()
+        with engine.connect() as conn:
+            rows = conn.execute(select(change_event.c.entity_id, change_event.c.seq)
+                                .where(change_event.c.organization_id == seeded["org_id"],
+                                       change_event.c.entity_id.in_(ids))
+                                .order_by(change_event.c.seq.desc()).limit(2)).all()
+        # Commit order was fast, then slow, so slow holds the newest seq.
+        assert [r.entity_id for r in rows] == [ids[0], ids[1]]
+    finally:
+        try:
+            _cleanup(engine, [seeded["org_id"]])
         finally:
             engine.dispose()
