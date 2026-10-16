@@ -16,6 +16,12 @@ services:
     build: .
     environment:
       CLINIAR_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-cliniar}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-cliniar}
+      # Meetings (optional): Cloudflare Realtime SFU app + TURN key. Unset = meetings work, media returns 503.
+      CLINIAR_CF_REALTIME_APP_ID: ${CLINIAR_CF_REALTIME_APP_ID:-}
+      CLINIAR_CF_REALTIME_APP_SECRET: ${CLINIAR_CF_REALTIME_APP_SECRET:-}
+      CLINIAR_CF_TURN_KEY_ID: ${CLINIAR_CF_TURN_KEY_ID:-}
+      CLINIAR_CF_TURN_KEY_API_TOKEN: ${CLINIAR_CF_TURN_KEY_API_TOKEN:-}
+      CLINIAR_APP_URL: ${CLINIAR_APP_URL:-}
     ports:
       - "${CLINIAR_PORT:-8787}:8787"
     depends_on:
