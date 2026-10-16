@@ -17,6 +17,7 @@ import logging
 import os
 import secrets
 import time
+from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -123,8 +124,11 @@ _MAX_QUERY_VISITS = 10_000
 _WS_REVALIDATE_SECONDS = 5
 _WS_BROADCAST_INTERVAL = 0.25
 _WS_MAX_REPLAY = 500
+_WS_VISIBILITY_TTL = 30.0
 _org_wake: dict = {}
 _broadcaster_seq = {"last": 0}
+_org_ring: dict = {}
+_visibility_cache: dict = {}
 _LOGIN_FAILURE_LIMIT = 10
 _LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60
 _CSP_HTML = "frame-ancestors 'none'; object-src 'none'; base-uri 'self'"
@@ -335,15 +339,20 @@ def create_app(
     gql_slots = asyncio.Semaphore(8)
 
     async def _change_broadcaster():
-        """Single global poller: wake per-org waiters instead of per-client DB polling."""
+        """Single global poller feeding an in-memory ring; wakes per-org waiters."""
         while True:
             try:
                 events = await asyncio.to_thread(
-                    store.change_org_ids_after, _broadcaster_seq["last"])
+                    store.change_events_after_global, _broadcaster_seq["last"])
                 touched = set()
                 for row in events:
                     _broadcaster_seq["last"] = max(_broadcaster_seq["last"], row["seq"])
-                    touched.add(row["organization_id"])
+                    org_id = row["organization_id"]
+                    touched.add(org_id)
+                    ring = _org_ring.get(org_id)
+                    if ring is None:
+                        ring = _org_ring[org_id] = deque(maxlen=10000)
+                    ring.append(row)
                 for org_id in touched:
                     ev = _org_wake.get(org_id)
                     if ev is not None:
@@ -697,6 +706,23 @@ def create_app(
         last_seq = cursor
         last_check = time.monotonic()
         wake = _org_wake.setdefault(org, asyncio.Event())
+        ring = _org_ring.setdefault(org, deque(maxlen=10000))
+
+        def _visible(evs, vis):
+            if vis is None:
+                return evs
+            return [e for e in evs if e["teamId"] is None or e["teamId"] in vis]
+
+        async def _visibility():
+            key = (org, uid)
+            now = time.monotonic()
+            cached = _visibility_cache.get(key)
+            if cached and now - cached[0] < _WS_VISIBILITY_TTL:
+                return cached[1]
+            vis = await asyncio.to_thread(store.visible_team_ids, org, uid)
+            _visibility_cache[key] = (now, vis)
+            return vis
+
         try:
             # Deliver any backlog immediately on connect, then wait for wakes.
             events = await asyncio.to_thread(store.change_events_after, org, last_seq, viewer_id=uid)
@@ -715,13 +741,15 @@ def create_app(
                     if current_uid != uid or current_org != org:
                         await websocket.close(code=4401)
                         return
-                events = await asyncio.to_thread(store.change_events_after, org, last_seq, viewer_id=uid)
-                if events:
-                    try:
-                        await websocket.send_text(json.dumps(events))
-                    except RuntimeError:
-                        return
-                    last_seq = events[-1]["seq"]
+                pending = [e for e in ring if e["seq"] > last_seq]
+                if pending:
+                    out = _visible(pending, await _visibility())
+                    if out:
+                        try:
+                            await websocket.send_text(json.dumps(out))
+                        except RuntimeError:
+                            return
+                    last_seq = pending[-1]["seq"]
         except WebSocketDisconnect:
             return
 
@@ -1401,6 +1429,9 @@ def create_app(
         )
         mcp_asgi = runtime_app
         nonlocal broadcaster_task
+        from concurrent.futures import ThreadPoolExecutor
+        asyncio.get_running_loop().set_default_executor(
+            ThreadPoolExecutor(max_workers=32, thread_name_prefix="cliniar"))
         broadcaster_task = asyncio.create_task(_change_broadcaster())
         async with runtime_app.router.lifespan_context(runtime_app):
             if agent_dbos_url := os.environ.get("CLINIAR_AGENT_DBOS_URL"):

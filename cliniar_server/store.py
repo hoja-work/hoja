@@ -213,6 +213,35 @@ class Store:
                 .where(change_event.c.organization_id == org_id)
             ).scalar() or 0)
 
+    def change_events_after_global(self, after_seq: int, limit: int = 5000) -> list[dict]:
+        """All orgs' raw change events after seq (broadcaster feed)."""
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                select(change_event)
+                .where(change_event.c.seq > after_seq)
+                .order_by(change_event.c.seq)
+                .limit(limit)
+            ).mappings().all()
+        return [
+            {"seq": r["seq"], "organization_id": r["organization_id"], "entity": r["entity"],
+             "entityId": r["entity_id"], "action": r["action"], "teamId": r["team_id"]}
+            for r in rows
+        ]
+
+    def visible_team_ids(self, org_id: str, viewer_id: str) -> frozenset | None:
+        """Viewer-visible team ids, or None when unrestricted (admin)."""
+        with self.engine.connect() as conn:
+            is_admin = conn.execute(select(user.c.admin).where(and_(
+                user.c.id == viewer_id, user.c.organization_id == org_id))).scalar()
+            if is_admin:
+                return None
+            vt = team.alias("visible_team")
+            member_teams = select(team_member.c.team_id).where(team_member.c.user_id == viewer_id)
+            rows = conn.execute(select(vt.c.id).where(and_(
+                vt.c.organization_id == org_id,
+                or_(vt.c.private.is_not(True), vt.c.id.in_(member_teams))))).all()
+            return frozenset(r[0] for r in rows)
+
     def resolve_token(self, token: str) -> dict | None:
         """token → {user_id, organization_id} or None."""
         th = token_hash(token)
