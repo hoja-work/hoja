@@ -1,7 +1,8 @@
-import React, {useEffect, useMemo, useRef, useState} from 'react';
+import React, {useEffect, useMemo, useReducer, useRef, useState} from 'react';
 import {Bell, Check, ChevronDown, ChevronRight, Copy, ExternalLink, Link2, ListFilter, Plus, Search, Settings2, SlidersHorizontal, Trash2, X} from 'lucide-react';
 import {gql, relTime, stateKey} from '../main';
 import type {Cycle, Issue, IssueActivityEvent, IssueLabel, IssueState, Project, Team, Viewer} from '../main';
+import {addLocalIssue, getSync, guessNextIdentifier, isLocalIssueId, localIssueId, onEntityChange, useEntityVersion, useIssueSelect, useSyncMeta} from '../sync';
 import {Avatar, CycleChip, CycleGlyph, DueChip, FavStar, IconBtn, LabelChip, LinMenu, LinearStatusIcon, PriorityIcon, ProjectChip, Ring, SubIssuePill, Tip, cx, fmtDate, fmtFullDate, useDismiss, useFavorite} from './shared';
 
 /* Linear 1:1 Issues list + board + detail. */
@@ -826,6 +827,130 @@ const detailFields = `{ id identifier title description createdAt updatedAt dueD
   attachments{nodes{id url title subtitle createdAt}}
   activity(first:50){nodes{id eventType createdAt actor{name} changes}}
   comments{nodes{id body createdAt user{id name}}} }`;
+const commentFields = `{id body createdAt user{id name}}`;
+
+/* Detail cache. The sync store already holds every synced issue's properties; this keeps
+ * what the snapshot does not carry (description, comments, activity, attachments,
+ * sub-issues) in memory, so a revisit or an open after a hover prefetch renders at once.
+ * Entries are marked stale by realtime events and revalidated when next shown. */
+export type IssueDetailEntry = {detail: LinIssue; subs: LinIssue[]};
+const DETAIL_CACHE_MAX = 60;
+const detailCache = new Map<string, IssueDetailEntry>();
+const detailInflight = new Map<string, Promise<IssueDetailEntry>>();
+const staleDetails = new Set<string>();
+
+function rememberDetail(entry: IssueDetailEntry) {
+  for (const k of [entry.detail.id, entry.detail.identifier]) { detailCache.delete(k); detailCache.set(k, entry); }
+  while (detailCache.size > DETAIL_CACHE_MAX * 2) detailCache.delete(detailCache.keys().next().value as string);
+}
+export function cachedIssueDetail(idOrIdentifier?: string | null): IssueDetailEntry | undefined {
+  return idOrIdentifier ? detailCache.get(idOrIdentifier) : undefined;
+}
+function updateCachedDetail(id: string, fn: (entry: IssueDetailEntry) => IssueDetailEntry) {
+  const cur = detailCache.get(id);
+  if (cur) rememberDetail(fn(cur));
+}
+const subsQuery = `issues(first:100,filter:$filter){nodes ${linIssueFields}}`;
+/** Fetch (deduplicated) and cache an issue's full detail. Pass the issue's id as knownId when you have it: one request instead of two. */
+export function fetchIssueDetail(idOrIdentifier: string, knownId?: string): Promise<IssueDetailEntry> {
+  const running = (knownId && detailInflight.get(knownId)) || detailInflight.get(idOrIdentifier);
+  if (running) return running;
+  if (knownId) staleDetails.delete(knownId);
+  const p = (async () => {
+    let detail: LinIssue | null;
+    let subs: LinIssue[];
+    if (knownId) {
+      const d = await gql(`query IssueDetail($id:String!,$filter:IssueFilter){issue(id:$id)${detailFields} ${subsQuery}}`,
+        {id: knownId, filter: {parent: {id: {eq: knownId}}}});
+      detail = d.issue;
+      subs = d.issues?.nodes || [];
+    } else {
+      const d = await gql(`query IssueDetail($id:String!){issue(id:$id)${detailFields}}`, {id: idOrIdentifier});
+      detail = d.issue;
+      if (!detail) throw new Error('Issue not found');
+      const s = await gql(`query IssueSubs($filter:IssueFilter){${subsQuery}}`, {filter: {parent: {id: {eq: detail.id}}}});
+      subs = s.issues.nodes;
+    }
+    if (!detail) throw new Error('Issue not found');
+    const entry = {detail, subs};
+    rememberDetail(entry);
+    return entry;
+  })();
+  const keys = knownId ? [knownId, idOrIdentifier] : [idOrIdentifier];
+  for (const k of keys) detailInflight.set(k, p);
+  const clear = () => { for (const k of keys) if (detailInflight.get(k) === p) detailInflight.delete(k); };
+  p.then(clear, clear);
+  return p;
+}
+async function fetchIssueComments(issueId: string) {
+  const d = await gql(`query IssueComments($id:String!){issue(id:$id){comments{nodes${commentFields}}}}`, {id: issueId});
+  if (d.issue) updateCachedDetail(issueId, e => ({...e, detail: {...e.detail, comments: d.issue.comments}}));
+}
+/** Warm the detail cache (no-op when cached, in flight, or a local placeholder). */
+export function prefetchIssueDetail(idOrIdentifier?: string | null, knownId?: string) {
+  if (!idOrIdentifier || isLocalIssueId(knownId || idOrIdentifier)) return;
+  const key = knownId || idOrIdentifier;
+  if ((detailCache.has(key) && !staleDetails.has(detailCache.get(key)!.detail.id)) || detailInflight.has(key)) return;
+  void fetchIssueDetail(idOrIdentifier, knownId).catch(() => undefined);
+}
+const intentTimers = new Map<string, number>();
+/** Spread onto an issue row/link: prefetches its detail after a short hover or on focus/touch (intent, not fly-over). */
+export function issueIntentProps(issue: {id: string; identifier?: string}, delay = 120) {
+  const cancel = () => { window.clearTimeout(intentTimers.get(issue.id)); intentTimers.delete(issue.id); };
+  const start = () => {
+    cancel();
+    intentTimers.set(issue.id, window.setTimeout(() => { intentTimers.delete(issue.id); prefetchIssueDetail(issue.identifier || issue.id, issue.id); }, delay));
+  };
+  return {onMouseEnter: start, onMouseLeave: cancel, onFocus: start, onTouchStart: () => prefetchIssueDetail(issue.identifier || issue.id, issue.id)};
+}
+// Comment/attachment events carry their own id, not the issue's, so a create may touch any cached issue.
+onEntityChange(['issue', 'comment', 'attachment'], events => {
+  const entries = [...new Set(detailCache.values())];
+  for (const e of events) {
+    if (e.entity === 'issue') {
+      for (const entry of entries) {
+        if (entry.detail.id === e.entityId || entry.subs.some(s => s.id === e.entityId)) staleDetails.add(entry.detail.id);
+      }
+      continue;
+    }
+    const owner = e.entity === 'comment' && e.action !== 'create'
+      ? entries.find(entry => entry.detail.comments?.nodes.some(c => c.id === e.entityId)) : undefined;
+    if (owner) staleDetails.add(owner.detail.id);
+    else if (e.action === 'create' || e.entity === 'attachment') for (const entry of entries) staleDetails.add(entry.detail.id);
+  }
+});
+
+/** The state a new issue most likely lands in when no status was picked (the server applies the team default). */
+export function guessDefaultState(team?: Team): Issue['state'] {
+  const states = team?.states.nodes || [];
+  return states.find(s => s.type === 'backlog') || states.find(s => s.type === 'unstarted') || states[0];
+}
+
+const PRIORITY_NAMES = ['No priority', 'Urgent', 'High', 'Medium', 'Low'];
+
+/* Store fields win over the fetched detail (they carry realtime deltas and optimistic overlays);
+ * the detail supplies what the snapshot lacks. A reference the store could not resolve
+ * (e.g. a project outside the synced page) falls back to the detail of the same version. */
+function mergeIssueView(base: LinIssue, live: Issue | undefined, users: Map<string, string>, layers: Partial<LinIssue>[]): LinIssue {
+  let out: LinIssue = base;
+  if (live) {
+    const sameVersion = !live.updatedAt || !base.updatedAt || base.updatedAt >= live.updatedAt;
+    const ref = <K extends 'project' | 'cycle' | 'assignee' | 'creator' | 'team'>(k: K) => (live[k] || (sameVersion ? base[k] : undefined)) as LinIssue[K];
+    out = {
+      ...base, id: live.id, identifier: live.identifier, title: live.title,
+      priority: live.priority, priorityLabel: live.priorityLabel, state: live.state || (sameVersion ? base.state : undefined),
+      team: ref('team'), project: ref('project'), cycle: ref('cycle'), assignee: ref('assignee'), creator: ref('creator'),
+      labels: live.labels, dueDate: live.dueDate, createdAt: base.createdAt || live.createdAt,
+      updatedAt: live.updatedAt && (!base.updatedAt || live.updatedAt > base.updatedAt) ? live.updatedAt : base.updatedAt,
+    };
+    if (Object.prototype.hasOwnProperty.call(live, 'description')) out.description = live.description;
+    if (live.subscribers) {
+      out.subscribers = {nodes: live.subscribers.nodes.map(s => base.subscribers?.nodes.find(b => b.id === s.id) || {id: s.id, name: users.get(s.id)})};
+    }
+  }
+  for (const l of layers) out = {...out, ...l};
+  return out;
+}
 
 function describeEvent(e: {eventType: string; actor?: {name?: string}; changes?: Record<string, unknown>}, states: IssueState[]): string {
   const actor = e.actor?.name || 'Someone';
@@ -839,28 +964,33 @@ function describeEvent(e: {eventType: string; actor?: {name?: string}; changes?:
   return `${actor} updated the issue`;
 }
 
-export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOpenIssue, loading, error, onArchive, onDelete, onDeleteComment, teams, projects, labels, cycles, onUpdate, onBack, backLabel, onRetry, onComment}: {
+type PendingComment = {id: string; body: string; createdAt: string; known: Set<string>};
+
+export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOpenIssue, loading, error, onArchive, onDelete, onDeleteComment, teams, projects, labels, cycles, onUpdate, onBack, backLabel, onRetry}: {
   workspaceName?: string; viewer: Viewer; issue: LinIssue | null; issueList: LinIssue[];
   onOpenIssue: (issue: LinIssue) => void; loading: boolean; error: string;
   onArchive: () => Promise<void>; onDelete: () => Promise<void>; onDeleteComment: (id: string) => Promise<void>;
   teams: Team[]; projects: Project[]; labels: IssueLabel[]; cycles: Cycle[];
   onUpdate: (input: Record<string, unknown>) => Promise<void>;
-  onBack: () => void; backLabel: string; onRetry?: () => void; onComment: (body: string) => Promise<void>;
+  onBack: () => void; backLabel: string; onRetry?: () => void;
+  /** Kept for callers; comments are created here so the pending comment can be swapped for the server's. */
+  onComment?: (body: string) => Promise<void>;
 }) {
-  const [detail, setDetail] = useState<LinIssue | null>(null);
+  const [, force] = useReducer((x: number) => x + 1, 0);
   const [loadError, setLoadError] = useState('');
-  const [subs, setSubs] = useState<LinIssue[]>([]);
-  const [subsDone, setSubsDone] = useState(0);
+  const [retryTick, setRetryTick] = useState(0);
   const [moreOpen, setMoreOpen] = useState(false);
-  const [title, setTitle] = useState('');
+  const [layers, setLayers] = useState<{patch: Partial<LinIssue>}[]>([]);
   const [desc, setDesc] = useState<string | null>(null);
   const [descEdit, setDescEdit] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [updateError, setUpdateError] = useState('');
   const [comment, setComment] = useState('');
-  const [commentBusy, setCommentBusy] = useState(false);
   const [commentError, setCommentError] = useState('');
-  const [subscribed, setSubscribed] = useState(false);
+  const [pendingComments, setPendingComments] = useState<PendingComment[]>([]);
+  const [hiddenComments, setHiddenComments] = useState<string[]>([]);
+  const [editedComments, setEditedComments] = useState<Record<string, string>>({});
+  const [editing, setEditing] = useState<{id: string; body: string} | null>(null);
+  const [pendingSubs, setPendingSubs] = useState<LinIssue[]>([]);
   const [labelOpen, setLabelOpen] = useState(false);
   const [parentSearch, setParentSearch] = useState(false);
   const [parentQuery, setParentQuery] = useState('');
@@ -872,34 +1002,58 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
   const [newSubTitle, setNewSubTitle] = useState('');
   const [addingSub, setAddingSub] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const titleFocused = useRef(false);
   const moreRef = useDismiss(() => setMoreOpen(false));
   const labelRef = useDismiss(() => setLabelOpen(false));
   const attachRef = useDismiss(() => setAttachMenu(false));
   const parentRef = useDismiss(() => setParentSearch(false));
 
   const issueId = issue?.id;
+  const issueIdent = issue?.identifier;
+  const live = useIssueSelect(issueId);
+  const meta = useSyncMeta();
+  const users = useMemo(() => new Map((meta?.users || []).map(([id, name]) => [id, name || ''])), [meta]);
+  const entry = cachedIssueDetail(issueId) || cachedIssueDetail(issueIdent);
+  const base: LinIssue | null = entry?.detail || issue || (live as LinIssue | undefined) || null;
+  const detail: LinIssue | null = base ? mergeIssueView(base, live, users, layers.map(l => l.patch)) : null;
+  const detailReady = Boolean(entry);
+  const [title, setTitle] = useState(detail?.title || '');
+  const issueVersion = useEntityVersion(['issue'], [issueId]);
+
+  // Render from the store/cache immediately; fetch only what is missing or stale.
   useEffect(() => {
-    if (!issueId) return;
+    if (!issueId || isLocalIssueId(issueId)) return;
+    const cached = cachedIssueDetail(issueId);
+    if (cached && !staleDetails.has(issueId)) return;
     let live = true;
     setLoadError('');
-    const detailTimeout = setTimeout(() => {
+    const detailTimeout = cached ? undefined : setTimeout(() => {
       if (live) setLoadError('Loading the issue timed out. Check your connection and retry.');
     }, 20000);
-    gql(`query($id:String!){issue(id:$id)${detailFields}}`, {id: issue?.identifier || issueId})
-      .then(d => {
-        if (!live) return;
-        if (!d.issue) throw new Error('Issue not found');
-        setDetail(d.issue);
-        setTitle(d.issue.title);
-        setSubscribed(!!(d.issue.subscribers?.nodes || []).some((s: {id: string}) => s.id === viewer.id));
-        setLoadError('');
-        return gql(`query($filter:IssueFilter){issues(first:100,filter:$filter){nodes ${linIssueFields}}}`, {filter: {parent: {id: {eq: d.issue.id}}}});
-      })
-      .then(d => { if (live && d) { setSubs(d.issues.nodes); setSubsDone(d.issues.nodes.filter((s: LinIssue) => s.state?.type === 'completed').length); } })
+    fetchIssueDetail(issueIdent || issueId, issueId)
+      .then(() => { if (live) { setLoadError(''); force(); } })
       .catch(e => { if (live) setLoadError((e as Error).message); })
-      .finally(() => { if (live) clearTimeout(detailTimeout); });
+      .finally(() => clearTimeout(detailTimeout));
     return () => { live = false; clearTimeout(detailTimeout); };
+  }, [issueId, issueVersion, retryTick]);
+
+  // New/edited/deleted comments from anyone. Create events cannot be scoped to this issue, so
+  // they refresh only this issue's comments (one small query), not the whole detail.
+  useEffect(() => {
+    if (!issueId || isLocalIssueId(issueId)) return;
+    let timer: number | undefined;
+    let live = true;
+    const off = onEntityChange(['comment'], events => {
+      const known = new Set((cachedIssueDetail(issueId)?.detail.comments?.nodes || []).map(c => c.id));
+      if (!events.some(e => (e.action === 'create' && !known.has(e.entityId)) || (e.action !== 'create' && known.has(e.entityId)))) return;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => { void fetchIssueComments(issueId).then(() => { if (live) force(); }).catch(() => undefined); }, 80);
+    });
+    return () => { live = false; window.clearTimeout(timer); off(); };
   }, [issueId]);
+
+  const liveTitle = detail?.title;
+  useEffect(() => { if (!titleFocused.current && liveTitle !== undefined) setTitle(liveTitle); }, [liveTitle]);
 
   useEffect(() => {
     if (!parentSearch || parentQuery.trim().length < 2) { setParentResults([]); return; }
@@ -911,8 +1065,8 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
     return () => clearTimeout(t);
   }, [parentQuery, parentSearch]);
 
-  if (loading) return <section className="lin-page"><p className="lin-loading" role="status">Loading issue…</p></section>;
-  if (error || loadError || !detail) {
+  if (!detail) {
+    if (loading || (!error && !loadError)) return <section className="lin-page"><p className="lin-loading" role="status">Loading issue…</p></section>;
     return <section className="lin-page"><div className="lin-scroll"><p className="lin-error" role="alert">{error || loadError || 'Issue not found'}</p>
       <div style={{display: 'flex', gap: 8, margin: '0 24px'}}>
         {onRetry && <button type="button" className="lin-btn primary" onClick={onRetry}>Retry</button>}
@@ -925,14 +1079,49 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
   const members = team?.members?.nodes || [];
   const teamCycles = cycles.filter(c => c.team?.id === detail.team?.id);
   const labelIds = detail.labels?.nodes.map(l => l.id) || [];
-  const change = async (input: Record<string, unknown>) => {
-    setSaving(true); setUpdateError('');
+
+  /* Local view of an IssueUpdateInput, applied until the server answers (covers fields the
+   * store does not track, like estimate and parent, and issues outside the snapshot). */
+  const localPatch = (input: Record<string, unknown>): Partial<LinIssue> => {
+    const out: Partial<LinIssue> = {};
+    const has = (k: string) => Object.prototype.hasOwnProperty.call(input, k);
+    if (has('title')) out.title = input.title as string;
+    if (has('description')) out.description = (input.description as string) || undefined;
+    if (has('priority')) { out.priority = Number(input.priority); out.priorityLabel = PRIORITY_NAMES[out.priority]; }
+    if (has('estimate')) out.estimate = input.estimate as number | null;
+    if (has('dueDate')) out.dueDate = (input.dueDate as string) || undefined;
+    if (has('stateId')) out.state = states.find(s => s.id === input.stateId);
+    if (has('assigneeId')) { const m = members.find(x => x.id === input.assigneeId); out.assignee = m ? {id: m.id, name: m.name || m.email || ''} : undefined; }
+    if (has('cycleId')) { const c = teamCycles.find(x => x.id === input.cycleId); out.cycle = c ? {id: c.id, name: c.name, number: c.number} : undefined; }
+    if (has('projectId')) { const p = projects.find(x => x.id === input.projectId); out.project = p ? {id: p.id, name: p.name} : undefined; }
+    if (has('labelIds')) {
+      const ids = (input.labelIds as string[]) || [];
+      out.labels = {nodes: ids.map(id => labels.find(l => l.id === id) || detail.labels?.nodes.find(l => l.id === id)).filter(Boolean) as IssueLabel[]};
+    }
+    if (has('parentId')) {
+      const r = input.parentId ? parentResults.find(x => x.id === input.parentId) : undefined;
+      out.parent = r ? {id: r.id, identifier: r.identifier, title: r.title} : input.parentId ? detail.parent : null;
+    }
+    return out;
+  };
+  const withLayer = async (patch: Partial<LinIssue>, run: () => Promise<void>): Promise<boolean> => {
+    const layer = {patch};
+    setLayers(ls => [...ls, layer]);
     try {
-      await onUpdate(input);
-      const d = await gql(`query($id:String!){issue(id:$id)${detailFields}}`, {id: detail.identifier});
-      setDetail(d.issue);
-      setTitle(d.issue.title);
-    } catch (e) { setUpdateError((e as Error).message); } finally { setSaving(false); }
+      await run();
+      updateCachedDetail(detail.id, e => ({...e, detail: {...e.detail, ...patch}}));
+      force();
+      return true;
+    } catch (e) {
+      setUpdateError((e as Error).message);
+      return false;
+    } finally {
+      setLayers(ls => ls.filter(l => l !== layer));
+    }
+  };
+  const change = (input: Record<string, unknown>): Promise<boolean> => {
+    setUpdateError('');
+    return withLayer(localPatch(input), () => onUpdate(input));
   };
   const copyText = async (text: string) => { try { await navigator.clipboard.writeText(text); } catch { /* ignore */ } };
   const branchName = detail.branchName || `${(detail.team?.key || 'hoja').toLowerCase()}-${detail.identifier.split('-')[1] || ''}`;
@@ -942,17 +1131,57 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
   const prev = idx > 0 ? issueList[idx - 1] : null;
   const next = idx >= 0 && idx < issueList.length - 1 ? issueList[idx + 1] : null;
 
+  const serverComments = (detail.comments?.nodes || [])
+    .filter(c => !hiddenComments.includes(c.id))
+    .map(c => (editedComments[c.id] !== undefined ? {...c, body: editedComments[c.id]} : c));
+  const shownPendingComments = pendingComments.filter(p => !serverComments.some(c => !p.known.has(c.id) && c.body === p.body && c.user?.id === viewer.id));
+
   const submitComment = async (e: React.FormEvent) => {
     e.preventDefault();
     const body = comment.trim();
-    if (!body || commentBusy) return;
-    setCommentBusy(true); setCommentError('');
+    if (!body) return;
+    const temp: PendingComment = {id: `local-comment-${Date.now()}-${pendingComments.length}`, body, createdAt: new Date().toISOString(),
+      known: new Set((detail.comments?.nodes || []).map(c => c.id))};
+    setPendingComments(p => [...p, temp]);
+    setComment(''); setCommentError('');
     try {
-      await onComment(body);
-      setComment('');
-      const d = await gql(`query($id:String!){issue(id:$id){comments{nodes{id body createdAt user{id name}}}}}`, {id: detail.identifier});
-      setDetail(cur => cur ? {...cur, comments: d.issue.comments} : cur);
-    } catch (e) { setCommentError((e as Error).message); } finally { setCommentBusy(false); }
+      const d = await gql(`mutation($input:CommentCreateInput!){commentCreate(input:$input){success comment${commentFields}}}`, {input: {issueId: detail.id, body}});
+      const created = d.commentCreate?.comment;
+      if (!d.commentCreate?.success || !created) throw new Error('Comment was rejected');
+      updateCachedDetail(detail.id, en => (en.detail.comments?.nodes.some(c => c.id === created.id) ? en
+        : {...en, detail: {...en.detail, comments: {nodes: [...(en.detail.comments?.nodes || []), created]}}}));
+      force();
+    } catch (err) {
+      setComment(cur => cur || body);
+      setCommentError((err as Error).message);
+    } finally {
+      setPendingComments(p => p.filter(x => x !== temp));
+    }
+  };
+  const deleteComment = async (id: string) => {
+    setHiddenComments(h => [...h, id]); setCommentError('');
+    try {
+      await onDeleteComment(id);
+      updateCachedDetail(detail.id, en => ({...en, detail: {...en.detail, comments: {nodes: (en.detail.comments?.nodes || []).filter(c => c.id !== id)}}}));
+      force();
+    } catch (err) { setCommentError((err as Error).message); } finally { setHiddenComments(h => h.filter(x => x !== id)); }
+  };
+  const saveComment = async (id: string, body: string) => {
+    const text = body.trim();
+    if (!text) return;
+    setEditing(null); setCommentError('');
+    setEditedComments(m => ({...m, [id]: text}));
+    try {
+      const d = await gql(`mutation($id:String!,$input:CommentUpdateInput!){commentUpdate(id:$id,input:$input){success comment${commentFields}}}`, {id, input: {body: text}});
+      if (!d.commentUpdate?.success) throw new Error('Comment edit was rejected');
+      updateCachedDetail(detail.id, en => ({...en, detail: {...en.detail, comments: {nodes: (en.detail.comments?.nodes || []).map(c => (c.id === id ? {...c, body: text} : c))}}}));
+      force();
+    } catch (err) {
+      setCommentError((err as Error).message);
+      setEditing({id, body: text});
+    } finally {
+      setEditedComments(m => { const n = {...m}; delete n[id]; return n; });
+    }
   };
 
   const doUpload = async (file: File) => {
@@ -971,7 +1200,8 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
       const d = await gql(`mutation($input:AttachmentCreateInput!){attachmentCreate(input:$input){success attachment{id url title subtitle createdAt}}}`,
         {input: {issueId: detail.id, url: b.url, title: b.title || file.name}});
       if (!d.attachmentCreate?.success) throw new Error('Attachment was rejected');
-      setDetail(cur => cur ? {...cur, attachments: {nodes: [...(cur.attachments?.nodes || []), d.attachmentCreate.attachment]}} : cur);
+      updateCachedDetail(detail.id, en => ({...en, detail: {...en.detail, attachments: {nodes: [...(en.detail.attachments?.nodes || []), d.attachmentCreate.attachment]}}}));
+      force();
     } catch (e) { setUpdateError((e as Error).message); } finally { setUploading(false); }
   };
 
@@ -982,32 +1212,81 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
       const d = await gql(`mutation($input:AttachmentCreateInput!){attachmentCreate(input:$input){success attachment{id url title subtitle createdAt}}}`,
         {input: {issueId: detail.id, url: attachUrl.trim(), title: attachTitle.trim() || attachUrl.trim()}});
       if (!d.attachmentCreate?.success) throw new Error('Attachment was rejected');
-      setDetail(cur => cur ? {...cur, attachments: {nodes: [...(cur.attachments?.nodes || []), d.attachmentCreate.attachment]}} : cur);
+      updateCachedDetail(detail.id, en => ({...en, detail: {...en.detail, attachments: {nodes: [...(en.detail.attachments?.nodes || []), d.attachmentCreate.attachment]}}}));
+      force();
       setAttachUrl(''); setAttachTitle(''); setAttachMenu(false);
     } catch (e) { setUpdateError((e as Error).message); } finally { setUploading(false); }
   };
 
+  /* Optimistic issue: shown in the store (lists/board) and here until the server's row replaces it. */
+  const placeholderIssue = (fields: Partial<LinIssue> & {title: string}): LinIssue => {
+    const now = new Date().toISOString();
+    return {
+      id: localIssueId(), identifier: guessNextIdentifier(detail.team?.key || 'ISS'), priority: 0, priorityLabel: PRIORITY_NAMES[0],
+      createdAt: now, updatedAt: now, stateChangedAt: now, team: detail.team, state: guessDefaultState(team),
+      creator: viewer.id ? {id: viewer.id, name: viewer.name} : undefined, labels: {nodes: []},
+      subscribers: {nodes: viewer.id ? [{id: viewer.id, name: viewer.name}] : []}, ...fields,
+    };
+  };
   const createSub = async () => {
     const t = newSubTitle.trim();
-    if (!t || addingSub || !detail.team?.id) return;
-    setAddingSub(true); setUpdateError('');
+    if (!t || !detail.team?.id) return;
+    const temp = placeholderIssue({title: t, parent: {id: detail.id, identifier: detail.identifier, title: detail.title}});
+    const resolve = addLocalIssue(temp as Issue);
+    setPendingSubs(p => [...p, temp]);
+    setNewSubTitle(''); setUpdateError('');
     try {
-      const d = await gql(`mutation($input:IssueCreateInput!){issueCreate(input:$input){success issue{id}}}`,
+      const d = await gql(`mutation($input:IssueCreateInput!){issueCreate(input:$input){success issue ${linIssueFields}}}`,
         {input: {title: t, teamId: detail.team.id, parentId: detail.id}});
-      if (!d.issueCreate?.success) throw new Error('Sub-issue was rejected');
-      setNewSubTitle('');
-      const s = await gql(`query($filter:IssueFilter){issues(first:100,filter:$filter){nodes ${linIssueFields}}}`, {filter: {parent: {id: {eq: detail.id}}}});
-      setSubs(s.issues.nodes);
-      setSubsDone(s.issues.nodes.filter((x: LinIssue) => x.state?.type === 'completed').length);
-    } catch (e) { setUpdateError((e as Error).message); } finally { setAddingSub(false); }
+      const created = d.issueCreate?.issue as LinIssue | undefined;
+      if (!d.issueCreate?.success || !created) throw new Error('Sub-issue was rejected');
+      resolve(created as Issue);
+      updateCachedDetail(detail.id, en => (en.subs.some(s => s.id === created.id) ? en : {...en, subs: [...en.subs, created]}));
+      force();
+    } catch (e) {
+      resolve(null);
+      setNewSubTitle(cur => cur || t);
+      setUpdateError((e as Error).message);
+    } finally {
+      setPendingSubs(p => p.filter(x => x !== temp));
+    }
+  };
+  const copyIssue = async () => {
+    const copyTitle = `Copy of ${detail.title}`;
+    const temp = placeholderIssue({title: copyTitle, description: detail.description, priority: detail.priority,
+      priorityLabel: detail.priorityLabel, project: detail.project, labels: detail.labels});
+    const resolve = addLocalIssue(temp as Issue);
+    setUpdateError('');
+    try {
+      const d = await gql(`mutation($input:IssueCreateInput!){issueCreate(input:$input){success issue ${linIssueFields}}}`,
+        {input: {title: copyTitle, teamId: detail.team?.id, description: detail.description, priority: detail.priority, projectId: detail.project?.id, labelIds}});
+      const created = d.issueCreate?.issue as LinIssue | undefined;
+      if (!d.issueCreate?.success || !created) throw new Error('Copy was rejected');
+      resolve(created as Issue);
+      onOpenIssue(created);
+    } catch (e) { resolve(null); setUpdateError((e as Error).message); }
   };
 
-  const toggleSubscribe = async () => {
-    try {
-      const d = await gql(`mutation($id:String!){${subscribed ? 'issueUnsubscribe' : 'issueSubscribe'}(id:$id)}`, {id: detail.id});
-      if (d[subscribed ? 'issueUnsubscribe' : 'issueSubscribe']) setSubscribed(!subscribed);
-    } catch (e) { setUpdateError((e as Error).message); }
+  const subscribed = Boolean(viewer.id && (detail.subscribers?.nodes || []).some(s => s.id === viewer.id));
+  const toggleSubscribe = () => {
+    if (!viewer.id) return;
+    const field = subscribed ? 'issueUnsubscribe' : 'issueSubscribe';
+    const current = detail.subscribers?.nodes || [];
+    const nodes = subscribed ? current.filter(s => s.id !== viewer.id) : [...current, {id: viewer.id, name: viewer.name}];
+    setUpdateError('');
+    void withLayer({subscribers: {nodes}}, async () => {
+      const settle = live ? getSync()?.patch(detail.id, {subscribers: {nodes: nodes.map(s => ({id: s.id}))}}) : undefined;
+      try {
+        const d = await gql(`mutation($id:String!){${field}(id:$id)}`, {id: detail.id});
+        if (!d[field]) throw new Error('Subscription was not changed');
+      } catch (e) { settle?.(false); throw e; }
+      settle?.(true);
+    });
   };
+  const archive = () => { void onArchive().catch(e => setUpdateError((e as Error).message)); };
+  const remove = () => { void onDelete().catch(e => setUpdateError((e as Error).message)); };
+  const subsView = [...(entry?.subs || []), ...pendingSubs];
+  const subsDone = subsView.filter(s => s.state?.type === 'completed').length;
 
   return (
     <section className="lin-page" aria-label={`${detail.identifier}: ${detail.title}`}>
@@ -1028,38 +1307,36 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
               {key: 'copy', label: 'Copy as prompt', icon: <Copy size={14} />, onSelect: () => void copyText(asPrompt)},
               {key: 'branch', label: 'Copy branch name', icon: <Copy size={14} />, onSelect: () => void copyText(branchName)},
               {key: 'div', divider: true},
-              {key: 'archive', label: 'Archive issue', onSelect: () => { if (window.confirm(`Archive ${detail.identifier}?`)) void onArchive(); }},
-              {key: 'delete', label: 'Delete issue', danger: true, onSelect: () => { if (window.confirm(`Permanently delete ${detail.identifier}? This cannot be undone.`)) void onDelete(); }},
+              {key: 'archive', label: 'Archive issue', onSelect: () => { if (window.confirm(`Archive ${detail.identifier}?`)) archive(); }},
+              {key: 'delete', label: 'Delete issue', danger: true, onSelect: () => { if (window.confirm(`Permanently delete ${detail.identifier}? This cannot be undone.`)) remove(); }},
             ]} />}
           </span>
           {idx >= 0 && <>
             <span className="lin-nav-count">{idx + 1} / {issueList.length}</span>
-            <IconBtn label="Previous issue" title="Previous issue" disabled={!prev} onClick={() => prev && onOpenIssue(prev)}>
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M8 13V3M4 7l4-4 4 4" strokeLinecap="round" strokeLinejoin="round" /></svg>
-            </IconBtn>
-            <IconBtn label="Next issue" title="Next issue" disabled={!next} onClick={() => next && onOpenIssue(next)}>
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M8 3v10M4 9l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" /></svg>
-            </IconBtn>
+            <span style={{display: 'contents'}} {...(prev ? issueIntentProps(prev) : {})}>
+              <IconBtn label="Previous issue" title="Previous issue" disabled={!prev} onClick={() => prev && onOpenIssue(prev)}>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M8 13V3M4 7l4-4 4 4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              </IconBtn>
+            </span>
+            <span style={{display: 'contents'}} {...(next ? issueIntentProps(next) : {})}>
+              <IconBtn label="Next issue" title="Next issue" disabled={!next} onClick={() => next && onOpenIssue(next)}>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M8 3v10M4 9l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              </IconBtn>
+            </span>
           </>}
         </div>
       </header>
       <div className="lin-toolbar" style={{justifyContent: 'flex-end'}}>
         <IconBtn label="Copy link" title="Copy link" onClick={() => void copyText(window.location.href)}><Link2 size={15} /></IconBtn>
         <IconBtn label="Create copy of issue" title="Create copy of issue"
-          onClick={() => { void (async () => {
-            try {
-              const d = await gql(`mutation($input:IssueCreateInput!){issueCreate(input:$input){success issue{id identifier}}}`,
-                {input: {title: `Copy of ${detail.title}`, teamId: detail.team?.id, description: detail.description, priority: detail.priority, projectId: detail.project?.id, labelIds}});
-              if (d.issueCreate?.success) onOpenIssue({...detail, id: d.issueCreate.issue.id, identifier: d.issueCreate.issue.identifier, title: `Copy of ${detail.title}`});
-            } catch (e) { setUpdateError((e as Error).message); }
-          })(); }}>
+          onClick={() => void copyIssue()}>
           <Copy size={15} />
         </IconBtn>
         <Tip label="Hoja has no public share links — copies the private URL">
           <span><IconBtn label="Share issue externally" title="Share issue externally" onClick={() => void copyText(window.location.href)}><ExternalLink size={15} /></IconBtn></span>
         </Tip>
         <IconBtn label="Archive issue" title="Archive issue"
-          onClick={() => { if (window.confirm(`Archive ${detail.identifier}?`)) void onArchive().catch(e => setUpdateError((e as Error).message)); }}>
+          onClick={() => { if (window.confirm(`Archive ${detail.identifier}?`)) archive(); }}>
           <Trash2 size={15} />
         </IconBtn>
       </div>
@@ -1067,25 +1344,31 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
       <div className="lin-detail">
         <main className="lin-detail-main">
           <textarea className="lin-detail-title" aria-label="Title" rows={1} value={title}
+            onFocus={() => { titleFocused.current = true; }}
             onChange={e => { setTitle(e.target.value); e.currentTarget.style.height = 'auto'; e.currentTarget.style.height = e.currentTarget.scrollHeight + 'px'; }}
-            onBlur={() => { const t = title.trim(); if (t && t !== detail.title) void change({title: t}); else setTitle(detail.title); }}
+            onBlur={() => { titleFocused.current = false; const t = title.trim(); if (t && t !== detail.title) void change({title: t}); else setTitle(detail.title); }}
             onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }} />
           {updateError && <p className="lin-error" role="alert">{updateError}</p>}
+          {loadError && <p className="lin-error" role="alert">{loadError} <button type="button" className="lin-btn" onClick={() => { setRetryTick(n => n + 1); onRetry?.(); }}>Retry</button></p>}
           {descEdit ? (
             <div>
               <textarea aria-label="Description" value={desc ?? ''} rows={6} autoFocus
                 onChange={e => setDesc(e.target.value)}
                 style={{width: '100%', border: '1px solid var(--line)', borderRadius: 8, padding: 10, font: 'inherit', fontSize: 14}} />
               <div style={{display: 'flex', gap: 8, marginTop: 8}}>
-                <button type="button" className="lin-btn primary" disabled={saving} onClick={() => { void change({description: (desc ?? '').trim() || null}).then(() => setDescEdit(false)); }}>Save</button>
+                <button type="button" className="lin-btn primary" onClick={() => {
+                  const text = (desc ?? '').trim() || null;
+                  setDescEdit(false);
+                  void change({description: text}).then(ok => { if (!ok) { setDesc(text || ''); setDescEdit(true); } });
+                }}>Save</button>
                 <button type="button" className="lin-btn" onClick={() => { setDescEdit(false); setDesc(detail.description || ''); }}>Cancel</button>
               </div>
             </div>
           ) : (
-            <p className={cx('lin-detail-desc', !detail.description && 'empty')}
-              onClick={() => { setDesc(detail.description || ''); setDescEdit(true); }}
+            <p className={cx('lin-detail-desc', !detail.description && 'empty')} aria-busy={!detailReady && !detail.description}
+              onClick={() => { if (!detailReady && !detail.description) return; setDesc(detail.description || ''); setDescEdit(true); }}
               title="Click to edit description" style={{cursor: 'text'}}>
-              {detail.description || 'Add description…'}
+              {detail.description || (detailReady ? 'Add description…' : 'Loading description…')}
             </p>
           )}
 
@@ -1093,7 +1376,7 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
             <header>
               <ChevronDown size={14} color="var(--muted)" />
               <span>Sub-Issues</span>
-              <SubIssuePill done={subsDone} total={subs.length} />
+              <SubIssuePill done={subsDone} total={subsView.length} />
               <span className="grow" />
               <IconBtn label="Sub-issue display settings" title="Display settings"><SlidersHorizontal size={14} /></IconBtn>
               <IconBtn label="Add sub-issue" title="Add sub-issue" onClick={() => setAddingSub(v => !v)}><Plus size={14} /></IconBtn>
@@ -1107,18 +1390,19 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
                 <button type="button" className="lin-btn primary" disabled={!newSubTitle.trim()} onClick={() => void createSub()}>Add</button>
               </div>
             )}
-            {subs.map(s => (
-              <div key={s.id} className={cx('lin-subrow', s.state?.type === 'completed' && 'done')}>
+            {subsView.map(s => (
+              <div key={s.id} className={cx('lin-subrow', s.state?.type === 'completed' && 'done', isLocalIssueId(s.id) && 'pending')}
+                aria-busy={isLocalIssueId(s.id) || undefined} {...(isLocalIssueId(s.id) ? {} : issueIntentProps(s))}>
                 <LinearStatusIcon state={s.state} size={14} />
-                <button type="button" className="t" onClick={() => onOpenIssue(s)} title={s.title}>{s.title}</button>
+                <button type="button" className="t" disabled={isLocalIssueId(s.id)} onClick={() => onOpenIssue(s)} title={s.title}>{s.title}</button>
                 {s.labels?.nodes.map(l => <LabelChip key={l.id} label={l} />)}
                 {s.assignee && <Avatar name={s.assignee.name} size={18} />}
-                <IconBtn label={`Open sub-issue ${s.identifier}`} title="Open sub-issue" onClick={() => onOpenIssue(s)}>
+                <IconBtn label={`Open sub-issue ${s.identifier}`} title="Open sub-issue" disabled={isLocalIssueId(s.id)} onClick={() => onOpenIssue(s)}>
                   <ExternalLink size={13} />
                 </IconBtn>
               </div>
             ))}
-            {!subs.length && !addingSub && <p className="lin-note">No sub-issues yet.</p>}
+            {!subsView.length && !addingSub && <p className="lin-note">{detailReady ? 'No sub-issues yet.' : 'Loading sub-issues…'}</p>}
           </section>
 
           <section className="lin-subsec" aria-label="Attachments">
@@ -1163,7 +1447,7 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
                 );
               })}
             </div>
-            {!(detail.attachments?.nodes || []).length && <p className="lin-note">No attachments yet.</p>}
+            {!(detail.attachments?.nodes || []).length && <p className="lin-note">{detailReady ? 'No attachments yet.' : 'Loading attachments…'}</p>}
           </section>
 
           <section className="lin-activity" aria-label="Activity">
@@ -1184,18 +1468,35 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
                 <time>{relTime(e.createdAt)}</time>
               </div>
             ))}
-            {(detail.comments?.nodes || []).map(c => (
-              <article key={c.id} className="lin-comment">
-                <header><Avatar name={c.user?.name} size={18} /><b>{c.user?.name || 'User'}</b><time>{relTime(c.createdAt)}</time></header>
-                <p>{c.body}</p>
-                {(viewer.admin || (viewer.id && c.user?.id === viewer.id)) && (
-                  <button type="button" className="lin-addrow del" onClick={() => { if (window.confirm('Delete this comment?')) void onDeleteComment(c.id).catch(e => setCommentError((e as Error).message)); }}>Delete comment</button>
-                )}
+            {!detailReady && <p className="lin-note" role="status">Loading activity…</p>}
+            {serverComments.map(c => (
+              <article key={c.id} className={cx('lin-comment', editedComments[c.id] !== undefined && 'pending')} aria-busy={editedComments[c.id] !== undefined || undefined}>
+                <header><Avatar name={c.user?.name} size={18} /><b>{c.user?.name || 'User'}</b><time>{editedComments[c.id] !== undefined ? 'Saving…' : relTime(c.createdAt)}</time></header>
+                {editing?.id === c.id ? (
+                  <form className="lin-commentbox" onSubmit={e => { e.preventDefault(); void saveComment(c.id, editing.body); }}>
+                    <textarea rows={2} value={editing.body} aria-label="Edit comment" autoFocus
+                      onChange={e => setEditing({id: c.id, body: e.target.value})}
+                      onKeyDown={e => { if (e.key === 'Escape') setEditing(null); if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} />
+                    <footer>
+                      <button type="button" className="lin-btn" onClick={() => setEditing(null)}>Cancel</button>
+                      <button type="submit" className="lin-btn primary" disabled={!editing.body.trim()}>Save</button>
+                    </footer>
+                  </form>
+                ) : <p>{c.body}</p>}
+                {(viewer.admin || (viewer.id && c.user?.id === viewer.id)) && editing?.id !== c.id && (<>
+                  <button type="button" className="lin-addrow del" onClick={() => setEditing({id: c.id, body: c.body})}>Edit comment</button>
+                  <button type="button" className="lin-addrow del" onClick={() => { if (window.confirm('Delete this comment?')) void deleteComment(c.id); }}>Delete comment</button>
+                </>)}
+              </article>
+            ))}
+            {shownPendingComments.map(p => (
+              <article key={p.id} className="lin-comment pending" aria-busy="true">
+                <header><Avatar name={viewer.name} size={18} /><b>{viewer.name || 'You'}</b><time>Sending…</time></header>
+                <p>{p.body}</p>
               </article>
             ))}
             <form className="lin-commentbox" onSubmit={submitComment}>
               <textarea rows={2} value={comment} aria-label="Leave a comment" placeholder="Leave a comment…"
-                disabled={commentBusy}
                 onChange={e => { setComment(e.target.value); if (commentError) setCommentError(''); }}
                 onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} />
               <footer>
@@ -1205,7 +1506,7 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
                   </button>
                 </Tip>
                 <button type="submit" className="lin-icon-btn" aria-label="Submit comment" title="Submit comment (⌘↵)"
-                  disabled={commentBusy || !comment.trim()}>
+                  disabled={!comment.trim()}>
                   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M8 13V3M4 7l4-4 4 4" strokeLinecap="round" strokeLinejoin="round" /></svg>
                 </button>
               </footer>

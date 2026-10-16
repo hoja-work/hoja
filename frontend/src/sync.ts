@@ -360,3 +360,123 @@ export function startSync(opts: {
   currentHandle = handle;
   return handle;
 }
+
+/* ---------------- local-only rows: optimistic create + optimistic remove ----------------
+ *
+ * Issues created or removed locally but not yet confirmed by the server. They live
+ * outside the snapshot (never persisted) and are folded into every emitted list:
+ *   addLocalIssue(issue)      show a temporary issue now; call the result with the
+ *                             server's issue (adopted into the snapshot) or null to drop it.
+ *   hideIssueLocally(id)      hide an issue now (archive/delete); call the result with
+ *                             whether the server accepted. Accepted hides last until a pull
+ *                             has removed the row; rejected ones reappear at once.
+ *   peekIssue(idOrIdentifier) non-hook lookup in the current store.
+ *   useIssueSelect(idOrIdentifier)  like useIssue but only re-renders when that issue changes.
+ *
+ * The fold runs as the first store listener: emit() hands the same array to setStore and
+ * then to onView, so editing that array in place before any other listener reads it keeps
+ * the App's onView state and the store hooks identical.
+ */
+
+const localCreates = new Map<string, Issue>();
+const localHidden = new Map<string, number>();
+const foldedLists = new WeakSet<Issue[]>();
+const LOCAL_REFRESH_ID = '__local_refresh__';
+
+function foldLocal(list: Issue[]) {
+  foldedLists.add(list);
+  if (localHidden.size) {
+    let w = 0;
+    for (let r = 0; r < list.length; r++) if (!localHidden.has(list[r].id)) list[w++] = list[r];
+    list.length = w;
+  }
+  if (localCreates.size) {
+    const present = new Set(list.map(i => i.id));
+    const fresh = [...localCreates.values()].filter(i => !present.has(i.id) && !localHidden.has(i.id));
+    if (fresh.length) list.unshift(...fresh.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')));
+  }
+}
+storeListeners.add(() => {
+  const list = storeState.issues;
+  if (!foldedLists.has(list) && (localCreates.size || localHidden.size)) foldLocal(list);
+});
+
+function refreshLocal() {
+  const handle = currentHandle;
+  if (handle && storeState.ready) {
+    // An empty overlay on an id that is not in the snapshot re-runs emit (store + onView) without changing rows.
+    handle.patch(LOCAL_REFRESH_ID, {})(false);
+    return;
+  }
+  const list = storeState.issues.filter(i => !i.id.startsWith('local-'));
+  foldLocal(list);
+  setStore({issues: list});
+}
+
+let localSeq = 0;
+export const isLocalIssueId = (id: string | null | undefined) => Boolean(id && id.startsWith('local-'));
+export function localIssueId(): string { localSeq += 1; return `local-${Date.now().toString(36)}-${localSeq}`; }
+
+export function addLocalIssue(issue: Issue): (real: Issue | null) => void {
+  localCreates.set(issue.id, issue);
+  refreshLocal();
+  let done = false;
+  return real => {
+    if (done) return;
+    done = true;
+    localCreates.delete(issue.id);
+    const handle = currentHandle;
+    if (real && handle && storeState.ready) {
+      handle.adopt([real]);
+      // adopt() skips ids the snapshot already holds (a delta beat us) and then does not emit.
+      if (storeState.issues.some(i => i.id === issue.id)) refreshLocal();
+    } else {
+      refreshLocal();
+    }
+  };
+}
+
+export function hideIssueLocally(issueId: string): (accepted: boolean) => void {
+  localHidden.set(issueId, (localHidden.get(issueId) || 0) + 1);
+  refreshLocal();
+  let done = false;
+  const unhide = () => {
+    const n = (localHidden.get(issueId) || 1) - 1;
+    if (n > 0) localHidden.set(issueId, n); else localHidden.delete(issueId);
+    refreshLocal();
+  };
+  return accepted => {
+    if (done) return;
+    done = true;
+    const handle = currentHandle;
+    if (accepted && handle) void handle.pull().finally(unhide); else unhide();
+  };
+}
+
+export function peekIssue(idOrIdentifier: string | null | undefined): Issue | undefined {
+  if (!idOrIdentifier) return undefined;
+  return storeState.issues.find(i => i.id === idOrIdentifier || i.identifier === idOrIdentifier);
+}
+export function useIssueSelect(idOrIdentifier: string | null | undefined): Issue | undefined {
+  return useSyncExternalStore(subscribeStore, () => peekIssue(idOrIdentifier));
+}
+/** Calls cb once when the store first holds that issue (e.g. after the IndexedDB snapshot loads); returns unsubscribe. */
+export function onStoreIssue(idOrIdentifier: string, cb: (issue: Issue) => void): () => void {
+  const hit = peekIssue(idOrIdentifier);
+  if (hit) { cb(hit); return () => undefined; }
+  const listener = () => {
+    const found = peekIssue(idOrIdentifier);
+    if (found) { storeListeners.delete(listener); cb(found); }
+  };
+  storeListeners.add(listener);
+  return () => { storeListeners.delete(listener); };
+}
+/** Placeholder identifier for an optimistic issue: the team's highest synced number + 1 (the server assigns the real one). */
+export function guessNextIdentifier(teamKey: string): string {
+  const prefix = `${teamKey}-`;
+  let max = 0;
+  for (const i of storeState.issues) {
+    if (i.identifier.startsWith(prefix)) { const n = Number(i.identifier.slice(prefix.length)); if (n > max) max = n; }
+  }
+  return `${prefix}${max + 1}`;
+}
