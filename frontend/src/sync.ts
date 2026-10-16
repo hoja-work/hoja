@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useState, useSyncExternalStore} from 'react';
 import type {Cycle, Issue, IssueLabel, Project, Team, Viewer} from './main';
-import type {ChangeEvent} from './realtime';
+import {onRealtimeFrame, type ChangeEvent, type RealtimeFrame} from './realtime';
 
 /* Local-first issue store.
  *
@@ -46,6 +46,8 @@ type Snapshot = {
 };
 
 const PRIORITY_LABELS = ['No priority', 'Urgent', 'High', 'Medium', 'Low'];
+// Frame events for these need data a frame does not carry: metadata, or a visibility change (re-bootstrap).
+const PULL_ENTITIES = new Set(['team', 'teamMember', 'workflowState', 'label', 'cycle', 'project', 'user', 'member']);
 const DB_NAME = 'hoja-sync';
 const STORE = 'snapshots';
 const KEY = 'current';
@@ -259,6 +261,7 @@ export function startSync(opts: {
   const hidden = new Map<string, number>(); // id → number of outstanding hide() calls
   const locals = new Map<string, Issue>(); // optimistic creates awaiting the server
   let emitQueued = false;
+  let headSeq = 0; // newest seq announced by a realtime frame
 
   const fetchJson = async (url: string, extra: Record<string, string> = {}) => {
     const res = await fetch(url, {credentials: 'include', headers: {...opts.headers(), ...extra}});
@@ -315,6 +318,7 @@ export function startSync(opts: {
             meta: b.meta, columns: b.columns, rows};
     persist();
     emit(true);
+    if (headSeq > b.seq) pullAgain = true; // frames moved on while the snapshot was built
   };
 
   const applyDelta = async () => {
@@ -335,6 +339,33 @@ export function startSync(opts: {
     persist();
     requestEmit();
   };
+
+  // Realtime v2 frames carry the changed rows: apply them in place of a /sync/delta round trip.
+  const remapRow = (r: Row, from: string[], to: string[]): Row => {
+    if (from.join() === to.join()) return r;
+    const at = new Map(from.map((c, i) => [c, i]));
+    return to.map(c => (at.has(c) ? r[at.get(c)!] : null));
+  };
+  const applyFrame = (frame: RealtimeFrame) => {
+    if (stopped) return;
+    headSeq = Math.max(headSeq, frame.seq);
+    if (frame.reset) return; // realtime.ts pulls
+    const s = snap;
+    if (!s) return; // bootstrap in flight; it catches up from headSeq
+    if (frame.seq <= s.seq) return;
+    const events = frame.events || [];
+    const needsPull = events.some(e => PULL_ENTITIES.has(e.entity));
+    const applicable = frame.full && frame.columns && (frame.prev ?? Infinity) <= s.seq;
+    if (!applicable || needsPull) { void pull(); return; }
+    if (pulling) { pullAgain = true; return; } // let the in-flight pull finish, then catch up
+    const rows = {...s.rows};
+    for (const r of frame.issues || []) rows[r[0] as string] = remapRow(r, frame.columns!, s.columns);
+    for (const id of frame.removed || []) delete rows[id];
+    snap = {...s, seq: frame.seq, etag: null, rows};
+    persist();
+    requestEmit();
+  };
+  const offFrames = onRealtimeFrame(applyFrame);
 
   const pull = (): Promise<void> => {
     if (stopped) return Promise.resolve();
@@ -365,7 +396,7 @@ export function startSync(opts: {
     pull,
     reset: async () => { snap = null; hydrated.clear(); setStore({issues: [], meta: null, ready: false}); await clearSnapshot(); await pull(); },
     forget: async () => { snap = null; hydrated.clear(); window.clearTimeout(saveTimer); setStore({issues: [], meta: null, ready: false, closedCutoff: ''}); await clearSnapshot(); },
-    stop: () => { stopped = true; window.clearTimeout(saveTimer); if (currentHandle === handle) currentHandle = null; },
+    stop: () => { stopped = true; offFrames(); window.clearTimeout(saveTimer); if (currentHandle === handle) currentHandle = null; },
     patch: (issueId, patch) => {
       const layers = overlays.get(issueId) || [];
       layers.push(patch);
