@@ -31,7 +31,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 27
+CURRENT_SCHEMA_REVISION = 28
 
 
 def now_iso() -> str:
