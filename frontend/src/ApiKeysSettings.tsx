@@ -44,7 +44,7 @@ export function ApiKeysSettings(){
 
   useEffect(()=>{
     let live=true;
-    setLoading(true);
+    // Revalidate in place: the list stays on screen; only the first load shows a loading line.
     gql('query MyApiKeys{myApiKeys{id label access hint expiresAt lastUsedAt createdAt revokedAt}}')
       .then(d=>{if(live)setKeys(d.myApiKeys)})
       .catch(e=>{if(live)setMessage({kind:'error',text:`Could not load API keys: ${(e as Error).message}`})})
@@ -80,16 +80,20 @@ export function ApiKeysSettings(){
     finally{setBusy(false)}
   };
 
+  // Shown as revoked at once; restored with an error if the server refuses.
   const revoke=async(k:ApiKey)=>{
-    setBusy(true);setMessage(null);
+    setMessage(null);setConfirmId(null);
+    const revokedAt=new Date().toISOString();
+    setKeys(list=>list.map(x=>x.id===k.id?{...x,revokedAt}:x));
     try{
       const d=await gql('mutation($id:String!){apiKeyRevoke(id:$id)}',{id:k.id});
       if(!d.apiKeyRevoke)throw Error('Could not revoke this key. It may already be revoked.');
       setMessage({kind:'status',text:`Revoked “${k.label||'API key'}”. Apps using it will stop working.`});
-      setConfirmId(null);
       setRefresh(x=>x+1);
-    }catch(err){setMessage({kind:'error',text:(err as Error).message})}
-    finally{setBusy(false)}
+    }catch(err){
+      setKeys(list=>list.map(x=>x.id===k.id?{...x,revokedAt:k.revokedAt}:x));
+      setMessage({kind:'error',text:(err as Error).message});
+    }
   };
 
   const copySecret=async()=>{
