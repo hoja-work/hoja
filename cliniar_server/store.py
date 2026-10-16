@@ -194,6 +194,17 @@ class Store:
             for r in rows
         ]
 
+    def change_org_ids_after(self, after_seq: int, limit: int = 1000) -> list[dict]:
+        """Cheap global change scan for the realtime broadcaster: seq + org only."""
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                select(change_event.c.seq, change_event.c.organization_id)
+                .where(change_event.c.seq > after_seq)
+                .order_by(change_event.c.seq)
+                .limit(limit)
+            ).all()
+        return [{"seq": r[0], "organization_id": r[1]} for r in rows]
+
     def resolve_token(self, token: str) -> dict | None:
         """token → {user_id, organization_id} or None."""
         th = token_hash(token)

@@ -899,6 +899,13 @@ def _apply_realtime_capture(conn):
             raise RuntimeError(f"Realtime capture is not implemented for {dialect}")
 
 
+def _apply_change_event_org_seq_index(conn):
+    conn.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_change_event_org_seq "
+        "ON change_event (organization_id, seq)"
+    )
+
+
 def _apply_api_key_lifecycle(conn):
     existing = {c["name"] for c in inspect(conn).get_columns("api_key")}
     for name, sql_type in (("hint", "VARCHAR"), ("expires_at", "VARCHAR"), ("last_used_at", "VARCHAR")):
@@ -1015,6 +1022,7 @@ _MIGRATIONS = {
     25: lambda conn: oauth_state_nonce.create(conn, checkfirst=True),
     26: _apply_team_cycle_automations,
     27: _apply_team_auto_add_backlog,
+    28: _apply_change_event_org_seq_index,
 }
 
 

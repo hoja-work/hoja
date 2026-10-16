@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from ariadne import format_error, graphql
+from ariadne import format_error, graphql, graphql_sync
 from graphql import (
     FieldNode,
     FragmentDefinitionNode,
@@ -38,6 +38,7 @@ from starlette.datastructures import MutableHeaders
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse
 from starlette.routing import Route, WebSocketRoute
+from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from cliniar_server.connectors_api import connector_binding_for, connector_routes
@@ -120,6 +121,9 @@ _MAX_QUERY_DEPTH = 15
 _MAX_QUERY_FIELDS = 100
 _MAX_QUERY_VISITS = 10_000
 _WS_REVALIDATE_SECONDS = 5
+_WS_BROADCAST_INTERVAL = 0.25
+_org_wake: dict = {}
+_broadcaster_seq = {"last": 0}
 _LOGIN_FAILURE_LIMIT = 10
 _LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60
 _CSP_HTML = "frame-ancestors 'none'; object-src 'none'; base-uri 'self'"
@@ -326,6 +330,26 @@ def create_app(
     engine = make_engine(target)
     store = Store(engine)
     writer = Writer(engine)
+    broadcaster_task = None
+
+    async def _change_broadcaster():
+        """Single global poller: wake per-org waiters instead of per-client DB polling."""
+        while True:
+            try:
+                events = await asyncio.to_thread(
+                    store.change_org_ids_after, _broadcaster_seq["last"])
+                touched = set()
+                for row in events:
+                    _broadcaster_seq["last"] = max(_broadcaster_seq["last"], row["seq"])
+                    touched.add(row["organization_id"])
+                for org_id in touched:
+                    ev = _org_wake.get(org_id)
+                    if ev is not None:
+                        ev.set()
+            except Exception:
+                pass
+            await asyncio.sleep(_WS_BROADCAST_INTERVAL)
+
     if open_mode is None:
         open_mode = os.environ.get("CLINIAR_SERVER_OPEN", "0") == "1"
 
@@ -664,8 +688,19 @@ def create_app(
             return
         last_seq = cursor
         last_check = time.monotonic()
+        wake = _org_wake.setdefault(org, asyncio.Event())
         try:
+            # Deliver any backlog immediately on connect, then wait for wakes.
+            events = await asyncio.to_thread(store.change_events_after, org, last_seq, viewer_id=uid)
+            for event in events:
+                await websocket.send_json(event)
+                last_seq = event["seq"]
             while True:
+                try:
+                    await asyncio.wait_for(wake.wait(), timeout=_WS_REVALIDATE_SECONDS)
+                except asyncio.TimeoutError:
+                    pass
+                wake.clear()
                 if time.monotonic() - last_check >= _WS_REVALIDATE_SECONDS:
                     last_check = time.monotonic()
                     current_uid, current_org, _i, _s = await asyncio.to_thread(_auth, websocket)
@@ -674,10 +709,11 @@ def create_app(
                         return
                 events = await asyncio.to_thread(store.change_events_after, org, last_seq, viewer_id=uid)
                 for event in events:
-                    await websocket.send_json(event)
+                    try:
+                        await websocket.send_json(event)
+                    except RuntimeError:
+                        return
                     last_seq = event["seq"]
-                if not events:
-                    await asyncio.sleep(1)
         except WebSocketDisconnect:
             return
 
@@ -837,7 +873,10 @@ def create_app(
             "browser_session": is_browser_session,
             "access": access,
         }
-        _success, result = await graphql(
+        # Sync resolvers would otherwise run on the event loop and block every
+        # WS client; execute the whole GraphQL operation in a worker thread.
+        _success, result = await run_in_threadpool(
+            graphql_sync,
             _schema,
             data,
             context_value=context,
@@ -1352,6 +1391,8 @@ def create_app(
             ),
         )
         mcp_asgi = runtime_app
+        nonlocal broadcaster_task
+        broadcaster_task = asyncio.create_task(_change_broadcaster())
         async with runtime_app.router.lifespan_context(runtime_app):
             if agent_dbos_url := os.environ.get("CLINIAR_AGENT_DBOS_URL"):
                 from dbos import DBOS
@@ -1364,6 +1405,8 @@ def create_app(
                     DBOS.destroy()
             else:
                 yield
+        if broadcaster_task is not None:
+            broadcaster_task.cancel()
 
     async def _malformed_json_handler(request: Request, exc: Exception):
         return JSONResponse({"error": "Malformed JSON body."}, status_code=400)
