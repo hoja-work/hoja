@@ -60,6 +60,19 @@ def _ctx(info):
     return info.context["store"], info.context["writer"], info.context["org_id"], info.context["user_id"]
 
 
+def _memo(info, kind, key, fn):
+    """Per-request memoization for reference lookups repeated across list rows.
+    Turns the issues-list N+1 (one lookup per issue) into one lookup per distinct entity."""
+    ctx = info.context
+    cache = ctx.get("cache") if isinstance(ctx, dict) else None
+    if cache is None:
+        return fn()
+    ck = (kind, key)
+    if ck not in cache:
+        cache[ck] = fn()
+    return cache[ck]
+
+
 _MAX_PAGE = 250
 
 
@@ -483,41 +496,46 @@ def reference_team(obj, info):
     tid = obj.get("_team_id")
     if not tid:
         return None
-    return store.ser_team(store.raw_team(org, tid, viewer_id=uid))
+    return _memo(info, "team", (org, uid, tid),
+                 lambda: store.ser_team(store.raw_team(org, tid, viewer_id=uid)))
 
 
 # ----------------------------------------------------------------- Issue fields
 @Issue.field("state")
 def i_state(obj, info):
     store, _w, org, _uid = _ctx(info)
-    return store.state_by_id(org, obj["_state_id"]) if obj.get("_state_id") else None
+    return _memo(info, "state", (org, obj["_state_id"]),
+                 lambda: store.state_by_id(org, obj["_state_id"])) if obj.get("_state_id") else None
 
 
 @Issue.field("assignee")
 def i_assignee(obj, info):
     store, _w, org, uid = _ctx(info)
-    return store.ser_user(store.get_user(org, obj["_assignee_id"]), uid) if obj.get("_assignee_id") else None
+    return _memo(info, "user", (org, obj["_assignee_id"]),
+                 lambda: store.ser_user(store.get_user(org, obj["_assignee_id"]), uid)) if obj.get("_assignee_id") else None
 
 
 @Issue.field("creator")
 def i_creator(obj, info):
     store, _w, org, uid = _ctx(info)
-    return store.ser_user(store.get_user(org, obj["_creator_id"]), uid) if obj.get("_creator_id") else None
+    return _memo(info, "user", (org, obj["_creator_id"]),
+                 lambda: store.ser_user(store.get_user(org, obj["_creator_id"]), uid)) if obj.get("_creator_id") else None
 
 
 @Issue.field("team")
 def i_team(obj, info):
     store, _w, org, uid = _ctx(info)
-    row = store.raw_team(org, obj["_team_id"], viewer_id=uid) if obj.get("_team_id") else None
-    if not row:
-        return None
-    return store.ser_team(row)
+    return _memo(info, "team", (org, uid, obj["_team_id"]), lambda: (
+        (lambda row: store.ser_team(row) if row else None)(
+            store.raw_team(org, obj["_team_id"], viewer_id=uid))
+    )) if obj.get("_team_id") else None
 
 
 @Issue.field("project")
 def i_project(obj, info):
     store, _w, org, _uid = _ctx(info)
-    return store.project_by_id(org, obj["_project_id"]) if obj.get("_project_id") else None
+    return _memo(info, "project", (org, obj["_project_id"]),
+                 lambda: store.project_by_id(org, obj["_project_id"])) if obj.get("_project_id") else None
 
 
 @Issue.field("cycle")
@@ -525,50 +543,57 @@ def i_cycle(obj, info):
     store, _w, org, uid = _ctx(info)
     if not obj.get("_cycle_id"):
         return None
-    with store.engine.connect() as conn:
-        from sqlalchemy import and_, select
+    def _load():
+        with store.engine.connect() as conn:
+            from sqlalchemy import and_, select
 
-        from cliniar_server.db import cycle as cyc
-        r = conn.execute(select(cyc).where(and_(cyc.c.organization_id == org, cyc.c.id == obj["_cycle_id"]))).first()
-        if not r:
-            return None
-        if not store.team_visible_for(org, uid, r._mapping["team_id"]):
-            return None
-        return store.ser_cycle(dict(r._mapping))
+            from cliniar_server.db import cycle as cyc
+            r = conn.execute(select(cyc).where(and_(cyc.c.organization_id == org, cyc.c.id == obj["_cycle_id"]))).first()
+            if not r:
+                return None
+            if not store.team_visible_for(org, uid, r._mapping["team_id"]):
+                return None
+            return store.ser_cycle(dict(r._mapping))
+    return _memo(info, "cycle", (org, uid, obj["_cycle_id"]), _load)
 
 
 @Issue.field("parent")
 def i_parent(obj, info):
     store, _w, org, uid = _ctx(info)
-    return store.issue_by_id_or_identifier(org, obj["_parent_id"], viewer_id=uid) if obj.get("_parent_id") else None
+    return _memo(info, "issue", (org, uid, obj["_parent_id"]),
+                 lambda: store.issue_by_id_or_identifier(org, obj["_parent_id"], viewer_id=uid)) if obj.get("_parent_id") else None
 
 
 @Issue.field("labels")
 def i_labels(obj, info, first=50):
     store, _w, org, _uid = _ctx(info)
     first = _page_size(first)
-    return _conn(store.issue_labels_for(org, obj["id"])[:first])
+    return _memo(info, "issue_labels", (org, obj["id"], first),
+                 lambda: _conn(store.issue_labels_for(org, obj["id"])[:first]))
 
 
 @Issue.field("subscribers")
 def i_subscribers(obj, info, first=50):
     store, _w, org, _uid = _ctx(info)
     first = _page_size(first)
-    return _conn(store.issue_subscribers_for(org, obj["id"])[:first])
+    return _memo(info, "issue_subscribers", (org, obj["id"], first),
+                 lambda: _conn(store.issue_subscribers_for(org, obj["id"], limit=first)))
 
 
 @Issue.field("comments")
 def i_comments(obj, info, first=50):
     store, _w, org, _uid = _ctx(info)
     first = _page_size(first)
-    return _conn(store.comments_for(org, obj["id"])[:first])
+    return _memo(info, "issue_comments", (org, obj["id"], first),
+                 lambda: _conn(store.comments_for(org, obj["id"], limit=first)))
 
 
 @Issue.field("attachments")
 def i_attachments(obj, info, first=50):
     store, _w, org, _uid = _ctx(info)
     first = _page_size(first)
-    return _conn(store.issue_attachments_for(org, obj["id"])[:first])
+    return _memo(info, "issue_attachments", (org, obj["id"], first),
+                 lambda: _conn(store.issue_attachments_for(org, obj["id"], limit=first)))
 
 
 @query.field("myIssueActivity")

@@ -902,6 +902,7 @@ def create_app(
         context = {
             "request": request,
             "store": store,
+            "cache": {},
             "writer": writer,
             "org_id": org,
             "user_id": uid,

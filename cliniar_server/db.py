@@ -31,7 +31,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 28
+CURRENT_SCHEMA_REVISION = 29
 
 
 def now_iso() -> str:
@@ -909,6 +909,21 @@ def _apply_change_event_org_seq_index(conn):
     )
 
 
+def _apply_issue_scale_indexes(conn):
+    for stmt in (
+        "CREATE INDEX IF NOT EXISTS ix_issue_cycle_id ON issue (cycle_id)",
+        "CREATE INDEX IF NOT EXISTS ix_issue_parent_id ON issue (parent_id)",
+        "CREATE INDEX IF NOT EXISTS ix_issue_creator_id ON issue (creator_id)",
+        "CREATE INDEX IF NOT EXISTS ix_issue_org_created ON issue (organization_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_issue_org_updated ON issue (organization_id, updated_at)",
+        "CREATE INDEX IF NOT EXISTS ix_issue_archived_partial ON issue (organization_id, archived_at) "
+        "WHERE archived_at IS NULL",
+        "CREATE INDEX IF NOT EXISTS ix_inbox_notification_recipient_read ON inbox_notification (recipient_id, read_at)",
+        "CREATE INDEX IF NOT EXISTS ix_issue_activity_issue_created ON issue_activity (issue_id, created_at)",
+    ):
+        conn.exec_driver_sql(stmt)
+
+
 def _apply_api_key_lifecycle(conn):
     existing = {c["name"] for c in inspect(conn).get_columns("api_key")}
     for name, sql_type in (("hint", "VARCHAR"), ("expires_at", "VARCHAR"), ("last_used_at", "VARCHAR")):
@@ -1026,6 +1041,7 @@ _MIGRATIONS = {
     26: _apply_team_cycle_automations,
     27: _apply_team_auto_add_backlog,
     28: _apply_change_event_org_seq_index,
+    29: _apply_issue_scale_indexes,
 }
 
 

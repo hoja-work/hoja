@@ -1300,25 +1300,31 @@ class Store:
                          issue_label.c.organization_id == org_id))
             return [self.ser_label(r) for r in _conn_rows(conn, stmt)]
 
-    def issue_subscribers_for(self, org_id: str, issue_id: str) -> list[dict]:
+    def issue_subscribers_for(self, org_id: str, issue_id: str, limit: int | None = None) -> list[dict]:
         with self.engine.connect() as conn:
             stmt = select(user).select_from(
                 user.join(issue_subscriber, issue_subscriber.c.user_id == user.c.id)
             ).where(and_(issue_subscriber.c.issue_id == issue_id, user.c.organization_id == org_id))
+            if limit:
+                stmt = stmt.limit(limit)
             return [self.ser_user(r) for r in _conn_rows(conn, stmt)]
 
-    def comments_for(self, org_id: str, issue_id: str) -> list[dict]:
+    def comments_for(self, org_id: str, issue_id: str, limit: int | None = None) -> list[dict]:
         with self.engine.connect() as conn:
             stmt = select(comment).where(and_(
                 comment.c.organization_id == org_id, comment.c.issue_id == issue_id,
                 comment.c.archived_at.is_(None))).order_by(comment.c.created_at)
+            if limit:
+                stmt = stmt.limit(limit)
             return [self.ser_comment(r) for r in _conn_rows(conn, stmt)]
 
-    def issue_attachments_for(self, org_id: str, issue_id: str) -> list[dict]:
+    def issue_attachments_for(self, org_id: str, issue_id: str, limit: int | None = None) -> list[dict]:
         with self.engine.connect() as conn:
             stmt = select(attachment).where(and_(
                 attachment.c.organization_id == org_id,
                 attachment.c.issue_id == issue_id)).order_by(attachment.c.created_at)
+            if limit:
+                stmt = stmt.limit(limit)
             return [self.ser_attachment(r) for r in _conn_rows(conn, stmt)]
 
     def projects(self, org_id: str, flt: dict | None = None,
