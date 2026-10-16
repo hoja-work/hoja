@@ -73,6 +73,55 @@ def _memo(info, kind, key, fn):
     return cache[ck]
 
 
+def _batch_entry(info, kind):
+    ctx = info.context
+    cache = ctx.get("cache") if isinstance(ctx, dict) else None
+    if cache is None:
+        return None
+    return cache.setdefault(("batch", kind), {"pending": set(), "loaded": {}})
+
+
+def _prime(info, kind, ids):
+    """Announce the keys a list page will resolve so the first lookup loads them all."""
+    entry = _batch_entry(info, kind)
+    if entry is not None:
+        entry["pending"].update(i for i in ids if i and i not in entry["loaded"])
+
+
+def _batched(info, kind, key, load_many, single, default=None):
+    """Resolve key from a primed batch (one query for every primed key), else singly."""
+    entry = _batch_entry(info, kind)
+    if entry is None:
+        return single()
+    if key in entry["loaded"]:
+        return entry["loaded"][key]
+    if key in entry["pending"]:
+        ids = list(entry["pending"])
+        entry["pending"].clear()
+        got = load_many(ids)
+        for i in ids:
+            entry["loaded"][i] = got.get(i, default)
+        return entry["loaded"][key]
+    value = single()
+    entry["loaded"][key] = value
+    return value
+
+
+def _user_row(info, user_id):
+    store, _w, org, _uid = _ctx(info)
+    return _batched(info, "user_row", user_id, lambda ids: store.users_by_ids(org, ids),
+                    lambda: store.get_user(org, user_id))
+
+
+def _prime_issue_nodes(info, nodes) -> None:
+    """Per-row lookups of an issue page (labels, subscribers, people) become one query each."""
+    ids = [n["id"] for n in nodes if n]
+    _prime(info, "issue_labels", ids)
+    _prime(info, "issue_subscribers", ids)
+    _prime(info, "user_row", [n.get(k) for n in nodes if n for k in ("_assignee_id", "_creator_id")])
+    _prime(info, "project", [n.get("_project_id") for n in nodes if n])
+
+
 _MAX_PAGE = 250
 
 
@@ -167,6 +216,8 @@ def r_inbox_notifications(_, info, first=50, after=None, unreadOnly=False, archi
     nodes = [dict(row, createdAt=row["created_at"], readAt=row["read_at"],
                   archivedAt=row["archived_at"], _actor_id=row["actor_id"],
                   _issue_id=row["issue_id"]) for row in rows[:first]]
+    _prime(info, "issue_obj", [n["_issue_id"] for n in nodes])
+    _prime(info, "user_row", [n["_actor_id"] for n in nodes])
     return {"nodes": nodes, "pageInfo": {
         "hasNextPage": len(rows) > first, "hasPreviousPage": after is not None,
         "startCursor": _activity_cursor(nodes[0]) if nodes else None,
@@ -203,14 +254,25 @@ InboxNotification = ObjectType("InboxNotification")
 
 @InboxNotification.field("issue")
 def inbox_issue(obj, info):
+    return _issue_obj(info, obj["_issue_id"])
+
+
+def _issue_obj(info, issue_id):
     store, _w, org, uid = _ctx(info)
-    return store.issue_by_id_or_identifier(org, obj["_issue_id"], viewer_id=uid)
+
+    def load_many(ids):
+        got = store.issues_by_ids(org, ids, viewer_id=uid)
+        _prime_issue_nodes(info, list(got.values()))
+        return got
+
+    return _batched(info, "issue_obj", issue_id, load_many,
+                    lambda: store.issue_by_id_or_identifier(org, issue_id, viewer_id=uid))
 
 
 @InboxNotification.field("actor")
 def inbox_actor(obj, info):
-    store, _w, org, uid = _ctx(info)
-    return store.ser_user(store.get_user(org, obj["_actor_id"]), uid) if obj.get("_actor_id") else None
+    store, _w, _org, uid = _ctx(info)
+    return store.ser_user(_user_row(info, obj["_actor_id"]), uid) if obj.get("_actor_id") else None
 
 
 @query.field("viewer")
@@ -308,6 +370,7 @@ def r_issues(_, info, filter=None, first=50, after=None, orderBy="updatedAt"):  
     cursor = _decode_issue_cursor(after)
     rows = store.issues(org, uid, filter, order_by=order_by, after=cursor, limit=first + 1)
     nodes = rows[:first]
+    _prime_issue_nodes(info, nodes)
     result = _conn(nodes)
     result["pageInfo"].update({
         "hasNextPage": len(rows) > first,
@@ -331,6 +394,8 @@ def r_projects(_, info, filter=None, first=50, after=None):
     cursor = _decode_project_update_cursor(after)
     rows = store.projects(org, filter, after=cursor, limit=first + 1)
     nodes = rows[:first]
+    _prime(info, "project_teams", [n["id"] for n in nodes])
+    _prime(info, "user_row", [n.get(k) for n in nodes for k in ("_lead_id", "_creator_id")])
     result = _conn(nodes)
     result["pageInfo"].update({
         "hasNextPage": len(rows) > first,
@@ -366,6 +431,8 @@ def r_project_updates(_, info, first=50, after=None, filter=None):
     cursor = _decode_project_update_cursor(after)
     rows = store.project_updates(org, after=cursor, project_id=project_id, limit=first + 1)
     nodes = rows[:first]
+    _prime(info, "project", [n.get("_project_id") for n in nodes])
+    _prime(info, "user_row", [n.get("_actor_id") for n in nodes])
     result = _conn(nodes)
     result["pageInfo"].update({
         "hasNextPage": len(rows) > first, "hasPreviousPage": after is not None,
@@ -438,7 +505,9 @@ def r_labels(_, info, filter=None, first=100, after=None):
 def r_search(_, info, term, first=20):
     store, _w, org, uid = _ctx(info)
     first = _page_size(first, 20)
-    return _conn(store.search_issues(org, term, viewer_id=uid)[:first])
+    nodes = store.search_issues(org, term, viewer_id=uid)[:first]
+    _prime_issue_nodes(info, nodes)
+    return _conn(nodes)
 
 
 @query.field("rateLimitStatus")
@@ -512,14 +581,14 @@ def i_state(obj, info):
 def i_assignee(obj, info):
     store, _w, org, uid = _ctx(info)
     return _memo(info, "user", (org, obj["_assignee_id"]),
-                 lambda: store.ser_user(store.get_user(org, obj["_assignee_id"]), uid)) if obj.get("_assignee_id") else None
+                 lambda: store.ser_user(_user_row(info, obj["_assignee_id"]), uid)) if obj.get("_assignee_id") else None
 
 
 @Issue.field("creator")
 def i_creator(obj, info):
     store, _w, org, uid = _ctx(info)
     return _memo(info, "user", (org, obj["_creator_id"]),
-                 lambda: store.ser_user(store.get_user(org, obj["_creator_id"]), uid)) if obj.get("_creator_id") else None
+                 lambda: store.ser_user(_user_row(info, obj["_creator_id"]), uid)) if obj.get("_creator_id") else None
 
 
 @Issue.field("team")
@@ -534,8 +603,9 @@ def i_team(obj, info):
 @Issue.field("project")
 def i_project(obj, info):
     store, _w, org, _uid = _ctx(info)
-    return _memo(info, "project", (org, obj["_project_id"]),
-                 lambda: store.project_by_id(org, obj["_project_id"])) if obj.get("_project_id") else None
+    pid = obj.get("_project_id")
+    return _batched(info, "project", pid, lambda ids: store.projects_by_ids(org, ids),
+                    lambda: store.project_by_id(org, pid)) if pid else None
 
 
 @Issue.field("cycle")
@@ -568,24 +638,30 @@ def i_parent(obj, info):
 def i_labels(obj, info, first=50):
     store, _w, org, _uid = _ctx(info)
     first = _page_size(first)
-    return _memo(info, "issue_labels", (org, obj["id"], first),
-                 lambda: _conn(store.issue_labels_for(org, obj["id"])[:first]))
+    labels = _batched(info, "issue_labels", obj["id"], lambda ids: store.issue_labels_for_many(org, ids),
+                      lambda: store.issue_labels_for(org, obj["id"]), default=[])
+    return _conn(labels[:first])
 
 
 @Issue.field("subscribers")
 def i_subscribers(obj, info, first=50):
     store, _w, org, _uid = _ctx(info)
     first = _page_size(first)
-    return _memo(info, "issue_subscribers", (org, obj["id"], first),
-                 lambda: _conn(store.issue_subscribers_for(org, obj["id"], limit=first)))
+    subs = _batched(info, "issue_subscribers", obj["id"],
+                    lambda ids: store.issue_subscribers_for_many(org, ids),
+                    lambda: store.issue_subscribers_for(org, obj["id"]), default=[])
+    return _conn(subs[:first])
 
 
 @Issue.field("comments")
 def i_comments(obj, info, first=50):
     store, _w, org, _uid = _ctx(info)
     first = _page_size(first)
-    return _memo(info, "issue_comments", (org, obj["id"], first),
-                 lambda: _conn(store.comments_for(org, obj["id"], limit=first)))
+    def load():
+        comments = store.comments_for(org, obj["id"], limit=first)
+        _prime(info, "user_row", [c.get("_user_id") for c in comments])
+        return _conn(comments)
+    return _memo(info, "issue_comments", (org, obj["id"], first), load)
 
 
 @Issue.field("attachments")
@@ -603,6 +679,8 @@ def r_my_issue_activity(_, info, first=50, after=None):
     cursor = _decode_activity_cursor(after)
     rows = store.my_issue_activity(org, uid, cursor, first + 1)
     nodes = [dict(row, eventType=row["event_type"], createdAt=row["created_at"]) for row in rows[:first]]
+    _prime(info, "issue_obj", [n["issue_id"] for n in nodes])
+    _prime(info, "user_row", [n.get("actor_id") for n in nodes])
     return {"nodes": nodes, "pageInfo": {
         "hasNextPage": len(rows) > first, "hasPreviousPage": after is not None,
         "startCursor": _activity_cursor(nodes[0]) if nodes else None,
@@ -612,14 +690,13 @@ def r_my_issue_activity(_, info, first=50, after=None):
 
 @MyIssueActivity.field("issue")
 def mia_issue(obj, info):
-    store, _w, org, uid = _ctx(info)
-    return store.issue_by_id_or_identifier(org, obj["issue_id"], viewer_id=uid)
+    return _issue_obj(info, obj["issue_id"])
 
 
 @MyIssueActivity.field("actor")
 def mia_actor(obj, info):
-    store, _w, org, uid = _ctx(info)
-    return store.ser_user(store.get_user(org, obj["actor_id"]), uid) if obj.get("actor_id") else None
+    store, _w, _org, uid = _ctx(info)
+    return store.ser_user(_user_row(info, obj["actor_id"]), uid) if obj.get("actor_id") else None
 
 
 @Issue.field("activity")
@@ -629,6 +706,7 @@ def i_activity(obj, info, first=50, after=None):
     cursor = _decode_activity_cursor(after)
     rows = store.issue_activity_for(org, obj["id"], cursor, first + 1)
     nodes = [dict(row, eventType=row["event_type"], createdAt=row["created_at"]) for row in rows[:first]]
+    _prime(info, "user_row", [n.get("actor_id") for n in nodes])
     return {"nodes": nodes, "pageInfo": {
         "hasNextPage": len(rows) > first, "hasPreviousPage": after is not None,
         "startCursor": _activity_cursor(nodes[0]) if nodes else None,
@@ -638,33 +716,35 @@ def i_activity(obj, info, first=50, after=None):
 
 @IssueActivity.field("actor")
 def ia_actor(obj, info):
-    store, _w, org, _uid = _ctx(info)
-    return store.ser_user(store.get_user(org, obj["actor_id"]), obj["actor_id"]) if obj.get("actor_id") else None
+    store, _w, _org, _uid = _ctx(info)
+    return store.ser_user(_user_row(info, obj["actor_id"]), obj["actor_id"]) if obj.get("actor_id") else None
 
 
 # ----------------------------------------------------------------- Project fields
 @Project.field("lead")
 def p_lead(obj, info):
-    store, _w, org, uid = _ctx(info)
-    return store.ser_user(store.get_user(org, obj["_lead_id"]), uid) if obj.get("_lead_id") else None
+    store, _w, _org, uid = _ctx(info)
+    return store.ser_user(_user_row(info, obj["_lead_id"]), uid) if obj.get("_lead_id") else None
 
 
 @ProjectUpdate.field("project")
 def pu_project(obj, info):
     store, _w, org, _uid = _ctx(info)
-    return store.project_update_project(org, obj["_project_id"])
+    pid = obj["_project_id"]
+    return _batched(info, "project", pid, lambda ids: store.projects_by_ids(org, ids),
+                    lambda: store.project_update_project(org, pid))
 
 
 @ProjectUpdate.field("actor")
 def pu_actor(obj, info):
-    store, _w, org, uid = _ctx(info)
-    return store.ser_user(store.get_user(org, obj["_actor_id"]), uid) if obj.get("_actor_id") else None
+    store, _w, _org, uid = _ctx(info)
+    return store.ser_user(_user_row(info, obj["_actor_id"]), uid) if obj.get("_actor_id") else None
 
 
 @Project.field("creator")
 def p_creator(obj, info):
-    store, _w, org, uid = _ctx(info)
-    return store.ser_user(store.get_user(org, obj["_creator_id"]), uid) if obj.get("_creator_id") else None
+    store, _w, _org, uid = _ctx(info)
+    return store.ser_user(_user_row(info, obj["_creator_id"]), uid) if obj.get("_creator_id") else None
 
 
 @Project.field("members")
@@ -678,14 +758,17 @@ def p_members(obj, info, first=100):
 def p_teams(obj, info, first=100):
     store, _w, org, uid = _ctx(info)
     first = _page_size(first, 100)
-    return _conn(store.project_teams(org, obj["id"], viewer_id=uid)[:first])
+    teams = _batched(info, "project_teams", obj["id"],
+                     lambda ids: store.project_teams_many(org, ids, viewer_id=uid),
+                     lambda: store.project_teams(org, obj["id"], viewer_id=uid), default=[])
+    return _conn(teams[:first])
 
 
 # ----------------------------------------------------------------- Comment fields
 @Comment.field("user")
 def c_user(obj, info):
-    store, _w, org, uid = _ctx(info)
-    return store.ser_user(store.get_user(org, obj["_user_id"]), uid) if obj.get("_user_id") else None
+    store, _w, _org, uid = _ctx(info)
+    return store.ser_user(_user_row(info, obj["_user_id"]), uid) if obj.get("_user_id") else None
 
 
 # ----------------------------------------------------------------- Mutations

@@ -29,7 +29,7 @@ def test_migration_creates_connector_tables_at_current_revision(tmp_path) -> Non
     engine = _engine(tmp_path)
     names = set(inspect(engine).get_table_names())
     assert {"connector_account", "connector_action"} <= names
-    assert applied_schema_revision(engine) == CURRENT_SCHEMA_REVISION == 27
+    assert applied_schema_revision(engine) == CURRENT_SCHEMA_REVISION
 
 
 def test_account_row_round_trips_without_plaintext_token(tmp_path) -> None:

@@ -43,6 +43,7 @@ ISSUE_COLUMNS = (
     "stateChangedAt", "dueDate", "stateId", "teamId", "projectId", "assigneeId",
     "creatorId", "cycleId", "parentId", "labelIds", "subscriberIds",
 )
+TEAM_COLUMN = ISSUE_COLUMNS.index("teamId")
 _CLOSED_TYPES = ("completed", "canceled")
 # Entities whose change invalidates the metadata block rather than issue rows.
 META_ENTITIES = {"team", "teamMember", "workflowState", "label", "cycle", "project", "user", "member"}
@@ -133,7 +134,7 @@ def snapshot_etag(viewer_id: str, key: tuple) -> str:
     return '"' + hashlib.sha256(raw.encode()).hexdigest()[:32] + '"'
 
 
-def _issue_select(conn, org_id: str, viewer_id: str):
+def _issue_select(conn, org_id: str, viewer_id: str | None):
     stmt = (
         select(
             issue.c.id, issue.c.identifier, issue.c.title, issue.c.priority, issue.c.estimate,
@@ -144,6 +145,8 @@ def _issue_select(conn, org_id: str, viewer_id: str):
         .select_from(issue.outerjoin(workflow_state, workflow_state.c.id == issue.c.state_id))
         .where(and_(issue.c.organization_id == org_id, issue.c.archived_at.is_(None)))
     )
+    if viewer_id is None:
+        return stmt  # unscoped: callers filter rows by teamId per viewer themselves
     clause = visible_team_clause(conn, org_id, viewer_id, issue.c.team_id)
     return stmt if clause is None else stmt.where(clause)
 
@@ -174,7 +177,8 @@ def bootstrap_issues(store: Store, org_id: str, viewer_id: str, cutoff: str) -> 
         return _rows_with_links(conn, stmt)
 
 
-def issues_by_id(store: Store, org_id: str, viewer_id: str, ids: list[str]) -> list[list]:
+def issues_by_id(store: Store, org_id: str, viewer_id: str | None, ids: list[str]) -> list[list]:
+    """Rows for ids; viewer_id=None returns them unscoped (the caller must filter by teamId)."""
     out: list[list] = []
     with store.engine.connect() as conn:
         # Chunked to stay under SQLite's bound-parameter limit.
@@ -183,6 +187,11 @@ def issues_by_id(store: Store, org_id: str, viewer_id: str, ids: list[str]) -> l
             out.extend(_rows_with_links(conn, _issue_select(conn, org_id, viewer_id)
                                         .where(issue.c.id.in_(chunk))))
     return out
+
+
+def row_visible(row: list, visible: frozenset | None) -> bool:
+    """Issue visibility is team visibility; None means unrestricted (admin)."""
+    return visible is None or row[TEAM_COLUMN] in visible
 
 
 def build_delta(store: Store, org_id: str, viewer_id: str, after: int, scope: str | None = None) -> dict:
@@ -210,3 +219,31 @@ def build_delta(store: Store, org_id: str, viewer_id: str, after: int, scope: st
         "meta": bool(entities & META_ENTITIES),
         "other": sorted(entities - META_ENTITIES - {"issue"}),
     }
+
+
+STATE_COLUMN = ISSUE_COLUMNS.index("stateId")
+UPDATED_COLUMN = ISSUE_COLUMNS.index("updatedAt")
+
+
+def closed_state_ids(store: Store, org_id: str) -> frozenset:
+    with store.engine.connect() as conn:
+        return frozenset(r[0] for r in conn.execute(select(workflow_state.c.id).where(and_(
+            workflow_state.c.organization_id == org_id, workflow_state.c.type.in_(_CLOSED_TYPES)))))
+
+
+def derive_issues(prev_rows: list[list], changes: dict, visible: frozenset | None, cutoff: str,
+                  closed_states: frozenset) -> list[list]:
+    """A newer bootstrap issue list from an older one plus the changed rows (None = gone).
+
+    Applies the same window and visibility rules as bootstrap_issues, so a page
+    load during a burst of writes costs a merge instead of re-reading every row.
+    """
+    out = [r for r in prev_rows if r[0] not in changes]
+    for row in changes.values():
+        if row is None or not row_visible(row, visible):
+            continue
+        if row[STATE_COLUMN] in closed_states and (row[UPDATED_COLUMN] or "") < cutoff:
+            continue
+        out.append(row)
+    out.sort(key=lambda r: (r[UPDATED_COLUMN] or "", r[0]), reverse=True)
+    return out

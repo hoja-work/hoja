@@ -18,8 +18,7 @@ import logging
 import os
 import secrets
 import time
-from collections import deque
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -42,7 +41,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Route, WebSocketRoute
 from starlette.concurrency import run_in_threadpool
-from starlette.websockets import WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocket
 
 from cliniar_server.connectors_api import connector_binding_for, connector_routes
 from cliniar_server.db import (
@@ -74,7 +73,7 @@ from cliniar_server.denials import DENY_HINT, hint_for
 from cliniar_server.resolvers import build_schema
 from cliniar_server.secrets_box import SecretBoxError
 from cliniar_server.store import Store
-from cliniar_server import sync
+from cliniar_server import realtime, sync
 from cliniar_server.writer import Writer
 
 _schema = build_schema()
@@ -124,14 +123,9 @@ _MAX_GRAPHQL_BODY = 1_000_000
 _MAX_QUERY_DEPTH = 15
 _MAX_QUERY_FIELDS = 100
 _MAX_QUERY_VISITS = 10_000
-_WS_REVALIDATE_SECONDS = 5
-_WS_BROADCAST_INTERVAL = 0.1
-_WS_MAX_REPLAY = 500
-_WS_VISIBILITY_TTL = 30.0
-_org_wake: dict = {}
-_broadcaster_seq = {"last": 0}
-_org_ring: dict = {}
-_visibility_cache: dict = {}
+# Read-only sync endpoints reuse a resolved credential this long (matches the
+# realtime socket revalidation interval) instead of re-querying it per request.
+_SYNC_AUTH_TTL = 5.0
 _LOGIN_FAILURE_LIMIT = 10
 _LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60
 _CSP_HTML = "frame-ancestors 'none'; object-src 'none'; base-uri 'self'"
@@ -338,37 +332,24 @@ def create_app(
     engine = make_engine(target)
     store = Store(engine)
     writer = Writer(engine)
-    broadcaster_task = None
-    gql_slots = asyncio.Semaphore(8)
-    # Set after a local write so the broadcaster polls now instead of at its next tick.
-    broadcaster_kick = asyncio.Event()
+    # GraphQL/sync work runs in worker threads. SQLite serializes on the GIL per
+    # fetched row, so more than a handful of concurrent readers only adds
+    # contention; PostgreSQL drivers release the GIL while waiting on the server.
+    default_slots = 8 if engine.dialect.name == "sqlite" else 24
+    gql_slots = asyncio.Semaphore(int(os.environ.get("CLINIAR_GRAPHQL_CONCURRENCY", default_slots)))
+    hub = realtime.RealtimeHub(store)
     issue_snapshots = sync.SingleFlightCache(8)
     body_snapshots = sync.SingleFlightCache(32)
+    meta_cache = sync.SingleFlightCache(512)
+    issue_lineage: dict = {}  # (org, cutoff, visibility) -> (seq, rows) of the newest snapshot
+    sync_auth_cache: dict = {}
 
-    async def _change_broadcaster():
-        """Single global poller feeding an in-memory ring; wakes per-org waiters."""
-        while True:
-            broadcaster_kick.clear()
-            try:
-                events = await asyncio.to_thread(
-                    store.change_events_after_global, _broadcaster_seq["last"])
-                touched = set()
-                for row in events:
-                    _broadcaster_seq["last"] = max(_broadcaster_seq["last"], row["seq"])
-                    org_id = row["organization_id"]
-                    touched.add(org_id)
-                    ring = _org_ring.get(org_id)
-                    if ring is None:
-                        ring = _org_ring[org_id] = deque(maxlen=10000)
-                    ring.append(row)
-                for org_id in touched:
-                    ev = _org_wake.get(org_id)
-                    if ev is not None:
-                        ev.set()
-            except Exception:
-                pass
-            with suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(broadcaster_kick.wait(), timeout=_WS_BROADCAST_INTERVAL)
+    def _validate_creds(creds):
+        keys = [h for kind, h in creds if kind == "key"]
+        sessions = [h for kind, h in creds if kind == "session"]
+        return store.validate_credentials(keys, sessions)
+
+    hub.validate = _validate_creds
 
     if open_mode is None:
         open_mode = os.environ.get("CLINIAR_SERVER_OPEN", "0") == "1"
@@ -461,7 +442,7 @@ def create_app(
             # A valid Authorization header is authoritative; cookies are not consulted.
             key = store.resolve_token(token)
             if key:
-                store.touch_api_key(key["id"])
+                store.touch_api_key(key["id"], key.get("last_used_at"))
                 request.state.api_key_access = key["access"]
                 return key["user_id"], key["organization_id"], None, False
             # The presented credential did not resolve (e.g. the browser SPA's
@@ -482,6 +463,36 @@ def create_app(
                     True,
                 )
         return _open_mode_identity(request)
+
+    def _socket_identity(websocket):
+        """_auth for a realtime socket, plus the credential to revalidate it by."""
+        uid, org, _identity_id, _is_session = _auth(websocket)
+        if not uid:
+            return None, None, None
+        raw = websocket.headers.get("authorization", "")
+        token = raw[7:].strip() if raw.lower().startswith("bearer ") else raw.strip()
+        if token and store.resolve_token(token):
+            return uid, org, ("key", token_hash(token))
+        session_token = websocket.cookies.get("hoja_session")
+        if session_token and _is_session:
+            return uid, org, ("session", token_hash(session_token))
+        return uid, org, None  # loopback open mode: nothing to revoke
+
+    def _auth_sync(request: Request):
+        """_auth for the read-only /sync endpoints, cached briefly per credential."""
+        key = (request.headers.get("authorization") or "", request.cookies.get("hoja_session") or "",
+               request.client.host if request.client else "")
+        now = time.monotonic()
+        hit = sync_auth_cache.get(key)
+        if hit is not None and now - hit[0] < _SYNC_AUTH_TTL:
+            request.state.api_key_access = hit[2]
+            return hit[1]
+        result = _auth(request)
+        if result[0]:
+            if len(sync_auth_cache) > 10000:
+                sync_auth_cache.clear()
+            sync_auth_cache[key] = (now, result, getattr(request.state, "api_key_access", "read_write"))
+        return result
 
     def _credential_slot(uid: str, org: str):
         """Return (table, key column, key value, stored hash) for the account's password."""
@@ -693,74 +704,24 @@ def create_app(
             *websocket.scope["headers"],
             *([(b"authorization", token_header.encode())] if token_header else []),
         ]
-        uid, org, _identity_id, _is_session = _auth(websocket)
+        uid, org, cred = await run_in_threadpool(_socket_identity, websocket)
         await websocket.accept(subprotocol=subprotocol)
         if not uid:
             await websocket.close(code=4401)
             return
-        try:
-            cursor = int(websocket.query_params.get("after", "0"))
-        except ValueError:
-            await websocket.close(code=4400)
-            return
-        if not 0 <= cursor <= _MAX_SEQ:
-            await websocket.close(code=4400)
-            return
-        # Clamp ancient cursors: replaying the full history floods the event
-        # loop with per-event JSON encodes/sends; browser clients refetch
-        # state on any event anyway, so skip stale history beyond a window.
-        latest = await asyncio.to_thread(store.latest_change_seq, org)
-        if latest - cursor > _WS_MAX_REPLAY:
-            cursor = max(0, latest - _WS_MAX_REPLAY)
-        last_seq = cursor
-        last_check = time.monotonic()
-        wake = _org_wake.setdefault(org, asyncio.Event())
-        ring = _org_ring.setdefault(org, deque(maxlen=10000))
-
-        def _visible(evs, vis):
-            if vis is None:
-                return evs
-            return [e for e in evs if e["teamId"] is None or e["teamId"] in vis]
-
-        async def _visibility():
-            key = (org, uid)
-            now = time.monotonic()
-            cached = _visibility_cache.get(key)
-            if cached and now - cached[0] < _WS_VISIBILITY_TTL:
-                return cached[1]
-            vis = await asyncio.to_thread(store.visible_team_ids, org, uid)
-            _visibility_cache[key] = (now, vis)
-            return vis
-
-        try:
-            # Deliver any backlog immediately on connect, then wait for wakes.
-            events = await asyncio.to_thread(store.change_events_after, org, last_seq, viewer_id=uid)
-            if events:
-                await websocket.send_text(json.dumps(events))
-                last_seq = events[-1]["seq"]
-            while True:
-                try:
-                    await asyncio.wait_for(wake.wait(), timeout=_WS_REVALIDATE_SECONDS)
-                except asyncio.TimeoutError:
-                    pass
-                wake.clear()
-                if time.monotonic() - last_check >= _WS_REVALIDATE_SECONDS:
-                    last_check = time.monotonic()
-                    current_uid, current_org, _i, _s = await asyncio.to_thread(_auth, websocket)
-                    if current_uid != uid or current_org != org:
-                        await websocket.close(code=4401)
-                        return
-                pending = [e for e in ring if e["seq"] > last_seq]
-                if pending:
-                    out = _visible(pending, await _visibility())
-                    if out:
-                        try:
-                            await websocket.send_text(json.dumps(out))
-                        except RuntimeError:
-                            return
-                    last_seq = pending[-1]["seq"]
-        except WebSocketDisconnect:
-            return
+        raw_after = websocket.query_params.get("after")
+        cursor = None
+        if raw_after is not None:
+            try:
+                cursor = int(raw_after)
+            except ValueError:
+                await websocket.close(code=4400)
+                return
+            if not 0 <= cursor <= _MAX_SEQ:
+                await websocket.close(code=4400)
+                return
+        proto = 2 if websocket.query_params.get("v") == "2" else 1
+        await hub.serve(websocket, uid, org, cred, cursor, proto)
 
     async def agent_chat_server(request: Request):
         uid, org, _identity_id, _is_browser = _auth(request)
@@ -870,7 +831,7 @@ def create_app(
         return JSONResponse({"success": True})
 
     async def graphql_server(request: Request):
-        uid, org, identity_id, is_browser_session = _auth(request)
+        uid, org, identity_id, is_browser_session = await run_in_threadpool(_auth, request)
         if not uid:
             return JSONResponse(
                 {
@@ -931,7 +892,7 @@ def create_app(
                 debug=(os.environ.get("CLINIAR_SERVER_DEBUG", "0") == "1"),
             )
         if isinstance(query, str) and "mutation" in query:
-            broadcaster_kick.set()
+            hub.kick()
         target = context.get("switch_target")
         if target:
             session_token, _details = store.create_session_for_membership(
@@ -1391,7 +1352,7 @@ def create_app(
         return Response(json.dumps(body, separators=(",", ":")), media_type="application/json", **kwargs)
 
     async def sync_bootstrap(request: Request):
-        uid, org, identity_id, is_browser = await run_in_threadpool(_auth, request)
+        uid, org, identity_id, is_browser = await run_in_threadpool(_auth_sync, request)
         if not uid:
             return JSONResponse({"error": "Authentication required"}, status_code=401)
         try:
@@ -1405,10 +1366,11 @@ def create_app(
             # Seq first: anything committed while the snapshot is read is replayed by the next delta.
             seq = store.latest_change_seq(org)
             cutoff = sync.closed_cutoff(closed_days)
-            key = sync.issues_key(org, seq, cutoff, store.visible_team_ids(org, uid))
-            return seq, cutoff, key, sync.snapshot_etag(uid, key)
+            visible = store.visible_team_ids(org, uid)
+            key = sync.issues_key(org, seq, cutoff, visible)
+            return seq, cutoff, visible, key, sync.snapshot_etag(uid, key)
 
-        seq, cutoff, key, etag = await run_in_threadpool(validator)
+        seq, cutoff, visible, key, etag = await run_in_threadpool(validator)
         headers = {"ETag": etag, "Cache-Control": "private, no-cache",
                    "Vary": "Cookie, Authorization, Accept-Encoding"}
         if_none_match = request.headers.get("if-none-match") or ""
@@ -1416,9 +1378,32 @@ def create_app(
             return Response(status_code=304, headers=headers)
 
         async def build_issues():
+            # Derive from the previous snapshot of the same (org, window, visibility)
+            # plus the rows the realtime feed already fetched, instead of re-reading
+            # every open issue after each write.
+            lineage = (org, cutoff, key[3])
+            prev = issue_lineage.get(lineage)
+            rows = None
+            if prev is not None and prev[0] < seq and await hub.wait_head(org, seq):
+                changes = hub.issue_changes(org, prev[0], seq)
+                if changes is not None:
+                    prev_rows = prev[1]
+                    async with gql_slots:
+                        rows = await run_in_threadpool(lambda: sync.derive_issues(
+                            prev_rows, changes, visible, cutoff, sync.closed_state_ids(store, org)))
+            elif prev is not None and prev[0] == seq:
+                rows = prev[1]
+            hub.stats["snapshot_derived" if rows is not None else "snapshot_full"] += 1
             async with gql_slots:
-                return await run_in_threadpool(lambda: json.dumps(
-                    sync.bootstrap_issues(store, org, uid, cutoff), separators=(",", ":")).encode())
+                if rows is None:
+                    rows = await run_in_threadpool(sync.bootstrap_issues, store, org, uid, cutoff)
+                data = await run_in_threadpool(lambda: json.dumps(rows, separators=(",", ":")).encode())
+            current = issue_lineage.get(lineage)
+            if current is None or current[0] < seq:
+                issue_lineage[lineage] = (seq, rows)
+                while len(issue_lineage) > 64:
+                    issue_lineage.pop(next(iter(issue_lineage)))
+            return data
 
         async def build_body():
             issues_json = await issue_snapshots.get(key, build_issues)
@@ -1441,7 +1426,7 @@ def create_app(
         return Response(raw, media_type="application/json", headers=headers)
 
     async def sync_delta(request: Request):
-        uid, org, identity_id, is_browser = await run_in_threadpool(_auth, request)
+        uid, org, identity_id, is_browser = await run_in_threadpool(_auth_sync, request)
         if not uid:
             return JSONResponse({"error": "Authentication required"}, status_code=401)
         try:
@@ -1450,15 +1435,29 @@ def create_app(
             return _bad_request("after must be an integer.")
         if not 0 <= after <= _MAX_SEQ:
             return _bad_request("after is out of range.")
+        scope = request.query_params.get("scope")
 
-        def build():
-            delta = sync.build_delta(store, org, uid, after, request.query_params.get("scope"))
+        async def meta_for(meta_seq):
+            async def build():
+                async with gql_slots:
+                    return await run_in_threadpool(_sync_meta, request, uid, org, identity_id, is_browser)
+            return await meta_cache.get((org, uid, identity_id, meta_seq), build)
+
+        delta = None
+        if scope is None or scope == sync.sync_scope(org, uid):
+            # Served from the realtime ring: after a broadcast every client pulls at
+            # once, and none of them needs to touch the database.
+            delta = await hub.delta(org, uid, after)
+            if delta is not None and delta.get("meta"):
+                delta["meta"] = await meta_for(delta["seq"])
+        if delta is None:
+            def build():
+                return sync.build_delta(store, org, uid, after, scope)
+
+            async with gql_slots:
+                delta = await run_in_threadpool(build)
             if delta.get("meta"):
-                delta["meta"] = _sync_meta(request, uid, org, identity_id, is_browser)
-            return delta
-
-        async with gql_slots:
-            delta = await run_in_threadpool(build)
+                delta["meta"] = await meta_for(delta["seq"])
         return _sync_json(delta, headers={"Cache-Control": "no-store"})
 
     async def health(request: Request):
@@ -1507,6 +1506,22 @@ def create_app(
             return JSONResponse({"error": "Web UI has not been built"}, status_code=503)
         return FileResponse(index)
 
+    def _sqlite_analyze():
+        # Without planner statistics SQLite prefers the (single-valued, in a
+        # one-workspace database) organization_id index over the id/identifier
+        # indexes and scans every issue for a single-issue lookup.
+        with engine.begin() as conn:
+            conn.exec_driver_sql("PRAGMA analysis_limit=1000")
+            conn.exec_driver_sql("ANALYZE")
+
+    async def _sqlite_maintenance():
+        while True:
+            try:
+                await asyncio.to_thread(_sqlite_analyze)
+            except Exception:
+                logging.getLogger("cliniar_server").warning("SQLite ANALYZE failed", exc_info=True)
+            await asyncio.sleep(6 * 3600)
+
     @asynccontextmanager
     async def lifespan(app):
         nonlocal mcp_asgi
@@ -1525,11 +1540,11 @@ def create_app(
             ),
         )
         mcp_asgi = runtime_app
-        nonlocal broadcaster_task
         from concurrent.futures import ThreadPoolExecutor
         asyncio.get_running_loop().set_default_executor(
             ThreadPoolExecutor(max_workers=32, thread_name_prefix="cliniar"))
-        broadcaster_task = asyncio.create_task(_change_broadcaster())
+        await hub.ensure_started()
+        maintenance = asyncio.create_task(_sqlite_maintenance()) if engine.dialect.name == "sqlite" else None
         async with runtime_app.router.lifespan_context(runtime_app):
             if agent_dbos_url := os.environ.get("CLINIAR_AGENT_DBOS_URL"):
                 from dbos import DBOS
@@ -1542,8 +1557,9 @@ def create_app(
                     DBOS.destroy()
             else:
                 yield
-        if broadcaster_task is not None:
-            broadcaster_task.cancel()
+        await hub.stop()
+        if maintenance is not None:
+            maintenance.cancel()
 
     async def _malformed_json_handler(request: Request, exc: Exception):
         return JSONResponse({"error": "Malformed JSON body."}, status_code=400)
@@ -1591,6 +1607,7 @@ def create_app(
         ],
         lifespan=lifespan,
     )
+    app.state.realtime = hub
     app.add_middleware(_SecurityHeaders)
     # Compress JSON and static assets; SSE streams are excluded by Starlette.
     app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
