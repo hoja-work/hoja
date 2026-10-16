@@ -9,8 +9,8 @@ import {getSync} from '../sync';
  * - runBounded: concurrent mutations with a cap, collecting per-item failures.
  * - optimistic bulk update/archive/delete: every overlay is applied before the first
  *   request leaves, requests run 6 at a time, failures roll back only their own rows.
- * - hidden ids: the store has no "remove locally" overlay, so archive/delete hide rows
- *   here until the delta that removes them has been pulled.
+ * - hidden ids: archive/delete use the store's hide() overlay; the local hidden set is only
+ *   a fallback when no store is running.
  * - useScrollWindow: the visible slice of a long list inside a scroll container.
  */
 
@@ -79,20 +79,22 @@ export async function bulkRemove(ids: string[], kind: 'archive' | 'delete'): Pro
   const mutation = kind === 'archive'
     ? `mutation($id:String!){issueArchive(id:$id){success}}`
     : `mutation($id:String!){issueDelete(id:$id){success}}`;
-  setHidden(ids, true);
+  const sync = getSync();
+  const settle = sync?.hide(ids);
+  if (!settle) setHidden(ids, true);
   const failures = await runBounded(ids, BULK_CONCURRENCY, async id => {
     const d = await gql(mutation, {id});
     const payload = kind === 'archive' ? d.issueArchive : d.issueDelete;
     if (!payload?.success) throw new Error(kind === 'archive' ? 'Archive was rejected' : 'Delete was rejected');
   });
   const failed = failures.map(f => f.item);
-  if (failed.length) setHidden(failed, false);
   const failedSet = new Set(failed);
   const done = ids.filter(id => !failedSet.has(id));
-  if (done.length) {
-    const sync = getSync();
-    if (sync) void sync.pull().finally(() => setHidden(done, false));
-    // Without a store nothing will bring these rows back; keep them hidden.
+  if (settle) {
+    if (failed.length) settle(false, failed);
+    if (done.length) settle(true, done);
+  } else if (failed.length) {
+    setHidden(failed, false); // without a store nothing brings removed rows back; keep the rest hidden
   }
   return {failed, error: summarize(failures, ids.length, kind === 'archive' ? 'archived' : 'deleted')};
 }

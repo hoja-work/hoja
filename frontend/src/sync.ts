@@ -32,6 +32,9 @@ export type SyncHandle = {
   patchFromInput: (input: Record<string, unknown>) => Partial<Issue>;
   /** Add issues fetched outside the snapshot (older closed pages) so deltas keep them fresh. */
   adopt: (issues: Issue[]) => void;
+  /** Remove issues locally (archive/delete). settle(true, ids?) keeps them hidden until a pull
+   *  has removed them; settle(false, ids?) brings them back. ids defaults to all hidden here. */
+  hide: (ids: string[]) => (accepted: boolean, ids?: string[]) => void;
 };
 
 type Row = unknown[];
@@ -57,6 +60,8 @@ const KEY = 'current';
  *                               (optionally only those entity ids) arrives — use as an effect dep
  *                               instead of the global `revision` prop.
  *   onEntityChange(entities, cb)      imperative form of the above; returns unsubscribe.
+ *   useTeamIssues(teamId)       issues of one team, from an index shared by every caller.
+ * Store updates are coalesced per microtask, so N patches/settles in a loop re-render once.
  * Entity names come from change_event: issue, comment, attachment, project, projectUpdate,
  * initiative, cycle, label, workflowState, team, teamMember, notification, user, member.
  */
@@ -79,6 +84,27 @@ export function useSyncStatus(): {ready: boolean; closedCutoff: string} {
   const closedCutoff = useSyncExternalStore(subscribeStore, () => storeState.closedCutoff);
   return useMemo(() => ({ready, closedCutoff}), [ready, closedCutoff]);
 }
+// One team index per issues array, shared by every useTeamIssues caller.
+const teamIndexCache = new WeakMap<Issue[], Map<string, Issue[]>>();
+function teamIndex(issues: Issue[]): Map<string, Issue[]> {
+  let index = teamIndexCache.get(issues);
+  if (!index) {
+    index = new Map();
+    for (const issue of issues) {
+      const key = issue.team?.id || '';
+      const list = index.get(key);
+      if (list) list.push(issue); else index.set(key, [issue]);
+    }
+    teamIndexCache.set(issues, index);
+  }
+  return index;
+}
+const NO_ISSUES: Issue[] = [];
+export function useTeamIssues(teamId: string | null | undefined): Issue[] {
+  const issues = useIssues();
+  return useMemo(() => (teamId ? teamIndex(issues).get(teamId) || NO_ISSUES : NO_ISSUES), [issues, teamId]);
+}
+
 export function useIssue(idOrIdentifier: string | null | undefined): Issue | undefined {
   const issues = useIssues();
   return useMemo(() => (idOrIdentifier ? issues.find(i => i.id === idOrIdentifier || i.identifier === idOrIdentifier) : undefined),
@@ -174,7 +200,7 @@ function columnReader(columns: string[]): (name: string) => Col {
   return name => { const i = at.get(name); return i === undefined ? () => undefined : row => row[i]; };
 }
 
-function hydrate(row: Row, col: (name: string) => Col, lk: Lookups): Issue {
+function hydrate(row: Row, col: (name: string) => Col, lk: Lookups, parentRow: Row | undefined): Issue {
   const id = (k: string) => col(k)(row) as string | null;
   const priority = (col('priority')(row) as number | null) ?? 0;
   const sid = id('stateId'), tid = id('teamId'), pid = id('projectId'), aid = id('assigneeId');
@@ -192,7 +218,11 @@ function hydrate(row: Row, col: (name: string) => Col, lk: Lookups): Issue {
     cycle: cyc ? lk.cycles.get(cyc) : undefined,
     labels: {nodes: ((col('labelIds')(row) as string[]) || []).map(l => lk.labels.get(l)).filter(Boolean) as IssueLabel[]},
     subscribers: {nodes: ((col('subscriberIds')(row) as string[]) || []).map(u => ({id: u}))},
-  };
+    estimate: (col('estimate')(row) as number | null) ?? null,
+    parent: parentRow
+      ? {id: parentRow[0] as string, identifier: col('identifier')(parentRow) as string, title: col('title')(parentRow) as string}
+      : (id('parentId') ? {id: id('parentId')!, identifier: '', title: ''} : null),
+  } as Issue;
 }
 
 /* Issue → row, for adopting issues loaded through GraphQL pages. */
@@ -200,7 +230,8 @@ function dehydrate(issue: Issue, columns: string[]): Row {
   const values: Record<string, unknown> = {
     id: issue.id, identifier: issue.identifier, title: issue.title, priority: issue.priority,
     createdAt: issue.createdAt, updatedAt: issue.updatedAt, stateChangedAt: issue.stateChangedAt,
-    dueDate: issue.dueDate, stateId: issue.state?.id, teamId: issue.team?.id, projectId: issue.project?.id,
+    dueDate: issue.dueDate, estimate: (issue as {estimate?: number | null}).estimate,
+    parentId: (issue as {parent?: {id: string} | null}).parent?.id, stateId: issue.state?.id, teamId: issue.team?.id, projectId: issue.project?.id,
     assigneeId: issue.assignee?.id, creatorId: issue.creator?.id, cycleId: issue.cycle?.id,
     labelIds: issue.labels?.nodes.map(l => l.id) || [], subscriberIds: issue.subscribers?.nodes.map(s => s.id) || [],
   };
@@ -222,8 +253,10 @@ export function startSync(opts: {
   let lk: Lookups | null = null;
   let lkMeta: SyncMeta | null = null;
   // Reuse hydrated objects while their row is unchanged so React can skip re-rendering them.
-  const hydrated = new Map<string, {row: Row; issue: Issue}>();
+  const hydrated = new Map<string, {row: Row; parentRow: Row | undefined; issue: Issue}>();
   const overlays = new Map<string, Partial<Issue>[]>();
+  const hidden = new Map<string, number>(); // id → number of outstanding hide() calls
+  let emitQueued = false;
 
   const fetchJson = async (url: string, extra: Record<string, string> = {}) => {
     const res = await fetch(url, {credentials: 'include', headers: {...opts.headers(), ...extra}});
@@ -237,14 +270,28 @@ export function startSync(opts: {
     saveTimer = window.setTimeout(() => { if (snap && !stopped) void saveSnapshot(snap); }, 250);
   };
 
+  // Coalesce bursts (bulk patches, many settles, delta + overlay) into one rebuild per microtask.
+  const requestEmit = () => {
+    if (emitQueued) return;
+    emitQueued = true;
+    queueMicrotask(() => { emitQueued = false; emit(false); });
+  };
+
   const emit = (reset: boolean) => {
     if (!snap || stopped) return;
     if (lkMeta !== snap.meta) { lk = lookups(snap.meta); lkMeta = snap.meta; hydrated.clear(); }
     const col = columnReader(snap.columns);
     const issues: Issue[] = [];
+    const parentAt = snap.columns.indexOf('parentId');
     for (const [id, row] of Object.entries(snap.rows)) {
+      if (hidden.has(id)) continue;
+      const pid = parentAt >= 0 ? row[parentAt] as string | null : null;
+      const parentRow = pid ? snap.rows[pid] : undefined;
       let entry = hydrated.get(id);
-      if (!entry || entry.row !== row) { entry = {row, issue: hydrate(row, col, lk!)}; hydrated.set(id, entry); }
+      if (!entry || entry.row !== row || entry.parentRow !== parentRow) {
+        entry = {row, parentRow, issue: hydrate(row, col, lk!, parentRow)};
+        hydrated.set(id, entry);
+      }
       const layers = overlays.get(id);
       issues.push(layers ? Object.assign({}, entry.issue, ...layers) : entry.issue);
     }
@@ -283,7 +330,7 @@ export function startSync(opts: {
     for (const id of d.removed as string[]) delete rows[id];
     snap = {...s, seq: d.seq, etag: null, rows, meta: d.meta ? d.meta : s.meta};
     persist();
-    emit(false);
+    requestEmit();
   };
 
   const pull = (): Promise<void> => {
@@ -320,12 +367,12 @@ export function startSync(opts: {
       const layers = overlays.get(issueId) || [];
       layers.push(patch);
       overlays.set(issueId, layers);
-      emit(false);
+      requestEmit();
       return accepted => {
         const drop = () => {
           const current = overlays.get(issueId)?.filter(p => p !== patch) || [];
           if (current.length) overlays.set(issueId, current); else overlays.delete(issueId);
-          emit(false);
+          requestEmit();
         };
         // Keep an accepted edit visible until a pull has brought the server's version.
         if (accepted) void pull().finally(drop); else drop();
@@ -354,7 +401,25 @@ export function startSync(opts: {
       for (const issue of issues) if (!(issue.id in rows)) rows[issue.id] = dehydrate(issue, snap.columns);
       snap = {...snap, rows};
       persist();
-      emit(false);
+      requestEmit();
+    },
+    hide: ids => {
+      for (const id of ids) hidden.set(id, (hidden.get(id) || 0) + 1);
+      requestEmit();
+      let open = new Set(ids);
+      return (accepted, which) => {
+        const done = (which || [...open]).filter(id => open.has(id));
+        open = new Set([...open].filter(id => !done.includes(id)));
+        const unhide = () => {
+          for (const id of done) {
+            const n = (hidden.get(id) || 1) - 1;
+            if (n > 0) hidden.set(id, n); else hidden.delete(id);
+          }
+          requestEmit();
+        };
+        // Accepted removals stay hidden until a pull has dropped their rows.
+        if (accepted) void pull().finally(unhide); else unhide();
+      };
     },
   };
   currentHandle = handle;
