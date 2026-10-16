@@ -1,7 +1,9 @@
-import React, {useEffect, useMemo, useRef, useState} from 'react';
+import React, {memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
 import {Bell, Check, ChevronDown, ChevronRight, Copy, ExternalLink, Link2, ListFilter, Plus, Search, Settings2, SlidersHorizontal, Trash2, X} from 'lucide-react';
 import {gql, relTime, stateKey} from '../main';
 import type {Cycle, Issue, IssueActivityEvent, IssueLabel, IssueState, Project, Team, Viewer} from '../main';
+import {getSync, useIssues, useSyncStatus} from '../sync';
+import {addLabelInput, bulkRemove, bulkUpdate, useHiddenIssueIds, useScrollWindow, useStableCallback, visibleRange} from './issueStore';
 import {Avatar, CycleChip, CycleGlyph, DueChip, FavStar, IconBtn, LabelChip, LinMenu, LinearStatusIcon, PriorityIcon, ProjectChip, Ring, SubIssuePill, Tip, cx, fmtDate, fmtFullDate, useDismiss, useFavorite} from './shared';
 
 /* Linear 1:1 Issues list + board + detail. */
@@ -89,11 +91,15 @@ export function applyLinFilters(issues: LinIssue[], f: LinFilters): LinIssue[] {
 export function orderLinIssues(issues: LinIssue[], d: LinDisplay): LinIssue[] {
   const arr = [...issues];
   const dir = d.direction === 'desc' ? -1 : 1;
+  if (d.ordering === 'priority') {
+    arr.sort((a, b) => ((a.priority || 5) - (b.priority || 5)) * dir);
+    return arr;
+  }
+  // ISO timestamps order lexicographically; plain comparison is far cheaper than localeCompare on 50k rows.
+  const key = d.ordering === 'created' ? 'createdAt' : 'updatedAt';
   arr.sort((a, b) => {
-    if (d.ordering === 'priority') return ((a.priority || 5) - (b.priority || 5)) * dir;
-    const ak = d.ordering === 'created' ? a.createdAt : a.updatedAt;
-    const bk = d.ordering === 'created' ? b.createdAt : b.updatedAt;
-    return ((ak || '').localeCompare(bk || '')) * dir;
+    const ak = a[key] || '', bk = b[key] || '';
+    return ak === bk ? 0 : (ak < bk ? -dir : dir);
   });
   return arr;
 }
@@ -313,7 +319,8 @@ export function DisplayPanel({display, setDisplay, onClose, anchorClass}: {
 
 /* ---------------- issue row ---------------- */
 
-export function IssueRow({issue, display, selected, onSelect, onOpen, childCount, showCheckbox}: {
+/* Memoized: with stable onSelect/onOpen only rows whose issue/selection changed re-render. */
+export const IssueRow = memo(function IssueRow({issue, display, selected, onSelect, onOpen, childCount, showCheckbox}: {
   issue: LinIssue; display: LinDisplay; selected: boolean;
   onSelect: (id: string, on: boolean) => void; onOpen: (issue: LinIssue) => void;
   childCount: number; showCheckbox: boolean;
@@ -343,11 +350,11 @@ export function IssueRow({issue, display, selected, onSelect, onOpen, childCount
       </span>
     </div>
   );
-}
+});
 
 /* ---------------- board ---------------- */
 
-function BoardCard({issue, onOpen, onDragStart}: {issue: LinIssue; onOpen: (i: LinIssue) => void; onDragStart: (e: React.DragEvent, i: LinIssue) => void}) {
+const BoardCard = memo(function BoardCard({issue, onOpen, onDragStart}: {issue: LinIssue; onOpen: (i: LinIssue) => void; onDragStart: (e: React.DragEvent, i: LinIssue) => void}) {
   return (
     <button type="button" className="lin-bcard" draggable
       onDragStart={e => onDragStart(e, issue)}
@@ -373,6 +380,24 @@ function BoardCard({issue, onOpen, onDragStart}: {issue: LinIssue; onOpen: (i: L
       </span>
     </button>
   );
+});
+
+/* A column renders its first cards and grows as it is scrolled, so a 10k-card backlog stays cheap. */
+const BOARD_PAGE = 60;
+const BOARD_STEP = 200;
+function BoardColumnCards({items, onOpen, onDragStart}: {items: LinIssue[]; onOpen: (i: LinIssue) => void; onDragStart: (e: React.DragEvent, i: LinIssue) => void}) {
+  const [limit, setLimit] = useState(BOARD_PAGE);
+  const more = items.length - limit;
+  return (
+    <div className="lin-bcards" onScroll={more > 0 ? e => {
+      const el = e.currentTarget;
+      if (el.scrollTop + el.clientHeight > el.scrollHeight - 800) setLimit(l => l + BOARD_STEP);
+    } : undefined}>
+      {(more > 0 ? items.slice(0, limit) : items).map(i => <BoardCard key={i.id} issue={i} onOpen={onOpen} onDragStart={onDragStart} />)}
+      {more > 0 && <button type="button" className="lin-btn" onClick={() => setLimit(l => l + BOARD_STEP)}>Show {Math.min(more, BOARD_STEP)} more of {more}</button>}
+      {!items.length && <div className="lin-bempty">No issues</div>}
+    </div>
+  );
 }
 
 function LinearBoard({issues, states, onOpen, onMoved, onNew, display, setDisplay}: {
@@ -384,21 +409,28 @@ function LinearBoard({issues, states, onOpen, onMoved, onNew, display, setDispla
   const [dropCol, setDropCol] = useState<string | null>(null);
   const [error, setError] = useState('');
   const dragIssue = useRef<LinIssue | null>(null);
-  const cols = states.map(s => ({state: s, items: issues.filter(i => i.state && stateKey(i.state) === stateKey(s))}));
+  // One pass over the issues instead of one filter per column.
+  const cols = useMemo(() => {
+    const by = new Map<string, LinIssue[]>(states.map(s => [stateKey(s), []]));
+    for (const i of issues) if (i.state) by.get(stateKey(i.state))?.push(i);
+    return states.map(s => ({state: s, items: by.get(stateKey(s)) || []}));
+  }, [issues, states]);
   const visible = cols.filter(c => !display.hiddenColumns.includes(stateKey(c.state)) && (display.showEmptyColumns || c.items.length));
   const hidden = cols.filter(c => display.hiddenColumns.includes(stateKey(c.state)));
+  const onDragStart = useCallback((e: React.DragEvent, it: LinIssue) => { dragIssue.current = it; e.dataTransfer.effectAllowed = 'move'; }, []);
   const onDropCol = async (state: IssueState) => {
     const issue = dragIssue.current;
     dragIssue.current = null;
     setDropCol(null);
     if (!issue || (issue.state && stateKey(issue.state) === stateKey(state))) return;
+    // onMoved overlays the new state in the store before the request and rolls back if it throws.
     try { await onMoved(issue.id, state); } catch (e) { setError((e as Error).message); }
   };
   return (
     <div className="lin-board" role="list" aria-label="Board">
       {visible.map(({state, items}) => (
         <section key={stateKey(state)} className="lin-bcol" aria-label={state.name}
-          onDragOver={e => { e.preventDefault(); setDropCol(stateKey(state)); }}
+          onDragOver={e => { e.preventDefault(); if (dropCol !== stateKey(state)) setDropCol(stateKey(state)); }}
           onDragLeave={() => setDropCol(cur => cur === stateKey(state) ? null : cur)}
           onDrop={e => { e.preventDefault(); void onDropCol(state); }}
           style={dropCol === stateKey(state) ? {outline: '2px dashed var(--accent)', outlineOffset: -2} : undefined}>
@@ -416,11 +448,7 @@ function LinearBoard({issues, states, onOpen, onMoved, onNew, display, setDispla
               )}
             </span>
           </header>
-          <div className="lin-bcards">
-            {items.map(i => <BoardCard key={i.id} issue={i} onOpen={onOpen}
-              onDragStart={(e, it) => { dragIssue.current = it; e.dataTransfer.effectAllowed = 'move'; }} />)}
-            {!items.length && <div className="lin-bempty">No issues</div>}
-          </div>
+          <BoardColumnCards items={items} onOpen={onOpen} onDragStart={onDragStart} />
         </section>
       ))}
       {hidden.length > 0 && (
@@ -448,30 +476,30 @@ function LinearBoard({issues, states, onOpen, onMoved, onNew, display, setDispla
 
 /* ---------------- bulk actions ---------------- */
 
-function BulkBar({selected, issues, team, teams, cycles, labels, onClear, onDone}: {
-  selected: string[]; issues: LinIssue[]; team?: Team; teams: Team[]; cycles: Cycle[];
-  labels: IssueLabel[]; onClear: () => void; onDone: () => void;
+/* Every action overlays its result on the selected rows at once, sends the requests
+ * BULK_CONCURRENCY at a time, rolls back only the rows that failed and keeps those selected. */
+function BulkBar({selected, byId, team, cycles, labels, onClear, onDone}: {
+  selected: string[]; byId: Map<string, LinIssue>; team?: Team; teams: Team[]; cycles: Cycle[];
+  labels: IssueLabel[]; onClear: () => void; onDone: (failed: string[]) => void;
 }) {
   const [action, setAction] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const ref = useDismiss(() => { setAction(null); });
-  const run = async (input: Record<string, unknown>, labelIds?: string[]) => {
-    setBusy(true); setError('');
-    try {
-      for (const id of selected) {
-        const d = await gql(`mutation($id:String!,$input:IssueUpdateInput!){issueUpdate(id:$id,input:$input){success}}`,
-          {id, input: labelIds ? {labelIds} : input});
-        if (!d.issueUpdate?.success) throw new Error('Update was rejected');
-      }
-      onDone();
-    } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+  const ref = useDismiss(useCallback(() => { setAction(null); }, []));
+  const finish = (res: {failed: string[]; error: string}) => { setBusy(false); setError(res.error); onDone(res.failed); };
+  const run = async (inputFor: (id: string) => Record<string, unknown> | null) => {
+    setAction(null); setBusy(true); setError('');
+    finish(await bulkUpdate([...selected], inputFor));
+  };
+  const remove = async (kind: 'archive' | 'delete') => {
+    setAction(null); setBusy(true); setError('');
+    finish(await bulkRemove([...selected], kind));
   };
   const states = team?.states.nodes || [];
   const members = team?.members?.nodes || [];
   const teamCycles = cycles.filter(c => c.team?.id === team?.id);
   return (
-    <div className="lin-multibar" role="toolbar" aria-label="Bulk actions">
+    <div className="lin-multibar" role="toolbar" aria-label="Bulk actions" aria-busy={busy || undefined}>
       <span className="n">{selected.length} selected</span>
       <span className="div" />
       <span style={{position: 'relative'}} ref={ref}>
@@ -486,32 +514,33 @@ function BulkBar({selected, issues, team, teams, cycles, labels, onClear, onDone
                 </button>
               ))}
               <div className="lin-menu-divider" />
-              <button type="button" className="lin-menu-item" onClick={() => { setAction(null); void (async () => { setBusy(true); try { for (const id of selected) await gql(`mutation($id:String!){issueArchive(id:$id){success}}`, {id}); onDone(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } })(); }}>Archive</button>
-              <button type="button" className="lin-menu-item danger" onClick={() => { if (window.confirm(`Delete ${selected.length} issues? This cannot be undone.`)) { setAction(null); void (async () => { setBusy(true); try { for (const id of selected) await gql(`mutation($id:String!){issueDelete(id:$id){success}}`, {id}); onDone(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } })(); } }}>Delete</button>
+              <button type="button" className="lin-menu-item" onClick={() => void remove('archive')}>Archive</button>
+              <button type="button" className="lin-menu-item danger" onClick={() => { if (window.confirm(`Delete ${selected.length} issues? This cannot be undone.`)) void remove('delete'); }}>Delete</button>
             </> : <>
               <button type="button" className="lin-menu-item" onClick={() => setAction('menu')}>‹ Back</button>
               <div className="lin-menu-divider" />
               <div style={{maxHeight: 260, overflowY: 'auto'}}>
                 {action === 'status' && states.map(s => (
                   <button key={s.id} type="button" className="lin-menu-item" disabled={busy}
-                    onClick={() => void run({stateId: s.id})}><LinearStatusIcon state={s} /><span className="lin-menu-label">{s.name}</span></button>))}
+                    onClick={() => void run(() => ({stateId: s.id}))}><LinearStatusIcon state={s} /><span className="lin-menu-label">{s.name}</span></button>))}
                 {action === 'priority' && [[1, 'Urgent'], [2, 'High'], [3, 'Medium'], [4, 'Low'], [0, 'No priority']].map(([v, l]) => (
                   <button key={v} type="button" className="lin-menu-item" disabled={busy}
-                    onClick={() => void run({priority: v})}><PriorityIcon priority={v as number} /><span className="lin-menu-label">{l}</span></button>))}
-                {action === 'assignee' && <><button type="button" className="lin-menu-item" disabled={busy} onClick={() => void run({assigneeId: null})}>Unassigned</button>
-                  {members.map(m => <button key={m.id} type="button" className="lin-menu-item" disabled={busy} title={m.name || m.email} onClick={() => void run({assigneeId: m.id})}><Avatar name={m.name} size={18} /><span className="lin-menu-label">{m.name || m.email}</span></button>)}</>}
-                {action === 'cycle' && <><button type="button" className="lin-menu-item" disabled={busy} onClick={() => void run({cycleId: null})}>Remove from cycle</button>
-                  {teamCycles.map(c => <button key={c.id} type="button" className="lin-menu-item" disabled={busy} onClick={() => void run({cycleId: c.id})}><CycleGlyph /><span className="lin-menu-label">{c.name || `Cycle ${c.number}`}</span></button>)}</>}
+                    onClick={() => void run(() => ({priority: v}))}><PriorityIcon priority={v as number} /><span className="lin-menu-label">{l}</span></button>))}
+                {action === 'assignee' && <><button type="button" className="lin-menu-item" disabled={busy} onClick={() => void run(() => ({assigneeId: null}))}>Unassigned</button>
+                  {members.map(m => <button key={m.id} type="button" className="lin-menu-item" disabled={busy} title={m.name || m.email} onClick={() => void run(() => ({assigneeId: m.id}))}><Avatar name={m.name} size={18} /><span className="lin-menu-label">{m.name || m.email}</span></button>)}</>}
+                {action === 'cycle' && <><button type="button" className="lin-menu-item" disabled={busy} onClick={() => void run(() => ({cycleId: null}))}>Remove from cycle</button>
+                  {teamCycles.map(c => <button key={c.id} type="button" className="lin-menu-item" disabled={busy} onClick={() => void run(() => ({cycleId: c.id}))}><CycleGlyph /><span className="lin-menu-label">{c.name || `Cycle ${c.number}`}</span></button>)}</>}
                 {action === 'label' && labels.map(l => (
                   <button key={l.id} type="button" className="lin-menu-item" disabled={busy}
-                    onClick={() => { const first = issues.find(i => selected.includes(i.id)); const ids = [...new Set([...(first?.labels?.nodes || []).map(x => x.id), l.id])]; void run({}, ids); }}>
+                    onClick={() => void run(id => addLabelInput(byId.get(id), l.id))}>
                     <LabelChip label={l} /></button>))}
               </div>
             </>}
-            {error && <p className="lin-error" style={{margin: 6}}>{error}</p>}
           </div>
         )}
       </span>
+      {error && <span className="lin-error" role="alert" title={error}
+        style={{margin: 0, padding: '5px 10px', maxWidth: 'min(360px, 50vw)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>{error}</span>}
       <button type="button" onClick={onClear} aria-label="Clear selection"><X size={14} /></button>
     </div>
   );
@@ -521,22 +550,30 @@ function BulkBar({selected, issues, team, teams, cycles, labels, onClear, onDone
 
 type SavedView = {id: string; name: string; query: string; state: string};
 
-export function LinearTeamIssues({team, teams, viewer, orgId, workspaceName, projects, labels, cycles, onIssue, onMoved, onNew, revision, layout, onLayoutChange, onNavigate}: {
+/* Rows come from the local-first store (useIssues): the open set and recently closed issues
+ * render instantly from cache and stay live through deltas. Only closed issues older than the
+ * store's closedCutoff are paged through GraphQL, and they are adopted into the store. */
+const WINDOW_THRESHOLD = 200;
+const LIST_PAD_TOP = 6, GROUP_GAP = 8, GROUP_HEAD = 36;
+type OlderPaging = {cursor: string | null; hasMore: boolean; loading: boolean; error: string; loaded: number};
+const olderInitial: OlderPaging = {cursor: null, hasMore: true, loading: false, error: '', loaded: 0};
+
+export function LinearTeamIssues({team, teams, orgId, workspaceName, projects, labels, cycles, onIssue, onMoved, onNew, layout, onLayoutChange, onNavigate}: {
   team?: Team; teams: Team[]; viewer: Viewer; orgId: string; workspaceName: string;
   projects: Project[]; labels: IssueLabel[]; cycles: Cycle[];
   onIssue: (issue: LinIssue) => void;
   onMoved: (issueId: string, state: IssueState) => Promise<void>;
+  /** Ignored: the page is live through the store; kept so callers needn't change. */
   onNew: () => void; revision: number;
   layout: 'List' | 'Board'; onLayoutChange: (l: 'List' | 'Board') => void;
   onNavigate: (view: string, path?: string) => void;
 }) {
-  const [rows, setRows] = useState<LinIssue[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [cursor, setCursor] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [moreError, setMoreError] = useState('');
+  const allIssues = useIssues();
+  const {ready, closedCutoff} = useSyncStatus();
+  const hiddenIds = useHiddenIssueIds();
+  const teamId = team?.id;
+  const [older, setOlder] = useState<OlderPaging>(olderInitial);
+  const olderGen = useRef(0);
   const [tab, setTab] = useState<'active' | 'backlog' | 'all'>('all');
   const [filters, setFilters] = useState<LinFilters>({...emptyFilters});
   const [filterOpen, setFilterOpen] = useState(false);
@@ -554,11 +591,14 @@ export function LinearTeamIssues({team, teams, viewer, orgId, workspaceName, pro
     } catch { /* ignore */ }
     return {...defaultDisplay};
   });
-  const setDisplay = (d: LinDisplay) => {
+  const setDisplay = useCallback((d: LinDisplay) => {
     setDisplayState(d);
     try { localStorage.setItem(displayKey, JSON.stringify(d)); } catch { /* ignore */ }
-  };
-  const effDisplay: LinDisplay = {...display, layout} as LinDisplay;
+  }, [displayKey]);
+  // Memoized so the filter/group memos below only recompute when display really changes.
+  const effDisplay = useMemo(() => ({...display, layout} as LinDisplay), [display, layout]);
+  // Typing in search stays responsive: filtering 50k rows runs at lower priority.
+  const deferredFilters = React.useDeferredValue(filters);
 
   useEffect(() => {
     try {
@@ -567,40 +607,33 @@ export function LinearTeamIssues({team, teams, viewer, orgId, workspaceName, pro
     } catch { /* ignore */ }
   }, [orgId]);
 
-  useEffect(() => {
-    if (!team) return;
-    let live = true;
-    setLoading(true); setError(''); setMoreError('');
-    setCursor(null); setHasMore(false);
-    gql(`query TeamIssues($filter:IssueFilter){issues(first:100,filter:$filter,orderBy:updatedAt){nodes ${linIssueFields} pageInfo{hasNextPage endCursor}}}`,
-      {filter: {team: {id: {eq: team.id}}}})
-      .then(d => {
-        if (!live) return;
-        setRows(d.issues.nodes);
-        setCursor(d.issues.pageInfo?.endCursor || null);
-        setHasMore(Boolean(d.issues.pageInfo?.hasNextPage));
-      })
-      .catch(e => { if (live) setError((e as Error).message); })
-      .finally(() => { if (live) setLoading(false); });
-    return () => { live = false; };
-  }, [team?.id, revision]);
+  useEffect(() => { olderGen.current++; setOlder(olderInitial); setSelected([]); }, [teamId, closedCutoff]);
 
-  const loadMore = async () => {
-    if (loadingMore || !hasMore || !cursor || !team) return;
-    setLoadingMore(true); setMoreError('');
+  const rows = useMemo(() => {
+    const out: LinIssue[] = [];
+    for (const i of allIssues) if (i.team?.id === teamId && !hiddenIds.has(i.id)) out.push(i as LinIssue);
+    return out;
+  }, [allIssues, teamId, hiddenIds]);
+  const byId = useMemo(() => new Map(rows.map(i => [i.id, i])), [rows]);
+
+  const loadOlder = async () => {
+    if (!team || !closedCutoff || older.loading || !older.hasMore) return;
+    const gen = olderGen.current;
+    const after = older.cursor;
+    setOlder(o => ({...o, loading: true, error: ''}));
     try {
-      const d = await gql(`query TeamIssuesMore($filter:IssueFilter,$after:String){issues(first:100,after:$after,filter:$filter,orderBy:updatedAt){nodes ${linIssueFields} pageInfo{hasNextPage endCursor}}}`,
-        {filter: {team: {id: {eq: team.id}}}, after: cursor});
+      const d = await gql(`query TeamClosedIssues($filter:IssueFilter,$after:String){issues(first:100,after:$after,filter:$filter,orderBy:updatedAt){nodes ${linIssueFields} pageInfo{hasNextPage endCursor}}}`,
+        {filter: {team: {id: {eq: team.id}}, state: {type: {in: ['completed', 'canceled']}}, updatedAt: {lt: closedCutoff}}, after});
+      if (gen !== olderGen.current) return;
       const page = d.issues;
-      if (page.pageInfo?.hasNextPage && (!page.pageInfo.endCursor || page.pageInfo.endCursor === cursor || !page.nodes.length))
+      if (page.pageInfo?.hasNextPage && (!page.pageInfo.endCursor || page.pageInfo.endCursor === after || !page.nodes.length))
         throw new Error('Issue pagination did not advance.');
-      setRows(old => {
-        const ids = new Set(old.map(i => i.id));
-        return [...old, ...page.nodes.filter((i: LinIssue) => !ids.has(i.id))];
-      });
-      setCursor(page.pageInfo?.endCursor || null);
-      setHasMore(Boolean(page.pageInfo?.hasNextPage));
-    } catch (e) { setMoreError((e as Error).message); } finally { setLoadingMore(false); }
+      // Adopted issues join the store, so they render through useIssues() and stay live.
+      getSync()?.adopt(page.nodes);
+      setOlder(o => ({cursor: page.pageInfo?.endCursor || null, hasMore: Boolean(page.pageInfo?.hasNextPage), loading: false, error: '', loaded: o.loaded + page.nodes.length}));
+    } catch (e) {
+      if (gen === olderGen.current) setOlder(o => ({...o, loading: false, error: (e as Error).message}));
+    }
   };
 
   const childCounts = useMemo(() => {
@@ -618,10 +651,31 @@ export function LinearTeamIssues({team, teams, viewer, orgId, workspaceName, pro
     if (effDisplay.hideCompleted) base = base.filter(i => i.state?.type !== 'completed' && i.state?.type !== 'canceled');
     if (tab === 'active') base = base.filter(i => i.state?.type === 'started' || i.state?.type === 'unstarted');
     if (tab === 'backlog') base = base.filter(i => i.state?.type === 'backlog');
-    return orderLinIssues(applyLinFilters(base, filters), effDisplay);
-  }, [rows, filters, effDisplay, tab]);
+    return orderLinIssues(applyLinFilters(base, deferredFilters), effDisplay);
+  }, [rows, deferredFilters, effDisplay, tab]);
 
-  const groups = useMemo(() => groupLinIssues(scoped, effDisplay, team?.states.nodes || []), [scoped, effDisplay, team]);
+  const teamStates = team?.states.nodes;
+  const groups = useMemo(() => groupLinIssues(scoped, effDisplay, teamStates || []), [scoped, effDisplay, teamStates]);
+  const selectedSet = useMemo(() => new Set(selected), [selected]);
+  const collapsedSet = useMemo(() => new Set(collapsed), [collapsed]);
+  const onSelect = useCallback((id: string, on: boolean) => setSelected(s => on ? (s.includes(id) ? s : [...s, id]) : s.filter(x => x !== id)), []);
+  const openIssue = useStableCallback(onIssue);
+  const movedStable = useStableCallback(onMoved);
+  const setDisplayWithLayout = useCallback((d: LinDisplay) => setDisplay({...d, layout} as LinDisplay), [setDisplay, layout]);
+
+  // Windowing: past WINDOW_THRESHOLD rows only the rows near the viewport are mounted.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const shownRows = groups.reduce((n, g) => n + (collapsedSet.has(g.key) ? 0 : g.items.length), 0);
+  const windowed = layout === 'List' && shownRows > WINDOW_THRESHOLD;
+  const win = useScrollWindow(scrollRef, listRef, windowed);
+  const [rowH, setRowH] = useState(42);
+  useLayoutEffect(() => {
+    if (!windowed) return;
+    const r = listRef.current?.querySelector<HTMLElement>('.lin-row');
+    if (r && r.offsetHeight && Math.abs(r.offsetHeight - rowH) > 0.5) setRowH(r.offsetHeight);
+  });
+
   const activeFilterCount = [filters.status, filters.assignee, filters.priority, filters.labels, filters.projects, filters.cycles, filters.creators, filters.subscribers].reduce((n, a) => n + a.length, 0)
     + (filters.dueFrom || filters.dueTo || filters.createdFrom || filters.createdTo ? 1 : 0);
 
@@ -640,11 +694,16 @@ export function LinearTeamIssues({team, teams, viewer, orgId, workspaceName, pro
 
   if (!team) return <section className="lin-page"><p className="lin-error" role="alert">Team not found in this workspace.</p></section>;
 
+  const loading = !ready && !rows.length;
+  const showOlder = tab === 'all' && !effDisplay.hideCompleted && Boolean(closedCutoff) && ready && (older.hasMore || Boolean(older.error));
+
   const filterChips: {label: string; clear: () => void}[] = [];
   if (filters.q) filterChips.push({label: `“${filters.q}”`, clear: () => setFilters({...filters, q: ''})});
   filters.status.forEach(s => filterChips.push({label: team.states.nodes.find(x => stateKey(x) === s)?.name || s, clear: () => setFilters({...filters, status: filters.status.filter(x => x !== s)})}));
   filters.priority.forEach(p => filterChips.push({label: ['No priority', 'Urgent', 'High', 'Medium', 'Low'][p], clear: () => setFilters({...filters, priority: filters.priority.filter(x => x !== p)})}));
   if (filters.dueFrom || filters.dueTo) filterChips.push({label: `Due ${filters.dueFrom || '…'} → ${filters.dueTo || '…'}`, clear: () => setFilters({...filters, dueFrom: '', dueTo: ''})});
+
+  let y = LIST_PAD_TOP;
 
   return (
     <section className="lin-page" aria-label={`${team.name} issues`}>
@@ -721,22 +780,28 @@ export function LinearTeamIssues({team, teams, viewer, orgId, workspaceName, pro
         </div>
       )}
 
-      <div className="lin-scroll">
+      <div className="lin-scroll" ref={scrollRef}>
         {loading && <p className="lin-loading" role="status">Loading issues…</p>}
-        {error && <p className="lin-error" role="alert">{error}</p>}
-        {!loading && !error && (layout === 'Board'
-          ? <LinearBoard issues={scoped} states={team.states.nodes} onOpen={onIssue}
-              onMoved={async (id, s) => { await onMoved(id, s); setRows(old => old.map(i => i.id === id ? {...i, state: s} : i)); }}
-              onNew={onNew} display={effDisplay} setDisplay={d => setDisplay({...d, layout} as LinDisplay)} />
-          : <div className="lin-list">
-              {groups.map(g => (
+        {!loading && (layout === 'Board'
+          ? <LinearBoard issues={scoped} states={team.states.nodes} onOpen={openIssue}
+              onMoved={movedStable}
+              onNew={onNew} display={effDisplay} setDisplay={setDisplayWithLayout} />
+          : <div className="lin-list" ref={listRef}>
+              {groups.map(g => {
+                const isCollapsed = collapsedSet.has(g.key);
+                const n = isCollapsed ? 0 : g.items.length;
+                y += GROUP_GAP;
+                const rowsTop = y + (g.name ? GROUP_HEAD : 0);
+                const [start, end] = windowed ? visibleRange(win, rowsTop, rowH, n) : [0, n];
+                y = rowsTop + n * rowH;
+                return (
                 <section key={g.key} className="lin-group">
                   {g.name && (
                     <header className="lin-group-head">
-                      <button type="button" className="chev" aria-label={`${collapsed.includes(g.key) ? 'Expand' : 'Collapse'} ${g.name}`}
-                        aria-expanded={!collapsed.includes(g.key)}
+                      <button type="button" className="chev" aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${g.name}`}
+                        aria-expanded={!isCollapsed}
                         onClick={() => setCollapsed(c => c.includes(g.key) ? c.filter(x => x !== g.key) : [...c, g.key])}>
-                        <ChevronDown size={14} style={{transform: collapsed.includes(g.key) ? 'rotate(-90deg)' : undefined}} />
+                        <ChevronDown size={14} style={{transform: isCollapsed ? 'rotate(-90deg)' : undefined}} />
                       </button>
                       {g.state && <LinearStatusIcon state={g.state} size={13} />}
                       <b>{g.name}</b><span className="count">{g.items.length}</span>
@@ -746,15 +811,18 @@ export function LinearTeamIssues({team, teams, viewer, orgId, workspaceName, pro
                       </Tip>
                     </header>
                   )}
-                  {!collapsed.includes(g.key) && g.items.map(i => (
+                  {start > 0 && <div aria-hidden="true" style={{height: start * rowH}} />}
+                  {(start > 0 || end < n ? g.items.slice(start, end) : n ? g.items : []).map(i => (
                     <IssueRow key={i.id} issue={i} display={effDisplay}
-                      selected={selected.includes(i.id)}
+                      selected={selectedSet.has(i.id)}
                       showCheckbox
-                      onSelect={(id, on) => setSelected(s => on ? [...s, id] : s.filter(x => x !== id))}
-                      onOpen={onIssue} childCount={childCounts.get(i.id) || 0} />
+                      onSelect={onSelect}
+                      onOpen={openIssue} childCount={childCounts.get(i.id) || 0} />
                   ))}
+                  {end < n && <div aria-hidden="true" style={{height: (n - end) * rowH}} />}
                 </section>
-              ))}
+                );
+              })}
               {!scoped.length && (
                 <div className="lin-empty">
                   <ListFilter size={30} strokeWidth={1.4} />
@@ -763,23 +831,24 @@ export function LinearTeamIssues({team, teams, viewer, orgId, workspaceName, pro
                   <button type="button" className="lin-btn primary" onClick={onNew}><Plus size={14} /> New issue</button>
                 </div>
               )}
-              {(hasMore || moreError) && !loading && (
+              {showOlder && (
                 <div className="lin-loadmore">
-                  {hasMore && (
-                    <button type="button" className="lin-btn" onClick={() => void loadMore()} disabled={loadingMore}>
-                      {loadingMore ? 'Loading…' : `Load more issues (${rows.length} shown)`}
+                  {older.hasMore && (
+                    <button type="button" className="lin-btn" onClick={() => void loadOlder()} disabled={older.loading}
+                      title={`Closed issues last updated before ${closedCutoff} are loaded on demand`}>
+                      {older.loading ? 'Loading…' : `Load older closed issues (${rows.length} shown)`}
                     </button>
                   )}
-                  {moreError && <span className="lin-error" role="alert">{moreError} <button type="button" className="lin-btn" onClick={() => void loadMore()}>Retry</button></span>}
+                  {older.error && <span className="lin-error" role="alert">{older.error} <button type="button" className="lin-btn" onClick={() => void loadOlder()}>Retry</button></span>}
                 </div>
               )}
             </div>)}
       </div>
 
       {selected.length > 0 && (
-        <BulkBar selected={selected} issues={rows} team={team} teams={teams} cycles={cycles} labels={labels}
+        <BulkBar selected={selected} byId={byId} team={team} teams={teams} cycles={cycles} labels={labels}
           onClear={() => setSelected([])}
-          onDone={() => { setSelected([]); /* parent refreshes via revision bump */ }} />
+          onDone={failed => setSelected(failed)} />
       )}
     </section>
   );
