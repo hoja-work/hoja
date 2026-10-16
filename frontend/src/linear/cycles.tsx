@@ -1,7 +1,8 @@
-import React, {useEffect, useMemo, useRef, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState, useSyncExternalStore} from 'react';
 import {Bell, CalendarDays, Check, ChevronDown, ChevronRight, Copy, Download, Link2, ListFilter, Plus, Settings2, SlidersHorizontal, X} from 'lucide-react';
 import {gql, stateKey} from '../main';
-import type {Cycle, IssueLabel, IssueState, Project, Team, Viewer} from '../main';
+import type {Cycle, Issue, IssueLabel, IssueState, Project, Team, Viewer} from '../main';
+import {getSync, useEntityVersion, useIssues, useSyncMeta, useSyncStatus} from '../sync';
 import {applyLinFilters, defaultDisplay, emptyFilters, groupLinIssues, orderLinIssues, DisplayPanel as _DP, FilterMenu, IssueRow, LinDisplay, LinFilters, LinIssue, linIssueFields} from './issues';
 import {Avatar, CycleGlyph, FavStar, IconBtn, LabelChip, LinMenu, LinearStatusIcon, PriorityIcon, Ring, Tip, cx, fmtDate, fmtRange, useDismiss, useFavorite} from './shared';
 
@@ -35,16 +36,242 @@ export function CycleStateIcon({state, size = 15}: {state: CycleState; size?: nu
 export type CycleStats = {scope: number; started: number; completed: number; points: number};
 
 export function statsFor(issues: LinIssue[]): CycleStats {
-  const scope = issues.length;
-  const completed = issues.filter(i => i.state?.type === 'completed').length;
-  const started = issues.filter(i => i.state?.type === 'started').length;
-  const points = issues.reduce((n, i) => n + (i.estimate || 0), 0);
-  return {scope, started, completed, points};
+  let started = 0, completed = 0, points = 0;
+  for (const i of issues) {
+    const t = i.state?.type;
+    if (t === 'completed') completed++; else if (t === 'started') started++;
+    points += i.estimate || 0;
+  }
+  return {scope: issues.length, started, completed, points};
+}
+
+/* ---------------- local-first data layer ----------------
+ *
+ * Cycles come from the synced workspace metadata (useSyncMeta) and issues per
+ * cycle from the synced issue store (useIssues), so every cycle page renders
+ * from memory and follows other clients through the store's delta pulls.
+ * Only what the store lacks is fetched: closed issues of cycles that predate
+ * the store's closed window (adopted into the store once per session), cycles
+ * beyond the metadata's first 250, and the team cadence/automation settings.
+ * Local cycle edits are overlays over the metadata until the server confirms
+ * them (or are dropped on failure), mirroring SyncHandle.patch for issues.
+ */
+
+const EMPTY: LinIssue[] = [];
+const cycleOverlays = new Map<string, Partial<Cycle>[]>();
+const extraCycles = new Map<string, Cycle>();
+let cycleLocalVersion = 0;
+const cycleListeners = new Set<() => void>();
+const subscribeCycles = (cb: () => void) => { cycleListeners.add(cb); return () => { cycleListeners.delete(cb); }; };
+function bumpCycles() { cycleLocalVersion++; for (const cb of cycleListeners) cb(); }
+
+/** Overlay a local cycle edit; call the returned function with whether the server accepted it. */
+export function patchCycle(cycleId: string, patch: Partial<Cycle>): (accepted: boolean, fresh?: Cycle | null) => void {
+  const layers = cycleOverlays.get(cycleId) || [];
+  layers.push(patch);
+  cycleOverlays.set(cycleId, layers);
+  bumpCycles();
+  return (accepted, fresh) => {
+    if (accepted && fresh) extraCycles.set(fresh.id, {...extraCycles.get(fresh.id), ...fresh});
+    const drop = () => {
+      const rest = cycleOverlays.get(cycleId)?.filter(p => p !== patch) || [];
+      if (rest.length) cycleOverlays.set(cycleId, rest); else cycleOverlays.delete(cycleId);
+      bumpCycles();
+    };
+    // Keep an accepted edit until a pull has brought the refreshed metadata.
+    const sync = getSync();
+    if (accepted && sync) void sync.pull().finally(drop); else drop();
+  };
+}
+
+function rememberCycles(cycles: Cycle[]) {
+  if (!cycles.length) return;
+  for (const c of cycles) extraCycles.set(c.id, {...extraCycles.get(c.id), ...c});
+  bumpCycles();
+}
+
+/** Every known cycle (metadata ∪ fetched extras, with pending local edits applied); null until the store has metadata. */
+export function useCycles(): Cycle[] | null {
+  const meta = useSyncMeta();
+  const version = useSyncExternalStore(subscribeCycles, () => cycleLocalVersion);
+  return useMemo(() => {
+    if (!meta) return null;
+    const byId = new Map<string, Cycle>();
+    for (const c of extraCycles.values()) byId.set(c.id, c);
+    // Metadata is fresher than anything fetched earlier; extras only add fields it lacks (description).
+    for (const c of meta.cycles.nodes) { const prior = byId.get(c.id); byId.set(c.id, prior ? {...prior, ...c} : c); }
+    for (const [id, layers] of cycleOverlays) { const base = byId.get(id); if (base) byId.set(id, Object.assign({}, base, ...layers)); }
+    return [...byId.values()];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meta, version]);
+}
+
+/* Issues grouped by cycle id, shared by every mounted cycle view. A cycle's
+ * array keeps its identity while its members are unchanged, so per-cycle
+ * stats (cached by array) and memoized rows skip unrelated store changes. */
+let groupMemo: {issues: Issue[] | null; groups: Map<string, LinIssue[]>} = {issues: null, groups: new Map()};
+function groupByCycle(issues: Issue[]): Map<string, LinIssue[]> {
+  if (groupMemo.issues === issues) return groupMemo.groups;
+  const next = new Map<string, LinIssue[]>();
+  for (const i of issues) {
+    const cid = i.cycle?.id;
+    if (!cid) continue;
+    const arr = next.get(cid);
+    if (arr) arr.push(i as LinIssue); else next.set(cid, [i as LinIssue]);
+  }
+  const prev = groupMemo.groups;
+  for (const [cid, arr] of next) {
+    const old = prev.get(cid);
+    if (old && old.length === arr.length && old.every((x, k) => x === arr[k])) next.set(cid, old);
+  }
+  groupMemo = {issues, groups: next};
+  return next;
+}
+export function useIssuesByCycle(): Map<string, LinIssue[]> {
+  return groupByCycle(useIssues());
+}
+
+const statsCache = new WeakMap<LinIssue[], CycleStats>();
+export function cachedStats(issues: LinIssue[]): CycleStats {
+  let s = statsCache.get(issues);
+  if (!s) { s = statsFor(issues); statsCache.set(issues, s); }
+  return s;
+}
+
+/* Closed issues older than the store's window are not synced. A cycle that
+ * started before that window may own some; fetch them once and adopt them so
+ * the store (and its deltas) keeps them fresh from then on. */
+const historyFields = `{ id identifier title createdAt updatedAt stateChangedAt dueDate priority priorityLabel state { id name color type } team { id key name } project { id name } assignee { id name } creator { id name } cycle { id name number } labels { nodes { id name color } } }`;
+const historyRequested = new Set<string>();
+// Session markers survive reloads (module state does not); storage may be unavailable.
+const sessionGet = (k: string) => { try { return sessionStorage.getItem(k); } catch { return null; } };
+const sessionSet = (k: string, v: string) => { try { sessionStorage.setItem(k, v); } catch { /* best effort */ } };
+const emptyHistoryKey = (cycleId: string) => `hoja-cycle-history-empty:${cycleId}`;
+export function cycleNeedsHistory(c: Cycle, closedCutoff: string): boolean {
+  if (!closedCutoff) return false;
+  return !c.startsAt || c.startsAt.slice(0, 10) < closedCutoff;
+}
+async function loadCycleHistory(cycleIds: string[], closedCutoff: string): Promise<void> {
+  const ids = cycleIds.filter(id => !historyRequested.has(id));
+  if (!ids.length) return;
+  for (const id of ids) historyRequested.add(id);
+  const found = new Set<string>();
+  try {
+    let after: string | null = null;
+    for (let page = 0; page < 20; page++) {
+      const d = await gql(`query CycleHistory($after:String,$filter:IssueFilter){issues(first:250,after:$after,filter:$filter){nodes ${historyFields} pageInfo{hasNextPage endCursor}}}`,
+        {after, filter: {cycle: {id: {in: ids}}, state: {type: {in: ['completed', 'canceled']}}}});
+      getSync()?.adopt(d.issues.nodes);
+      for (const n of d.issues.nodes as Issue[]) if (n.cycle?.id) found.add(n.cycle.id);
+      const info = d.issues.pageInfo;
+      if (!info?.hasNextPage || !info.endCursor || info.endCursor === after) break;
+      after = info.endCursor;
+    }
+    // Cycles with nothing out of window leave no adopted trace; remember that for this window.
+    for (const id of ids) if (!found.has(id)) sessionSet(emptyHistoryKey(id), closedCutoff);
+  } catch {
+    for (const id of ids) historyRequested.delete(id); // retry on the next view
+  }
+}
+/* A closed issue older than the window only enters the store through adopt
+ * (bootstrap leaves it out; any edit makes it recent), so finding one means
+ * this cycle's history was adopted into the persisted snapshot already. */
+function hasAdoptedHistory(issues: LinIssue[] | undefined, closedCutoff: string): boolean {
+  return !!issues?.some(i => (i.state?.type === 'completed' || i.state?.type === 'canceled') && (i.updatedAt || '') < closedCutoff);
+}
+/** Background-load the out-of-window closed issues of these cycles (newest first, bounded). */
+function useCycleHistory(cycles: Cycle[], limit: number) {
+  const {ready, closedCutoff} = useSyncStatus();
+  const byCycle = useIssuesByCycle();
+  const key = useMemo(() => cycles
+    .filter(c => cycleNeedsHistory(c, closedCutoff))
+    .sort((a, b) => (b.startsAt || '').localeCompare(a.startsAt || ''))
+    .slice(0, limit).map(c => c.id).join(','), [cycles, closedCutoff, limit]);
+  useEffect(() => {
+    if (!ready || !key) return;
+    const missing = key.split(',').filter(id =>
+      !hasAdoptedHistory(byCycle.get(id), closedCutoff) && sessionGet(emptyHistoryKey(id)) !== closedCutoff);
+    if (missing.length) void loadCycleHistory(missing, closedCutoff);
+    // byCycle is read once per key; adopting changes it and must not re-trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, key, closedCutoff]);
+}
+
+/* Reading cycles through GraphQL used to roll team cadences forward
+ * (reconcile). Keep that side effect, at most every few minutes per team, off
+ * the render path. If the metadata is truncated, the same request also
+ * supplies the team's cycles the metadata could not carry. */
+const reconcileKey = (teamId: string) => `hoja-cycle-reconciled:${teamId}`;
+function useTeamCycleUpkeep(teamId: string | undefined) {
+  const meta = useSyncMeta();
+  const hasMeta = Boolean(meta);
+  const truncated = (meta?.cycles.nodes.length || 0) >= 250;
+  const cycleVersion = useEntityVersion(['cycle'], undefined, 250);
+  useEffect(() => {
+    if (!teamId || !hasMeta) return;
+    const last = Number(sessionGet(reconcileKey(teamId)) || 0);
+    if (!truncated && Date.now() - last < 5 * 60_000) return;
+    sessionSet(reconcileKey(teamId), String(Date.now()));
+    gql(`query TeamCycles($filter:CycleFilter){cycles(first:100,filter:$filter){nodes{${cycleFields}}}}`,
+      {filter: {team: {id: {eq: teamId}}}})
+      .then(d => { if (truncated) rememberCycles(d.cycles.nodes); })
+      .catch(() => { sessionSet(reconcileKey(teamId), '0'); });
+    // cycleVersion: refetch the truncated set when another client changes cycles.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teamId, hasMeta, truncated, truncated ? cycleVersion : 0]);
+}
+
+/* Optimistic issue update from a cycle view: overlay → mutation → settle/rollback. */
+export async function updateIssueOptimistic(issueId: string, input: Record<string, unknown>): Promise<void> {
+  const sync = getSync();
+  const settle = sync ? sync.patch(issueId, sync.patchFromInput(input)) : null;
+  try {
+    const d = await gql(`mutation CycleIssueUpdate($id:String!,$input:IssueUpdateInput!){issueUpdate(id:$id,input:$input){success}}`, {id: issueId, input});
+    if (!d.issueUpdate?.success) throw new Error('Update was rejected');
+    settle?.(true);
+  } catch (e) {
+    settle?.(false);
+    throw e;
+  }
+}
+
+const cycleFields = 'id name description number startsAt endsAt completedAt progress team{id key name}';
+/** Optimistic cycleUpdate. Null inputs mean "unchanged" on this server, so they are not overlaid. */
+async function updateCycleOptimistic(cycleId: string, input: Record<string, unknown>): Promise<void> {
+  const patch: Partial<Cycle> = {};
+  for (const [k, v] of Object.entries(input)) if (v != null) (patch as Record<string, unknown>)[k] = v;
+  const settle = patchCycle(cycleId, patch);
+  try {
+    const d = await gql(`mutation CycleUpdate($id:String!,$input:CycleUpdateInput!){cycleUpdate(id:$id,input:$input){success cycle{${cycleFields}}}}`, {id: cycleId, input});
+    if (!d.cycleUpdate?.success) throw new Error('Cycle update was rejected');
+    settle(true, d.cycleUpdate.cycle);
+  } catch (e) {
+    settle(false);
+    throw e;
+  }
 }
 
 /* ---------------- burndown chart ---------------- */
 
-export function BurndownChart({cycle, stats, height = 200}: {cycle: Cycle; stats: CycleStats; height?: number}) {
+/* Remaining scope at daily steps from the cycle start to now (or its end),
+ * from completion times of the store's issues: scope minus issues completed
+ * by then. Without history this is the best client-side burndown. */
+function remainingSteps(issues: LinIssue[] | undefined, scope: number, start: number, until: number): [number, number][] {
+  if (!issues || !(until > start)) return [];
+  const done = issues.filter(i => i.state?.type === 'completed')
+    .map(i => Date.parse(i.stateChangedAt || i.updatedAt || '')).filter(t => !Number.isNaN(t)).sort((a, b) => a - b);
+  const steps: [number, number][] = [];
+  const days = Math.min(400, Math.ceil((until - start) / 864e5));
+  let k = 0;
+  for (let d = 0; d <= days; d++) {
+    const t = Math.min(until, start + d * 864e5);
+    while (k < done.length && done[k] <= t) k++;
+    steps.push([t, scope - k]);
+  }
+  return steps;
+}
+
+export function BurndownChart({cycle, stats, issues, height = 200}: {cycle: Cycle; stats: CycleStats; issues?: LinIssue[]; height?: number}) {
   const W = 560, H = height, padL = 8, padR = 8, padT = 10, padB = 22;
   const now = Date.now();
   const start = cycle.startsAt ? Date.parse(cycle.startsAt) : now - 6 * 864e5;
@@ -53,6 +280,11 @@ export function BurndownChart({cycle, stats, height = 200}: {cycle: Cycle; stats
   const maxY = Math.max(stats.scope, 4);
   const X = (t: number) => padL + ((t - x0) / (x1 - x0)) * (W - padL - padR);
   const Y = (v: number) => padT + (1 - v / maxY) * (H - padT - padB);
+  const steps = useMemo(() => remainingSteps(issues, stats.scope, start, Math.min(now, end)),
+    // Recomputed when the cycle's issues (stable per membership) or window change, not per render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [issues, stats, start, end]);
+  const last = steps.length ? steps[steps.length - 1][1] : stats.scope;
   const d = (t: number) => new Date(t).toLocaleDateString(undefined, {month: 'short', day: 'numeric'});
   const hatchId = `hatch-${cycle.id}`;
   return (
@@ -69,9 +301,12 @@ export function BurndownChart({cycle, stats, height = 200}: {cycle: Cycle; stats
       )}
       <line className="grid" x1={padL} y1={Y(stats.scope)} x2={W - padR} y2={Y(stats.scope)} />
       <line x1={X(start)} y1={Y(stats.scope)} x2={X(end)} y2={Y(0)} stroke="#8a94a6" strokeWidth="1.4" strokeDasharray="5 4" />
-      <line x1={X(start)} y1={Y(stats.scope)} x2={X(Math.min(now, end))} y2={Y(stats.scope)} stroke="#8a94a6" strokeWidth="1.8" />
+      {steps.length > 1
+        ? <polyline fill="none" stroke="#8a94a6" strokeWidth="1.8" strokeLinejoin="round"
+            points={steps.map(([t, v]) => `${X(t).toFixed(1)},${Y(v).toFixed(1)}`).join(' ')} />
+        : <line x1={X(start)} y1={Y(stats.scope)} x2={X(Math.min(now, end))} y2={Y(stats.scope)} stroke="#8a94a6" strokeWidth="1.8" />}
       <circle cx={X(start)} cy={Y(stats.scope)} r="3.4" fill="#e5b800" />
-      <circle cx={X(Math.min(now, end))} cy={Y(stats.scope)} r="3.4" fill="#5e6ad2" />
+      <circle cx={X(Math.min(now, end))} cy={Y(last)} r="3.4" fill="#5e6ad2" />
       <text className="axis" x={X(start)} y={H - 6} textAnchor="middle">{d(start)}</text>
       <text className="axis" x={X(end)} y={H - 6} textAnchor="middle">{d(end)}</text>
     </svg>
@@ -95,8 +330,8 @@ function Legend({stats}: {stats: CycleStats}) {
 
 /* ---------------- overview rows ---------------- */
 
-function CycleOverviewRow({cycle, state, stats, onCycle, showChart}: {
-  cycle: Cycle; state: CycleState; stats: CycleStats; onCycle: (c: Cycle) => void; showChart: boolean;
+const CycleOverviewRow = React.memo(function CycleOverviewRow({cycle, state, stats, issues, onCycle, showChart}: {
+  cycle: Cycle; state: CycleState; stats: CycleStats; issues: LinIssue[]; onCycle: (c: Cycle) => void; showChart: boolean;
 }) {
   const name = cycle.name || `Cycle ${cycle.number ?? ''}`;
   const pct = stats.scope ? Math.round((stats.completed / stats.scope) * 100) : 0;
@@ -124,14 +359,14 @@ function CycleOverviewRow({cycle, state, stats, onCycle, showChart}: {
         </div>
         {showChart && (
           <div className="lin-cycle-chart">
-            <div className="chart"><BurndownChart cycle={cycle} stats={stats} height={180} /></div>
+            <div className="chart"><BurndownChart cycle={cycle} stats={stats} issues={issues} height={180} /></div>
             <Legend stats={stats} />
           </div>
         )}
       </div>
     </div>
   );
-}
+});
 
 function orderCycles(cycles: Cycle[]): {cycle: Cycle; state: CycleState}[] {
   const now = Date.now();
@@ -151,8 +386,12 @@ function orderCycles(cycles: Cycle[]): {cycle: Cycle; state: CycleState}[] {
 export function CycleOverviewRows({cycles, issuesByCycle, onCycle, emptyHint}: {
   cycles: Cycle[]; issuesByCycle: Map<string, LinIssue[]>; onCycle: (c: Cycle) => void; emptyHint?: string;
 }) {
-  const ordered = orderCycles(cycles);
+  const ordered = useMemo(() => orderCycles(cycles), [cycles]);
   const current = ordered.find(o => o.state === 'current');
+  // Rows are memoized; keep their callback stable even when the parent passes a fresh closure.
+  const onCycleRef = useRef(onCycle);
+  onCycleRef.current = onCycle;
+  const openCycle = useMemo(() => (c: Cycle) => onCycleRef.current(c), []);
   if (!ordered.length) {
     return (
       <div className="lin-empty">
@@ -165,55 +404,37 @@ export function CycleOverviewRows({cycles, issuesByCycle, onCycle, emptyHint}: {
   return (
     <div className="lin-cycles-tl">
       <div className="lin-cycles-spine" />
-      {ordered.map(({cycle, state}) => (
-        <CycleOverviewRow key={cycle.id} cycle={cycle} state={state}
-          stats={statsFor(issuesByCycle.get(cycle.id) || [])}
-          onCycle={onCycle} showChart={current?.cycle.id === cycle.id} />
-      ))}
+      {ordered.map(({cycle, state}) => {
+        const issues = issuesByCycle.get(cycle.id) || EMPTY;
+        return (
+          <CycleOverviewRow key={cycle.id} cycle={cycle} state={state} issues={issues}
+            stats={cachedStats(issues)}
+            onCycle={openCycle} showChart={current?.cycle.id === cycle.id} />
+        );
+      })}
     </div>
   );
 }
 
 /* ---------------- team cycles overview page ---------------- */
 
-export function LinearTeamCycles({team, teams, onCycle, onSettings, revision, onNavigate, workspaceName, viewer}: {
+const EMPTY_CYCLES: Cycle[] = [];
+
+export function LinearTeamCycles({team, teams, onCycle, onSettings, onNavigate, workspaceName, viewer}: {
   team?: Team; teams: Team[]; onCycle: (c: Cycle) => void; onSettings: () => void;
-  revision: number; onNavigate: (view: string, path?: string) => void; workspaceName: string; viewer: Viewer;
+  revision?: number; onNavigate: (view: string, path?: string) => void; workspaceName: string; viewer: Viewer;
 }) {
-  const [cycles, setCycles] = useState<Cycle[]>([]);
-  const [issues, setIssues] = useState<LinIssue[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  // Rendered from the local store: no per-view fetch, live through deltas.
+  const all = useCycles();
+  const issuesByCycle = useIssuesByCycle();
+  const teamId = team?.id;
+  const cycles = useMemo(() => (all && teamId ? all.filter(c => c.team?.id === teamId) : EMPTY_CYCLES), [all, teamId]);
+  const loading = all === null;
+  const error = '';
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useDismiss(() => setMenuOpen(false));
-
-  useEffect(() => {
-    if (!team) return;
-    let live = true;
-    setLoading(true); setError('');
-    Promise.all([
-      gql(`query($filter:CycleFilter){cycles(first:100,filter:$filter){nodes{id name description number startsAt endsAt completedAt progress team{id key name}}}}`,
-        {filter: {team: {id: {eq: team.id}}}}),
-      gql(`query($filter:IssueFilter){issues(first:200,filter:$filter,orderBy:updatedAt){nodes ${linIssueFields}}}`,
-        {filter: {team: {id: {eq: team.id}}}}),
-    ]).then(([c, i]) => {
-      if (!live) return;
-      setCycles(c.cycles.nodes); setIssues(i.issues.nodes);
-    }).catch(e => { if (live) setError((e as Error).message); })
-      .finally(() => { if (live) setLoading(false); });
-    return () => { live = false; };
-  }, [team?.id, revision]);
-
-  const issuesByCycle = useMemo(() => {
-    const m = new Map<string, LinIssue[]>();
-    for (const i of issues) {
-      const cid = i.cycle?.id;
-      if (!cid) continue;
-      if (!m.has(cid)) m.set(cid, []);
-      m.get(cid)!.push(i);
-    }
-    return m;
-  }, [issues]);
+  useTeamCycleUpkeep(teamId);
+  useCycleHistory(cycles, 6);
 
   if (!team) return <section className="lin-page"><p className="lin-error" role="alert">Team not found in this workspace.</p></section>;
 
@@ -257,35 +478,16 @@ export function LinearTeamCycles({team, teams, onCycle, onSettings, revision, on
 
 /* ---------------- workspace cycles (route fix) ---------------- */
 
-export function LinearWorkspaceCycles({teams, onCycle, onSettings, revision, onNavigate, workspaceName, viewer}: {
+export function LinearWorkspaceCycles({teams, onCycle, onSettings, onNavigate, workspaceName, viewer}: {
   teams: Team[]; onCycle: (c: Cycle) => void; onSettings: (team: Team) => void;
-  revision: number; onNavigate: (view: string, path?: string) => void; workspaceName: string; viewer: Viewer;
+  revision?: number; onNavigate: (view: string, path?: string) => void; workspaceName: string; viewer: Viewer;
 }) {
-  const [cycles, setCycles] = useState<Cycle[]>([]);
-  const [issues, setIssues] = useState<LinIssue[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  useEffect(() => {
-    let live = true;
-    setLoading(true); setError('');
-    Promise.all([
-      gql(`query{cycles(first:100){nodes{id name description number startsAt endsAt completedAt progress team{id key name}}}}`),
-      gql(`query{issues(first:200,orderBy:updatedAt){nodes ${linIssueFields}}}`),
-    ]).then(([c, i]) => { if (!live) return; setCycles(c.cycles.nodes); setIssues(i.issues.nodes); })
-      .catch(e => { if (live) setError((e as Error).message); })
-      .finally(() => { if (live) setLoading(false); });
-    return () => { live = false; };
-  }, [revision]);
-  const issuesByCycle = useMemo(() => {
-    const m = new Map<string, LinIssue[]>();
-    for (const i of issues) {
-      const cid = i.cycle?.id;
-      if (!cid) continue;
-      if (!m.has(cid)) m.set(cid, []);
-      m.get(cid)!.push(i);
-    }
-    return m;
-  }, [issues]);
+  const all = useCycles();
+  const cycles = all || EMPTY_CYCLES;
+  const issuesByCycle = useIssuesByCycle();
+  const loading = all === null;
+  const error = '';
+  useCycleHistory(cycles, 12);
   const byTeam = useMemo(() => {
     const m = new Map<string, {team: Team; cycles: Cycle[]}>();
     for (const t of teams) m.set(t.id, {team: t, cycles: []});
@@ -351,8 +553,8 @@ function issuesCSV(issues: LinIssue[]): string {
   return [head.join(','), ...rows].join('\n');
 }
 
-function CycleOptionsMenu({cycle, issues, onChanged, onClose}: {
-  cycle: Cycle; issues: LinIssue[]; onChanged: (c: Cycle) => void; onClose: () => void;
+function CycleOptionsMenu({cycle, issues, onError, onClose}: {
+  cycle: Cycle; issues: LinIssue[]; onError: (message: string) => void; onClose: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [dates, setDates] = useState(false);
@@ -360,18 +562,13 @@ function CycleOptionsMenu({cycle, issues, onChanged, onClose}: {
   const [description, setDescription] = useState(cycle.description || '');
   const [startsAt, setStartsAt] = useState((cycle.startsAt || '').slice(0, 10));
   const [endsAt, setEndsAt] = useState((cycle.endsAt || '').slice(0, 10));
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
+  const busy = false;
+  const error = '';
   const [fav, toggleFav] = useFavorite('cycles', cycle.id);
-  const save = async (input: Record<string, unknown>) => {
-    setBusy(true); setError('');
-    try {
-      const d = await gql(`mutation($id:String!,$input:CycleUpdateInput!){cycleUpdate(id:$id,input:$input){success cycle{id name description number startsAt endsAt completedAt progress team{id key name}}}}`,
-        {id: cycle.id, input});
-      if (!d.cycleUpdate?.success) throw new Error('Cycle update was rejected');
-      onChanged(d.cycleUpdate.cycle);
-      setEditing(false); setDates(false);
-    } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+  // Optimistic: the edit shows at once; a rejected save rolls back and reports on the page.
+  const save = (input: Record<string, unknown>) => {
+    setEditing(false); setDates(false); onClose();
+    updateCycleOptimistic(cycle.id, input).catch(e => onError((e as Error).message || 'Cycle update failed'));
   };
   if (editing || dates) {
     return (
@@ -392,7 +589,7 @@ function CycleOptionsMenu({cycle, issues, onChanged, onClose}: {
         {error && <p className="lin-error" style={{margin: '8px 0'}}>{error}</p>}
         <div style={{display: 'flex', gap: 8, marginTop: 12}}>
           <button type="button" className="lin-btn primary" disabled={busy}
-            onClick={() => void save(editing ? {name: name.trim() || null, description: description.trim() || null} : {startsAt: startsAt || null, endsAt: endsAt || null})}>
+            onClick={() => save(editing ? {name: name.trim() || null, description: description.trim() || null} : {startsAt: startsAt || null, endsAt: endsAt || null})}>
             {busy ? 'Saving…' : 'Save'}</button>
           <button type="button" className="lin-btn" onClick={() => { setEditing(false); setDates(false); }}>Cancel</button>
         </div>
@@ -414,16 +611,77 @@ function CycleOptionsMenu({cycle, issues, onChanged, onClose}: {
   );
 }
 
-export function LinearCycleDetail({cycle: initial, team, teams, viewer, orgId, workspaceName, projects, labels, cycles, revision, onBack, onSelect, onNavigate}: {
+/* Issue groups of a cycle. Memoized so unrelated store changes (which
+ * re-render the page) do not re-render hundreds of rows; callbacks from the
+ * parent are read through refs to keep the props stable. */
+type IssueGroup = ReturnType<typeof groupLinIssues>[number];
+const ISSUE_MIME = 'application/x-hoja-issue';
+const CycleIssueGroups = React.memo(function CycleIssueGroups({groups, collapsed, setCollapsed, display, childCounts, onOpen, onMove}: {
+  groups: IssueGroup[]; collapsed: string[]; setCollapsed: React.Dispatch<React.SetStateAction<string[]>>;
+  display: LinDisplay; childCounts: Map<string, number>;
+  onOpen: (issue: LinIssue) => void; onMove: (issueId: string, stateId: string) => void;
+}) {
+  const handlers = useRef({onOpen, onMove});
+  handlers.current = {onOpen, onMove};
+  const open = useMemo(() => (i: LinIssue) => handlers.current.onOpen(i), []);
+  const noop = useMemo(() => () => {}, []);
+  const [dropKey, setDropKey] = useState<string | null>(null);
+  return (
+    <>
+      {groups.map(g => (
+        <section key={g.key} className="lin-group"
+          style={dropKey === g.key ? {outline: '1px dashed var(--accent)', outlineOffset: 2, borderRadius: 7} : undefined}
+          onDragOver={g.state ? e => { if (e.dataTransfer.types.includes(ISSUE_MIME)) { e.preventDefault(); if (dropKey !== g.key) setDropKey(g.key); } } : undefined}
+          onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropKey(k => (k === g.key ? null : k)); }}
+          onDrop={g.state ? e => {
+            e.preventDefault(); setDropKey(null);
+            const id = e.dataTransfer.getData(ISSUE_MIME);
+            if (id && g.state) handlers.current.onMove(id, g.state.id);
+          } : undefined}>
+          <header className="lin-group-head">
+            <button type="button" className="chev" aria-label={`${collapsed.includes(g.key) ? 'Expand' : 'Collapse'} ${g.name}`}
+              onClick={() => setCollapsed(c => c.includes(g.key) ? c.filter(x => x !== g.key) : [...c, g.key])}>
+              <ChevronDown size={14} style={{transform: collapsed.includes(g.key) ? 'rotate(-90deg)' : undefined}} />
+            </button>
+            {g.state && <LinearStatusIcon state={g.state} size={13} />}
+            <b>{g.name}</b><span className="count">{g.items.length}</span>
+            <span className="grow" />
+            <Tip label={`Create issue in ${g.name}`}>
+              <button type="button" className="add" aria-label={`Create issue in ${g.name}`}><Plus size={14} /></button>
+            </Tip>
+          </header>
+          {!collapsed.includes(g.key) && g.items.map(i => (
+            <div key={i.id} draggable data-issue-id={i.id}
+              onDragStart={e => { e.dataTransfer.setData(ISSUE_MIME, i.id); e.dataTransfer.effectAllowed = 'move'; }}
+              onDragEnd={() => setDropKey(null)}>
+              <IssueRow issue={i} display={display} selected={false}
+                showCheckbox={false} onSelect={noop} onOpen={open} childCount={childCounts.get(i.id) || 0} />
+            </div>
+          ))}
+        </section>
+      ))}
+    </>
+  );
+});
+
+export function LinearCycleDetail({cycle: initial, team, teams, viewer, orgId, workspaceName, projects, labels, cycles, onBack, onSelect, onNavigate}: {
   cycle: Cycle; team?: Team; teams: Team[]; viewer: Viewer; orgId: string; workspaceName: string;
   projects: Project[]; labels: IssueLabel[]; cycles: Cycle[];
-  revision: number; onBack: () => void; onSelect: (issue: LinIssue) => void;
+  revision?: number; onBack: () => void; onSelect: (issue: LinIssue) => void;
   onNavigate: (view: string, path?: string) => void;
 }) {
-  const [cycle, setCycle] = useState<Cycle>(initial);
-  const [issues, setIssues] = useState<LinIssue[]>([]);
-  const [loading, setLoading] = useState(true);
+  // The cycle and its issues come from the local store (live); `initial` only seeds the first paint.
+  const allCycles = useCycles();
+  const cycle = useMemo(() => {
+    const live = allCycles?.find(c => c.id === initial.id);
+    return live ? {...initial, ...live} : initial;
+  }, [allCycles, initial]);
+  const issuesByCycle = useIssuesByCycle();
+  const issues = issuesByCycle.get(cycle.id) || EMPTY;
+  const {ready} = useSyncStatus();
+  const loading = !ready;
   const [error, setError] = useState('');
+  const [mutationError, setMutationError] = useState('');
   const [filters, setFilters] = useState<LinFilters>({...emptyFilters});
   const [filterOpen, setFilterOpen] = useState(false);
   const [displayOpen, setDisplayOpen] = useState(false);
@@ -435,27 +693,20 @@ export function LinearCycleDetail({cycle: initial, team, teams, viewer, orgId, w
   const [dimFilter, setDimFilter] = useState<{kind: string; id: string} | null>(null);
   const [dateOpen, setDateOpen] = useState(false);
   const [endDate, setEndDate] = useState((initial.endsAt || '').slice(0, 10));
-  const [savingDate, setSavingDate] = useState(false);
+  const savingDate = false;
   const menuRef = useDismiss(() => setMenuOpen(false));
   const dateRef = useDismiss(() => setDateOpen(false));
-  const display: LinDisplay = {...defaultDisplay, grouping: 'status'};
+  const display = useMemo<LinDisplay>(() => ({...defaultDisplay, grouping: 'status'}), []);
 
-  useEffect(() => { setCycle(initial); setEndDate((initial.endsAt || '').slice(0, 10)); }, [initial.id]);
-
-  useEffect(() => {
-    let live = true;
-    setLoading(true); setError('');
-    gql(`query($filter:IssueFilter){issues(first:100,filter:$filter,orderBy:updatedAt){nodes ${linIssueFields}}}`,
-      {filter: {cycle: {id: {eq: cycle.id}}}})
-      .then(d => { if (live) setIssues(d.issues.nodes); })
-      .catch(e => { if (live) setError((e as Error).message); })
-      .finally(() => { if (live) setLoading(false); });
-    return () => { live = false; };
-  }, [cycle.id, revision]);
+  useEffect(() => { setEndDate((initial.endsAt || '').slice(0, 10)); setError(''); setMutationError(''); }, [initial.id]);
+  useTeamCycleUpkeep(cycle.team?.id);
+  // Closed issues older than the store window are fetched once and adopted.
+  const historyScope = useMemo(() => [cycle], [cycle.id, cycle.startsAt]);
+  useCycleHistory(historyScope, 1);
 
   const state = cycleState(cycle);
   const cname = cycle.name || `Cycle ${cycle.number ?? ''}`;
-  const stats = useMemo(() => statsFor(issues), [issues]);
+  const stats = cachedStats(issues);
   const childCounts = useMemo(() => {
     const m = new Map<string, number>();
     for (const i of issues) { const pid = i.parent?.id; if (pid) m.set(pid, (m.get(pid) || 0) + 1); }
@@ -512,15 +763,19 @@ export function LinearCycleDetail({cycle: initial, team, teams, viewer, orgId, w
     return [...m.values()].map(r => ({key: r.id, icon: <span>▣</span>, name: r.name, pct: pct(r.done, r.total), of: r.total}));
   }, [issues, dimTab]);
 
-  const saveEndDate = async () => {
-    setSavingDate(true);
-    try {
-      const d = await gql(`mutation($id:String!,$input:CycleUpdateInput!){cycleUpdate(id:$id,input:$input){success cycle{id name description number startsAt endsAt completedAt progress team{id key name}}}}`,
-        {id: cycle.id, input: {endsAt: endDate || null}});
-      if (!d.cycleUpdate?.success) throw new Error('Could not change the end date');
-      setCycle(d.cycleUpdate.cycle);
-      setDateOpen(false);
-    } catch (e) { setError((e as Error).message); } finally { setSavingDate(false); }
+  const saveEndDate = () => {
+    setDateOpen(false);
+    setMutationError('');
+    updateCycleOptimistic(cycle.id, {endsAt: endDate || null})
+      .catch(e => setMutationError((e as Error).message || 'Could not change the end date'));
+  };
+  // Dropping a row on another status group moves it there at once; a rejected update rolls back.
+  const moveToState = (issueId: string, stateId: string) => {
+    const issue = issues.find(i => i.id === issueId);
+    if (!issue || issue.state?.id === stateId) return;
+    setMutationError('');
+    updateIssueOptimistic(issueId, {stateId})
+      .catch(e => setMutationError(`${issue.identifier}: ${(e as Error).message || 'Status change failed'}`));
   };
 
   return (
@@ -539,7 +794,7 @@ export function LinearCycleDetail({cycle: initial, team, teams, viewer, orgId, w
           <FavStar kind="cycles" id={cycle.id} label={cname} />
           <span style={{position: 'relative'}} ref={menuRef}>
             <IconBtn label="Cycle options" title="Cycle options" onClick={() => setMenuOpen(v => !v)}><span style={{fontWeight: 700}}>···</span></IconBtn>
-            {menuOpen && <CycleOptionsMenu cycle={cycle} issues={issues} onChanged={setCycle} onClose={() => setMenuOpen(false)} />}
+            {menuOpen && <CycleOptionsMenu cycle={cycle} issues={issues} onError={setMutationError} onClose={() => setMenuOpen(false)} />}
           </span>
         </div>
       </header>
@@ -566,28 +821,11 @@ export function LinearCycleDetail({cycle: initial, team, teams, viewer, orgId, w
           <div className="lin-scroll">
             {loading && <p className="lin-loading" role="status">Loading cycle issues…</p>}
             {error && <p className="lin-error" role="alert">{error}</p>}
+            {mutationError && <p className="lin-error" role="alert">{mutationError}</p>}
             {!loading && !error && (
               <div className="lin-list">
-                {groups.map(g => (
-                  <section key={g.key} className="lin-group">
-                    <header className="lin-group-head">
-                      <button type="button" className="chev" aria-label={`${collapsed.includes(g.key) ? 'Expand' : 'Collapse'} ${g.name}`}
-                        onClick={() => setCollapsed(c => c.includes(g.key) ? c.filter(x => x !== g.key) : [...c, g.key])}>
-                        <ChevronDown size={14} style={{transform: collapsed.includes(g.key) ? 'rotate(-90deg)' : undefined}} />
-                      </button>
-                      {g.state && <LinearStatusIcon state={g.state} size={13} />}
-                      <b>{g.name}</b><span className="count">{g.items.length}</span>
-                      <span className="grow" />
-                      <Tip label={`Create issue in ${g.name}`}>
-                        <button type="button" className="add" aria-label={`Create issue in ${g.name}`}><Plus size={14} /></button>
-                      </Tip>
-                    </header>
-                    {!collapsed.includes(g.key) && g.items.map(i => (
-                      <IssueRow key={i.id} issue={i} display={display} selected={false}
-                        showCheckbox={false} onSelect={() => {}} onOpen={onSelect} childCount={childCounts.get(i.id) || 0} />
-                    ))}
-                  </section>
-                ))}
+                <CycleIssueGroups groups={groups} collapsed={collapsed} setCollapsed={setCollapsed} display={display}
+                  childCounts={childCounts} onOpen={onSelect} onMove={moveToState} />
                 {!scoped.length && (
                   <div className="lin-empty"><h2>No issues in this cycle</h2><p>Issues added to this cycle will appear here.</p></div>
                 )}
@@ -632,7 +870,7 @@ export function LinearCycleDetail({cycle: initial, team, teams, viewer, orgId, w
             </button>
             {progressOpen && <>
               <Legend stats={stats} />
-              <div style={{marginTop: 8}}><BurndownChart cycle={cycle} stats={stats} /></div>
+              <div style={{marginTop: 8}}><BurndownChart cycle={cycle} stats={stats} issues={issues} /></div>
             </>}
 
             <div className="lin-ctabs" role="tablist" aria-label="Cycle breakdown">
@@ -663,26 +901,32 @@ export function LinearCycleDetail({cycle: initial, team, teams, viewer, orgId, w
 
 /* ---------------- current / upcoming wrapper ---------------- */
 
-export function LinearTeamCycle({team, teams, viewer, orgId, workspaceName, projects, labels, cycles, revision, upcoming, onBack, onSelect, onNavigate}: {
+/* Mirrors the server's isActive/isNext: the team's active cycle, and the
+ * cycle after it by number (or the first one when none is active). */
+function pickTeamCycle(cycles: Cycle[], teamId: string, activeId: string | undefined, upcoming: boolean): Cycle | null {
+  const mine = cycles.filter(c => c.team?.id === teamId).sort((a, b) => (a.number ?? 0) - (b.number ?? 0));
+  const at = activeId ? mine.findIndex(c => c.id === activeId) : -1;
+  if (!upcoming) return at >= 0 ? mine[at] : null;
+  if (activeId && at < 0) return null;
+  return mine[at + 1] || null;
+}
+
+export function LinearTeamCycle({team, teams, viewer, orgId, workspaceName, projects, labels, cycles, upcoming, onBack, onSelect, onNavigate}: {
   team?: Team; teams: Team[]; viewer: Viewer; orgId: string; workspaceName: string;
   projects: Project[]; labels: IssueLabel[]; cycles: Cycle[];
-  revision: number; upcoming: boolean; onBack: () => void; onSelect: (issue: LinIssue) => void;
+  revision?: number; upcoming: boolean; onBack: () => void; onSelect: (issue: LinIssue) => void;
   onNavigate: (view: string, path?: string) => void;
 }) {
-  const [cycle, setCycle] = useState<Cycle | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  useEffect(() => {
-    if (!team) return;
-    let live = true;
-    setLoading(true); setError('');
-    gql(`query($filter:CycleFilter){cycles(first:10,filter:$filter){nodes{id name description number startsAt endsAt completedAt progress team{id key name}}}}`,
-      {filter: {team: {id: {eq: team.id}}, [upcoming ? 'isNext' : 'isActive']: {eq: true}}})
-      .then(d => { if (live) setCycle(d.cycles.nodes[0] || null); })
-      .catch(e => { if (live) setError((e as Error).message); })
-      .finally(() => { if (live) setLoading(false); });
-    return () => { live = false; };
-  }, [team?.id, upcoming, revision]);
+  const meta = useSyncMeta();
+  const all = useCycles();
+  const teamId = team?.id;
+  // The active cycle id lives on the synced team; fall back to the team prop before metadata arrives.
+  const activeId = (meta?.teams.nodes.find(t => t.id === teamId) || team)?.activeCycle?.id;
+  const cycle = useMemo(() => (all && teamId ? pickTeamCycle(all, teamId, activeId, upcoming) : null),
+    [all, teamId, activeId, upcoming]);
+  const loading = all === null;
+  const error = '';
+  useTeamCycleUpkeep(teamId);
   if (!team) return <section className="lin-page"><p className="lin-error" role="alert">Team not found in this workspace.</p></section>;
   if (loading) return <section className="lin-page"><p className="lin-loading" role="status">Loading cycle…</p></section>;
   if (error) return <section className="lin-page"><p className="lin-error" role="alert">{error}</p></section>;
@@ -700,59 +944,99 @@ export function LinearTeamCycle({team, teams, viewer, orgId, workspaceName, proj
   }
   return <LinearCycleDetail cycle={cycle} team={team} teams={teams} viewer={viewer} orgId={orgId}
     workspaceName={workspaceName} projects={projects} labels={labels} cycles={cycles}
-    revision={revision} onBack={onBack} onSelect={onSelect} onNavigate={onNavigate} />;
+    onBack={onBack} onSelect={onSelect} onNavigate={onNavigate} />;
 }
 
 /* ---------------- cycle settings ---------------- */
 
+type Cadence = {enabled: boolean; weekday?: number | null; timezone: string; policyVersion: number};
+type AutoFlags = {started: boolean; completed: boolean; backlog: boolean};
+/* Last known settings per team: a revisit renders at once and revalidates in the background. */
+const settingsCache = new Map<string, {cadence?: Cadence; auto?: AutoFlags}>();
+
 export function LinearTeamCycleSettings({team, onBack, admin}: {
   team?: Team; onBack: () => void; admin?: boolean;
 }) {
-  const [saved, setSaved] = useState<{enabled: boolean; weekday?: number | null; timezone: string; policyVersion: number} | null>(null);
-  const [weekday, setWeekday] = useState('');
-  const [autoStarted, setAutoStarted] = useState<boolean | null>(null);
-  const [autoCompleted, setAutoCompleted] = useState<boolean | null>(null);
-  const [autoBacklog, setAutoBacklog] = useState<boolean | null>(null);
-  const [autoBusy, setAutoBusy] = useState(false);
+  const cached = team ? settingsCache.get(team.id) : undefined;
+  const [saved, setSaved] = useState<Cadence | null>(cached?.cadence || null);
+  const [weekday, setWeekday] = useState(cached?.cadence?.weekday == null ? '' : String(cached.cadence.weekday));
+  const [autoStarted, setAutoStarted] = useState<boolean | null>(cached?.auto?.started ?? null);
+  const [autoCompleted, setAutoCompleted] = useState<boolean | null>(cached?.auto?.completed ?? null);
+  const [autoBacklog, setAutoBacklog] = useState<boolean | null>(cached?.auto?.backlog ?? null);
+  const autoBusy = false;
   const [busy, setBusy] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!cached?.cadence);
   const [error, setError] = useState('');
+  // Server-confirmed automation flags (rollback target) and the newest save's sequence number.
+  const confirmedAuto = useRef<AutoFlags | null>(cached?.auto || null);
+  const autoSeq = useRef(0);
+  const teamVersion = useEntityVersion(['team'], [team?.id]);
+  const remember = (teamId: string, next: {cadence?: Cadence; auto?: AutoFlags}) =>
+    settingsCache.set(teamId, {...settingsCache.get(teamId), ...next});
+  const showAuto = (f: AutoFlags) => { setAutoStarted(f.started); setAutoCompleted(f.completed); setAutoBacklog(f.backlog); };
   useEffect(() => {
     if (!team) return;
     let live = true;
-    setLoading(true); setError('');
-    gql(`query($id:String!){teamCycleCadence(teamId:$id){enabled weekday timezone policyVersion}}`, {id: team.id})
-      .then(d => { if (live) { setSaved(d.teamCycleCadence); setWeekday(d.teamCycleCadence.weekday == null ? '' : String(d.teamCycleCadence.weekday)); } })
+    const teamId = team.id;
+    const prior = settingsCache.get(teamId);
+    setLoading(!prior?.cadence); setError('');
+    gql(`query($id:String!){teamCycleCadence(teamId:$id){enabled weekday timezone policyVersion}}`, {id: teamId})
+      .then(d => {
+        remember(teamId, {cadence: d.teamCycleCadence});
+        if (live) { setSaved(d.teamCycleCadence); setWeekday(d.teamCycleCadence.weekday == null ? '' : String(d.teamCycleCadence.weekday)); }
+      })
       .catch(e => { if (live) setError((e as Error).message); })
       .finally(() => { if (live) setLoading(false); });
-    gql(`query($id:String!){team(id:$id){autoAddStarted autoAddCompleted autoAddBacklog}}`, {id: team.id})
-      .then(d => { if (live && d.team) { setAutoStarted(d.team.autoAddStarted !== false); setAutoCompleted(d.team.autoAddCompleted !== false); setAutoBacklog(d.team.autoAddBacklog !== false); } })
+    gql(`query($id:String!){team(id:$id){autoAddStarted autoAddCompleted autoAddBacklog}}`, {id: teamId})
+      .then(d => {
+        if (!d.team) return;
+        const flags = {started: d.team.autoAddStarted !== false, completed: d.team.autoAddCompleted !== false, backlog: d.team.autoAddBacklog !== false};
+        remember(teamId, {auto: flags});
+        // Do not clobber a toggle the user made while this was loading.
+        if (live && autoSeq.current === 0) { confirmedAuto.current = flags; showAuto(flags); }
+      })
       .catch(() => { /* flags stay null; card shows loading state */ });
     return () => { live = false; };
-  }, [team?.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [team?.id, teamVersion]);
   const enable = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!team || weekday === '' || busy) return;
+    const previous = saved;
+    // Optimistic: show the schedule as enabled at once; roll back if the server refuses.
+    setSaved({enabled: true, weekday: Number(weekday), timezone: previous?.timezone || 'UTC', policyVersion: previous?.policyVersion ?? 1});
     setBusy(true); setError('');
     try {
       const d = await gql(`mutation($id:String!,$weekday:Int!){teamCycleCadenceEnable(teamId:$id,weekday:$weekday){enabled weekday timezone policyVersion}}`,
         {id: team.id, weekday: Number(weekday)});
       setSaved(d.teamCycleCadenceEnable);
-    } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+      remember(team.id, {cadence: d.teamCycleCadenceEnable});
+      void getSync()?.pull(); // generated cycles arrive with the metadata
+    } catch (e) { setSaved(previous); setError((e as Error).message); } finally { setBusy(false); }
   };
   const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  // Toggles apply instantly; each save carries all three flags, so the newest one wins.
   const saveAuto = async (started: boolean, completed: boolean, backlog: boolean) => {
-    if (!team || !admin || autoBusy) return;
-    setAutoBusy(true); setError('');
+    if (!team || !admin) return;
+    const seq = ++autoSeq.current;
+    const teamId = team.id;
+    showAuto({started, completed, backlog});
+    setError('');
     try {
       const d = await gql(
         `mutation($id:String!,$input:TeamUpdateInput!){teamUpdate(id:$id,input:$input){success team{id autoAddStarted autoAddCompleted autoAddBacklog}}}`,
-        {id: team.id, input: {autoAddStarted: started, autoAddCompleted: completed, autoAddBacklog: backlog}});
+        {id: teamId, input: {autoAddStarted: started, autoAddCompleted: completed, autoAddBacklog: backlog}});
       if (!d.teamUpdate?.success) throw new Error('Could not save cycle automations.');
-      setAutoStarted(d.teamUpdate.team.autoAddStarted !== false);
-      setAutoCompleted(d.teamUpdate.team.autoAddCompleted !== false);
-      setAutoBacklog(d.teamUpdate.team.autoAddBacklog !== false);
-    } catch (e) { setError((e as Error).message); } finally { setAutoBusy(false); }
+      const flags = {started: d.teamUpdate.team.autoAddStarted !== false, completed: d.teamUpdate.team.autoAddCompleted !== false, backlog: d.teamUpdate.team.autoAddBacklog !== false};
+      confirmedAuto.current = flags;
+      remember(teamId, {auto: flags});
+      if (seq === autoSeq.current) showAuto(flags);
+    } catch (e) {
+      if (seq === autoSeq.current) {
+        if (confirmedAuto.current) showAuto(confirmedAuto.current);
+        setError((e as Error).message || 'Could not save cycle automations.');
+      }
+    }
   };
   return (
     <section className="lin-page"><div className="lin-scroll"><div className="lin-csettings">
@@ -807,19 +1091,19 @@ export function LinearTeamCycleSettings({team, onBack, admin}: {
               <label className="lin-auto-row">
                 <input type="checkbox" className="lin-check" checked={autoStarted}
                   disabled={!admin || autoBusy}
-                  onChange={e => { const v = e.target.checked; setAutoStarted(v); void saveAuto(v, autoCompleted, autoBacklog); }} />
+                  onChange={e => { void saveAuto(e.target.checked, autoCompleted, autoBacklog); }} />
                 <span>Auto-add <b>started</b> issues to the current cycle</span>
               </label>
               <label className="lin-auto-row">
                 <input type="checkbox" className="lin-check" checked={autoCompleted}
                   disabled={!admin || autoBusy}
-                  onChange={e => { const v = e.target.checked; setAutoCompleted(v); void saveAuto(autoStarted, v, autoBacklog); }} />
+                  onChange={e => { void saveAuto(autoStarted, e.target.checked, autoBacklog); }} />
                 <span>Auto-add <b>completed</b> issues to the current cycle</span>
               </label>
               <label className="lin-auto-row">
                 <input type="checkbox" className="lin-check" checked={autoBacklog}
                   disabled={!admin || autoBusy}
-                  onChange={e => { const v = e.target.checked; setAutoBacklog(v); void saveAuto(autoStarted, autoCompleted, v); }} />
+                  onChange={e => { void saveAuto(autoStarted, autoCompleted, e.target.checked); }} />
                 <span>Auto-add <b>backlog</b> issues to the current cycle</span>
               </label>
               {!admin && <p className="lin-note" role="status">Only workspace admins can change cycle automations.</p>}

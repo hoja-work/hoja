@@ -216,7 +216,7 @@ function hydrate(row: Row, col: (name: string) => Col, lk: Lookups, parentRow: R
     project: pid ? lk.projects.get(pid) : undefined,
     assignee: aid ? lk.users.get(aid) : undefined,
     creator: cid ? lk.users.get(cid) : undefined,
-    cycle: cyc ? lk.cycles.get(cyc) : undefined,
+    cycle: cyc ? lk.cycles.get(cyc) || {id: cyc} : undefined,
     labels: {nodes: ((col('labelIds')(row) as string[]) || []).map(l => lk.labels.get(l)).filter(Boolean) as IssueLabel[]},
     subscribers: {nodes: ((col('subscriberIds')(row) as string[]) || []).map(u => ({id: u}))},
     estimate: (col('estimate')(row) as number | null) ?? null,
@@ -394,7 +394,7 @@ export function startSync(opts: {
       if (has('stateId')) out.state = ref(lk!.states, 'stateId');
       if (has('assigneeId')) out.assignee = ref(lk!.users, 'assigneeId');
       if (has('projectId')) out.project = ref(lk!.projects, 'projectId');
-      if (has('cycleId')) out.cycle = ref(lk!.cycles, 'cycleId');
+      if (has('cycleId')) out.cycle = input.cycleId ? lk!.cycles.get(input.cycleId as string) || {id: input.cycleId as string} : undefined;
       if (has('labelIds')) out.labels = {nodes: ((input.labelIds as string[]) || []).map(l => lk!.labels.get(l)).filter(Boolean) as IssueLabel[]};
       return out;
     },
