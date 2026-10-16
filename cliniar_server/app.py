@@ -331,6 +331,7 @@ def create_app(
     store = Store(engine)
     writer = Writer(engine)
     broadcaster_task = None
+    gql_slots = asyncio.Semaphore(8)
 
     async def _change_broadcaster():
         """Single global poller: wake per-org waiters instead of per-client DB polling."""
@@ -875,14 +876,15 @@ def create_app(
         }
         # Sync resolvers would otherwise run on the event loop and block every
         # WS client; execute the whole GraphQL operation in a worker thread.
-        _success, result = await run_in_threadpool(
-            graphql_sync,
-            _schema,
-            data,
-            context_value=context,
-            error_formatter=_format_graphql_error,
-            debug=(os.environ.get("CLINIAR_SERVER_DEBUG", "0") == "1"),
-        )
+        async with gql_slots:
+            _success, result = await run_in_threadpool(
+                graphql_sync,
+                _schema,
+                data,
+                context_value=context,
+                error_formatter=_format_graphql_error,
+                debug=(os.environ.get("CLINIAR_SERVER_DEBUG", "0") == "1"),
+            )
         target = context.get("switch_target")
         if target:
             session_token, _details = store.create_session_for_membership(

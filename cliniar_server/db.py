@@ -674,6 +674,9 @@ def make_engine(target: str | Path) -> Engine:
     kwargs = {"future": True}
     if backend == "postgresql":
         kwargs["pool_pre_ping"] = True
+        kwargs["pool_size"] = 40
+        kwargs["max_overflow"] = 20
+        kwargs["pool_timeout"] = 60
     eng = create_engine(url, **kwargs)
 
     if backend == "sqlite":
