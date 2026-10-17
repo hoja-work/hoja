@@ -70,11 +70,11 @@ export function saveGuest(code: string, seat: GuestSeat | null) {
 
 /** Guest token for the current call, set by the room once joined (members never set it). */
 let activeGuest: string | null = null;
-export function useGuestToken(token: string | null) { activeGuest = token; }
+export function setGuestToken(token: string | null) { activeGuest = token; }
 
 /** Seat token of a companion device (a member's second device); the main device needs none. */
 let activeSeat: string | null = null;
-export function useSeatToken(token: string | null) { activeSeat = token; }
+export function setSeatToken(token: string | null) { activeSeat = token; }
 const seatKey = (code: string) => `hoja_meeting_seat_${code}`;
 export function loadSeat(code: string): string | null { try { return sessionStorage.getItem(seatKey(code)); } catch { return null; } }
 export function saveSeat(code: string, token: string | null) {

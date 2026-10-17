@@ -1,0 +1,11 @@
+/* Phone hit areas (WCAG 2.5.5). Imported last so it wins over component stylesheets; enforced by the mobile audit. */
+@media(max-width:700px){.mobile-nav-toggle{width:44px!important;height:44px!important}.topbar .command{min-height:44px!important}}
+@media(max-width:700px){.my-issue-tabs{min-width:0;flex:1 1 0;overflow-x:auto}}
+@media(max-width:700px){.lin-chipbtn,.mt-icon-btn,.mt-btn,[role=tab]{min-width:44px!important;min-height:44px!important}input:not([type=checkbox]):not([type=radio]):not([type=hidden]){min-height:44px!important}}
+@media(max-width:700px){.topbar button{min-height:44px!important}.topbar .command{min-width:44px!important}button.brand,.text-action,.settings-mobile-back,.mt-day-add,.mt-popover button{min-width:44px!important;min-height:44px!important}select{min-height:44px!important}}
+@media(max-width:700px){.lin-icon-btn{width:44px!important;height:44px!important}}
+@media(max-width:700px){.api-key-filters button,button.outline,button.eyebrow,.mt-segment,.setting-control{min-width:44px!important;min-height:44px!important}}
+@media(max-width:700px){.lin-btn,.crumb-link,.back-link,.project-add-view{min-width:44px!important;min-height:44px!important}}
+@media(max-width:700px){.project-add-view{position:static!important;right:auto!important;top:auto!important;margin:0 4px 0 0!important}.side-card button,.mt-segment button,.mt-link-btn{min-height:44px!important}}
+@media(max-width:700px){.lin-crumb{min-width:0}.lin-crumb a,.lin-crumb button.crumb-link{white-space:normal;min-width:0;max-width:100%}}
+@media(max-width:700px){.lin-head{flex-wrap:wrap;row-gap:4px}.lin-crumb{flex-wrap:wrap;row-gap:2px}}

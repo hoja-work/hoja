@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import {confirmDialog} from './dialogs';
 
 type ModelProvider = {
   id: string;
@@ -78,7 +79,7 @@ export function ModelProvidersSettings() {
   };
 
   const remove = async (p: ModelProvider) => {
-    if (!window.confirm(`Delete ${p.name}? The agent will stop using this model.`)) return;
+    if (!await confirmDialog(`Delete ${p.name}? The agent will stop using this model.`,{danger:true})) return;
     try {
       await call(DELETE, { id: p.id });
       setRefresh((x) => x + 1);

@@ -84,6 +84,8 @@ export function CycleGlyph({size = 13, tone = 'currentColor'}: {size?: number; t
 
 export function LabelChip({label, onClick, onRemove}: {label: IssueLabel; onClick?: (e: React.MouseEvent) => void; onRemove?: () => void}) {
   return (
+    // Interactive only when onClick is passed; the role and key handler below apply in that case.
+    // eslint-disable-next-line jsx-a11y/no-static-element-interactions
     <span className="lin-chip lin-label-chip" onClick={onClick} role={onClick ? 'button' : undefined} tabIndex={onClick ? 0 : undefined}
       onKeyDown={onClick ? e => { if (e.key === 'Enter') onClick(e as unknown as React.MouseEvent); } : undefined}>
       <i style={{background: label.color || '#8a94a6'}} />

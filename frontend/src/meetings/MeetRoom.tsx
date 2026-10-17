@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import {
   ApiError, apiToken, deviceId, deviceLabel, fmtDuration, fmtTime, fmtWhen, initials, joinUrl, loadGuest, loadSeat, meetingsApi,
-  saveGuest, saveSeat, useGuestToken, useSeatToken,
+  saveGuest, saveSeat, setGuestToken, setSeatToken,
   type Meeting, type Participant, type Person, type Preview, type Recap,
 } from './api';
 import {connectInbox, useInbox} from './inbox';
@@ -171,10 +171,10 @@ function Lobby({code, boot, leftTitle, onJoined}: {
     if (!boot.member && !name.trim()) { setError('Enter your name so others know who you are.'); return; }
     setBusy(true);
     try {
-      if (!boot.member && seat) useGuestToken(seat.token);
+      if (!boot.member && seat) setGuestToken(seat.token);
       // A refreshed companion device presents the seat it was given; a fresh choice starts clean.
       const savedSeat = boot.member && !mode ? loadSeat(code) : null;
-      useSeatToken(savedSeat);
+      setSeatToken(savedSeat);
       const res = await meetingsApi.join(code, {name: name.trim() || undefined, passcode: passcode || undefined,
         deviceId: deviceId(), deviceLabel: deviceLabel(), mode});
       let auth: RoomAuth = {kind: 'member'};
@@ -182,16 +182,16 @@ function Lobby({code, boot, leftTitle, onJoined}: {
         const token = res.guestToken || seat?.token;
         if (!token) throw new Error('Could not start a guest session.');
         saveGuest(code, {token, name: name.trim()});
-        useGuestToken(token);
+        setGuestToken(token);
         auth = {kind: 'guest', token};
       } else if (res.seatToken || (res.participant.deviceOf && savedSeat)) {
         const token = res.seatToken || savedSeat!;
         saveSeat(code, token);
-        useSeatToken(token);
+        setSeatToken(token);
         auth = {kind: 'member', seat: token};
       } else {
         saveSeat(code, null);
-        useSeatToken(null);
+        setSeatToken(null);
       }
       held.current.handedOff = true;
       if (mic) mic.enabled = micOn;
@@ -390,7 +390,9 @@ function Room({code, seed, auth, meeting: m0, you: y0, member, onExit}: {
   });
 
   return (
-    <main className="mr-room" data-sharing={shares.length ? 'true' : 'false'} onClick={() => popover && setPopover(null)}>
+    <main className="mr-room" data-sharing={shares.length ? 'true' : 'false'}
+      onClick={(e) => { if (popover && !(e.target as Element).closest('.mr-pop, .mr-panel, .mr-controls')) setPopover(null); }}
+      onKeyDown={(e) => { if (e.key === 'Escape') setPopover(null); }}>
       {/* hidden audio sinks for everyone else */}
       {admitted.filter((p) => p.id !== you.id).map((p) => streams[p.id]?.mic && <RemoteAudio key={p.id} stream={streams[p.id].mic!} />)}
 
@@ -437,7 +439,7 @@ function Room({code, seed, auth, meeting: m0, you: y0, member, onExit}: {
         </section>
 
         {panel && (
-          <aside className="mr-panel" aria-label={panel === 'chat' ? 'Chat' : 'People'} onClick={(e) => e.stopPropagation()}>
+          <aside className="mr-panel" aria-label={panel === 'chat' ? 'Chat' : 'People'}>
             <div className="mr-panel-head">
               <div role="tablist">
                 <button type="button" role="tab" aria-selected={panel === 'people'} onClick={() => setPanel('people')}>People ({admitted.length})</button>
@@ -450,7 +452,7 @@ function Room({code, seed, auth, meeting: m0, you: y0, member, onExit}: {
         )}
       </div>
 
-      <footer className="mr-controls" onClick={(e) => e.stopPropagation()}>
+      <footer className="mr-controls">
         <div className="mr-controls-main">
           <Ctl icon={micOn ? <Mic size={18} /> : <MicOff size={18} />} label={micOn ? 'Mute' : 'Unmute'} off={!micOn} onClick={() => void room.toggleMic()} />
           <Ctl icon={camOn ? <Camera size={18} /> : <CameraOff size={18} />} label={camOn ? 'Stop video' : 'Start video'} off={!camOn} onClick={() => void room.toggleCam()} />
@@ -679,7 +681,7 @@ function InvitePopover({code, onCopy, notify}: {code: string; onCopy: () => void
     setBusy('');
   };
   return (
-    <div className="mr-pop mr-invite" role="dialog" aria-label="Invite people" onClick={(e) => e.stopPropagation()}>
+    <div className="mr-pop mr-invite" role="dialog" aria-label="Invite people">
       <button type="button" className="mr-btn mr-wide" onClick={onCopy}><Copy size={14} /> Copy invite link</button>
       <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a teammate to call" aria-label="Find a teammate" />
       <ul>
@@ -730,7 +732,8 @@ function useSpeaking(streams: Streams, admitted: Participant[], me: string): Map
       }
       setLevels((prev) => (prev.size === next.size && [...next.keys()].every((k) => prev.has(k)) ? prev : next));
     }, 200);
-    return () => { window.clearInterval(timer); ctx.current?.close().catch(() => undefined); ctx.current = null; nodes.current.clear(); };
+    const nodeMap = nodes.current;
+    return () => { window.clearInterval(timer); ctx.current?.close().catch(() => undefined); ctx.current = null; nodeMap.clear(); };
   }, []);
   return levels;
 }

@@ -44,7 +44,7 @@ export function PeoplePicker({people, value, onChange, excludeId, allowEmail, pl
       <label className="mt-search">
         <Search size={14} aria-hidden="true" />
         <input
-          value={query} autoFocus={autoFocus} aria-label="Search people"
+          value={query} aria-label="Search people"
           placeholder={placeholder || (allowEmail ? 'Search people or type an email' : 'Search people')}
           onChange={(e) => { setQuery(e.target.value); setError(''); }}
           onKeyDown={(e) => {
