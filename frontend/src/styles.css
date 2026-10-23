@@ -1006,3 +1006,138 @@ input::placeholder,textarea::placeholder{color:var(--muted)}
 
 
 
+/* ---- board cards edit in place ------------------------------------------------
+   The card title opens the issue; the property row edits status, due date,
+   priority and assignee without leaving the board. Values come from the shared
+   store, so an accepted edit is already on screen when the request returns. */
+.kanban-card-open{display:flex;flex-direction:column;gap:6px;width:100%;padding:0;background:transparent;color:inherit;text-align:left}
+.kanban-card-open small{color:var(--muted);font-size:11px}
+.kanban-card-open strong{font-size:13px;line-height:1.4;font-weight:550}
+.kanban-card-props{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:7px;min-width:0}
+.kanban-prop{display:inline-flex;align-items:center;gap:4px;height:24px;min-width:0;padding:0 6px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--muted);font-size:11px}
+.kanban-prop:hover{border-color:var(--accent)}
+.kanban-prop:focus-within{border-color:var(--accent)}
+.kanban-prop select{height:22px;min-width:0;max-width:108px;padding:0 2px;border:0;background:transparent;color:var(--text);font-size:11px}
+.kanban-prop select:focus-visible{outline:0}
+.kanban-prop-date input{width:92px;height:20px;padding:0;border:0;background:transparent;color:var(--text);font-size:11px}
+.kanban-prop-date.overdue{border-color:color-mix(in srgb,var(--danger) 55%,var(--line));color:var(--danger)}
+.kanban-prop-date.overdue input{color:var(--danger)}
+.kanban-prop-assignee select{max-width:92px}
+.kanban-prop-avatar{display:grid;place-items:center;width:15px;height:15px;flex:none;border-radius:50%;background:var(--accent-soft);color:var(--accent);font-size:9px;font-weight:700}
+.kanban-card-props .status-picker{align-self:auto}
+.kanban-card-props .status-picker-trigger{width:24px;height:24px;padding:0;border:1px solid var(--line);border-radius:6px;background:var(--bg)}
+.kanban-card-props .status-picker-trigger:hover{border-color:var(--accent)}
+.issue-property input[type=date]{width:auto;max-width:132px;height:22px;padding:0 2px;border:0;background:transparent;color:var(--text);font-size:11px}
+.issue-property input[type=date]:focus-visible{outline:0}
+.issue-create-modal .issue-property input[type=date]{font-size:12px;font-weight:450}
+
+/* ---- team management cards ---------------------------------------------------
+   One card per team: rename, members (add/remove), archive and a delete panel that
+   states exactly what goes with the team. Everything wraps instead of overflowing,
+   so a long key or a long member name cannot break the card. */
+.team-card-list{display:grid;gap:12px;min-width:0}
+.team-card-empty{margin:0;padding:18px;border:1px dashed var(--line);border-radius:12px;color:var(--muted);font-size:13px}
+.team-card{display:grid;gap:14px;min-width:0;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--panel);box-shadow:0 1px 2px #1b1b1b08}
+.team-card-head{display:flex;align-items:center;gap:10px;min-width:0}
+.team-card-mark{display:grid;place-items:center;flex:none;width:30px;height:30px;border-radius:8px;background:var(--accent-soft);color:var(--accent);font-size:11px;font-weight:700}
+.team-card-title{display:grid;gap:2px;min-width:0}
+.team-card-title b{font-size:14px;font-weight:600}
+.team-card-title small{color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+.team-card-pending{align-self:center;margin-left:auto;color:var(--muted);font-size:11px}
+.team-card-fields{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.45fr) minmax(0,1.4fr);gap:10px;align-items:end;min-width:0}
+.team-card-fields label{display:grid;gap:5px;min-width:0;color:var(--muted);font-size:11px}
+.team-card-fields input{width:100%;min-width:0;padding:7px 9px;border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px}
+.team-card-fields input:disabled{opacity:.6}
+.team-card-readonly{margin:0;color:var(--muted);font-size:12px}
+.team-card-actions{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px}
+.team-card-actions .primary,.team-card-actions .outline,.team-card-actions .danger{min-height:32px;padding:6px 12px;border-radius:7px;font-size:12px;font-weight:550}
+.team-card-actions .outline.danger{border-color:var(--line);color:var(--danger)}
+.team-card-actions .outline.danger:hover:not(:disabled){border-color:var(--danger);background:color-mix(in srgb,var(--danger) 8%,transparent)}
+.team-card-actions button.danger{border:1px solid var(--danger);background:transparent;color:var(--danger)}
+.team-card-actions button.danger:hover:not(:disabled){background:color-mix(in srgb,var(--danger) 10%,transparent)}
+.team-card-actions button:disabled{opacity:.5;cursor:not-allowed}
+.team-card-members{display:grid;gap:9px;min-width:0;padding-top:12px;border-top:1px solid var(--line)}
+.team-card-members-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px}
+.team-card-members-head b{font-size:12px}
+.team-card-members-head small{color:var(--muted);font-size:11px}
+.team-member-list{display:flex;flex-wrap:wrap;gap:6px;margin:0;padding:0;list-style:none;min-width:0}
+.team-member{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:3px 4px 3px 3px;border:1px solid var(--line);border-radius:99px;background:var(--bg);font-size:12px}
+.team-member-avatar{display:grid;place-items:center;flex:none;width:18px;height:18px;border-radius:50%;background:var(--accent-soft);color:var(--accent);font-size:9px;font-weight:700}
+.team-member-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.team-member-remove{display:grid;place-items:center;flex:none;width:20px;height:20px;border-radius:50%;background:transparent;color:var(--muted)}
+.team-member-remove:hover:not(:disabled){background:var(--subtle);color:var(--danger)}
+.team-member-empty{padding:6px 0;color:var(--muted);font-size:12px}
+.team-member-add{display:grid;gap:5px;max-width:320px;color:var(--muted);font-size:11px}
+.team-member-add select{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--text);font-size:12px}
+.team-card-delete{display:grid;gap:10px;min-width:0;padding:12px;border:1px solid color-mix(in srgb,var(--danger) 40%,var(--line));border-radius:10px;background:color-mix(in srgb,var(--danger) 5%,var(--panel))}
+.team-card-delete p{margin:0;font-size:12px;line-height:1.5}
+.team-card-delete-check{display:flex;align-items:flex-start;gap:8px;font-size:12px}
+.team-card-delete-check input{margin-top:2px;flex:none}
+.team-card-delete-confirm{display:grid;gap:5px;max-width:260px;color:var(--muted);font-size:11px}
+.team-card-delete-confirm input{width:100%;padding:6px 9px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--text);font-size:13px}
+.team-card-message{margin:0;font-size:12px;color:var(--muted)}
+.team-card-message.error{color:var(--danger)}
+@media(max-width:820px){.team-card-fields{grid-template-columns:1fr 1fr}.team-card-description{grid-column:1/-1}}
+@media(max-width:560px){.team-card{padding:13px}.team-card-fields{grid-template-columns:1fr}}
+.team-member-remove{padding:0}
+
+/* ---- new-issue modal: motion + state polish ----------------------------------
+   Motion budget: 90-200ms, compositor-only properties (transform/opacity), one
+   standard easing plus a settle easing. `prefers-reduced-motion` collapses every
+   token to ~1ms, so no rule needs its own media query and nothing janks. */
+:root{
+  --motion-instant:90ms;
+  --motion-fast:120ms;
+  --motion-base:160ms;
+  --motion-overlay:200ms;
+  --ease-standard:cubic-bezier(.2,0,0,1);
+  --ease-settle:cubic-bezier(.16,1,.3,1);
+}
+@media (prefers-reduced-motion:reduce){:root{--motion-instant:1ms;--motion-fast:1ms;--motion-base:1ms;--motion-overlay:1ms}}
+
+@keyframes issue-backdrop-in{from{opacity:0}to{opacity:1}}
+@keyframes issue-backdrop-out{from{opacity:1}to{opacity:0}}
+@keyframes issue-modal-in{from{opacity:0;transform:translateY(10px) scale(.985)}to{opacity:1;transform:none}}
+@keyframes issue-modal-out{from{opacity:1;transform:none}to{opacity:0;transform:translateY(6px) scale(.99)}}
+@keyframes issue-spin{to{transform:rotate(360deg)}}
+
+.modal-backdrop:has(> .issue-create-modal){animation:issue-backdrop-in var(--motion-overlay) var(--ease-standard) both;overscroll-behavior:contain}
+.modal-backdrop:has(> .issue-create-modal.is-closing){animation:issue-backdrop-out var(--motion-fast) var(--ease-standard) both}
+.issue-create-modal{animation:issue-modal-in var(--motion-overlay) var(--ease-standard) both}
+.issue-create-modal.is-closing{animation:issue-modal-out var(--motion-fast) var(--ease-standard) both}
+.issue-create-modal .issue-create-body{overscroll-behavior:contain}
+@supports (backdrop-filter:blur(2px)) or (-webkit-backdrop-filter:blur(2px)){
+  .modal-backdrop:has(> .issue-create-modal){background:rgba(9,9,11,.42);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
+}
+
+/* Text fields keep their borderless look but a keyboard user must see where they are. */
+.issue-create-modal .issue-create-title{caret-color:var(--accent)}
+.issue-create-modal .issue-create-description{caret-color:var(--accent)}
+.issue-create-modal .issue-create-title:focus-visible,
+.issue-create-modal .issue-create-description:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 82%,transparent);outline-offset:2px;border-radius:6px}
+.issue-create-modal .issue-create-title::selection,
+.issue-create-modal .issue-create-description::selection{background:color-mix(in srgb,var(--accent) 22%,transparent)}
+
+/* Property pills: hover only where a real pointer exists; focus-within always. */
+.issue-create-modal .issue-property{transition:background-color var(--motion-base) var(--ease-settle),border-color var(--motion-base) var(--ease-settle),box-shadow var(--motion-base) var(--ease-settle),color var(--motion-fast) var(--ease-settle)}
+.issue-create-modal .issue-property:focus-within{border-color:color-mix(in srgb,var(--accent) 70%,var(--line));box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent)}
+.issue-create-modal .issue-property select{transition:color var(--motion-fast) var(--ease-settle)}
+.issue-create-modal .issue-property input[type=date]::-webkit-calendar-picker-indicator{opacity:.5;cursor:pointer;transition:opacity var(--motion-fast) var(--ease-settle)}
+
+/* Footer actions: lift on hover, settle on press, never when disabled. */
+.issue-create-footer{position:sticky;bottom:0}
+.issue-create-footer .primary{transition:background-color var(--motion-base) var(--ease-settle),transform var(--motion-fast) var(--ease-settle),box-shadow var(--motion-fast) var(--ease-settle)}
+.issue-create-footer .primary:disabled{opacity:.55;cursor:not-allowed;box-shadow:none;transform:none;filter:none}
+.issue-create-footer .outline{transition:background-color var(--motion-fast) var(--ease-settle),border-color var(--motion-fast) var(--ease-settle)}
+.issue-create-footer .issue-create-more{transition:color var(--motion-fast) var(--ease-settle)}
+.issue-create-spinner{display:inline-block;width:12px;height:12px;margin-right:2px;border:2px solid color-mix(in srgb,#fff 45%,transparent);border-top-color:#fff;border-radius:50%;animation:issue-spin .7s linear infinite}
+
+@media (hover:hover) and (pointer:fine){
+  .issue-create-modal .issue-property:hover{background:color-mix(in srgb,var(--subtle) 58%,var(--panel));border-color:color-mix(in srgb,var(--accent) 34%,var(--line));color:var(--text)}
+  .issue-create-modal .issue-property:hover input[type=date]::-webkit-calendar-picker-indicator{opacity:1}
+  .issue-create-modal .issue-create-more:hover{color:var(--text)}
+  .issue-create-footer .outline:hover{background:var(--subtle);border-color:color-mix(in srgb,var(--accent) 26%,var(--line))}
+  .issue-create-footer .primary:not(:disabled):hover{transform:translateY(-1px);box-shadow:0 6px 18px color-mix(in srgb,var(--accent) 30%,transparent);filter:none}
+}
+.issue-create-footer .primary:not(:disabled):active{transform:translateY(0) scale(.985);box-shadow:none;transition-duration:var(--motion-instant)}
+html.hoja-modal-open{overflow:hidden;scrollbar-gutter:stable}

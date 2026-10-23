@@ -132,13 +132,38 @@ export function SubIssuePill({done, total}: {done: number; total: number}) {
   );
 }
 
+/* Due dates arrive as date-only strings ("YYYY-MM-DD") or full ISO timestamps.
+ * A date-only value is a calendar day, so it must not be parsed as UTC midnight:
+ * that renders the previous day west of Greenwich. */
+export function parseDueDay(iso?: string | null): Date | null {
+  if (!iso) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** True once the due day is before today (the due day itself is not late). */
+export function dueIsOverdue(iso?: string | null): boolean {
+  const d = parseDueDay(iso);
+  if (!d) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime() < today.getTime();
+}
+
+export function formatDueDay(iso?: string | null): string {
+  const d = parseDueDay(iso);
+  return d ? d.toLocaleDateString(undefined, {month: 'short', day: 'numeric'}) : '';
+}
+
 /** Due-date chip; red when overdue. */
 export function DueChip({iso}: {iso?: string | null}) {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  const overdue = d.getTime() < Date.now();
-  const label = d.toLocaleDateString(undefined, {month: 'short', day: 'numeric'});
+  const d = parseDueDay(iso);
+  if (!d) return null;
+  const overdue = dueIsOverdue(iso);
+  const label = formatDueDay(iso);
   return (
     <span className={cx('lin-chip lin-due-chip', overdue && 'overdue')} title={`Due ${d.toLocaleDateString()}`}>
       <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="2" /><path d="M2 6.5h12M5.5 1.5V4M10.5 1.5V4" strokeLinecap="round" /></svg>

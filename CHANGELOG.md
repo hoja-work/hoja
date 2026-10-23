@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- The create-issue dialog has a due date field, and the optimistic issue it adds
+  to the board carries that date immediately.
+- Board cards can be edited in place: status, due date, priority and assignee are
+  changed from the card, on both the workspace/My-issues board and the team board,
+  without opening the issue. Edits are optimistic and roll back if the server
+  rejects them. Clicking the card title still opens the issue.
+- Team settings now manage membership directly on each team card: members are
+  listed with a remove control and a workspace member can be added from a picker.
+- The new-issue dialog has a documented motion budget (`--motion-*` tokens,
+  90–200 ms, transform/opacity only) with an entrance and an exit animation, a
+  softened and blurred backdrop, hover/press states on the property pills and
+  actions, a visible focus ring on the borderless title and description, a
+  spinner while creating, a sticky footer on short viewports, and a focus trap
+  that returns focus to the trigger. `prefers-reduced-motion` collapses the
+  tokens to 1 ms and the page keeps its scrollbar gutter, so opening the dialog
+  shifts nothing.
+
+### Changed
+
+- The team settings screen renders one card per team (properties, members, actions
+  and a delete panel) instead of a single cramped row per team, and each card
+  reports its issue and project counts.
+
+### Fixed
+
+- The new-issue dialog no longer hides keyboard focus on the title and
+  description, no longer lets Tab escape into the page behind it, and its
+  focus indicators meet 3:1 contrast.
+- Deleting a team no longer fails because it still has projects. `teamDelete`
+  only blocks on projects, cycles and issues for a plain delete; with
+  `deleteIssues: true` it deletes the team's issues, its cycles and its project
+  links, and leaves the projects in the workspace. The delete panel states what
+  goes with the team and, when the server refuses, explains the real blocker and
+  offers the retry.
+- Date-only due dates render on their own calendar day in every timezone; they
+  were previously parsed as UTC midnight and could show the previous day, and the
+  "overdue" highlight now uses one shared rule.
+- An assignee or state id that is unknown to the current sync snapshot no longer
+  blanks the issue's field in the optimistic overlay.
+
+### Testing
+
+- Added `scripts/test-issue-modal-polish.cjs` (`npm run test:modal`), a browser
+  suite that measures the dialog instead of screenshotting it: animation
+  durations and animated properties, reduced-motion collapse, hover/press/focus
+  deltas, focus trap and focus restore, layout shift during interaction, WCAG
+  contrast in light and dark, and geometry at 1440×900, 390×844 and 320×568.
+
 ## [0.21.4] — 2026-10-06
 
 ### Added

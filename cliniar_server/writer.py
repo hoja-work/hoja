@@ -21,6 +21,7 @@ from cliniar_server.db import (
     issue_label,
     issue_label_link,
     issue_subscriber,
+    meeting,
     new_id,
     now_iso,
     organization,
@@ -312,11 +313,15 @@ class Writer:
             self._require_team_admin(conn, org_id, viewer_id)
             self._team_row(conn, org_id, team_id, include_archived=True)
             blockers = []
-            for label, table in (("projects", project_team), ("cycles", cycle)):
-                if conn.execute(select(table.c.team_id).where(table.c.team_id == team_id).limit(1)).first():
-                    blockers.append(label)
-            if not delete_issues and conn.execute(select(issue.c.id).where(issue.c.team_id == team_id).limit(1)).first():
-                blockers.append("issues")
+            # A plain delete is the conservative path and refuses while the team still owns
+            # anything. deleteIssues=True is the explicit "delete this team and its work"
+            # path, so it also takes the team-owned relations instead of dead-ending on them.
+            if not delete_issues:
+                for label, table in (("projects", project_team), ("cycles", cycle)):
+                    if conn.execute(select(table.c.team_id).where(table.c.team_id == team_id).limit(1)).first():
+                        blockers.append(label)
+                if conn.execute(select(issue.c.id).where(issue.c.team_id == team_id).limit(1)).first():
+                    blockers.append("issues")
             if blockers:
                 raise GraphQLError(
                     f"Team still has {', '.join(blockers)}. Archive it instead, or move or delete them first.",
@@ -327,6 +332,17 @@ class Writer:
                               issue_label_link, issue_subscriber):
                     conn.execute(child.delete().where(child.c.issue_id.in_(issue_ids)))
                 conn.execute(issue.delete().where(issue.c.team_id == team_id))
+            # Cycles belong to their team, so they go with it; any left-over reference is
+            # cleared rather than left dangling.
+            team_cycle_ids = select(cycle.c.id).where(cycle.c.team_id == team_id)
+            conn.execute(issue.update().where(issue.c.cycle_id.in_(team_cycle_ids))
+                         .values(cycle_id=None, updated_at=now_iso()))
+            conn.execute(cycle.delete().where(cycle.c.team_id == team_id))
+            # Projects are workspace-level: deleting a team only drops its link to them.
+            conn.execute(project_team.delete().where(project_team.c.team_id == team_id))
+            # Meetings belong to their host, so they survive with their team scope cleared.
+            conn.execute(meeting.update().where(meeting.c.team_id == team_id)
+                         .values(team_id=None, updated_at=now_iso()))
             conn.execute(team_member.delete().where(team_member.c.team_id == team_id))
             conn.execute(issue_label.delete().where(issue_label.c.team_id == team_id))
             conn.execute(workflow_state.delete().where(workflow_state.c.team_id == team_id))
