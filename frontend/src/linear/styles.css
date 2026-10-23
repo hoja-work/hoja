@@ -309,3 +309,18 @@
 .lin-note{font-size:12px;color:var(--muted);}
 @media (max-width:1100px){.lin-props{width:250px;}.lin-cpane{width:290px;}}
 @media (max-width:900px){.lin-detail{flex-direction:column;}.lin-props{width:auto;border-left:0;border-top:1px solid var(--line);}.lin-cdetail{flex-direction:column;}.lin-cpane{width:auto;border-left:0;border-top:1px solid var(--line);}.lin-detail-main{max-width:none;padding:20px;}}
+
+/* ---- editable board card properties ------------------------------------------ */
+.lin-bcard{font:inherit}
+.lin-card-ctl{position:relative;display:inline-flex;flex:none;align-items:center}
+.lin-card-btn{display:grid;place-items:center;padding:2px;border-radius:5px;background:transparent;color:inherit}
+.lin-card-btn:hover{background:var(--subtle)}
+.lin-card-btn:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.lin-card-menu{top:calc(100% + 6px);left:0;min-width:190px;max-height:300px;overflow:auto}
+.lin-card-due{padding:2px 7px;background:transparent;border-color:transparent}
+.lin-card-due.empty{color:var(--muted);border-style:dashed;border-color:var(--line)}
+.lin-card-due.overdue{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 45%,var(--line))}
+.lin-card-pop{position:absolute;z-index:130;top:calc(100% + 6px);left:0;display:flex;align-items:center;gap:6px;padding:6px;border:1px solid var(--line);border-radius:9px;background:var(--panel);box-shadow:0 12px 40px #1b1b1b1f}
+.lin-card-pop input{padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px}
+.lin-card-pop button{padding:4px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text);font-size:12px}
+.lin-bcard-error{margin-top:2px;color:var(--danger);font-size:11px}

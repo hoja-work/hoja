@@ -4,7 +4,7 @@ import {gql, relTime, stateKey} from '../main';
 import type {Cycle, Issue, IssueActivityEvent, IssueLabel, IssueState, Project, Team, Viewer} from '../main';
 import {addLocalIssue, getSync, guessNextIdentifier, isLocalIssueId, localIssueId, onEntityChange, useEntityVersion, useIssueSelect, useIssues, useSyncMeta, useSyncStatus} from '../sync';
 import {addLabelInput, bulkRemove, bulkUpdate, useHiddenIssueIds, useScrollWindow, useStableCallback, visibleRange} from './issueStore';
-import {Avatar, CycleChip, CycleGlyph, DueChip, FavStar, IconBtn, LabelChip, LinMenu, LinearStatusIcon, PriorityIcon, ProjectChip, Ring, SubIssuePill, Tip, cx, fmtDate, fmtFullDate, useDismiss, useFavorite} from './shared';
+import {Avatar, CycleChip, CycleGlyph, DueChip, FavStar, IconBtn, LabelChip, LinMenu, LinearStatusIcon, PriorityIcon, ProjectChip, Ring, SubIssuePill, Tip, cx, dueIsOverdue, fmtDate, fmtFullDate, formatDueDay, parseDueDay, useDismiss, useFavorite} from './shared';
 
 /* Linear 1:1 Issues list + board + detail. */
 
@@ -354,38 +354,117 @@ export const IssueRow = memo(function IssueRow({issue, display, selected, onSele
 
 /* ---------------- board ---------------- */
 
-const BoardCard = memo(function BoardCard({issue, onOpen, onDragStart}: {issue: LinIssue; onOpen: (i: LinIssue) => void; onDragStart: (e: React.DragEvent, i: LinIssue) => void}) {
+/* Card properties are editable in place: each control overlays its change on the shared
+ * store immediately and rolls back if the mutation is rejected, so opening the issue is
+ * optional. The card itself stays a click target for the detail page. */
+const BOARD_PRIORITIES = ['No priority', 'Urgent', 'High', 'Medium', 'Low'];
+
+const BoardCard = memo(function BoardCard({issue, team, onOpen, onDragStart, onUpdate}: {
+  issue: LinIssue; team?: Team;
+  onOpen: (i: LinIssue) => void; onDragStart: (e: React.DragEvent, i: LinIssue) => void;
+  onUpdate: (issueId: string, input: Record<string, unknown>) => Promise<void>;
+}) {
+  const [menu, setMenu] = useState<null | 'status' | 'priority' | 'assignee' | 'due'>(null);
+  const [error, setError] = useState('');
+  const states = team?.states.nodes || [];
+  const members = team?.members?.nodes || [];
+  const due = (issue.dueDate || '').slice(0, 10);
+  const overdue = dueIsOverdue(issue.dueDate);
+  const [up, setUp] = useState(false);
+  const dueRef = useDismiss(useCallback(() => setMenu(m => (m === 'due' ? null : m)), []));
+  const close = useCallback(() => setMenu(null), []);
+  const stop = (e: React.SyntheticEvent) => e.stopPropagation();
+  const run = async (input: Record<string, unknown>) => {
+    setError('');
+    try { await onUpdate(issue.id, input); } catch (e) { setError((e as Error).message); }
+  };
+  /* Open upward when the card sits near the bottom of the viewport, so a menu is not
+   * pushed below the fold of a scrolling lane. */
+  const toggle = (kind: 'status' | 'priority' | 'assignee' | 'due') => (e: React.MouseEvent) => {
+    const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setUp(window.innerHeight - box.bottom < 300);
+    setMenu(m => (m === kind ? null : kind));
+  };
   return (
-    <button type="button" className="lin-bcard" draggable
-      onDragStart={e => onDragStart(e, issue)}
-      onClick={() => onOpen(issue)} aria-label={`${issue.identifier}: ${issue.title}`}>
+    <div className="lin-bcard" draggable
+      onDragStart={e => { if ((e.target as HTMLElement).closest('input,select,label,button')) { e.preventDefault(); return; } onDragStart(e, issue); }}
+      onClick={() => onOpen(issue)}>
       <span className="top">
         <span className="ident">{issue.identifier}</span>
-        <LinearStatusIcon state={issue.state} size={13} />
-        <span style={{flex: 1}} />
-        <PriorityIcon priority={issue.priority} size={13} />
-      </span>
-      <span className="ttl">{issue.title}</span>
-      {(issue.labels?.nodes.length || issue.project || issue.dueDate) && (
-        <span className="chips">
-          {issue.labels?.nodes.map(l => <LabelChip key={l.id} label={l} />)}
-          {issue.project && <ProjectChip name={issue.project.name} />}
-          {issue.dueDate && <DueChip iso={issue.dueDate} />}
+        <span className="lin-card-ctl" onClick={stop}>
+          <button type="button" className="lin-card-btn" aria-haspopup="menu" aria-expanded={menu === 'status'}
+            aria-label={`Status of ${issue.identifier}: ${issue.state?.name || 'No status'}`} onClick={toggle('status')}>
+            <LinearStatusIcon state={issue.state} size={13} />
+          </button>
+          {menu === 'status' && (
+            <LinMenu className={cx('lin-card-menu', up && 'up')} onClose={close} items={states.map(s => ({
+              key: s.id, label: s.name, icon: <LinearStatusIcon state={s} size={13} />,
+              onSelect: () => void run({stateId: s.id}),
+            }))} />
+          )}
         </span>
-      )}
+        <span style={{flex: 1}} />
+        <span className="lin-card-ctl" onClick={stop}>
+          <button type="button" className="lin-card-btn" aria-haspopup="menu" aria-expanded={menu === 'priority'}
+            aria-label={`Priority of ${issue.identifier}: ${BOARD_PRIORITIES[issue.priority || 0]}`} onClick={toggle('priority')}>
+            <PriorityIcon priority={issue.priority} size={13} />
+          </button>
+          {menu === 'priority' && (
+            <LinMenu className={cx('lin-card-menu', up && 'up')} onClose={close} items={BOARD_PRIORITIES.map((label, i) => ({
+              key: String(i), label, icon: <PriorityIcon priority={i} size={13} />,
+              onSelect: () => void run({priority: i}),
+            }))} />
+          )}
+        </span>
+      </span>
+      <button type="button" className="ttl lin-card-open" onClick={e => { e.stopPropagation(); onOpen(issue); }} aria-label={`Open ${issue.identifier}: ${issue.title}`}>{issue.title}</button>
+      <span className="chips">
+        {issue.labels?.nodes.map(l => <LabelChip key={l.id} label={l} />)}
+        {issue.project && <ProjectChip name={issue.project.name} />}
+        <span className="lin-card-ctl" onClick={stop} ref={dueRef}>
+          <button type="button" className={cx('lin-chip lin-due-chip lin-card-due', overdue && 'overdue', !due && 'empty')}
+            aria-haspopup="dialog" aria-expanded={menu === 'due'} aria-label={`Due date of ${issue.identifier}: ${due || 'none'}`}
+            title={due ? `Due ${due}` : 'Set a due date'} onClick={toggle('due')}>
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="2" /><path d="M2 6.5h12M5.5 1.5V4M10.5 1.5V4" strokeLinecap="round" /></svg>
+            {due ? formatDueDay(due) : 'Due'}
+          </button>
+          {menu === 'due' && (
+            <span className={cx('lin-card-pop', up && 'up')} role="dialog" aria-label={`Due date for ${issue.identifier}`}>
+              <input type="date" value={due} aria-label="Due date" onChange={e => void run({dueDate: e.target.value || null})} />
+              {due && <button type="button" onClick={() => void run({dueDate: null})}>Clear</button>}
+            </span>
+          )}
+        </span>
+      </span>
       <span className="row">
-        {issue.assignee ? <Avatar name={issue.assignee.name} size={18} /> : null}
+        <span className="lin-card-ctl" onClick={stop}>
+          <button type="button" className="lin-card-btn" aria-haspopup="menu" aria-expanded={menu === 'assignee'}
+            aria-label={`Assignee of ${issue.identifier}: ${issue.assignee?.name || 'Unassigned'}`} onClick={toggle('assignee')}>
+            <Avatar name={issue.assignee?.name} size={18} />
+          </button>
+          {menu === 'assignee' && (
+            <LinMenu className={cx('lin-card-menu', up && 'up')} onClose={close} items={[
+              {key: 'none', label: 'Unassigned', onSelect: () => void run({assigneeId: null})},
+              ...members.map(m => ({key: m.id, label: m.name || m.email || 'Member', icon: <Avatar name={m.name} size={16} />, onSelect: () => void run({assigneeId: m.id})})),
+            ]} />
+          )}
+        </span>
         <span className="assignee-name">{issue.assignee?.name || 'Unassigned'}</span>
         <span>{fmtDate(issue.createdAt)}</span>
       </span>
-    </button>
+      {error && <span className="lin-bcard-error" role="alert">{error}</span>}
+    </div>
   );
 });
 
 /* A column renders its first cards and grows as it is scrolled, so a 10k-card backlog stays cheap. */
 const BOARD_PAGE = 60;
 const BOARD_STEP = 200;
-function BoardColumnCards({items, onOpen, onDragStart}: {items: LinIssue[]; onOpen: (i: LinIssue) => void; onDragStart: (e: React.DragEvent, i: LinIssue) => void}) {
+function BoardColumnCards({items, team, onOpen, onDragStart, onUpdate}: {
+  items: LinIssue[]; team?: Team;
+  onOpen: (i: LinIssue) => void; onDragStart: (e: React.DragEvent, i: LinIssue) => void;
+  onUpdate: (issueId: string, input: Record<string, unknown>) => Promise<void>;
+}) {
   const [limit, setLimit] = useState(BOARD_PAGE);
   const more = items.length - limit;
   return (
@@ -393,16 +472,17 @@ function BoardColumnCards({items, onOpen, onDragStart}: {items: LinIssue[]; onOp
       const el = e.currentTarget;
       if (el.scrollTop + el.clientHeight > el.scrollHeight - 800) setLimit(l => l + BOARD_STEP);
     } : undefined}>
-      {(more > 0 ? items.slice(0, limit) : items).map(i => <BoardCard key={i.id} issue={i} onOpen={onOpen} onDragStart={onDragStart} />)}
+      {(more > 0 ? items.slice(0, limit) : items).map(i => <BoardCard key={i.id} issue={i} team={team} onOpen={onOpen} onDragStart={onDragStart} onUpdate={onUpdate} />)}
       {more > 0 && <button type="button" className="lin-btn" onClick={() => setLimit(l => l + BOARD_STEP)}>Show {Math.min(more, BOARD_STEP)} more of {more}</button>}
       {!items.length && <div className="lin-bempty">No issues</div>}
     </div>
   );
 }
 
-function LinearBoard({issues, states, onOpen, onMoved, onNew, display, setDisplay}: {
-  issues: LinIssue[]; states: IssueState[]; onOpen: (i: LinIssue) => void;
+function LinearBoard({issues, states, team, onOpen, onMoved, onUpdate, onNew, display, setDisplay}: {
+  issues: LinIssue[]; states: IssueState[]; team?: Team; onOpen: (i: LinIssue) => void;
   onMoved: (issueId: string, state: IssueState) => Promise<void>;
+  onUpdate: (issueId: string, input: Record<string, unknown>) => Promise<void>;
   onNew: () => void; display: LinDisplay; setDisplay: (d: LinDisplay) => void;
 }) {
   const [colMenu, setColMenu] = useState<string | null>(null);
@@ -448,7 +528,7 @@ function LinearBoard({issues, states, onOpen, onMoved, onNew, display, setDispla
               )}
             </span>
           </header>
-          <BoardColumnCards items={items} onOpen={onOpen} onDragStart={onDragStart} />
+          <BoardColumnCards items={items} team={team} onOpen={onOpen} onDragStart={onDragStart} onUpdate={onUpdate} />
         </section>
       ))}
       {hidden.length > 0 && (
@@ -558,11 +638,12 @@ const LIST_PAD_TOP = 6, GROUP_GAP = 8, GROUP_HEAD = 36;
 type OlderPaging = {cursor: string | null; hasMore: boolean; loading: boolean; error: string; loaded: number};
 const olderInitial: OlderPaging = {cursor: null, hasMore: true, loading: false, error: '', loaded: 0};
 
-export function LinearTeamIssues({team, teams, orgId, workspaceName, projects, labels, cycles, onIssue, onMoved, onNew, layout, onLayoutChange, onNavigate}: {
+export function LinearTeamIssues({team, teams, orgId, workspaceName, projects, labels, cycles, onIssue, onMoved, onUpdate, onNew, layout, onLayoutChange, onNavigate}: {
   team?: Team; teams: Team[]; viewer: Viewer; orgId: string; workspaceName: string;
   projects: Project[]; labels: IssueLabel[]; cycles: Cycle[];
   onIssue: (issue: LinIssue) => void;
   onMoved: (issueId: string, state: IssueState) => Promise<void>;
+  onUpdate: (issueId: string, input: Record<string, unknown>) => Promise<void>;
   /** Ignored: the page is live through the store; kept so callers needn't change. */
   onNew: () => void; revision: number;
   layout: 'List' | 'Board'; onLayoutChange: (l: 'List' | 'Board') => void;
@@ -661,6 +742,7 @@ export function LinearTeamIssues({team, teams, orgId, workspaceName, projects, l
   const onSelect = useCallback((id: string, on: boolean) => setSelected(s => on ? (s.includes(id) ? s : [...s, id]) : s.filter(x => x !== id)), []);
   const openIssue = useStableCallback(onIssue);
   const movedStable = useStableCallback(onMoved);
+  const updateStable = useStableCallback(onUpdate);
   const setDisplayWithLayout = useCallback((d: LinDisplay) => setDisplay({...d, layout} as LinDisplay), [setDisplay, layout]);
 
   // Windowing: past WINDOW_THRESHOLD rows only the rows near the viewport are mounted.
@@ -783,8 +865,8 @@ export function LinearTeamIssues({team, teams, orgId, workspaceName, projects, l
       <div className="lin-scroll" ref={scrollRef}>
         {loading && <p className="lin-loading" role="status">Loading issues…</p>}
         {!loading && (layout === 'Board'
-          ? <LinearBoard issues={scoped} states={team.states.nodes} onOpen={openIssue}
-              onMoved={movedStable}
+          ? <LinearBoard issues={scoped} states={team.states.nodes} team={team} onOpen={openIssue}
+              onMoved={movedStable} onUpdate={updateStable}
               onNew={onNew} display={effDisplay} setDisplay={setDisplayWithLayout} />
           : <div className="lin-list" ref={listRef}>
               {groups.map(g => {

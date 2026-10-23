@@ -422,7 +422,7 @@ export function startSync(opts: {
       if (has('description')) out.description = (input.description as string) || undefined;
       if (has('dueDate')) out.dueDate = (input.dueDate as string) || undefined;
       if (has('priority')) { out.priority = Number(input.priority); out.priorityLabel = PRIORITY_LABELS[out.priority]; }
-      if (has('stateId')) out.state = ref(lk!.states, 'stateId');
+      if (has('stateId')) { const st = ref(lk!.states, 'stateId'); if (st) out.state = st; }
       if (has('assigneeId')) out.assignee = ref(lk!.users, 'assigneeId');
       if (has('projectId')) out.project = ref(lk!.projects, 'projectId');
       if (has('cycleId')) out.cycle = input.cycleId ? lk!.cycles.get(input.cycleId as string) || {id: input.cycleId as string} : undefined;
