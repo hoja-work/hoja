@@ -2,7 +2,6 @@ import '@fontsource-variable/inter/wght.css';
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {Popover} from './Popover';
-import {ReactGrabDev} from './dev/ReactGrabDev';
 import {Activity, Bell, CalendarDays, Check, ChevronDown, CircleDot, Target, Command, FolderKanban, Inbox, LayoutDashboard, ListFilter, LogOut, Menu, Moon, MoreHorizontal, Plus, Search, Settings, Shield, Sun, Users, X, Zap, Bot, BarChart3, MoreVertical, MessageCircle, Layers3, List as ListIcon, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import {ApiKeysSettings} from './ApiKeysSettings';
 import {connectRealtime} from './realtime';
