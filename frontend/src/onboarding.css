@@ -1,4 +1,220 @@
-.onboarding-page{min-height:100vh;display:grid;place-items:center;padding:32px;background:radial-gradient(ellipse at 15% 10%,#dff8ef 0,transparent 38%),radial-gradient(ellipse at 88% 86%,#eee8ff 0,transparent 42%),#f7f8fa;color:#18191b}.onboarding-card{width:min(100%,520px);padding:42px;border:1px solid #e5e7eb;border-radius:18px;background:rgba(255,255,255,.94);box-shadow:0 24px 80px rgba(24,25,27,.09)}.onboarding-brand{display:flex;align-items:center;gap:10px;font-size:18px;font-weight:700;margin-bottom:34px}.onboarding-mark{display:grid;place-items:center;width:32px;height:32px;border-radius:10px;background:#4c9a79;color:white}.onboarding-progress{color:#667085;font-size:12px;margin-bottom:22px}.onboarding-eyebrow{color:#3b8669;font-weight:700;font-size:11px;letter-spacing:.1em}.onboarding-card h1{font-size:29px;line-height:1.2;letter-spacing:-.03em;margin:0 0 10px}.onboarding-card>p:not(.error),.onboarding-card form>p{color:#667085;line-height:1.55;margin:0 0 26px}.onboarding-card label{display:block;margin:18px 0 0;font-size:13px;font-weight:600}.onboarding-card input,.onboarding-card select{display:block;width:100%;margin-top:8px;padding:12px 13px;border:1px solid #d9dde3;border-radius:8px;background:white;color:#25272b;font:inherit}.onboarding-card input:focus,.onboarding-card select:focus{outline:3px solid #d6f2e6;border-color:#4c9a79}.onboarding-card .primary{margin-top:24px;min-height:46px;border-radius:8px;background:#286c51;color:white}.onboarding-card .primary:hover{background:#205a43}.onboarding-actions{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:22px}.onboarding-actions .primary{margin:0}.onboarding-card .auth-switch{color:#536175}.onboarding-key{display:block;overflow-wrap:anywhere;padding:12px;border-radius:8px;background:#f1f4f6;font-family:ui-monospace,monospace;font-size:12px}.onboarding-card details{margin:22px 0}.onboarding-card summary{cursor:pointer;font-weight:600}.onboarding-card .login-help{margin-top:30px}@media(max-width:600px){.onboarding-page{padding:16px}.onboarding-card{padding:26px 22px;border-radius:14px}.onboarding-card h1{font-size:25px}}
-.onboarding-card .onboarding-actions .primary{margin-top:0}.onboarding-card form button.primary{margin-top:24px}.onboarding-card .login-help{margin-bottom:0}
-.onboarding-key-row{display:grid;gap:8px;margin:14px 0}.onboarding-key-row .onboarding-key{margin:0}
-.workspace-settings-form.modal{position:relative;top:auto;left:auto;transform:none;width:100%;margin:0 0 18px;box-shadow:none}
+.onboarding-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.onboarding-card {
+  width: min(100%, 420px);
+  padding: 32px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.onboarding-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 24px;
+  font-size: 18px;
+}
+
+.onboarding-progress,
+.onboarding-eyebrow {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.onboarding-eyebrow {
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.onboarding-card h1 {
+  margin: 0 0 6px;
+  font-size: 22px;
+  line-height: 1.3;
+  letter-spacing: -0.02em;
+}
+
+.onboarding-card > p:not(.error),
+.onboarding-card form > p {
+  margin: 0 0 24px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.onboarding-card label {
+  display: block;
+  margin-top: 14px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.onboarding-card input,
+.onboarding-card select {
+  display: block;
+  width: 100%;
+  margin: 7px 0 14px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.onboarding-card input:focus,
+.onboarding-card select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.onboarding-card .primary {
+  min-height: 44px;
+  margin-top: 18px;
+  border-radius: 0;
+  background: var(--accent);
+  color: #fff;
+  box-shadow: none;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  transition: background-color 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+
+.onboarding-card .primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 84%, var(--text));
+}
+
+.onboarding-card .primary:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.onboarding-card .primary:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.onboarding-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.onboarding-card .onboarding-actions .primary {
+  flex: 1;
+  margin-top: 0;
+}
+
+.onboarding-card .onboarding-actions .auth-switch {
+  min-height: 44px;
+  margin: 0;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 550;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.onboarding-card .onboarding-actions .auth-switch:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.onboarding-card form button.primary {
+  margin-top: 18px;
+}
+
+.onboarding-card .auth-switch {
+  width: 100%;
+  min-height: 44px;
+  margin: 10px 0 0;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--muted);
+  font-weight: 550;
+}
+
+.onboarding-card .auth-switch:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.onboarding-card .outline {
+  border-radius: 0;
+}
+
+.onboarding-card .login-help {
+  margin: 20px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.onboarding-key {
+  display: block;
+  overflow-wrap: anywhere;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--bg);
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+
+.onboarding-card details {
+  margin: 22px 0;
+}
+
+.onboarding-card summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.onboarding-key-row {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.onboarding-key-row .onboarding-key {
+  margin: 0;
+}
+
+.workspace-settings-form.modal {
+  position: relative;
+  top: auto;
+  left: auto;
+  transform: none;
+  width: 100%;
+  margin: 0 0 18px;
+  box-shadow: none;
+}
+
+@media (max-width: 600px) {
+  .onboarding-page {
+    padding: 16px;
+  }
+
+  .onboarding-card {
+    padding: 26px 22px;
+  }
+
+  .onboarding-actions {
+    align-items: stretch;
+  }
+}
