@@ -156,3 +156,37 @@ def test_non_admin_cannot_delete_team_with_issues(tmp_path) -> None:
         assert denied.get("errors") and "Admin access required" in denied["errors"][0]["message"], denied
     with engine.connect() as conn:
         assert conn.execute(issue.select().where(issue.c.id == issue_id)).first() is not None
+
+
+def test_team_delete_with_issues_also_removes_project_links_and_cycles(tmp_path) -> None:
+    """deleteIssues=True deletes the team's work instead of dead-ending on projects/cycles."""
+    from sqlalchemy import select
+
+    from cliniar_server.db import cycle, project, project_team
+
+    engine, app, admin = _setup(tmp_path)
+    team_id, issue_id = _team_with_issue_and_comment(engine, admin, "prj")
+    org_id = admin["org_id"]
+    project_id, cycle_id = new_id(), new_id()
+    with engine.begin() as conn:
+        conn.execute(project.insert().values(
+            id=project_id, organization_id=org_id, name="Linked project",
+            created_at=now_iso(), updated_at=now_iso()))
+        conn.execute(project_team.insert().values(project_id=project_id, team_id=team_id))
+        conn.execute(cycle.insert().values(
+            id=cycle_id, organization_id=org_id, team_id=team_id, number=1,
+            name="Cycle 1", created_at=now_iso(), updated_at=now_iso()))
+        conn.execute(issue.update().where(issue.c.id == issue_id).values(cycle_id=cycle_id))
+    with TestClient(create_app(str(engine.url.database), open_mode=False)) as client:
+        refused = _gql(client, admin["token"], DELETE, {"id": team_id})
+        assert refused.get("errors") and "projects" in refused["errors"][0]["message"], refused
+        done = _gql(client, admin["token"], DELETE_WITH_ISSUES, {"id": team_id})
+        assert done["data"]["teamDelete"]["success"] is True, done
+    with engine.connect() as conn:
+        assert conn.execute(select(team.c.id).where(team.c.id == team_id)).first() is None
+        assert conn.execute(select(issue.c.id).where(issue.c.id == issue_id)).first() is None
+        assert conn.execute(select(cycle.c.id).where(cycle.c.id == cycle_id)).first() is None
+        assert conn.execute(select(project_team.c.project_id)
+                            .where(project_team.c.team_id == team_id)).first() is None
+        # The project itself survives: it is workspace-level, only the team link goes.
+        assert conn.execute(select(project.c.id).where(project.c.id == project_id)).first() is not None
