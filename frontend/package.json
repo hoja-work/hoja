@@ -13,7 +13,8 @@
     "test:pages": "node ../scripts/test-page-invariants.cjs",
     "test:mobile": "node ../scripts/mobile-audit.cjs --scale --gate",
     "lint:ui": "eslint src",
-    "test:modal": "node ../scripts/test-issue-modal-polish.cjs"
+    "test:modal": "node ../scripts/test-issue-modal-polish.cjs",
+    "test:my-issues": "node ../scripts/test-my-issues-completed.cjs"
   },
   "dependencies": {
     "@fontsource-variable/inter": "5.3.0",

@@ -42,12 +42,17 @@ export type SyncHandle = {
 type Row = unknown[];
 type Snapshot = {
   v: number; scope: string; seq: number; etag: string | null; closedCutoff: string;
+  /** Closed-issue window the snapshot was built with; a cached snapshot with another window re-bootstraps. */
+  closedDays?: number;
   meta: SyncMeta; columns: string[]; rows: Record<string, Row>;
 };
 
 const PRIORITY_LABELS = ['No priority', 'Urgent', 'High', 'Medium', 'Low'];
 // Frame events for these need data a frame does not carry: metadata, or a visibility change (re-bootstrap).
 const PULL_ENTITIES = new Set(['team', 'teamMember', 'workflowState', 'label', 'cycle', 'project', 'user', 'member']);
+// Sync a year of closed issues so My issues and team lists can show completed work without paging.
+// Older closed issues are fetched on demand (scoped to the viewer) by the pages that need them.
+const CLOSED_DAYS = 365;
 const DB_NAME = 'hoja-sync';
 const STORE = 'snapshots';
 const KEY = 'current';
@@ -308,14 +313,14 @@ export function startSync(opts: {
   };
 
   const bootstrap = async () => {
-    const res = await fetchJson('/sync/bootstrap', snap?.etag ? {'if-none-match': snap.etag} : {});
+    const res = await fetchJson(`/sync/bootstrap?closedDays=${CLOSED_DAYS}`, snap?.etag ? {'if-none-match': snap.etag} : {});
     if (stopped) return;
     if (res.status === 304 && snap) return; // the cached snapshot is exactly current
     const b = res.body;
     const rows: Record<string, Row> = {};
     for (const r of b.issues as Row[]) rows[r[0] as string] = r;
     snap = {v: b.v, scope: b.scope, seq: b.seq, etag: res.etag, closedCutoff: b.closedCutoff,
-            meta: b.meta, columns: b.columns, rows};
+            closedDays: CLOSED_DAYS, meta: b.meta, columns: b.columns, rows};
     persist();
     emit(true);
     if (headSeq > b.seq) pullAgain = true; // frames moved on while the snapshot was built
@@ -388,7 +393,7 @@ export function startSync(opts: {
   void (async () => {
     const cached = await loadSnapshot();
     if (stopped) return;
-    if (cached && cached.v === 1 && cached.rows && cached.meta) { snap = cached; emit(true); }
+    if (cached && cached.v === 1 && cached.closedDays === CLOSED_DAYS && cached.rows && cached.meta) { snap = cached; emit(true); }
     await pull();
   })();
 
