@@ -160,7 +160,7 @@ function AskWizard({ questions }: { questions: AskQuestion[] }) {
             rows={2}
             placeholder="Write your answer…"
             value={a.other}
-            autoFocus
+
             onChange={(e) => update({ other: e.target.value })}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); next(); } }}
           />
@@ -266,6 +266,8 @@ function ChatToolbar() {
         <SquarePen size={16} aria-hidden="true" /> New chat
       </button>
       {open && (
+        // Closes when a thread title is clicked. The thread buttons inside are the keyboard path, so the container needs no key handler.
+        // eslint-disable-next-line jsx-a11y/click-events-have-key-events
         <div
           id="agent-history"
           className="agent-history"

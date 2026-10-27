@@ -1,4 +1,5 @@
 import React, {memo, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState} from 'react';
+import {confirmDialog, promptDialog} from '../dialogs';
 import {Bell, Check, ChevronDown, ChevronRight, Copy, ExternalLink, Link2, ListFilter, Plus, Search, Settings2, SlidersHorizontal, Trash2, X} from 'lucide-react';
 import {gql, relTime, stateKey} from '../main';
 import type {Cycle, Issue, IssueActivityEvent, IssueLabel, IssueState, Project, Team, Viewer} from '../main';
@@ -192,7 +193,7 @@ export function FilterMenu({filters, setFilters, team, teams, projects, labels, 
   return (
     <div ref={ref} className={cx('lin-popover lin-filtermenu', anchorClass)} role="dialog" aria-label="Add filter">
       {!sub && <>
-        <div className="fm-search"><input autoFocus placeholder="Add filter…" value={search} onChange={e => setSearch(e.target.value)} /></div>
+        <div className="fm-search"><input placeholder="Add filter…" value={search} onChange={e => setSearch(e.target.value)} /></div>
         <div style={{padding: '4px 0'}}>
           {FILTER_DEFS.filter(d => d.label.toLowerCase().includes(search.toLowerCase())).map(d => (
             <button type="button" key={d.key} className="fm-item" onClick={() => setSub(d.key)}>
@@ -595,7 +596,7 @@ function BulkBar({selected, byId, team, cycles, labels, onClear, onDone}: {
               ))}
               <div className="lin-menu-divider" />
               <button type="button" className="lin-menu-item" onClick={() => void remove('archive')}>Archive</button>
-              <button type="button" className="lin-menu-item danger" onClick={() => { if (window.confirm(`Delete ${selected.length} issues? This cannot be undone.`)) void remove('delete'); }}>Delete</button>
+              <button type="button" className="lin-menu-item danger" onClick={async () => { if (await confirmDialog(`Delete ${selected.length} issues? This cannot be undone.`)) void remove('delete'); }}>Delete</button>
             </> : <>
               <button type="button" className="lin-menu-item" onClick={() => setAction('menu')}>‹ Back</button>
               <div className="lin-menu-divider" />
@@ -756,7 +757,7 @@ export function LinearTeamIssues({team, teams, orgId, workspaceName, projects, l
     if (!windowed) return;
     const r = listRef.current?.querySelector<HTMLElement>('.lin-row');
     if (r && r.offsetHeight && Math.abs(r.offsetHeight - rowH) > 0.5) setRowH(r.offsetHeight);
-  });
+  }, [windowed, rowH, shownRows]);
 
   const activeFilterCount = [filters.status, filters.assignee, filters.priority, filters.labels, filters.projects, filters.cycles, filters.creators, filters.subscribers].reduce((n, a) => n + a.length, 0)
     + (filters.dueFrom || filters.dueTo || filters.createdFrom || filters.createdTo ? 1 : 0);
@@ -765,8 +766,8 @@ export function LinearTeamIssues({team, teams, orgId, workspaceName, projects, l
     setFilters({...emptyFilters, q: v.query || '', status: v.state ? [v.state] : []});
     setViewsOpen(false);
   };
-  const saveCurrentView = () => {
-    const name = window.prompt('Name this view:');
+  const saveCurrentView = async () => {
+    const name = await promptDialog('Name this view:');
     if (!name?.trim()) return;
     const v = {id: `v${Date.now()}`, name: name.trim(), query: filters.q, state: filters.status[0] || '', kind: 'issues'};
     const next = [...views, v];
@@ -1185,7 +1186,7 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
       .catch(e => { if (live) setLoadError((e as Error).message); })
       .finally(() => clearTimeout(detailTimeout));
     return () => { live = false; clearTimeout(detailTimeout); };
-  }, [issueId, issueVersion, retryTick]);
+  }, [issueId, issueIdent, issueVersion, retryTick]);
 
   // New/edited/deleted comments from anyone. Create events cannot be scoped to this issue, so
   // they refresh only this issue's comments (one small query), not the whole detail.
@@ -1213,7 +1214,7 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
         .catch(() => setParentResults([]));
     }, 250);
     return () => clearTimeout(t);
-  }, [parentQuery, parentSearch]);
+  }, [parentQuery, parentSearch, detail?.id]);
 
   if (!detail) {
     if (loading || (!error && !loadError)) return <section className="lin-page"><p className="lin-loading" role="status">Loading issue…</p></section>;
@@ -1457,8 +1458,8 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
               {key: 'copy', label: 'Copy as prompt', icon: <Copy size={14} />, onSelect: () => void copyText(asPrompt)},
               {key: 'branch', label: 'Copy branch name', icon: <Copy size={14} />, onSelect: () => void copyText(branchName)},
               {key: 'div', divider: true},
-              {key: 'archive', label: 'Archive issue', onSelect: () => { if (window.confirm(`Archive ${detail.identifier}?`)) archive(); }},
-              {key: 'delete', label: 'Delete issue', danger: true, onSelect: () => { if (window.confirm(`Permanently delete ${detail.identifier}? This cannot be undone.`)) remove(); }},
+              {key: 'archive', label: 'Archive issue', onSelect: async () => { if (await confirmDialog(`Archive ${detail.identifier}?`)) archive(); }},
+              {key: 'delete', label: 'Delete issue', danger: true, onSelect: async () => { if (await confirmDialog(`Permanently delete ${detail.identifier}? This cannot be undone.`)) remove(); }},
             ]} />}
           </span>
           {idx >= 0 && <>
@@ -1486,7 +1487,7 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
           <span><IconBtn label="Share issue externally" title="Share issue externally" onClick={() => void copyText(window.location.href)}><ExternalLink size={15} /></IconBtn></span>
         </Tip>
         <IconBtn label="Archive issue" title="Archive issue"
-          onClick={() => { if (window.confirm(`Archive ${detail.identifier}?`)) archive(); }}>
+          onClick={async () => { if (await confirmDialog(`Archive ${detail.identifier}?`)) archive(); }}>
           <Trash2 size={15} />
         </IconBtn>
       </div>
@@ -1502,7 +1503,7 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
           {loadError && <p className="lin-error" role="alert">{loadError} <button type="button" className="lin-btn" onClick={() => { setRetryTick(n => n + 1); onRetry?.(); }}>Retry</button></p>}
           {descEdit ? (
             <div>
-              <textarea aria-label="Description" value={desc ?? ''} rows={6} autoFocus
+              <textarea aria-label="Description" value={desc ?? ''} rows={6}
                 onChange={e => setDesc(e.target.value)}
                 style={{width: '100%', border: '1px solid var(--line)', borderRadius: 8, padding: 10, font: 'inherit', fontSize: 14}} />
               <div style={{display: 'flex', gap: 8, marginTop: 8}}>
@@ -1516,6 +1517,8 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
             </div>
           ) : (
             <p className={cx('lin-detail-desc', !detail.description && 'empty')} aria-busy={!detailReady && !detail.description}
+              role="button" tabIndex={0}
+              onKeyDown={(e) => { if (e.key === 'Enter') { if (!detailReady && !detail.description) return; setDesc(detail.description || ''); setDescEdit(true); } }}
               onClick={() => { if (!detailReady && !detail.description) return; setDesc(detail.description || ''); setDescEdit(true); }}
               title="Click to edit description" style={{cursor: 'text'}}>
               {detail.description || (detailReady ? 'Add description…' : 'Loading description…')}
@@ -1528,12 +1531,12 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
               <span>Sub-Issues</span>
               <SubIssuePill done={subsDone} total={subsView.length} />
               <span className="grow" />
-              <IconBtn label="Sub-issue display settings" title="Display settings"><SlidersHorizontal size={14} /></IconBtn>
+              <IconBtn label="Sub-issue display settings" title="Sub-issue display options are not available yet" disabled><SlidersHorizontal size={14} /></IconBtn>
               <IconBtn label="Add sub-issue" title="Add sub-issue" onClick={() => setAddingSub(v => !v)}><Plus size={14} /></IconBtn>
             </header>
             {addingSub && (
               <div style={{display: 'flex', gap: 8, margin: '4px 0 8px'}}>
-                <input placeholder="Sub-issue title…" value={newSubTitle} autoFocus
+                <input placeholder="Sub-issue title…" value={newSubTitle}
                   onChange={e => setNewSubTitle(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') void createSub(); }}
                   style={{flex: 1, border: '1px solid var(--line)', borderRadius: 7, padding: '8px 10px', fontSize: 13}} />
@@ -1624,7 +1627,7 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
                 <header><Avatar name={c.user?.name} size={18} /><b>{c.user?.name || 'User'}</b><time>{editedComments[c.id] !== undefined ? 'Saving…' : relTime(c.createdAt)}</time></header>
                 {editing?.id === c.id ? (
                   <form className="lin-commentbox" onSubmit={e => { e.preventDefault(); void saveComment(c.id, editing.body); }}>
-                    <textarea rows={2} value={editing.body} aria-label="Edit comment" autoFocus
+                    <textarea rows={2} value={editing.body} aria-label="Edit comment"
                       onChange={e => setEditing({id: c.id, body: e.target.value})}
                       onKeyDown={e => { if (e.key === 'Escape') setEditing(null); if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} />
                     <footer>
@@ -1635,7 +1638,7 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
                 ) : <p>{c.body}</p>}
                 {(viewer.admin || (viewer.id && c.user?.id === viewer.id)) && editing?.id !== c.id && (<>
                   <button type="button" className="lin-addrow del" onClick={() => setEditing({id: c.id, body: c.body})}>Edit comment</button>
-                  <button type="button" className="lin-addrow del" onClick={() => { if (window.confirm('Delete this comment?')) void deleteComment(c.id); }}>Delete comment</button>
+                  <button type="button" className="lin-addrow del" onClick={async () => { if (await confirmDialog('Delete this comment?',{danger:true})) void deleteComment(c.id); }}>Delete comment</button>
                 </>)}
               </article>
             ))}
@@ -1746,7 +1749,7 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
               <button type="button" className="lin-addrow" onClick={() => setParentSearch(v => !v)}>Set parent…</button>
               {parentSearch && (
                 <div className="lin-popover" style={{left: 0, top: 'calc(100% + 4px)', width: 300, padding: 8}}>
-                  <input autoFocus placeholder="Search issues…" value={parentQuery} onChange={e => setParentQuery(e.target.value)}
+                  <input placeholder="Search issues…" value={parentQuery} onChange={e => setParentQuery(e.target.value)}
                     style={{width: '100%', border: '1px solid var(--line)', borderRadius: 6, padding: '7px 10px', fontSize: 13, marginBottom: 6}} />
                   {parentResults.map(r => (
                     <button key={r.id} type="button" className="lin-dd-opt"

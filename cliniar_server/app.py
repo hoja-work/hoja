@@ -43,6 +43,7 @@ from starlette.routing import Route, WebSocketRoute
 from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocket
 
+from cliniar_server.cloudflare_realtime import CloudflareRealtime
 from cliniar_server.connectors_api import connector_binding_for, connector_routes
 from cliniar_server.db import (
     _seed_demo_issues,
@@ -70,6 +71,8 @@ from cliniar_server.db import (
     user,
 )
 from cliniar_server.denials import DENY_HINT, hint_for
+from cliniar_server.meetings import MeetingService
+from cliniar_server.meetings_api import MeetingHub, meeting_routes
 from cliniar_server.resolvers import build_schema
 from cliniar_server.secrets_box import SecretBoxError
 from cliniar_server.store import Store
@@ -327,6 +330,7 @@ def create_app(
     open_mode: bool | None = None,
     trusted_proxy_cidrs: str | None = None,
     trusted_public_host: str | None = None,
+    meeting_sfu: object = "env",
 ) -> Starlette:
     target = resolve_database_target(database_url=database_url, db_path=db_path, tenant=tenant)
     engine = make_engine(target)
@@ -338,6 +342,9 @@ def create_app(
     default_slots = 8 if engine.dialect.name == "sqlite" else 24
     gql_slots = asyncio.Semaphore(int(os.environ.get("CLINIAR_GRAPHQL_CONCURRENCY", default_slots)))
     hub = realtime.RealtimeHub(store)
+    meeting_service = MeetingService(engine)
+    meeting_hub = MeetingHub(meeting_service)
+    sfu = CloudflareRealtime.from_env() if meeting_sfu == "env" else meeting_sfu
     issue_snapshots = sync.SingleFlightCache(8)
     body_snapshots = sync.SingleFlightCache(32)
     meta_cache = sync.SingleFlightCache(512)
@@ -1544,6 +1551,7 @@ def create_app(
         asyncio.get_running_loop().set_default_executor(
             ThreadPoolExecutor(max_workers=32, thread_name_prefix="cliniar"))
         await hub.ensure_started()
+        meeting_hub.start()
         maintenance = asyncio.create_task(_sqlite_maintenance()) if engine.dialect.name == "sqlite" else None
         async with runtime_app.router.lifespan_context(runtime_app):
             if agent_dbos_url := os.environ.get("CLINIAR_AGENT_DBOS_URL"):
@@ -1558,6 +1566,9 @@ def create_app(
             else:
                 yield
         await hub.stop()
+        await meeting_hub.close_all()
+        if sfu is not None:
+            await sfu.aclose()
         if maintenance is not None:
             maintenance.cancel()
 
@@ -1574,6 +1585,10 @@ def create_app(
             Route("/api/agent/threads/update/{thread_id}", agent_thread_update, methods=["PATCH"]),
             Route("/api/agent/threads/delete/{thread_id}", agent_thread_delete, methods=["DELETE"]),
             *connector_routes(engine, store, _auth),
+            *meeting_routes(
+                engine, meeting_service, meeting_hub, auth=_auth,
+                csrf=lambda request: _cookie_csrf_error(request, json_only=True),
+                read_json=_read_json_object, client_ip=_client_ip, same_origin=_same_origin, sfu=sfu),
             WebSocketRoute("/ws", realtime_socket),
             Route("/auth/setup", auth_setup, methods=["GET", "POST"]),
             Route("/auth/invite/accept", auth_invite_accept, methods=["POST"]),
@@ -1608,6 +1623,7 @@ def create_app(
         lifespan=lifespan,
     )
     app.state.realtime = hub
+    app.state.meetings = meeting_hub
     app.add_middleware(_SecurityHeaders)
     # Compress JSON and static assets; SSE streams are excluded by Starlette.
     app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)

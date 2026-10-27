@@ -326,7 +326,7 @@ export function usePagedCache<T extends {id: string}>(key: string | null, fetchP
     }
   }, [key, pageSize, label]);
 
-  useEffect(() => { void run('refresh'); return () => { generation.current++; busy.current = false; }; }, [run, revision]);
+  useEffect(() => { const gen = generation; void run('refresh'); return () => { gen.current++; busy.current = false; }; }, [run, revision]);
 
   return {
     rows: view || ([] as T[]),

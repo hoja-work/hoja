@@ -190,3 +190,30 @@ def test_team_delete_with_issues_also_removes_project_links_and_cycles(tmp_path)
                             .where(project_team.c.team_id == team_id)).first() is None
         # The project itself survives: it is workspace-level, only the team link goes.
         assert conn.execute(select(project.c.id).where(project.c.id == project_id)).first() is not None
+
+
+def test_team_delete_keeps_meetings_and_clears_their_team(tmp_path) -> None:
+    """A team's meetings are hosted by a person, so they survive the team (FK-safe)."""
+    from sqlalchemy import select
+
+    from cliniar_server.db import meeting
+
+    engine, app, admin = _setup(tmp_path)
+    with TestClient(app) as client:
+        team_id = _gql(client, admin["token"], CREATE,
+                       {"input": {"name": "Meet", "key": "mts"}})["data"]["teamCreate"]["team"]["id"]
+    meeting_id = new_id()
+    with engine.begin() as conn:
+        conn.execute(meeting.insert().values(
+            id=meeting_id, organization_id=admin["org_id"], code=f"m-{new_id()[:8]}",
+            title="Standup", host_id=admin["user_id"], team_id=team_id,
+            created_at=now_iso(), updated_at=now_iso()))
+    with TestClient(create_app(str(engine.url.database), open_mode=False)) as client:
+        done = _gql(client, admin["token"], DELETE, {"id": team_id})
+        assert done.get("errors") is None, done
+        assert done["data"]["teamDelete"]["success"] is True, done
+    with engine.connect() as conn:
+        assert conn.execute(select(team.c.id).where(team.c.id == team_id)).first() is None
+        row = conn.execute(select(meeting.c.team_id).where(meeting.c.id == meeting_id)).first()
+        assert row is not None, "the meeting row survives"
+        assert row[0] is None, "its team scope is cleared"

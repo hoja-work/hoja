@@ -310,6 +310,9 @@
 @media (max-width:1100px){.lin-props{width:250px;}.lin-cpane{width:290px;}}
 @media (max-width:900px){.lin-detail{flex-direction:column;}.lin-props{width:auto;border-left:0;border-top:1px solid var(--line);}.lin-cdetail{flex-direction:column;}.lin-cpane{width:auto;border-left:0;border-top:1px solid var(--line);}.lin-detail-main{max-width:none;padding:20px;}}
 
+/* Phone guard: see styles.css. Enforced by clinear/no-small-field-font. */
+@media(max-width:700px){input,select,textarea{font-size:16px!important}}
+
 /* ---- editable board card properties ------------------------------------------ */
 .lin-bcard{font:inherit}
 .lin-card-ctl{position:relative;display:inline-flex;flex:none;align-items:center}

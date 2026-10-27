@@ -629,7 +629,7 @@ const CycleIssueGroups = React.memo(function CycleIssueGroups({groups, collapsed
   return (
     <>
       {groups.map(g => (
-        <section key={g.key} className="lin-group"
+        <section role="presentation" key={g.key} className="lin-group"
           style={dropKey === g.key ? {outline: '1px dashed var(--accent)', outlineOffset: 2, borderRadius: 7} : undefined}
           onDragOver={g.state ? e => { if (e.dataTransfer.types.includes(ISSUE_MIME)) { e.preventDefault(); if (dropKey !== g.key) setDropKey(g.key); } } : undefined}
           onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropKey(k => (k === g.key ? null : k)); }}
@@ -646,12 +646,12 @@ const CycleIssueGroups = React.memo(function CycleIssueGroups({groups, collapsed
             {g.state && <LinearStatusIcon state={g.state} size={13} />}
             <b>{g.name}</b><span className="count">{g.items.length}</span>
             <span className="grow" />
-            <Tip label={`Create issue in ${g.name}`}>
-              <button type="button" className="add" aria-label={`Create issue in ${g.name}`}><Plus size={14} /></button>
+            <Tip label="Creating issues from a cycle group is not available yet. Use Create new issue.">
+              <button type="button" className="add" aria-label={`Create issue in ${g.name}`} disabled style={{opacity: .5, cursor: 'not-allowed'}}><Plus size={14} /></button>
             </Tip>
           </header>
           {!collapsed.includes(g.key) && g.items.map(i => (
-            <div key={i.id} draggable data-issue-id={i.id}
+            <div role="presentation" key={i.id} draggable data-issue-id={i.id}
               onDragStart={e => { e.dataTransfer.setData(ISSUE_MIME, i.id); e.dataTransfer.effectAllowed = 'move'; }}
               onDragEnd={() => setDropKey(null)}>
               <IssueRow issue={i} display={display} selected={false}
@@ -698,10 +698,10 @@ export function LinearCycleDetail({cycle: initial, team, teams, viewer, orgId, w
   const dateRef = useDismiss(() => setDateOpen(false));
   const display = useMemo<LinDisplay>(() => ({...defaultDisplay, grouping: 'status'}), []);
 
-  useEffect(() => { setEndDate((initial.endsAt || '').slice(0, 10)); setError(''); setMutationError(''); }, [initial.id]);
+  useEffect(() => { setEndDate((initial.endsAt || '').slice(0, 10)); setError(''); setMutationError(''); }, [initial.id, initial.endsAt]);
   useTeamCycleUpkeep(cycle.team?.id);
   // Closed issues older than the store window are fetched once and adopted.
-  const historyScope = useMemo(() => [cycle], [cycle.id, cycle.startsAt]);
+  const historyScope = useMemo(() => [cycle], [cycle]);
   useCycleHistory(historyScope, 1);
 
   const state = cycleState(cycle);
@@ -722,8 +722,8 @@ export function LinearCycleDetail({cycle: initial, team, teams, viewer, orgId, w
       if (dimFilter.kind === 'projects') base = base.filter(i => (i.project?.id || 'none') === dimFilter.id);
     }
     return orderLinIssues(base, display);
-  }, [issues, filters, dimFilter]);
-  const groups = useMemo(() => groupLinIssues(scoped, display, team?.states.nodes || []), [scoped, team]);
+  }, [issues, filters, dimFilter, display]);
+  const groups = useMemo(() => groupLinIssues(scoped, display, team?.states.nodes || []), [scoped, team, display]);
 
   const dimRows = useMemo(() => {
     const pct = (done: number, total: number) => total ? Math.round((done / total) * 100) : 0;

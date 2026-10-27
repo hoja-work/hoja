@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Column,
     Float,
@@ -31,7 +32,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 31
+CURRENT_SCHEMA_REVISION = 34
 
 
 def now_iso() -> str:
@@ -1142,6 +1143,139 @@ def _apply_team_cycle_automations(conn) -> None:
             conn.exec_driver_sql(f"ALTER TABLE team ADD COLUMN {name} {sql_type}")
 
 
+meeting = Table(
+    "meeting",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("code", String, nullable=False, unique=True),
+    Column("title", String, nullable=False),
+    Column("description", Text),
+    Column("host_id", String, ForeignKey("user.id"), nullable=False, index=True),
+    Column("team_id", String, ForeignKey("team.id")),
+    Column("issue_id", String),
+    Column("project_id", String),
+    Column("access", String, nullable=False, default="invited"),
+    Column("passcode_hash", String),
+    Column("link_enabled", Boolean, nullable=False, default=False),
+    Column("waiting_room", Boolean, nullable=False, default=True),
+    Column("join_before_host", Boolean, nullable=False, default=False),
+    Column("mute_on_entry", Boolean, nullable=False, default=True),
+    Column("allow_unmute", Boolean, nullable=False, default=True),
+    Column("screen_share", String, nullable=False, default="all"),
+    Column("chat_enabled", Boolean, nullable=False, default=True),
+    Column("locked", Boolean, nullable=False, default=False),
+    Column("recording", String, nullable=False, default="off"),
+    Column("max_participants", Integer, nullable=False, default=25),
+    Column("status", String, nullable=False, default="scheduled", index=True),
+    Column("scheduled_start", String),
+    Column("duration_minutes", Integer),
+    Column("started_at", String),
+    Column("ended_at", String),
+    Column("reminded_at", String),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+)
+
+meeting_invitee = Table(
+    "meeting_invitee",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("meeting_id", String, ForeignKey("meeting.id"), nullable=False, index=True),
+    Column("user_id", String, ForeignKey("user.id"), index=True),
+    Column("email", String, index=True),
+    Column("role", String, nullable=False, default="attendee"),
+    Column("response", String, nullable=False, default="needsAction", server_default="needsAction"),
+    Column("invited_by", String, ForeignKey("user.id")),
+    Column("created_at", String, nullable=False),
+)
+
+meeting_participant = Table(
+    "meeting_participant",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("meeting_id", String, ForeignKey("meeting.id"), nullable=False, index=True),
+    Column("user_id", String, ForeignKey("user.id"), index=True),
+    Column("kind", String, nullable=False, default="member"),
+    Column("display_name", String, nullable=False),
+    Column("role", String, nullable=False, default="attendee"),
+    Column("state", String, nullable=False, default="waiting"),
+    Column("token_hash", String, unique=True, index=True),
+    Column("sfu_session_id", String),
+    Column("sfu_sub_session_id", String),
+    Column("device_id", String),
+    Column("device_of", String),
+    Column("device_label", String),
+    Column("tracks", Text),
+    Column("muted_by_host", Boolean, nullable=False, default=False),
+    Column("hand_raised", Boolean, nullable=False, default=False),
+    Column("audio_on", Boolean, nullable=False, default=False),
+    Column("video_on", Boolean, nullable=False, default=False),
+    Column("screen_on", Boolean, nullable=False, default=False),
+    Column("bytes_in", BigInteger, nullable=False, default=0),
+    Column("bytes_out", BigInteger, nullable=False, default=0),
+    Column("joined_at", String),
+    Column("left_at", String),
+    Column("created_at", String, nullable=False),
+)
+
+meeting_ring = Table(
+    "meeting_ring",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("meeting_id", String, ForeignKey("meeting.id"), nullable=False, index=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False),
+    Column("from_id", String, ForeignKey("user.id"), nullable=False),
+    Column("to_id", String, ForeignKey("user.id"), nullable=False, index=True),
+    Column("state", String, nullable=False, default="ringing"),
+    Column("created_at", String, nullable=False),
+    Column("expires_at", String, nullable=False),
+    Column("responded_at", String),
+)
+
+meeting_chat = Table(
+    "meeting_chat",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("meeting_id", String, ForeignKey("meeting.id"), nullable=False, index=True),
+    Column("sender_id", String, nullable=False),
+    Column("recipient_id", String),
+    Column("body", Text, nullable=False),
+    Column("created_at", String, nullable=False),
+)
+
+
+def _apply_meeting_extras(conn) -> None:
+    """RSVPs, ringing, reminders, separate publisher/subscriber SFU sessions, media flags, usage."""
+    meeting_ring.create(conn, checkfirst=True)
+    inspector = inspect(conn)
+    additions = {
+        "meeting": {"reminded_at": "VARCHAR"},
+        "meeting_invitee": {"response": "VARCHAR NOT NULL DEFAULT 'needsAction'"},
+        "meeting_participant": {
+            "sfu_sub_session_id": "VARCHAR",
+            "audio_on": "BOOLEAN NOT NULL DEFAULT FALSE",
+            "video_on": "BOOLEAN NOT NULL DEFAULT FALSE",
+            "screen_on": "BOOLEAN NOT NULL DEFAULT FALSE",
+            "bytes_in": "BIGINT NOT NULL DEFAULT 0",
+            "bytes_out": "BIGINT NOT NULL DEFAULT 0",
+        },
+    }
+    for table_name, columns in additions.items():
+        existing = {column["name"] for column in inspector.get_columns(table_name)}
+        for name, sql_type in columns.items():
+            if name not in existing:
+                conn.exec_driver_sql(f"ALTER TABLE {table_name} ADD COLUMN {name} {sql_type}")
+
+
+def _apply_meeting_devices(conn) -> None:
+    """Per-device seats: a person may hold a main seat plus companion seats (phone as mic, etc.)."""
+    existing = {column["name"] for column in inspect(conn).get_columns("meeting_participant")}
+    for name in ("device_id", "device_of", "device_label"):
+        if name not in existing:
+            conn.exec_driver_sql(f"ALTER TABLE meeting_participant ADD COLUMN {name} VARCHAR")
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -1191,6 +1325,14 @@ _MIGRATIONS = {
     29: _apply_issue_scale_indexes,
     30: _apply_issue_link_capture,
     31: _apply_realtime_v2_capture,
+    32: lambda conn: (
+        meeting.create(conn, checkfirst=True),
+        meeting_invitee.create(conn, checkfirst=True),
+        meeting_participant.create(conn, checkfirst=True),
+        meeting_chat.create(conn, checkfirst=True),
+    ),
+    33: _apply_meeting_extras,
+    34: lambda conn: _apply_meeting_devices(conn),
 }
 
 

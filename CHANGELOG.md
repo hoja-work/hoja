@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- My issues → Assigned has a "Completed issues" display option (None, Past week,
+  Past month, All; default Past week, remembered per browser). Done and cancelled
+  issues were previously always hidden there. Closed groups sort last.
 - The create-issue dialog has a due date field, and the optimistic issue it adds
   to the board carries that date immediately.
 - Board cards can be edited in place: status, due date, priority and assignee are
@@ -30,6 +33,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Frontend TypeScript is pinned to 6.0.3 instead of 7.0.2: typescript-eslint
+  (used by `npm run lint:ui`) refuses TS 7 and does not support it in any
+  release yet. Move back to 7 when it does.
+- My issues no longer has a "Load more issues" button. The sync now carries a
+  year of closed issues (`closedDays=365`; a cached 14-day snapshot re-bootstraps
+  once). Older closed issues are fetched automatically, only the viewer's own
+  (assigned for Assigned → All, created for Created), instead of paging the whole
+  workspace's closed history. The old button loaded issues that the Assigned tab
+  then hid.
+- Long My issues lists are windowed like the team list, replacing the
+  "Show N more" button.
 - The team settings screen renders one card per team (properties, members, actions
   and a delete panel) instead of a single cramped row per team, and each card
   reports its issue and project counts.
