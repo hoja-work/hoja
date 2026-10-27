@@ -322,7 +322,7 @@ function KanbanCard({issue, teams, dragged, onDragStart, onDragEnd, onSelect, on
   <div className="kanban-card" draggable onDragStart={e=>{if((e.target as HTMLElement).closest('input,select,label,button')){e.preventDefault();return}onDragStart(e)}} onDragEnd={onDragEnd}
    onKeyDown={e=>{if(e.altKey&&e.key==='ArrowRight'){e.preventDefault();onMoveNext()}}}>
    <button type="button" className="kanban-card-open" onClick={()=>onSelect(issue)} aria-label={`Open ${issue.identifier}: ${issue.title}`}>
-    <small><span className="team-key-badge">{issue.team?.key}</span>{issue.identifier} · {issue.team?.name}</small>
+    <small>{issue.identifier} · {issue.team?.name}</small>
     <strong>{issue.title}</strong>
    </button>
    <div className="kanban-card-props" aria-busy={busy||undefined}>
