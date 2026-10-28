@@ -1147,3 +1147,24 @@ html.hoja-modal-open{overflow:hidden;scrollbar-gutter:stable}
 @media(max-width:700px){.project-reference:has(>.my-issues-view)>.project-add-view{order:2}.project-reference>.my-issues-view{order:3}}
 /* Phones: the heading, tabs and list keep their own height instead of sharing the shell's (sparse lists stretched the rows apart). */
 @media(max-width:700px){.main:has(.my-issues-view){display:flex;flex-direction:column}.main:has(.my-issues-view)>.my-issue-tabs{flex:none;padding-right:10px}.main:has(.my-issues-view)>.my-issues-view>.my-issue-toolbar{position:static;justify-content:flex-end;padding:4px 8px}.main:has(.my-issues-view)>.my-issues-view{flex:1}}
+
+/* Project Overview: a bounded summary (progress, status counts, latest update) instead of an issue list. */
+.project-overview-progress,.project-overview-update{min-width:0;margin:24px 14px 0;padding:16px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+.project-overview-progress>header,.project-overview-update>header{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.project-overview-progress h2,.project-overview-update h2{margin:0;font-size:12px;font-weight:600}
+.project-overview-progress [data-overview=progress]{font-size:20px;font-weight:600;font-variant-numeric:tabular-nums}
+.project-progress-bar{height:6px;margin:10px 0 8px;border-radius:99px;background:var(--subtle);overflow:hidden}.project-progress-bar>i{display:block;height:100%;border-radius:inherit;background:var(--accent)}
+.project-overview-progress>p,.project-overview-update .muted{margin:0;color:var(--muted);font-size:12px}
+.project-status-counts{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0;padding:0;list-style:none}
+.project-status-counts button{display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:0 10px;border:1px solid var(--line);border-radius:99px;background:transparent;color:var(--text);font-size:12px}
+.project-status-counts button:hover{background:var(--subtle)}.project-status-counts b{color:var(--muted);font-weight:600;font-variant-numeric:tabular-nums}
+.project-overview-progress .text-action,.project-overview-update .text-action{padding:0;background:transparent;color:var(--accent);font-size:12px}
+.project-overview-update article{margin-top:10px;font-size:12px}.project-overview-update article p{margin:6px 0 0;font-size:13px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}
+@media(min-width:901px){
+  .project-reference:has(>.project-reference-properties)>.project-overview-progress{grid-column:1;grid-row:4;margin:28px 0 0 43px}
+  .project-reference:has(>.project-reference-properties)>.project-overview-update{grid-column:1;grid-row:5;margin:16px 0 0 43px}
+  .project-reference:has(>.project-reference-properties)>.project-overview-description{grid-row:6;margin-bottom:40px}
+  .project-reference:has(>.project-reference-properties)>.project-editor{grid-row:7}
+}
+@media(max-width:700px){.project-reference>.project-overview-progress{order:4;margin:18px 10px 0}.project-reference>.project-overview-update{order:5;margin:12px 10px 0}.project-reference>.project-overview-description{order:6;margin:18px 10px 24px}.project-reference>.project-editor{order:7}}
+@media(min-width:901px){.project-reference:has(>.project-reference-properties)>.project-reference-tabs{grid-row:2}}
