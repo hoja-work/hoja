@@ -625,7 +625,7 @@ class Writer:
                             if auto_id:
                                 values["cycle_id"] = auto_id
             changes = {}
-            for field, column in {"title": "title", "description": "description", "priority": "priority", "stateId": "state_id", "assigneeId": "assignee_id"}.items():
+            for field, column in {"title": "title", "description": "description", "priority": "priority", "stateId": "state_id", "assigneeId": "assignee_id", "projectId": "project_id"}.items():
                 if field in inp and issue_row.get(column) != values.get(column):
                     changes[field] = {"from": issue_row.get(column), "to": values.get(column)}
             conn.execute(issue.update().where(issue.c.id == iid).values(**values))

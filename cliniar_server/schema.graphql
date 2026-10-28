@@ -271,6 +271,8 @@ type Project {
   creator: User
   members(first: Int = 100): UserConnection
   teams(first: Int = 100): TeamConnection
+  "Events on this project's issues (created, updated, comments, archived), newest first."
+  activity(first: Int = 50, after: String, eventTypes: [String!]): MyIssueActivityConnection
   health: String
   createdAt: DateTime
   updatedAt: DateTime
