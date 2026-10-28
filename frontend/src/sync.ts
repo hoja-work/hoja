@@ -275,6 +275,36 @@ export function startSync(opts: {
     return {status: res.status, body: await res.json(), etag: res.headers.get('etag')};
   };
 
+  /* Project progress is derived server-side from issues, but project rows only arrive with metadata.
+   * When an issue changes project or status, re-read just the affected projects' progress. */
+  const progressDirty = new Set<string>();
+  let progressTimer = 0;
+  const noteProgress = (before: Row | undefined, after: Row | undefined, columns: string[]) => {
+    const pi = columns.indexOf('projectId'), si = columns.indexOf('stateId');
+    const bp = before?.[pi] as string | null | undefined, ap = after?.[pi] as string | null | undefined;
+    if (bp === ap && before?.[si] === after?.[si]) return;
+    for (const pid of [bp, ap]) if (pid) progressDirty.add(pid);
+    if (!progressDirty.size || progressTimer) return;
+    progressTimer = window.setTimeout(() => { progressTimer = 0; void refreshProgress(); }, 250);
+  };
+  const refreshProgress = async () => {
+    const ids = [...progressDirty]; progressDirty.clear();
+    if (!ids.length || stopped) return;
+    try {
+      const res = await fetch('/graphql', {method: 'POST', credentials: 'include', headers: {'content-type': 'application/json', ...opts.headers()},
+        body: JSON.stringify({query: 'query($ids:[ID!]){projects(first:250,filter:{id:{in:$ids}}){nodes{id progress}}}', variables: {ids}})});
+      const nodes: {id: string; progress: number}[] = (await res.json())?.data?.projects?.nodes || [];
+      const s = snap;
+      if (!s || stopped || !nodes.length) return;
+      const next = new Map(nodes.map(n => [n.id, n.progress]));
+      const projects = s.meta.projects.nodes.map(p => next.has(p.id) && next.get(p.id) !== p.progress ? {...p, progress: next.get(p.id)} : p);
+      if (projects.every((p, i) => p === s.meta.projects.nodes[i])) return;
+      snap = {...s, meta: {...s.meta, projects: {...s.meta.projects, nodes: projects}}};
+      persist();
+      requestEmit();
+    } catch { /* next issue change or metadata pull refreshes it */ }
+  };
+
   const persist = () => {
     window.clearTimeout(saveTimer);
     saveTimer = window.setTimeout(() => { if (snap && !stopped) void saveSnapshot(snap); }, 250);
@@ -337,9 +367,11 @@ export function startSync(opts: {
     const rows = {...s.rows};
     for (const r of d.issues as Row[]) {
       // Columns are server-ordered; remap if the server's column set ever differs from the cached one.
-      rows[r[0] as string] = d.columns.join() === s.columns.join() ? r : s.columns.map(c => (at.has(c) ? r[at.get(c)!] : null));
+      const row = d.columns.join() === s.columns.join() ? r : s.columns.map(c => (at.has(c) ? r[at.get(c)!] : null));
+      noteProgress(rows[r[0] as string], row, s.columns);
+      rows[r[0] as string] = row;
     }
-    for (const id of d.removed as string[]) delete rows[id];
+    for (const id of d.removed as string[]) { noteProgress(rows[id], undefined, s.columns); delete rows[id]; }
     snap = {...s, seq: d.seq, etag: null, rows, meta: d.meta ? d.meta : s.meta};
     persist();
     requestEmit();
@@ -364,8 +396,8 @@ export function startSync(opts: {
     if (!applicable || needsPull) { void pull(); return; }
     if (pulling) { pullAgain = true; return; } // let the in-flight pull finish, then catch up
     const rows = {...s.rows};
-    for (const r of frame.issues || []) rows[r[0] as string] = remapRow(r, frame.columns!, s.columns);
-    for (const id of frame.removed || []) delete rows[id];
+    for (const r of frame.issues || []) { const row = remapRow(r, frame.columns!, s.columns); noteProgress(rows[r[0] as string], row, s.columns); rows[r[0] as string] = row; }
+    for (const id of frame.removed || []) { noteProgress(rows[id], undefined, s.columns); delete rows[id]; }
     snap = {...s, seq: frame.seq, etag: null, rows};
     persist();
     requestEmit();

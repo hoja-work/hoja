@@ -1469,6 +1469,31 @@ class Store:
                     out[row["id"]] = self.ser_project(row)
         return out
 
+    def project_progress_many(self, org_id: str, project_ids: list[str]) -> dict[str, float]:
+        """Percent (0-100) of each project's non-canceled, non-archived issues that are completed.
+
+        Derived from issues on every read (one grouped query per batch) because the stored
+        project.progress column is never updated after creation."""
+        out: dict[str, float] = {p: 0.0 for p in project_ids}
+        with self.engine.connect() as conn:
+            for start in range(0, len(project_ids), 500):
+                chunk = project_ids[start:start + 500]
+                stmt = select(issue.c.project_id, workflow_state.c.type, func.count()).select_from(
+                    issue.join(workflow_state, workflow_state.c.id == issue.c.state_id)
+                ).where(and_(issue.c.organization_id == org_id, issue.c.project_id.in_(chunk),
+                             issue.c.archived_at.is_(None))).group_by(issue.c.project_id, workflow_state.c.type)
+                done: dict[str, int] = {}
+                scope: dict[str, int] = {}
+                for pid, kind, n in conn.execute(stmt):
+                    if kind == "canceled":
+                        continue
+                    scope[pid] = scope.get(pid, 0) + n
+                    if kind == "completed":
+                        done[pid] = done.get(pid, 0) + n
+                for pid, total in scope.items():
+                    out[pid] = round(done.get(pid, 0) * 100.0 / total, 2) if total else 0.0
+        return out
+
     def project_teams_many(self, org_id: str, project_ids: list[str],
                            viewer_id: str | None = None) -> dict[str, list[dict]]:
         out: dict[str, list[dict]] = {p: [] for p in project_ids}
