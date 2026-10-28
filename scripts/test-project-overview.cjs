@@ -80,6 +80,7 @@ const UPDATE = 'Onboarding is in review; release notes drafted.';
     }
     ok(c(DESC) === 1, `${tag}: description shown once`, String(c(DESC)));
     ok(info.progress.includes(expected), `${tag}: progress matches server (${done}/${scope} = ${expected})`, info.progress || 'no progress element');
+    ok(/36 done · 70 open · 14 canceled/.test(info.text), `${tag}: done/open/canceled line`);
     ok(/In Progress\s*30\b/.test(info.text) && /Todo\s*40\b/.test(info.text) && /Done\s*36\b/.test(info.text), `${tag}: per-status issue counts match the server`);
     ok(info.issueRows === 0, `${tag}: overview summarizes instead of listing issues`, String(info.issueRows));
     ok(info.height < 1600, `${tag}: overview height stays bounded with 120 issues`, `${info.height}px`);
@@ -88,6 +89,33 @@ const UPDATE = 'Onboarding is in review; release notes drafted.';
     ok(!info.oldCard, `${tag}: old IssueList card gone`);
     ok(info.tabsAbove, `${tag}: Overview/Activity/Issues tabs sit above the content`);
     ok(!info.hscroll, `${tag}: no horizontal page scroll`);
+    await ctx.close();
+  }
+  // Same number on the Projects list and on Pulse, and it follows issue changes made elsewhere without a reload.
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    await ctx.addInitScript(t => localStorage.setItem('hoja_token', t), token);
+    const page = await ctx.newPage(); page.on('pageerror', e => errors.push(e.message));
+    const listPct = async () => (await page.locator('.projects-table-row, .projects-board-card, [class*=projects] button').filter({ hasText: 'Launch' }).first().innerText()).match(/(\d+)%/)?.[1];
+    await page.goto(`${base}/workspace/projects`, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(400);
+    if (shots) await page.screenshot({ path: path.join(shots, 'projects-list-1440.png') });
+    ok(`${await listPct()}%` === expected, `Projects list shows ${expected}`, String(await listPct()));
+    await page.goto(`${base}/workspace/pulse`, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(400);
+    const pulse = await page.locator('.pulse-post').first().innerText().catch(() => '');
+    ok(pulse.includes(expected), `Pulse update shows ${expected}`, (pulse.match(/\d+%/) || ['none'])[0]);
+    // Move 17 open issues to Done through the API (another client): 53 / 106 = 50%.
+    await page.goto(`${base}/workspace/projects`, { waitUntil: 'networkidle' });
+    const open = (await gql('query($id:ID!){issues(first:250,filter:{project:{id:{eq:$id}}}){nodes{id state{type}}}}', { id: projectId })).issues.nodes.filter(n => n.state.type === 'unstarted').slice(0, 17);
+    for (const n of open) await gql('mutation($id:String!,$i:IssueUpdateInput!){issueUpdate(id:$id,input:$i){success}}', { id: n.id, i: { stateId: st('completed') } });
+    let live = '';
+    for (let i = 0; i < 40 && live !== '50'; i++) { await page.waitForTimeout(250); live = await listPct(); }
+    ok(live === '50', 'Projects list updates live after issues move to Done (no reload)', `${live}%`);
+    await page.goto(`${base}/workspace/project/${projectId}/overview`, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(400);
+    const ov = await page.locator('[data-overview="progress"]').innerText();
+    ok(ov === '50%', 'Overview agrees with the list after the change', ov);
     await ctx.close();
   }
   ok(errors.length === 0, 'no page errors', errors.join(' | '));

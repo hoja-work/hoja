@@ -395,6 +395,7 @@ def r_projects(_, info, filter=None, first=50, after=None):
     rows = store.projects(org, filter, after=cursor, limit=first + 1)
     nodes = rows[:first]
     _prime(info, "project_teams", [n["id"] for n in nodes])
+    _prime(info, "project_progress", [n["id"] for n in nodes])
     _prime(info, "user_row", [n.get(k) for n in nodes for k in ("_lead_id", "_creator_id")])
     result = _conn(nodes)
     result["pageInfo"].update({
@@ -752,6 +753,14 @@ def p_members(obj, info, first=100):
     store, _w, org, _uid = _ctx(info)
     first = _page_size(first, 100)
     return _conn(store.project_members(org, obj["id"])[:first])
+
+
+@Project.field("progress")
+def p_progress(obj, info):
+    store, _w, org, _uid = _ctx(info)
+    pid = obj["id"]
+    return _batched(info, "project_progress", pid, lambda ids: store.project_progress_many(org, ids),
+                    lambda: store.project_progress_many(org, [pid])[pid], default=0.0)
 
 
 @Project.field("teams")

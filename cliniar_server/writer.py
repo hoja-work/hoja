@@ -958,9 +958,19 @@ class Writer:
             conn.execute(project_update.insert().values(
                 id=update_id, organization_id=org_id, project_id=pid,
                 actor_id=actor_id, body=body, status=inp.get("status"),
-                progress=row.get("progress"), created_at=ts,
+                progress=self._project_progress(conn, org_id, pid), created_at=ts,
             ))
             return update_id
+
+    def _project_progress(self, conn, org_id: str, pid: str) -> float:
+        """Snapshot of the project's completion percent for a project update (see Store.project_progress_many)."""
+        rows = conn.execute(select(workflow_state.c.type, func.count()).select_from(
+            issue.join(workflow_state, workflow_state.c.id == issue.c.state_id)
+        ).where(and_(issue.c.organization_id == org_id, issue.c.project_id == pid,
+                     issue.c.archived_at.is_(None))).group_by(workflow_state.c.type)).all()
+        scope = sum(n for kind, n in rows if kind != "canceled")
+        done = sum(n for kind, n in rows if kind == "completed")
+        return round(done * 100.0 / scope, 2) if scope else 0.0
 
     def _require_project_owner(self, conn, org_id: str, viewer_id: str, pid: str) -> bool:
         """Creator, lead, or admin may edit/archive a project. Returns False when the project is absent."""
