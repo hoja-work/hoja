@@ -755,6 +755,22 @@ def p_members(obj, info, first=100):
     return _conn(store.project_members(org, obj["id"])[:first])
 
 
+@Project.field("activity")
+def p_activity(obj, info, first=50, after=None, eventTypes=None):
+    store, _w, org, uid = _ctx(info)
+    first = _page_size(first)
+    cursor = _decode_activity_cursor(after)
+    rows = store.project_issue_activity(org, obj["id"], uid, cursor, first + 1, eventTypes or None)
+    nodes = [dict(row, eventType=row["event_type"], createdAt=row["created_at"]) for row in rows[:first]]
+    _prime(info, "issue_obj", [n["issue_id"] for n in nodes])
+    _prime(info, "user_row", [n.get("actor_id") for n in nodes])
+    return {"nodes": nodes, "pageInfo": {
+        "hasNextPage": len(rows) > first, "hasPreviousPage": after is not None,
+        "startCursor": _activity_cursor(nodes[0]) if nodes else None,
+        "endCursor": _activity_cursor(nodes[-1]) if nodes else None,
+    }}
+
+
 @Project.field("progress")
 def p_progress(obj, info):
     store, _w, org, _uid = _ctx(info)

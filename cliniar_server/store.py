@@ -1371,6 +1371,31 @@ class Store:
                 row["changes"] = json.loads(row["changes"]) if row.get("changes") else None
             return rows
 
+    def project_issue_activity(self, org_id: str, project_id: str, viewer_id: str | None = None,
+                               after=None, limit=51, event_types: list[str] | None = None) -> list[dict]:
+        """Events on the issues currently in a project, newest first, limited to teams the viewer can see."""
+        with self.engine.connect() as conn:
+            stmt = select(issue_activity).join(issue, and_(
+                issue_activity.c.issue_id == issue.c.id,
+                issue_activity.c.organization_id == issue.c.organization_id,
+            )).where(and_(
+                issue_activity.c.organization_id == org_id,
+                issue.c.organization_id == org_id,
+                issue.c.project_id == project_id,
+            ))
+            stmt = _scope_teams(conn, stmt, org_id, viewer_id, issue.c.team_id)
+            if event_types:
+                stmt = stmt.where(issue_activity.c.event_type.in_(event_types))
+            if after:
+                ts, event_id = after
+                stmt = stmt.where(issue_activity.c.created_at <= ts).where(or_(issue_activity.c.created_at < ts,
+                    and_(issue_activity.c.created_at == ts, issue_activity.c.id < event_id)))
+            rows = _conn_rows(conn, stmt.order_by(
+                issue_activity.c.created_at.desc(), issue_activity.c.id.desc()).limit(limit))
+            for row in rows:
+                row["changes"] = json.loads(row["changes"]) if row.get("changes") else None
+            return rows
+
     def issue_activity_for(self, org_id: str, issue_id: str, after=None, limit=51) -> list[dict]:
         with self.engine.connect() as conn:
             stmt = select(issue_activity).where(and_(
