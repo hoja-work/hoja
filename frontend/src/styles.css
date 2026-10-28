@@ -1140,3 +1140,10 @@ input::placeholder,textarea::placeholder{color:var(--muted)}
 }
 .issue-create-footer .primary:not(:disabled):active{transform:translateY(0) scale(.985);box-shadow:none;transition-duration:var(--motion-instant)}
 html.hoja-modal-open{overflow:hidden;scrollbar-gutter:stable}
+
+/* Project Issues tab hosts the shared My issues view: the tabs row carries its toolbar, the view fills the page. */
+.project-reference:has(>.my-issues-view){display:flex;flex-direction:column;flex:1;min-height:0}
+.project-reference:has(>.my-issues-view)>.project-add-view{right:118px}
+@media(max-width:700px){.project-reference:has(>.my-issues-view)>.project-add-view{order:2}.project-reference>.my-issues-view{order:3}}
+/* Phones: the heading, tabs and list keep their own height instead of sharing the shell's (sparse lists stretched the rows apart). */
+@media(max-width:700px){.main:has(.my-issues-view){display:flex;flex-direction:column}.main:has(.my-issues-view)>.my-issue-tabs{flex:none;padding-right:10px}.main:has(.my-issues-view)>.my-issues-view>.my-issue-toolbar{position:static;justify-content:flex-end;padding:4px 8px}.main:has(.my-issues-view)>.my-issues-view{flex:1}}
