@@ -2,6 +2,7 @@ import {useCallback, useEffect, useRef, useState} from 'react';
 import {CalendarDays, Copy, Download, Link2, Pencil, Phone, Trash2, Users, Video, X} from 'lucide-react';
 import {fmtDuration, fmtTime, fmtWhen, googleCalendarUrl, joinUrl, meetingsApi, type Invitee, type Meeting, type Person, type Rsvp} from './api';
 import {PeoplePicker, ScheduleDialog} from './ScheduleDialog';
+import {Markdown} from '../markdown';
 import './meetings-page.css';
 
 const RSVP_LABEL: Record<Rsvp, string> = {needsAction: 'No reply', accepted: 'Going', declined: 'Declined', tentative: 'Maybe'};
@@ -132,7 +133,7 @@ export function MeetingDrawer({meeting: initial, viewer, onClose, onChanged}: {
             {meeting.hasPasscode && <div><dt>Passcode</dt><dd>Required for guests</dd></div>}
           </dl>
 
-          {meeting.description && <p className="mt-description">{meeting.description}</p>}
+          {meeting.description && <div className="mt-description"><Markdown text={meeting.description} density="compact" /></div>}
 
           {meeting.status === 'ended' && <Recap meeting={meeting} />}
           {meeting.status === 'cancelled' && <p className="mt-note" role="status">This meeting was cancelled.</p>}

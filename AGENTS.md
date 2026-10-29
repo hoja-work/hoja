@@ -208,6 +208,23 @@ long content, tall properties, navigation open/closed, and form controls. CSS-ba
 fixtures are not authenticated app journeys. These checks
 are not part of the fast pre-commit hook and do not require a backend.
 
+### Markdown bodies
+
+Every user-authored body (issue and description, comments, project updates, project and
+team descriptions, meeting agenda/notes, meeting chat, agent replies) renders through
+`frontend/src/markdown.tsx`. Do not add a second renderer and do not pass bodies through
+`dangerouslySetInnerHTML`. The contract: GFM, raw HTML dropped, `javascript:`/`data:` URLs
+stripped, headings demoted by two levels (a body can never emit h1) and clamped at h6,
+external links get `target=_blank rel="noopener noreferrer nofollow"`, tables wrapped in
+their own scroll box, bodies over 20k characters shown verbatim. Editors keep the raw
+source; only the read view renders. Titles, list-cell snippets and system text stay literal.
+
+Prove a change with `cd frontend && npm run test:markdown:spec` (the official CommonMark
+0.31.2 corpus, 652 examples, run against the real component) and
+`npm run test:markdown` (seeded server + Playwright over the rendered surfaces). The corpus
+is vendored at `scripts/fixtures/`; refresh it deliberately and re-review the skips, which
+are limited to three named buckets (raw HTML, unsafe hrefs, GFM autolink literals).
+
 ### UI audit method: define what a component must never do
 
 Before adding or changing a view, inventory its components (inputs, cards, menus,

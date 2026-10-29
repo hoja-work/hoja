@@ -266,7 +266,7 @@ button.primary{color:#fff;background:var(--accent)}
 .pulse-meta{display:flex;flex-wrap:wrap;align-items:center;gap:8px;color:var(--muted);font-size:12px}
 .pulse-health{display:inline-flex;align-items:center;gap:5px;color:#2d8b54}
 .pulse-avatar{display:inline-grid;place-items:center;width:16px;height:16px;border-radius:50%;background:#e576d0;color:#fff;font-size:8px}
-.pulse-post-body{margin:18px 0 28px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:15px;line-height:1.6}
+.pulse-post-body{margin:18px 0 28px;overflow-wrap:anywhere;line-height:1.6}.pulse-post-body .md{font-size:15px;line-height:1.6}
 .pulse-changes{display:grid;gap:7px;margin:0 0 27px;padding-left:12px;border-left:2px solid var(--line);font-size:12px}
 .pulse-changes>div{display:grid;grid-template-columns:145px minmax(0,1fr);gap:10px}
 .pulse-changes dt{color:var(--muted)}.pulse-changes dd{margin:0;overflow-wrap:anywhere}
@@ -903,10 +903,38 @@ main:has(>.issue-detail-page){padding:0}
 .agent-msg-avatar{flex:0 0 28px;height:28px;border-radius:999px;display:grid;place-items:center;background:var(--text);color:var(--bg);font-size:12px;font-weight:650;margin-top:2px}
 .agent-msg-body{min-width:0;flex:1;line-height:1.65;overflow-wrap:anywhere}
 .agent-chat-reply{padding:0}
-.agent-chat-reply p{margin:0 0 .75em}
-.agent-chat-reply p:last-child{margin-bottom:0}
-.agent-chat-reply ul,.agent-chat-reply ol{margin:.25em 0 .75em;padding-left:1.25em}
-.agent-chat-reply li+li{margin-top:.2em}
+
+/* Markdown bodies. One system for every quoted-text surface (comments, project updates,
+   descriptions, meeting chat, agent replies). `.agent-chat-reply` stays in the grouped
+   selectors because the agent reply markup is also exercised as a static fixture. */
+.md{min-width:0;font-size:13px;line-height:1.6;color:var(--text);overflow-wrap:anywhere}
+.md--block{font-size:14px;line-height:1.65}
+.md>:first-child{margin-top:0}
+.md>:last-child{margin-bottom:0}
+.md p,.agent-chat-reply p{margin:0 0 .7em}
+.md p:last-child,.agent-chat-reply p:last-child{margin-bottom:0}
+.md ul,.md ol,.agent-chat-reply ul,.agent-chat-reply ol{margin:.3em 0 .7em;padding-left:1.3em}
+.md li+li,.agent-chat-reply li+li{margin-top:.2em}
+.md li>ul,.md li>ol{margin:.25em 0 .3em}
+.md li.task-list-item{list-style:none}
+.md .md-check{margin:0 .45em 0 -1.2em;vertical-align:-1px;accent-color:var(--accent)}
+.md code,.agent-chat-reply code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em;padding:.1em .35em;border-radius:6px;background:var(--subtle)}
+.md pre,.agent-chat-reply pre{overflow-x:auto;padding:12px 14px;border-radius:12px;background:var(--subtle);border:1px solid var(--line);margin:.5em 0}
+.md pre code,.agent-chat-reply pre code{padding:0;background:none;font-size:.85em;line-height:1.5}
+.md a,.agent-chat-reply a{color:var(--text);text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--line)}
+.md a:hover,.agent-chat-reply a:hover{text-decoration-color:var(--text)}
+/* Headings inside a body are demoted to h3–h6 by the renderer, so they read as local section
+   labels rather than page structure. */
+.md .md-h{margin:.9em 0 .35em;font-size:1em;font-weight:650;line-height:1.35;letter-spacing:-.005em}
+.md blockquote{margin:.5em 0;padding-left:12px;border-left:2px solid var(--line);color:var(--muted)}
+.md hr{border:0;border-top:1px solid var(--line);margin:.9em 0}
+.md .md-table{max-width:100%;overflow-x:auto;margin:.5em 0}
+.md table,.agent-chat-reply table{border-collapse:collapse;margin:.5em 0;font-size:.94em}
+.md th,.md td,.agent-chat-reply th,.agent-chat-reply td{padding:6px 10px;border:1px solid var(--line);text-align:left}
+.md th{background:var(--subtle);font-weight:600}
+.md .md-img{max-width:100%;height:auto;margin:.4em 0;border:1px solid var(--line);border-radius:8px}
+.md .md-plain{margin:0;white-space:pre-wrap;word-break:break-word}
+.md .agent-issue-chip{text-decoration:none}
 .agent-chat-page .openui-agent-composer-slot .openui-agent-composer-slot{padding:0;background:none}
 .agent-ask{display:flex;flex-direction:column;gap:10px;width:100%;max-width:var(--ag-max);margin:0 auto;padding:14px;border:1px solid var(--line);border-radius:var(--ag-radius);background:var(--panel);box-shadow:var(--shadow);max-height:60vh;overflow:auto}
 .agent-ask-top{display:flex;justify-content:space-between;align-items:center;gap:8px;min-height:16px}
@@ -1197,7 +1225,7 @@ html.hoja-modal-open{overflow:hidden;scrollbar-gutter:stable}
 .activity-entry[data-new]{background:var(--accent-soft)}
 .activity-entry time{flex:none;color:var(--muted);font-size:11px}
 .activity-update{display:block;margin:4px 0;padding:10px 12px;border:1px solid var(--line);background:var(--panel)}
-.activity-update .activity-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:12px}.activity-update p{margin:6px 0 0;white-space:pre-wrap}
+.activity-update .activity-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:12px}.activity-update .md{margin:6px 0 0}
 .activity-issue{display:inline;max-width:100%;padding:0;border:0;background:none;color:var(--text);font:inherit;text-align:left;cursor:pointer}
 .activity-issue code{color:var(--muted);font-family:inherit;font-size:12px}.activity-issue span{text-decoration:underline;text-decoration-color:var(--line);text-underline-offset:2px}
 .activity-issue:hover span{text-decoration-color:currentColor}

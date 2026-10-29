@@ -6,6 +6,7 @@ __pycache__/
 .Python
 build/
 dist/
+frontend/.md-conformance/
 *.egg-info/
 .eggs/
 
