@@ -161,7 +161,7 @@
 .mt-facts div{display:flex;gap:10px}
 .mt-facts dt{flex:none;width:96px;color:var(--muted)}
 .mt-facts dd{margin:0;min-width:0;overflow-wrap:anywhere}
-.mt-description{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.5}
+.mt-description{margin:0;overflow-wrap:anywhere;line-height:1.5}
 .mt-usage{margin:0;font-size:12px}
 .mt-copy-row{display:flex;gap:6px}
 .mt-copy-row input{flex:1;min-width:0}

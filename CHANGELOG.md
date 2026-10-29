@@ -30,6 +30,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that returns focus to the trigger. `prefers-reduced-motion` collapses the
   tokens to 1 ms and the page keeps its scrollbar gutter, so opening the dialog
   shifts nothing.
+- Every user-authored body renders Markdown through one component
+  (`frontend/src/markdown.tsx`): issue comments (including the optimistic echo),
+  issue descriptions, project and team descriptions, project updates on Pulse,
+  Overview and Activity, meeting chat and the meeting agenda. CommonMark plus
+  GFM: lists, task lists, fenced code, tables, quotes, links, images. The
+  contract is fixed and tested: raw HTML is never rendered, unknown URL
+  protocols are stripped with the label kept, headings are demoted by two levels
+  so a comment can never emit `h1`/`h2`, tables scroll in their own box,
+  external links carry `rel="noopener noreferrer nofollow"`, bare identifiers
+  such as `TREBOL-12` become issue chips outside code spans, and bodies over
+  20 000 characters render verbatim. Editors still show the raw source.
 
 ### Changed
 
@@ -47,6 +58,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The team settings screen renders one card per team (properties, members, actions
   and a delete panel) instead of a single cramped row per team, and each card
   reports its issue and project counts.
+- The issue description is no longer a `role="button"` wrapper: links inside it
+  are real links, a click no longer opens the editor, and a dedicated
+  hover/focus "Edit" control (always visible on touch) opens the raw Markdown.
+- Text bodies dropped `white-space:pre-wrap`, which fought rendered block
+  children, and the agent-chat Markdown rules became one `.md` system shared by
+  every surface.
 
 ### Fixed
 
@@ -62,6 +79,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Date-only due dates render on their own calendar day in every timezone; they
   were previously parsed as UTC midnight and could show the previous day, and the
   "overdue" highlight now uses one shared rule.
+- Issue chips in agent replies rendered as `href=""`: `react-markdown` blanks any
+  protocol outside http(s)/mailto/xmpp/irc, including the internal
+  `hoja-issue:` scheme. A wrapper now re-allows that one scheme and delegates
+  every other URL to the stock transform, so `javascript:` and `data:` stay
+  stripped.
 - An assignee or state id that is unknown to the current sync snapshot no longer
   blanks the issue's field in the optimistic overlay.
 
@@ -72,6 +94,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   durations and animated properties, reduced-motion collapse, hover/press/focus
   deltas, focus trap and focus restore, layout shift during interaction, WCAG
   contrast in light and dark, and geometry at 1440×900, 390×844 and 320×568.
+- Added `scripts/test-markdown-conformance.cjs` (`npm run test:markdown:spec`),
+  which runs the official CommonMark 0.31.2 corpus (652 examples, vendored at
+  `scripts/fixtures/commonmark-spec-0.31.2.json` with a pinned sha256) against
+  the component the app ships — transpiled with the TypeScript API and rendered
+  with `renderToStaticMarkup` — comparing element structure instead of HTML
+  strings. 576 structural passes, 0 failures, and 76 skips confined to three
+  named buckets (raw HTML dropped, unsafe href stripped, GFM autolink literal),
+  plus 12 contract checks. Added `scripts/test-markdown-surfaces.cjs`
+  (`npm run test:markdown`), which seeds a server, writes Markdown through
+  GraphQL and asserts 31 DOM facts on the issue, Pulse, Overview and Activity
+  surfaces at 1440, 390 and 320. Both fail against the previous build.
 
 ## [0.21.4] — 2026-10-06
 

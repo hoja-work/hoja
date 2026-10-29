@@ -2,6 +2,7 @@ import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {gql, relTime, StatusIcon} from './main';
 import type {Issue, IssueState, Project, PulsePost, Team} from './main';
 import {usePagedCache, useProjectEntityVersion, type PageOf} from './projectStore';
+import {Markdown} from './markdown';
 
 /* Project Activity: one timeline of project updates and the events on the project's issues.
  * Features: merged timeline, day groups, type filters, readable event sentences, issue links,
@@ -221,7 +222,7 @@ export function ProjectActivity({project, teams, users, updates, onPublish, onOp
             {r.kind === 'update'
               ? <li className="activity-entry activity-update" data-new={isNew(at)} aria-busy={r.x.update.id.startsWith('optimistic:') || undefined}>
                   <div className="activity-meta"><span className={`activity-health-pill health-${healthSlug(r.x.update.status)}`}>{r.x.update.status || 'Update'}</span><b>{r.x.update.actor?.name || 'Member'}</b> posted an update{r.x.update.progress != null && <span className="muted"> · {Math.round(r.x.update.progress)}% done</span>} · <Time iso={at}/></div>
-                  <p>{r.x.update.body}</p>
+                  <Markdown text={r.x.update.body} density="block" />
                 </li>
               : r.items.length === 1
                 ? <li className="activity-entry activity-event" data-type={r.items[0].type} data-new={isNew(at)}>

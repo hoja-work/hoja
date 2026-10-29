@@ -9,6 +9,7 @@ import {
   type Meeting, type Participant, type Person, type Preview, type Recap,
 } from './api';
 import {connectInbox, useInbox} from './inbox';
+import {Markdown} from '../markdown';
 import {CAM_CONSTRAINTS, MIC_CONSTRAINTS, ridForWidth} from './rtc';
 import {useRoom, type LocalSeed, type RoomAuth, type Streams} from './useRoom';
 import './meet-room.css';
@@ -598,7 +599,7 @@ function ChatPanel({room, admitted}: {room: ReturnType<typeof useRoom>; admitted
         {room.chat.map((c) => (
           <div key={c.id} className={`mr-msg ${c.from === room.you.id ? 'mine' : ''}`}>
             <b>{c.from === room.you.id ? 'You' : names.get(c.from) || 'Someone'}{c.to ? ` → ${c.to === room.you.id ? 'you' : names.get(c.to) || 'someone'} (private)` : ''}</b>
-            <p>{c.body}</p>
+            <Markdown text={c.body} />
           </div>
         ))}
         <div ref={end} />

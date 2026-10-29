@@ -1,5 +1,6 @@
 import React, {memo, useEffect, useMemo, useReducer, useRef, useState} from 'react';
 import {confirmDialog} from '../dialogs';
+import {Markdown} from '../markdown';
 import {Check, ChevronDown, ChevronRight, Copy, ExternalLink, Link2, Plus, SlidersHorizontal, Trash2, X} from 'lucide-react';
 import {gql, relTime, stateKey} from '../main';
 import type {Cycle, Issue, IssueActivityEvent, IssueLabel, IssueState, Project, Team, Viewer} from '../main';
@@ -931,13 +932,14 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
               </div>
             </div>
           ) : (
-            <p className={cx('lin-detail-desc', !detail.description && 'empty')} aria-busy={!detailReady && !detail.description}
-              role="button" tabIndex={0}
-              onKeyDown={(e) => { if (e.key === 'Enter') { if (!detailReady && !detail.description) return; setDesc(detail.description || ''); setDescEdit(true); } }}
-              onClick={() => { if (!detailReady && !detail.description) return; setDesc(detail.description || ''); setDescEdit(true); }}
-              title="Click to edit description" style={{cursor: 'text'}}>
-              {detail.description || (detailReady ? 'Add description…' : 'Loading description…')}
-            </p>
+            <div className={cx('lin-detail-desc', !detail.description && 'empty')} aria-busy={!detailReady && !detail.description}>
+              {detail.description
+                ? <Markdown text={detail.description} density="block" />
+                : <p className="lin-detail-empty">{detailReady ? 'Add description…' : 'Loading description…'}</p>}
+              <button type="button" className="lin-desc-edit" disabled={!detailReady && !detail.description}
+                title="Edit description" aria-label={detail.description ? 'Edit description' : 'Add description'}
+                onClick={() => { setDesc(detail.description || ''); setDescEdit(true); }}>Edit</button>
+            </div>
           )}
 
           <section className="lin-subsec" aria-label="Sub-issues">
@@ -1050,7 +1052,7 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
                       <button type="submit" className="lin-btn primary" disabled={!editing.body.trim()}>Save</button>
                     </footer>
                   </form>
-                ) : <p>{c.body}</p>}
+                ) : <Markdown text={c.body} />}
                 {(viewer.admin || (viewer.id && c.user?.id === viewer.id)) && editing?.id !== c.id && (<>
                   <button type="button" className="lin-addrow del" onClick={() => setEditing({id: c.id, body: c.body})}>Edit comment</button>
                   <button type="button" className="lin-addrow del" onClick={async () => { if (await confirmDialog('Delete this comment?',{danger:true})) void deleteComment(c.id); }}>Delete comment</button>
@@ -1060,7 +1062,7 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
             {shownPendingComments.map(p => (
               <article key={p.id} className="lin-comment pending" aria-busy="true">
                 <header><Avatar name={viewer.name} size={18} /><b>{viewer.name || 'You'}</b><time>Sending…</time></header>
-                <p>{p.body}</p>
+                <Markdown text={p.body} />
               </article>
             ))}
             <form className="lin-commentbox" onSubmit={submitComment}>
