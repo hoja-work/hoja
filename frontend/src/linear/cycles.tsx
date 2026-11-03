@@ -5,6 +5,8 @@ import type {Cycle, Issue, IssueLabel, IssueState, Project, Team, Viewer} from '
 import {getSync, useEntityVersion, useIssues, useSyncMeta, useSyncStatus} from '../sync';
 import {applyLinFilters, defaultDisplay, emptyFilters, groupLinIssues, orderLinIssues, DisplayPanel as _DP, FilterMenu, IssueRow, LinDisplay, LinFilters, LinIssue, linIssueFields} from './issues';
 import {Avatar, CycleGlyph, FavStar, IconBtn, LabelChip, LinMenu, LinearStatusIcon, PriorityIcon, Ring, Tip, cx, fmtDate, fmtRange, useDismiss, useFavorite} from './shared';
+import {asPct, cycleStats, deliveryRate, dropoutRate, remainingSteps, scopeCompletion} from './cycleMetrics';
+import type {CycleStats} from './cycleMetrics';
 
 /* Linear 1:1 Cycles views. */
 
@@ -33,17 +35,8 @@ export function CycleStateIcon({state, size = 15}: {state: CycleState; size?: nu
   return (<svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="#8a94a6" strokeWidth="1.5" aria-label="Planned"><circle cx="8" cy="8" r="5.6" strokeDasharray="2.6 2.2" /><path d="M8 5v3.2l2.2 1.4" strokeLinecap="round" /></svg>);
 }
 
-export type CycleStats = {scope: number; started: number; completed: number; points: number};
-
-export function statsFor(issues: LinIssue[]): CycleStats {
-  let started = 0, completed = 0, points = 0;
-  for (const i of issues) {
-    const t = i.state?.type;
-    if (t === 'completed') completed++; else if (t === 'started') started++;
-    points += i.estimate || 0;
-  }
-  return {scope: issues.length, started, completed, points};
-}
+export type {CycleStats};
+export const statsFor = cycleStats;
 
 /* ---------------- local-first data layer ----------------
  *
@@ -253,24 +246,9 @@ async function updateCycleOptimistic(cycleId: string, input: Record<string, unkn
 
 /* ---------------- burndown chart ---------------- */
 
-/* Remaining scope at daily steps from the cycle start to now (or its end),
- * from completion times of the store's issues: scope minus issues completed
- * by then. Without history this is the best client-side burndown. */
-function remainingSteps(issues: LinIssue[] | undefined, scope: number, start: number, until: number): [number, number][] {
-  if (!issues || !(until > start)) return [];
-  const done = issues.filter(i => i.state?.type === 'completed')
-    .map(i => Date.parse(i.stateChangedAt || i.updatedAt || '')).filter(t => !Number.isNaN(t)).sort((a, b) => a - b);
-  const steps: [number, number][] = [];
-  const days = Math.min(400, Math.ceil((until - start) / 864e5));
-  let k = 0;
-  for (let d = 0; d <= days; d++) {
-    const t = Math.min(until, start + d * 864e5);
-    while (k < done.length && done[k] <= t) k++;
-    steps.push([t, scope - k]);
-  }
-  return steps;
-}
-
+/* The daily steps themselves live in ./cycleMetrics (remainingSteps), which
+ * drops an issue from "remaining" when it is delivered *or* canceled. Without
+ * history this is still the best client-side burndown. */
 export function BurndownChart({cycle, stats, issues, height = 200}: {cycle: Cycle; stats: CycleStats; issues?: LinIssue[]; height?: number}) {
   const W = 560, H = height, padL = 8, padR = 8, padT = 10, padB = 22;
   const now = Date.now();
@@ -289,7 +267,7 @@ export function BurndownChart({cycle, stats, issues, height = 200}: {cycle: Cycl
   const hatchId = `hatch-${cycle.id}`;
   return (
     <svg className="lin-burndown" viewBox={`0 0 ${W} ${H}`} role="img"
-      aria-label={`Burndown: scope ${stats.scope}, started ${stats.started}, completed ${stats.completed}`}>
+      aria-label={`Burndown: scope ${stats.scope}, open ${stats.open}, delivered ${stats.completed}, canceled ${stats.canceled}`}>
       <defs>
         <pattern id={hatchId} width="7" height="7" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
           <rect width="7" height="7" fill="transparent" />
@@ -318,12 +296,16 @@ function Legend({stats}: {stats: CycleStats}) {
     <div className="lr"><span className="sw" style={{background: color}} />{label}
       <span className="n"><b>{n}</b>{pct !== undefined && <> · {pct}%</>}</span></div>
   );
-  const pct = (n: number) => stats.scope ? Math.round((n / stats.scope) * 100) : 0;
+  /* Every row shares one denominator (scope) so the percentages add up and no
+   * two rows can be read as being out of different wholes. Canceled is its own
+   * row: dropping work must never read as delivering it. */
+  const pct = (n: number) => (stats.scope ? Math.round((n / stats.scope) * 100) : 0);
   return (
     <div className="legend">
       {row('#8a94a6', 'Scope', stats.scope)}
-      {row('#e5b800', 'Started', stats.started, pct(stats.started))}
-      {row('#5e6ad2', 'Completed', stats.completed, pct(stats.completed))}
+      {row('#5e6ad2', 'Delivered', stats.completed, pct(stats.completed))}
+      {row('#e5b800', 'Open', stats.open, pct(stats.open))}
+      {row('#95a2b3', 'Canceled', stats.canceled, pct(stats.canceled))}
     </div>
   );
 }
@@ -334,7 +316,9 @@ const CycleOverviewRow = React.memo(function CycleOverviewRow({cycle, state, sta
   cycle: Cycle; state: CycleState; stats: CycleStats; issues: LinIssue[]; onCycle: (c: Cycle) => void; showChart: boolean;
 }) {
   const name = cycle.name || `Cycle ${cycle.number ?? ''}`;
-  const pct = stats.scope ? Math.round((stats.completed / stats.scope) * 100) : 0;
+  const ofScope = asPct(scopeCompletion(stats)) ?? 0;
+  const ofKept = asPct(deliveryRate(stats));
+  const dropped = asPct(dropoutRate(stats)) ?? 0;
   const badge = state === 'current' ? 'Current' : state === 'upcoming' ? 'Upcoming' : state === 'completed' ? 'Completed' : 'Planned';
   return (
     <div className="lin-cycle-row">
@@ -348,10 +332,10 @@ const CycleOverviewRow = React.memo(function CycleOverviewRow({cycle, state, sta
           </button>
           <span className="stats">
             <span className={cx('lin-badge', state === 'current' && 'current')}>{badge}</span>
-            {state === 'completed'
-              ? <><span className="lin-cap"><Ring frac={pct / 100} /> <b>{pct}%</b> success</span>
-                  <span><b>{stats.completed}</b> completed</span></>
-              : <span className="lin-cap"><Ring frac={stats.scope ? stats.started / stats.scope : 0} /> <b>{pct}%</b> of capacity</span>}
+            <span className="lin-cap"><Ring frac={ofScope / 100} /> <b>{ofScope}%</b> of scope</span>
+            {state === 'completed' && <span><b>{stats.completed}</b> completed</span>}
+            {stats.canceled > 0 && <span><b>{stats.canceled}</b> canceled · {dropped}%</span>}
+            {stats.canceled > 0 && ofKept !== null && <span><b>{ofKept}%</b> of what it kept</span>}
             <span><b>{stats.scope}</b> scope</span>
             <span className="range">{fmtRange(cycle.startsAt, cycle.endsAt)}</span>
             <button type="button" className="lin-cycle-detail-btn" onClick={() => onCycle(cycle)}>Cycle detail</button>
@@ -726,41 +710,54 @@ export function LinearCycleDetail({cycle: initial, team, teams, viewer, orgId, w
   const groups = useMemo(() => groupLinIssues(scoped, display, team?.states.nodes || []), [scoped, team, display]);
 
   const dimRows = useMemo(() => {
-    const pct = (done: number, total: number) => total ? Math.round((done / total) * 100) : 0;
+    /* Per-bucket rows use the same rule as the cycle itself: canceled work is
+     * counted and shown, never folded into the denominator of delivered work. */
+    type Bucket = {total: number; done: number; canceled: number};
+    const bump = (m: Map<string, Bucket>, key: string, i: LinIssue) => {
+      let r = m.get(key);
+      if (!r) m.set(key, r = {total: 0, done: 0, canceled: 0});
+      if (i.state?.type === 'canceled') r.canceled++;
+      else { r.total++; if (i.state?.type === 'completed') r.done++; }
+    };
+    const out = (key: string, icon: React.ReactNode, name: string, r: Bucket) => ({
+      key, icon, name,
+      pct: r.total ? Math.round((r.done / r.total) * 100) : 0,
+      of: r.total, canceled: r.canceled,
+    });
     if (dimTab === 'assignees') {
-      const m = new Map<string, {id: string; name: string; total: number; done: number}>();
+      const m = new Map<string, Bucket>(); const names = new Map<string, string>();
       for (const i of issues) {
-        const id = i.assignee?.id || 'none', name = i.assignee?.name || 'No assignee';
-        if (!m.has(id)) m.set(id, {id, name, total: 0, done: 0});
-        const r = m.get(id)!; r.total++; if (i.state?.type === 'completed') r.done++;
+        const id = i.assignee?.id || 'none';
+        names.set(id, i.assignee?.name || 'No assignee');
+        bump(m, id, i);
       }
-      return [...m.values()].map(r => ({key: r.id, icon: r.id === 'none' ? <span className="lin-avatar" style={{width: 20, height: 20}}>?</span> : <Avatar name={r.name} size={20} />, name: r.name, pct: pct(r.done, r.total), of: r.total}));
+      return [...m.entries()].map(([id, r]) => out(id,
+        id === 'none' ? <span className="lin-avatar" style={{width: 20, height: 20}}>?</span> : <Avatar name={names.get(id)!} size={20} />,
+        names.get(id)!, r));
     }
     if (dimTab === 'labels') {
-      const m = new Map<string, {id: string; label: IssueLabel; total: number; done: number}>();
+      const m = new Map<string, Bucket>(); const labels = new Map<string, IssueLabel>();
       for (const i of issues) for (const l of i.labels?.nodes || []) {
-        if (!m.has(l.id)) m.set(l.id, {id: l.id, label: l, total: 0, done: 0});
-        const r = m.get(l.id)!; r.total++; if (i.state?.type === 'completed') r.done++;
+        labels.set(l.id, l);
+        bump(m, l.id, i);
       }
-      return [...m.values()].map(r => ({key: r.id, icon: <i style={{width: 8, height: 8, borderRadius: 99, background: r.label.color || '#8a94a6'}} />, name: r.label.name, pct: pct(r.done, r.total), of: r.total}));
+      return [...m.entries()].map(([id, r]) => out(id,
+        <i style={{width: 8, height: 8, borderRadius: 99, background: labels.get(id)!.color || '#8a94a6'}} />,
+        labels.get(id)!.name, r));
     }
     if (dimTab === 'priority') {
       const names = ['No priority', 'Urgent', 'High', 'Medium', 'Low'];
-      const m = new Map<number, {total: number; done: number}>();
-      for (const i of issues) {
-        const p = i.priority || 0;
-        if (!m.has(p)) m.set(p, {total: 0, done: 0});
-        const r = m.get(p)!; r.total++; if (i.state?.type === 'completed') r.done++;
-      }
-      return [...m.entries()].map(([p, r]) => ({key: String(p), icon: <PriorityIcon priority={p} />, name: names[p], pct: pct(r.done, r.total), of: r.total}));
+      const m = new Map<string, Bucket>();
+      for (const i of issues) bump(m, String(i.priority || 0), i);
+      return [...m.entries()].map(([p, r]) => out(p, <PriorityIcon priority={Number(p)} />, names[Number(p)], r));
     }
-    const m = new Map<string, {id: string; name: string; total: number; done: number}>();
+    const m = new Map<string, Bucket>(); const names = new Map<string, string>();
     for (const i of issues) {
-      const id = i.project?.id || 'none', name = i.project?.name || 'No project';
-      if (!m.has(id)) m.set(id, {id, name, total: 0, done: 0});
-      const r = m.get(id)!; r.total++; if (i.state?.type === 'completed') r.done++;
+      const id = i.project?.id || 'none';
+      names.set(id, i.project?.name || 'No project');
+      bump(m, id, i);
     }
-    return [...m.values()].map(r => ({key: r.id, icon: <span>▣</span>, name: r.name, pct: pct(r.done, r.total), of: r.total}));
+    return [...m.entries()].map(([id, r]) => out(id, <span>▣</span>, names.get(id)!, r));
   }, [issues, dimTab]);
 
   const saveEndDate = () => {
@@ -887,7 +884,8 @@ export function LinearCycleDetail({cycle: initial, team, teams, viewer, orgId, w
                   onClick={() => setDimFilter(f => f?.id === r.key && f.kind === dimTab ? null : {kind: dimTab, id: r.key})}
                   style={dimFilter?.id === r.key ? {background: 'var(--subtle)'} : undefined}>
                   {r.icon}<span className="nm">{r.name}</span>
-                  <span className="pc"><Ring frac={r.pct / 100} /> {r.pct}% of {r.of}</span>
+                  <span className="pc"><Ring frac={r.pct / 100} /> {r.pct}% of {r.of}
+                    {r.canceled > 0 && <> · {r.canceled} canceled</>}</span>
                 </button>
               ))}
               {!dimRows.length && <p className="lin-note">Nothing to break down yet.</p>}
