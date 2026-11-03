@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v7
       - name: Export the lock (no local project, no extras omitted)
         run: uv export --frozen --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/requirements-audit.txt"
       - name: Fail on any known advisory
