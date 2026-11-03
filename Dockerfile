@@ -10,7 +10,10 @@ RUN groupadd --system cliniar && useradd --system --gid cliniar --home /app --sh
 WORKDIR /app
 COPY . .
 COPY --from=frontend-build /frontend/dist /app/web
-RUN pip install --no-cache-dir '.[server,mcp]' \
+# pip is part of the shipped image's attack surface (12 advisories on 25.0.1),
+# so it is upgraded before the project install rather than left at the base tag.
+RUN python -m pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir '.[server,mcp]' \
     && chown -R cliniar:cliniar /app
 ENV CLINIAR_WEB_ROOT=/app/web
 USER cliniar

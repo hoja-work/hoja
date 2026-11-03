@@ -1,0 +1,48 @@
+name: Dependency audit
+
+# Keeps the "warnings" from coming back: high/critical advisories fail the
+# build on every push and PR, and the weekly run catches newly published
+# advisories in dependencies we did not touch.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  npm:
+    name: npm audit (frontend)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Fail on high or critical advisories
+        run: npm audit --audit-level=high
+
+  python:
+    name: pip-audit (locked dependencies)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Export the lock (no local project, no extras omitted)
+        run: uv export --frozen --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/requirements-audit.txt"
+      - name: Fail on any known advisory
+        run: uvx pip-audit -r "$RUNNER_TEMP/requirements-audit.txt"
