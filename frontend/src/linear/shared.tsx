@@ -1,5 +1,6 @@
 import React, {useEffect, useRef, useState} from 'react';
 import type {IssueLabel} from '../main';
+import {statusAgeLabel, type StatusAgeIssue} from './statusAge';
 
 /* Shared Linear-style primitives for the 1:1 Issues/Cycles rebuild. */
 
@@ -70,6 +71,21 @@ export function LinearStatusIcon({state, size = 14}: {state?: {name?: string; ty
   if (t === 'started') return (<svg {...common}><circle cx="8" cy="8" r="6" fill="none" stroke="#e5b800" strokeWidth="1.5" /><path d="M8 2a6 6 0 0 1 0 12Z" fill="#e5b800" /></svg>);
   if (t === 'unstarted') return (<svg {...common}><circle cx="8" cy="8" r="6" fill="none" stroke="#8a94a6" strokeWidth="1.5" /></svg>);
   return (<svg {...common}><circle cx="8" cy="8" r="6" fill="none" stroke={c} strokeWidth="1.5" /></svg>);
+}
+
+/** A status symbol that explains how long the issue has held that status on hover or
+ *  keyboard focus. Rows use this instead of a bare LinearStatusIcon so every list
+ *  (Team issues, team views, cycle issues) answers the question with the same
+ *  stateChangedAt-based math as the My issues picker. */
+export function StatusAgeIcon({issue, size = 14}: {issue: StatusAgeIssue; size?: number}) {
+  const label = statusAgeLabel(issue);
+  return (
+    <span className="lin-status-age" tabIndex={0} role="img"
+      aria-label={`Status: ${issue.state?.name || 'No status'}. ${label}`}>
+      <LinearStatusIcon state={issue.state} size={size} />
+      <span className="lin-status-age-tip" role="tooltip">{label}</span>
+    </span>
+  );
 }
 
 /** Cycle icon used in chips and the cycles timeline. */

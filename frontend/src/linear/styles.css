@@ -107,6 +107,18 @@
 .lin-row .title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);background:none;border:0;text-align:left;font:inherit;padding:0;cursor:pointer;}
 .lin-row .meta{display:flex;align-items:center;gap:8px;flex:none;margin-left:auto;}
 .lin-row .date{color:var(--muted);font-size:12px;white-space:nowrap;}
+
+/* Status symbol + age. Hover and keyboard focus reveal the same sentence; the row is
+ * raised so the tooltip paints above the following row's background. */
+.lin-status-age{position:relative;display:inline-grid;place-items:center;flex:none;border-radius:4px;}
+.lin-status-age:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+.lin-status-age-tip{display:none;position:absolute;top:calc(100% + 7px);left:0;z-index:120;white-space:nowrap;
+  background:#1b1b1f;color:#fff;font-size:11px;font-weight:500;padding:5px 9px;border-radius:6px;
+  box-shadow:0 4px 14px #0003;pointer-events:none;}
+.lin-status-age:hover .lin-status-age-tip,.lin-status-age:focus-visible .lin-status-age-tip{display:block;}
+.lin-row:has(.lin-status-age:hover),.lin-row:has(.lin-status-age:focus-visible){z-index:2;}
+/* The final row has no room below it inside the scroll viewport. */
+.lin-row:last-child .lin-status-age-tip{top:auto;bottom:calc(100% + 7px);}
 .lin-avatar{border-radius:50%;display:grid;place-items:center;font-weight:700;flex:none;color:#5b4a52;}
 .lin-chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;border:1px solid var(--line);border-radius:99px;padding:2px 9px;color:var(--text);background:var(--panel);white-space:nowrap;}
 .lin-chip i{width:7px;height:7px;border-radius:50%;flex:none;font-style:normal;}

@@ -5,7 +5,7 @@ import {gql, relTime, stateKey} from '../main';
 import type {Cycle, Issue, IssueActivityEvent, IssueLabel, IssueState, Project, Team, Viewer} from '../main';
 import {addLocalIssue, getSync, guessNextIdentifier, isLocalIssueId, localIssueId, onEntityChange, useEntityVersion, useIssueSelect, useIssues, useSyncMeta, useSyncStatus} from '../sync';
 import {addLabelInput, bulkRemove, bulkUpdate, useHiddenIssueIds, useScrollWindow, useStableCallback, visibleRange} from './issueStore';
-import {Avatar, CycleChip, CycleGlyph, DueChip, FavStar, IconBtn, LabelChip, LinMenu, LinearStatusIcon, PriorityIcon, ProjectChip, Ring, SubIssuePill, Tip, cx, dueIsOverdue, fmtDate, fmtFullDate, formatDueDay, parseDueDay, useDismiss, useFavorite} from './shared';
+import {Avatar, CycleChip, CycleGlyph, DueChip, FavStar, IconBtn, LabelChip, LinMenu, LinearStatusIcon, PriorityIcon, ProjectChip, Ring, StatusAgeIcon, SubIssuePill, Tip, cx, dueIsOverdue, fmtDate, fmtFullDate, formatDueDay, parseDueDay, useDismiss, useFavorite} from './shared';
 
 /* Linear 1:1 Issues list + board + detail. */
 
@@ -337,7 +337,7 @@ export const IssueRow = memo(function IssueRow({issue, display, selected, onSele
       )}
       {p.priority && <PriorityIcon priority={issue.priority} />}
       {p.id && <span className="ident">{issue.identifier}</span>}
-      {p.status && <LinearStatusIcon state={issue.state} />}
+      {p.status && <StatusAgeIcon issue={issue} />}
       <button type="button" className="title" onClick={() => onOpen(issue)} title={issue.title}>{issue.title}</button>
       {childCount > 0 && <SubIssuePill done={0} total={childCount} />}
       <span className="meta">
