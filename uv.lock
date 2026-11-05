@@ -667,74 +667,6 @@ wheels = [
 ]
 
 [[package]]
-name = "hoja"
-version = "0.21.4"
-source = { editable = "." }
-dependencies = [
-    { name = "httpx" },
-    { name = "pydantic" },
-    { name = "rich" },
-    { name = "tomli", marker = "python_full_version < '3.11'" },
-    { name = "tomli-w" },
-    { name = "typer" },
-]
-
-[package.optional-dependencies]
-agent = [
-    { name = "google-workspace-connector" },
-    { name = "pydantic-ai-slim", extra = ["dbos", "mcp", "openai"] },
-]
-dev = [
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-cov" },
-    { name = "respx" },
-    { name = "ruff" },
-]
-mcp = [
-    { name = "mcp" },
-]
-saas = [
-    { name = "asyncpg" },
-]
-server = [
-    { name = "aiosqlite" },
-    { name = "ariadne" },
-    { name = "fastapi" },
-    { name = "psycopg", extra = ["binary"] },
-    { name = "sqlalchemy" },
-    { name = "uvicorn", extra = ["standard"] },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiosqlite", marker = "extra == 'server'", specifier = ">=0.20" },
-    { name = "ariadne", marker = "extra == 'server'", specifier = ">=0.23" },
-    { name = "asyncpg", marker = "extra == 'saas'", specifier = ">=0.29" },
-    { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.115" },
-    { name = "google-workspace-connector", marker = "extra == 'agent'", editable = "connectors/google_workspace" },
-    { name = "httpx", specifier = ">=0.27,<1.0" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2.2.0,<3.0.0" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.13" },
-    { name = "psycopg", extras = ["binary"], marker = "extra == 'server'", specifier = ">=3.2" },
-    { name = "pydantic", specifier = ">=2.10,<3.0" },
-    { name = "pydantic-ai-slim", extras = ["dbos", "openai", "mcp"], marker = "extra == 'agent'", specifier = ">=2.54,<3.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0" },
-    { name = "respx", marker = "extra == 'dev'", specifier = ">=0.21" },
-    { name = "rich", specifier = ">=13.9,<15.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.7" },
-    { name = "sqlalchemy", marker = "extra == 'server'", specifier = ">=2.0" },
-    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
-    { name = "tomli-w", specifier = ">=1.0" },
-    { name = "typer", specifier = ">=0.15,<1.0" },
-    { name = "uvicorn", extras = ["standard"], marker = "extra == 'server'", specifier = ">=0.30" },
-]
-provides-extras = ["dev", "mcp", "server", "saas", "agent"]
-
-[[package]]
 name = "colorama"
 version = "0.4.6"
 source = { registry = "https://pypi.org/simple" }
@@ -1209,6 +1141,76 @@ sdist = { url = "https://files.pythonhosted.org/packages/01/ee/02a2c011bdab74c6f
 wheels = [
     { url = "https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl", hash = "sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86", size = 37515, upload-time = "2025-04-24T03:35:24.344Z" },
 ]
+
+[[package]]
+name = "hoja"
+version = "0.21.4"
+source = { editable = "." }
+dependencies = [
+    { name = "cryptography" },
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "rich" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
+    { name = "tomli-w" },
+    { name = "typer" },
+]
+
+[package.optional-dependencies]
+agent = [
+    { name = "google-workspace-connector" },
+    { name = "pydantic-ai-slim", extra = ["dbos", "mcp", "openai"] },
+]
+dev = [
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "respx" },
+    { name = "ruff" },
+]
+mcp = [
+    { name = "mcp" },
+]
+saas = [
+    { name = "asyncpg" },
+]
+server = [
+    { name = "aiosqlite" },
+    { name = "ariadne" },
+    { name = "fastapi" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "sqlalchemy" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiosqlite", marker = "extra == 'server'", specifier = ">=0.20" },
+    { name = "ariadne", marker = "extra == 'server'", specifier = ">=0.23" },
+    { name = "asyncpg", marker = "extra == 'saas'", specifier = ">=0.29" },
+    { name = "cryptography", specifier = ">=42,<60" },
+    { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.115" },
+    { name = "google-workspace-connector", marker = "extra == 'agent'", editable = "connectors/google_workspace" },
+    { name = "httpx", specifier = ">=0.27,<1.0" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2.2.0,<3.0.0" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.13" },
+    { name = "psycopg", extras = ["binary"], marker = "extra == 'server'", specifier = ">=3.2" },
+    { name = "pydantic", specifier = ">=2.10,<3.0" },
+    { name = "pydantic-ai-slim", extras = ["dbos", "openai", "mcp"], marker = "extra == 'agent'", specifier = ">=2.54,<3.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0" },
+    { name = "respx", marker = "extra == 'dev'", specifier = ">=0.21" },
+    { name = "rich", specifier = ">=13.9,<15.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.7" },
+    { name = "sqlalchemy", marker = "extra == 'server'", specifier = ">=2.0" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
+    { name = "tomli-w", specifier = ">=1.0" },
+    { name = "typer", specifier = ">=0.15,<1.0" },
+    { name = "uvicorn", extras = ["standard"], marker = "extra == 'server'", specifier = ">=0.30" },
+]
+provides-extras = ["dev", "mcp", "server", "saas", "agent"]
 
 [[package]]
 name = "httpcore"

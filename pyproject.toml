@@ -28,6 +28,7 @@ classifiers = [
 ]
 dependencies = [
     "pydantic>=2.10,<3.0",
+    "cryptography>=42,<60",
     "httpx>=0.27,<1.0",
     "typer>=0.15,<1.0",
     "rich>=13.9,<15.0",
