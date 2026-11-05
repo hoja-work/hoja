@@ -71,6 +71,7 @@ from cliniar_server.db import (
     user,
 )
 from cliniar_server.denials import DENY_HINT, hint_for
+from cliniar_server.deployment import single_org_mode
 from cliniar_server.meetings import MeetingService
 from cliniar_server.meetings_api import MeetingHub, meeting_routes
 from cliniar_server.resolvers import build_schema
@@ -1004,7 +1005,7 @@ def create_app(
             initialized = store.is_initialized()
         except Exception:
             return JSONResponse({"error": "Setup status unavailable"}, status_code=503)
-        return JSONResponse({"initialized": initialized})
+        return JSONResponse({"initialized": initialized, "singleOrg": single_org_mode()})
 
     async def onboarding_bootstrap(request: Request):
         body = await request.json()
@@ -1109,14 +1110,14 @@ def create_app(
                         name=team_name,
                         description=f"{team_name} team",
                         color="#5e6ad2",
-                        private=False,
+                        visibility="public",
                         timezone="UTC",
                         issue_counter=0,
                         created_at=now,
                         updated_at=now,
                     )
                 )
-                conn.execute(team_member.insert().values(team_id=tid, user_id=uid))
+                conn.execute(team_member.insert().values(team_id=tid, user_id=uid, role="owner"))
                 default_state = seed_states_for_team(conn, org_id, tid)
                 conn.execute(
                     team.update().where(team.c.id == tid).values(default_state_id=default_state)
@@ -1332,6 +1333,10 @@ def create_app(
         except (OSError, ValueError):
             return JSONResponse({"error": "Not found"}, status_code=404)
         if meta.get("org") != org:
+            return JSONResponse({"error": "Not found"}, status_code=404)
+        # An uploaded file inherits its issue's team visibility: knowing the (random)
+        # file id is not authority to read a private team's material.
+        if not store.upload_visible(org, uid, file_id):
             return JSONResponse({"error": "Not found"}, status_code=404)
         candidates = [p for p in _uploads_dir().glob(f"{file_id}.*")
                       if p.suffix != ".json" and p.name != f"{file_id}.json"]
