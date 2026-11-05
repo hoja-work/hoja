@@ -61,6 +61,11 @@ CONTROL_PLANE_ENV = "HOJA_CONTROL_PLANE_URL"
 #: a single-origin install; when present it must be long enough to be a secret.
 TRANSFER_KEY_ENV = "HOJA_IDENTITY_TRANSFER_KEY"
 
+#: The control plane's master, from which every tenant's key is derived. It is
+#: deliberately a different variable from TRANSFER_KEY_ENV: a tenant must never
+#: be able to hold the master and mint identities for its neighbours.
+TRANSFER_MASTER_ENV = "HOJA_IDENTITY_TRANSFER_MASTER"
+
 #: A site key is an opaque token, not a URL and not a compound value.
 _SITE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]{8,128}$")
 
@@ -135,6 +140,7 @@ class SignupConfig:
     #: it. Both empty on a single-origin install; both set on a hosted one.
     control_plane_url: str | None = None
     identity_transfer_key: str | None = None
+    identity_transfer_master: str | None = None
     flow_ttl_seconds: int = 600
     session_days: int = 30
 
@@ -233,6 +239,7 @@ def load_signup_config(environ: dict[str, str] | None = None) -> SignupConfig:
         tenant_registry=(env.get(TENANT_REGISTRY_ENV) or "").strip() or None,
         control_plane_url=control_plane_url(env),
         identity_transfer_key=identity_transfer_key(env),
+        identity_transfer_master=identity_transfer_master(env),
     )
 
 
@@ -245,6 +252,19 @@ def control_plane_url(environ=None) -> str | None:
     parts = urlsplit(raw)
     if parts.scheme != "https" or not parts.netloc:
         raise SignupConfigError(f"{CONTROL_PLANE_ENV} must be an https origin, got {raw!r}.")
+    return raw
+
+
+def identity_transfer_master(environ=None) -> str | None:
+    """The control plane's key-derivation master, or None."""
+    env = os.environ if environ is None else environ
+    raw = (env.get(TRANSFER_MASTER_ENV) or "").strip()
+    if not raw:
+        return None
+    if len(raw) < 32:
+        raise SignupConfigError(
+            f"{TRANSFER_MASTER_ENV} must be at least 32 characters; every tenant key is derived from it."
+        )
     return raw
 
 

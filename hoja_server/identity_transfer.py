@@ -30,6 +30,13 @@ DEFAULT_TTL_SECONDS = 120
 MIN_KEY_BYTES = 32
 
 
+#: HKDF salt. Changing it invalidates every derived key, so it is versioned.
+DERIVATION_SALT = b"hoja-identity-transfer-v1"
+
+#: Derived keys are 32 bytes, the HMAC-SHA256 key size.
+DERIVED_KEY_BYTES = 32
+
+
 class TransferError(Exception):
     """A transfer token was refused. ``reason`` is safe to log and return."""
 
@@ -53,6 +60,33 @@ def _check_key(key: str | bytes | None) -> bytes:
     if not key or len(key) < MIN_KEY_BYTES:
         raise TransferError("key_missing", "A transfer key of at least 32 bytes is required.")
     return key
+
+
+def tenant_key(master: str | bytes, audience: str) -> bytes:
+    """Derive the one key a given host may hold, from the control-plane master.
+
+    Domain separation is the point: a tenant stores *this* value, never the
+    master, so a compromised tenant cannot compute any other host's key and
+    therefore cannot mint an identity for it. HKDF-SHA256 with the hostname as
+    ``info`` also gives stability (same host, same key) and independence
+    (different host, unrelated key).
+    """
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
+    if isinstance(master, str):
+        master = master.encode("utf-8")
+    if not master or len(master) < MIN_KEY_BYTES:
+        raise TransferError("key_missing", "A master key of at least 32 bytes is required.")
+    host = (audience or "").strip().lower()
+    if not host:
+        raise TransferError("claims_missing", "An audience is required to derive a key.")
+    return HKDF(
+        algorithm=hashes.SHA256(),
+        length=DERIVED_KEY_BYTES,
+        salt=DERIVATION_SALT,
+        info=host.encode("utf-8"),
+    ).derive(master)
 
 
 def _signature(key: bytes, signing_input: bytes) -> bytes:

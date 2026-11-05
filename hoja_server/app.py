@@ -1516,16 +1516,18 @@ def create_app(
         if tenant_target is not None:
             # This origin is the control plane for a tenant sign-in. The address
             # is verified; the tenant decides whether it belongs.
-            transfer_key = signup_config.identity_transfer_key
-            if not transfer_key:
+            master = signup_config.identity_transfer_master
+            if not master:
                 return JSONResponse(
                     {"error": "Identity handoff is not configured on this deployment.",
                      "reason": "transfer_unconfigured"},
                     status_code=503,
                 )
+            target_host = urlsplit(tenant_target).hostname or ""
+            # Sign with the target's own derived key: the master never leaves here.
             transfer = identity_transfer.issue(
-                key=transfer_key,
-                audience=urlsplit(tenant_target).hostname or "",
+                key=identity_transfer.tenant_key(master, target_host),
+                audience=target_host,
                 email=email.strip().lower(),
                 subject=claims["sub"],
                 name=claims.get("name"),
