@@ -84,20 +84,27 @@ def ask_block(ask: AskUser) -> str:
 
 
 class AgentDeps:
-    def __init__(self, schema, context: dict):
+    def __init__(self, schema, context: dict, graphql_runner=None, sink=None):
         self.schema = schema
         self.context = context
         self.snapshot: str | None = None
+        # Durable runs route the graphql tool through a checkpointed step and stream text to a sink.
+        self.graphql_runner = graphql_runner
+        self.sink = sink
 
 
-def build_agent(model, schema_sdl: str, connector: ConnectorBinding | None = None) -> Agent:
-    toolsets = [connector_toolset(connector)] if connector is not None else []
+def build_agent(model, schema_sdl: str, connector: ConnectorBinding | None = None, *,
+                name: str | None = None, capabilities: list | None = None, toolsets: list | None = None) -> Agent:
+    if toolsets is None:
+        toolsets = [connector_toolset(connector)] if connector is not None else []
     # ask_user is an output tool: it ends the run and never receives deps, so it cannot read or change workspace data.
     agent = Agent(
         model,
+        name=name,
         deps_type=AgentDeps,
         retries=3,
         toolsets=toolsets,
+        capabilities=capabilities or [],
         output_type=[str, ToolOutput(AskUser, name="ask_user", description=AskUser.__doc__)],
     )
 
@@ -124,6 +131,8 @@ def build_agent(model, schema_sdl: str, connector: ConnectorBinding | None = Non
         `query` is REQUIRED and must be a non-empty GraphQL string. Call `schema` first if you need field names."""
         if read_only_violation(query, ctx.deps.context.get("access", "read")):
             return {"errors": [{"message": "This API key is read-only.", "extensions": {"code": "FORBIDDEN", "agentHint": DENY_HINT}}]}
+        if ctx.deps.graphql_runner is not None:
+            return await ctx.deps.graphql_runner(query, variables or {})
         _ok, result = await graphql_run(ctx.deps.schema, query, variables or {}, ctx.deps.context)
         return result
 

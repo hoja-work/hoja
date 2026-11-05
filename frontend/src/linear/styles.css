@@ -199,6 +199,7 @@
 .lin-comment > header{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
 .lin-comment > header b{font-size:13px;}
 .lin-comment > header time{color:var(--muted);font-size:12px;}
+.lin-comment > header .lin-comment-edited{color:var(--muted);font-size:12px;}
 .lin-comment .md{margin-top:2px;}
 .lin-comment .del{margin-top:8px;}
 .lin-comment.pending{opacity:.62;}

@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Durable agent chat turns when `CLINIAR_AGENT_DBOS_URL` is set: each turn is a DBOS
+  workflow, so a server crash or restart resumes the turn instead of losing the reply, and
+  a completed GraphQL mutation is not executed again on recovery. The transcript is read
+  from the server's thread, not the client's message list. Without the variable, behaviour
+  is unchanged.
 - My issues → Assigned has a "Completed issues" display option (None, Past week,
   Past month, All; default Past week, remembered per browser). Done and cancelled
   issues were previously always hidden there. Closed groups sort last.

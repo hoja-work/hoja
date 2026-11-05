@@ -359,6 +359,8 @@ def create_app(
     engine = make_engine(target)
     store = Store(engine)
     writer = Writer(engine)
+    # Set during lifespan when HOJA_AGENT_DBOS_URL enables durable agent turns.
+    durable_agent = None
     # Sign-up is configured (or refused) once, at startup. An enabled mode with a
     # missing credential raises here — a clear error beats a silent allow.
     try:
@@ -790,7 +792,10 @@ def create_app(
         try:
             thread_id = body.get("threadId") if isinstance(body, dict) else None
             connector = connector_binding_for(engine, org, uid)
-            gen = stream_reply(store, org, uid, messages, _schema, SCHEMA_SDL, base_context, thread_id, connector)
+            if durable_agent is not None:
+                gen = durable_agent.stream_reply(store, org, uid, messages, base_context, thread_id, connector)
+            else:
+                gen = stream_reply(store, org, uid, messages, _schema, SCHEMA_SDL, base_context, thread_id, connector)
             first = await gen.__anext__()
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
@@ -1822,7 +1827,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app):
-        nonlocal mcp_asgi
+        nonlocal mcp_asgi, durable_agent
         # Each TestClient/server lifespan gets a fresh SDK session manager;
         # the SDK manager is intentionally single-use after shutdown.
         from hoja_server.mcp_oauth import HojaOAuthProvider, build_server
@@ -1848,12 +1853,19 @@ def create_app(
             if agent_dbos_url := os.environ.get("HOJA_AGENT_DBOS_URL"):
                 from dbos import DBOS
 
+                # Imported before launch: DBOS registers workflows at import and recovers them at launch.
+                from hoja_server import agent_durable
+
+                agent_durable.configure(store, writer, _schema)
                 DBOS(config={"name": "hoja-agent", "system_database_url": agent_dbos_url})
                 DBOS.launch()
+                durable_agent = agent_durable
                 try:
                     yield
                 finally:
+                    durable_agent = None
                     DBOS.destroy()
+                    agent_durable.shutdown()
             else:
                 yield
         await hub.stop()

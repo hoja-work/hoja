@@ -973,14 +973,15 @@ function PropDropdown({label, icon, value, onPick, options, disabled}: {
 
 /* ---------------- issue detail ---------------- */
 
+// canEdit/canDelete come from the server's comment policy; the UI never re-derives them.
+const commentFields = `{id body createdAt editedAt canEdit canDelete user{id name}}`;
 const detailFields = `{ id identifier title description createdAt updatedAt dueDate priority priorityLabel estimate branchName url
   state{id name color type} team{id key name} project{id name} assignee{id name} creator{id name}
   cycle{id name number} parent{id identifier title}
   labels{nodes{id name color}} subscribers{nodes{id name}}
   attachments{nodes{id url title subtitle createdAt}}
   activity(first:50){nodes{id eventType createdAt actor{name} changes}}
-  comments{nodes{id body createdAt user{id name}}} }`;
-const commentFields = `{id body createdAt user{id name}}`;
+  comments{nodes${commentFields}} }`;
 
 /* Detail cache. The sync store already holds every synced issue's properties; this keeps
  * what the snapshot does not carry (description, comments, activity, attachments,
@@ -1317,7 +1318,11 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
       await onDeleteComment(id);
       updateCachedDetail(detail.id, en => ({...en, detail: {...en.detail, comments: {nodes: (en.detail.comments?.nodes || []).filter(c => c.id !== id)}}}));
       force();
-    } catch (err) { setCommentError((err as Error).message); } finally { setHiddenComments(h => h.filter(x => x !== id)); }
+    } catch (err) {
+      setCommentError((err as Error).message);
+      // Rights may have changed (demotion, deletion elsewhere): let the server's answer redraw the controls.
+      void fetchIssueComments(detail.id).then(force).catch(() => undefined);
+    } finally { setHiddenComments(h => h.filter(x => x !== id)); }
   };
   const saveComment = async (id: string, body: string) => {
     const text = body.trim();
@@ -1326,12 +1331,14 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
     setEditedComments(m => ({...m, [id]: text}));
     try {
       const d = await gql(`mutation($id:String!,$input:CommentUpdateInput!){commentUpdate(id:$id,input:$input){success comment${commentFields}}}`, {id, input: {body: text}});
-      if (!d.commentUpdate?.success) throw new Error('Comment edit was rejected');
-      updateCachedDetail(detail.id, en => ({...en, detail: {...en.detail, comments: {nodes: (en.detail.comments?.nodes || []).map(c => (c.id === id ? {...c, body: text} : c))}}}));
+      const saved = d.commentUpdate?.comment;
+      if (!d.commentUpdate?.success || !saved) throw new Error('This comment no longer exists.');
+      updateCachedDetail(detail.id, en => ({...en, detail: {...en.detail, comments: {nodes: (en.detail.comments?.nodes || []).map(c => (c.id === id ? saved : c))}}}));
       force();
     } catch (err) {
       setCommentError((err as Error).message);
       setEditing({id, body: text});
+      void fetchIssueComments(detail.id).then(force).catch(() => undefined);
     } finally {
       setEditedComments(m => { const n = {...m}; delete n[id]; return n; });
     }
@@ -1628,8 +1635,9 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
             {!detailReady && <p className="lin-note" role="status">Loading activity…</p>}
             {serverComments.map(c => (
               <article key={c.id} className={cx('lin-comment', editedComments[c.id] !== undefined && 'pending')} aria-busy={editedComments[c.id] !== undefined || undefined}>
-                <header><Avatar name={c.user?.name} size={18} /><b>{c.user?.name || 'User'}</b><time>{editedComments[c.id] !== undefined ? 'Saving…' : relTime(c.createdAt)}</time></header>
-                {editing?.id === c.id ? (
+                <header><Avatar name={c.user?.name} size={18} /><b>{c.user?.name || 'User'}</b><time>{editedComments[c.id] !== undefined ? 'Saving…' : relTime(c.createdAt)}</time>
+                  {c.editedAt && editedComments[c.id] === undefined && <span className="lin-comment-edited" title={`Edited ${relTime(c.editedAt)}`}>(edited)</span>}</header>
+                {editing?.id === c.id && c.canEdit ? (
                   <form className="lin-commentbox" onSubmit={e => { e.preventDefault(); void saveComment(c.id, editing.body); }}>
                     <textarea rows={2} value={editing.body} aria-label="Edit comment"
                       onChange={e => setEditing({id: c.id, body: e.target.value})}
@@ -1640,9 +1648,9 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
                     </footer>
                   </form>
                 ) : <Markdown text={c.body} />}
-                {(viewer.admin || (viewer.id && c.user?.id === viewer.id)) && editing?.id !== c.id && (<>
-                  <button type="button" className="lin-addrow del" onClick={() => setEditing({id: c.id, body: c.body})}>Edit comment</button>
-                  <button type="button" className="lin-addrow del" onClick={async () => { if (await confirmDialog('Delete this comment?',{danger:true})) void deleteComment(c.id); }}>Delete comment</button>
+                {editing?.id !== c.id && (<>
+                  {c.canEdit && <button type="button" className="lin-addrow del" onClick={() => setEditing({id: c.id, body: c.body})}>Edit comment</button>}
+                  {c.canDelete && <button type="button" className="lin-addrow del" onClick={async () => { if (await confirmDialog(c.user?.id && c.user.id !== viewer.id ? `Delete ${c.user?.name || 'this member'}'s comment? This removes it for everyone.` : 'Delete this comment?', {danger: true})) void deleteComment(c.id); }}>Delete comment</button>}
                 </>)}
               </article>
             ))}

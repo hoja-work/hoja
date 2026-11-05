@@ -302,6 +302,12 @@ type Comment {
   user: User
   createdAt: DateTime
   updatedAt: DateTime
+  "When the author last changed the body; null if never edited."
+  editedAt: DateTime
+  "Whether the viewer may edit this comment (author only)."
+  canEdit: Boolean!
+  "Whether the viewer may delete this comment (author or workspace admin)."
+  canDelete: Boolean!
 }
 
 type Issue {

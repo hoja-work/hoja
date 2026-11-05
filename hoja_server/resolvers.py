@@ -815,6 +815,30 @@ def c_user(obj, info):
     return store.ser_user(_user_row(info, obj["_user_id"]), uid) if obj.get("_user_id") else None
 
 
+def _comment_can(obj, info, action) -> bool:
+    from hoja_server import comment_policy
+    store, _w, org, uid = _ctx(info)
+    subject = info.context.get("_comment_subject")
+    if subject is None:
+        with store.engine.connect() as conn:
+            subject = info.context["_comment_subject"] = comment_policy.subject(conn, org, uid)
+    # The comment was readable, so its team is visible to this viewer.
+    resource = {"author_id": obj.get("_user_id"), "archived": obj.get("_archived"), "team_visible": True}
+    return comment_policy.decide(action, subject, resource).allowed
+
+
+@Comment.field("canEdit")
+def c_can_edit(obj, info):
+    from hoja_server.comment_policy import EDIT
+    return _comment_can(obj, info, EDIT)
+
+
+@Comment.field("canDelete")
+def c_can_delete(obj, info):
+    from hoja_server.comment_policy import DELETE
+    return _comment_can(obj, info, DELETE)
+
+
 # ----------------------------------------------------------------- Mutations
 @mutation.field("workspaceCreate")
 def m_workspace_create(_, info, input):

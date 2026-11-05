@@ -848,7 +848,9 @@ class Store:
         return {
             "id": row["id"], "body": row["body"], "url": row.get("url"),
             "createdAt": row.get("created_at"), "updatedAt": row.get("updated_at"),
+            "editedAt": row.get("updated_at") if (row.get("updated_at") or "") > (row.get("created_at") or "") else None,
             "_user_id": row.get("user_id"),
+            "_archived": row.get("archived_at") is not None,
         }
 
     def ser_attachment(self, row: dict | None) -> dict | None:

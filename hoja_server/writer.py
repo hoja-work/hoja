@@ -15,6 +15,7 @@ from hoja_server.store import (
     team_descendant_ids,
     team_visible,
 )
+from hoja_server import comment_policy
 from hoja_server.db import (
     PRIORITY_LABELS,
     attachment,
@@ -912,29 +913,42 @@ class Writer:
 
     def comment_update(self, org_id: str, viewer_id: str, cid: str, inp: dict) -> str | None:
         with self.engine.begin() as conn:
-            row = conn.execute(select(comment.c.id, comment.c.user_id, comment.c.issue_id).where(and_(
-                comment.c.organization_id == org_id, comment.c.id == cid))).first()
+            row = self._authorize_comment(conn, org_id, viewer_id, cid, comment_policy.EDIT)
             if not row:
                 return None
-            self._require_creator_or_admin(conn, org_id, viewer_id, row[1])
-            issue_team = conn.execute(select(issue.c.team_id).where(issue.c.id == row[2])).scalar()
-            self._require_team_visible(conn, org_id, viewer_id, issue_team)
             vals = {"updated_at": now_iso()}
             if "body" in inp:
                 vals["body"] = inp["body"]
             conn.execute(comment.update().where(comment.c.id == cid).values(**vals))
-            issue_id = conn.execute(select(comment.c.issue_id).where(comment.c.id == cid)).scalar_one()
-            self._record_activity(conn, org_id, issue_id, None, "commentUpdated", {"commentId": cid}, vals["updated_at"])
+            self._record_activity(conn, org_id, row.issue_id, viewer_id, "commentUpdated", {"commentId": cid}, vals["updated_at"])
             return cid
 
     def comment_delete(self, org_id: str, viewer_id: str, cid: str) -> bool:
         with self.engine.begin() as conn:
-            row = conn.execute(select(comment.c.user_id).where(and_(
-                comment.c.organization_id == org_id, comment.c.id == cid,
-                comment.c.archived_at.is_(None)))).first()
-            if row:
-                self._require_creator_or_admin(conn, org_id, viewer_id, row[0])
-        return self._soft_delete(comment, org_id, cid)
+            if not self._authorize_comment(conn, org_id, viewer_id, cid, comment_policy.DELETE):
+                return False
+            conn.execute(comment.update().where(comment.c.id == cid).values(archived_at=now_iso()))
+            return True
+
+    def _authorize_comment(self, conn, org_id: str, viewer_id: str, cid: str, action: str):
+        """The comment row if the policy permits ``action``; None when it is absent or must look absent."""
+        row = conn.execute(
+            select(comment.c.user_id, comment.c.issue_id, comment.c.archived_at, issue.c.team_id)
+            .select_from(comment.join(issue, issue.c.id == comment.c.issue_id))
+            .where(and_(comment.c.organization_id == org_id, comment.c.id == cid))
+        ).first()
+        if not row:
+            return None
+        decision = comment_policy.decide(
+            action, comment_policy.subject(conn, org_id, viewer_id),
+            comment_policy.resource(conn, org_id, viewer_id, author_id=row.user_id,
+                                    archived=row.archived_at is not None, team_id=row.team_id))
+        if decision:
+            return row
+        if decision.rule in comment_policy.NOT_FOUND_RULES:
+            return None
+        raise GraphQLError(comment_policy.DENIED_MESSAGE[action],
+                           extensions={"code": "FORBIDDEN", "rule": decision.rule or "default-deny"})
 
     # -------------------------------------------------------------- attachments
     def attachment_create(self, org_id: str, viewer_id: str, inp: dict) -> dict | None:

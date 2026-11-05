@@ -42,15 +42,17 @@ def start_conversation(conn, org_id: str, user_id: str, title: str | None = None
     return cid
 
 
-def save_message(conn, conversation_id: str, role: str, content: str) -> None:
+def save_message(conn, conversation_id: str, role: str, content: str) -> str:
     if len(content.encode("utf-8")) > MAX_MESSAGE_BYTES:
         raise ValueError(f"Each message must be at most {MAX_MESSAGE_BYTES} bytes.")
     ts = now_iso()
+    mid = new_id()
     conn.execute(agent_message.insert().values(
-        id=new_id(), conversation_id=conversation_id, role=role, content=content, created_at=ts))
+        id=mid, conversation_id=conversation_id, role=role, content=content, created_at=ts))
     conn.execute(agent_conversation.update()
                  .where(agent_conversation.c.id == conversation_id)
                  .values(updated_at=ts))
+    return mid
 
 
 @query.field("agentConversations")
