@@ -1,13 +1,14 @@
 /* Sign-up / sign-in — metrics taken from the reference page (login.tailscale.com):
-   white page, 1.25rem/600 heading, 16px subtitle, 0.8rem legal block, 20rem button
-   column, 0.25rem radii, #d8d6d4 borders and a 0 2px 4px shadow. Values are
+   white page, 20px/600 heading, 16px subtitle, 12.8px legal block, 320px button
+   column, 4px radii, #d8d6d4 borders and a 0 2px 4px shadow. Values are
    reproduced, not vendored: this stylesheet is ours. */
 
 .signin-page {
   min-height: 100dvh;
-  padding: 3rem 0 4rem;
+  padding: 48px 0 64px;
   background: #fff;
   color: #242424;
+  font-size: 16px;
   font-family: Inter, -apple-system, BlinkMacSystemFont, "avenir next", avenir,
     helvetica, "helvetica neue", ubuntu, roboto, noto, "segoe ui", arial, sans-serif;
   letter-spacing: -0.0015em;
@@ -19,7 +20,7 @@
 
 .signin-shell {
   width: 94%;
-  max-width: 35rem;
+  max-width: 560px;
   margin: 0 auto;
 }
 
@@ -27,43 +28,43 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.4rem;
-  margin-bottom: 3rem;
+  gap: 6.4px;
+  margin-bottom: 48px;
   color: #242424;
-  font-size: 1.15rem;
+  font-size: 18.4px;
   font-weight: 600;
   letter-spacing: -0.03em;
 }
 
 .signin-brand .brand-mark {
-  width: 1.35rem;
-  height: 1.35rem;
+  width: 21.6px;
+  height: 21.6px;
 }
 
 /* Header: same block, same rhythm as the reference. */
 .signin-shell h1 {
   margin: 0;
   color: #242424;
-  font-size: 1.25rem;
+  font-size: 20px;
   font-weight: 600;
   letter-spacing: -0.03em;
   line-height: 1.45;
 }
 
 .signin-sub {
-  margin: 0.75rem auto 0;
-  max-width: 35rem;
+  margin: 12px auto 0;
+  max-width: 560px;
   color: #343433;
-  font-size: 1rem;
+  font-size: 16px;
   font-weight: 400;
 }
 
 /* Legal line sits above the buttons, exactly as the reference does. */
 .signin-legal {
-  max-width: 28rem;
-  margin: 0.5rem auto 2rem;
+  max-width: 448px;
+  margin: 8px auto 32px;
   color: #666;
-  font-size: 0.8rem;
+  font-size: 12.8px;
   letter-spacing: -0.01em;
   line-height: 1.45;
 }
@@ -76,9 +77,9 @@
 
 .signin-providers {
   display: grid;
-  gap: 0.625rem;
+  gap: 10px;
   width: 94%;
-  max-width: 20rem;
+  max-width: 320px;
   margin: 0 auto;
 }
 
@@ -88,14 +89,14 @@
   align-items: center;
   justify-content: center;
   width: 100%;
-  padding: 0.5rem 0.75rem;
+  padding: 8px 12px;
   border: 1px solid #d8d6d4;
-  border-radius: 0.25rem;
+  border-radius: 4px;
   background-color: #fff;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
   color: #242424;
   font-family: inherit;
-  font-size: 1rem;
+  font-size: 16px;
   font-weight: 400;
   line-height: inherit;
   text-decoration: none;
@@ -108,7 +109,7 @@
 
 .signin-provider svg {
   flex: none;
-  margin-right: 0.75rem;
+  margin-right: 12px;
 }
 
 .signin-provider:hover {
@@ -132,9 +133,9 @@
 }
 
 .signin-pending {
-  margin-left: 0.55rem;
+  margin-left: 8.8px;
   color: #8a8a8a;
-  font-size: 0.62rem;
+  font-size: 9.92px;
   font-style: normal;
   font-weight: 500;
   letter-spacing: 0.08em;
@@ -142,30 +143,30 @@
 }
 
 .signin-loading {
-  margin: 1rem auto;
+  margin: 16px auto;
   color: #666;
-  font-size: 0.8rem;
+  font-size: 12.8px;
 }
 
 .signin-error {
-  max-width: 20rem;
-  margin: 1rem auto 0;
+  max-width: 320px;
+  margin: 16px auto 0;
   color: #c62f2f;
-  font-size: 0.8rem;
+  font-size: 12.8px;
 }
 
 /* The second screen keeps the same column and type scale. */
 .signin-form {
   width: 94%;
-  max-width: 20rem;
+  max-width: 320px;
   margin: 0 auto;
   text-align: left;
 }
 
 .signin-identity {
-  margin: 0 0 1rem;
+  margin: 0 0 16px;
   color: #666;
-  font-size: 0.8rem;
+  font-size: 12.8px;
   letter-spacing: -0.01em;
   text-align: center;
 }
@@ -181,7 +182,7 @@
   background: none;
   color: #666;
   font-family: inherit;
-  font-size: 0.8rem;
+  font-size: 12.8px;
   text-decoration: underline;
   text-underline-offset: 0.1em;
   cursor: pointer;
@@ -193,9 +194,9 @@
 
 .signin-form > label {
   display: block;
-  margin-bottom: 0.35rem;
+  margin-bottom: 5.6px;
   color: #242424;
-  font-size: 0.8rem;
+  font-size: 12.8px;
   font-weight: 600;
 }
 
@@ -203,7 +204,7 @@
   display: flex;
   align-items: center;
   border: 1px solid #d8d6d4;
-  border-radius: 0.25rem;
+  border-radius: 4px;
   background: #fff;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
@@ -215,52 +216,52 @@
 .signin-field input {
   flex: 1;
   min-width: 0;
-  padding: 0.5rem 0 0.5rem 0.75rem;
+  padding: 8px 0 8px 12px;
   border: 0;
   outline: 0;
   background: transparent;
   color: #242424;
   font-family: inherit;
-  font-size: 1rem;
+  font-size: 16px;
 }
 
 .signin-suffix {
   flex: none;
-  padding-right: 0.75rem;
+  padding-right: 12px;
   color: #8a8a8a;
-  font-size: 0.875rem;
+  font-size: 14px;
 }
 
 .signin-hint {
-  margin: 0.4rem 0 0;
+  margin: 6.4px 0 0;
   color: #666;
-  font-size: 0.75rem;
+  font-size: 12px;
   letter-spacing: -0.01em;
 }
 
 .signin-hint code {
-  font-size: 0.72rem;
+  font-size: 11.52px;
 }
 
 .signin-hint-error {
-  min-height: 1.05rem;
-  margin: 0.2rem 0 0;
+  min-height: 16.8px;
+  margin: 3.2px 0 0;
   color: #c62f2f;
-  font-size: 0.75rem;
+  font-size: 12px;
 }
 
 .signin-challenge {
   display: flex;
   justify-content: center;
-  margin: 0.875rem 0 0.25rem;
+  margin: 14px 0 4px;
 }
 
 .signin-alert {
   display: grid;
-  gap: 0.15rem;
-  margin: 0.6rem 0 0;
+  gap: 2.4px;
+  margin: 9.6px 0 0;
   color: #c62f2f;
-  font-size: 0.8rem;
+  font-size: 12.8px;
   line-height: 1.45;
 }
 
@@ -270,14 +271,14 @@
 
 .signin-submit {
   width: 100%;
-  margin-top: 0.875rem;
-  padding: 0.5rem 0.75rem;
+  margin-top: 14px;
+  padding: 8px 12px;
   border: 1px solid #242424;
-  border-radius: 0.25rem;
+  border-radius: 4px;
   background: #242424;
   color: #fff;
   font-family: inherit;
-  font-size: 1rem;
+  font-size: 16px;
   font-weight: 500;
   cursor: pointer;
   transition: background-color 200ms ease, border-color 200ms ease;
@@ -296,32 +297,32 @@
 /* Terminal and unavailable states, same column and scale. */
 .signin-notice {
   width: 94%;
-  max-width: 20rem;
-  margin: 0 auto 2rem;
-  padding: 1rem;
+  max-width: 320px;
+  margin: 0 auto 32px;
+  padding: 16px;
   border: 1px solid #d8d6d4;
-  border-radius: 0.25rem;
+  border-radius: 4px;
   background: #fff;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
   text-align: left;
 }
 
 .signin-notice h2 {
-  margin: 0 0 0.5rem;
+  margin: 0 0 8px;
   color: #242424;
-  font-size: 1.12rem;
+  font-size: 17.92px;
   font-weight: 600;
   letter-spacing: -0.03em;
 }
 
 .signin-notice h2 code {
-  font-size: 1.05rem;
+  font-size: 16.8px;
 }
 
 .signin-notice p {
-  margin: 0 0 0.5rem;
+  margin: 0 0 8px;
   color: #666;
-  font-size: 0.8rem;
+  font-size: 12.8px;
   line-height: 1.45;
 }
 
@@ -330,10 +331,10 @@
 }
 
 .signin-inline-note {
-  max-width: 28rem;
-  margin: 0 auto 1rem;
+  max-width: 448px;
+  margin: 0 auto 16px;
   color: #666;
-  font-size: 0.8rem;
+  font-size: 12.8px;
 }
 
 @media (max-width: 700px) {
