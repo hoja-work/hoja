@@ -1,139 +1,298 @@
-/* The gate's own pieces. The page layout, the card, the labels, the fields and
-   the primary button are the existing auth surface (.onboarding-page,
-   .onboarding-card in onboarding.css; .primary, .error, .login-help in
-   styles.css), so nothing here re-implements a layout. stylelint enforces the
-   house rules: no 100vh, no light text without its own ground, and any field
-   font-size below 16px must come with the phone guard. */
+/* Sign-up / sign-in. One decision per screen, centered column, no app chrome:
+   identity first (a single provider button), the workspace address only after
+   sign-in. Colours come from the app tokens so the dark theme keeps working. */
 
-.signup-loading {
-  margin: 0 0 16px;
-  color: var(--muted);
-  font-size: 13px;
+.signin-page {
+  min-height: 100dvh;
+  padding: clamp(40px, 9vh, 96px) 24px 64px;
+  background: var(--bg);
 }
 
-.signup-note {
-  margin: 0 0 14px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  background: var(--subtle);
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.5;
+.signin-shell {
+  width: min(100%, 460px);
+  margin: 0 auto;
+  text-align: center;
 }
 
-.signup-hint {
-  margin: 0 0 4px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.signup-hint-error {
-  margin: 0 0 10px;
-  color: var(--danger);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.signup-card code {
-  padding: 1px 4px;
-  border: 1px solid var(--line);
-  background: var(--subtle);
-  font-family: ui-monospace, monospace;
-  font-size: 11px;
-  overflow-wrap: anywhere;
-}
-
-.signup-identity {
-  margin: 0 0 4px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.signup-identity b {
-  color: var(--text);
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
-
-.signup-link {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--accent);
-  font-size: 12px;
-  text-decoration: underline;
-}
-
-.signup-link:hover {
-  color: var(--text);
-}
-
-.signup-google {
-  margin-top: 8px;
-  text-decoration: none;
-}
-
-.signup-challenge {
+.signin-brand {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 100%;
-  min-height: 66px;
-  margin: 12px 0 4px;
-}
-
-.signup-alert {
-  display: grid;
-  gap: 4px;
-  margin: 12px 0 0;
-}
-
-.signup-alert:empty {
-  display: none;
-}
-
-.signup-alert strong {
-  color: var(--danger);
-  font-size: 13px;
-}
-
-.signup-alert span {
+  gap: 9px;
+  margin-bottom: clamp(40px, 8vh, 64px);
+  font-size: 19px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
   color: var(--text);
-  font-size: 13px;
-  line-height: 1.5;
 }
 
-.signup-notice {
-  margin: 0 0 20px;
-  padding: 14px 16px;
-  border: 1px solid var(--line);
-  background: var(--subtle);
+.signin-shell h1 {
+  margin: 0 0 10px;
+  font-size: 21px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+  color: var(--text);
 }
 
-.signup-notice h2 {
-  margin: 0 0 6px;
-  font-size: 15px;
-  letter-spacing: -0.01em;
-}
-
-.signup-notice p {
-  margin: 0;
+.signin-sub {
+  max-width: 400px;
+  margin: 0 auto 30px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14.5px;
   line-height: 1.55;
 }
 
-.signup-notice p + p {
-  margin-top: 8px;
+.signin-legal {
+  max-width: 372px;
+  margin: 0 auto 22px;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.65;
 }
 
-/* The submit button must never leave the screen: the card grows with its content
-   and the page scrolls, so no fixed height, no overflow clipping, no absolute
-   positioning. On a phone the card simply becomes the page. */
-@media (max-width: 600px) {
-  .signup-challenge {
-    min-height: 70px;
+.signin-loading {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 18px 0;
+}
+
+/* The one provider button — the entire first screen's decision. */
+.signin-provider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  height: 46px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 14.5px;
+  font-weight: 550;
+  text-decoration: none;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.signin-provider:hover {
+  border-color: var(--accent);
+  background: var(--subtle);
+}
+
+.signin-provider svg {
+  flex: none;
+}
+
+.signin-alt {
+  margin: 44px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+
+.signin-alt a {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* Second screen: the workspace address. */
+.signin-form {
+  margin-top: 6px;
+  text-align: left;
+}
+
+.signin-identity {
+  margin: 0 0 20px;
+  color: var(--muted);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+.signin-identity b {
+  color: var(--text);
+  font-weight: 550;
+}
+
+.signin-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 12.5px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.signin-link:hover {
+  color: var(--text);
+}
+
+.signin-form > label {
+  display: block;
+  margin-bottom: 7px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.signin-field {
+  display: flex;
+  align-items: center;
+  height: 46px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  transition: border-color 0.15s ease;
+}
+
+.signin-field:focus-within {
+  border-color: var(--accent);
+}
+
+.signin-field input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 4px 0 13px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 14.5px;
+}
+
+.signin-suffix {
+  flex: none;
+  padding: 0 13px 0 0;
+  color: var(--muted);
+  font-size: 13.5px;
+  font-variant-ligatures: none;
+}
+
+.signin-hint {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.signin-hint code {
+  font-size: 11px;
+}
+
+.signin-hint-error {
+  min-height: 17px;
+  margin: 4px 0 0;
+  color: var(--danger);
+  font-size: 11.5px;
+}
+
+/* Turnstile renders here: managed mode may show a small checkbox. */
+.signin-challenge {
+  display: flex;
+  justify-content: center;
+  min-height: 0;
+  margin: 16px 0 4px;
+}
+
+.signin-alert {
+  display: grid;
+  gap: 2px;
+  margin: 10px 0 0;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.signin-alert strong {
+  font-weight: 650;
+}
+
+.signin-submit {
+  width: 100%;
+  height: 46px;
+  margin-top: 14px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 14.5px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  transition: filter 0.15s ease;
+}
+
+.signin-submit:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.signin-submit:disabled {
+  opacity: 0.65;
+  cursor: progress;
+}
+
+/* Terminal / unavailable states, same centered rhythm. */
+.signin-notice {
+  margin: 4px 0 0;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  text-align: left;
+}
+
+.signin-notice h2 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.signin-notice h2 code {
+  font-size: 14px;
+}
+
+.signin-notice p {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.signin-notice p:last-child {
+  margin-bottom: 0;
+}
+
+.signin-inline-note {
+  margin: 0 auto 18px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.signin-error {
+  margin: 12px 0;
+  color: var(--danger);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+@media (max-width: 420px) {
+  .signin-page {
+    padding: 32px 18px 48px;
+  }
+
+  .signin-shell h1 {
+    font-size: 19px;
+  }
+}
+
+/* iOS zooms the page when a field under 16px takes focus; this guard is required
+   by the no-small-field-font stylelint rule. */
+@media (max-width: 700px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
   }
 }

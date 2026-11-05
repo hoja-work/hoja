@@ -167,43 +167,32 @@ export function SignupPage() {
   const liveIssue = liveCheck && !liveCheck.ok ? describeReason(liveCheck.reason).message : '';
   const preview = typed && (!liveCheck || !liveCheck.ok) ? typed.toLowerCase() : 'your-workspace';
 
+  const signedIn = Boolean(session?.googleVerified);
+  const heading = queued
+    ? (queued.alreadyQueued ? 'You already asked for this address' : 'Request received')
+    : signedIn ? 'Name your workspace' : 'Sign up or sign in';
+  const sub = queued
+    ? 'Your request is queued. Nothing else is needed from you right now.'
+    : signedIn
+      ? 'Signed in with Google. Your team will reach this workspace at ' + preview + '.hoja.work.'
+      : 'One Google account, one workspace. We check that a person is asking before a workspace is queued.';
+
   return (
-    <main className="onboarding-page signup-page">
-      <section className="onboarding-card signup-card" aria-labelledby="signup-title">
-        <div className="onboarding-brand">
+    <main className="signin-page">
+      <div className="signin-shell">
+        <div className="signin-brand">
           <img className="brand-mark" src="/hoja-clover.8371400e.svg" alt=""/>
-          <span>Hoja</span>
+          <span>hoja</span>
         </div>
-        <p className="onboarding-eyebrow">Sign up</p>
-        <h1 id="signup-title">
-          {queued
-            ? (queued.alreadyQueued ? 'You already asked for this address' : 'Request received')
-            : 'Create your Hoja workspace'}
-        </h1>
 
-        {!queued && (
-          <p>
-            Sign in with Google, then choose the address your workspace will live at — your
-            team reaches it at <code>{preview}.hoja.work</code>. We also check that a person,
-            not a script, is asking before the request is queued.
-          </p>
-        )}
+        <h1 id="signup-title">{heading}</h1>
+        <p className="signin-sub">{sub}</p>
 
-        {queued && (
-          <div className="signup-notice" role="status">
-            <h2><code>{queued.slug}.hoja.work</code></h2>
-            <p>{queued.message}</p>
-            <p>
-              Creating it is an operator step, so nothing else is needed from you right now.
-            </p>
-          </div>
-        )}
-
-        {configError && <p className="error" role="alert">{configError}</p>}
-        {!config && !configError && <p className="signup-loading" role="status">Loading sign-up…</p>}
+        {configError && <p className="signin-error" role="alert">{configError}</p>}
+        {!config && !configError && <p className="signin-loading" role="status">Loading sign-up…</p>}
 
         {config && closed && (
-          <div className="signup-notice" role="note">
+          <div className="signin-notice" role="note">
             <h2>Sign-ups are invite-only</h2>
             <p>
               Every workspace gets its own database and address, so Hoja is opening them by
@@ -213,7 +202,7 @@ export function SignupPage() {
         )}
 
         {config && !closed && !config.available && (
-          <div className="signup-notice" role="note">
+          <div className="signin-notice" role="note">
             <h2>Sign-up is unavailable</h2>
             <p>
               This deployment cannot run the verification challenge, so no request can be
@@ -225,63 +214,71 @@ export function SignupPage() {
 
         {config && !closed && config.available && !queued && (
           session === null
-            ? <p className="signup-loading" role="status">Checking your Google sign-in…</p>
+            ? <p className="signin-loading" role="status">Checking your Google sign-in…</p>
             : !session.googleVerified
               ? (
                 <>
                   {config.mode === 'invite' && (
-                    <p className="signup-note">
-                      Hoja is invite-only right now: sign in with the Google address that was
-                      invited.
+                    <p className="signin-inline-note">
+                      Invite-only right now: use the Google address that was invited.
                     </p>
                   )}
-                  <a className="primary full signup-google" href={config.signInUrl ?? undefined}>
-                    Continue with Google
+                  <p className="signin-legal">
+                    By continuing you agree to the Hoja terms. We use Google to verify who you
+                    are and Cloudflare Turnstile to check that a person is asking — your Google
+                    password is never shared with us.
+                  </p>
+                  <a className="signin-provider" href={config.signInUrl ?? undefined}>
+                    <GoogleMark/>
+                    <span>Sign up with Google</span>
                   </a>
                 </>
               )
               : (
-                <form className="signup-form" onSubmit={onSubmit} noValidate>
-                  <p className="signup-identity">
-                    Signed in as <b>{session.email || 'your Google account'}</b>.{' '}
-                    <button type="button" className="signup-link" onClick={signOut}>
-                      Use a different account
+                <form className="signin-form" onSubmit={onSubmit} noValidate>
+                  <p className="signin-identity">
+                    Signed in as <b>{session.email || 'your Google account'}</b> ·{' '}
+                    <button type="button" className="signin-link" onClick={signOut}>
+                      use a different account
                     </button>
                   </p>
                   {config.mode === 'invite' && (
-                    <p className="signup-note">
+                    <p className="signin-inline-note">
                       Invite-only: this address needs an open invitation before the request is
                       queued.
                     </p>
                   )}
 
                   <label htmlFor="signup-slug">Workspace address</label>
-                  <input
-                    id="signup-slug"
-                    ref={slugInput}
-                    name="slug"
-                    value={slug}
-                    onChange={(event) => { setSlug(event.target.value); setAlert(null) }}
-                    placeholder="acme"
-                    autoComplete="off"
-                    autoCapitalize="none"
-                    spellCheck={false}
-                    maxLength={SLUG_MAX_LENGTH + 16}
-                    aria-invalid={liveIssue ? true : undefined}
-                    aria-describedby={liveIssue ? 'signup-slug-help signup-slug-error' : 'signup-slug-help'}
-                  />
-                  <p className="signup-hint" id="signup-slug-help">
+                  <div className="signin-field">
+                    <input
+                      id="signup-slug"
+                      ref={slugInput}
+                      name="slug"
+                      value={slug}
+                      onChange={(event) => { setSlug(event.target.value); setAlert(null) }}
+                      placeholder="acme"
+                      autoComplete="off"
+                      autoCapitalize="none"
+                      spellCheck={false}
+                      maxLength={SLUG_MAX_LENGTH + 16}
+                      aria-invalid={liveIssue ? true : undefined}
+                      aria-describedby={liveIssue ? 'signup-slug-help signup-slug-error' : 'signup-slug-help'}
+                    />
+                    <span className="signin-suffix">.hoja.work</span>
+                  </div>
+                  <p className="signin-hint" id="signup-slug-help">
                     Lowercase letters, digits and single hyphens, up to {SLUG_MAX_LENGTH}{' '}
                     characters. Names such as <code>www</code> are reserved.
                   </p>
-                  <div aria-live="polite" className="signup-hint-error" id="signup-slug-error">
+                  <div aria-live="polite" className="signin-hint-error" id="signup-slug-error">
                     {liveIssue || null}
                   </div>
 
-                  <div className="signup-challenge" ref={widgetRef}/>
-                  {challengeError && <p className="error" role="alert">{challengeError}</p>}
+                  <div className="signin-challenge" ref={widgetRef}/>
+                  {challengeError && <p className="signin-error" role="alert">{challengeError}</p>}
 
-                  <div className="signup-alert" role="alert" aria-live="assertive" aria-atomic="true">
+                  <div className="signin-alert" role="alert" aria-live="assertive" aria-atomic="true">
                     {alert && (
                       <>
                         <strong>{alert.title}</strong>
@@ -290,19 +287,37 @@ export function SignupPage() {
                     )}
                   </div>
 
-                  <button type="submit" className="primary full" disabled={submitting}>
-                    {submitting ? 'Sending your request…' : 'Request workspace'}
+                  <button type="submit" className="signin-submit" disabled={submitting}>
+                    {submitting ? 'Sending your request…' : 'Create workspace'}
                   </button>
                 </form>
               )
         )}
 
-        {!queued && (
-          <p className="login-help">
-            Turnstile verifies a human; the token is checked on the server, never here.
-          </p>
+        {queued && (
+          <div className="signin-notice" role="status">
+            <h2><code>{queued.slug}.hoja.work</code></h2>
+            <p>{queued.message}</p>
+            <p>Creating it is an operator step, so nothing else is needed from you right now.</p>
+          </div>
         )}
-      </section>
+
+        <p className="signin-alt">
+          Prefer to run it yourself?{' '}
+          <a href="https://hoja.work/docs/self-host">Self-host Hoja</a>
+        </p>
+      </div>
     </main>
+  );
+}
+
+function GoogleMark() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true" focusable="false">
+      <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/>
+      <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.81.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"/>
+      <path fill="#FBBC05" d="M3.97 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33z"/>
+      <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/>
+    </svg>
   );
 }
