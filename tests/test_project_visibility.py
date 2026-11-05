@@ -39,6 +39,8 @@ PROJECT_CREATE = ("mutation($i: ProjectCreateInput!) { projectCreate(input: $i) 
 PROJECT_UPDATE = ("mutation($id: String!, $i: ProjectUpdateInput!) { projectUpdate(id: $id, input: $i) "
                   "{ success project { id teams(first: 10) { nodes { key } } } } }")
 PROJECTS = "query { projects(first: 50) { nodes { id name } } }"
+CREATE_ISSUE = ("mutation($i: IssueCreateInput!) { issueCreate(input: $i) "
+                "{ success issue { id identifier title } } }")
 PROJECT = "query($id: String!) { project(id: $id) { id name } }"
 
 
@@ -112,3 +114,28 @@ def test_project_update_can_attach_and_detach_teams(world) -> None:
         assert _team_keys(attached["projectUpdate"]) == ["SEC"]
         detached = _data(client, ADMIN, PROJECT_UPDATE, {"id": pid, "i": {"teamIds": []}})
         assert _team_keys(detached["projectUpdate"]) == []
+
+
+def test_sync_bootstrap_respects_private_team_visibility(world) -> None:
+    """The sync payload is built through the resolvers, so private material never enters it.
+
+    ``/sync/bootstrap`` runs META_QUERY through graphql_sync with the viewer's context
+    (app.py) and scopes issues in sync._issue_select, so a non-member must not receive
+    a private team's project or issue. This test fails if either path ever goes direct.
+    """
+    with TestClient(world["app"]) as client:
+        hidden_id = _data(client, ADMIN, PROJECT_CREATE, {"i": {"name": "Secret roadmap"}})[
+            "projectCreate"]["project"]["id"]
+        with world["engine"].begin() as conn:
+            conn.execute(project_team.insert().values(project_id=hidden_id, team_id=world["secret"]))
+        created = _data(client, ADMIN, CREATE_ISSUE, {"i": {"title": "secret work", "teamId": world["secret"]}})
+        assert created["issueCreate"]["success"] is True
+
+        outsider = client.get("/sync/bootstrap", headers={"Authorization": f"Bearer {OUTSIDER}"})
+        admin = client.get("/sync/bootstrap", headers={"Authorization": f"Bearer {ADMIN}"})
+        assert outsider.status_code == 200 and admin.status_code == 200
+        assert "Secret roadmap" in admin.text and "secret work" in admin.text
+        assert "Secret roadmap" not in outsider.text
+        assert "secret work" not in outsider.text
+        # visibility is part of the snapshot cache key, so the two viewers never share a payload
+        assert outsider.headers["etag"] != admin.headers["etag"]
