@@ -1687,7 +1687,7 @@ def test_first_run_onboarding_bootstraps_admin_session_and_disables_setup(tmp_pa
     db_path = tmp_path / "onboarding.db"
     migrate(make_engine(db_path))
     client = TestClient(create_app(str(db_path), open_mode=False))
-    assert client.get("/onboarding/status").json() == {"initialized": False}
+    assert client.get("/onboarding/status").json() == {"initialized": False, "singleOrg": False}
 
     response = client.post("/onboarding/bootstrap", json={
         "name": "First Admin", "email": "first@example.test",
@@ -1698,7 +1698,7 @@ def test_first_run_onboarding_bootstraps_admin_session_and_disables_setup(tmp_pa
     assert response.json()["status"] == "created"
     assert response.json()["apiKey"].startswith("lin_api_")
     assert response.cookies.get("hoja_session")
-    assert client.get("/onboarding/status").json() == {"initialized": True}
+    assert client.get("/onboarding/status").json() == {"initialized": True, "singleOrg": False}
     assert client.get("/auth/me").status_code == 200
     assert client.post("/onboarding/bootstrap", json={
         "name": "Other Admin", "email": "other@example.test",
@@ -1717,7 +1717,7 @@ def test_first_run_onboarding_rejects_invalid_password_without_initializing(tmp_
         "teamName": "Engineering", "teamKey": "ENG",
     })
     assert response.status_code == 400
-    assert client.get("/onboarding/status").json() == {"initialized": False}
+    assert client.get("/onboarding/status").json() == {"initialized": False, "singleOrg": False}
 
 
 def test_new_member_invite_code_acceptance_sets_password_and_is_one_time(tmp_path) -> None:
