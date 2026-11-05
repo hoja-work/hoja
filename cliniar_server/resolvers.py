@@ -391,10 +391,10 @@ def r_issue(_, info, id):
 
 @query.field("projects")
 def r_projects(_, info, filter=None, first=50, after=None):
-    store, _w, org, _uid = _ctx(info)
+    store, _w, org, uid = _ctx(info)
     first = _page_size(first)
     cursor = _decode_project_update_cursor(after)
-    rows = store.projects(org, filter, after=cursor, limit=first + 1)
+    rows = store.projects(org, filter, after=cursor, limit=first + 1, viewer_id=uid)
     nodes = rows[:first]
     _prime(info, "project_teams", [n["id"] for n in nodes])
     _prime(info, "project_progress", [n["id"] for n in nodes])
@@ -447,8 +447,8 @@ def r_project_updates(_, info, first=50, after=None, filter=None):
 
 @query.field("project")
 def r_project(_, info, id):
-    store, _w, org, _uid = _ctx(info)
-    return store.project_by_id(org, id)
+    store, _w, org, uid = _ctx(info)
+    return store.project_by_id(org, id, viewer_id=uid)
 
 
 @query.field("workflowStates")
@@ -622,10 +622,10 @@ def i_team(obj, info):
 
 @Issue.field("project")
 def i_project(obj, info):
-    store, _w, org, _uid = _ctx(info)
+    store, _w, org, uid = _ctx(info)
     pid = obj.get("_project_id")
-    return _batched(info, "project", pid, lambda ids: store.projects_by_ids(org, ids),
-                    lambda: store.project_by_id(org, pid)) if pid else None
+    return _batched(info, "project", pid, lambda ids: store.projects_by_ids(org, ids, viewer_id=uid),
+                    lambda: store.project_by_id(org, pid, viewer_id=uid)) if pid else None
 
 
 @Issue.field("cycle")
@@ -1133,14 +1133,14 @@ def m_label_delete(_, info, id):
 def m_project_create(_, info, input):
     store, w, org, uid = _ctx(info)
     pid = w.project_create(org, uid, input)
-    return {"success": bool(pid), "project": store.project_by_id(org, pid) if pid else None}
+    return {"success": bool(pid), "project": store.project_by_id(org, pid, viewer_id=uid) if pid else None}
 
 
 @mutation.field("projectUpdate")
 def m_project_update(_, info, id, input):
     store, w, org, uid = _ctx(info)
     pid = w.project_update(org, uid, id, input)
-    return {"success": bool(pid), "project": store.project_by_id(org, pid) if pid else None}
+    return {"success": bool(pid), "project": store.project_by_id(org, pid, viewer_id=uid) if pid else None}
 
 
 @mutation.field("projectUpdateCreate")

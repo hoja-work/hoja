@@ -1187,6 +1187,21 @@ class Writer:
                     conn, user, org_id, lead_id, "leadId",
                     user.c.active.is_(True),
                 )
+            if "teamIds" in inp:
+                team_ids = set(inp.get("teamIds") or [])
+                if team_ids:
+                    found = set(conn.execute(select(team.c.id).where(and_(
+                        team.c.id.in_(team_ids),
+                        team.c.organization_id == org_id,
+                        team.c.archived_at.is_(None)))).scalars())
+                    if found != team_ids:
+                        raise InvalidReferenceError("teamIds")
+                    for tid in team_ids:
+                        if not team_visible(conn, org_id, viewer_id, tid):
+                            raise InvalidReferenceError("teamIds")
+                conn.execute(project_team.delete().where(project_team.c.project_id == pid))
+                for tid in sorted(team_ids):
+                    conn.execute(project_team.insert().values(project_id=pid, team_id=tid))
             vals = {"updated_at": now_iso()}
             m = {"name": "name", "description": "description", "leadId": "lead_id",
                  "state": "state", "color": "color", "icon": "icon",
