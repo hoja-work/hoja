@@ -38,7 +38,7 @@ from starlette.applications import Starlette
 from starlette.datastructures import MutableHeaders
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.requests import Request
-from starlette.responses import FileResponse, JSONResponse, Response
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from starlette.routing import Route, WebSocketRoute
 from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocket
@@ -133,6 +133,16 @@ _SYNC_AUTH_TTL = 5.0
 _LOGIN_FAILURE_LIMIT = 10
 _LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60
 _CSP_HTML = "frame-ancestors 'none'; object-src 'none'; base-uri 'self'"
+
+# Served when the SPA bundle is absent. It is HTML on purpose: the security-headers
+# middleware only attaches Content-Security-Policy to text/html responses, and a
+# browser hitting an unbuilt deployment must still get clickjacking protection.
+_UNBUILT_HTML = (
+    '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+    "<title>Hoja</title></head><body><h1>Web UI has not been built</h1>"
+    "<p>Run <code>npm run build</code> in <code>frontend/</code>, or point "
+    "<code>CLINIAR_WEB_ROOT</code> at a built bundle.</p></body></html>"
+)
 _graphql_log = logging.getLogger("cliniar_server.graphql")
 _security_log = logging.getLogger("cliniar_server.security")
 
@@ -1495,7 +1505,7 @@ def create_app(
     async def web_index(request: Request):
         index = _WEB_ROOT / "index.html"
         if not index.is_file():
-            return JSONResponse({"error": "Web UI has not been built"}, status_code=503)
+            return HTMLResponse(_UNBUILT_HTML, status_code=503)
         return FileResponse(index)
 
     async def web_asset(request: Request):
@@ -1515,7 +1525,7 @@ def create_app(
     async def web_fallback(request: Request):
         index = _WEB_ROOT / "index.html"
         if not index.is_file():
-            return JSONResponse({"error": "Web UI has not been built"}, status_code=503)
+            return HTMLResponse(_UNBUILT_HTML, status_code=503)
         return FileResponse(index)
 
     def _sqlite_analyze():
