@@ -185,8 +185,10 @@ export function SignupPage() {
           <span>hoja</span>
         </div>
 
-        <h1 id="signup-title">{heading}</h1>
-        <p className="signin-sub">{sub}</p>
+        <header className="signin-header">
+          <h1 id="signup-title">{heading}</h1>
+          <p className="signin-sub">{sub}</p>
+        </header>
 
         {configError && <p className="signin-error" role="alert">{configError}</p>}
         {!config && !configError && <p className="signin-loading" role="status">Loading sign-up…</p>}
