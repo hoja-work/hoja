@@ -177,3 +177,26 @@ def test_an_inactive_membership_does_not_let_someone_back_in(engine):
     assert again["action"] == google_login.ACTION_DENIED
     assert again["reason"] == "no_membership"
     assert first["user_id"]
+
+
+# --------------------------------------------------------------------------- #
+# Which hosts a handoff may bounce back to
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("https://acme.hoja.work/", "https://acme.hoja.work/"),
+    ("https://acme.hoja.work/signin?x=1", "https://acme.hoja.work/signin"),
+    ("https://ACME.hoja.work/", "https://acme.hoja.work/"),
+    ("https://app.hoja.work/", None),          # the control plane is not a tenant
+    ("https://www.hoja.work/", None),
+    ("https://hoja.work/", None),              # the apex itself
+    ("https://evil.example/", None),           # not ours
+    ("https://evil-hoja.work/", None),         # suffix trick
+    ("http://acme.hoja.work/", None),          # not https
+    ("/relative", None),
+    ("", None),
+    (None, None),
+])
+def test_only_our_tenant_hosts_can_be_a_handoff_target(value, expected):
+    assert identity_transfer.tenant_target(value) == expected

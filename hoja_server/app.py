@@ -1345,21 +1345,8 @@ def create_app(
         return candidate
 
     def _tenant_transfer_target(value: str | None) -> str | None:
-        """A return target on one of OUR tenant hosts, normalised, or None.
-
-        Only the apex domain we control can be a handoff target: the token is
-        signed for that exact host, and Google is told nothing about it. A path
-        on an arbitrary site is still refused, so this is not an open redirect.
-        """
-        candidate = (value or "").strip()
-        parts = urlsplit(candidate)
-        host = (parts.hostname or "").lower()
-        if parts.scheme != "https" or not host.endswith(".hoja.work"):
-            return None
-        if host in {"app.hoja.work", "www.hoja.work"}:
-            return None
-        path = parts.path if parts.path.startswith("/") else "/" + parts.path
-        return f"https://{host}{path or '/'}"
+        """A return target on one of OUR tenant hosts, normalised, or None."""
+        return identity_transfer.tenant_target(value)
 
     def _signup_host(request: Request) -> str:
         forwarded = (

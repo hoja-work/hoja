@@ -137,3 +137,33 @@ def redeem(
     if not claims.get("email") or not claims.get("sub"):
         raise TransferError("claims_missing", "Token is missing email or subject.")
     return claims
+
+
+def tenant_target(
+    value: str | None,
+    *,
+    apex: str = "hoja.work",
+    reserved: tuple[str, ...] = ("app", "www"),
+) -> str | None:
+    """Normalise a return target on a *tenant* origin of ours, or return None.
+
+    The handoff token is signed for one host, so this decides which hosts a
+    person may be sent back to. Only absolute https URLs under our own apex
+    qualify, and the reserved control-plane names never do; anything else is
+    refused, which is what keeps this from being an open redirect.
+    """
+    from urllib.parse import urlsplit
+
+    candidate = (value or "").strip()
+    parts = urlsplit(candidate)
+    host = (parts.hostname or "").lower()
+    if parts.scheme != "https":
+        return None
+    if not host.endswith("." + apex) or host == apex:
+        return None
+    if host.split(".", 1)[0] in reserved:
+        return None
+    path = parts.path or "/"
+    if not path.startswith("/"):
+        return None
+    return f"https://{host}{path}"
