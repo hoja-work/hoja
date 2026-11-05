@@ -62,12 +62,17 @@ def _check_key(key: str | bytes | None) -> bytes:
     return key
 
 
-def tenant_key(master: str | bytes, audience: str) -> bytes:
+def tenant_key(master: str | bytes, audience: str) -> str:
     """Derive the one key a given host may hold, from the control-plane master.
 
     Domain separation is the point: a tenant stores *this* value, never the
     master, so a compromised tenant cannot compute any other host's key and
-    therefore cannot mint an identity for it. HKDF-SHA256 with the hostname as
+    therefore cannot mint an identity for it.
+
+    The result is text because it travels in an environment variable. Both ends
+    must hash the same bytes, so the control plane signs with this *string* and
+    the tenant verifies with the string it was given -- never the decoded bytes
+    on one side and the text on the other. HKDF-SHA256 with the hostname as
     ``info`` also gives stability (same host, same key) and independence
     (different host, unrelated key).
     """
@@ -81,12 +86,14 @@ def tenant_key(master: str | bytes, audience: str) -> bytes:
     host = (audience or "").strip().lower()
     if not host:
         raise TransferError("claims_missing", "An audience is required to derive a key.")
-    return HKDF(
-        algorithm=hashes.SHA256(),
-        length=DERIVED_KEY_BYTES,
-        salt=DERIVATION_SALT,
-        info=host.encode("utf-8"),
-    ).derive(master)
+    return base64.urlsafe_b64encode(
+        HKDF(
+            algorithm=hashes.SHA256(),
+            length=DERIVED_KEY_BYTES,
+            salt=DERIVATION_SALT,
+            info=host.encode("utf-8"),
+        ).derive(master)
+    ).decode("ascii").rstrip("=")
 
 
 def _signature(key: bytes, signing_input: bytes) -> bytes:

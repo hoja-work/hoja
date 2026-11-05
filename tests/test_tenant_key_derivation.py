@@ -20,3 +20,14 @@ def test_derived_keys_differ_per_audience_and_are_stable():
     assert a != b
     assert a == identity_transfer.tenant_key(MASTER, "ACME.hoja.work")
     assert len(a) >= 32
+
+
+def test_the_derived_key_survives_an_environment_variable():
+    # The key has to round-trip through an env var and still verify, otherwise
+    # the control plane signs with one byte sequence and the tenant another.
+    key = identity_transfer.tenant_key(MASTER, "acme.hoja.work")
+    assert isinstance(key, str) and "\n" not in key
+    token = identity_transfer.issue(key=key, audience="acme.hoja.work",
+                                    email="a@b.co", subject="s", email_verified=True)
+    claims = identity_transfer.redeem(key=key, token=token, audience="acme.hoja.work")
+    assert claims["email"] == "a@b.co"
