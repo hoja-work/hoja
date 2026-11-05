@@ -132,7 +132,7 @@ type Mutation {
   workspaceUpdate(input: WorkspaceUpdateInput!): OrganizationPayload
   memberInvite(input: MemberInviteInput!): UserPayload
   memberRoleUpdate(userId: String!, admin: Boolean!): UserPayload
-  teamMemberAdd(teamId: String!, userId: String!): UserPayload
+  teamMemberAdd(teamId: String!, userId: String!, role: String = "member"): UserPayload
   teamMemberRemove(teamId: String!, userId: String!): UserPayload
   issueCreate(input: IssueCreateInput!): IssuePayload
   issueUpdate(id: String!, input: IssueUpdateInput!): IssuePayload
@@ -205,7 +205,10 @@ type Team {
   description: String
   color: String
   icon: String
-  private: Boolean
+  visibility: String!
+  parentTeamId: ID
+  parent: Team
+  children(first: Int = 100): TeamConnection
   timezone: String
   createdAt: DateTime
   updatedAt: DateTime
@@ -426,10 +429,10 @@ input IssueParentFilter { id: IDComparator }
 input IssueLabelFilter { team: TeamFilter name: StringComparator }
 
 # ---- Mutation inputs ----
-input TeamUpdateInput { name: String key: String description: String autoAddStarted: Boolean autoAddCompleted: Boolean autoAddBacklog: Boolean }
+input TeamUpdateInput { name: String key: String description: String autoAddStarted: Boolean autoAddCompleted: Boolean autoAddBacklog: Boolean visibility: String parentTeamId: String }
 input CycleUpdateInput { name: String description: String startsAt: DateTime endsAt: DateTime }
 type CyclePayload { success: Boolean! cycle: Cycle }
-input TeamCreateInput { name: String! key: String! description: String color: String icon: String private: Boolean timezone: String memberIds: [String!] }
+input TeamCreateInput { name: String! key: String! description: String color: String icon: String visibility: String parentTeamId: String timezone: String memberIds: [String!] }
 input IssueCreateInput {
   title: String!
   teamId: String!

@@ -8,7 +8,13 @@ from graphql import GraphQLError
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.engine import Engine
 
-from cliniar_server.store import team_visible
+from cliniar_server.store import (
+    PUBLIC,
+    TEAM_ACCESS_LEVELS,
+    team_ancestor_ids,
+    team_descendant_ids,
+    team_visible,
+)
 from cliniar_server.db import (
     PRIORITY_LABELS,
     attachment,
@@ -132,6 +138,7 @@ def _validate_issue_references(
     label_ids = inp.get("labelIds") if "labelIds" in inp else None
     if label_ids:
         expected = set(label_ids)
+        applicable_teams = team_ancestor_ids(conn, org_id, team_id)
         found = set(
             conn.execute(
                 select(issue_label.c.id).where(
@@ -141,7 +148,8 @@ def _validate_issue_references(
                         issue_label.c.archived_at.is_(None),
                         or_(
                             issue_label.c.team_id.is_(None),
-                            issue_label.c.team_id == team_id,
+                            # A sub-team may use its own labels and every ancestor's.
+                            issue_label.c.team_id.in_(applicable_teams),
                         ),
                     )
                 )
@@ -221,18 +229,25 @@ class Writer:
                 team.c.organization_id == org_id, team.c.key == key
             ))).first():
                 raise GraphQLError("Team key already exists", extensions={"code": "BAD_USER_INPUT", "field": "key"})
+            parent_team_id = inp.get("parentTeamId") or None
+            if parent_team_id:
+                parent_team_id = self._team_row(conn, org_id, parent_team_id)[0]
+                self._validate_parent(conn, org_id, None, parent_team_id)
+            visibility = self._validate_visibility(inp.get("visibility") or PUBLIC)
             ts, tid = now_iso(), new_id()
             conn.execute(team.insert().values(
                 id=tid, organization_id=org_id, name=name.strip(), key=key,
                 description=inp.get("description"), color=inp.get("color"), icon=inp.get("icon"),
-                private=bool(inp.get("private", False)), timezone=inp.get("timezone") or "UTC",
+                visibility=visibility, parent_team_id=parent_team_id,
+                timezone=inp.get("timezone") or "UTC",
                 issue_counter=0, created_at=ts, updated_at=ts,
             ))
             default_state_id = seed_states_for_team(conn, org_id, tid)
             conn.execute(team.update().where(team.c.id == tid).values(
                 default_state_id=default_state_id
             ))
-            conn.execute(team_member.insert().values(team_id=tid, user_id=viewer_id))
+            # The creator owns the team and, by the cascade rule, every ancestor.
+            self._seat_member(conn, org_id, tid, viewer_id, role="owner")
             for member_id in dict.fromkeys(inp.get("memberIds") or []):
                 if member_id == viewer_id:
                     continue
@@ -240,8 +255,18 @@ class Writer:
                     user.c.id == member_id, user.c.organization_id == org_id,
                     user.c.active.is_(True), user.c.archived_at.is_(None)))).first():
                     raise InvalidReferenceError("memberIds")
-                conn.execute(team_member.insert().values(team_id=tid, user_id=member_id))
+                self._seat_member(conn, org_id, tid, member_id)
             return tid
+
+    def _seat_member(self, conn, org_id: str, team_id: str, user_id: str, *, role: str = "member") -> None:
+        """Seat someone on a team and, by the cascade rule, on every ancestor (idempotent)."""
+        for ancestor in team_ancestor_ids(conn, org_id, team_id):
+            exists = conn.execute(select(team_member.c.user_id).where(and_(
+                team_member.c.team_id == ancestor, team_member.c.user_id == user_id))).first()
+            if not exists:
+                conn.execute(team_member.insert().values(
+                    team_id=ancestor, user_id=user_id,
+                    role=role if ancestor == team_id else "member"))
 
     def _require_team_admin(self, conn, org_id: str, viewer_id: str) -> None:
         admin = conn.execute(select(user.c.id).where(and_(
@@ -270,6 +295,159 @@ class Writer:
             raise GraphQLError("Team not found", extensions={"code": "BAD_USER_INPUT", "field": "id"})
         return row
 
+    # ----------------------------------------------------------- departments
+    MAX_TEAM_DEPTH = 3
+
+    @staticmethod
+    def _team_depth(conn, org_id: str, team_id: str | None) -> int:
+        """1 for a root team, 2 for its child, 3 for a grandchild."""
+        depth, current, seen = 0, team_id, set()
+        while current and current not in seen:
+            seen.add(current)
+            depth += 1
+            current = conn.execute(select(team.c.parent_team_id).where(and_(
+                team.c.id == current, team.c.organization_id == org_id))).scalar()
+        return depth
+
+    @classmethod
+    def _subtree_height(cls, conn, org_id: str, team_id: str) -> int:
+        """How many levels live at or below this team (1 when it has no children)."""
+        children = list(conn.execute(select(team.c.id).where(and_(
+            team.c.organization_id == org_id, team.c.parent_team_id == team_id))).scalars())
+        if not children:
+            return 1
+        return 1 + max(cls._subtree_height(conn, org_id, child) for child in children)
+
+    def _validate_parent(self, conn, org_id: str, team_id: str | None, parent_team_id: str | None) -> None:
+        """Reject self-parenting, cycles and any shape deeper than MAX_TEAM_DEPTH."""
+        if not parent_team_id:
+            return
+        parent = self._team_row(conn, org_id, parent_team_id)
+        if team_id is None:
+            # Creating a team under this parent: the new team is one level deeper.
+            new_depth = self._team_depth(conn, org_id, parent_team_id) + 1
+            if new_depth > self.MAX_TEAM_DEPTH:
+                raise GraphQLError(
+                    f"Departments can nest at most {self.MAX_TEAM_DEPTH} levels deep (max depth {self.MAX_TEAM_DEPTH})",
+                    extensions={"code": "BAD_USER_INPUT", "field": "parentTeamId"})
+            return
+        if parent_team_id == team_id:
+            raise GraphQLError("A team cannot be its own parent",
+                               extensions={"code": "BAD_USER_INPUT", "field": "parentTeamId"})
+        # Walk up from the proposed parent: reaching the team means a cycle.
+        current, seen = parent_team_id, set()
+        while current and current not in seen:
+            if current == team_id:
+                raise GraphQLError(
+                    "A team cannot be nested under itself or one of its descendants (cycle)",
+                    extensions={"code": "BAD_USER_INPUT", "field": "parentTeamId"})
+            seen.add(current)
+            current = conn.execute(select(team.c.parent_team_id).where(and_(
+                team.c.id == current, team.c.organization_id == org_id))).scalar()
+        new_depth = (self._team_depth(conn, org_id, parent_team_id)
+                     + self._subtree_height(conn, org_id, team_id))
+        if new_depth > self.MAX_TEAM_DEPTH:
+            raise GraphQLError(
+                f"Departments can nest at most {self.MAX_TEAM_DEPTH} levels deep (max depth {self.MAX_TEAM_DEPTH})",
+                extensions={"code": "BAD_USER_INPUT", "field": "parentTeamId"})
+        if not parent:
+            raise InvalidReferenceError("parentTeamId")
+
+    @staticmethod
+    def _validate_visibility(value) -> str:
+        if value not in TEAM_ACCESS_LEVELS:
+            raise GraphQLError("visibility must be one of public, restricted, private",
+                               extensions={"code": "BAD_USER_INPUT", "field": "visibility"})
+        return value
+
+    def _apply_reparent(self, conn, org_id: str, team_id: str, previous_parent_id: str | None) -> None:
+        """Side effects of moving a team in or out of a department.
+
+        Nesting: every member of the moved subtree also joins the new ancestors, the
+        in-flight cycle is closed, and the not-yet-started cycles take the boundaries
+        of the nearest parent cycle so the sub-team reports on the department rhythm.
+        Un-nesting: labels the team was using through its old ancestors become its own
+        copies when issues still use them, and the unused ones simply stop applying.
+        """
+        if previous_parent_id:
+            self._release_inherited_labels(conn, org_id, team_id, previous_parent_id)
+        new_parent_id = conn.execute(select(team.c.parent_team_id).where(
+            team.c.id == team_id)).scalar()
+        if not new_parent_id:
+            return
+        subtree = [team_id, *team_descendant_ids(conn, org_id, team_id)[1:]]
+        ancestors = team_ancestor_ids(conn, org_id, new_parent_id)
+        for member_id in list(conn.execute(select(team_member.c.user_id).where(
+                team_member.c.team_id.in_(subtree))).scalars()):
+            for ancestor in ancestors:
+                if not conn.execute(select(team_member.c.user_id).where(and_(
+                        team_member.c.team_id == ancestor,
+                        team_member.c.user_id == member_id))).first():
+                    conn.execute(team_member.insert().values(
+                        team_id=ancestor, user_id=member_id, role="member"))
+        for tid in subtree:
+            self._align_cycles_with_parent(conn, org_id, tid)
+
+    def _release_inherited_labels(self, conn, org_id: str, team_id: str, old_parent_id: str) -> None:
+        """Turn labels used through the old ancestors into team-owned copies."""
+        ancestors = team_ancestor_ids(conn, org_id, old_parent_id)
+        inherited = conn.execute(select(
+            issue_label.c.id, issue_label.c.name, issue_label.c.color, issue_label.c.description,
+        ).where(and_(
+            issue_label.c.organization_id == org_id,
+            issue_label.c.team_id.in_(ancestors),
+            issue_label.c.archived_at.is_(None),
+        ))).all()
+        for label_id, name, color, description in inherited:
+            used = conn.execute(select(issue_label_link.c.issue_id).select_from(
+                issue_label_link.join(issue, issue.c.id == issue_label_link.c.issue_id)
+            ).where(and_(issue_label_link.c.label_id == label_id,
+                         issue.c.team_id == team_id))).scalars().all()
+            if not used:
+                continue  # never used here: dropping out of the department is enough
+            ts, copy_id = now_iso(), new_id()
+            conn.execute(issue_label.insert().values(
+                id=copy_id, organization_id=org_id, team_id=team_id, name=name,
+                color=color, description=description, created_at=ts, updated_at=ts))
+            conn.execute(issue_label_link.update().where(and_(
+                issue_label_link.c.label_id == label_id,
+                issue_label_link.c.issue_id.in_(used),
+            )).values(label_id=copy_id))
+
+    @staticmethod
+    def _align_cycles_with_parent(conn, org_id: str, team_id: str) -> None:
+        """Close the in-flight cycle and snap upcoming ones to the nearest ancestor cycle."""
+        ts = now_iso()
+        active_id = conn.execute(select(team.c.active_cycle_id).where(
+            team.c.id == team_id)).scalar()
+        if active_id:
+            conn.execute(cycle.update().where(cycle.c.id == active_id).values(
+                completed_at=ts, updated_at=ts))
+            conn.execute(team.update().where(team.c.id == team_id).values(
+                active_cycle_id=None, updated_at=ts))
+        parent_id = conn.execute(select(team.c.parent_team_id).where(
+            team.c.id == team_id)).scalar()
+        if not parent_id:
+            return
+        parent_cycles = {
+            number: (starts_at, ends_at, boundary_at)
+            for number, starts_at, ends_at, boundary_at in conn.execute(
+                select(cycle.c.number, cycle.c.starts_at, cycle.c.ends_at, cycle.c.cadence_boundary_at)
+                .where(and_(cycle.c.organization_id == org_id, cycle.c.team_id == parent_id,
+                            cycle.c.completed_at.is_(None))))
+        }
+        if not parent_cycles:
+            return
+        upcoming = conn.execute(select(cycle.c.id, cycle.c.number).where(and_(
+            cycle.c.organization_id == org_id, cycle.c.team_id == team_id,
+            cycle.c.completed_at.is_(None), cycle.c.id != (active_id or "")))).all()
+        for cycle_id, number in upcoming:
+            nearest = min(parent_cycles, key=lambda n: abs((n or 0) - (number or 0)))
+            starts_at, ends_at, boundary_at = parent_cycles[nearest]
+            conn.execute(cycle.update().where(cycle.c.id == cycle_id).values(
+                starts_at=starts_at, ends_at=ends_at, cadence_boundary_at=boundary_at,
+                updated_at=ts))
+
     def team_update(self, org_id: str, viewer_id: str, team_id: str, inp: dict) -> str:
         values: dict = {}
         if "name" in inp:
@@ -290,6 +468,8 @@ class Writer:
                 if not isinstance(inp[key], bool):
                     raise GraphQLError(f"{key} must be a boolean", extensions={"code": "BAD_USER_INPUT", "field": key})
                 values[column] = inp[key]
+        if "visibility" in inp:
+            values["visibility"] = self._validate_visibility(inp["visibility"])
         with self.engine.begin() as conn:
             self._require_team_admin(conn, org_id, viewer_id)
             self._team_row(conn, org_id, team_id)
@@ -297,8 +477,18 @@ class Writer:
                 team.c.organization_id == org_id, team.c.key == values["key"], team.c.id != team_id
             ))).first():
                 raise GraphQLError("Team key already exists", extensions={"code": "BAD_USER_INPUT", "field": "key"})
+            reparented = False
+            if "parentTeamId" in inp:
+                parent_team_id = inp["parentTeamId"] or None
+                previous = conn.execute(select(team.c.parent_team_id).where(
+                    team.c.id == team_id)).scalar()
+                self._validate_parent(conn, org_id, team_id, parent_team_id)
+                values["parent_team_id"] = parent_team_id
+                reparented = parent_team_id != previous
             values["updated_at"] = now_iso()
             conn.execute(team.update().where(team.c.id == team_id).values(**values))
+            if reparented:
+                self._apply_reparent(conn, org_id, team_id, previous)
             return team_id
 
     def team_archive(self, org_id: str, viewer_id: str, team_id: str) -> bool:
