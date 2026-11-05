@@ -32,7 +32,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 35
+CURRENT_SCHEMA_REVISION = 36
 
 
 def now_iso() -> str:
@@ -146,6 +146,112 @@ browser_session = Table(
     Column("created_at", String, nullable=False),
     Column("expires_at", String, nullable=False, index=True),
     Column("revoked_at", String),
+)
+
+# --------------------------------------------------------------------------
+# Hosted sign-up: Google-only identity, the pre-tenant session, and the gate
+# rows the provisioner picks up. None of these tables is a workspace: an
+# eligibility row is a *request*, not a database, container, route or DNS name.
+# --------------------------------------------------------------------------
+
+signup_identity = Table(
+    "signup_identity",
+    metadata,
+    Column("id", String, primary_key=True),
+    # `subject` is the Google `sub` claim: the stable identity key. `email` is
+    # display/policy only, because a Workspace address can be reassigned.
+    Column("provider", String, nullable=False, server_default="google"),
+    Column("subject", String, nullable=False),
+    Column("email", String, nullable=False),
+    Column("email_verified", Boolean, nullable=False, server_default="0"),
+    Column("name", String),
+    Column("picture", Text),
+    Column("hosted_domain", String),  # the `hd` claim, when Google returns one
+    Column("google_verified_at", String, nullable=False),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+    UniqueConstraint("provider", "subject", name="uq_signup_identity_provider_subject"),
+)
+
+signup_flow = Table(
+    "signup_flow",
+    metadata,
+    # One row per in-flight authorization-code flow. The browser holds only an
+    # opaque binding id in a short-lived HttpOnly cookie; the state hash, nonce
+    # and PKCE verifier stay server-side and are single use (consumed_at).
+    Column("id", String, primary_key=True),
+    Column("state_hash", String, nullable=False, unique=True, index=True),
+    Column("binding_hash", String, nullable=False, index=True),
+    Column("nonce", String, nullable=False),
+    Column("code_verifier", String, nullable=False),
+    Column("redirect_uri", Text, nullable=False),
+    Column("return_to", Text),
+    Column("created_at", String, nullable=False),
+    Column("expires_at", String, nullable=False, index=True),
+    Column("consumed_at", String),
+)
+
+signup_session = Table(
+    "signup_session",
+    metadata,
+    # Opaque server-side session for a google_verified person who has no
+    # workspace yet, so browser_session (user_id/organization_id NOT NULL) cannot
+    # hold it. Same machinery: a random token, only its hash stored, rotation on
+    # login, revocation by row update.
+    Column("id", String, primary_key=True),
+    Column("token_hash", String, nullable=False, unique=True, index=True),
+    Column("identity_id", String, ForeignKey("signup_identity.id"), nullable=False, index=True),
+    Column("created_at", String, nullable=False),
+    Column("expires_at", String, nullable=False, index=True),
+    Column("revoked_at", String),
+    Column("rotated_from", String),
+    Column("client_ip", String),
+    Column("user_agent", Text),
+)
+
+signup_invite = Table(
+    "signup_invite",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("email", String, nullable=False, unique=True, index=True),
+    Column("note", Text),
+    Column("created_by", String),
+    Column("created_at", String, nullable=False),
+    Column("expires_at", String),
+    Column("consumed_at", String),
+    Column("consumed_by_identity_id", String, ForeignKey("signup_identity.id")),
+)
+
+signup_eligibility = Table(
+    "signup_eligibility",
+    metadata,
+    # The outbox the provisioner reads. status='eligible' + claimed_at IS NULL
+    # is the queue; (subject, slug) is unique so a retried signup cannot enqueue
+    # two workspaces, and idempotency_key makes a repeated POST return the same row.
+    Column("id", String, primary_key=True),
+    Column("idempotency_key", String, nullable=False, unique=True, index=True),
+    Column("identity_id", String, ForeignKey("signup_identity.id"), nullable=False, index=True),
+    Column("google_sub", String, nullable=False, index=True),
+    Column("email", String, nullable=False),
+    Column("slug", String, nullable=False, unique=True, index=True),
+    Column("status", String, nullable=False, server_default="eligible"),
+    Column("client_ip", String, nullable=False, index=True),
+    Column("turnstile_hostname", String),
+    Column("created_at", String, nullable=False),
+    Column("claimed_at", String),
+    UniqueConstraint("google_sub", "slug", name="uq_signup_eligibility_subject_slug"),
+)
+
+turnstile_use = Table(
+    "turnstile_use",
+    metadata,
+    # A Turnstile token is single use: the primary key IS the token hash, so a
+    # second attempt to spend it fails on insert instead of passing the gate.
+    Column("token_hash", String, primary_key=True),
+    Column("identity_id", String, ForeignKey("signup_identity.id"), index=True),
+    Column("client_ip", String),
+    Column("hostname", String),
+    Column("consumed_at", String, nullable=False),
 )
 
 oauth_client = Table(
@@ -1362,6 +1468,14 @@ _MIGRATIONS = {
     33: _apply_meeting_extras,
     34: lambda conn: _apply_meeting_devices(conn),
     35: _apply_team_hierarchy,
+    36: lambda conn: (
+        signup_identity.create(conn, checkfirst=True),
+        signup_flow.create(conn, checkfirst=True),
+        signup_session.create(conn, checkfirst=True),
+        signup_invite.create(conn, checkfirst=True),
+        signup_eligibility.create(conn, checkfirst=True),
+        turnstile_use.create(conn, checkfirst=True),
+    ),
 }
 
 
