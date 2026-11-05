@@ -77,8 +77,16 @@ from hoja_server.meetings_api import MeetingHub, meeting_routes
 from hoja_server.resolvers import build_schema
 from hoja_server.secrets_box import SecretBoxError
 from hoja_server import google_oidc
-from hoja_server.signup_config import SignupConfigError, load_signup_config
-from hoja_server.signup_gate import SignupGate
+from hoja_server.signup_config import (
+    TURNSTILE_SCRIPT_URL,
+    SignupConfigError,
+    load_signup_config,
+)
+from hoja_server.signup_gate import (
+    CROSS_SITE_REQUEST,
+    INVALID_REQUEST,
+    SignupGate,
+)
 from hoja_server.signup_store import SignupStore
 from hoja_server.store import Store
 from hoja_server import realtime, sync
@@ -1307,6 +1315,8 @@ def create_app(
     _SIGNUP_SESSION_COOKIE = "hoja_signup_session"
     _OIDC_FLOW_COOKIE = "hoja_oidc_flow"
     _SIGNUP_BODY_LIMIT = 8 * 1024
+    #: Where the page starts Google sign-in: same origin, back to the page itself.
+    _GOOGLE_SIGN_IN_URL = "/auth/google/start?return_to=%2Fsignup"
 
     def _session_cookie_attrs(request: Request) -> dict:
         """HttpOnly, Secure, SameSite=Lax, Path=/ — the browser_session rule."""
@@ -1340,6 +1350,32 @@ def create_app(
     def _signup_identity(request: Request):
         """The google_verified person behind the sign-up cookie, or None."""
         return signup_store.resolve_session(request.cookies.get(_SIGNUP_SESSION_COOKIE))
+
+    async def signup_public_config(request: Request):
+        """Everything the sign-up page needs, and nothing it must not have.
+
+        Public by contract: the Turnstile *site* key, which mode is on, and where
+        Google sign-in starts. The site key is public by design (it ships in the
+        page bundle); the siteverify secret, the OIDC client secret, the client id
+        and the expected hostname are never in this response, and the test asserts
+        that the body contains no secret and no unexpected field.
+
+        ``available`` is the fail-closed flag: with no site key the page renders
+        "sign-up unavailable" instead of a widget that could never be verified.
+        ``no-store`` because a stale mode or a stale key is a trap after a deploy.
+        """
+        return JSONResponse(
+            {
+                "mode": signup_config.mode,
+                "available": signup_config.public_widget_available,
+                "sitekey": signup_config.turnstile_site_key or None,
+                "signInUrl": (
+                    _GOOGLE_SIGN_IN_URL if signup_config.configured else None
+                ),
+                "widgetScriptUrl": TURNSTILE_SCRIPT_URL,
+            },
+            headers={"cache-control": "no-store"},
+        )
 
     async def google_sign_in_start(request: Request):
         if not signup_config.configured:
@@ -1496,14 +1532,14 @@ def create_app(
             )
         if not _same_origin(request.headers.get("origin"), request.headers):
             return JSONResponse(
-                {"ok": False, "reason": "cross_site_request",
+                {"ok": False, "reason": CROSS_SITE_REQUEST,
                  "message": "Cross-site request rejected."},
                 status_code=403,
             )
         body, body_error = await _read_json_object(request, _SIGNUP_BODY_LIMIT)
         if body_error is not None:
             return JSONResponse(
-                {"ok": False, "reason": "invalid_request",
+                {"ok": False, "reason": INVALID_REQUEST,
                  "message": body_error.body.decode("utf-8", "replace")},
                 status_code=body_error.status_code,
             )
@@ -1856,6 +1892,7 @@ def create_app(
             Route("/auth/google/start", google_sign_in_start, methods=["GET"]),
             Route("/auth/google/callback", google_sign_in_callback, methods=["GET"]),
             Route("/auth/google/logout", signup_logout, methods=["POST"]),
+            Route("/api/signup/config", signup_public_config, methods=["GET"]),
             Route("/api/signup", signup_endpoint, methods=["GET", "POST"]),
             Route("/api/uploads", upload_create, methods=["POST"]),
             Route("/api/uploads/{file_id}", upload_serve, methods=["GET"]),

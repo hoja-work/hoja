@@ -72,6 +72,25 @@ class SignupReason(str, Enum):
     ELIGIBLE = "eligible"
 
 
+#: Two refusals ``POST /api/signup`` adds before the gate runs: the same-origin
+#: check and the body parser. They are named here, next to the enum, so the route
+#: and the page share one vocabulary instead of agreeing by copy-paste.
+CROSS_SITE_REQUEST = "cross_site_request"
+INVALID_REQUEST = "invalid_request"
+
+#: Every ``reason`` the sign-up endpoint can answer with — the one list the page's
+#: copy map is checked against. ``eligible`` is included because it is a member of
+#: :class:`SignupReason` (it is delivered as ``state``, with ``reason: null``), so
+#: the tuple stays a faithful enumeration rather than a hand-curated subset.
+#:
+#: ``frontend/src/signup/reasonCopy.ts`` must map each entry;
+#: ``tests/test_signup_page.py`` asserts the two lists are equal, so a new code
+#: cannot be added here without the page being updated (and vice versa).
+SIGNUP_REASON_CODES = tuple(
+    reason.value for reason in SignupReason
+) + (CROSS_SITE_REQUEST, INVALID_REQUEST)
+
+
 _SLUG_REASON_STATUS = {
     "slug_required": (SignupReason.SLUG_REQUIRED, 422),
     "invalid_slug": (SignupReason.INVALID_SLUG, 422),

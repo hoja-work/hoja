@@ -17,6 +17,7 @@ Nothing in this module talks to the network or to the database.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
@@ -32,12 +33,28 @@ REQUIRED_ENV = (
 )
 
 MODE_ENV = "HOJA_SIGNUP_MODE"
+
+#: The Turnstile *site* key. Public by design — it ships to the browser, so it is
+#: deliberately **not** in ``REQUIRED_ENV`` and never gates what the server
+#: accepts. Missing only means the page cannot render a widget, and the page then
+#: says "sign-up unavailable" instead of rendering one that cannot work.
+SITE_KEY_ENV = "TURNSTILE_SITE_KEY"
+
+#: Cloudflare's widget script, explicit rendering (the page calls render() itself,
+#: so the implicit-render auto-scan is never what creates the widget).
+TURNSTILE_SCRIPT_URL = (
+    "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
+)
+
 REDIRECT_ALLOWLIST_ENV = "GOOGLE_REDIRECT_URI_ALLOWLIST"
 HD_ENV = "HOJA_GOOGLE_HD"
 IDENTITY_CAP_ENV = "HOJA_SIGNUP_IDENTITY_CAP"
 IP_CAP_ENV = "HOJA_SIGNUP_IP_CAP"
 IP_WINDOW_ENV = "HOJA_SIGNUP_IP_WINDOW_SECONDS"
 TENANT_REGISTRY_ENV = "HOJA_TENANT_REGISTRY"
+
+#: A site key is an opaque token, not a URL and not a compound value.
+_SITE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]{8,128}$")
 
 
 class SignupConfigError(RuntimeError):
@@ -79,6 +96,17 @@ def _validate_hostname(value: str) -> str:
     return value.strip().lower()
 
 
+def _validate_site_key(value: str) -> str:
+    """The public widget key: a bare token, or ``""`` when it is not set."""
+    if not value:
+        return ""
+    if not _SITE_KEY_RE.match(value):
+        raise SignupConfigError(
+            f"{SITE_KEY_ENV} must be a bare Turnstile site key "
+            f"(letters, digits, '-' and '_' only), got {value!r}.")
+    return value
+
+
 @dataclass(frozen=True)
 class SignupConfig:
     """The validated sign-up configuration. ``configured`` gates the endpoints."""
@@ -88,6 +116,7 @@ class SignupConfig:
     google_client_secret: str = ""
     redirect_uris: tuple[str, ...] = ()
     turnstile_secret_key: str = ""
+    turnstile_site_key: str = ""
     turnstile_expected_hostname: str = ""
     google_hd: str | None = None
     identity_cap: int = 1
@@ -107,6 +136,18 @@ class SignupConfig:
             and self.turnstile_secret_key
             and self.turnstile_expected_hostname
         )
+
+    @property
+    def public_widget_available(self) -> bool:
+        """True when a browser can render a widget *and* the gate can verify it.
+
+        Both halves are required: a site key with no server secret renders a
+        widget whose token the gate can never spend, which is worse than saying
+        "unavailable" — so this is False for a half-configured deployment even
+        though ``configured`` and the presence of a key are each true on their
+        own.
+        """
+        return bool(self.configured and self.turnstile_site_key)
 
     def redirect_uri_for(self, host: str) -> str | None:
         """The exact allow-listed redirect URI for ``host``, or None.
@@ -155,12 +196,23 @@ def load_signup_config(environ: dict[str, str] | None = None) -> SignupConfig:
     hostname = _validate_hostname(values["TURNSTILE_EXPECTED_HOSTNAME"]) if values[
         "TURNSTILE_EXPECTED_HOSTNAME"] else ""
 
+    site_key = _validate_site_key((env.get(SITE_KEY_ENV) or "").strip())
+    if site_key and site_key == values["TURNSTILE_SECRET_KEY"]:
+        # The site key ships to every browser. Copying the secret into it would
+        # publish the secret, and Cloudflare's two keys look alike enough that
+        # this mistake is one edit away — so refuse to start instead.
+        raise SignupConfigError(
+            f"{SITE_KEY_ENV} is identical to TURNSTILE_SECRET_KEY. The site key is "
+            "public and goes into the page bundle; the secret key must never be "
+            "used as the widget key.")
+
     return SignupConfig(
         mode=mode,
         google_client_id=values["GOOGLE_CLIENT_ID"],
         google_client_secret=values["GOOGLE_CLIENT_SECRET"],
         redirect_uris=redirect_uris,
         turnstile_secret_key=values["TURNSTILE_SECRET_KEY"],
+        turnstile_site_key=site_key,
         turnstile_expected_hostname=hostname,
         google_hd=(env.get(HD_ENV) or "").strip().lower() or None,
         identity_cap=_int_env(env, IDENTITY_CAP_ENV, 1),
