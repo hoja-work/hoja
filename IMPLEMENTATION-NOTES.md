@@ -10,7 +10,7 @@ mechanism open ("upcoming cycles snap to the nearest parent cycle") is called ou
 | | passed | skipped | failed |
 |---|---|---|---|
 | baseline (recorded, re-measured at 7d5fa8a) | 338 | 6 | 1 |
-| after this work | 352 | 6 | 0 |
+| after this work | 353 | 6 | 0 |
 
 The pre-existing failure `tests/test_security_lane_a.py::test_security_headers_on_api_and_html`
 was **not** touched. It is environment-dependent, not fixed by this branch: it fails
@@ -38,7 +38,7 @@ asserts CSP headers on an HTML error page, and the served HTML differs).
 | `cliniar/graphql/fragments.py`, `cliniar/models/team.py` | client asks for `visibility`/`parentTeamId` |
 | `frontend/src/main.tsx` | single-org mode hides "Create workspace" and the switch list |
 | `docs/DESIGN.md` | `--workspace` removed; single-org and department rules documented |
-| `tests/test_team_hierarchy.py` | new, 10 tests (written first, 9 failed) |
+| `tests/test_team_hierarchy.py` | new, 11 tests (written first, 9 of the first 10 failed; the cycle test in item E was added later and also verified failing) |
 | `tests/test_team_visibility_audit.py` | new, 3 read-path probes (all failed before their fix) |
 | `tests/test_realtime.py`, `tests/test_server_backend.py` | updated for the intentional API change |
 
@@ -104,7 +104,7 @@ Each fixed leak has a test that failed before the fix and passes after; the
 ```
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-352 passed, 6 skipped, 1 warning in 76.24s (0:01:16)
+353 passed, 6 skipped, 1 warning in 76.57s (0:01:16)
 ```
 
 ### Gate 2 — GraphQL introspection, base vs. this branch

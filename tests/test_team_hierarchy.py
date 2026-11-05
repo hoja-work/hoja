@@ -26,6 +26,7 @@ from starlette.testclient import TestClient
 from cliniar_server.app import create_app
 from cliniar_server.db import (
     api_key,
+    cycle,
     issue,
     issue_label,
     issue_label_link,
@@ -333,6 +334,45 @@ def test_un_nest_keeps_issues_and_copies_in_use_inherited_labels(world) -> None:
         assert label_id != used_label
         assert conn.execute(select(issue_label.c.id).where(and_(
             issue_label.c.id == used_label, issue_label.c.team_id == parent))).first() is not None
+
+
+def test_nesting_closes_the_in_flight_cycle_and_snaps_upcoming_boundaries(world) -> None:
+    """Item E: an in-flight sub-team cycle closes; upcoming cycles take the parent's dates."""
+    engine, app = world["engine"], world["app"]
+    parent = _make_team(engine, world["org"], "PAR", "Parent")
+    child = _make_team(engine, world["org"], "CHL", "Child")
+    with engine.begin() as conn:
+        parent_cycles, child_cycles = {}, {}
+        for number in (1, 2, 3):
+            pid = new_id()
+            parent_cycles[number] = pid
+            conn.execute(cycle.insert().values(
+                id=pid, organization_id=world["org"], team_id=parent, number=number,
+                name=f"Parent {number}", starts_at=f"2026-01-0{number}T00:00:00",
+                ends_at=f"2026-01-0{number}T23:59:59", created_at=now_iso(), updated_at=now_iso()))
+            cid = new_id()
+            child_cycles[number] = cid
+            conn.execute(cycle.insert().values(
+                id=cid, organization_id=world["org"], team_id=child, number=number,
+                name=f"Child {number}", starts_at=f"2026-06-0{number}T00:00:00",
+                ends_at=f"2026-06-0{number}T23:59:59", created_at=now_iso(), updated_at=now_iso()))
+        # Cycle 1 is the child's in-flight cycle.
+        conn.execute(team.update().where(team.c.id == child).values(active_cycle_id=child_cycles[1]))
+
+    with TestClient(app) as client:
+        nested = _data(client, ADMIN, UPDATE_TEAM, {"id": child, "input": {"parentTeamId": parent}})
+        assert nested["teamUpdate"]["success"] is True, nested
+
+    with engine.connect() as conn:
+        rows = {n: (s, e, done) for n, s, e, done in conn.execute(
+            select(cycle.c.number, cycle.c.starts_at, cycle.c.ends_at, cycle.c.completed_at)
+            .where(cycle.c.team_id == child))}
+        active = conn.execute(select(team.c.active_cycle_id).where(team.c.id == child)).scalar()
+    assert rows[1][2] is not None, "the in-flight cycle must be completed"
+    assert active is None, "the team must no longer point at an active cycle"
+    # Upcoming cycles keep their rows but take the nearest parent cycle's boundaries.
+    assert rows[2][:2] == ("2026-01-02T00:00:00", "2026-01-02T23:59:59"), rows[2]
+    assert rows[3][:2] == ("2026-01-03T00:00:00", "2026-01-03T23:59:59"), rows[3]
 
 
 # ---------------------------------------------------------------- decision 4
