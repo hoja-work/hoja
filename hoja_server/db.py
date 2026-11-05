@@ -808,6 +808,10 @@ def make_engine(target: str | Path) -> Engine:
         kwargs["max_overflow"] = _pool_setting("HOJA_DB_MAX_OVERFLOW", 5, minimum=0)
         kwargs["pool_timeout"] = _pool_setting("HOJA_DB_POOL_TIMEOUT", 30, minimum=1)
     eng = create_engine(url, **kwargs)
+    if backend == "postgresql":
+        from hoja_server.tenant_context import install
+
+        install(eng)
 
     if backend == "sqlite":
 

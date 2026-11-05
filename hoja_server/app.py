@@ -89,6 +89,7 @@ from hoja_server.signup_gate import (
 )
 from hoja_server.signup_store import SignupStore
 from hoja_server.store import Store
+from hoja_server import tenant_context
 from hoja_server import realtime, sync
 from hoja_server.writer import Writer
 
@@ -476,6 +477,18 @@ def create_app(
         return None, None, None, False
 
     def _auth(request: Request):
+        """Resolve the caller, then scope the rest of this request to its organization.
+
+        Credential lookups run before any tenant is known, so they are a system
+        operation; everything after a successful resolution is tenant-scoped.
+        """
+        with tenant_context.system():
+            result = _resolve_auth(request)
+        if result[0]:
+            tenant_context.bind(result[1])
+        return result
+
+    def _resolve_auth(request: Request):
         raw = request.headers.get("authorization", "") or request.headers.get("Authorization", "")
         token = raw[7:].strip() if raw.lower().startswith("bearer ") else raw.strip()
         if raw and token:
@@ -526,6 +539,8 @@ def create_app(
         hit = sync_auth_cache.get(key)
         if hit is not None and now - hit[0] < _SYNC_AUTH_TTL:
             request.state.api_key_access = hit[2]
+            # a cache hit skips _auth, so it must scope the request itself
+            tenant_context.bind(hit[1][1])
             return hit[1]
         result = _auth(request)
         if result[0]:
@@ -745,6 +760,8 @@ def create_app(
             *([(b"authorization", token_header.encode())] if token_header else []),
         ]
         uid, org, cred = await run_in_threadpool(_socket_identity, websocket)
+        if uid:  # resolved in a worker thread: its context copy is gone, bind here
+            tenant_context.bind(org)
         await websocket.accept(subprotocol=subprotocol)
         if not uid:
             await websocket.close(code=4401)
@@ -875,6 +892,8 @@ def create_app(
 
     async def graphql_server(request: Request):
         uid, org, identity_id, is_browser_session = await run_in_threadpool(_auth, request)
+        if uid:  # resolved in a worker thread: its context copy is gone, bind here
+            tenant_context.bind(org)
         if not uid:
             return JSONResponse(
                 {
@@ -1759,6 +1778,8 @@ def create_app(
 
     async def sync_bootstrap(request: Request):
         uid, org, identity_id, is_browser = await run_in_threadpool(_auth_sync, request)
+        if uid:  # resolved in a worker thread: its context copy is gone, bind here
+            tenant_context.bind(org)
         if not uid:
             return JSONResponse({"error": "Authentication required"}, status_code=401)
         try:
@@ -1833,6 +1854,8 @@ def create_app(
 
     async def sync_delta(request: Request):
         uid, org, identity_id, is_browser = await run_in_threadpool(_auth_sync, request)
+        if uid:  # resolved in a worker thread: its context copy is gone, bind here
+            tenant_context.bind(org)
         if not uid:
             return JSONResponse({"error": "Authentication required"}, status_code=401)
         try:
@@ -2039,5 +2062,8 @@ def create_app(
     app.add_middleware(_SecurityHeaders)
     # Compress JSON and static assets; SSE streams are excluded by Starlette.
     app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
+    # Outermost: enumerated pre-tenant paths run in system context; every other
+    # request has no tenant until _auth binds one (fail closed under RLS).
+    app.add_middleware(tenant_context.TenantContextMiddleware)
     app.add_exception_handler(json.JSONDecodeError, _malformed_json_handler)
     return app

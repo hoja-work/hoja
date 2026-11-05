@@ -26,6 +26,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from hoja_server import tenant_context
 from hoja_server import meeting_policy as P
 from hoja_server.cloudflare_realtime import CloudflareRealtime, SFUError
 from hoja_server.db import meeting, rate_limit_blocked, rate_limit_record
@@ -89,7 +90,7 @@ class MeetingHub:
     # ---------------------------------------------------------------- background work
     def start(self) -> None:
         if self._reminders is None:
-            self._reminders = asyncio.get_running_loop().create_task(self._remind_loop())
+            self._reminders = asyncio.get_running_loop().create_task(tenant_context.as_system(self._remind_loop()))
 
     async def _remind_loop(self) -> None:
         while True:
@@ -107,7 +108,7 @@ class MeetingHub:
             except Exception:
                 log.exception("scheduled meeting task failed")
 
-        task = asyncio.get_running_loop().create_task(run())
+        task = asyncio.get_running_loop().create_task(tenant_context.as_system(run()))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
@@ -222,7 +223,7 @@ class MeetingHub:
             await self.dispatch(meeting_id, events)
 
         with suppress(RuntimeError):
-            self._pending[pid] = asyncio.get_running_loop().create_task(later())
+            self._pending[pid] = asyncio.get_running_loop().create_task(tenant_context.as_system(later()))
 
     async def close_all(self) -> None:
         for task in [*self._pending.values(), *self._tasks, *([self._reminders] if self._reminders else [])]:

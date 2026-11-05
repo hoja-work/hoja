@@ -32,6 +32,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from hoja_server import db
+from hoja_server import tenant_context
 from hoja_server.denials import DENY_HINT
 from hoja_server.mcp_tools import INSTRUCTIONS as MCP_INSTRUCTIONS
 
@@ -347,7 +348,9 @@ class HojaOAuthProvider(OAuthAuthorizationServerProvider):
         return token
 
     async def load_access_token(self, token: str):
-        with self.engine.connect() as conn:
+        # The bearer is looked up before any tenant is known (system context);
+        # a valid token then scopes the rest of the MCP request to its org.
+        with tenant_context.system(), self.engine.connect() as conn:
             row = (
                 conn.execute(
                     select(db.oauth_access_token).where(
@@ -360,6 +363,7 @@ class HojaOAuthProvider(OAuthAuthorizationServerProvider):
             )
         if not row or row["expires_at"] <= _iso(_now()):
             return None
+        tenant_context.bind(row["organization_id"])
         subject = json.dumps({"user_id": row["user_id"], "org_id": row["organization_id"]})
         return AccessToken(
             token=token,

@@ -38,6 +38,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from sqlalchemy import and_, select
 
 from hoja_server import agent_chat as chat
+from hoja_server import tenant_context
 from hoja_server.agent_conversations import save_message, start_conversation
 from hoja_server.agent_threads import _owned as _owned_thread
 from hoja_server.agent_threads import _title_from
@@ -223,6 +224,8 @@ def _reply_text(result) -> str:
 async def agent_turn(turn: dict) -> dict:
     """One chat turn. Inputs are plain ids so a new process can rebuild everything on recovery."""
     assert _runtime is not None
+    # Inputs are plain ids, so a recovered workflow rebinds its own tenant here.
+    tenant_context.bind(turn["org_id"])
     turns = await _load_turn(turn["conversation_id"], turn["user_message_id"])
     prompt, history = chat._history([{"role": role, "content": content} for role, content in turns])
     context = {
