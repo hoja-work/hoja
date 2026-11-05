@@ -869,7 +869,9 @@ def _apply_team_cadence(conn) -> None:
     inspector = inspect(conn)
     existing = {column["name"] for column in inspector.get_columns("team")}
     additions = {
-        "cadence_enabled": "BOOLEAN NOT NULL DEFAULT 0",
+        # FALSE, not 0: Postgres rejects an integer default on a boolean column
+        # ("column ... is of type boolean but default expression is of type integer").
+        "cadence_enabled": "BOOLEAN NOT NULL DEFAULT FALSE",
         "cadence_weekday": "INTEGER",
         "cadence_anchor_at": "VARCHAR",
         "cadence_policy_version": "INTEGER",
@@ -1396,18 +1398,27 @@ def _apply_team_hierarchy(conn) -> None:
     columns = {column["name"] for column in inspect(conn).get_columns("team")}
     if "parent_team_id" not in columns:
         conn.exec_driver_sql("ALTER TABLE team ADD COLUMN parent_team_id VARCHAR")
+    # DDL must come before the data copy below: Postgres refuses to run DDL on a table
+    # that has pending trigger events, and the copy fires the change_event triggers.
+    conn.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_team_parent_team_id ON team (parent_team_id)")
+    copy_private = False
     if "visibility" not in columns:
         conn.exec_driver_sql(
             "ALTER TABLE team ADD COLUMN visibility VARCHAR NOT NULL DEFAULT 'public'")
-        if "private" in columns:
-            # Existing rows: private=True -> 'private'; everything else stays 'public'.
-            conn.exec_driver_sql("UPDATE team SET visibility = 'private' WHERE private = 1")
-    conn.exec_driver_sql(
-        "CREATE INDEX IF NOT EXISTS ix_team_parent_team_id ON team (parent_team_id)")
+        copy_private = "private" in columns
     member_columns = {column["name"] for column in inspect(conn).get_columns("team_member")}
     if "role" not in member_columns:
         conn.exec_driver_sql(
             "ALTER TABLE team_member ADD COLUMN role VARCHAR NOT NULL DEFAULT 'member'")
+    if copy_private:
+        # Last statement on purpose. Postgres types `private` BOOLEAN so an integer
+        # literal is a type error there; SQLite stores 0/1 and accepts either. This
+        # branch only runs when upgrading a database created before `visibility`
+        # existed, which is why a fresh-Postgres test never exercised it.
+        truthy = "TRUE" if conn.dialect.name == "postgresql" else "1"
+        conn.exec_driver_sql(
+            f"UPDATE team SET visibility = 'private' WHERE private = {truthy}")
 
 
 _MIGRATIONS = {

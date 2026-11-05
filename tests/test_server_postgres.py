@@ -14,6 +14,8 @@ pytest.importorskip("psycopg")
 from sqlalchemy import delete, func, select
 
 from hoja_server.db import (
+    _MIGRATIONS,
+    _apply_team_hierarchy,
     change_event,
     issue,
     issue_label_link,
@@ -266,3 +268,72 @@ def test_postgres_seqs_are_commit_ordered_per_org() -> None:
             _cleanup(engine, [seeded["org_id"]])
         finally:
             engine.dispose()
+
+
+def test_postgres_upgrade_from_legacy_private_column() -> None:
+    """Upgrading a pre-`visibility` database must work on Postgres, not just SQLite.
+
+    The legacy data-copy runs only when the column is missing, so a fresh Postgres
+    database never reaches it. This probe builds the current schema, rewinds it to
+    the pre-visibility shape (boolean `private`, no `visibility`/`parent_team_id`/
+    `role`), sets the revision back, and migrates again. That is exactly the path
+    production takes on its first deploy after the change.
+    """
+    import uuid
+
+    admin = make_engine(POSTGRES_URL)
+    name = f"hoja_upgrade_{uuid.uuid4().hex[:8]}"
+    # CREATE/DROP DATABASE cannot run inside a transaction on Postgres.
+    admin_auto = admin.connect().execution_options(isolation_level="AUTOCOMMIT")
+    try:
+        admin_auto.exec_driver_sql(f'CREATE DATABASE "{name}"')
+    except Exception:  # pragma: no cover - depends on server privileges
+        admin_auto.close()
+        pytest.skip("cannot create a database for the upgrade probe")
+
+    hierarchy_revision = next(
+        revision for revision, apply_revision in _MIGRATIONS.items()
+        if apply_revision is _apply_team_hierarchy)
+
+    try:
+        base = POSTGRES_URL.rsplit("/", 1)[0]
+        engine = make_engine(f"{base}/{name}")
+        migrate(engine)  # full current schema
+        with engine.begin() as conn:
+            # Insert through the table object so client-side defaults apply, while
+            # the full current schema still exists; the rows survive the rewind.
+            conn.execute(team.insert().values(
+                id="t-private", organization_id=None, key="PRV", name="Private team"))
+            conn.execute(team.insert().values(
+                id="t-public", organization_id=None, key="PUB", name="Public team"))
+
+        # Separate transaction: those inserts fired the change_event triggers, and
+        # Postgres refuses DDL on a table with pending trigger events.
+        with engine.begin() as conn:
+            # Rewind to the pre-visibility shape.
+            conn.exec_driver_sql("DROP INDEX IF EXISTS ix_team_parent_team_id")
+            conn.exec_driver_sql("ALTER TABLE team DROP COLUMN visibility")
+            conn.exec_driver_sql("ALTER TABLE team DROP COLUMN parent_team_id")
+            conn.exec_driver_sql("ALTER TABLE team_member DROP COLUMN role")
+            conn.exec_driver_sql(
+                "ALTER TABLE team ADD COLUMN private BOOLEAN NOT NULL DEFAULT FALSE")
+            conn.exec_driver_sql("UPDATE team SET private = TRUE WHERE id = 't-private'")
+            # schema_revision is an append-only, contiguous log: to re-apply the
+            # hierarchy revision, delete it and everything after it. The revision
+            # number is derived so renumbering cannot silently disarm this test.
+            conn.exec_driver_sql(
+                f"DELETE FROM schema_revision WHERE revision >= {hierarchy_revision}")
+
+        migrate(engine)  # the upgrade under test
+
+        with engine.begin() as conn:
+            rows = dict(conn.exec_driver_sql("SELECT id, visibility FROM team").all())
+            role = conn.exec_driver_sql(
+                "SELECT count(*) FROM information_schema.columns"
+                " WHERE table_name = 'team_member' AND column_name = 'role'").scalar()
+        assert rows["t-private"] == "private"
+        assert rows["t-public"] == "public"
+        assert role == 1
+    finally:
+        admin_auto.exec_driver_sql(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+        admin_auto.close()
