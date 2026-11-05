@@ -36,8 +36,9 @@ from hoja.models.workflow import WorkflowState
 def _client() -> LinearClient:
     """Build a LinearClient using the same resolution rules as the CLI.
 
-    Order: $LINEAR_TOKEN env var > config.toml. The `--token` CLI flag is not
-    applicable here (MCP server has no CLI args for the token).
+    Order: $HOJA_TOKEN env var (deprecated alias $LINEAR_TOKEN) > config.toml.
+    The `--token` CLI flag is not applicable here (the MCP server has no CLI
+    args for the token).
     """
     cfg = load_config()
     try:
@@ -45,8 +46,8 @@ def _client() -> LinearClient:
         token = resolve_token(None, account_cfg)
     except AuthError as e:
         raise RuntimeError(
-            "hoja-mcp could not resolve a Linear API token. "
-            "Set $LINEAR_TOKEN, or run `hoja init` and put your token in "
+            "hoja-mcp could not resolve an API token. "
+            "Set $HOJA_TOKEN, or run `hoja init` and put your token in "
             "~/.config/hoja/config.toml. "
             f"Underlying error: {e}"
         ) from e

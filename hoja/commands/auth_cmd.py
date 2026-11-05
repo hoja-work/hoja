@@ -111,12 +111,12 @@ def accounts_list() -> None:
 @auth_app.command("add")
 def account_add(
     name: str = typer.Argument(..., help="Account name"),
-    token: str = typer.Option(..., "--token", help="Linear API token"),
+    token: str = typer.Option(..., "--token", help="Hoja API token"),
     token_env: str = typer.Option(
-        "LINEAR_TOKEN", "--token-env", help="Environment variable name"
+        "HOJA_TOKEN", "--token-env", help="Environment variable name"
     ),
     verify: bool = typer.Option(
-        True, "--verify/--no-verify", help="Verify token by calling Linear API"
+        True, "--verify/--no-verify", help="Verify token by calling the API"
     ),
     default: bool = typer.Option(
         False, "--default", help="Set as global default account"
@@ -149,7 +149,9 @@ def account_add(
     )
     was_empty = len(config.accounts) == 0
     config.accounts[name] = AccountConfig(
-        token=token if token_env == "LINEAR_TOKEN" else None,
+        # The shared default env vars are never persisted; only a distinct
+        # per-account variable stores the token inline.
+        token=token if token_env in ("HOJA_TOKEN", "LINEAR_TOKEN") else None,
         token_env=token_env,
         org_name=org_name,
         teams=team_keys,

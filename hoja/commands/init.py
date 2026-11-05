@@ -17,7 +17,8 @@ CONFIG_TEMPLATE = """\
 #
 # Token resolution order (per account):
 #   1. --token CLI flag
-#   2. $<ACCOUNT_TOKEN_ENV> environment variable (default: LINEAR_TOKEN)
+#   2. $<ACCOUNT_TOKEN_ENV> environment variable (default: HOJA_TOKEN;
+#      the deprecated LINEAR_TOKEN is read as a fallback)
 #   3. [accounts.<name>].token below (discouraged: plaintext in dotfiles)
 #
 # Account resolution order:
@@ -26,8 +27,9 @@ CONFIG_TEMPLATE = """\
 #   3. Global default account
 
 [accounts.default]
-# Environment variable to read the token from. Default: LINEAR_TOKEN.
-token_env = "LINEAR_TOKEN"
+# Environment variable to read the token from. Default: HOJA_TOKEN
+# (LINEAR_TOKEN is still honoured as a deprecated fallback).
+token_env = "HOJA_TOKEN"
 # Uncomment to store the token here directly (not recommended):
 # token = "lin_api_..."
 # Team keys this account owns — enables automatic account selection when a
@@ -91,12 +93,12 @@ def init(
     typer.echo(f"Created {target}")
     typer.echo("")
     typer.echo("Next steps:")
-    typer.echo(f"  1. export LINEAR_TOKEN=\"lin_api_...\"  # or edit {target}")
+    typer.echo(f"  1. export HOJA_TOKEN=\"lin_api_...\"  # or edit {target}")
     typer.echo("  2. hoja me  # verify it works")
     typer.echo("")
     typer.echo("Multi-account setup:")
-    typer.echo("  hoja auth add work --token $LINEAR_WORK_TOKEN")
-    typer.echo("  hoja auth add personal --token $LINEAR_PERSONAL_TOKEN")
+    typer.echo("  hoja auth add work --token $HOJA_WORK_TOKEN")
+    typer.echo("  hoja auth add personal --token $HOJA_PERSONAL_TOKEN")
     typer.echo("  hoja auth switch work")
 
 

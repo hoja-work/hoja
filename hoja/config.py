@@ -6,7 +6,8 @@ Lookup order:
 
 Token resolution order (per account):
   1. --token CLI flag (passed in)
-  2. $<ACCOUNT_TOKEN_ENV> environment variable (default: LINEAR_TOKEN)
+  2. $<ACCOUNT_TOKEN_ENV> environment variable (default: HOJA_TOKEN,
+     with deprecated LINEAR_TOKEN still read as a fallback)
   3. config.toml [accounts.<name>].token (discouraged)
 
 Account resolution order:
@@ -39,18 +40,40 @@ import contextlib
 
 from hoja.errors import AuthError, UsageError
 
+# Deprecated environment-variable aliases kept for wire compatibility.
+# The HOJA_* name is canonical: it is read first, and the LINEAR_* name is
+# consulted only when the canonical variable is unset. Convenience aliases are
+# NOT inherited by accounts that declare their own ``token_env``.
+LEGACY_ENV_ALIASES: dict[str, str] = {
+    "HOJA_TOKEN": "LINEAR_TOKEN",
+    "HOJA_API_URL": "LINEAR_API_URL",
+}
+
+
+def env_with_legacy(name: str) -> str | None:
+    """Read ``$name``, falling back to its deprecated alias when it has one."""
+    if value := os.environ.get(name):
+        return value
+    alias = LEGACY_ENV_ALIASES.get(name)
+    if alias and (value := os.environ.get(alias)):
+        return value
+    return None
+
 
 class AccountConfig(BaseModel):
-    """A named Linear account."""
+    """A named Hoja account."""
 
     model_config = ConfigDict(extra="forbid")
 
     token: str | None = None
-    token_env: str = "LINEAR_TOKEN"
+    # Environment variable holding this account's token. HOJA_TOKEN is read
+    # first and the deprecated LINEAR_TOKEN is used only if HOJA_TOKEN is unset.
+    token_env: str = "HOJA_TOKEN"
     org_name: str | None = None
     # GraphQL endpoint override. Point this at a local hoja-serve backend
     # (e.g. "http://127.0.0.1:8787/graphql") to run fully offline. When unset,
-    # hoja talks to the configured Linear-compatible API. $LINEAR_API_URL overrides this too.
+    # hoja talks to the configured Linear-compatible API. $HOJA_API_URL
+    # (or its deprecated alias $LINEAR_API_URL) overrides this too.
     base_url: str | None = None
     # Team keys this account owns (e.g. ["SWA", "ENG"]). Used for intelligent
     # account auto-selection: a command targeting team SWA (via --team SWA or
@@ -238,7 +261,7 @@ def resolve_account(
       3. Workspace-mapped account
       4. Global default account
       5. First available account (fallback)
-      6. Not found → synthetic default (lets resolve_token check $LINEAR_TOKEN)
+      6. Not found → synthetic default (lets resolve_token check $HOJA_TOKEN)
 
     Returns (account_name, account_config).
     """
@@ -281,30 +304,35 @@ def resolve_account(
         first_name = next(iter(config.accounts))
         return first_name, config.accounts[first_name]
 
-    # 6. Legacy fallback: no accounts configured but $LINEAR_TOKEN may exist.
-    # Return a synthetic default account so resolve_token can check the env var.
-    return "default", AccountConfig(token_env="LINEAR_TOKEN")
+    # 6. Env-only fallback: no accounts configured but $HOJA_TOKEN (or the
+    # deprecated $LINEAR_TOKEN) may exist. Return a synthetic default account so
+    # resolve_token can check the env var.
+    return "default", AccountConfig(token_env="HOJA_TOKEN")
 
 
 def resolve_token(
     cli_token: str | None,
     account: AccountConfig,
 ) -> str:
-    """Resolve the Linear API token using precedence rules.
+    """Resolve the API token using precedence rules.
 
-    Order: --token > $<ACCOUNT_TOKEN_ENV> > account.token
+    Order: --token > $<ACCOUNT_TOKEN_ENV> > account.token.
+    The default token env var is HOJA_TOKEN; LINEAR_TOKEN is still accepted as
+    a deprecated alias when HOJA_TOKEN is unset.
     """
     if cli_token:
         return cli_token
-    env_var = account.token_env or "LINEAR_TOKEN"
-    if env_token := os.environ.get(env_var):
+    env_var = account.token_env or "HOJA_TOKEN"
+    if env_token := env_with_legacy(env_var):
         return env_token
     if account.token:
         return account.token
+    alias = LEGACY_ENV_ALIASES.get(env_var)
+    hint_vars = f"${env_var} (or ${alias})" if alias else f"${env_var}"
     raise AuthError(
-        "No Linear API token found",
+        "No Hoja API token found",
         hint=(
-            f"Set ${env_var}, pass --token, or configure token in "
+            f"Set {hint_vars}, pass --token, or configure token in "
             f"{config_path()}"
         ),
     )
@@ -316,12 +344,13 @@ def resolve_base_url(
 ) -> str | None:
     """Resolve the GraphQL endpoint override.
 
-    Order: --api-url flag > $LINEAR_API_URL env > account.base_url > None.
-    Returning None means "use the LinearClient default" (the real Linear API).
+    Order: --api-url flag > $HOJA_API_URL env (deprecated alias
+    $LINEAR_API_URL) > account.base_url > None.
+    Returning None means "use the client's default endpoint".
     """
     if cli_base_url:
         return cli_base_url
-    if env_url := os.environ.get("LINEAR_API_URL"):
+    if env_url := env_with_legacy("HOJA_API_URL"):
         return env_url
     return account.base_url
 

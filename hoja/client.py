@@ -1,9 +1,9 @@
-"""Async GraphQL client for the Linear API.
+"""Async GraphQL client for Hoja's Linear-compatible GraphQL API.
 
 Design goals:
 - Single httpx.AsyncClient with sensible defaults (HTTP/2, timeout, retries).
 - Token never logged in plaintext (redacted in verbose mode).
-- Linear errors lifted into typed exceptions.
+- GraphQL errors lifted into typed exceptions.
 - Rate limit awareness (X-RateLimit-* headers honored).
 - Cursor-based pagination helper.
 """
@@ -29,19 +29,23 @@ from hoja.errors import (
 
 logger = logging.getLogger("hoja.client")
 
-LINEAR_API_URL = "https://api.linear.app/graphql"
+# Endpoint used when no --api-url flag, $HOJA_API_URL (or deprecated
+# $LINEAR_API_URL), or accounts.<name>.base_url is configured. Point the client
+# at your own `hoja-serve` instance (e.g. http://127.0.0.1:8787/graphql) to stay
+# fully self-hosted; this fallback is the public Linear-compatible API.
+DEFAULT_API_URL = "https://api.linear.app/graphql"
 
 T = TypeVar("T", bound=BaseModel)
 
 
 class LinearClient:
-    """Async GraphQL client for the Linear API."""
+    """Async GraphQL client for a Linear-compatible GraphQL API."""
 
     def __init__(
         self,
         token: str,
         *,
-        base_url: str = LINEAR_API_URL,
+        base_url: str = DEFAULT_API_URL,
         timeout: float = 30.0,
         verbose: bool = False,
     ) -> None:

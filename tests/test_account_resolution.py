@@ -13,7 +13,9 @@ from hoja.config import (
     AccountConfig,
     Config,
     DefaultsConfig,
+    env_with_legacy,
     resolve_account,
+    resolve_base_url,
     resolve_token,
     team_key_from_hint,
 )
@@ -88,28 +90,107 @@ def test_unknown_cli_account_raises():
 def test_synthetic_default_when_empty():
     name, acc = resolve_account(None, Config())
     assert name == "default"
-    assert acc.token_env == "LINEAR_TOKEN"
+    assert acc.token_env == "HOJA_TOKEN"
 
 
 # ----------------- resolve_token -----------------
 
 
 def test_token_cli_overrides(monkeypatch):
-    monkeypatch.setenv("LINEAR_TOKEN", "from_env")
+    monkeypatch.setenv("HOJA_TOKEN", "from_env")
     acc = AccountConfig(token="from_config")
     assert resolve_token("from_cli", acc) == "from_cli"
 
 
 def test_token_env_overrides_config(monkeypatch):
-    monkeypatch.setenv("LINEAR_TOKEN", "from_env")
+    monkeypatch.setenv("HOJA_TOKEN", "from_env")
     acc = AccountConfig(token="from_config")
     assert resolve_token(None, acc) == "from_env"
 
 
 def test_token_config_last(monkeypatch):
+    monkeypatch.delenv("HOJA_TOKEN", raising=False)
     monkeypatch.delenv("LINEAR_TOKEN", raising=False)
     acc = AccountConfig(token="from_config")
     assert resolve_token(None, acc) == "from_config"
+
+
+# -------- env-var aliases: HOJA_* canonical, LINEAR_* deprecated --------------
+#
+# The Linear-compatible wire surface keeps accepting the old names, but the
+# HOJA_* variable must win whenever both are present.
+
+
+def _clear_auth_env(monkeypatch) -> None:
+    for name in ("HOJA_TOKEN", "LINEAR_TOKEN", "HOJA_API_URL", "LINEAR_API_URL"):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_hoja_token_wins_when_both_set(monkeypatch):
+    _clear_auth_env(monkeypatch)
+    monkeypatch.setenv("HOJA_TOKEN", "from_hoja")
+    monkeypatch.setenv("LINEAR_TOKEN", "from_linear")
+    assert resolve_token(None, AccountConfig()) == "from_hoja"
+
+
+def test_linear_token_still_works_alone(monkeypatch):
+    _clear_auth_env(monkeypatch)
+    monkeypatch.setenv("LINEAR_TOKEN", "from_linear")
+    assert resolve_token(None, AccountConfig()) == "from_linear"
+
+
+def test_missing_token_error_names_both_vars(monkeypatch):
+    _clear_auth_env(monkeypatch)
+    with pytest.raises(AuthError) as excinfo:
+        resolve_token(None, AccountConfig())
+    message = str(excinfo.value) + str(getattr(excinfo.value, "hint", ""))
+    assert "HOJA_TOKEN" in message
+    assert "LINEAR_TOKEN" in message
+
+
+def test_custom_token_env_does_not_inherit_linear_alias(monkeypatch):
+    # An account that names its own variable must not silently fall back to
+    # LINEAR_TOKEN; only the canonical HOJA_TOKEN gets that alias.
+    _clear_auth_env(monkeypatch)
+    monkeypatch.setenv("LINEAR_TOKEN", "from_linear")
+    acc = AccountConfig(token="from_config", token_env="ACME_TOKEN")
+    assert resolve_token(None, acc) == "from_config"
+
+
+# ----------------- resolve_base_url + aliases -----------------
+
+
+def test_hoja_api_url_wins_when_both_set(monkeypatch):
+    _clear_auth_env(monkeypatch)
+    monkeypatch.setenv("HOJA_API_URL", "http://hoja.example/graphql")
+    monkeypatch.setenv("LINEAR_API_URL", "http://linear.example/graphql")
+    assert resolve_base_url(None, AccountConfig()) == "http://hoja.example/graphql"
+
+
+def test_linear_api_url_still_works_alone(monkeypatch):
+    _clear_auth_env(monkeypatch)
+    monkeypatch.setenv("LINEAR_API_URL", "http://linear.example/graphql")
+    assert resolve_base_url(None, AccountConfig()) == "http://linear.example/graphql"
+
+
+def test_api_url_precedence_flag_env_account(monkeypatch):
+    _clear_auth_env(monkeypatch)
+    acc = AccountConfig(base_url="http://account.example/graphql")
+    monkeypatch.setenv("HOJA_API_URL", "http://env.example/graphql")
+    assert resolve_base_url("http://flag.example/graphql", acc) == "http://flag.example/graphql"
+    assert resolve_base_url(None, acc) == "http://env.example/graphql"
+    monkeypatch.delenv("HOJA_API_URL")
+    assert resolve_base_url(None, acc) == "http://account.example/graphql"
+
+
+def test_env_with_legacy_reads_alias_only_when_canonical_is_unset(monkeypatch):
+    _clear_auth_env(monkeypatch)
+    monkeypatch.setenv("LINEAR_TOKEN", "alias")
+    assert env_with_legacy("HOJA_TOKEN") == "alias"
+    monkeypatch.setenv("HOJA_TOKEN", "canonical")
+    assert env_with_legacy("HOJA_TOKEN") == "canonical"
+    # Names without an alias mapping are read verbatim.
+    assert env_with_legacy("UNMAPPED_VAR") is None
 
 
 # ----------------- WorkflowState smart-union -----------------

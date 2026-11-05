@@ -1,15 +1,18 @@
 // Reconcile one real cycle's numbers against the workspace itself.
-//   LINEAR_API_URL=https://host/graphql LINEAR_TOKEN=... node scripts/check-cycle-metrics-live.mjs [cycleNumber]
+//   HOJA_API_URL=https://host/graphql HOJA_TOKEN=... node scripts/check-cycle-metrics-live.mjs [cycleNumber]
+// The deprecated LINEAR_API_URL / LINEAR_TOKEN names are still accepted.
 // Defaults to the most recently completed cycle of the first team. Prints what
 // the UI used to show (completed/scope) next to what it shows now, and fails if
 // the buckets do not add up to the scope the server returned.
 import assert from 'node:assert/strict';
 import {asPct, cycleStats, deliveryRate, dropoutRate, scopeCompletion} from '../frontend/src/linear/cycleMetrics.ts';
 
-const url = process.env.LINEAR_API_URL;
-const token = process.env.LINEAR_TOKEN;
+const url = process.env.HOJA_API_URL || process.env.LINEAR_API_URL;
+const token = process.env.HOJA_TOKEN || process.env.LINEAR_TOKEN;
 if (!url || !token) {
-  console.log('skipped: set LINEAR_API_URL and LINEAR_TOKEN to reconcile against a live workspace');
+  console.log(
+    'skipped: set HOJA_API_URL and HOJA_TOKEN to reconcile against a live workspace',
+  );
   process.exit(0);
 }
 

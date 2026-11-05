@@ -104,7 +104,7 @@ def _cmd_seed(args):
     print(f"  TOKEN    : {info['token']}")
     print()
     print("Use it with hoja:")
-    print(f"  export LINEAR_TOKEN='{info['token']}'")
+    print(f"  export HOJA_TOKEN='{info['token']}'")
     print(f"  hoja --token '{info['token']}' me   # (after wiring base_url)")
 
 

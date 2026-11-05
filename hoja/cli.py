@@ -69,7 +69,7 @@ def _team_key_hint_from_argv(argv: list[str]) -> str | None:
 @app.callback()
 def main(
     ctx: typer.Context,
-    token: Optional[str] = typer.Option(None, "--token", envvar=None, help="Linear API token (overrides $LINEAR_TOKEN)"),
+    token: Optional[str] = typer.Option(None, "--token", envvar=None, help="Hoja API token (overrides $HOJA_TOKEN)"),
     account: Optional[str] = typer.Option(None, "--account", "-a", envvar=None, help="Account name to use (overrides workspace/default)"),
     output: OutputFormat = typer.Option(OutputFormat.HUMAN, "--output", "-o", help="Output format"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Print GraphQL operations to stderr"),

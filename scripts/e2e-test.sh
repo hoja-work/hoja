@@ -2,12 +2,15 @@
 # Comprehensive E2E test for Hoja
 # Tests every command in both human and JSON output modes.
 #
-# Requires: $LINEAR_TOKEN in environment. We never hardcode the token here.
+# Requires: $HOJA_TOKEN in environment (the deprecated $LINEAR_TOKEN is still
+# honoured). We never hardcode the token here.
 
 set -u
-if [ -z "${LINEAR_TOKEN:-}" ]; then
-    echo "ERROR: \$LINEAR_TOKEN is not set. Export it before running these tests." >&2
-    echo "Get a token at: https://linear.app/settings/api" >&2
+HOJA_TOKEN="${HOJA_TOKEN:-${LINEAR_TOKEN:-}}"
+export HOJA_TOKEN
+if [ -z "$HOJA_TOKEN" ]; then
+    echo "ERROR: \$HOJA_TOKEN is not set. Export it before running these tests." >&2
+    echo "Mint one from your workspace (Members/API keys) or: hoja-serve token" >&2
     exit 3
 fi
 if [ -z "${HOJA_TEST_TEAM:-}" ] || [ -z "${HOJA_TEST_ISSUE:-}" ]; then
