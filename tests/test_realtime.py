@@ -46,7 +46,7 @@ def world(tmp_path):
         public_id = conn.execute(select(team.c.id).where(team.c.organization_id == seeded["org_id"])).scalar()
         private_id = new_id()
         conn.execute(team.insert().values(id=private_id, organization_id=seeded["org_id"], key="SEC",
-                                          name="Secret", private=True, created_at=ts, updated_at=ts))
+                                          name="Secret", visibility="private", created_at=ts, updated_at=ts))
         seed_states_for_team(conn, seeded["org_id"], private_id)
         conn.execute(team_member.insert().values(team_id=private_id, user_id=seeded["user_id"]))
         member_id = new_id()
