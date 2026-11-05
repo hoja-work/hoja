@@ -175,7 +175,7 @@ export function SignupPage() {
     ? 'Your request is queued. Nothing else is needed from you right now.'
     : signedIn
       ? 'Signed in with Google. Your team will reach this workspace at ' + preview + '.hoja.work.'
-      : "You'll use this provider to sign in to your workspace. We check that a person is asking before a workspace is queued.";
+      : "You'll use this provider to sign in to your workspace.";
 
   return (
     <main className="signin-page">
