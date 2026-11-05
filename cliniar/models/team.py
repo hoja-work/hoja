@@ -22,7 +22,8 @@ class Team(Timestamped):
     description: str | None = None
     color: str | None = None
     icon: str | None = None
-    private: bool = False
+    visibility: str = "public"
+    parent_team_id: str | None = Field(alias="parentTeamId", default=None)
     timezone: str | None = None
 
     # Counts (often included for at-a-glance views)

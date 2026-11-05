@@ -24,7 +24,8 @@ fragment TeamCore on Team {
   description
   color
   icon
-  private
+  visibility
+  parentTeamId
   timezone
 }
 """
