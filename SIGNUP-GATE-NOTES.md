@@ -172,7 +172,8 @@ so a half-configured deployment cannot start and cannot silently allow.
 | `GOOGLE_CLIENT_ID` | yes | — | OIDC client id; also the `aud` we require |
 | `GOOGLE_CLIENT_SECRET` | yes | — | confidential client, exchanged server-side |
 | `GOOGLE_REDIRECT_URI` | yes | — | exact URI; `https` (http only for loopback); no query/fragment |
-| `TURNSTILE_SECRET_KEY` | yes | — | siteverify secret |
+| `TURNSTILE_SECRET_KEY` | yes | — | siteverify secret; never leaves the server |
+| `TURNSTILE_SITE_KEY` | no | — | Turnstile **site** key: public by design, handed to the page by `GET /api/signup/config`. Not in `REQUIRED_ENV` and not part of `configured`, so it never widens what the gate accepts; without it the page shows "sign-up unavailable" instead of a widget. Equal to `TURNSTILE_SECRET_KEY` is a startup error. |
 | `TURNSTILE_EXPECTED_HOSTNAME` | yes | — | bare hostname the widget is registered for |
 | `GOOGLE_REDIRECT_URI_ALLOWLIST` | no | `GOOGLE_REDIRECT_URI` | comma-separated exact URIs, one host each |
 | `HOJA_GOOGLE_HD` | no | unset | require this Workspace domain in the `hd` claim |
@@ -221,9 +222,9 @@ and no provisioning machinery exists in the gate module.
 
 - **Provisioning, deliberately.** No queue worker, no tenant creation, no
   Cloudflare call. The eligibility row is the whole hand-off.
-- **No frontend.** No Turnstile widget, no sign-up page, no "Continue with
-  Google" control. The marketing-site contract in the design (§7) is not
-  implemented here.
+- **No frontend in this branch.** The page lives on `feat/signup-page`
+  (`frontend/src/signup/`, `GET /api/signup/config`) — see `SIGNUP-PAGE-NOTES.md`.
+  The marketing-site contract in the design (§7) is not implemented.
 - **Login failures render JSON**, not an HTML error page — correct and
   machine-readable, but not the final UX.
 - **`hd` is deployment-wide** (`HOJA_GOOGLE_HD`), not per-tenant: this surface
