@@ -151,7 +151,6 @@ Every command supports `--output` / `-o`:
 
 ```
 --token TEXT            Override LINEAR_TOKEN env var
---workspace TEXT        Workspace override (multi-workspace future)
 --config PATH           Use specific config file
 --output, -o FORMAT     Output format (default: human)
 --no-color              Disable ANSI colors
@@ -162,6 +161,23 @@ Every command supports `--output` / `-o`:
 --help, -h              Show help
 --version               Print version and exit
 ```
+
+There is no `--workspace` flag: Hoja is a single-organization product. The
+`organization` table and every `organization_id` column stay (the change_event
+triggers and the whole read scope depend on them); only the ability to create or
+switch organization is gone. `HOJA_SINGLE_ORG=1` makes that explicit by refusing
+the `workspaceCreate` and `workspaceSwitch` mutations and hiding the workspace
+switcher in the UI.
+
+## Departments
+
+A department is a team with children (`team.parent_team_id`), at most three levels
+deep. A department is **not** an access boundary: `team.visibility` is one of
+`public` (any member), `restricted` (parent-team members may see and join) or
+`private` (explicit members only), and a sub-team never inherits its parent's
+access. Adding someone to a sub-team also adds them to every ancestor; removing
+them from a parent while they still sit on a descendant is refused rather than
+cascaded.
 
 ---
 
