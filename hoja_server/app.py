@@ -38,7 +38,7 @@ from starlette.applications import Starlette
 from starlette.datastructures import MutableHeaders
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.requests import Request
-from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Route, WebSocketRoute
 from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocket
@@ -76,6 +76,10 @@ from hoja_server.meetings import MeetingService
 from hoja_server.meetings_api import MeetingHub, meeting_routes
 from hoja_server.resolvers import build_schema
 from hoja_server.secrets_box import SecretBoxError
+from hoja_server import google_oidc
+from hoja_server.signup_config import SignupConfigError, load_signup_config
+from hoja_server.signup_gate import SignupGate
+from hoja_server.signup_store import SignupStore
 from hoja_server.store import Store
 from hoja_server import realtime, sync
 from hoja_server.writer import Writer
@@ -347,6 +351,14 @@ def create_app(
     engine = make_engine(target)
     store = Store(engine)
     writer = Writer(engine)
+    # Sign-up is configured (or refused) once, at startup. An enabled mode with a
+    # missing credential raises here — a clear error beats a silent allow.
+    try:
+        signup_config = load_signup_config()
+    except SignupConfigError as exc:
+        raise SignupConfigError(f"Sign-up configuration is invalid: {exc}") from exc
+    signup_store = SignupStore(engine)
+    signup_gate = SignupGate(config=signup_config, store=signup_store)
     # GraphQL/sync work runs in worker threads. SQLite serializes on the GIL per
     # fetched row, so more than a handful of concurrent readers only adds
     # contention; PostgreSQL drivers release the GIL while waiting on the server.
@@ -1286,6 +1298,234 @@ def create_app(
             return JSONResponse({"error": "Authentication required"}, status_code=401)
         return JSONResponse({"userId": uid, "organizationId": org})
 
+    # ---- Hosted sign-up: Google-only identity, then the verification gate ----
+    #
+    # The three layers live in their own modules (google_oidc, turnstile,
+    # signup_gate); these handlers only move cookies, calls and JSON. No handler
+    # here creates a database, container, route or DNS record, and none calls a
+    # provisioner: success is one signup_eligibility row for it to pick up.
+    _SIGNUP_SESSION_COOKIE = "hoja_signup_session"
+    _OIDC_FLOW_COOKIE = "hoja_oidc_flow"
+    _SIGNUP_BODY_LIMIT = 8 * 1024
+
+    def _session_cookie_attrs(request: Request) -> dict:
+        """HttpOnly, Secure, SameSite=Lax, Path=/ — the browser_session rule."""
+        return {
+            "httponly": True,
+            "secure": _cookie_secure(request),
+            "samesite": "lax",
+            "path": "/",
+        }
+
+    def _safe_return_to(value: str | None) -> str:
+        """Only a path on this host: an absolute URL here would be an open redirect."""
+        candidate = (value or "").strip()
+        if not candidate.startswith("/") or candidate.startswith("//"):
+            return "/"
+        if "\\" in candidate or any(ch.isspace() for ch in candidate):
+            return "/"
+        parts = urlsplit(candidate)
+        if parts.scheme or parts.netloc:
+            return "/"
+        return candidate
+
+    def _signup_host(request: Request) -> str:
+        forwarded = (
+            request.headers.get("x-forwarded-host")
+            if _request_from_trusted_proxy(request)
+            else None
+        )
+        return (forwarded or request.headers.get("host") or "").split(",")[0].strip()
+
+    def _signup_identity(request: Request):
+        """The google_verified person behind the sign-up cookie, or None."""
+        return signup_store.resolve_session(request.cookies.get(_SIGNUP_SESSION_COOKIE))
+
+    async def google_sign_in_start(request: Request):
+        if not signup_config.configured:
+            return JSONResponse(
+                {"error": "Sign-up is not configured on this deployment.",
+                 "reason": "signup_unconfigured"},
+                status_code=503,
+            )
+        redirect_uri = signup_config.redirect_uri_for(_signup_host(request))
+        if redirect_uri is None:
+            return JSONResponse(
+                {"error": "This host is not on the redirect allow-list.",
+                 "reason": "redirect_uri_not_allowed"},
+                status_code=400,
+            )
+        state = google_oidc.new_secret()
+        nonce = google_oidc.new_secret()
+        binding = google_oidc.new_secret()
+        verifier, challenge = google_oidc.pkce_pair()
+        signup_store.start_flow(
+            state=state,
+            binding=binding,
+            nonce=nonce,
+            code_verifier=verifier,
+            redirect_uri=redirect_uri,
+            return_to=_safe_return_to(request.query_params.get("return_to")),
+            ttl_seconds=signup_config.flow_ttl_seconds,
+        )
+        location = google_oidc.authorization_url(
+            client_id=signup_config.google_client_id,
+            redirect_uri=redirect_uri,
+            state=state,
+            nonce=nonce,
+            code_challenge=challenge,
+            hosted_domain=signup_config.google_hd,
+        )
+        response = RedirectResponse(location, status_code=302)
+        response.set_cookie(
+            _OIDC_FLOW_COOKIE,
+            binding,
+            max_age=signup_config.flow_ttl_seconds,
+            **_session_cookie_attrs(request),
+        )
+        return response
+
+    async def google_sign_in_callback(request: Request):
+        if not signup_config.configured:
+            return JSONResponse(
+                {"error": "Sign-up is not configured on this deployment.",
+                 "reason": "signup_unconfigured"},
+                status_code=503,
+            )
+        flow, flow_reason = signup_store.consume_flow(
+            state=request.query_params.get("state") or "",
+            binding=request.cookies.get(_OIDC_FLOW_COOKIE),
+        )
+        if flow is None:
+            # Generic message: a caller learns that it failed, not which check.
+            return JSONResponse(
+                {"error": "This sign-in attempt is invalid or has expired.",
+                 "reason": flow_reason},
+                status_code=400,
+            )
+        if request.query_params.get("error"):
+            return JSONResponse(
+                {"error": "Google refused the sign-in.", "reason": "provider_error"},
+                status_code=400,
+            )
+        code = request.query_params.get("code") or ""
+        if not code:
+            return JSONResponse(
+                {"error": "Missing authorization code.", "reason": "code_missing"},
+                status_code=400,
+            )
+        if flow["redirect_uri"] not in signup_config.redirect_uris:
+            return JSONResponse(
+                {"error": "Redirect URI is not allow-listed.",
+                 "reason": "redirect_uri_not_allowed"},
+                status_code=400,
+            )
+        try:
+            tokens = await run_in_threadpool(
+                google_oidc.exchange_code,
+                code=code,
+                code_verifier=flow["code_verifier"],
+                client_id=signup_config.google_client_id,
+                client_secret=signup_config.google_client_secret,
+                redirect_uri=flow["redirect_uri"],
+            )
+            jwks = await run_in_threadpool(google_oidc.get_jwks)
+            try:
+                claims = google_oidc.verify_id_token(
+                    tokens["id_token"],
+                    jwks=jwks,
+                    client_id=signup_config.google_client_id,
+                    nonce=flow["nonce"],
+                )
+            except google_oidc.OIDCError as exc:
+                # Google rotates signing keys; a cached JWKS can lag by a `kid`.
+                # Refetch once before refusing a token we might otherwise accept.
+                if exc.reason != "unknown_key":
+                    raise
+                google_oidc.clear_jwks_cache()
+                jwks = await run_in_threadpool(google_oidc.get_jwks)
+                claims = google_oidc.verify_id_token(
+                    tokens["id_token"],
+                    jwks=jwks,
+                    client_id=signup_config.google_client_id,
+                    nonce=flow["nonce"],
+                )
+            email = claims.get("email")
+            if not isinstance(email, str) or not email.strip():
+                raise google_oidc.OIDCError("claim_missing", "ID token has no email.")
+        except google_oidc.OIDCError as exc:
+            return JSONResponse(
+                {"error": "Google sign-in could not be verified.", "reason": exc.reason},
+                status_code=400,
+            )
+        identity = signup_store.upsert_identity(
+            subject=claims["sub"],
+            email=email.strip().lower(),
+            email_verified=claims.get("email_verified") is True,
+            name=claims.get("name"),
+            picture=claims.get("picture"),
+            hosted_domain=claims.get("hd"),
+        )
+        raw, _session = signup_store.rotate_session(
+            previous_raw=request.cookies.get(_SIGNUP_SESSION_COOKIE),
+            identity_id=identity["id"],
+            client_ip=_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            days=signup_config.session_days,
+        )
+        response = RedirectResponse(flow["return_to"] or "/", status_code=302)
+        response.set_cookie(
+            _SIGNUP_SESSION_COOKIE,
+            raw,
+            max_age=signup_config.session_days * 24 * 60 * 60,
+            **_session_cookie_attrs(request),
+        )
+        response.delete_cookie(_OIDC_FLOW_COOKIE, path="/")
+        return response
+
+    async def signup_endpoint(request: Request):
+        if request.method == "GET":
+            identity = _signup_identity(request)
+            return JSONResponse(
+                {
+                    "state": "google_verified" if identity else "anonymous",
+                    "googleVerified": bool(identity),
+                    "humanVerified": False,
+                    "email": (identity or {}).get("email"),
+                }
+            )
+        if not _same_origin(request.headers.get("origin"), request.headers):
+            return JSONResponse(
+                {"ok": False, "reason": "cross_site_request",
+                 "message": "Cross-site request rejected."},
+                status_code=403,
+            )
+        body, body_error = await _read_json_object(request, _SIGNUP_BODY_LIMIT)
+        if body_error is not None:
+            return JSONResponse(
+                {"ok": False, "reason": "invalid_request",
+                 "message": body_error.body.decode("utf-8", "replace")},
+                status_code=body_error.status_code,
+            )
+        token = body.get("turnstileToken")
+        if token is None:
+            token = body.get("turnstile_token")
+        decision = signup_gate.evaluate(
+            identity=_signup_identity(request),
+            slug=body.get("slug"),
+            turnstile_token=token if isinstance(token, str) else None,
+            client_ip=_client_ip(request),
+        )
+        return JSONResponse(decision.as_dict(), status_code=decision.status_code)
+
+    async def signup_logout(request: Request):
+        if not _same_origin(request.headers.get("origin"), request.headers):
+            return JSONResponse({"error": "Cross-site request rejected."}, status_code=403)
+        signup_store.revoke_session(request.cookies.get(_SIGNUP_SESSION_COOKIE))
+        response = JSONResponse({"status": "logged_out"})
+        response.delete_cookie(_SIGNUP_SESSION_COOKIE, path="/")
+        return response
+
     # ---- Attachment file uploads (images/files/videos for issue attachments)
     _UPLOAD_MAX_BYTES = 10 * 1024 * 1024
     _UPLOAD_TYPE_PREFIXES = ("image/", "video/")
@@ -1613,6 +1853,10 @@ def create_app(
             Route("/auth/workspaces", auth_workspaces, methods=["POST"]),
             Route("/auth/logout", auth_logout, methods=["POST"]),
             Route("/auth/me", auth_me, methods=["GET"]),
+            Route("/auth/google/start", google_sign_in_start, methods=["GET"]),
+            Route("/auth/google/callback", google_sign_in_callback, methods=["GET"]),
+            Route("/auth/google/logout", signup_logout, methods=["POST"]),
+            Route("/api/signup", signup_endpoint, methods=["GET", "POST"]),
             Route("/api/uploads", upload_create, methods=["POST"]),
             Route("/api/uploads/{file_id}", upload_serve, methods=["GET"]),
             Route("/sync/bootstrap", sync_bootstrap, methods=["GET"]),
