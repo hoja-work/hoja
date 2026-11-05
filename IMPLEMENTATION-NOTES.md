@@ -180,7 +180,7 @@ Seeded tenant 'default' at /tmp/gate3/gate3.db
   user     : Gate Admin <gate@example.test>
   TOKEN    : gate3-token
 
-$ export LINEAR_TOKEN=gate3-token LINEAR_API_URL=http://127.0.0.1:8799/graphql
+$ export HOJA_TOKEN=gate3-token HOJA_API_URL=http://127.0.0.1:8799/graphql
 $ hoja -o plain me
 d86f88fd-8ea6-400e-bf06-42fc223a3a09	Gate Admin	gate@example.test
 

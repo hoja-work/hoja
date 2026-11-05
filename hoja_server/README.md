@@ -50,10 +50,11 @@ hoja --account local issue create --team ENG --title "Hello local"
 hoja --account local issue list
 ```
 
-`$LINEAR_API_URL` overrides `base_url` for any account, e.g.:
+`$HOJA_API_URL` overrides `base_url` for any account (the deprecated
+`$LINEAR_API_URL` is still read when it is unset), e.g.:
 
 ```bash
-LINEAR_API_URL=http://127.0.0.1:8787/graphql hoja me
+HOJA_API_URL=http://127.0.0.1:8787/graphql hoja me
 ```
 
 ## Commands

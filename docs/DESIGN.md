@@ -150,7 +150,7 @@ Every command supports `--output` / `-o`:
 ## Global Flags
 
 ```
---token TEXT            Override LINEAR_TOKEN env var
+--token TEXT            Override the HOJA_TOKEN env var
 --config PATH           Use specific config file
 --output, -o FORMAT     Output format (default: human)
 --no-color              Disable ANSI colors
@@ -222,7 +222,7 @@ Location precedence:
 # ~/.config/hoja/config.toml
 
 [auth]
-token_env = "LINEAR_TOKEN"  # Read from env, never store plaintext
+token_env = "HOJA_TOKEN"  # Read from env, never store plaintext
 # Or for users who want it stored:
 # token = "lin_api_..."
 
@@ -347,7 +347,9 @@ Error format (JSON mode):
 - **HTTPS only.** No fallback to HTTP.
 - **TLS verification mandatory.** No `--insecure` flag.
 - **Pinned dependencies.** `requirements.txt` includes hashes.
-- **No telemetry.** Zero outbound calls except to `api.linear.app`.
+- **No telemetry.** Zero outbound calls except to the configured GraphQL
+  endpoint (a `hoja-serve` instance, or any Linear-compatible endpoint the
+  account's `base_url` / `$HOJA_API_URL` points at).
 
 ---
 

@@ -178,7 +178,7 @@ hoja -o ids issue list --state "In Progress"
 hoja issue create --team ENG --title "..."
 
 # DON'T — print the token
-# echo "Using token: $LINEAR_TOKEN"
+# echo "Using token: $HOJA_TOKEN"
 
 # DO — verify silently
 hoja auth status >/dev/null && echo "ok" || echo "auth failed"

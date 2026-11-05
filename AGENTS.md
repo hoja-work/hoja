@@ -6,8 +6,9 @@ Hoja is a standalone, generic, self-hosted, offline-first, agent-native
 work-management product with a Linear-compatible GraphQL interface. Do not encode a particular
 organization, repository owner, or deployment as a product default. New work
 uses `hoja`, `hoja-mcp`, `hoja-serve`, `HOJA_*`, and `hoja`
-config/data paths. Preserve the wire-facing
-`LINEAR_TOKEN`, `LINEAR_API_URL`, and Linear GraphQL names.
+config/data paths. Preserve the wire-facing Linear GraphQL names, and keep
+`HOJA_TOKEN`/`HOJA_API_URL` canonical while honouring the deprecated
+`LINEAR_TOKEN`/`LINEAR_API_URL` aliases.
 
 ---
 
@@ -145,7 +146,7 @@ uv pip install -e ".[dev]"
 
 ```bash
 # 1. Set your token (one-time per shell)
-export LINEAR_TOKEN="lin_api_..."
+export HOJA_TOKEN="lin_api_..."
 
 # 2. Edit code
 
@@ -177,11 +178,13 @@ Linear-compatible endpoint. For standalone product work, prefer the local
 backend suite below so verification does not depend on a hosted service.
 
 ```bash
-export LINEAR_TOKEN="lin_api_..."  # issued by hoja-serve seed or another configured backend
+export HOJA_TOKEN="lin_api_..."  # issued by hoja-serve seed or another configured backend
 bash scripts/e2e-test.sh
 ```
 
-The script reads `LINEAR_TOKEN` from your env. **It does not contain any hardcoded tokens.** If you find one, that's a bug — fix it immediately and rotate the leaked credential.
+The script reads `HOJA_TOKEN` from your env (falling back to the deprecated
+`LINEAR_TOKEN`). **It does not contain any hardcoded tokens.** If you find one,
+that's a bug — fix it immediately and rotate the leaked credential.
 
 Pass condition: `SUMMARY: N passed, 0 failed`.
 
@@ -191,7 +194,8 @@ The `tests/` directory contains pytest coverage for CLI account resolution and
 the backend, including optional PostgreSQL checks. Run `uv run pytest`; tests
 requiring optional services or drivers may skip when those dependencies are not
 installed. The live API matrix in `scripts/e2e-test.sh` is separate and requires
-`LINEAR_TOKEN`, `HOJA_TEST_TEAM`, and `HOJA_TEST_ISSUE`.
+`HOJA_TOKEN` (deprecated alias `LINEAR_TOKEN`), `HOJA_TEST_TEAM`, and
+`HOJA_TEST_ISSUE`.
 
 ### UI styling checks
 

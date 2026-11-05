@@ -159,10 +159,10 @@ fi
 
 | Don't | Why | Instead |
 |---|---|---|
-| Write a Python script calling Linear's GraphQL directly | hoja already handles auth/retries/pagination/validation | Use `hoja` in the shell |
+| Write a Python script calling the GraphQL API directly | hoja already handles auth/retries/pagination/validation | Use `hoja` in the shell |
 | Loop in shell when filters would do the job | One API call vs N | Use `hoja issue list --filter ...` |
 | `hoja issue list \| jq` to filter on team or state | Server-side filters are faster and produce smaller payloads | Use `--team`, `--state`, `--assignee` |
-| Hardcode tokens in scripts | Leak risk | Use `$LINEAR_TOKEN` env var, never `--token <real>` |
+| Hardcode tokens in scripts | Leak risk | Use the `$HOJA_TOKEN` env var (deprecated `$LINEAR_TOKEN` still works), never `--token <real>` |
 | Use `raw query` for things the wrapper supports | Inconsistent errors, no Pydantic validation | Use dedicated commands |
 | `hoja issue delete` | Does not exist | Use state transition or archive workflow |
 | Bulk mutate without `--dry-run` first when uncertain | One typo = many bad writes | Always preview with `--dry-run` |

@@ -13,7 +13,7 @@ The Python distribution and commands are named **Hoja**: `hoja`, `hoja-serve`, a
 - Save issue and project views in the browser. These views are local to that browser, not shared workspace records.
 - Use the CLI for shell workflows and automation. Responses are validated models; `--output json` and `--output ids` are suitable for scripts.
 
-Hoja does not require Linear Cloud. The API uses Linear-compatible GraphQL names and accepts `LINEAR_TOKEN` and `LINEAR_API_URL` so compatible clients can target a Hoja server. Compatibility does not mean every Linear feature is implemented. Unsupported screens or controls are presented as unavailable rather than simulated as working.
+Hoja does not require Linear Cloud. The API uses Linear-compatible GraphQL names and authenticates with `HOJA_TOKEN` / `HOJA_API_URL`, so compatible clients can target a Hoja server. The former `LINEAR_TOKEN` and `LINEAR_API_URL` names are still read as deprecated aliases (the `HOJA_*` variable wins when both are set). Compatibility does not mean every Linear feature is implemented. Unsupported screens or controls are presented as unavailable rather than simulated as working.
 
 ## Run the workspace locally with Docker
 
@@ -129,13 +129,13 @@ Configure an account in `~/.config/hoja/config.toml`:
 ```toml
 [accounts.local]
 base_url = "http://127.0.0.1:8787/graphql"
-token_env = "LINEAR_TOKEN"
+token_env = "HOJA_TOKEN"
 
 [defaults]
 default_account = "local"
 ```
 
-Export the token as `LINEAR_TOKEN` (or choose a different `token_env` for the
+Export the token as `HOJA_TOKEN` (or choose a different `token_env` for the
 account), then try:
 
 ```bash
@@ -146,7 +146,7 @@ hoja issue create --team ENG --title "Review onboarding flow"
 hoja -o json issue list --state Todo
 ```
 
-The CLI also supports projects, cycles, comments, labels, raw GraphQL queries, and dry-run previews for supported mutations. Run `hoja --help` or `hoja <command> --help` for the current command and option list. For compatibility with existing Linear accounts, `LINEAR_TOKEN` and `LINEAR_API_URL` remain supported.
+The CLI also supports projects, cycles, comments, labels, raw GraphQL queries, and dry-run previews for supported mutations. Run `hoja --help` or `hoja <command> --help` for the current command and option list. Clients written against the Linear-compatible surface can point at Hoja with `LINEAR_TOKEN` and `LINEAR_API_URL`; those names remain accepted as deprecated aliases of `HOJA_TOKEN` and `HOJA_API_URL`.
 
 ## Agent integrations
 
@@ -183,7 +183,7 @@ executable path if the GUI does not inherit your shell `PATH`:
     "hoja": {
       "command": "/absolute/path/to/hoja-mcp",
       "env": {
-        "LINEAR_TOKEN": "<workspace-token>"
+        "HOJA_TOKEN": "<workspace-token>"
       }
     }
   }
@@ -204,7 +204,7 @@ uv sync --extra dev --extra server
 uv run pytest
 ```
 
-Build the browser app with `npm ci && npm run build` in `frontend/`. The local backend integration script is `bash scripts/e2e-local-backend.sh`; it uses a disposable local database. The live API CLI matrix in `scripts/e2e-test.sh` requires `LINEAR_TOKEN`, `HOJA_TEST_TEAM`, and `HOJA_TEST_ISSUE`.
+Build the browser app with `npm ci && npm run build` in `frontend/`. The local backend integration script is `bash scripts/e2e-local-backend.sh`; it uses a disposable local database. The live API CLI matrix in `scripts/e2e-test.sh` requires `HOJA_TOKEN`, `HOJA_TEST_TEAM`, and `HOJA_TEST_ISSUE`.
 
 Product architecture is described in [Design](docs/DESIGN.md); deployment instructions are in [Deployment](docs/DEPLOYMENT.md). The [changelog](CHANGELOG.md) records release-level behavior changes.
 

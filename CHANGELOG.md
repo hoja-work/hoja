@@ -44,6 +44,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking: the product's previous name is gone.** The Python distribution
+  is `hoja`, the packages are `hoja/` and `hoja_server/`, and the console
+  scripts are `hoja`, `hoja-mcp` and `hoja-serve`; the pre-rename scripts no
+  longer exist. Every environment variable that used the old upper-case prefix
+  is now `HOJA_*`, including `HOJA_WEB_ROOT`, `HOJA_DATABASE_URL`,
+  `HOJA_CONFIG`, `HOJA_PORT`, `HOJA_APP_URL` and `HOJA_CF_*`. The Docker image
+  runs as the `hoja` user/group and Compose defaults to `hoja` for
+  `POSTGRES_DB`/`POSTGRES_USER` and the `hoja-postgres` volume (still
+  overridable from `.env`). `HOJA_TOKEN` and `HOJA_API_URL` are the canonical
+  client variables; the Linear-compatible `LINEAR_TOKEN` and `LINEAR_API_URL`
+  are still read as deprecated aliases when the `HOJA_*` variable is unset, and
+  the GraphQL type names are unchanged. Local state under the old name must be
+  moved by hand: the CLI config directory (`~/.config/<old-name>/` →
+  `~/.config/hoja/`) and any `.<old-name>/memory.yaml` board (→
+  `.hoja/memory.yaml`). A running deployment should follow `DEPLOY-RENAME.md`;
+  its database must not be renamed in place.
 - Frontend TypeScript is pinned to 6.0.3 instead of 7.0.2: typescript-eslint
   (used by `npm run lint:ui`) refuses TS 7 and does not support it in any
   release yet. Move back to 7 when it does.

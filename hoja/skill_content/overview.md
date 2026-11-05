@@ -31,10 +31,10 @@ Use `hoja` via the **Bash tool** whenever a task touches Linear:
 5. **Linear identifiers are case-sensitive.** Use `ENG-35`, never `eng-35`.
 6. **Use `--dry-run` on mutations** when the user's intent is ambiguous or destructive.
 7. **Prefer dedicated subcommands over `raw query`.** `raw query` is an escape hatch for unsupported GraphQL operations only.
-8. **Chain via the shell, not Python.** For multi-step workflows (create + assign + comment), call `hoja` three times — do not write Python wrappers around the Linear API.
+8. **Chain via the shell, not Python.** For multi-step workflows (create + assign + comment), call `hoja` three times — do not write Python wrappers around the GraphQL API.
 9. **Filter at the API, not in shell.** `hoja issue list --assignee me --state "In Progress"` is faster and cleaner than `hoja issue list | jq`.
-10. **Never log or echo the token.** The CLI masks it automatically; do not print `$LINEAR_TOKEN` in your shell output.
-11. **`hoja issue delete` does NOT exist.** Linear has no hard delete via API. Use a state transition (e.g., `cancel` or `archive` workflow state) instead.
+10. **Never log or echo the token.** The CLI masks it automatically; do not print `$HOJA_TOKEN` in your shell output.
+11. **`hoja issue delete` does NOT exist.** The Linear-compatible API has no issue hard delete. Use a state transition (e.g., `cancel` or `archive` workflow state) instead.
 
 ## Command tree (one-liner reference)
 

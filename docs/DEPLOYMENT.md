@@ -118,8 +118,9 @@ base_url = "https://api.example.com/graphql"
 token = "TOKEN_FROM_A_SECRET_STORE"
 ```
 
-`LINEAR_API_URL` can override the client-side account URL. It is separate from
-`HOJA_APP_URL`.
+`HOJA_API_URL` can override the client-side account URL; the deprecated
+`LINEAR_API_URL` is still read when `HOJA_API_URL` is unset. Both are separate
+from `HOJA_APP_URL`.
 
 ## Health, readiness, and operation
 

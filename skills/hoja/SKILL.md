@@ -17,8 +17,10 @@ self-hosted, offline-first, agent-native work management with Pydantic v2
 validation, six output formats, and a filter DSL.
 
 Use the canonical `hoja`, `hoja-mcp`, and `hoja-serve` commands.
-Keep the wire-facing `LINEAR_TOKEN`, `LINEAR_API_URL`, and Linear GraphQL
-names unchanged.
+Keep the Linear GraphQL names unchanged on the wire. `HOJA_TOKEN` and
+`HOJA_API_URL` are the canonical environment variables; the deprecated
+`LINEAR_TOKEN` and `LINEAR_API_URL` names are still read when the `HOJA_*`
+variable is unset.
 
 ## Agent Guidance
 
@@ -41,8 +43,8 @@ Best practices and operational guidance for AI coding agents using `hoja`.
 - **Identifiers are case-sensitive** — `ENG-35`, never `eng-35`.
 - **Search before create** — `hoja issue search "<query>"` before
   `hoja issue create` to avoid duplicate issues.
-- **`hoja issue delete` does NOT exist** — Linear has no hard delete via
-  API. Use a state transition (`Canceled` or `Archived`).
+- **`hoja issue delete` does NOT exist** — the Linear-compatible API has no
+  issue hard delete. Use a state transition (`Canceled` or `Archived`).
 
 ### Design Principles
 
@@ -70,12 +72,12 @@ familiar with them, the knowledge transfers directly:
 
 ### Safety Rules
 
-- **Never log or echo `$LINEAR_TOKEN`** — the CLI redacts it automatically;
+- **Never log or echo `$HOJA_TOKEN`** — the CLI redacts it automatically;
   don't undo that.
 - **For destructive mutations, use `--dry-run` first** when the user's
   intent is ambiguous.
-- **Comments are permanent** — `hoja comment delete` is reversible only
-  in the Linear UI.
+- **Comments are only soft-deleted** — `hoja comment delete` archives the
+  comment server-side and there is no CLI undo, so confirm intent first.
 - **State transitions are server-validated** — passing an invalid state
   name returns an `InvalidInput` error (exit code 6) rather than silently
   doing nothing.
@@ -222,7 +224,7 @@ All commands support:
 
 ## Authentication & Multi-Account
 
-hoja supports **multiple Linear accounts/workspaces** with no env-var
+hoja supports **multiple accounts/workspaces** with no env-var
 juggling — accounts live in `~/.config/hoja/config.toml` and the right one
 is selected automatically. You do NOT need to export a token per workspace.
 
@@ -249,18 +251,19 @@ hoja auth accounts          # see them, with [default]/[current]/teams markers
 ### Token resolution (within the chosen account, in order)
 
 1. `--token <T>` CLI flag
-2. `$<account.token_env>` environment variable (default `LINEAR_TOKEN`)
+2. `$<account.token_env>` environment variable (default `HOJA_TOKEN`; the
+   deprecated `LINEAR_TOKEN` is used only when `HOJA_TOKEN` is unset)
 3. `token` stored in the account's config block (discouraged: plaintext)
 
 Verify what resolved with `hoja auth status` / `hoja auth accounts`.
-Tokens look like `lin_api_<long-random-string>` — get one at
-https://linear.app/settings/api.
+Tokens look like `lin_api_<long-random-string>` — mint one from your
+workspace's members/API-key screen, or with `hoja-serve token`.
 
 ### Config schema (canonical — do NOT downgrade to `[auth]`)
 
 ```toml
 [accounts.work]
-token_env = "LINEAR_TOKEN"   # or: token = "lin_api_..."
+token_env = "HOJA_TOKEN"     # or: token = "lin_api_..."
 teams = ["SWA", "ENG"]       # enables team-key auto-selection
 
 [accounts.personal]
@@ -312,7 +315,7 @@ esac
 ## Companion MCP server
 
 hoja also ships an optional MCP server (`hoja-mcp`) that exposes the
-same teaching content as an MCP tool, plus read-only Linear resources
+same teaching content as an MCP tool, plus read-only workspace resources
 (`hoja://issue/{id}`, `hoja://team/{key}`, etc.) and prompt templates
 for common workflows. Install with `pip install 'hoja[mcp]'` and add to
 your MCP client config:

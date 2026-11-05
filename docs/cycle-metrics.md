@@ -78,7 +78,7 @@ reader judge.
 
 ```bash
 node scripts/test-cycle-metrics.mjs          # contract: definitions, adversarial cases, burndown
-LINEAR_API_URL=... LINEAR_TOKEN=... \
+HOJA_API_URL=... HOJA_TOKEN=... \
   node scripts/check-cycle-metrics-live.mjs 3   # reconcile one real cycle against the server
 ```
 
