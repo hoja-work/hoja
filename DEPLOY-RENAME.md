@@ -161,7 +161,8 @@ scope are:
 | `CF_TURN_KEY_ID` | `HOJA_CF_TURN_KEY_ID` |
 | `CF_TURN_KEY_API_TOKEN` | `HOJA_CF_TURN_KEY_API_TOKEN` |
 | `CONNECTOR_SIGNING_KEY` | `HOJA_CONNECTOR_SIGNING_KEY` |
-| `GOOGLE_CLIENT_ID` / `_SECRET` / `_REDIRECT_URI` | `HOJA_GOOGLE_CLIENT_ID` / `_SECRET` / `_REDIRECT_URI` |
+| `GOOGLE_CLIENT_ID` / `_SECRET` / `_REDIRECT_URI` | **unchanged** — the sign-up service reads these unprefixed (`hoja_server/signup_config.py`); renaming them silently disables Google sign-in |
+| `TURNSTILE_SECRET_KEY` / `TURNSTILE_EXPECTED_HOSTNAME` | **unchanged**, same reason |
 | `MEETING_MAX_PARTICIPANTS` | `HOJA_MEETING_MAX_PARTICIPANTS` |
 | `GRAPHQL_CONCURRENCY` | `HOJA_GRAPHQL_CONCURRENCY` |
 | `SERVER_DEBUG` | `HOJA_SERVER_DEBUG` |
