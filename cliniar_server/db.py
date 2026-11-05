@@ -32,7 +32,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 34
+CURRENT_SCHEMA_REVISION = 35
 
 
 def now_iso() -> str:
@@ -340,7 +340,9 @@ team = Table(
     Column("description", String),
     Column("color", String),
     Column("icon", String),
-    Column("private", Boolean, default=False),
+    # Departments are teams with children. Not an access boundary: visibility is.
+    Column("parent_team_id", String, ForeignKey("team.id"), index=True),
+    Column("visibility", String, nullable=False, default="public"),
     Column("timezone", String),
     Column("cadence_enabled", Boolean, nullable=False, default=False),
     Column("cadence_weekday", Integer),
@@ -382,6 +384,7 @@ team_member = Table(
     metadata,
     Column("team_id", String, ForeignKey("team.id"), primary_key=True),
     Column("user_id", String, ForeignKey("user.id"), primary_key=True),
+    Column("role", String, nullable=False, default="member"),
 )
 
 issue = Table(
@@ -1276,6 +1279,31 @@ def _apply_meeting_devices(conn) -> None:
             conn.exec_driver_sql(f"ALTER TABLE meeting_participant ADD COLUMN {name} VARCHAR")
 
 
+def _apply_team_hierarchy(conn) -> None:
+    """Departments (team.parent_team_id), team.visibility and team_member.role.
+
+    ``private`` becomes ``visibility``: the two-state boolean could not express the
+    'restricted' middle ground (parent-team members may see and join). The old column
+    is left in place because SQLite cannot drop columns in place and nothing reads it
+    once the data has been copied; a fresh database never gets it.
+    """
+    columns = {column["name"] for column in inspect(conn).get_columns("team")}
+    if "parent_team_id" not in columns:
+        conn.exec_driver_sql("ALTER TABLE team ADD COLUMN parent_team_id VARCHAR")
+    if "visibility" not in columns:
+        conn.exec_driver_sql(
+            "ALTER TABLE team ADD COLUMN visibility VARCHAR NOT NULL DEFAULT 'public'")
+        if "private" in columns:
+            # Existing rows: private=True -> 'private'; everything else stays 'public'.
+            conn.exec_driver_sql("UPDATE team SET visibility = 'private' WHERE private = 1")
+    conn.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_team_parent_team_id ON team (parent_team_id)")
+    member_columns = {column["name"] for column in inspect(conn).get_columns("team_member")}
+    if "role" not in member_columns:
+        conn.exec_driver_sql(
+            "ALTER TABLE team_member ADD COLUMN role VARCHAR NOT NULL DEFAULT 'member'")
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -1333,6 +1361,7 @@ _MIGRATIONS = {
     ),
     33: _apply_meeting_extras,
     34: lambda conn: _apply_meeting_devices(conn),
+    35: _apply_team_hierarchy,
 }
 
 
@@ -1502,14 +1531,14 @@ def seed_tenant(
                     name=team_name,
                     description=f"{team_name} team",
                     color="#5e6ad2",
-                    private=False,
+                    visibility="public",
                     timezone="UTC",
                     issue_counter=0,
                     created_at=ts,
                     updated_at=ts,
                 )
             )
-            conn.execute(team_member.insert().values(team_id=tid, user_id=uid))
+            conn.execute(team_member.insert().values(team_id=tid, user_id=uid, role="owner"))
             default_state_id = seed_states_for_team(conn, org_id, tid)
             conn.execute(
                 team.update().where(team.c.id == tid).values(default_state_id=default_state_id)
