@@ -108,18 +108,78 @@ def _like_contains(value: str) -> str:
     return f"%{escaped}%"
 
 
+PUBLIC, RESTRICTED, PRIVATE = "public", "restricted", "private"
+TEAM_ACCESS_LEVELS = (PUBLIC, RESTRICTED, PRIVATE)
+TEAM_ROLES = ("owner", "member")
+
+
+def _member_team_ids(viewer_id: str):
+    """Subquery of the team ids this viewer holds a team_member row on."""
+    return select(team_member.c.team_id).where(team_member.c.user_id == viewer_id)
+
+
+def visibility_holds(team_cols, viewer_id: str):
+    """SQL predicate over one team row: may ``viewer_id`` see it?
+
+    The single definition of the visibility rule (decision 2 of the brief):
+      public     — any member of the organization;
+      restricted — explicit members, plus members of the parent team (they may also join);
+      private    — explicit members only.
+
+    Departments are not an access boundary, so a restricted team looks at its direct
+    parent only; the membership cascade keeps an explicit row on every ancestor, which
+    is what makes a grandparent member count here too. Everything else (reads, boards,
+    search, attachments, realtime) is expressed through this predicate.
+    """
+    members = _member_team_ids(viewer_id)
+    return or_(
+        team_cols["visibility"] == PUBLIC,
+        team_cols["id"].in_(members),
+        and_(team_cols["visibility"] == RESTRICTED, team_cols["parent_team_id"].in_(members)),
+    )
+
+
+def visible_team_select(org_id: str, viewer_id: str, *, alias: str = "visible_team"):
+    """Subquery of the team ids in ``org_id`` that ``viewer_id`` may see."""
+    vt = team.alias(alias)
+    cols = {"id": vt.c.id, "visibility": vt.c.visibility, "parent_team_id": vt.c.parent_team_id}
+    return select(vt.c.id).where(and_(vt.c.organization_id == org_id, visibility_holds(cols, viewer_id)))
+
+
+def _viewer_is_admin(conn, org_id: str, viewer_id: str) -> bool:
+    return bool(conn.execute(select(user.c.admin).where(and_(
+        user.c.id == viewer_id, user.c.organization_id == org_id))).scalar())
+
+
 def visible_team_clause(conn, org_id: str, viewer_id: str, team_id_col):
     """Restrict team_id_col to teams the viewer may see. None means unrestricted (admin)."""
-    is_admin = conn.execute(select(user.c.admin).where(and_(
-        user.c.id == viewer_id, user.c.organization_id == org_id))).scalar()
-    if is_admin:
+    if _viewer_is_admin(conn, org_id, viewer_id):
         return None
-    vt = team.alias("visible_team")
-    member_teams = select(team_member.c.team_id).where(team_member.c.user_id == viewer_id)
-    visible = select(vt.c.id).where(and_(
-        vt.c.organization_id == org_id,
-        or_(vt.c.private.is_not(True), vt.c.id.in_(member_teams))))
-    return team_id_col.in_(visible)
+    return team_id_col.in_(visible_team_select(org_id, viewer_id))
+
+
+def team_ancestor_ids(conn, org_id: str, team_id: str) -> list[str]:
+    """The team followed by its parents, root last (nesting is capped at three levels)."""
+    chain, current = [], team_id
+    while current and current not in chain:
+        parent = conn.execute(select(team.c.parent_team_id).where(and_(
+            team.c.id == current, team.c.organization_id == org_id))).scalar()
+        chain.append(current)
+        current = parent
+    return chain
+
+
+def team_descendant_ids(conn, org_id: str, team_id: str) -> list[str]:
+    """The team followed by every team beneath it, breadth first."""
+    seen, queue = [team_id], [team_id]
+    while queue:
+        children = list(conn.execute(select(team.c.id).where(and_(
+            team.c.organization_id == org_id, team.c.parent_team_id == queue.pop(0)))).scalars())
+        for child in children:
+            if child not in seen:
+                seen.append(child)
+                queue.append(child)
+    return seen
 
 
 def team_visible(conn, org_id: str, viewer_id: str, team_id: str) -> bool:
@@ -238,15 +298,9 @@ class Store:
     def visible_team_ids(self, org_id: str, viewer_id: str) -> frozenset | None:
         """Viewer-visible team ids, or None when unrestricted (admin)."""
         with self.engine.connect() as conn:
-            is_admin = conn.execute(select(user.c.admin).where(and_(
-                user.c.id == viewer_id, user.c.organization_id == org_id))).scalar()
-            if is_admin:
+            if _viewer_is_admin(conn, org_id, viewer_id):
                 return None
-            vt = team.alias("visible_team")
-            member_teams = select(team_member.c.team_id).where(team_member.c.user_id == viewer_id)
-            rows = conn.execute(select(vt.c.id).where(and_(
-                vt.c.organization_id == org_id,
-                or_(vt.c.private.is_not(True), vt.c.id.in_(member_teams))))).all()
+            rows = conn.execute(visible_team_select(org_id, viewer_id)).all()
             return frozenset(r[0] for r in rows)
 
     def max_change_seq(self) -> int:
@@ -272,8 +326,9 @@ class Store:
     def visibility_map(self, org_id: str, user_ids) -> dict[str, frozenset | None]:
         """visible_team_ids for many viewers with three queries instead of one per viewer.
 
-        Mirrors visible_team_clause: admins see everything (None); everyone else sees
-        non-private teams plus private teams they belong to.
+        Mirrors ``visibility_holds`` exactly: admins see everything (None); everyone
+        else sees public teams, the teams they hold a membership row on, and restricted
+        teams whose parent they belong to.
         """
         uids = list(dict.fromkeys(user_ids))
         if not uids:
@@ -289,16 +344,26 @@ class Store:
                     if admin:
                         admins.add(uid)
             public = frozenset(r[0] for r in conn.execute(select(team.c.id).where(and_(
-                team.c.organization_id == org_id, team.c.private.is_not(True)))))
-            private_member: dict[str, set[str]] = {}
+                team.c.organization_id == org_id, team.c.visibility == PUBLIC))))
+            restricted_parent: dict[str, str] = {
+                tid: parent for tid, parent in conn.execute(select(team.c.id, team.c.parent_team_id).where(and_(
+                    team.c.organization_id == org_id, team.c.visibility == RESTRICTED,
+                    team.c.parent_team_id.is_not(None))))
+            }
+            member_of: dict[str, set[str]] = {}
             for start in range(0, len(uids), 500):
                 chunk = uids[start:start + 500]
                 for uid, tid in conn.execute(
-                        select(team_member.c.user_id, team.c.id)
+                        select(team_member.c.user_id, team_member.c.team_id)
                         .join(team, team.c.id == team_member.c.team_id)
-                        .where(and_(team.c.organization_id == org_id, team.c.private.is_(True),
+                        .where(and_(team.c.organization_id == org_id,
                                     team_member.c.user_id.in_(chunk)))):
-                    private_member.setdefault(uid, set()).add(tid)
+                    member_of.setdefault(uid, set()).add(tid)
+            visible_restricted: dict[str, set[str]] = {}
+            for tid, parent in restricted_parent.items():
+                for uid in uids:
+                    if parent in member_of.get(uid, ()):
+                        visible_restricted.setdefault(uid, set()).add(tid)
         out: dict[str, frozenset | None] = {}
         for uid in uids:
             if uid in admins:
@@ -306,7 +371,8 @@ class Store:
             elif uid not in known:
                 out[uid] = frozenset()
             else:
-                out[uid] = public | frozenset(private_member.get(uid, ()))
+                out[uid] = (public | frozenset(member_of.get(uid, ()))
+                            | frozenset(visible_restricted.get(uid, ())))
         return out
 
     def validate_credentials(self, key_hashes, session_hashes) -> dict[tuple[str, str], tuple[str, str]]:
@@ -710,7 +776,9 @@ class Store:
         return {
             "id": row["id"], "name": row["name"], "key": row["key"],
             "description": row.get("description"), "color": row.get("color"),
-            "icon": row.get("icon"), "private": bool(row.get("private", False)),
+            "icon": row.get("icon"),
+            "visibility": row.get("visibility") or PUBLIC,
+            "parentTeamId": row.get("parent_team_id"),
             "timezone": row.get("timezone"), "createdAt": row.get("created_at"),
             "updatedAt": row.get("updated_at"), "_id": row["id"],
             "autoAddStarted": True if auto_started is None else bool(auto_started),
@@ -1091,8 +1159,14 @@ class Store:
                 id=new_id(), token_hash=token_hash(raw_token), label="member invite",
                 user_id=uid, organization_id=org_id, created_at=now,
             ))
+            seats: dict[str, None] = {}
             for team_id in dict.fromkeys(team_ids or []):
-                conn.execute(team_member.insert().values(team_id=team_id, user_id=uid))
+                # Same rule as set_team_membership: a sub-team seat implies its ancestors.
+                for ancestor in self._team_and_ancestors(conn, org_id, team_id):
+                    seats[ancestor] = None
+            for team_id in seats:
+                conn.execute(team_member.insert().values(
+                    team_id=team_id, user_id=uid, role="member"))
         return self.get_user(org_id, uid), raw_token
 
     def workspace(self, org_id: str) -> dict | None:
@@ -1187,15 +1261,51 @@ class Store:
                 for r in _conn_rows(conn, stmt.order_by(workflow_state.c.position))
             ]
 
-    def set_team_membership(self, org_id: str, team_id: str, user_id: str, *, add: bool) -> None:
+    def set_team_membership(self, org_id: str, team_id: str, user_id: str, *, add: bool,
+                            role: str = "member") -> None:
+        """Add or remove a team member, honouring the parent/child membership rules.
+
+        Adding to a sub-team also adds the person to every ancestor, because a
+        department is a reporting structure and a sub-team member belongs to the
+        department above it. Removal never cascades: dropping someone from a parent
+        while they are still on a descendant is refused instead of silently taking
+        away their access to the sub-team.
+        """
         with self.engine.begin() as conn:
-            exists = conn.execute(select(team_member.c.user_id).where(and_(
-                team_member.c.team_id == team_id, team_member.c.user_id == user_id))).first()
-            if add and not exists:
-                conn.execute(team_member.insert().values(team_id=team_id, user_id=user_id))
-            elif not add and exists:
-                conn.execute(team_member.delete().where(and_(
-                    team_member.c.team_id == team_id, team_member.c.user_id == user_id)))
+            if add:
+                if role not in TEAM_ROLES:
+                    raise GraphQLError("role must be one of owner, member",
+                                       extensions={"code": "BAD_USER_INPUT", "field": "role"})
+                for ancestor in self._team_and_ancestors(conn, org_id, team_id):
+                    exists = conn.execute(select(team_member.c.user_id).where(and_(
+                        team_member.c.team_id == ancestor, team_member.c.user_id == user_id))).first()
+                    if not exists:
+                        conn.execute(team_member.insert().values(
+                            team_id=ancestor, user_id=user_id,
+                            role=role if ancestor == team_id else "member"))
+                return
+            descendants = self._team_descendants(conn, org_id, team_id)
+            still_on = [tid for tid in descendants if tid != team_id and conn.execute(
+                select(team_member.c.user_id).where(and_(
+                    team_member.c.team_id == tid, team_member.c.user_id == user_id))).first()]
+            if still_on:
+                names = ", ".join(sorted(
+                    r[0] for r in conn.execute(select(team.c.key).where(team.c.id.in_(still_on)))))
+                raise GraphQLError(
+                    f"This person is still a member of the sub-team(s) {names}. "
+                    "Remove them from those first.",
+                    extensions={"code": "BAD_USER_INPUT", "field": "teamId",
+                                "subTeams": names})
+            conn.execute(team_member.delete().where(and_(
+                team_member.c.team_id == team_id, team_member.c.user_id == user_id)))
+
+    @staticmethod
+    def _team_and_ancestors(conn, org_id: str, team_id: str) -> list[str]:
+        return team_ancestor_ids(conn, org_id, team_id)
+
+    @staticmethod
+    def _team_descendants(conn, org_id: str, team_id: str) -> list[str]:
+        return team_descendant_ids(conn, org_id, team_id)
 
     def team_members(self, org_id: str, team_id: str, viewer_id: str | None = None) -> list[dict]:
         with self.engine.connect() as conn:
@@ -1205,6 +1315,18 @@ class Store:
                 user.join(team_member, team_member.c.user_id == user.c.id)
             ).where(and_(team_member.c.team_id == team_id, user.c.organization_id == org_id))
             return [self.ser_user(r) for r in _conn_rows(conn, stmt)]
+
+    def team_children(self, org_id: str, team_id: str, viewer_id: str | None = None) -> list[dict]:
+        """Direct sub-teams, scoped like every other team read."""
+        with self.engine.connect() as conn:
+            if viewer_id is not None and not team_visible(conn, org_id, viewer_id, team_id):
+                return []
+            stmt = select(team).where(and_(
+                team.c.organization_id == org_id,
+                team.c.parent_team_id == team_id,
+                team.c.archived_at.is_(None)))
+            stmt = _scope_teams(conn, stmt, org_id, viewer_id, team.c.id)
+            return [self.ser_team(r) for r in _conn_rows(conn, stmt.order_by(team.c.key))]
 
     def team_cycles(self, org_id: str, team_id: str, viewer_id: str | None = None) -> list[dict]:
         with self.engine.connect() as conn:
@@ -1361,6 +1483,8 @@ class Store:
                 or_(issue.c.assignee_id == viewer_id, issue.c.creator_id == viewer_id,
                     issue_activity.c.actor_id == viewer_id),
             ))
+            # Activity carries `changes`, which can repeat a title or body: scope it like the issue itself.
+            stmt = _scope_teams(conn, stmt, org_id, viewer_id, issue.c.team_id)
             if after:
                 ts, event_id = after
                 stmt = stmt.where(issue_activity.c.created_at <= ts).where(or_(issue_activity.c.created_at < ts,
@@ -1414,12 +1538,13 @@ class Store:
 
     def labels(self, org_id: str, team_id: str | None = None, name: str | None = None,
                viewer_id: str | None = None) -> list[dict]:
+        """Labels in the org. With a team_id, its own plus the ones it inherits from ancestors."""
         with self.engine.connect() as conn:
             stmt = select(issue_label).where(and_(
                 issue_label.c.organization_id == org_id, issue_label.c.archived_at.is_(None)))
             stmt = _scope_teams(conn, stmt, org_id, viewer_id, issue_label.c.team_id, nullable=True)
             if team_id:
-                stmt = stmt.where(issue_label.c.team_id == team_id)
+                stmt = stmt.where(issue_label.c.team_id.in_(team_ancestor_ids(conn, org_id, team_id)))
             if name:
                 stmt = stmt.where(issue_label.c.name == name)
             return [self.ser_label(r) for r in _conn_rows(conn, stmt.order_by(issue_label.c.name))]
@@ -1562,6 +1687,26 @@ class Store:
                 stmt = stmt.limit(limit)
             return [self.ser_attachment(r) for r in _conn_rows(conn, stmt)]
 
+    def upload_visible(self, org_id: str, viewer_id: str, file_id: str) -> bool:
+        """May this viewer fetch an uploaded file?
+
+        Uploads are org-wide blobs, so the file itself carries no team. When any
+        attachment row points at it, the file takes the visibility of the *most*
+        permissive of those issues; a file no attachment references (an avatar, an
+        in-flight upload) stays readable by any member of the organization.
+        """
+        with self.engine.connect() as conn:
+            issue_ids = list(conn.execute(select(attachment.c.issue_id).where(and_(
+                attachment.c.organization_id == org_id,
+                attachment.c.url.contains(file_id),
+                attachment.c.issue_id.is_not(None)))).scalars())
+            if not issue_ids:
+                return True
+            stmt = select(issue.c.id).where(and_(
+                issue.c.organization_id == org_id, issue.c.id.in_(issue_ids)))
+            stmt = _scope_teams(conn, stmt, org_id, viewer_id, issue.c.team_id)
+            return conn.execute(stmt).first() is not None
+
     def projects(self, org_id: str, flt: dict | None = None,
                  after: tuple[str, str] | None = None, limit: int | None = None) -> list[dict]:
         with self.engine.connect() as conn:
@@ -1576,11 +1721,12 @@ class Store:
                 stmt = stmt.limit(limit)
             return [self.ser_project(r) for r in _conn_rows(conn, stmt)]
 
-    def cycle_by_id(self, org_id: str, cycle_id: str) -> dict | None:
+    def cycle_by_id(self, org_id: str, cycle_id: str, viewer_id: str | None = None) -> dict | None:
         with self.engine.connect() as conn:
-            row = _one(conn, select(cycle).where(and_(
-                cycle.c.organization_id == org_id, cycle.c.id == cycle_id)))
-            return self.ser_cycle(row)
+            stmt = select(cycle).where(and_(
+                cycle.c.organization_id == org_id, cycle.c.id == cycle_id))
+            stmt = _scope_teams(conn, stmt, org_id, viewer_id, cycle.c.team_id)
+            return self.ser_cycle(_one(conn, stmt))
 
     def project_by_id(self, org_id: str, pid: str) -> dict | None:
         with self.engine.connect() as conn:
