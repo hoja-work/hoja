@@ -53,6 +53,14 @@ IP_CAP_ENV = "HOJA_SIGNUP_IP_CAP"
 IP_WINDOW_ENV = "HOJA_SIGNUP_IP_WINDOW_SECONDS"
 TENANT_REGISTRY_ENV = "HOJA_TENANT_REGISTRY"
 
+#: Where a tenant origin sends its sign-in. Google cannot register a wildcard
+#: redirect, so every tenant delegates the code exchange to this one origin.
+CONTROL_PLANE_ENV = "HOJA_CONTROL_PLANE_URL"
+
+#: Shared HMAC key for the control plane -> tenant identity handoff. Optional on
+#: a single-origin install; when present it must be long enough to be a secret.
+TRANSFER_KEY_ENV = "HOJA_IDENTITY_TRANSFER_KEY"
+
 #: A site key is an opaque token, not a URL and not a compound value.
 _SITE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]{8,128}$")
 
@@ -123,6 +131,10 @@ class SignupConfig:
     ip_cap: int = 2
     ip_window_seconds: int = 24 * 60 * 60
     tenant_registry: str | None = None
+    #: Where tenant origins delegate Google sign-in, and the key they share with
+    #: it. Both empty on a single-origin install; both set on a hosted one.
+    control_plane_url: str | None = None
+    identity_transfer_key: str | None = None
     flow_ttl_seconds: int = 600
     session_days: int = 30
 
@@ -219,4 +231,31 @@ def load_signup_config(environ: dict[str, str] | None = None) -> SignupConfig:
         ip_cap=_int_env(env, IP_CAP_ENV, 2),
         ip_window_seconds=_int_env(env, IP_WINDOW_ENV, 24 * 60 * 60, minimum=60),
         tenant_registry=(env.get(TENANT_REGISTRY_ENV) or "").strip() or None,
+        control_plane_url=control_plane_url(env),
+        identity_transfer_key=identity_transfer_key(env),
     )
+
+
+def control_plane_url(environ=None) -> str | None:
+    """The origin a tenant delegates Google sign-in to, or None."""
+    env = os.environ if environ is None else environ
+    raw = (env.get(CONTROL_PLANE_ENV) or "").strip().rstrip("/")
+    if not raw:
+        return None
+    parts = urlsplit(raw)
+    if parts.scheme != "https" or not parts.netloc:
+        raise SignupConfigError(f"{CONTROL_PLANE_ENV} must be an https origin, got {raw!r}.")
+    return raw
+
+
+def identity_transfer_key(environ=None) -> str | None:
+    """The shared handoff key, or None when handoff is not configured."""
+    env = os.environ if environ is None else environ
+    raw = (env.get(TRANSFER_KEY_ENV) or "").strip()
+    if not raw:
+        return None
+    if len(raw) < 32:
+        raise SignupConfigError(
+            f"{TRANSFER_KEY_ENV} must be at least 32 characters; it signs signed-in identities."
+        )
+    return raw
