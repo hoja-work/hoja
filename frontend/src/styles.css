@@ -1027,7 +1027,7 @@ input::placeholder,textarea::placeholder{color:var(--muted)}
 :root[data-theme=dark] .my-issue-popover input,:root[data-theme=dark] .my-issue-popover select,:root[data-theme=dark] .my-issue-load-more{background:var(--panel);color:var(--text);border-color:var(--line)}
 :root[data-theme=dark] .main:has(.my-issues-view),:root[data-theme=dark] .my-issues-view .my-issues-head{background:var(--bg);border-color:var(--line)}
 
-/* Phone fields stay at 16px whatever their desktop size: iOS Safari zooms the page on focus of any field under 16px. Enforced by clinear/no-small-field-font. */
+/* Phone fields stay at 16px whatever their desktop size: iOS Safari zooms the page on focus of any field under 16px. Enforced by hoja/no-small-field-font. */
 @media(max-width:700px){input,select,textarea{font-size:16px!important}}
 
 

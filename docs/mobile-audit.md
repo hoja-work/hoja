@@ -761,7 +761,7 @@ Rules enforced:
 - `jsx-a11y/click-events-have-key-events`, `no-static-element-interactions`, `interactive-supports-focus`: pointer-only handlers need a keyboard path or an explicit non-interactive role.
 - `jsx-a11y/no-autofocus` (DOM elements only): autofocus opens the phone keyboard unprompted.
 - `react-hooks/rules-of-hooks`, `react-hooks/exhaustive-deps`.
-- Stylelint: `clinear/no-viewport-height-units`, `clinear/no-small-field-font`.
+- Stylelint: `hoja/no-viewport-height-units`, `hoja/no-small-field-font`.
 - Runtime gate: `npm --prefix frontend run test:mobile` (touch targets, overlaps, unlabeled controls, field font, overflow, at 390px and 320px).
 
 Suppressions still in the code (each has a reason in its comment):

@@ -279,5 +279,5 @@
 .mt-recap-line{margin:0;overflow-wrap:anywhere}
 .mt-recap h3{display:flex;align-items:center;gap:6px;margin:0}
 
-/* Phone guard: see styles.css. Enforced by clinear/no-small-field-font. */
+/* Phone guard: see styles.css. Enforced by hoja/no-small-field-font. */
 @media(max-width:700px){input,select,textarea{font-size:16px!important}}

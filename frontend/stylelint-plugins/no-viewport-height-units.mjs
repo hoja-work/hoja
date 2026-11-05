@@ -8,7 +8,7 @@ import stylelint from 'stylelint';
 
 const { createPlugin, utils } = stylelint;
 
-const ruleName = 'clinear/no-viewport-height-units';
+const ruleName = 'hoja/no-viewport-height-units';
 const messages = utils.ruleMessages(ruleName, {
   expected: (prop, value) =>
     `"${prop}: ${value}" sizes against the largest viewport, which mobile browsers hide behind their toolbars. ` +

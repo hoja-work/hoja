@@ -9,7 +9,7 @@ import stylelint from 'stylelint';
 
 const { createPlugin, utils } = stylelint;
 
-const ruleName = 'clinear/no-small-field-font';
+const ruleName = 'hoja/no-small-field-font';
 const messages = utils.ruleMessages(ruleName, {
   expected: (selector, value) =>
     `"${selector}" sets field font-size ${value}, under 16px. iOS zooms the page when this field is focused. ` +

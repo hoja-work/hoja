@@ -18,9 +18,9 @@ export default {
     'selector-pseudo-class-no-unknown': true,
     'selector-pseudo-element-no-unknown': true,
     'unit-no-unknown': true,
-    'clinear/no-unstretched-chrome-wrapper': true,
-    'clinear/no-light-text-without-dark-ground': true,
-    'clinear/no-viewport-height-units': true,
-    'clinear/no-small-field-font': true,
+    'hoja/no-unstretched-chrome-wrapper': true,
+    'hoja/no-light-text-without-dark-ground': true,
+    'hoja/no-viewport-height-units': true,
+    'hoja/no-small-field-font': true,
   },
 };

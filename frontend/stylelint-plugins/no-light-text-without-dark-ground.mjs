@@ -8,7 +8,7 @@ import stylelint from 'stylelint';
 
 const { createPlugin, utils } = stylelint;
 
-const ruleName = 'clinear/no-light-text-without-dark-ground';
+const ruleName = 'hoja/no-light-text-without-dark-ground';
 const messages = utils.ruleMessages(ruleName, {
   expected: (selector, value) =>
     `"${selector}" sets light text color "${value}" without its own background. Light text on a light ` +

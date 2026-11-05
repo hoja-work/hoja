@@ -16,7 +16,7 @@ import stylelint from 'stylelint';
 
 const { createPlugin, utils } = stylelint;
 
-const ruleName = 'clinear/no-unstretched-chrome-wrapper';
+const ruleName = 'hoja/no-unstretched-chrome-wrapper';
 const messages = utils.ruleMessages(ruleName, {
   expected: (child, parent) =>
     `"${child}" carries visual chrome (border/shadow/background) but its parent "${parent}" ` +
