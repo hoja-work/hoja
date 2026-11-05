@@ -284,3 +284,31 @@ PASS  legacy: schema revision is 35  [35]
 
 all gate-4 assertions passed
 ```
+
+## Follow-ups (review pass, after the worker finished)
+
+Three defects found while reviewing this branch; each fixed with a test that failed first.
+
+### 1. Project visibility — the audit's last row was wrong
+The audit said projects have "no team dimension in the model". `project_team` *is* that
+dimension, and `store.projects` filtered on organization only, so a project linked solely
+to a private team was listed to every member (name, description, lead). `project_by_id`
+and `projects_by_ids` had the same hole. Added `_scope_projects`: a project with no team
+links keeps the historical org-wide behaviour, a project whose every linked team is
+invisible disappears. The viewer is threaded through `Query.projects`, `Query.project`,
+`Issue.project` and the projectCreate/projectUpdate payloads.
+
+### 2. CSP depended on `frontend/dist`
+`_SecurityHeaders` only attaches `Content-Security-Policy` to `text/html`, and the
+unbuilt-bundle path answered JSON 503 — so `test_security_headers_on_api_and_html` failed
+on a clean checkout. The unbuilt page is now HTML (`_UNBUILT_HTML`), so clickjacking
+protection applies whether or not the SPA is built.
+
+### 3. `projectUpdate` could not change teams
+`ProjectUpdateInput` had no `teamIds`, so a project created without a team could never
+join one through the API. `projectUpdate` now validates org scope, archive state and team
+visibility, then replaces the `project_team` rows.
+
+Evidence: `tests/test_project_visibility.py` — both tests fail with the source fixes
+reverted (`2 failed`) and pass with them (`2 passed`). Full suite with `frontend/dist`
+moved away: **355 passed, 6 skipped, 0 failed in 74.97s**.
