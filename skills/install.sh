@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the Cliniar agent skill into Swarm OS and/or Claude skill directories.
+# Install the Hoja agent skill into Swarm OS and/or Claude skill directories.
 #
 # Usage:
 #   bash skills/install.sh [--swarm-only|--claude-only] [--copy]
@@ -7,7 +7,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SRC="$SCRIPT_DIR/cliniar"
+SRC="$SCRIPT_DIR/hoja"
 MODE="symlink"
 ACTION="install"
 TARGETS=("swarm" "claude")
@@ -53,7 +53,7 @@ remove_managed_link() {
 install_one() {
     local root canonical
     root="$(skill_root "$1")"
-    canonical="$root/cliniar"
+    canonical="$root/hoja"
     mkdir -p "$root"
 
     remove_managed_link "$canonical" "$SRC"
@@ -74,7 +74,7 @@ install_one() {
 uninstall_one() {
     local root canonical
     root="$(skill_root "$1")"
-    canonical="$root/cliniar"
+    canonical="$root/hoja"
     remove_managed_link "$canonical" "$SRC" || true
 }
 
@@ -84,9 +84,9 @@ if [ ! -d "$SRC" ]; then
 fi
 
 if [ "$ACTION" = "install" ]; then
-    echo "Installing Cliniar skill (mode: $MODE)"
+    echo "Installing Hoja skill (mode: $MODE)"
     for target in "${TARGETS[@]}"; do install_one "$target"; done
 else
-    echo "Uninstalling managed Cliniar skill paths"
+    echo "Uninstalling managed Hoja skill paths"
     for target in "${TARGETS[@]}"; do uninstall_one "$target"; done
 fi

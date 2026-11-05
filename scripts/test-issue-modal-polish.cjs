@@ -21,9 +21,9 @@ const scratch = path.join(repo, 'local-e2e/artifacts');
 fs.mkdirSync(scratch, { recursive: true });
 const dir = fs.mkdtempSync(path.join(scratch, 'modal-polish-'));
 const db = path.join(dir, 'modal.db');
-const token = 'cliniar_modal_polish_token';
+const token = 'hoja_modal_polish_token';
 const py = path.join(repo, '.venv/bin/python');
-const seed = spawnSync(py, ['-c', `from cliniar_server.db import make_engine,migrate,seed_tenant
+const seed = spawnSync(py, ['-c', `from hoja_server.db import make_engine,migrate,seed_tenant
 e=make_engine(${JSON.stringify(db)}); migrate(e)
 seed_tenant(e, org_name='Acme', team_key='TREBOL', team_name='Trebol', user_name='Ada', user_email='ada@example.test', token=${JSON.stringify(token)}, demo_issues=True)
 e.dispose()`], { cwd: repo, env: { ...process.env, PYTHONPATH: repo }, encoding: 'utf8' });
@@ -31,7 +31,7 @@ assert.equal(seed.status, 0, seed.stderr);
 
 const port = 19100 + Math.floor(Math.random() * 90);
 const base = `http://127.0.0.1:${port}`;
-const server = spawn(path.join(repo, '.venv/bin/cliniar-serve'), ['serve', '--db', db, '--host', '127.0.0.1', '--port', String(port)], { cwd: repo, env: { ...process.env, CLINIAR_WEB_ROOT: web }, stdio: 'ignore' });
+const server = spawn(path.join(repo, '.venv/bin/hoja-serve'), ['serve', '--db', db, '--host', '127.0.0.1', '--port', String(port)], { cwd: repo, env: { ...process.env, HOJA_WEB_ROOT: web }, stdio: 'ignore' });
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
 let pass = 0, fail = 0;

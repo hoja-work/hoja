@@ -12,10 +12,10 @@ pytest.importorskip("starlette")
 
 from starlette.testclient import TestClient
 
-from cliniar_server.abac import Policy, deny, permit
-from cliniar_server.app import create_app
-from cliniar_server.db import make_engine, migrate, seed_tenant
-from cliniar_server.store import Store
+from hoja_server.abac import Policy, deny, permit
+from hoja_server.app import create_app
+from hoja_server.db import make_engine, migrate, seed_tenant
+from hoja_server.store import Store
 
 INVITE = "mutation($i: MemberInviteInput!) { memberInvite(input: $i) { success user { id } } }"
 
@@ -53,11 +53,11 @@ class FakeSFU:
         pass
 
 
-POSTGRES_URL = os.environ.get("CLINIAR_TEST_POSTGRES_URL")
+POSTGRES_URL = os.environ.get("HOJA_TEST_POSTGRES_URL")
 
 
 class World:
-    """One disposable workspace. With CLINIAR_TEST_POSTGRES_URL set it runs on PostgreSQL (own schema)."""
+    """One disposable workspace. With HOJA_TEST_POSTGRES_URL set it runs on PostgreSQL (own schema)."""
 
     def __init__(self, tmp_path, sfu="fake"):
         self.db = tmp_path / "meet.db"

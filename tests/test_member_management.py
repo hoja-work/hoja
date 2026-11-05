@@ -10,9 +10,9 @@ pytest.importorskip("starlette")
 from sqlalchemy import select, update
 from starlette.testclient import TestClient
 
-from cliniar_server.app import create_app
-from cliniar_server.db import make_engine, membership_invitation, migrate, seed_tenant, user as user_table
-from cliniar_server.store import Store
+from hoja_server.app import create_app
+from hoja_server.db import make_engine, membership_invitation, migrate, seed_tenant, user as user_table
+from hoja_server.store import Store
 
 INVITE = "mutation($i: MemberInviteInput!) { memberInvite(input: $i) { success user { id email } } }"
 DEACTIVATE = "mutation($u: String!) { memberDeactivate(userId: $u) { success user { id active } } }"

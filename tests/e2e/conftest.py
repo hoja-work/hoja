@@ -1,4 +1,4 @@
-"""Browser e2e fixtures: a real cliniar-serve process on a fresh database."""
+"""Browser e2e fixtures: a real hoja-serve process on a fresh database."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ pytest.importorskip("sqlalchemy")
 
 from playwright.sync_api import sync_playwright  # noqa: E402
 
-from cliniar_server.db import make_engine, migrate, seed_tenant  # noqa: E402
+from hoja_server.db import make_engine, migrate, seed_tenant  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 TOKEN = "e2e-realtime-token"
@@ -35,7 +35,7 @@ def _free_port() -> int:
 
 def _database_url(tmp_path: Path) -> str:
     """SQLite per test by default; a fresh Postgres database per test when configured."""
-    postgres = os.environ.get("CLINIAR_TEST_POSTGRES_URL")
+    postgres = os.environ.get("HOJA_TEST_POSTGRES_URL")
     if not postgres:
         return f"sqlite:///{tmp_path / 'e2e.db'}"
     from sqlalchemy import text
@@ -69,7 +69,7 @@ def server(tmp_path):
     migrate(engine)
     seeded = seed_tenant(engine, org_name="E2E", org_url_key="e2e", user_email="e2e@example.test",
                          token=TOKEN, demo_issues=False)
-    from cliniar_server.store import Store
+    from hoja_server.store import Store
 
     store = Store(engine)
     store.set_password(seeded["token"], PASSWORD)
@@ -79,7 +79,7 @@ def server(tmp_path):
     OTHER_TOKENS["token"] = other_token
     port = _free_port()
     proc = subprocess.Popen(
-        [sys.executable, "-m", "cliniar_server.cli", "serve", "--database-url", url,
+        [sys.executable, "-m", "hoja_server.cli", "serve", "--database-url", url,
          "--port", str(port), "--host", "127.0.0.1"],
         cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
     )
@@ -94,7 +94,7 @@ def server(tmp_path):
             time.sleep(0.2)
     else:
         proc.kill()
-        raise RuntimeError("cliniar-serve did not become ready")
+        raise RuntimeError("hoja-serve did not become ready")
     yield base
     proc.terminate()
     _drop_postgres(url)

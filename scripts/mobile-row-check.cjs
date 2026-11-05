@@ -10,12 +10,12 @@ const repo = path.resolve(__dirname, '..');
 const arg = (flag, fallback) => { const i = process.argv.indexOf(flag); return i > -1 ? process.argv[i + 1] : fallback; };
 const db = path.resolve(arg('--db', path.join(repo, 'local-e2e/artifacts/mobile-audit-scale/audit.db')));
 const perScreen = Number(arg('--per-screen', '25'));
-const token = 'cliniar_mobile_audit_token';
+const token = 'hoja_mobile_audit_token';
 const web = path.join(repo, 'frontend/dist');
 const port = 19200 + Math.floor(Math.random() * 80);
 const base = `http://127.0.0.1:${port}`;
 const wait = ms => new Promise(r => setTimeout(r, ms));
-const server = spawn(path.join(repo, '.venv/bin/cliniar-serve'), ['serve', '--db', db, '--host', '127.0.0.1', '--port', String(port)], { cwd: repo, env: { ...process.env, CLINIAR_WEB_ROOT: web }, stdio: 'ignore' });
+const server = spawn(path.join(repo, '.venv/bin/hoja-serve'), ['serve', '--db', db, '--host', '127.0.0.1', '--port', String(port)], { cwd: repo, env: { ...process.env, HOJA_WEB_ROOT: web }, stdio: 'ignore' });
 
 // Project rows are labelled "Open project <name>" and open the project's own page, whose heading is that name.
 const PROJECT_SCREENS = [['Projects', '/workspace/projects']];

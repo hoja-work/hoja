@@ -9,8 +9,8 @@ pytest.importorskip("starlette")
 
 from starlette.testclient import TestClient
 
-from cliniar_server.app import create_app
-from cliniar_server.db import (
+from hoja_server.app import create_app
+from hoja_server.db import (
     comment, issue, make_engine, migrate, new_id, now_iso, seed_tenant, team, workflow_state,
     user as user_table,
 )
@@ -100,7 +100,7 @@ def test_team_delete_refused_when_team_has_issues(tmp_path) -> None:
 
 def test_non_admin_cannot_update_archive_or_delete(tmp_path) -> None:
     from sqlalchemy import update
-    from cliniar_server.db import user as user_table
+    from hoja_server.db import user as user_table
     engine, app, admin = _setup(tmp_path)
     with TestClient(app) as client:
         team_id = _gql(client, admin["token"], CREATE, {"input": {"name": "Locked", "key": "lck"}})["data"]["teamCreate"]["team"]["id"]
@@ -162,7 +162,7 @@ def test_team_delete_with_issues_also_removes_project_links_and_cycles(tmp_path)
     """deleteIssues=True deletes the team's work instead of dead-ending on projects/cycles."""
     from sqlalchemy import select
 
-    from cliniar_server.db import cycle, project, project_team
+    from hoja_server.db import cycle, project, project_team
 
     engine, app, admin = _setup(tmp_path)
     team_id, issue_id = _team_with_issue_and_comment(engine, admin, "prj")
@@ -196,7 +196,7 @@ def test_team_delete_keeps_meetings_and_clears_their_team(tmp_path) -> None:
     """A team's meetings are hosted by a person, so they survive the team (FK-safe)."""
     from sqlalchemy import select
 
-    from cliniar_server.db import meeting
+    from hoja_server.db import meeting
 
     engine, app, admin = _setup(tmp_path)
     with TestClient(app) as client:

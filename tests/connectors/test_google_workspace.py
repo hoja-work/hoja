@@ -58,10 +58,10 @@ def test_authorization_url_carries_pkce_state_and_offline_access() -> None:
 
 def test_config_error_names_variables_but_not_values(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(ConnectorConfigError) as info:
-        GoogleOAuthConfig.from_env({"CLINIAR_GOOGLE_CLIENT_ID": "id-only"})
+        GoogleOAuthConfig.from_env({"HOJA_GOOGLE_CLIENT_ID": "id-only"})
     message = str(info.value)
-    assert "CLINIAR_GOOGLE_CLIENT_SECRET" in message
-    assert "CLINIAR_GOOGLE_REDIRECT_URI" in message
+    assert "HOJA_GOOGLE_CLIENT_SECRET" in message
+    assert "HOJA_GOOGLE_REDIRECT_URI" in message
     assert "id-only" not in message
 
 

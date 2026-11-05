@@ -2,11 +2,11 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-cliniar}
-      POSTGRES_USER: ${POSTGRES_USER:-cliniar}
+      POSTGRES_DB: ${POSTGRES_DB:-hoja}
+      POSTGRES_USER: ${POSTGRES_USER:-hoja}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
     volumes:
-      - cliniar-postgres:/var/lib/postgresql/data
+      - hoja-postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -15,18 +15,18 @@ services:
   app:
     build: .
     environment:
-      CLINIAR_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-cliniar}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-cliniar}
+      HOJA_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-hoja}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-hoja}
       # Meetings (optional): Cloudflare Realtime SFU app + TURN key. Unset = meetings work, media returns 503.
-      CLINIAR_CF_REALTIME_APP_ID: ${CLINIAR_CF_REALTIME_APP_ID:-}
-      CLINIAR_CF_REALTIME_APP_SECRET: ${CLINIAR_CF_REALTIME_APP_SECRET:-}
-      CLINIAR_CF_TURN_KEY_ID: ${CLINIAR_CF_TURN_KEY_ID:-}
-      CLINIAR_CF_TURN_KEY_API_TOKEN: ${CLINIAR_CF_TURN_KEY_API_TOKEN:-}
-      CLINIAR_APP_URL: ${CLINIAR_APP_URL:-}
+      HOJA_CF_REALTIME_APP_ID: ${HOJA_CF_REALTIME_APP_ID:-}
+      HOJA_CF_REALTIME_APP_SECRET: ${HOJA_CF_REALTIME_APP_SECRET:-}
+      HOJA_CF_TURN_KEY_ID: ${HOJA_CF_TURN_KEY_ID:-}
+      HOJA_CF_TURN_KEY_API_TOKEN: ${HOJA_CF_TURN_KEY_API_TOKEN:-}
+      HOJA_APP_URL: ${HOJA_APP_URL:-}
     ports:
-      - "${CLINIAR_PORT:-8787}:8787"
+      - "${HOJA_PORT:-8787}:8787"
     depends_on:
       db:
         condition: service_healthy
     restart: unless-stopped
 volumes:
-  cliniar-postgres:
+  hoja-postgres:

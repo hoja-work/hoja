@@ -1,11 +1,11 @@
-# AGENTS.md — Contributing to Cliniar
+# AGENTS.md — Contributing to Hoja
 
 > Guide for humans and AI agents who modify this codebase.
 
-Cliniar is a standalone, generic, self-hosted, offline-first, agent-native
+Hoja is a standalone, generic, self-hosted, offline-first, agent-native
 work-management product with a Linear-compatible GraphQL interface. Do not encode a particular
 organization, repository owner, or deployment as a product default. New work
-uses `cliniar`, `cliniar-mcp`, `cliniar-serve`, `CLINIAR_*`, and `cliniar`
+uses `hoja`, `hoja-mcp`, `hoja-serve`, `HOJA_*`, and `hoja`
 config/data paths. Preserve the wire-facing
 `LINEAR_TOKEN`, `LINEAR_API_URL`, and Linear GraphQL names.
 
@@ -23,12 +23,12 @@ config/data paths. Preserve the wire-facing
 ## Architecture
 
 ```
-cliniar/
+hoja/
 ├── VERSION                    Source of truth for __version__
 ├── pyproject.toml             Build metadata (must match VERSION)
 ├── CHANGELOG.md               Keep-a-Changelog format
 │
-├── cliniar/                   Package
+├── hoja/                   Package
 │   ├── __init__.py            Reads VERSION
 │   ├── cli.py                 Root Typer app, global flags, error wrapper
 │   ├── cli_state.py           Per-invocation state container
@@ -48,17 +48,17 @@ cliniar/
 │   │   ├── filters.md
 │   │   ├── output-formats.md
 │   │   └── examples.md
-│   └── mcp/                   Optional MCP server (`pip install 'cliniar[mcp]'`)
-│       ├── content.py         CliniarGuide Pydantic model + load_topic()
+│   └── mcp/                   Optional MCP server (`pip install 'hoja[mcp]'`)
+│       ├── content.py         HojaGuide Pydantic model + load_topic()
 │       ├── resources.py       7 read-only resource handlers
 │       ├── prompts.py         6 workflow prompt templates
-│       └── server.py          FastMCP wire-up; entry point of `cliniar-mcp`
+│       └── server.py          FastMCP wire-up; entry point of `hoja-mcp`
 │
 ├── skills/                    Agent skill bundle (installable into ~/.swarmos and ~/.claude)
-│   ├── install.sh             Symlinks skills/cliniar into both skill dirs
-│   └── cliniar/
+│   ├── install.sh             Symlinks skills/hoja into both skill dirs
+│   └── hoja/
 │       ├── SKILL.md           Frontmatter + body (mechanics + behavior + safety)
-│       └── references/        Symlinks → ../../cliniar/skill_content/*.md
+│       └── references/        Symlinks → ../../hoja/skill_content/*.md
 │
 ├── schema/
 │   ├── linear-schema.json     2.3 MB introspection result (GITIGNORED)
@@ -76,32 +76,32 @@ cliniar/
 
 ```
 User CLI input
-  └─► cliniar.cli.app (Typer)
+  └─► hoja.cli.app (Typer)
         └─► global flags resolved → cli_state.CLIState
-              └─► subcommand handler (cliniar/commands/*.py)
-                    └─► cliniar.client.LinearClient.execute_as()
+              └─► subcommand handler (hoja/commands/*.py)
+                    └─► hoja.client.LinearClient.execute_as()
                           ├─► httpx POST to the configured self-hosted /graphql endpoint
                           ├─► JSON → dict
                           └─► dict → Pydantic model (validation)
-                                └─► cliniar.output.render(model, fmt)
+                                └─► hoja.output.render(model, fmt)
                                       └─► stdout
 ```
 
 ### Adding a new command
 
-1. Pick the right file in `cliniar/commands/` (or create one).
+1. Pick the right file in `hoja/commands/` (or create one).
 2. Add a Typer command with rich `--help` text.
-3. Write the GraphQL string in `cliniar/graphql/queries.py` or `mutations.py`. Use fragments from `fragments.py`.
-4. If the response shape is new, add or extend a Pydantic model in `cliniar/models/`.
-5. Register the new command group in `cliniar/cli.py` via `app.add_typer(...)`.
+3. Write the GraphQL string in `hoja/graphql/queries.py` or `mutations.py`. Use fragments from `fragments.py`.
+4. If the response shape is new, add or extend a Pydantic model in `hoja/models/`.
+5. Register the new command group in `hoja/cli.py` via `app.add_typer(...)`.
 6. Add focused pytest coverage; update `scripts/e2e-test.sh` only for live end-to-end behavior.
 7. Update release metadata only when preparing a release.
 
 ### Adding a new model
 
 ```python
-# cliniar/models/your_entity.py
-from cliniar.models.base import Timestamped
+# hoja/models/your_entity.py
+from hoja.models.base import Timestamped
 
 class YourEntity(Timestamped):
     id: str
@@ -116,7 +116,7 @@ Keep fragments **DRY** and **small**. One fragment per entity "view":
 - `YourEntityFull` → extra fields included on detail views
 
 ```python
-# cliniar/graphql/fragments.py
+# hoja/graphql/fragments.py
 YOUR_ENTITY_CORE = """
 fragment YourEntityCore on YourEntity {
   id
@@ -133,8 +133,8 @@ fragment YourEntityCore on YourEntity {
 ### Setup
 
 ```bash
-git clone <repository-url> cliniar
-cd cliniar
+git clone <repository-url> hoja
+cd hoja
 bash scripts/install-hooks.sh        # MANDATORY — installs the secret-blocking pre-commit hook
 uv venv
 source .venv/bin/activate
@@ -150,14 +150,14 @@ export LINEAR_TOKEN="lin_api_..."
 # 2. Edit code
 
 # 3. Smoke test live API
-.venv/bin/cliniar me
+.venv/bin/hoja me
 
 # 4. Full E2E suite (takes ~30s)
 bash scripts/e2e-test.sh
 
 # 5. Lint + type check
-uv run ruff check cliniar/
-uv run mypy cliniar/
+uv run ruff check hoja/
+uv run mypy hoja/
 
 # 6. Bump version (see "Versioning" below)
 
@@ -177,7 +177,7 @@ Linear-compatible endpoint. For standalone product work, prefer the local
 backend suite below so verification does not depend on a hosted service.
 
 ```bash
-export LINEAR_TOKEN="lin_api_..."  # issued by cliniar-serve seed or another configured backend
+export LINEAR_TOKEN="lin_api_..."  # issued by hoja-serve seed or another configured backend
 bash scripts/e2e-test.sh
 ```
 
@@ -191,7 +191,7 @@ The `tests/` directory contains pytest coverage for CLI account resolution and
 the backend, including optional PostgreSQL checks. Run `uv run pytest`; tests
 requiring optional services or drivers may skip when those dependencies are not
 installed. The live API matrix in `scripts/e2e-test.sh` is separate and requires
-`LINEAR_TOKEN`, `CLINIAR_TEST_TEAM`, and `CLINIAR_TEST_ISSUE`.
+`LINEAR_TOKEN`, `HOJA_TEST_TEAM`, and `HOJA_TEST_ISSUE`.
 
 ### UI styling checks
 
@@ -300,7 +300,7 @@ We follow [Semantic Versioning](https://semver.org/):
 bash scripts/e2e-test.sh
 
 # Lint passes?
-uv run ruff check cliniar/
+uv run ruff check hoja/
 
 # Version is bumped in BOTH places?
 cat VERSION
@@ -326,8 +326,8 @@ git push origin v0.3.0
 ```bash
 rm -rf dist/
 uv build
-# → dist/cliniar-0.3.0-py3-none-any.whl
-# → dist/cliniar-0.3.0.tar.gz
+# → dist/hoja-0.3.0-py3-none-any.whl
+# → dist/hoja-0.3.0.tar.gz
 ```
 
 ### 4. Publish to PyPI
@@ -344,16 +344,16 @@ uv publish
 gh release create v0.3.0 \
     --title "v0.3.0" \
     --notes-file <(awk '/^## \[0.3.0\]/,/^## \[/{if (!/^## \[/) print; if (/^## \[/ && !found) found=1; else if (/^## \[/) exit}' CHANGELOG.md) \
-    dist/cliniar-0.3.0-py3-none-any.whl \
-    dist/cliniar-0.3.0.tar.gz
+    dist/hoja-0.3.0-py3-none-any.whl \
+    dist/hoja-0.3.0.tar.gz
 ```
 
 ### 6. Verify
 
 ```bash
 # Wait ~60s for PyPI to propagate, then:
-uv tool install --refresh cliniar
-cliniar --version  # should print the new version
+uv tool install --refresh hoja
+hoja --version  # should print the new version
 ```
 
 ---
@@ -383,9 +383,9 @@ It also blocks these file types entirely:
 ## House Rules
 
 1. **No new runtime dependencies without a security review.** Every dep is a supply-chain attack vector. The dependency tree is currently: `pydantic + pydantic-core (Rust binary) + httpx + httpcore + h11 + idna + certifi + sniffio + anyio + typer + click + shellingham + rich + markdown-it-py + mdurl + pygments + typing-extensions + annotated-types + annotated-doc + exceptiongroup + tomli (py<3.11)`. Don't add to it without justification.
-2. **No `dict[str, Any]` leaks** out of `cliniar.client`. Everything that hits a command handler must be a Pydantic model.
-3. **No silent failures.** If something can't be done, raise a `CliniarError` subclass with a helpful `hint`.
-4. **No print statements** outside `cliniar/output.py` and a couple of init-related scripts. All output goes through the formatter.
+2. **No `dict[str, Any]` leaks** out of `hoja.client`. Everything that hits a command handler must be a Pydantic model.
+3. **No silent failures.** If something can't be done, raise a `HojaError` subclass with a helpful `hint`.
+4. **No print statements** outside `hoja/output.py` and a couple of init-related scripts. All output goes through the formatter.
 5. **No `--insecure` flag, ever.** TLS verification is non-negotiable.
 
 ---
@@ -395,15 +395,15 @@ It also blocks these file types entirely:
 1. Re-run `bash scripts/e2e-test.sh -v` (verbose flag prints full output).
 2. Linear API errors will be in the error message verbatim — look for `GRAPHQL_VALIDATION_FAILED` (your query is wrong) vs. `AUTHENTICATION_ERROR` (token issue).
 3. Pydantic validation errors mean the response shape changed or the model is wrong. Run with `--verbose` to see the raw response.
-4. `cliniar raw query 'query { ... }'` is your friend — bypass our models, talk directly to Linear's GraphQL.
+4. `hoja raw query 'query { ... }'` is your friend — bypass our models, talk directly to Linear's GraphQL.
 5. Re-fetch the schema from the configured backend (for example, `http://127.0.0.1:8787/graphql`) with `curl`, rather than assuming a hosted endpoint. Update fragments/models as needed.
 
 ---
 
 ## Roadmap
 
-- v0.3 (current) — agent skill bundle + `cliniar-mcp` MCP server (1 tool + 7 resources + 6 prompts).
-- v0.4 — pytest unit tests, hash-pinned `requirements.txt`, `docs/COMMANDS.md`, `cliniar completions` for shell completion install
-- v0.5 — `cliniar initiative`, `cliniar document`, `cliniar customer` (next-tier domains)
+- v0.3 (current) — agent skill bundle + `hoja-mcp` MCP server (1 tool + 7 resources + 6 prompts).
+- v0.4 — pytest unit tests, hash-pinned `requirements.txt`, `docs/COMMANDS.md`, `hoja completions` for shell completion install
+- v0.5 — `hoja initiative`, `hoja document`, `hoja customer` (next-tier domains)
 - v0.6 — config-defined views (`--view my-bugs`), aliases
 - v1.0 — stable command surface, full integration with the 8 priority domains

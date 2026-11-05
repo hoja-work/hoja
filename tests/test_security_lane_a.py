@@ -11,9 +11,9 @@ pytest.importorskip("starlette")
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from cliniar_server.app import create_app
-from cliniar_server.db import make_engine, migrate, seed_tenant
-from cliniar_server.store import Store
+from hoja_server.app import create_app
+from hoja_server.db import make_engine, migrate, seed_tenant
+from hoja_server.store import Store
 
 PASSWORD = "correct horse battery"
 
@@ -100,9 +100,9 @@ def test_agent_graphql_tool_refuses_mutation_for_read_access(tmp_path) -> None:
     from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
     from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-    from cliniar_server.agent_chat import AgentDeps, build_agent
-    from cliniar_server.resolvers import build_schema
-    from cliniar_server.schema_sdl import SCHEMA_SDL
+    from hoja_server.agent_chat import AgentDeps, build_agent
+    from hoja_server.resolvers import build_schema
+    from hoja_server.schema_sdl import SCHEMA_SDL
 
     db_path, engine, seeded = _setup(tmp_path, "agenttool")
     seen = {}
@@ -124,7 +124,7 @@ def test_agent_graphql_tool_refuses_mutation_for_read_access(tmp_path) -> None:
 
 
 def test_agent_graphql_tool_blocks_mutations_for_read_access(tmp_path) -> None:
-    from cliniar_server.agent_chat import read_only_violation
+    from hoja_server.agent_chat import read_only_violation
 
     assert read_only_violation("mutation { teamCreate(input:{}) { success } }", "read") is True
     assert read_only_violation("{ viewer { id } }", "read") is False
@@ -207,7 +207,7 @@ def test_graphql_depth_and_alias_limits(tmp_path) -> None:
 def test_graphql_formatter_masks_internal_but_keeps_intentional_errors() -> None:
     from graphql import GraphQLError
 
-    from cliniar_server.app import _format_graphql_error
+    from hoja_server.app import _format_graphql_error
 
     internal = GraphQLError("secret sql detail", original_error=RuntimeError("db password is hunter2"))
     assert _format_graphql_error(internal) == {
@@ -288,14 +288,14 @@ def test_websocket_rejects_foreign_origin(tmp_path) -> None:
 
 
 def test_websocket_closes_when_key_revoked(tmp_path, monkeypatch) -> None:
-    import cliniar_server.realtime as realtime_module
+    import hoja_server.realtime as realtime_module
 
     db_path, engine, seeded = _setup(tmp_path, "wsrevoke")
     monkeypatch.setattr(realtime_module, "REVALIDATE_SECONDS", 0.05)
     client = _admin_client(db_path, seeded)
     from sqlalchemy import delete
 
-    from cliniar_server.db import api_key, token_hash
+    from hoja_server.db import api_key, token_hash
 
     with client.websocket_connect("/ws?after=0", headers={"Authorization": f"Bearer {seeded['token']}"}) as ws:
         with engine.begin() as conn:
@@ -321,7 +321,7 @@ def test_login_rate_limit_per_email(tmp_path) -> None:
 
 
 def test_limiter_does_not_block_other_accounts_or_successful_logins(tmp_path) -> None:
-    from cliniar_server.app import _FailureLimiter
+    from hoja_server.app import _FailureLimiter
 
     engine = make_engine(tmp_path / "limiter.db")
     migrate(engine)
@@ -420,8 +420,8 @@ def test_websocket_bearer_subprotocol_authenticates(tmp_path) -> None:
 def test_failure_limiter_is_bounded(tmp_path) -> None:
     from sqlalchemy import func, select
 
-    from cliniar_server import db
-    from cliniar_server.app import _FailureLimiter
+    from hoja_server import db
+    from hoja_server.app import _FailureLimiter
 
     engine = make_engine(tmp_path / "bounded.db")
     migrate(engine)
@@ -436,7 +436,7 @@ def test_failure_limiter_is_bounded(tmp_path) -> None:
 
 
 def test_denied_responses_carry_agent_hint(tmp_path) -> None:
-    from cliniar_server.denials import DENY_HINT, RATE_HINT
+    from hoja_server.denials import DENY_HINT, RATE_HINT
 
     db_path, _engine, seeded = _setup(tmp_path, "hint")
     client = _admin_client(db_path, seeded)

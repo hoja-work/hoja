@@ -1,4 +1,4 @@
-"""PostgreSQL integration tests, gated by CLINIAR_TEST_POSTGRES_URL."""
+"""PostgreSQL integration tests, gated by HOJA_TEST_POSTGRES_URL."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ pytest.importorskip("psycopg")
 
 from sqlalchemy import delete, func, select
 
-from cliniar_server.db import (
+from hoja_server.db import (
     change_event,
     issue,
     issue_label_link,
@@ -29,13 +29,13 @@ from cliniar_server.db import (
     team,
     team_member,
 )
-from cliniar_server.store import Store
-from cliniar_server.writer import Writer
+from hoja_server.store import Store
+from hoja_server.writer import Writer
 
-POSTGRES_URL = os.environ.get("CLINIAR_TEST_POSTGRES_URL")
+POSTGRES_URL = os.environ.get("HOJA_TEST_POSTGRES_URL")
 pytestmark = pytest.mark.skipif(
     not POSTGRES_URL,
-    reason="CLINIAR_TEST_POSTGRES_URL is not configured",
+    reason="HOJA_TEST_POSTGRES_URL is not configured",
 )
 
 
@@ -172,7 +172,7 @@ def test_postgres_notify_wakes_another_node_without_polling(monkeypatch) -> None
     import asyncio
     import time
 
-    from cliniar_server import realtime
+    from hoja_server import realtime
 
     assert POSTGRES_URL is not None
     monkeypatch.setattr(realtime, "PG_SAFETY_POLL_INTERVAL", 3600)  # prove it is not the poll

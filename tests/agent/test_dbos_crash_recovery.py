@@ -10,15 +10,15 @@ from pathlib import Path
 
 import pytest
 
-POSTGRES_URL = os.environ.get("CLINIAR_TEST_POSTGRES_URL")
-pytestmark = pytest.mark.skipif(not POSTGRES_URL, reason="set CLINIAR_TEST_POSTGRES_URL to run")
+POSTGRES_URL = os.environ.get("HOJA_TEST_POSTGRES_URL")
+pytestmark = pytest.mark.skipif(not POSTGRES_URL, reason="set HOJA_TEST_POSTGRES_URL to run")
 
 WORKER = textwrap.dedent(
     """
     import os, sys, time
     from dbos import DBOS, SetWorkflowID
 
-    DBOS(config={"name": "cliniar-agent-test", "system_database_url": os.environ["DB_URL"]})
+    DBOS(config={"name": "hoja-agent-test", "system_database_url": os.environ["DB_URL"]})
 
     gate = os.environ["GATE"]
 

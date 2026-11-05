@@ -10,9 +10,9 @@ pytest.importorskip("starlette")
 from sqlalchemy import update
 from starlette.testclient import TestClient
 
-from cliniar_server.app import create_app
-from cliniar_server.db import make_engine, migrate, seed_tenant, user as user_table
-from cliniar_server.store import Store
+from hoja_server.app import create_app
+from hoja_server.db import make_engine, migrate, seed_tenant, user as user_table
+from hoja_server.store import Store
 
 CREATE = "mutation($i: IssueLabelCreateInput!) { issueLabelCreate(input: $i) { success issueLabel { id } } }"
 UPDATE = ("mutation($id: String!, $i: IssueLabelUpdateInput!) { issueLabelUpdate(id: $id, input: $i)"

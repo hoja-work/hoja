@@ -14,8 +14,8 @@ pytest.importorskip("pydantic_ai")
 
 from starlette.testclient import TestClient
 
-from cliniar_server.app import create_app
-from cliniar_server.db import make_engine, migrate, seed_tenant
+from hoja_server.app import create_app
+from hoja_server.db import make_engine, migrate, seed_tenant
 
 CREATE = (
     "mutation($k: String!, $u: String!) { modelProviderCreate(name: \"Stub\", provider: \"openai\", "
@@ -61,7 +61,7 @@ def stub_base_url():
 def _secret_key(monkeypatch):
     monkeypatch.setenv("HOJA_SECRET_KEY", "test-master-key")
     # The stub provider listens on plain http://127.0.0.1; allow loopback http for these tests only.
-    monkeypatch.setenv("CLINIAR_ALLOW_INSECURE_MODEL_URL", "1")
+    monkeypatch.setenv("HOJA_ALLOW_INSECURE_MODEL_URL", "1")
 
 
 def _setup(tmp_path):
@@ -121,10 +121,10 @@ def test_agent_recovers_from_empty_graphql_call(tmp_path) -> None:
     from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
     from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-    from cliniar_server.agent_chat import AgentDeps, build_agent
-    from cliniar_server.resolvers import build_schema
-    from cliniar_server.schema_sdl import SCHEMA_SDL
-    from cliniar_server.store import Store
+    from hoja_server.agent_chat import AgentDeps, build_agent
+    from hoja_server.resolvers import build_schema
+    from hoja_server.schema_sdl import SCHEMA_SDL
+    from hoja_server.store import Store
 
     engine, _app, admin = _setup(tmp_path)
     calls = []
@@ -152,10 +152,10 @@ def test_agent_graphql_tool_runs_as_signed_in_user(tmp_path) -> None:
     from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
     from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-    from cliniar_server.agent_chat import AgentDeps, build_agent
-    from cliniar_server.resolvers import build_schema
-    from cliniar_server.schema_sdl import SCHEMA_SDL
-    from cliniar_server.store import Store
+    from hoja_server.agent_chat import AgentDeps, build_agent
+    from hoja_server.resolvers import build_schema
+    from hoja_server.schema_sdl import SCHEMA_SDL
+    from hoja_server.store import Store
 
     engine, _app, admin = _setup(tmp_path)
     seen = {}
@@ -176,9 +176,9 @@ def test_agent_graphql_tool_runs_as_signed_in_user(tmp_path) -> None:
 
 
 def test_agent_prompt_filters_assignee_by_viewer_id(tmp_path) -> None:
-    from cliniar_server.agent_chat import INSTRUCTIONS
-    from cliniar_server.resolvers import build_schema
-    from cliniar_server.schema_sdl import SCHEMA_SDL
+    from hoja_server.agent_chat import INSTRUCTIONS
+    from hoja_server.resolvers import build_schema
+    from hoja_server.schema_sdl import SCHEMA_SDL
 
     assert "isMe: {" not in INSTRUCTIONS
     assert "viewer { id }" in INSTRUCTIONS
@@ -254,10 +254,10 @@ def test_ask_user_ends_turn_with_question_block(tmp_path) -> None:
     from pydantic_ai.messages import ModelResponse, ToolCallPart
     from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-    from cliniar_server.agent_chat import AgentDeps, AskUser, ask_block, build_agent
-    from cliniar_server.resolvers import build_schema
-    from cliniar_server.schema_sdl import SCHEMA_SDL
-    from cliniar_server.store import Store
+    from hoja_server.agent_chat import AgentDeps, AskUser, ask_block, build_agent
+    from hoja_server.resolvers import build_schema
+    from hoja_server.schema_sdl import SCHEMA_SDL
+    from hoja_server.store import Store
 
     engine, _app, admin = _setup(tmp_path)
     context = {

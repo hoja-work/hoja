@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Cliniar will be documented in this file.
+All notable changes to Hoja will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -368,20 +368,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Documented Cliniar as a standalone self-hosted product rather than only a
+- Documented Hoja as a standalone self-hosted product rather than only a
   CLI client for Linear Cloud.
 
 ## [0.7.0] — 2026-07-26
 
 ### Changed
 
-- Renamed the product and canonical distribution to **Cliniar**, a generic
+- Renamed the product and canonical distribution to **Hoja**, a generic
   self-hosted, offline-first, agent-native work-management system with a
   Linear-compatible GraphQL interface.
-- Canonical executables are now `cliniar`, `cliniar-mcp`, and `cliniar-serve`;
+- Canonical executables are now `hoja`, `hoja-mcp`, and `hoja-serve`;
   Python packages, release artifacts, skill metadata, documentation, and
-  configuration/data directories use `cliniar`.
-- Canonical application variables now use the `CLINIAR_*` prefix. The existing
+  configuration/data directories use `hoja`.
+- Canonical application variables now use the `HOJA_*` prefix. The existing
   `LINEAR_TOKEN` and `LINEAR_API_URL` variables remain unchanged, as do Linear
   API field names and GraphQL wire names.
 - Removed product ownership and deployment assumptions from the self-hosted
@@ -394,9 +394,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one release. They are compatibility shims; scripts and new integrations must
   move to the canonical commands now.
 - Matching `CLINEAR_*` variables are read only as one-release fallbacks when
-  their `CLINIAR_*` equivalents are unset.
+  their `HOJA_*` equivalents are unset.
 - Existing `~/.config/clinear/` and `$XDG_DATA_HOME/clinear/` files are detected
-  only when the canonical `cliniar/` location is absent. Copy configuration and
+  only when the canonical `hoja/` location is absent. Copy configuration and
   data into the canonical location; do not maintain two writable copies.
 - The skill installer can create deprecated `clinear` discovery symlinks only
   when explicitly passed `--legacy-links`, and never removes or replaces an
@@ -404,13 +404,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Migration
 
-1. Replace command names with `cliniar`, `cliniar-mcp`, and `cliniar-serve`.
-2. Rename application variables from `CLINEAR_*` to `CLINIAR_*`; leave
+1. Replace command names with `hoja`, `hoja-mcp`, and `hoja-serve`.
+2. Rename application variables from `CLINEAR_*` to `HOJA_*`; leave
    `LINEAR_TOKEN` and `LINEAR_API_URL` unchanged.
-3. Move configuration to `~/.config/cliniar/config.toml` (or
-   `$XDG_CONFIG_HOME/cliniar/config.toml`) and local data to
-   `$XDG_DATA_HOME/cliniar/` (normally `~/.local/share/cliniar/`).
-4. Reinstall the canonical `skills/cliniar` skill. Use `--legacy-links` only
+3. Move configuration to `~/.config/hoja/config.toml` (or
+   `$XDG_CONFIG_HOME/hoja/config.toml`) and local data to
+   `$XDG_DATA_HOME/hoja/` (normally `~/.local/share/hoja/`).
+4. Reinstall the canonical `skills/hoja` skill. Use `--legacy-links` only
    for agents that cannot yet discover the new name.
 
 ---

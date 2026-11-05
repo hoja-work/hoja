@@ -28,14 +28,14 @@ asserts CSP headers on an HTML error page, and the served HTML differs).
 
 | file | change |
 |---|---|
-| `cliniar_server/db.py` | revision 35: `team.visibility`, `team.parent_team_id` (+index), `team_member.role`; `private` removed from the DDL and migrated |
-| `cliniar_server/store.py` | `visibility_holds()` as the single rule; `visible_team_clause`/`visible_team_ids`/`visibility_map` derive from it; cascading membership; scoped cycle-by-id, uploads, activity |
-| `cliniar_server/writer.py` | `team_create`/`team_update` accept visibility and parent; depth/self-parent/cycle validation; inherited label release on un-nest; cycle alignment; seat cascade |
-| `cliniar_server/resolvers.py` | `Team.parent`/`Team.children`; `teamMemberAdd(role)`; `HOJA_SINGLE_ORG` gates on `workspaceCreate`/`workspaceSwitch`; cycle-by-id scoped |
-| `cliniar_server/deployment.py` | new: `single_org_mode()` |
-| `cliniar_server/app.py` | upload serving checks issue visibility; `/onboarding/status` reports `singleOrg` |
-| `cliniar_server/schema.graphql` | `Team.visibility/parentTeamId/parent/children`, inputs updated, `teamMemberAdd(role)` |
-| `cliniar/graphql/fragments.py`, `cliniar/models/team.py` | client asks for `visibility`/`parentTeamId` |
+| `hoja_server/db.py` | revision 35: `team.visibility`, `team.parent_team_id` (+index), `team_member.role`; `private` removed from the DDL and migrated |
+| `hoja_server/store.py` | `visibility_holds()` as the single rule; `visible_team_clause`/`visible_team_ids`/`visibility_map` derive from it; cascading membership; scoped cycle-by-id, uploads, activity |
+| `hoja_server/writer.py` | `team_create`/`team_update` accept visibility and parent; depth/self-parent/cycle validation; inherited label release on un-nest; cycle alignment; seat cascade |
+| `hoja_server/resolvers.py` | `Team.parent`/`Team.children`; `teamMemberAdd(role)`; `HOJA_SINGLE_ORG` gates on `workspaceCreate`/`workspaceSwitch`; cycle-by-id scoped |
+| `hoja_server/deployment.py` | new: `single_org_mode()` |
+| `hoja_server/app.py` | upload serving checks issue visibility; `/onboarding/status` reports `singleOrg` |
+| `hoja_server/schema.graphql` | `Team.visibility/parentTeamId/parent/children`, inputs updated, `teamMemberAdd(role)` |
+| `hoja/graphql/fragments.py`, `hoja/models/team.py` | client asks for `visibility`/`parentTeamId` |
 | `frontend/src/main.tsx` | single-org mode hides "Create workspace" and the switch list |
 | `docs/DESIGN.md` | `--workspace` removed; single-org and department rules documented |
 | `tests/test_team_hierarchy.py` | new, 11 tests (written first, 9 of the first 10 failed; the cycle test in item E was added later and also verified failing) |
@@ -109,7 +109,7 @@ Each fixed leak has a test that failed before the fix and passes after; the
 
 ### Gate 2 — GraphQL introspection, base vs. this branch
 
-Type-system introspection of `cliniar_server/schema.graphql` at `7d5fa8a` and at `HEAD`
+Type-system introspection of `hoja_server/schema.graphql` at `7d5fa8a` and at `HEAD`
 (plus the unchanged provider/conversation SDL), `diff -u`:
 
 ```diff
@@ -168,10 +168,10 @@ Type-system introspection of `cliniar_server/schema.graphql` at `7d5fa8a` and at
 
 Nothing else changed: no type added or removed, no other field or argument touched.
 
-### Gate 3 — `cliniar` CLI against a fresh sqlite database
+### Gate 3 — `hoja` CLI against a fresh sqlite database
 
 ```
-$ cliniar-serve seed --db /tmp/gate3/gate3.db --org "Gate Three" --org-key gate-three \
+$ hoja-serve seed --db /tmp/gate3/gate3.db --org "Gate Three" --org-key gate-three \
     --team-key ENG --team-name Engineering --user "Gate Admin" --email gate@example.test \
     --token gate3-token --no-demo
 Seeded tenant 'default' at /tmp/gate3/gate3.db
@@ -181,10 +181,10 @@ Seeded tenant 'default' at /tmp/gate3/gate3.db
   TOKEN    : gate3-token
 
 $ export LINEAR_TOKEN=gate3-token LINEAR_API_URL=http://127.0.0.1:8799/graphql
-$ cliniar -o plain me
+$ hoja -o plain me
 d86f88fd-8ea6-400e-bf06-42fc223a3a09	Gate Admin	gate@example.test
 
-$ cliniar -o json raw query 'mutation { teamCreate(input: {name: "Platform", key: "PLT", visibility: "public"}) {
+$ hoja -o json raw query 'mutation { teamCreate(input: {name: "Platform", key: "PLT", visibility: "public"}) {
     success team { id key visibility parentTeamId } } }'
 {
   "teamCreate": {
@@ -194,7 +194,7 @@ $ cliniar -o json raw query 'mutation { teamCreate(input: {name: "Platform", key
   }
 }
 
-$ cliniar -o json raw query 'mutation { teamCreate(input: {name: "Apps", key: "APX",
+$ hoja -o json raw query 'mutation { teamCreate(input: {name: "Apps", key: "APX",
     visibility: "restricted", parentTeamId: "e79aa506-..."}) { success team { key visibility parentTeamId parent { key } } } }'
 {
   "teamCreate": {
@@ -205,36 +205,36 @@ $ cliniar -o json raw query 'mutation { teamCreate(input: {name: "Apps", key: "A
 }
 
 # a fourth level is refused
-$ cliniar -o json raw query 'mutation { teamCreate(input: {name: "TooDeep", key: "DP5",
+$ hoja -o json raw query 'mutation { teamCreate(input: {name: "TooDeep", key: "DP5",
     parentTeamId: "03d5c5c2-..."}) { success team { key } } }'
   "extensions": { "code": "BAD_USER_INPUT", "field": "parentTeamId" }
   # message: Departments can nest at most 3 levels deep (max depth 3)
 
 # self-parenting is refused
-$ cliniar -o json raw query 'mutation { teamUpdate(id: "e79aa506-...", input: {parentTeamId: "e79aa506-..."}) ... }'
+$ hoja -o json raw query 'mutation { teamUpdate(id: "e79aa506-...", input: {parentTeamId: "e79aa506-..."}) ... }'
   "extensions": { "code": "BAD_USER_INPUT", "field": "parentTeamId" }
   # message: A team cannot be its own parent
 
-$ cliniar -o json issue create --title "Department issue" --team APX
+$ hoja -o json issue create --title "Department issue" --team APX
 { "id": "...", "identifier": "APX-1", "team": { "key": "APX", "name": "Apps" }, "number": 1, ... }
 
-$ cliniar -o plain team list
+$ hoja -o plain team list
 APX	Apps	65a98c8a-ebfb-4fc2-ab1a-1cb0f698b582
 DP4	Deep	03d5c5c2-10cb-44db-b432-383d0af3eb44
 ENG	Engineering	9a140818-d7d7-461e-a033-09d93f691b73
 PLT	Platform	e79aa506-c1dc-4884-8d5c-d9cc49e53e00
 
-$ cliniar -o plain issue list
+$ hoja -o plain issue list
 APX-1	Todo	—	No priority	Department issue
 
-$ cliniar -o json team get APX
+$ hoja -o json team get APX
 { "key": "APX", "visibility": "restricted", "parent_team_id": "e79aa506-...", ... }
 ```
 
 This gate is what caught the client regression: before the last commit,
-`cliniar issue create` failed with `Cannot query field 'private' on type 'Team'`.
+`hoja issue create` failed with `Cannot query field 'private' on type 'Team'`.
 
-Single-org gating over HTTP (`cliniar-serve serve` with `HOJA_SINGLE_ORG=1`):
+Single-org gating over HTTP (`hoja-serve serve` with `HOJA_SINGLE_ORG=1`):
 
 ```
 $ curl -s http://127.0.0.1:8798/onboarding/status     # HOJA_SINGLE_ORG=1

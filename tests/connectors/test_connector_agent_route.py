@@ -5,10 +5,10 @@ from __future__ import annotations
 import pytest
 from starlette.testclient import TestClient
 
-from cliniar_server import agent_chat
-from cliniar_server.app import create_app
-from cliniar_server.connectors_api import PROVIDER
-from cliniar_server.db import connector_account, make_engine, migrate, seed_tenant
+from hoja_server import agent_chat
+from hoja_server.app import create_app
+from hoja_server.connectors_api import PROVIDER
+from hoja_server.db import connector_account, make_engine, migrate, seed_tenant
 
 MESSAGES = {"messages": [{"role": "user", "content": "list my unread mail"}]}
 
@@ -16,8 +16,8 @@ MESSAGES = {"messages": [{"role": "user", "content": "list my unread mail"}]}
 @pytest.fixture(autouse=True)
 def _secret_key(monkeypatch):
     monkeypatch.setenv("HOJA_SECRET_KEY", "test-master-key")
-    monkeypatch.setenv("CLINIAR_CONNECTOR_MCP_URL", "http://localhost:8000/mcp")
-    monkeypatch.setenv("CLINIAR_CONNECTOR_SIGNING_KEY", "route-test-signing-key")
+    monkeypatch.setenv("HOJA_CONNECTOR_MCP_URL", "http://localhost:8000/mcp")
+    monkeypatch.setenv("HOJA_CONNECTOR_SIGNING_KEY", "route-test-signing-key")
 
 
 def _setup(tmp_path, *, with_account: bool):

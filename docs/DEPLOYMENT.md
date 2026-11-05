@@ -1,6 +1,6 @@
 # Self-hosted backend deployment
 
-`cliniar_server` is Cliniar's generic Linear-compatible GraphQL backend. It is
+`hoja_server` is Hoja's generic Linear-compatible GraphQL backend. It is
 offline-first with an isolated SQLite file for local work and supports shared
 PostgreSQL for multiple organizations. Organization names, URL keys, users,
 teams, application URLs, and database targets are always deployment inputs;
@@ -9,7 +9,7 @@ the server assumes no particular owner or hosting environment.
 ## Install
 
 ```bash
-python -m pip install 'cliniar[server]'
+python -m pip install 'hoja[server]'
 ```
 
 The server extra includes Ariadne, Starlette/FastAPI, Uvicorn, SQLAlchemy,
@@ -20,13 +20,13 @@ SQLite support, and the psycopg 3 binary PostgreSQL driver.
 `serve`, `seed`, `token`, and programmatic `create_app` use one precedence rule:
 
 1. explicit `--database-url`;
-2. `CLINIAR_DATABASE_URL`;
+2. `HOJA_DATABASE_URL`;
 3. the existing `--db` path, or the SQLite path derived from `--tenant`.
 
 `--database-url` accepts a SQLAlchemy URL such as
 `postgresql+psycopg://USER:PASSWORD@DB_HOST:5432/DATABASE`. Do not place
 credentials in source control or command logs; prefer a secret-injected
-`CLINIAR_DATABASE_URL`. CLI status output redacts URL passwords.
+`HOJA_DATABASE_URL`. CLI status output redacts URL passwords.
 
 SQLite retains WAL mode and foreign-key pragmas. PostgreSQL does not receive
 SQLite pragmas and enables `pool_pre_ping` so stale pooled connections are
@@ -35,19 +35,19 @@ discarded before use.
 ## Isolated SQLite
 
 ```bash
-cliniar-serve seed \
+hoja-serve seed \
   --tenant local \
   --org "Local Workspace" \
   --org-key local \
   --team-key ENG \
   --email user@example.test
 
-cliniar-serve serve --tenant local --host 127.0.0.1 --port 8787
+hoja-serve serve --tenant local --host 127.0.0.1 --port 8787
 ```
 
 Without `--db`, the canonical file is
-`$XDG_DATA_HOME/cliniar/<tenant>.db` or
-`~/.local/share/cliniar/<tenant>.db`.
+`$XDG_DATA_HOME/hoja/<tenant>.db` or
+`~/.local/share/hoja/<tenant>.db`.
 `--open` is intended only for isolated local use. It resolves an identity only
 when the SQLite database contains exactly one organization and one user. It is
 disabled by ambiguity and never selects the first global user in PostgreSQL.
@@ -58,26 +58,26 @@ Create a dedicated database and role using your normal PostgreSQL provisioning
 tooling, then inject its URL:
 
 ```bash
-export CLINIAR_DATABASE_URL='postgresql+psycopg://USER:PASSWORD@DB_HOST:5432/DATABASE'
-export CLINIAR_APP_URL='https://issues.example.com'
+export HOJA_DATABASE_URL='postgresql+psycopg://USER:PASSWORD@DB_HOST:5432/DATABASE'
+export HOJA_APP_URL='https://issues.example.com'
 
-cliniar-serve migrate
+hoja-serve migrate
 
-cliniar-serve seed \
+hoja-serve seed \
   --org "Engineering" \
   --org-key engineering \
   --team-key ENG \
   --user "Initial Admin" \
   --email admin@example.com
 
-cliniar-serve seed \
+hoja-serve seed \
   --org "Operations" \
   --org-key operations \
   --team-key OPS \
   --user "Operations Admin" \
   --email ops-admin@example.com
 
-cliniar-serve serve --host 0.0.0.0 --port 8787
+hoja-serve serve --host 0.0.0.0 --port 8787
 ```
 
 Each organization must have a unique `--org-key`. Seeding rejects duplicates
@@ -87,13 +87,13 @@ In a shared database, minting a token requires an explicit organization plus
 one user selector:
 
 ```bash
-cliniar-serve token \
+hoja-serve token \
   --organization engineering \
   --email admin@example.com \
   --label automation
 
 # User IDs are also accepted:
-cliniar-serve token \
+hoja-serve token \
   --organization engineering \
   --user USER_ID \
   --label service
@@ -105,7 +105,7 @@ different organization.
 
 ## Application and API URLs
 
-`CLINIAR_APP_URL` is the browser-facing base used for generated issue and
+`HOJA_APP_URL` is the browser-facing base used for generated issue and
 project URLs. Its sensible local default is `http://localhost:8787`. Set it to
 the public application origin in hosted environments; generated URLs do
 not require `linear.app`.
@@ -119,7 +119,7 @@ token = "TOKEN_FROM_A_SECRET_STORE"
 ```
 
 `LINEAR_API_URL` can override the client-side account URL. It is separate from
-`CLINIAR_APP_URL`.
+`HOJA_APP_URL`.
 
 ## Health, readiness, and operation
 
@@ -135,7 +135,7 @@ database credentials through a secret manager, restrict database network
 access, back up PostgreSQL normally, and monitor readiness failures.
 
 Schema changes are ordered and recorded in `schema_revision`. Run
-`cliniar-serve migrate` as a pre-deployment or init step before starting new
+`hoja-serve migrate` as a pre-deployment or init step before starting new
 application instances. The server process does not alter schema on startup, so
 `/health` remains available during a database outage and `/ready` rejects
 traffic until both connectivity and schema currency are confirmed.
@@ -153,12 +153,12 @@ bash scripts/e2e-local-backend.sh
 PostgreSQL integration tests are opt-in and never start Docker:
 
 ```bash
-export CLINIAR_TEST_POSTGRES_URL='postgresql+psycopg://USER:PASSWORD@DB_HOST:5432/TEST_DATABASE'
+export HOJA_TEST_POSTGRES_URL='postgresql+psycopg://USER:PASSWORD@DB_HOST:5432/TEST_DATABASE'
 uv run --extra server --extra dev python -m pytest -q tests/test_server_postgres.py
 
 # Run the same 17-check CLI matrix against PostgreSQL:
-CLINIAR_DATABASE_URL="$CLINIAR_TEST_POSTGRES_URL" \
-CLINIAR_PYTHON="$PWD/.venv/bin/python" \
+HOJA_DATABASE_URL="$HOJA_TEST_POSTGRES_URL" \
+HOJA_PYTHON="$PWD/.venv/bin/python" \
 bash scripts/e2e-local-backend.sh
 ```
 

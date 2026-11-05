@@ -2,7 +2,7 @@
 
 **A self-hosted workspace for issues, projects, cycles, and team work.** Hoja includes a browser UI and a Python CLI. It can run against its own SQLite or PostgreSQL-backed service; the GraphQL API also implements a Linear-compatible surface for clients that use it.
 
-The Python distribution and commands are named **Cliniar**: `cliniar`, `cliniar-serve`, and the optional `cliniar-mcp`.
+The Python distribution and commands are named **Hoja**: `hoja`, `hoja-serve`, and the optional `hoja-mcp`.
 
 ## What you can do
 
@@ -31,7 +31,7 @@ internet access to download the base images and frontend/Python dependencies.
 
    Keep this file private; do not commit it. Compose currently has a
    development fallback password, so setting your own avoids relying on that
-   default. If port `8787` is already in use, add `CLINIAR_PORT=8788` to this
+   default. If port `8787` is already in use, add `HOJA_PORT=8788` to this
    same file and use port 8788 in the browser URL below.
 
 2. Build and start the services:
@@ -69,7 +69,7 @@ docker compose down
 ```
 
 Start them again later with `docker compose up -d`. PostgreSQL data is stored
-in the named `cliniar-postgres` volume and survives ordinary container stops
+in the named `hoja-postgres` volume and survives ordinary container stops
 and rebuilds. To permanently delete the local database and all demo data, use
 `docker compose down -v`; this is destructive and the data cannot be recovered
 without a backup.
@@ -81,7 +81,7 @@ without a backup.
   v2 plugin (included with current Docker Desktop), then verify with
   `docker compose version`. This guide uses the `docker compose` subcommand,
   not the legacy standalone `docker-compose` command.
-- **Port is already allocated:** set `CLINIAR_PORT=8788` in `.env` and browse
+- **Port is already allocated:** set `HOJA_PORT=8788` in `.env` and browse
   to `http://localhost:8788`.
 - **The app cannot connect to PostgreSQL:** check `docker compose ps` and
   `docker compose logs db app`; Compose starts the app only after the database
@@ -108,10 +108,10 @@ checks, and multi-organization token provisioning.
 For an isolated SQLite instance instead:
 
 ```bash
-python -m pip install 'cliniar[server]'
-cliniar-serve seed --tenant local --org "Local Workspace" \
+python -m pip install 'hoja[server]'
+hoja-serve seed --tenant local --org "Local Workspace" \
   --org-key local --team-key ENG --email user@example.test
-cliniar-serve serve --tenant local --host 127.0.0.1 --port 8787
+hoja-serve serve --tenant local --host 127.0.0.1 --port 8787
 ```
 
 ## Use the CLI
@@ -119,12 +119,12 @@ cliniar-serve serve --tenant local --host 127.0.0.1 --port 8787
 Install the CLI from PyPI or from a checkout:
 
 ```bash
-python -m pip install cliniar
+python -m pip install hoja
 # or, from this repository:
 uv sync --extra dev --extra server
 ```
 
-Configure an account in `~/.config/cliniar/config.toml`:
+Configure an account in `~/.config/hoja/config.toml`:
 
 ```toml
 [accounts.local]
@@ -139,24 +139,24 @@ Export the token as `LINEAR_TOKEN` (or choose a different `token_env` for the
 account), then try:
 
 ```bash
-cliniar me
-cliniar team list
-cliniar issue list --assignee me
-cliniar issue create --team ENG --title "Review onboarding flow"
-cliniar -o json issue list --state Todo
+hoja me
+hoja team list
+hoja issue list --assignee me
+hoja issue create --team ENG --title "Review onboarding flow"
+hoja -o json issue list --state Todo
 ```
 
-The CLI also supports projects, cycles, comments, labels, raw GraphQL queries, and dry-run previews for supported mutations. Run `cliniar --help` or `cliniar <command> --help` for the current command and option list. For compatibility with existing Linear accounts, `LINEAR_TOKEN` and `LINEAR_API_URL` remain supported.
+The CLI also supports projects, cycles, comments, labels, raw GraphQL queries, and dry-run previews for supported mutations. Run `hoja --help` or `hoja <command> --help` for the current command and option list. For compatibility with existing Linear accounts, `LINEAR_TOKEN` and `LINEAR_API_URL` remain supported.
 
 ## Agent integrations
 
 The optional MCP server provides one guide tool, seven read-only resources, and six workflow prompts. It does not expose mutation tools; make changes through the CLI.
 
 ```bash
-python -m pip install 'cliniar[mcp]'
+python -m pip install 'hoja[mcp]'
 ```
 
-Register `cliniar-mcp` as a stdio MCP server in your client, passing the needed token through that client's environment configuration. The server reads the same account configuration as the CLI. See [the MCP section below](#mcp-server-setup) for a complete example.
+Register `hoja-mcp` as a stdio MCP server in your client, passing the needed token through that client's environment configuration. The server reads the same account configuration as the CLI. See [the MCP section below](#mcp-server-setup) for a complete example.
 
 The repository also includes an installable agent skill:
 
@@ -164,14 +164,14 @@ The repository also includes an installable agent skill:
 bash skills/install.sh --claude-only
 ```
 
-It installs the `skills/cliniar` instructions into the selected agent skill directory; `--copy` copies rather than symlinks.
+It installs the `skills/hoja` instructions into the selected agent skill directory; `--copy` copies rather than symlinks.
 
 ## MCP server setup
 
 Install the optional MCP dependency alongside the CLI:
 
 ```bash
-python -m pip install 'cliniar[mcp]'
+python -m pip install 'hoja[mcp]'
 ```
 
 For Claude Desktop, add a server entry to its MCP configuration. Use an absolute
@@ -180,8 +180,8 @@ executable path if the GUI does not inherit your shell `PATH`:
 ```json
 {
   "mcpServers": {
-    "cliniar": {
-      "command": "/absolute/path/to/cliniar-mcp",
+    "hoja": {
+      "command": "/absolute/path/to/hoja-mcp",
       "env": {
         "LINEAR_TOKEN": "<workspace-token>"
       }
@@ -190,7 +190,7 @@ executable path if the GUI does not inherit your shell `PATH`:
 }
 ```
 
-Replace the command path with the result of `which cliniar-mcp`. If the selected
+Replace the command path with the result of `which hoja-mcp`. If the selected
 account sets a custom `token_env`, pass that variable instead. The MCP server
 provides one guide tool, seven read-only resources, and six workflow prompts;
 it does not provide mutation tools.
@@ -204,7 +204,7 @@ uv sync --extra dev --extra server
 uv run pytest
 ```
 
-Build the browser app with `npm ci && npm run build` in `frontend/`. The local backend integration script is `bash scripts/e2e-local-backend.sh`; it uses a disposable local database. The live API CLI matrix in `scripts/e2e-test.sh` requires `LINEAR_TOKEN`, `CLINIAR_TEST_TEAM`, and `CLINIAR_TEST_ISSUE`.
+Build the browser app with `npm ci && npm run build` in `frontend/`. The local backend integration script is `bash scripts/e2e-local-backend.sh`; it uses a disposable local database. The live API CLI matrix in `scripts/e2e-test.sh` requires `LINEAR_TOKEN`, `HOJA_TEST_TEAM`, and `HOJA_TEST_ISSUE`.
 
 Product architecture is described in [Design](docs/DESIGN.md); deployment instructions are in [Deployment](docs/DEPLOYMENT.md). The [changelog](CHANGELOG.md) records release-level behavior changes.
 

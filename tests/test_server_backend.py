@@ -15,8 +15,8 @@ from sqlalchemy import inspect, select
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from cliniar_server.app import create_app
-from cliniar_server.db import (
+from hoja_server.app import create_app
+from hoja_server.db import (
     CURRENT_SCHEMA_REVISION,
     api_key,
     applied_schema_revision,
@@ -43,8 +43,8 @@ from cliniar_server.db import (
     token_hash,
     workflow_state,
 )
-from cliniar_server.store import Store
-from cliniar_server.writer import InvalidReferenceError, Writer
+from hoja_server.store import Store
+from hoja_server.writer import InvalidReferenceError, Writer
 
 
 def test_oauth_pending_survives_provider_instance_and_binds_session(tmp_path) -> None:
@@ -54,8 +54,8 @@ def test_oauth_pending_survives_provider_instance_and_binds_session(tmp_path) ->
     from mcp.server.auth.provider import AuthorizationParams
     from mcp.shared.auth import OAuthClientInformationFull
 
-    from cliniar_server import db
-    from cliniar_server.mcp_oauth import READ_SCOPE, HojaOAuthProvider, _digest
+    from hoja_server import db
+    from hoja_server.mcp_oauth import READ_SCOPE, HojaOAuthProvider, _digest
 
     path = tmp_path / "durable-oauth.db"
     engine = make_engine(path)
@@ -89,8 +89,8 @@ def test_oauth_refresh_replay_revokes_family_and_persists_resource(tmp_path) -> 
     from mcp.server.auth.provider import TokenError
     from mcp.shared.auth import OAuthClientInformationFull
 
-    from cliniar_server import db
-    from cliniar_server.mcp_oauth import READ_SCOPE, HojaOAuthProvider
+    from hoja_server import db
+    from hoja_server.mcp_oauth import READ_SCOPE, HojaOAuthProvider
 
     engine = make_engine(tmp_path / "oauth-refresh.db")
     migrate(engine)
@@ -102,7 +102,7 @@ def test_oauth_refresh_replay_revokes_family_and_persists_resource(tmp_path) -> 
         conn.execute(db.oauth_client.insert().values(client_id=client.client_id, client_json=client.model_dump_json(), created_at=now_iso()))
         initial = provider._mint_pair(conn, client.client_id, tenant["user_id"], tenant["org_id"], [READ_SCOPE], resource)
     with engine.connect() as conn:
-        from cliniar_server.mcp_oauth import _digest
+        from hoja_server.mcp_oauth import _digest
         minted_refresh = conn.execute(select(db.oauth_refresh_token).where(db.oauth_refresh_token.c.token_hash == _digest(initial.refresh_token))).mappings().one()
         assert minted_refresh["resource"] == resource
     original = asyncio.run(provider.load_refresh_token(client, initial.refresh_token))
@@ -130,8 +130,8 @@ def test_oauth_refresh_scope_escalation_keeps_original_usable(tmp_path) -> None:
     from mcp.server.auth.provider import TokenError
     from mcp.shared.auth import OAuthClientInformationFull
 
-    from cliniar_server import db
-    from cliniar_server.mcp_oauth import READ_SCOPE, WRITE_SCOPE, HojaOAuthProvider
+    from hoja_server import db
+    from hoja_server.mcp_oauth import READ_SCOPE, WRITE_SCOPE, HojaOAuthProvider
 
     engine = make_engine(tmp_path / "oauth-scope.db")
     migrate(engine)
@@ -156,8 +156,8 @@ def test_oauth_authorization_code_concurrent_redemption_is_single_use(tmp_path) 
     from mcp.server.auth.provider import TokenError
     from mcp.shared.auth import OAuthClientInformationFull
 
-    from cliniar_server import db
-    from cliniar_server.mcp_oauth import READ_SCOPE, HojaOAuthProvider
+    from hoja_server import db
+    from hoja_server.mcp_oauth import READ_SCOPE, HojaOAuthProvider
 
     engine = make_engine(tmp_path / "oauth-code-race.db")
     migrate(engine)
@@ -170,7 +170,7 @@ def test_oauth_authorization_code_concurrent_redemption_is_single_use(tmp_path) 
         provider._mint_pair(conn, client.client_id, tenant["user_id"], tenant["org_id"],
                             [READ_SCOPE], "https://mcp.test/mcp")
         code = "race-authorization-code"
-        from cliniar_server.mcp_oauth import _digest
+        from hoja_server.mcp_oauth import _digest
         conn.execute(db.oauth_authorization.insert().values(code_hash=_digest(code), client_id=client.client_id,
             user_id=tenant["user_id"], organization_id=tenant["org_id"], scopes='["hoja:read"]',
             code_challenge="challenge", redirect_uri="https://client.test/cb", resource="https://mcp.test/mcp",
@@ -208,7 +208,7 @@ def _seed(
 
 def test_database_target_precedence(monkeypatch, tmp_path) -> None:
     sqlite_path = tmp_path / "fallback.db"
-    monkeypatch.setenv("CLINIAR_DATABASE_URL", "sqlite:///environment.db")
+    monkeypatch.setenv("HOJA_DATABASE_URL", "sqlite:///environment.db")
 
     assert resolve_database_target(
         database_url="sqlite:///explicit.db",
@@ -217,13 +217,13 @@ def test_database_target_precedence(monkeypatch, tmp_path) -> None:
     ) == "sqlite:///explicit.db"
     assert resolve_database_target(db_path=sqlite_path) == "sqlite:///environment.db"
 
-    monkeypatch.delenv("CLINIAR_DATABASE_URL")
+    monkeypatch.delenv("HOJA_DATABASE_URL")
     assert resolve_database_target(db_path=sqlite_path) == str(sqlite_path)
 
 
 def test_mcp_oauth_http_discovery_and_dynamic_registration(tmp_path) -> None:
     pytest.importorskip("mcp")
-    from cliniar_server.db import make_engine, migrate
+    from hoja_server.db import make_engine, migrate
 
     migrate(make_engine(tmp_path / "oauth-http.db"))
     app = create_app(
@@ -331,7 +331,7 @@ def test_mcp_oauth_http_authorization_code_pkce_flow(tmp_path, monkeypatch) -> N
 
 def test_mcp_http_rejects_missing_and_invalid_bearer_tokens(tmp_path) -> None:
     pytest.importorskip("mcp")
-    from cliniar_server.db import make_engine, migrate
+    from hoja_server.db import make_engine, migrate
 
     path = tmp_path / "oauth-calls.db"
     migrate(make_engine(path))
@@ -346,8 +346,8 @@ def test_mcp_streamable_http_lifecycle_and_host_validation(tmp_path) -> None:
     pytest.importorskip("mcp")
     from mcp.types import LATEST_PROTOCOL_VERSION
 
-    from cliniar_server import db
-    from cliniar_server.mcp_oauth import READ_SCOPE, HojaOAuthProvider
+    from hoja_server import db
+    from hoja_server.mcp_oauth import READ_SCOPE, HojaOAuthProvider
 
     path = tmp_path / "mcp-sdk-lifecycle.db"
     engine = make_engine(path)
@@ -380,7 +380,7 @@ def test_mcp_streamable_http_lifecycle_and_host_validation(tmp_path) -> None:
         assert wrong_host.status_code == 421
 
         with engine.begin() as conn:
-            conn.execute(db.oauth_access_token.update().where(db.oauth_access_token.c.token_hash == __import__("cliniar_server.mcp_oauth", fromlist=["_digest"])._digest(token.access_token)).values(revoked_at=now_iso()))
+            conn.execute(db.oauth_access_token.update().where(db.oauth_access_token.c.token_hash == __import__("hoja_server.mcp_oauth", fromlist=["_digest"])._digest(token.access_token)).values(revoked_at=now_iso()))
         revoked = client.post("/mcp/", headers={**session_headers, "Mcp-Method": "tools/list"}, json={**base, "id": 6, "method": "tools/list", "params": envelope})
         assert revoked.status_code in (401, 403)
 
@@ -443,7 +443,7 @@ def test_make_engine_accepts_path_or_url(target) -> None:
 
 def test_make_engine_uses_psycopg3_and_redacts_passwords() -> None:
     pytest.importorskip("psycopg")
-    engine = make_engine("postgresql://user:secret@db.example.test/cliniar")
+    engine = make_engine("postgresql://user:secret@db.example.test/hoja")
     try:
         assert engine.dialect.name == "postgresql"
         assert engine.dialect.driver == "psycopg"
@@ -451,8 +451,8 @@ def test_make_engine_uses_psycopg3_and_redacts_passwords() -> None:
     finally:
         engine.dispose()
     assert display_database_target(
-        "postgresql://user:secret@db.example.test/cliniar"
-    ) == "postgresql://user:***@db.example.test/cliniar"
+        "postgresql://user:secret@db.example.test/hoja"
+    ) == "postgresql://user:***@db.example.test/hoja"
 
 
 def test_migrate_upgrades_a_recorded_prior_schema(tmp_path) -> None:
@@ -488,7 +488,7 @@ def test_identity_membership_migration_preserves_duplicate_email_profiles(tmp_pa
         conn.execute(schema_revision.delete().where(schema_revision.c.revision >= 6))
     with engine.begin() as conn:
         # Simulate a revision-5 database retaining the old password hashes.
-        from cliniar_server.db import password_credential
+        from hoja_server.db import password_credential
         for seeded in (first, second):
             conn.execute(password_credential.insert().values(
                 user_id=seeded["user_id"], password_hash=f"legacy-hash-{seeded['user_id']}",
@@ -578,7 +578,7 @@ def test_shared_schema_isolates_organizations_and_rejects_duplicate_key(tmp_path
 def test_api_tokens_are_globally_unique_and_identity_consistent(tmp_path) -> None:
     engine = make_engine(tmp_path / "token-constraints.db")
     migrate(engine)
-    shared_token = "cliniar_test_shared_token"
+    shared_token = "hoja_test_shared_token"
     alpha = seed_tenant(
         engine,
         org_name="Alpha",
@@ -598,7 +598,7 @@ def test_api_tokens_are_globally_unique_and_identity_consistent(tmp_path) -> Non
         )
 
     beta = _seed(engine, name="Beta", key="beta", email="beta@example.test")
-    inconsistent_token = "cliniar_test_inconsistent_identity"
+    inconsistent_token = "hoja_test_inconsistent_identity"
     with engine.begin() as conn:
         conn.execute(
             api_key.insert().values(
@@ -896,7 +896,7 @@ def test_token_identity_requires_unambiguous_selection_in_sqlite(tmp_path) -> No
 
 
 def test_generated_urls_use_configured_application_url(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("CLINIAR_APP_URL", "https://issues.example.test/root/")
+    monkeypatch.setenv("HOJA_APP_URL", "https://issues.example.test/root/")
     engine = make_engine(tmp_path / "urls.db")
     migrate(engine)
     seeded = _seed(engine, name="Example", key="example", email="user@example.test")
@@ -1061,7 +1061,7 @@ def test_profile_name_update_and_notification_preferences_filter_inbox(tmp_path)
     assert store.update_profile_name(seeded["org_id"], seeded["user_id"], " ") is None
     assert store.set_notification_preference(seeded["user_id"], "issueCreated", False)
     assert not store.set_notification_preference(seeded["user_id"], "unknown", False)
-    from cliniar_server.db import inbox_notification
+    from hoja_server.db import inbox_notification
     created_issue = Writer(engine).issue_create(seeded["org_id"], seeded["user_id"], {
         "teamId": seeded["team_id"], "title": "Notification preference test"})
     with engine.begin() as conn:
@@ -1127,11 +1127,11 @@ def test_health_stays_available_when_schema_is_unmigrated(tmp_path) -> None:
 
 
 def test_cloverops_graphql_operation_contract(tmp_path) -> None:
-    target = os.environ.get("CLINIAR_TEST_POSTGRES_URL") or (
+    target = os.environ.get("HOJA_TEST_POSTGRES_URL") or (
         tmp_path / "cloverops-contract.db"
     )
     suffix = uuid.uuid4().hex[:12]
-    contract_token = f"cliniar_test_cloverops_contract_{suffix}"
+    contract_token = f"hoja_test_cloverops_contract_{suffix}"
     engine = make_engine(target)
     migrate(engine)
     seeded = seed_tenant(
@@ -1565,7 +1565,7 @@ def test_global_identity_can_switch_only_to_its_explicit_memberships(tmp_path) -
     assert client.get("/auth/me").json()["organizationId"] == one["org_id"]
 
     # Explicitly add the second org profile to the same identity; an active membership enables switching.
-    from cliniar_server.db import organization_membership
+    from hoja_server.db import organization_membership
     with engine.begin() as conn:
         identity_id = conn.execute(select(organization_membership.c.identity_id).where(
             organization_membership.c.profile_user_id == one["user_id"])).scalar_one()
@@ -1648,7 +1648,7 @@ def test_workspace_members_and_admin_update_are_org_scoped(tmp_path) -> None:
                         {"id": two["user_id"]})
     assert outsider_role["data"]["memberRoleUpdate"]["success"] is False
     second_admin = new_id()
-    from cliniar_server.db import user as user_table
+    from hoja_server.db import user as user_table
     with engine.begin() as conn:
         conn.execute(user_table.insert().values(id=second_admin, organization_id=one["org_id"],
                      name="Second Admin", email=f"second-{suffix}@example.test", active=True,
@@ -1771,7 +1771,7 @@ def test_concurrent_first_run_bootstrap_only_creates_one_workspace(tmp_path) -> 
     assert sorted(statuses) == [200, 409]
     engine = make_engine(db_path)
     try:
-        from cliniar_server.db import organization, user
+        from hoja_server.db import organization, user
         with engine.connect() as conn:
             assert conn.execute(select(organization.c.id)).all().__len__() == 1
             assert conn.execute(select(user.c.id).where(user.c.admin.is_(True))).all().__len__() == 1

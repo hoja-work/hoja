@@ -16,9 +16,9 @@ fs.writeFileSync(path.join(web, 'index.html'), '<!doctype html><title>SPA</title
 fs.writeFileSync(path.join(web, 'hoja-clover.8371400e.svg'), '<svg xmlns="http://www.w3.org/2000/svg"></svg>');
 const db = path.join(dir, 'brand.db');
 const port = 18700 + Math.floor(Math.random() * 200);
-const migrate = spawnSync(python, ['-c', `from cliniar_server.db import make_engine,migrate; e=make_engine(${JSON.stringify(db)}); migrate(e); e.dispose()`], { cwd: repo, env: { ...process.env, PYTHONPATH: repo }, encoding: 'utf8' });
+const migrate = spawnSync(python, ['-c', `from hoja_server.db import make_engine,migrate; e=make_engine(${JSON.stringify(db)}); migrate(e); e.dispose()`], { cwd: repo, env: { ...process.env, PYTHONPATH: repo }, encoding: 'utf8' });
 assert.equal(migrate.status, 0, migrate.stderr);
-const server = spawn(path.join(repo, '.venv/bin/cliniar-serve'), ['serve', '--db', db, '--host', '127.0.0.1', '--port', String(port)], { cwd: repo, env: { ...process.env, CLINIAR_WEB_ROOT: web }, stdio: 'ignore' });
+const server = spawn(path.join(repo, '.venv/bin/hoja-serve'), ['serve', '--db', db, '--host', '127.0.0.1', '--port', String(port)], { cwd: repo, env: { ...process.env, HOJA_WEB_ROOT: web }, stdio: 'ignore' });
 
 (async () => {
   try {

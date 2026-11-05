@@ -8,10 +8,10 @@ from google_workspace.principal import verify_principal
 from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from cliniar_server.agent_chat import build_agent
-from cliniar_server.connectors_api import PROVIDER, connector_binding_for
-from cliniar_server.db import connector_account, make_engine, migrate, seed_tenant
-from cliniar_server.schema_sdl import SCHEMA_SDL
+from hoja_server.agent_chat import build_agent
+from hoja_server.connectors_api import PROVIDER, connector_binding_for
+from hoja_server.db import connector_account, make_engine, migrate, seed_tenant
+from hoja_server.schema_sdl import SCHEMA_SDL
 
 KEY = "wiring-test-signing-key"
 URL = "http://localhost:8000/mcp"
@@ -52,14 +52,14 @@ def _add_account(engine, org: str, owner: str | None, status: str = "active") ->
 
 @pytest.fixture
 def configured(monkeypatch):
-    monkeypatch.setenv("CLINIAR_CONNECTOR_MCP_URL", URL)
-    monkeypatch.setenv("CLINIAR_CONNECTOR_SIGNING_KEY", KEY)
+    monkeypatch.setenv("HOJA_CONNECTOR_MCP_URL", URL)
+    monkeypatch.setenv("HOJA_CONNECTOR_SIGNING_KEY", KEY)
 
 
 def test_no_binding_when_server_not_configured(seeded, monkeypatch) -> None:
     engine, admin = seeded
-    monkeypatch.delenv("CLINIAR_CONNECTOR_MCP_URL", raising=False)
-    monkeypatch.delenv("CLINIAR_CONNECTOR_SIGNING_KEY", raising=False)
+    monkeypatch.delenv("HOJA_CONNECTOR_MCP_URL", raising=False)
+    monkeypatch.delenv("HOJA_CONNECTOR_SIGNING_KEY", raising=False)
     _add_account(engine, admin["org_id"], admin["user_id"])
     assert connector_binding_for(engine, admin["org_id"], admin["user_id"]) is None
 

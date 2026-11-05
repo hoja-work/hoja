@@ -16,9 +16,9 @@ const web = path.join(repo, 'frontend/dist');
 assert.ok(fs.existsSync(path.join(web, 'index.html')), 'build the frontend first: cd frontend && npm run build');
 const dir = fs.mkdtempSync(path.join(repoScratch, 'page-invariants-'));
 const db = path.join(dir, 'pages.db');
-const token = 'cliniar_page_invariant_token';
+const token = 'hoja_page_invariant_token';
 const py = path.join(repo, '.venv/bin/python');
-const seed = spawnSync(py, ['-c', `from cliniar_server.db import make_engine,migrate,seed_tenant
+const seed = spawnSync(py, ['-c', `from hoja_server.db import make_engine,migrate,seed_tenant
 e=make_engine(${JSON.stringify(db)}); migrate(e)
 seed_tenant(e, org_name='Acme', team_key='TREBOL', team_name='Trebol', user_name='Ada', user_email='ada@example.test', token=${JSON.stringify(token)}, demo_issues=True)
 e.dispose()`], { cwd: repo, env: { ...process.env, PYTHONPATH: repo }, encoding: 'utf8' });
@@ -26,7 +26,7 @@ assert.equal(seed.status, 0, seed.stderr);
 
 const port = 18900 + Math.floor(Math.random() * 90);
 const base = `http://127.0.0.1:${port}`;
-const server = spawn(path.join(repo, '.venv/bin/cliniar-serve'), ['serve', '--db', db, '--host', '127.0.0.1', '--port', String(port)], { cwd: repo, env: { ...process.env, CLINIAR_WEB_ROOT: web }, stdio: 'ignore' });
+const server = spawn(path.join(repo, '.venv/bin/hoja-serve'), ['serve', '--db', db, '--host', '127.0.0.1', '--port', String(port)], { cwd: repo, env: { ...process.env, HOJA_WEB_ROOT: web }, stdio: 'ignore' });
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
 async function gql(query) {

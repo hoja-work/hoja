@@ -12,9 +12,9 @@ Replace the cold login-first experience for an uninitialized instance with a wel
 6. **Finish** — Continue directly into the authenticated workspace, with a brief getting-started cue.
 
 ## Existing contracts and constraints
-- `cliniar_server/db.py#seed_tenant` already creates an organization, initial admin user, team/default states, demo issues, and a generated API token, but only via CLI.
-- `cliniar_server/app.py#auth_setup` currently sets a password using a valid token; `/auth/login` accepts email/password or API key and establishes an HttpOnly cookie session.
-- `cliniar_server/resolvers.py#m_member_invite` is admin-gated and returns an API key once; `frontend/src/main.tsx#MembersPage` is the current manual invite UI. No invitation email delivery is present.
+- `hoja_server/db.py#seed_tenant` already creates an organization, initial admin user, team/default states, demo issues, and a generated API token, but only via CLI.
+- `hoja_server/app.py#auth_setup` currently sets a password using a valid token; `/auth/login` accepts email/password or API key and establishes an HttpOnly cookie session.
+- `hoja_server/resolvers.py#m_member_invite` is admin-gated and returns an API key once; `frontend/src/main.tsx#MembersPage` is the current manual invite UI. No invitation email delivery is present.
 - `frontend/src/main.tsx#App` currently renders `Login` whenever there is no local token, and login places API key in localStorage. New first-run bootstrap must avoid requiring that token storage for browser authentication; HttpOnly session cookie should be the browser auth mechanism.
 
 ## Implementation sequence

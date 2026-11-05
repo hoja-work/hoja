@@ -8,7 +8,7 @@ import pytest
 
 pytest.importorskip("pydantic_ai")
 
-from cliniar_server.agent_prompt import WORKING_EXAMPLES, compose_prompt, workspace_snapshot
+from hoja_server.agent_prompt import WORKING_EXAMPLES, compose_prompt, workspace_snapshot
 
 
 def test_snapshot_fetch_uses_variables_not_string_interpolation() -> None:
@@ -73,10 +73,10 @@ def test_run_sends_snapshot_and_examples_to_model(tmp_path) -> None:
     from pydantic_ai.messages import ModelResponse, TextPart
     from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-    from cliniar_server.agent_chat import AgentDeps, build_agent
-    from cliniar_server.resolvers import build_schema
-    from cliniar_server.schema_sdl import SCHEMA_SDL
-    from cliniar_server.store import Store
+    from hoja_server.agent_chat import AgentDeps, build_agent
+    from hoja_server.resolvers import build_schema
+    from hoja_server.schema_sdl import SCHEMA_SDL
+    from hoja_server.store import Store
     from tests.test_agent_chat import _setup
 
     engine, _app, admin = _setup(tmp_path)
@@ -99,7 +99,7 @@ def test_run_sends_snapshot_and_examples_to_model(tmp_path) -> None:
 
 
 def test_issue_titles_cannot_inject_prompt_lines() -> None:
-    from cliniar_server.agent_prompt import _snapshot_text
+    from hoja_server.agent_prompt import _snapshot_text
 
     data = {
         "viewer": {"id": "u1", "displayName": "Ada"},
@@ -117,10 +117,10 @@ def test_snapshot_is_fetched_once_per_run(tmp_path) -> None:
     from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
     from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-    from cliniar_server.agent_chat import AgentDeps, build_agent
-    from cliniar_server.resolvers import build_schema
-    from cliniar_server.schema_sdl import SCHEMA_SDL
-    from cliniar_server.store import Store
+    from hoja_server.agent_chat import AgentDeps, build_agent
+    from hoja_server.resolvers import build_schema
+    from hoja_server.schema_sdl import SCHEMA_SDL
+    from hoja_server.store import Store
     from tests.test_agent_chat import _setup
 
     engine, _app, admin = _setup(tmp_path)
@@ -137,13 +137,13 @@ def test_snapshot_is_fetched_once_per_run(tmp_path) -> None:
         "user_id": admin["user_id"], "identity_id": None, "browser_session": False,
     }
     calls = []
-    real = __import__("cliniar_server.agent_chat", fromlist=["graphql_run"]).graphql_run
+    real = __import__("hoja_server.agent_chat", fromlist=["graphql_run"]).graphql_run
 
     async def counting(*args, **kwargs):
         calls.append(args[1])
         return await real(*args, **kwargs)
 
-    import cliniar_server.agent_chat as chat
+    import hoja_server.agent_chat as chat
     chat.graphql_run = counting
     try:
         agent = build_agent(FunctionModel(scripted), SCHEMA_SDL)

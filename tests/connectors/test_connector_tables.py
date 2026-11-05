@@ -9,7 +9,7 @@ pytest.importorskip("sqlalchemy")
 from sqlalchemy import inspect, select
 from sqlalchemy.exc import IntegrityError
 
-from cliniar_server.db import (
+from hoja_server.db import (
     CURRENT_SCHEMA_REVISION,
     applied_schema_revision,
     connector_account,

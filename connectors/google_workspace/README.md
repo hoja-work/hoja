@@ -1,6 +1,6 @@
 # Google Workspace connector
 
-Read-only Gmail, Drive, Calendar, and Docs access for Cliniar agents. Write actions are not implemented yet; they will go through an approval queue.
+Read-only Gmail, Drive, Calendar, and Docs access for Hoja agents. Write actions are not implemented yet; they will go through an approval queue.
 
 ## Deployer setup
 
@@ -13,9 +13,9 @@ Each deployment uses its own Google Cloud OAuth client.
 
 | Variable | Purpose |
 |----------|---------|
-| `CLINIAR_GOOGLE_CLIENT_ID` | OAuth client id |
-| `CLINIAR_GOOGLE_CLIENT_SECRET` | OAuth client secret (keep out of logs and version control) |
-| `CLINIAR_GOOGLE_REDIRECT_URI` | Must exactly match the redirect URI registered in step 3 |
+| `HOJA_GOOGLE_CLIENT_ID` | OAuth client id |
+| `HOJA_GOOGLE_CLIENT_SECRET` | OAuth client secret (keep out of logs and version control) |
+| `HOJA_GOOGLE_REDIRECT_URI` | Must exactly match the redirect URI registered in step 3 |
 
 Refresh tokens are encrypted at rest with `HOJA_SECRET_KEY`, the same key used for model provider credentials.
 

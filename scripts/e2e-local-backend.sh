@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# E2E proof: Cliniar CLI driven against the local cliniar_server backend.
+# E2E proof: Hoja CLI driven against the local hoja_server backend.
 # Boots a seeded SQLite tenant in a tmux-supervised server, then runs the
-# real Cliniar CLI (via `python3 -m cliniar` from repo source) against it.
+# real Hoja CLI (via `python3 -m hoja` from repo source) against it.
 #
 # Usage: bash scripts/e2e-local-backend.sh
 set -uo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
-PYTHON="${CLINIAR_PYTHON:-python3}"
+PYTHON="${HOJA_PYTHON:-python3}"
 
 PORT="${PORT:-8796}"
-DB="/tmp/cliniar_e2e_$$.db"
-TOK="cliniar_test_token_e2e_$$"
-CFG="/tmp/cliniar_e2e_$$.toml"
-ENVFILE="/tmp/cliniar_e2e_$$.env"
-SESS="cliniar_e2e_$$"
+DB="/tmp/hoja_e2e_$$.db"
+TOK="hoja_test_token_e2e_$$"
+CFG="/tmp/hoja_e2e_$$.toml"
+ENVFILE="/tmp/hoja_e2e_$$.env"
+SESS="hoja_e2e_$$"
 URL="http://127.0.0.1:${PORT}/graphql"
 PASS=0; FAIL=0
 
@@ -27,16 +27,16 @@ trap cleanup EXIT
 
 : > "$ENVFILE"
 chmod 600 "$ENVFILE"
-if [ -n "${CLINIAR_DATABASE_URL:-}" ]; then
-  printf 'export CLINIAR_DATABASE_URL=%q\n' "$CLINIAR_DATABASE_URL" > "$ENVFILE"
+if [ -n "${HOJA_DATABASE_URL:-}" ]; then
+  printf 'export HOJA_DATABASE_URL=%q\n' "$HOJA_DATABASE_URL" > "$ENVFILE"
 fi
 
 echo "== seeding tenant =="
-"$PYTHON" -m cliniar_server.cli seed --db "$DB" --org-key "e2e-$$" --token "$TOK" --no-demo >/dev/null
+"$PYTHON" -m hoja_server.cli seed --db "$DB" --org-key "e2e-$$" --token "$TOK" --no-demo >/dev/null
 
 echo "== starting server in tmux =="
 tmux kill-session -t "$SESS" 2>/dev/null
-tmux new-session -d -s "$SESS" "cd '$ROOT' && . '$ENVFILE' && exec '$PYTHON' -m cliniar_server.cli serve --db '$DB' --port $PORT --log-level warning > /tmp/${SESS}.log 2>&1"
+tmux new-session -d -s "$SESS" "cd '$ROOT' && . '$ENVFILE' && exec '$PYTHON' -m hoja_server.cli serve --db '$DB' --port $PORT --log-level warning > /tmp/${SESS}.log 2>&1"
 for i in $(seq 1 20); do curl -sf "http://127.0.0.1:${PORT}/ready" >/dev/null 2>&1 && break; sleep 1; done
 curl -sf "http://127.0.0.1:${PORT}/ready" >/dev/null 2>&1 || { echo "server failed readiness"; cat /tmp/${SESS}.log; exit 1; }
 
@@ -47,8 +47,8 @@ token = "$TOK"
 [defaults]
 default_account = "local"
 TOML
-export CLINIAR_CONFIG="$CFG"
-C="$PYTHON -m cliniar --account local"
+export HOJA_CONFIG="$CFG"
+C="$PYTHON -m hoja --account local"
 
 echo "== running CLI matrix =="
 check "me"              "$($C -o json me 2>&1)"                       '"email"'

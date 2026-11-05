@@ -13,10 +13,10 @@ pytest.importorskip("mcp")
 from sqlalchemy import select
 from starlette.testclient import TestClient
 
-from cliniar_server import db, mcp_oauth
-from cliniar_server.app import _FailureLimiter, create_app
-from cliniar_server.db import make_engine, migrate, rate_limit_event, seed_tenant
-from cliniar_server.store import Store
+from hoja_server import db, mcp_oauth
+from hoja_server.app import _FailureLimiter, create_app
+from hoja_server.db import make_engine, migrate, rate_limit_event, seed_tenant
+from hoja_server.store import Store
 
 EMAIL = "ratelimit-persist@sec.test"
 

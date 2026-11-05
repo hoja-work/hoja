@@ -25,13 +25,13 @@ the Python process never touches audio or video.
 
 | Variable | Purpose |
 |---|---|
-| `CLINIAR_CF_REALTIME_APP_ID`, `CLINIAR_CF_REALTIME_APP_SECRET` | SFU application. Unset ⇒ meetings still work, media endpoints return 503. |
-| `CLINIAR_CF_TURN_KEY_ID`, `CLINIAR_CF_TURN_KEY_API_TOKEN` | TURN key for short-lived relay credentials. Unset ⇒ free STUN only. |
-| `CLINIAR_APP_URL` | Public base URL used to build join links. Falls back to the request host. |
-| `CLINIAR_MEETING_MAX_PARTICIPANTS` | Hard cap on a meeting's `maxParticipants` (default 100; per-meeting default 25). |
+| `HOJA_CF_REALTIME_APP_ID`, `HOJA_CF_REALTIME_APP_SECRET` | SFU application. Unset ⇒ meetings still work, media endpoints return 503. |
+| `HOJA_CF_TURN_KEY_ID`, `HOJA_CF_TURN_KEY_API_TOKEN` | TURN key for short-lived relay credentials. Unset ⇒ free STUN only. |
+| `HOJA_APP_URL` | Public base URL used to build join links. Falls back to the request host. |
+| `HOJA_MEETING_MAX_PARTICIPANTS` | Hard cap on a meeting's `maxParticipants` (default 100; per-meeting default 25). |
 
 Schema revisions 32–34 add `meeting`, `meeting_invitee`, `meeting_participant`, `meeting_chat`,
-`meeting_ring` (+ RSVP, reminder, media-flag, usage and per-device seat columns). Run `cliniar-serve migrate` first.
+`meeting_ring` (+ RSVP, reminder, media-flag, usage and per-device seat columns). Run `hoja-serve migrate` first.
 
 ## Second devices (phone as mic, screen from the laptop)
 
@@ -56,8 +56,8 @@ duration (no names). The link, the calendar chip ("ended · lasted …"), the Pa
 
 ## Authorization (ABAC)
 
-`cliniar_server/abac.py` is a small deny-overrides / default-deny engine; the rules live in
-`cliniar_server/meeting_policy.py`. Every REST call, socket message and SFU control call is a
+`hoja_server/abac.py` is a small deny-overrides / default-deny engine; the rules live in
+`hoja_server/meeting_policy.py`. Every REST call, socket message and SFU control call is a
 `decide(action, subject, resource)`. Refusals return `{"error", "rule"}` naming the rule.
 
 * **Subject** – member (API key or session; workspace admin, host, invitee, team visibility from the
@@ -141,7 +141,7 @@ else's (server-driven offers never collide with mine).
   **real Cloudflare SFU**: scheduling, invite toast, RSVP, calendar, ringing, lobby, waiting room,
   two- and three-way audio/video, guest by link, chat/hand/reactions, lock, screen share, reminder,
   end for everyone, usage, plus layout audits (controls reachable and uncovered, no overflow or
-  overlap at 1440 / 901 / 899 / 621 / 619 / 390 / 360 / 780×360). Needs `CLINIAR_CF_*` in the
+  overlap at 1440 / 901 / 899 / 621 / 619 / 390 / 360 / 780×360). Needs `HOJA_CF_*` in the
   environment or in `../vault/env/env.hoja-cloudflare-realtime`. Screenshots land in
   `local-e2e/artifacts/meetings-*.png`.
 

@@ -52,7 +52,7 @@ schema/linear-schema.json
 vendor/linear-kit/
 
 # Local runtime artifacts
-.cliniar/
+.hoja/
 frontend/node_modules/
 .pi/agent-sessions/
 

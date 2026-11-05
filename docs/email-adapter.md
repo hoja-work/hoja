@@ -1,6 +1,6 @@
 # SMTP email adapter
 
-`cliniar_server.email_adapter` provides a small synchronous SMTP transport
+`hoja_server.email_adapter` provides a small synchronous SMTP transport
 function. It does not change server routes or send mail automatically; the
 application integration point and choice of provider remain deployment-specific.
 
@@ -11,7 +11,7 @@ server hostname and port. STARTTLS is enabled by default; optional credentials
 must be supplied as a pair. `timeout` defaults to 10 seconds.
 
 ```python
-from cliniar_server.email_adapter import SMTPConfig, send_email
+from hoja_server.email_adapter import SMTPConfig, send_email
 
 config = SMTPConfig(
     host="smtp.example.test",

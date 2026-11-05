@@ -88,8 +88,8 @@ The contract test pins the numbers by hand, including the adversarial case
 ## Known gaps
 
 - `cycle.progress` on the server is written as `0` when a cycle is created and
-  never recomputed (`cliniar_server/cadence.py:206`), while
-  `cliniar_server/agent_prompt.py:86` tells agents to report it — so any agent
+  never recomputed (`hoja_server/cadence.py:206`), while
+  `hoja_server/agent_prompt.py:86` tells agents to report it — so any agent
   asked for cycle progress reports 0%. The web UI ignores the field and computes
   locally; the API value is still wrong.
 - Scope is the set of issues attached *now*. Issues added mid-cycle and issues

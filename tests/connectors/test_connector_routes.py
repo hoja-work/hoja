@@ -14,10 +14,10 @@ pytest.importorskip("starlette")
 
 from starlette.testclient import TestClient
 
-from cliniar_server.app import create_app
-from cliniar_server.db import connector_account, make_engine, migrate, seed_tenant
-from cliniar_server.secrets_box import decrypt_secret, encrypt_secret
-from cliniar_server.store import Store
+from hoja_server.app import create_app
+from hoja_server.db import connector_account, make_engine, migrate, seed_tenant
+from hoja_server.secrets_box import decrypt_secret, encrypt_secret
+from hoja_server.store import Store
 
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 PROFILE_URL = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
@@ -27,10 +27,10 @@ REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 @pytest.fixture(autouse=True)
 def _env(monkeypatch):
     monkeypatch.setenv("HOJA_SECRET_KEY", "test-master-key")
-    monkeypatch.setenv("CLINIAR_GOOGLE_CLIENT_ID", "client-123.apps.googleusercontent.com")
-    monkeypatch.setenv("CLINIAR_GOOGLE_CLIENT_SECRET", "GOCSPX-route-test-secret")
+    monkeypatch.setenv("HOJA_GOOGLE_CLIENT_ID", "client-123.apps.googleusercontent.com")
+    monkeypatch.setenv("HOJA_GOOGLE_CLIENT_SECRET", "GOCSPX-route-test-secret")
     monkeypatch.setenv(
-        "CLINIAR_GOOGLE_REDIRECT_URI", "https://hoja.example.test/api/connectors/google/callback"
+        "HOJA_GOOGLE_REDIRECT_URI", "https://hoja.example.test/api/connectors/google/callback"
     )
 
 

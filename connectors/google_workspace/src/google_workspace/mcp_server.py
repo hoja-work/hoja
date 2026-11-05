@@ -1,6 +1,6 @@
 """Google Workspace MCP server. Identity comes only from a server-signed principal header.
 
-The agent sends `X-Cliniar-Principal` on each MCP request. Tools never accept a user id, so an
+The agent sends `X-Hoja-Principal` on each MCP request. Tools never accept a user id, so an
 agent cannot ask for another user's mail. Account resolution and token refresh are injected
 so the server stays independent of Hoja's database.
 """
@@ -20,7 +20,7 @@ from google_workspace.errors import ConnectorAuthError
 from google_workspace.principal import Principal, verify_principal
 from google_workspace.tools import AccountGrant
 
-PRINCIPAL_HEADER = "x-cliniar-principal"
+PRINCIPAL_HEADER = "x-hoja-principal"
 
 # Resolves the accounts a principal may use (per-user accounts owned by the principal, plus
 # org accounts when the principal's org enables them). Returns grants with token callables.

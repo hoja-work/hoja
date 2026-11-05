@@ -5,9 +5,9 @@ from __future__ import annotations
 from sqlalchemy import select
 from starlette.testclient import TestClient
 
-from cliniar_server.app import create_app
-from cliniar_server.connector_actions import PENDING, queue_action
-from cliniar_server.db import connector_account, connector_action, make_engine, migrate, seed_tenant
+from hoja_server.app import create_app
+from hoja_server.connector_actions import PENDING, queue_action
+from hoja_server.db import connector_account, connector_action, make_engine, migrate, seed_tenant
 
 
 def _setup(tmp_path):

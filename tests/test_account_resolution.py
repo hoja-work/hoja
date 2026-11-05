@@ -1,7 +1,7 @@
 """Unit tests for intelligent account/token resolution and WorkflowState.
 
 These tests are token-free and offline — they exercise the pure resolution
-logic in cliniar.config plus the WorkflowState smart-union introduced to
+logic in hoja.config plus the WorkflowState smart-union introduced to
 tolerate undocumented Linear workflow state types (e.g. "duplicate").
 """
 
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from cliniar.config import (
+from hoja.config import (
     AccountConfig,
     Config,
     DefaultsConfig,
@@ -17,8 +17,8 @@ from cliniar.config import (
     resolve_token,
     team_key_from_hint,
 )
-from cliniar.errors import AuthError
-from cliniar.models.workflow import WorkflowState, WorkflowStateType
+from hoja.errors import AuthError
+from hoja.models.workflow import WorkflowState, WorkflowStateType
 
 # ----------------- team_key_from_hint -----------------
 

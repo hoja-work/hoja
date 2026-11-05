@@ -6,7 +6,7 @@ COPY frontend/ ./
 RUN npm run build
 
 FROM python:3.12-slim
-RUN groupadd --system cliniar && useradd --system --gid cliniar --home /app --shell /usr/sbin/nologin cliniar
+RUN groupadd --system hoja && useradd --system --gid hoja --home /app --shell /usr/sbin/nologin hoja
 WORKDIR /app
 COPY . .
 COPY --from=frontend-build /frontend/dist /app/web
@@ -14,8 +14,8 @@ COPY --from=frontend-build /frontend/dist /app/web
 # so it is upgraded before the project install rather than left at the base tag.
 RUN python -m pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir '.[server,mcp]' \
-    && chown -R cliniar:cliniar /app
-ENV CLINIAR_WEB_ROOT=/app/web
-USER cliniar
+    && chown -R hoja:hoja /app
+ENV HOJA_WEB_ROOT=/app/web
+USER hoja
 EXPOSE 8787
-CMD ["sh", "-c", "cliniar-serve migrate && cliniar-serve serve --host 0.0.0.0 --port 8787"]
+CMD ["sh", "-c", "hoja-serve migrate && hoja-serve serve --host 0.0.0.0 --port 8787"]

@@ -14,10 +14,10 @@ share repository connections across workspaces initially.
 ## Architecture and invariants
 
 The ASGI app authenticates and provides `org_id` and `user_id` to GraphQL
-resolvers (`cliniar_server/app.py`). Resolver persistence belongs in
-org-scoped Store/Writer paths (`cliniar_server/resolvers.py`,
-`cliniar_server/store.py`, `cliniar_server/writer.py`); SQLAlchemy Core tables
-and revisions are in `cliniar_server/db.py`. Reuse these boundaries rather
+resolvers (`hoja_server/app.py`). Resolver persistence belongs in
+org-scoped Store/Writer paths (`hoja_server/resolvers.py`,
+`hoja_server/store.py`, `hoja_server/writer.py`); SQLAlchemy Core tables
+and revisions are in `hoja_server/db.py`. Reuse these boundaries rather
 than trusting a client-provided organization ID.
 
 Add a server-side callback with unpredictable, short-lived, one-use state bound

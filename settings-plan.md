@@ -4,7 +4,7 @@
 
 ### Inputs and preconditions
 - Authenticated viewer (`id`, `name`, `email`, `admin`) and active workspace; existing GraphQL authentication resolves user and organization.
-- Existing API keys are stored in `api_key` with `token_hash`, `label`, `user_id`, `organization_id`, `created_at`, and nullable `revoked_at` (`cliniar_server/db.py`). No key list/create/revoke contract exists yet; key plaintext is returned only from creation flows such as bootstrap/invite/CLI.
+- Existing API keys are stored in `api_key` with `token_hash`, `label`, `user_id`, `organization_id`, `created_at`, and nullable `revoked_at` (`hoja_server/db.py`). No key list/create/revoke contract exists yet; key plaintext is returned only from creation flows such as bootstrap/invite/CLI.
 - Settings navigation currently routes to `WorkspaceSettings`; workspace update and team creation already have admin checks on backend.
 - No service-connection persistence or integration backend exists.
 

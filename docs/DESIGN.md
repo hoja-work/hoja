@@ -1,4 +1,4 @@
-# cliniar — Design Document
+# hoja — Design Document
 
 > Linear CLI built in Python with Pydantic v2 + httpx + Typer
 > Designed for: humans, agents, CI/CD, and shell pipelines
@@ -9,10 +9,10 @@
 
 1. **Type-safe everything.** Every API response is a validated Pydantic model. No `dict[str, Any]` leaks into business logic.
 2. **Agent-first, human-second.** JSON output is the canonical contract. Human-friendly tables are a presentation layer on top.
-3. **Composable.** Every command works in pipelines (`cliniar issue list | jq | xargs ...`).
+3. **Composable.** Every command works in pipelines (`hoja issue list | jq | xargs ...`).
 4. **Idempotent where possible.** Re-running a command shouldn't break state.
 5. **Fast.** Async by default. Concurrent fetches where safe.
-6. **Discoverable.** `cliniar --help`, `cliniar issue --help`, `cliniar issue create --help` should be sufficient.
+6. **Discoverable.** `hoja --help`, `hoja issue --help`, `hoja issue create --help` should be sufficient.
 7. **Honest errors.** Linear API errors surfaced verbatim with context. No silent failures.
 
 ---
@@ -55,7 +55,7 @@ v1 covers the 8 highest-value domains. v2+ expands.
 ## Command Hierarchy
 
 ```
-cliniar
+hoja
 ├── auth                    # Token management
 │   ├── login               # Interactive: prompt for token, validate, store
 │   ├── status              # Show authenticated user
@@ -187,26 +187,26 @@ Linear's GraphQL has powerful filter inputs. We expose them ergonomically:
 
 ```bash
 # Simple flags
-cliniar issue list --team ENG --state "In Progress" --assignee me
+hoja issue list --team ENG --state "In Progress" --assignee me
 
 # Filter by relations
-cliniar issue list --project "Q2 Roadmap" --label Bug
+hoja issue list --project "Q2 Roadmap" --label Bug
 
 # Date filters (ISO 8601 durations supported)
-cliniar issue list --updated "-P7D"          # Updated in last 7 days
-cliniar issue list --due-before "2026-06-01"
+hoja issue list --updated "-P7D"          # Updated in last 7 days
+hoja issue list --due-before "2026-06-01"
 
 # Multiple states (OR)
-cliniar issue list --state "Todo,In Progress"
+hoja issue list --state "Todo,In Progress"
 
 # Negation
-cliniar issue list --not-state "Done"
+hoja issue list --not-state "Done"
 
 # Free-text within structured filter
-cliniar issue list --team ENG --contains "auth bug"
+hoja issue list --team ENG --contains "auth bug"
 
 # Saved views (named filters in config)
-cliniar issue list --view "my-open-bugs"
+hoja issue list --view "my-open-bugs"
 ```
 
 ---
@@ -214,12 +214,12 @@ cliniar issue list --view "my-open-bugs"
 ## Config File
 
 Location precedence:
-1. `$CLINIAR_CONFIG` env var
-2. `$XDG_CONFIG_HOME/cliniar/config.toml`
-3. `~/.config/cliniar/config.toml`
+1. `$HOJA_CONFIG` env var
+2. `$XDG_CONFIG_HOME/hoja/config.toml`
+3. `~/.config/hoja/config.toml`
 
 ```toml
-# ~/.config/cliniar/config.toml
+# ~/.config/hoja/config.toml
 
 [auth]
 token_env = "LINEAR_TOKEN"  # Read from env, never store plaintext
@@ -252,48 +252,48 @@ todo = "issue list --state Todo --assignee me"
 
 ### Story 1: Quick triage (most common)
 ```bash
-$ cliniar me                              # confirm auth
-$ cliniar issue list --assignee me        # what's on my plate
-$ cliniar issue get ENG-123               # full detail
-$ cliniar issue state ENG-123 "In Progress"
-$ cliniar issue comment ENG-123 "Starting work on this"
+$ hoja me                              # confirm auth
+$ hoja issue list --assignee me        # what's on my plate
+$ hoja issue get ENG-123               # full detail
+$ hoja issue state ENG-123 "In Progress"
+$ hoja issue comment ENG-123 "Starting work on this"
 ```
 
 ### Story 2: Sprint planning
 ```bash
-$ cliniar cycle current ENG               # what's the current cycle
-$ cliniar cycle issues                    # issues in current cycle
-$ cliniar issue list --no-cycle --team ENG --state Todo | head -20
-$ cliniar issue update ENG-200 --cycle current
+$ hoja cycle current ENG               # what's the current cycle
+$ hoja cycle issues                    # issues in current cycle
+$ hoja issue list --no-cycle --team ENG --state Todo | head -20
+$ hoja issue update ENG-200 --cycle current
 ```
 
 ### Story 3: Bulk operations (agents/scripts)
 ```bash
 # Find all stale bugs and assign to me
-$ cliniar issue list \
+$ hoja issue list \
     --label Bug --state Todo --updated "-P30D" \
     -o ids | \
-  xargs -I {} cliniar issue update {} --assignee me
+  xargs -I {} hoja issue update {} --assignee me
 
 # Export to markdown for weekly report
-$ cliniar issue list --assignee me --updated "-P7D" \
+$ hoja issue list --assignee me --updated "-P7D" \
     -o md > weekly-report.md
 ```
 
 ### Story 4: Project status check
 ```bash
-$ cliniar project list --state started
-$ cliniar project get "Q2 Roadmap"
-$ cliniar project issues "Q2 Roadmap" --state "!completed"
+$ hoja project list --state started
+$ hoja project get "Q2 Roadmap"
+$ hoja project issues "Q2 Roadmap" --state "!completed"
 ```
 
 ### Story 5: Agent integration
 ```bash
 # Get JSON for an LLM to process
-$ cliniar issue get ENG-123 -o json
+$ hoja issue get ENG-123 -o json
 
 # Create from agent
-$ cliniar issue create \
+$ hoja issue create \
     --team ENG \
     --title "Auth bug in login flow" \
     --description "$(cat error-report.md)" \
@@ -303,8 +303,8 @@ $ cliniar issue create \
 
 ### Story 6: Escape hatch
 ```bash
-# Need a query cliniar doesn't expose? Drop to raw GraphQL.
-$ cliniar raw query 'query { viewer { id name email } }'
+# Need a query hoja doesn't expose? Drop to raw GraphQL.
+$ hoja raw query 'query { viewer { id name email } }'
 ```
 
 ---
@@ -354,7 +354,7 @@ Error format (JSON mode):
 ## Project Structure
 
 ```
-cliniar/
+hoja/
 ├── pyproject.toml          # Modern Python project metadata
 ├── README.md               # Quick start
 ├── LICENSE                 # MIT
@@ -363,9 +363,9 @@ cliniar/
 ├── requirements.txt        # Hashed runtime deps
 ├── requirements-dev.txt    # Test/lint deps
 │
-├── cliniar/                # Package root
+├── hoja/                # Package root
 │   ├── __init__.py         # Version, entry point
-│   ├── __main__.py         # python -m cliniar
+│   ├── __main__.py         # python -m hoja
 │   ├── cli.py              # Typer app, global flags, root command
 │   ├── config.py           # Config loading/validation
 │   ├── client.py           # Async GraphQL client
@@ -431,14 +431,14 @@ cliniar/
 
 ## v1 Acceptance Criteria
 
-- [ ] `cliniar me` returns viewer info
-- [ ] `cliniar team list` works
-- [ ] `cliniar issue list` with `--team`, `--state`, `--assignee`, `--label` filters
-- [ ] `cliniar issue get <id>` shows full issue detail
-- [ ] `cliniar issue create` with all common flags
-- [ ] `cliniar issue update <id>` for state/assignee/priority/labels
-- [ ] `cliniar cycle current` returns current cycle for a team
-- [ ] `cliniar project list` and `project get`
+- [ ] `hoja me` returns viewer info
+- [ ] `hoja team list` works
+- [ ] `hoja issue list` with `--team`, `--state`, `--assignee`, `--label` filters
+- [ ] `hoja issue get <id>` shows full issue detail
+- [ ] `hoja issue create` with all common flags
+- [ ] `hoja issue update <id>` for state/assignee/priority/labels
+- [ ] `hoja cycle current` returns current cycle for a team
+- [ ] `hoja project list` and `project get`
 - [ ] Output formats: human, json, ids, plain
 - [ ] `--dry-run` shows mutation without executing
 - [ ] All commands validated against Pydantic models

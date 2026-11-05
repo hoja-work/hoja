@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cliniar pre-commit hook: hard-block secrets and forbidden file types.
+# Hoja pre-commit hook: hard-block secrets and forbidden file types.
 #
 # Refuses to commit if any staged file contains:
 #   - Linear API token         (lin_api_...)

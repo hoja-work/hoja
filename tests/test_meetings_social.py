@@ -11,7 +11,7 @@ pytest.importorskip("starlette")
 
 from tests.test_meetings import FakeSFU, World, _act, _create, _h, _join  # noqa: E402
 
-from cliniar_server.meetings import MeetingService, Principal  # noqa: E402
+from hoja_server.meetings import MeetingService, Principal  # noqa: E402
 
 
 @pytest.fixture

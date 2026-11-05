@@ -18,8 +18,8 @@ pytest.importorskip("starlette")
 from sqlalchemy import select
 from starlette.testclient import TestClient
 
-from cliniar_server.app import create_app
-from cliniar_server.db import (
+from hoja_server.app import create_app
+from hoja_server.db import (
     api_key,
     attachment,
     cycle,
@@ -117,7 +117,7 @@ def test_upload_serve_respects_issue_team_visibility(world, tmp_path) -> None:
             id=new_id(), organization_id=world["org"], issue_id=made["id"],
             creator_id=world["admin"], url=f"/api/uploads/{file_id}",
             title="secret.txt", created_at=ts))
-    import cliniar_server.db as db_module
+    import hoja_server.db as db_module
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(db_module, "default_db_dir", lambda: tmp_path)
         with TestClient(world["app"]) as client:

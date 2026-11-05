@@ -6,7 +6,7 @@ The user chose automatic team cadence rather than manual cycle creation, then de
 
 ## Schema
 
-`cliniar_server/schema.graphql` Team (`#L138-L154`) exposes timezone, cycles and activeCycle; Cycle (`#L177-L188`) exposes number/name/start/end/completed/progress/team. Query (`#L65-L67`) offers cycles and cycle(id); Mutation (`#L84-L102`) has no cycleCreate/update or team cadence settings. `cliniar_server/db.py#L163-L181` team stores timezone/active_cycle_id but no recurrence; `db.py#L373-L390` cycle stores org/team/number, ISO-like text timestamps, progress and unique(team_id,number), not overlap constraints. `writer.py#L112-L123` validates issue cycle references in the same organization and team. There is no current cadence validation, permission or date-time boundary contract. Preserve wire-facing Linear GraphQL names; add fields/mutations without renaming existing fields.
+`hoja_server/schema.graphql` Team (`#L138-L154`) exposes timezone, cycles and activeCycle; Cycle (`#L177-L188`) exposes number/name/start/end/completed/progress/team. Query (`#L65-L67`) offers cycles and cycle(id); Mutation (`#L84-L102`) has no cycleCreate/update or team cadence settings. `hoja_server/db.py#L163-L181` team stores timezone/active_cycle_id but no recurrence; `db.py#L373-L390` cycle stores org/team/number, ISO-like text timestamps, progress and unique(team_id,number), not overlap constraints. `writer.py#L112-L123` validates issue cycle references in the same organization and team. There is no current cadence validation, permission or date-time boundary contract. Preserve wire-facing Linear GraphQL names; add fields/mutations without renaming existing fields.
 
 ## Storage
 

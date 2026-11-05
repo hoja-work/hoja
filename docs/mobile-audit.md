@@ -24,7 +24,7 @@ Route: `/workspace/my-issues/assigned`
 - [x] button "Hoja" (×2), 44x44px, click: no visible effect
 - [x] button "Load more issues" (×2), 130x35px, click: changes the page
 - [x] button "Open ENG-#: Set up local backend" (×2), 200x17px, click: not reproduced on reload
-- [x] button "Open ENG-#: Wire Cliniar base_url" (×2), 198x17px, click: not reproduced on reload
+- [x] button "Open ENG-#: Wire Hoja base_url" (×2), 198x17px, click: not reproduced on reload
 - [x] button "Open navigation" (×2), 44x44px, click: changes the page
 - [x] button "Search issues and pages⌘ K" (×2), 44x44px, click: changes the page
 - [x] button "Status of ENG-#: Todo" (×4), 18x18px, click: changes the page
@@ -283,7 +283,7 @@ Route: `/workspace/team/eng/active`
 - [x] button "Set up local backend", 61x18px, click: not run
 - [x] button "Switch to board view" (×2), 44x44px, click: not run
 - [x] button "Team notifications" (×2), 44x44px, click: changes the page
-- [x] button "Wire Cliniar base_url", 59x18px, click: not run
+- [x] button "Wire Hoja base_url", 59x18px, click: not run
 - [x] input "Search issues" (×2), 156x44px, click: not run
 - [x] tab "Active" (×2), 60x44px, click: no visible effect
 - [x] tab "All issues" (×2), 80x44px, click: no visible effect
@@ -363,7 +363,7 @@ Route: `/workspace/team/eng`
 - [x] button "Status of ENG-#: Todo" (×4), 66x25px, click: changes the page
 - [x] button "View team cycles →" (×2), 332x44px, click: navigates
 - [x] button "View team issues →" (×2), 104x44px, click: navigates
-- [x] button "Wire Cliniar base_urlENG-# · Engineering" (×2), 250x40px, click: navigates
+- [x] button "Wire Hoja base_urlENG-# · Engineering" (×2), 250x40px, click: navigates
 
 ## Team issues list
 
@@ -383,7 +383,7 @@ Route: `/workspace/team/eng/issues`
 - [x] button "Status of ENG-#: Todo" (×4), 66x25px, click: changes the page
 - [x] button "View team cycles →" (×2), 332x44px, click: navigates
 - [x] button "View team issues →" (×2), 104x44px, click: navigates
-- [x] button "Wire Cliniar base_urlENG-# · Engineering" (×2), 250x40px, click: navigates
+- [x] button "Wire Hoja base_urlENG-# · Engineering" (×2), 250x40px, click: navigates
 
 ## Team cycles
 
@@ -800,7 +800,7 @@ Covered at 390px:
 
 The seeded run needs a cycle cadence and one pulse post, which the scale seed does not create. Reproduce with `teamCycleCadenceEnable(teamId, weekday: 1)` on the ENG team and `projectUpdateCreate(projectId, body, status: "onTrack")`.
 
-- Inbox rows: `opens-named-issue`. The inbox is empty for a single-user seed, so the check needs a notification. Reproduce with `memberInvite` for a second member, mint that member's token with `cliniar-serve token --email …`, then as that member run `issueUpdate(id: "ENG-1", input: {priority: 1})`. Ada (the creator) gets an `issueUpdated` notification. Note: an assignment to someone who already holds the issue creates no notification, because nothing changed.
+- Inbox rows: `opens-named-issue`. The inbox is empty for a single-user seed, so the check needs a notification. Reproduce with `memberInvite` for a second member, mint that member's token with `hoja-serve token --email …`, then as that member run `issueUpdate(id: "ENG-1", input: {priority: 1})`. Ada (the creator) gets an `issueUpdated` notification. Note: an assignment to someone who already holds the issue creates no notification, because nothing changed.
 
 
 ## Behavior fixes found in the review (this pass)

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the Cliniar pre-commit hook into .git/hooks/pre-commit
+# Install the Hoja pre-commit hook into .git/hooks/pre-commit
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HOOK="$ROOT/.git/hooks/pre-commit"

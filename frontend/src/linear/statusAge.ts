@@ -3,7 +3,7 @@
  * Every surface that shows status age (the My issues StatusPicker popover and the
  * Linear-style list rows) must use this module. `stateChangedAt` is the server's
  * dedicated timestamp: the backend moves it only when the state actually changes
- * (cliniar_server/writer.py), so editing a title or assignee does not reset it.
+ * (hoja_server/writer.py), so editing a title or assignee does not reset it.
  *
  * Fallbacks exist only for data written before that column existed:
  * stateChangedAt -> updatedAt -> createdAt. An unparseable timestamp is "Unknown"

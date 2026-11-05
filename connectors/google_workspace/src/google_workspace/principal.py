@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 from google_workspace.errors import ConnectorAuthError, ConnectorConfigError
 
-SECRET_ENV = "CLINIAR_CONNECTOR_SIGNING_KEY"
+SECRET_ENV = "HOJA_CONNECTOR_SIGNING_KEY"
 DEFAULT_TTL_SECONDS = 300
 
 

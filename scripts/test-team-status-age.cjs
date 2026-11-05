@@ -23,12 +23,12 @@ const web = path.join(repo, 'frontend/dist');
 assert.ok(fs.existsSync(path.join(web, 'index.html')), 'build the frontend first: cd frontend && npm run build');
 const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'status-age-'));
 const db = path.join(dir, 'status-age.db');
-const token = 'cliniar_status_age_token';
-const py = process.env.CLINIAR_PYTHON || 'python3';
+const token = 'hoja_status_age_token';
+const py = process.env.HOJA_PYTHON || 'python3';
 const AGE_MS = (2 * 24 + 3) * 60 * 60 * 1000; // 2d 3h
 const since = new Date(Date.now() - AGE_MS).toISOString();
 
-const seed = spawnSync(py, ['-c', `from cliniar_server.db import make_engine,migrate,seed_tenant
+const seed = spawnSync(py, ['-c', `from hoja_server.db import make_engine,migrate,seed_tenant
 e=make_engine(${JSON.stringify(db)}); migrate(e)
 seed_tenant(e, org_name='Acme', team_key='TREBOL', team_name='Trebol', user_name='Ada', user_email='ada@example.test', token=${JSON.stringify(token)}, demo_issues=True)
 e.dispose()
@@ -44,8 +44,8 @@ const stateName = seed.stdout.trim().split('\n').pop();
 
 const port = 19090 + Math.floor(Math.random() * 90);
 const base = `http://127.0.0.1:${port}`;
-const server = spawn(py, ['-m', 'cliniar_server.cli', 'serve', '--db', db, '--host', '127.0.0.1', '--port', String(port)],
-  { cwd: repo, env: {...process.env, CLINIAR_WEB_ROOT: web}, stdio: 'ignore' });
+const server = spawn(py, ['-m', 'hoja_server.cli', 'serve', '--db', db, '--host', '127.0.0.1', '--port', String(port)],
+  { cwd: repo, env: {...process.env, HOJA_WEB_ROOT: web}, stdio: 'ignore' });
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
 const fmt = ms => {

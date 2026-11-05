@@ -12,7 +12,7 @@ __pycache__
 .pi
 .claude
 .agents
-.cliniar
+.hoja
 .fastapi-reference
 local-e2e
 tests

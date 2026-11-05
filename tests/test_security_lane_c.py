@@ -14,10 +14,10 @@ pytest.importorskip("mcp")
 
 from starlette.testclient import TestClient
 
-from cliniar_server import agent_threads, db, mcp_oauth, model_providers
-from cliniar_server.app import create_app
-from cliniar_server.db import make_engine, migrate, seed_tenant
-from cliniar_server.store import Store
+from hoja_server import agent_threads, db, mcp_oauth, model_providers
+from hoja_server.app import create_app
+from hoja_server.db import make_engine, migrate, seed_tenant
+from hoja_server.store import Store
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -127,7 +127,7 @@ def test_registration_total_client_cap(tmp_path, monkeypatch) -> None:
 def test_oauth_module_has_no_production_assert() -> None:
     import ast
 
-    tree = ast.parse((ROOT / "cliniar_server" / "mcp_oauth.py").read_text())
+    tree = ast.parse((ROOT / "hoja_server" / "mcp_oauth.py").read_text())
     assert not [n for n in ast.walk(tree) if isinstance(n, ast.Assert)]
 
 
@@ -203,7 +203,7 @@ def test_thread_message_bounds() -> None:
 
 
 def test_thread_title_and_save_message_bounds(tmp_path) -> None:
-    from cliniar_server.agent_conversations import (
+    from hoja_server.agent_conversations import (
         MAX_MESSAGE_BYTES,
         save_message,
         start_conversation,
@@ -230,9 +230,9 @@ def test_thread_create_rejects_oversized_message(tmp_path) -> None:
 # 5. Docker hardening.
 def test_dockerfile_runs_as_non_root_without_embedded_db_credentials() -> None:
     text = (ROOT / "Dockerfile").read_text()
-    assert "USER cliniar" in text
-    assert "cliniar:cliniar@" not in text
-    assert "CLINIAR_DATABASE_URL" not in text
+    assert "USER hoja" in text
+    assert "hoja:hoja@" not in text
+    assert "HOJA_DATABASE_URL" not in text
 
 
 def test_compose_requires_postgres_password() -> None:
@@ -243,5 +243,5 @@ def test_compose_requires_postgres_password() -> None:
 
 def test_dockerignore_excludes_secrets_and_state() -> None:
     lines = {line.strip() for line in (ROOT / ".dockerignore").read_text().splitlines()}
-    for entry in (".git", ".env", ".venv", ".swarm", ".cliniar", "tests", "docs", "frontend/node_modules"):
+    for entry in (".git", ".env", ".venv", ".swarm", ".hoja", "tests", "docs", "frontend/node_modules"):
         assert entry in lines

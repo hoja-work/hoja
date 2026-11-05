@@ -2,7 +2,7 @@
 """Benchmark and stress-test browser sync and realtime delivery.
 
 Seeds a throwaway workspace with N issues (one public team, one private team,
-an admin and a non-admin member), starts one or more cliniar server processes
+an admin and a non-admin member), starts one or more hoja server processes
 on it, and measures:
 
   1. legacy load   — the old Dashboard query, plus paging every issue via GraphQL
@@ -52,7 +52,7 @@ from sqlalchemy import select
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from cliniar_server.db import (  # noqa: E402
+from hoja_server.db import (  # noqa: E402
     PRIORITY_LABELS,
     api_key,
     issue,
@@ -174,10 +174,10 @@ def free_port() -> int:
 
 def start_server(target: str, port: int, log: Path, deflate: bool = True, workers: int = 1) -> subprocess.Popen:
     if workers > 1:
-        cmd = [sys.executable, "-m", "cliniar_server.cli", "serve", "--database-url", target,
+        cmd = [sys.executable, "-m", "hoja_server.cli", "serve", "--database-url", target,
                "--port", str(port), "--workers", str(workers)] + ([] if deflate else ["--no-ws-deflate"])
     else:
-        code = (f"import sys, uvicorn; sys.path.insert(0, {str(ROOT)!r}); from cliniar_server.app import create_app; "
+        code = (f"import sys, uvicorn; sys.path.insert(0, {str(ROOT)!r}); from hoja_server.app import create_app; "
                 f"uvicorn.run(create_app(database_url={target!r}, open_mode=False), host='127.0.0.1', port={port}, "
                 f"log_level='warning', backlog=4096, ws_per_message_deflate={deflate})")
         cmd = [sys.executable, "-c", code]
@@ -525,7 +525,7 @@ async def _drive_fanout(write_client, workers, ids, n_mutations, gap, writers) -
 # ---------------------------------------------------------------------------- driver
 
 async def run(args) -> dict:
-    tmp = Path(tempfile.mkdtemp(prefix="cliniar-bench-", dir=args.scratch))
+    tmp = Path(tempfile.mkdtemp(prefix="hoja-bench-", dir=args.scratch))
     target = args.database_url or f"sqlite:///{tmp / 'bench.db'}"
     engine = make_engine(target)
     t0 = time.perf_counter()

@@ -10,11 +10,11 @@ pytest.importorskip("mcp")
 
 from starlette.testclient import TestClient
 
-from cliniar_server import db
-from cliniar_server.app import create_app
-from cliniar_server.db import make_engine, migrate, now_iso, seed_tenant
-from cliniar_server.mcp_oauth import READ_SCOPE, WRITE_SCOPE, HojaOAuthProvider
-from cliniar_server.store import Store
+from hoja_server import db
+from hoja_server.app import create_app
+from hoja_server.db import make_engine, migrate, now_iso, seed_tenant
+from hoja_server.mcp_oauth import READ_SCOPE, WRITE_SCOPE, HojaOAuthProvider
+from hoja_server.store import Store
 
 HOST = "mcp.example.test"
 

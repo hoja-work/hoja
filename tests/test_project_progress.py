@@ -9,8 +9,8 @@ pytest.importorskip("starlette")
 
 from starlette.testclient import TestClient
 
-from cliniar_server.app import create_app
-from cliniar_server.db import make_engine, migrate, seed_tenant
+from hoja_server.app import create_app
+from hoja_server.db import make_engine, migrate, seed_tenant
 
 TOKEN = "progress-admin-token"
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select
 
-from cliniar_server.connector_actions import (
+from hoja_server.connector_actions import (
     APPROVED,
     EXECUTING,
     FAILED,
@@ -15,7 +15,7 @@ from cliniar_server.connector_actions import (
     queue_action,
     reject_action,
 )
-from cliniar_server.db import connector_account, connector_action, make_engine, migrate
+from hoja_server.db import connector_account, connector_action, make_engine, migrate
 
 ORG = "org-1"
 OWNER = "user-owner"

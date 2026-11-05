@@ -1,6 +1,6 @@
 import {getSync, storedSyncSeq} from './sync';
 
-/* Realtime change feed client (protocol v2, see cliniar_server/realtime.py).
+/* Realtime change feed client (protocol v2, see hoja_server/realtime.py).
  *
  * Frames: {v:2, prev, seq, events, columns, issues, removed, full} or {v:2, reset:true, seq}.
  * Every change visible to this viewer with prev < seq <= frame.seq is in `events`

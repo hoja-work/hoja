@@ -20,7 +20,7 @@ const inventoryPath = arg('--inventory', path.join(repo, 'local-e2e/artifacts/mo
 const db = arg('--db', path.join(repo, 'local-e2e/artifacts/mobile-audit-scale/audit.db'));
 const outPath = arg('--out', path.join(repo, 'local-e2e/artifacts/mobile-audit-scale/functional.json'));
 const web = path.join(repo, 'frontend/dist');
-const token = 'cliniar_mobile_audit_token';
+const token = 'hoja_mobile_audit_token';
 const DESTRUCTIVE = /delete|remove|archive|log ?out|sign ?out|revoke|leave|disconnect|discard|reset|disable|deactivate|rotate|transfer|close workspace|unsubscribe/i;
 const MAX_PER_SCREEN = 80;
 const CONCURRENCY = 4;
@@ -28,7 +28,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
 
 const port = 19100 + Math.floor(Math.random() * 80);
 const base = `http://127.0.0.1:${port}`;
-const server = spawn(path.join(repo, '.venv/bin/cliniar-serve'), ['serve', '--db', db, '--host', '127.0.0.1', '--port', String(port)], { cwd: repo, env: { ...process.env, CLINIAR_WEB_ROOT: web }, stdio: 'ignore' });
+const server = spawn(path.join(repo, '.venv/bin/hoja-serve'), ['serve', '--db', db, '--host', '127.0.0.1', '--port', String(port)], { cwd: repo, env: { ...process.env, HOJA_WEB_ROOT: web }, stdio: 'ignore' });
 
 // Reads every visible, named control on the page, in document order, so each one can be clicked by index.
 const listControls = () => {

@@ -3,7 +3,7 @@ requires = ["hatchling>=1.21"]
 build-backend = "hatchling.build"
 
 [project]
-name = "cliniar"
+name = "hoja"
 version = "0.21.4"
 description = "Self-hosted, offline-first, agent-native work management with Linear compatibility"
 readme = "README.md"
@@ -67,22 +67,22 @@ agent = [
 google-workspace-connector = { path = "connectors/google_workspace", editable = true }
 
 [project.scripts]
-cliniar = "cliniar.cli:app"
-cliniar-mcp = "cliniar.mcp.server:main"
-cliniar-serve = "cliniar_server.cli:main"
+hoja = "hoja.cli:app"
+hoja-mcp = "hoja.mcp.server:main"
+hoja-serve = "hoja_server.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/rinadelph/cliniar"
-Documentation = "https://github.com/rinadelph/cliniar/blob/main/docs/DESIGN.md"
-Issues = "https://github.com/rinadelph/cliniar/issues"
+Homepage = "https://github.com/rinadelph/hoja"
+Documentation = "https://github.com/rinadelph/hoja/blob/main/docs/DESIGN.md"
+Issues = "https://github.com/rinadelph/hoja/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["cliniar", "cliniar_server"]
+packages = ["hoja", "hoja_server"]
 artifacts = ["VERSION"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "VERSION" = "VERSION"
-"cliniar_server/schema.graphql" = "cliniar_server/schema.graphql"
+"hoja_server/schema.graphql" = "hoja_server/schema.graphql"
 "connectors/google_workspace/src/google_workspace" = "google_workspace"
 
 [tool.ruff]

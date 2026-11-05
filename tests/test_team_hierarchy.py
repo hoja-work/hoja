@@ -23,8 +23,8 @@ pytest.importorskip("starlette")
 from sqlalchemy import and_, select
 from starlette.testclient import TestClient
 
-from cliniar_server.app import create_app
-from cliniar_server.db import (
+from hoja_server.app import create_app
+from hoja_server.db import (
     api_key,
     cycle,
     issue,
@@ -396,7 +396,7 @@ def test_single_org_mode_refuses_workspace_create_and_switch(world, monkeypatch)
         assert [n["key"] for n in _data(client, ADMIN, TEAMS)["teams"]["nodes"]] == ["ENG"]
 
     with world["engine"].connect() as conn:
-        from cliniar_server.db import organization
+        from hoja_server.db import organization
         # The organization table and the organization_id scope are kept.
         assert conn.execute(select(organization.c.id)).all() == [(world["org"],)]
         assert conn.execute(select(issue.c.organization_id).where(

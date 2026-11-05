@@ -1,7 +1,7 @@
 # Hoja Remote MCP with OAuth — implementation plan
 
 ## User-confirmed decisions
-- Build a new hosted/remote MCP, not an extension of `cliniar-mcp` stdio.
+- Build a new hosted/remote MCP, not an extension of `hoja-mcp` stdio.
 - Use OAuth 2.1 Authorization Code + PKCE.
 - Allow Dynamic Client Registration with strict redirect URI validation and mandatory PKCE S256.
 - Enable read and write capabilities.
@@ -11,10 +11,10 @@
 - User explicitly requested all GraphQL mutations, including administrative/account and destructive operations.
 
 ## Repository facts and constraints
-- Existing MCP is optional FastMCP stdio (`cliniar/mcp/server.py`, `pyproject.toml`); it has static Linear token auth and is not a template for OAuth transport.
-- Hoja ASGI app is currently Starlette (`cliniar_server/app.py`), with `/graphql`, browser login/session, bearer API keys, and request-scoped `store`, `writer`, `org_id`, `user_id` context. There is no OAuth provider today.
-- `cliniar_server/schema.graphql` defines query and mutation surfaces. `cliniar_server/resolvers.py` implements existing permission rules; `Store`/`Writer` are org-scoped. MCP must not bypass them.
-- DB schema uses ordered migrations and supports SQLite/Postgres (`cliniar_server/db.py`).
+- Existing MCP is optional FastMCP stdio (`hoja/mcp/server.py`, `pyproject.toml`); it has static Linear token auth and is not a template for OAuth transport.
+- Hoja ASGI app is currently Starlette (`hoja_server/app.py`), with `/graphql`, browser login/session, bearer API keys, and request-scoped `store`, `writer`, `org_id`, `user_id` context. There is no OAuth provider today.
+- `hoja_server/schema.graphql` defines query and mutation surfaces. `hoja_server/resolvers.py` implements existing permission rules; `Store`/`Writer` are org-scoped. MCP must not bypass them.
+- DB schema uses ordered migrations and supports SQLite/Postgres (`hoja_server/db.py`).
 - Existing worktree is already modified in many unrelated files. Preserve all of it; intended implementation boundary is new OAuth/MCP modules/tests and minimal necessary app/db/ignore/dependency/docs edits.
 - Latest FastAPI repository was shallow-cloned to ignored `.fastapi-reference/` at `94918c1d40afb27065c64d523219ed2ad9822f76`. Reference only; do not vendor or depend on it.
 

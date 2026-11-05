@@ -16,7 +16,7 @@ import httpx
 import pytest
 import respx
 
-from cliniar_server.email_adapter import EmailAdapterError, SMTPConfig, send_email
+from hoja_server.email_adapter import EmailAdapterError, SMTPConfig, send_email
 
 SMTP_CFG = SMTPConfig(host="smtp.example.test", port=25, username="u", password="p", starttls=False)
 
@@ -24,7 +24,7 @@ SMTP_CFG = SMTPConfig(host="smtp.example.test", port=25, username="u", password=
 def _sent_message(**overrides):
     kwargs = {"sender": "a@x.test", "recipients": ["b@y.test"], "subject": "hi", "text": "body"}
     kwargs.update(overrides)
-    with mock.patch("cliniar_server.email_adapter.smtplib.SMTP") as smtp:
+    with mock.patch("hoja_server.email_adapter.smtplib.SMTP") as smtp:
         send_email(SMTP_CFG, **kwargs)
         return smtp.return_value.__enter__.return_value.send_message.call_args.args[0]
 
@@ -55,7 +55,7 @@ def test_plain_display_name_is_kept_and_no_bcc_added() -> None:
 
 def test_starttls_failure_never_sends_credentials() -> None:
     cfg = SMTPConfig(host="smtp.example.test", port=25, username="u", password="SECRET")
-    with mock.patch("cliniar_server.email_adapter.smtplib.SMTP") as smtp:
+    with mock.patch("hoja_server.email_adapter.smtplib.SMTP") as smtp:
         client = smtp.return_value.__enter__.return_value
         client.starttls.side_effect = smtplib.SMTPNotSupportedError(0, b"no starttls")
         with pytest.raises(EmailAdapterError):
@@ -109,9 +109,9 @@ def stub_server():
 def _provider_app(tmp_path, base_url: str):
     from sqlalchemy import insert
 
-    from cliniar_server.app import create_app
-    from cliniar_server.db import make_engine, migrate, model_provider, new_id, now_iso, seed_tenant
-    from cliniar_server.secrets_box import encrypt_secret
+    from hoja_server.app import create_app
+    from hoja_server.db import make_engine, migrate, model_provider, new_id, now_iso, seed_tenant
+    from hoja_server.secrets_box import encrypt_secret
 
     engine = make_engine(tmp_path / "lanev.db")
     migrate(engine)
@@ -138,7 +138,7 @@ def _chat_text(app, admin) -> str:
 @pytest.fixture
 def strict_urls(monkeypatch):
     monkeypatch.setenv("HOJA_SECRET_KEY", "test-master-key")
-    monkeypatch.delenv("CLINIAR_ALLOW_INSECURE_MODEL_URL", raising=False)
+    monkeypatch.delenv("HOJA_ALLOW_INSECURE_MODEL_URL", raising=False)
 
 
 def test_db_inserted_loopback_provider_is_not_called(tmp_path, strict_urls, stub_server) -> None:
@@ -151,7 +151,7 @@ def test_db_inserted_loopback_provider_is_not_called(tmp_path, strict_urls, stub
 
 def test_provider_redirect_is_not_followed(tmp_path, monkeypatch, stub_server) -> None:
     monkeypatch.setenv("HOJA_SECRET_KEY", "test-master-key")
-    monkeypatch.setenv("CLINIAR_ALLOW_INSECURE_MODEL_URL", "1")
+    monkeypatch.setenv("HOJA_ALLOW_INSECURE_MODEL_URL", "1")
     internal = HTTPServer(("127.0.0.1", 0), _Stub)
     threading.Thread(target=internal.serve_forever, daemon=True).start()
     try:
@@ -169,14 +169,14 @@ def test_provider_redirect_is_not_followed(tmp_path, monkeypatch, stub_server) -
 @pytest.fixture
 def google_env(monkeypatch):
     monkeypatch.setenv("HOJA_SECRET_KEY", "test-master-key")
-    monkeypatch.setenv("CLINIAR_GOOGLE_CLIENT_ID", "client-123.apps.googleusercontent.com")
-    monkeypatch.setenv("CLINIAR_GOOGLE_CLIENT_SECRET", "GOCSPX-lanev")
-    monkeypatch.setenv("CLINIAR_GOOGLE_REDIRECT_URI", "https://hoja.example.test/api/connectors/google/callback")
+    monkeypatch.setenv("HOJA_GOOGLE_CLIENT_ID", "client-123.apps.googleusercontent.com")
+    monkeypatch.setenv("HOJA_GOOGLE_CLIENT_SECRET", "GOCSPX-lanev")
+    monkeypatch.setenv("HOJA_GOOGLE_REDIRECT_URI", "https://hoja.example.test/api/connectors/google/callback")
 
 
 def _google_app(tmp_path):
-    from cliniar_server.app import create_app
-    from cliniar_server.db import make_engine, migrate, seed_tenant
+    from hoja_server.app import create_app
+    from hoja_server.db import make_engine, migrate, seed_tenant
 
     engine = make_engine(tmp_path / "g.db")
     migrate(engine)
@@ -195,7 +195,7 @@ def _state_of(client, token) -> str:
 def test_state_cannot_be_replayed(tmp_path, google_env) -> None:
     from starlette.testclient import TestClient
 
-    from cliniar_server.db import connector_account
+    from hoja_server.db import connector_account
 
     respx.post("https://oauth2.googleapis.com/token").mock(return_value=httpx.Response(
         200, json={"access_token": "ya29", "refresh_token": "1//R", "expires_in": 3599, "scope": "gmail.readonly"}))
@@ -219,7 +219,7 @@ def test_state_cannot_be_replayed(tmp_path, google_env) -> None:
 def test_expired_state_is_rejected(tmp_path, google_env) -> None:
     from starlette.testclient import TestClient
 
-    from cliniar_server.secrets_box import encrypt_secret
+    from hoja_server.secrets_box import encrypt_secret
 
     app, admin, _engine = _google_app(tmp_path)
     expired = encrypt_secret(json.dumps({"uid": admin["user_id"], "org": admin["org_id"], "scope": "user",
@@ -235,8 +235,8 @@ def test_state_replay_rejected_across_app_instances(tmp_path, google_env) -> Non
     """Used nonces persist in the database, so a second worker or a restart cannot accept a replay."""
     from starlette.testclient import TestClient
 
-    from cliniar_server.app import create_app
-    from cliniar_server.db import oauth_state_nonce
+    from hoja_server.app import create_app
+    from hoja_server.db import oauth_state_nonce
 
     respx.post("https://oauth2.googleapis.com/token").mock(return_value=httpx.Response(
         200, json={"access_token": "ya29", "refresh_token": "1//R", "expires_in": 3599, "scope": "gmail.readonly"}))

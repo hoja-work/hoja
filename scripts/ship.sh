@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Build and publish a Cliniar release from an already-versioned, clean checkout.
+# Build and publish a Hoja release from an already-versioned, clean checkout.
 # This script does not create repositories, commits, or deployment-specific
-# configuration. Set CLINIAR_RELEASE_REPOSITORY only to override the current
+# configuration. Set HOJA_RELEASE_REPOSITORY only to override the current
 # GitHub remote.
 set -euo pipefail
 
@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 
 VERSION="$(tr -d '[:space:]' < VERSION)"
 TAG="v$VERSION"
-NOTES_FILE="$(mktemp "${TMPDIR:-/tmp}/cliniar-release-notes.XXXXXX.md")"
+NOTES_FILE="$(mktemp "${TMPDIR:-/tmp}/hoja-release-notes.XXXXXX.md")"
 trap 'rm -f "$NOTES_FILE"' EXIT
 
 if [ -n "$(git status --porcelain)" ]; then
@@ -32,11 +32,11 @@ fi
 echo "==> Running release gate"
 bash scripts/pre-commit.sh
 
-echo "==> Building Cliniar $VERSION"
+echo "==> Building Hoja $VERSION"
 rm -rf dist build
 uv build
-WHEEL="dist/cliniar-${VERSION}-py3-none-any.whl"
-SDIST="dist/cliniar-${VERSION}.tar.gz"
+WHEEL="dist/hoja-${VERSION}-py3-none-any.whl"
+SDIST="dist/hoja-${VERSION}.tar.gz"
 test -f "$WHEEL"
 test -f "$SDIST"
 
@@ -49,11 +49,11 @@ test -s "$NOTES_FILE"
 
 echo "==> Creating GitHub release $TAG"
 REPOSITORY_ARGS=()
-if [ -n "${CLINIAR_RELEASE_REPOSITORY:-}" ]; then
-    REPOSITORY_ARGS=(--repo "$CLINIAR_RELEASE_REPOSITORY")
+if [ -n "${HOJA_RELEASE_REPOSITORY:-}" ]; then
+    REPOSITORY_ARGS=(--repo "$HOJA_RELEASE_REPOSITORY")
 fi
 gh release create "$TAG" "${REPOSITORY_ARGS[@]}" \
-    --title "Cliniar $VERSION" \
+    --title "Hoja $VERSION" \
     --notes-file "$NOTES_FILE" \
     "$WHEEL" "$SDIST"
 
@@ -63,6 +63,6 @@ if [ -z "${UV_PUBLISH_TOKEN:-}" ]; then
 fi
 uv publish "$WHEEL" "$SDIST"
 
-echo "Cliniar $VERSION published. Verify with:"
-echo "  uv tool install --refresh cliniar"
-echo "  cliniar --version"
+echo "Hoja $VERSION published. Verify with:"
+echo "  uv tool install --refresh hoja"
+echo "  hoja --version"

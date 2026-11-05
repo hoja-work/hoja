@@ -7,7 +7,7 @@ const { chromium } = require('../../local-e2e/node_modules/playwright');
     const errors = [];
     page.on('pageerror', e => errors.push(e.message));
     await page.goto('http://127.0.0.1:8797/');
-    await page.evaluate(() => localStorage.setItem('hoja_token', 'cliniar_probe_token_12345'));
+    await page.evaluate(() => localStorage.setItem('hoja_token', 'hoja_probe_token_12345'));
     await page.goto('http://127.0.0.1:8797/workspace/agent');
     await page.waitForSelector('.openui-agent-container, .agent-chat-page', { timeout: 15000 }).catch(() => {});
     await page.waitForTimeout(1500);

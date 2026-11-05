@@ -15,7 +15,7 @@ Status: proposed, awaiting approval.
 ## Breakdown
 
 ### What we need
-- A Google Cloud OAuth client (`CLINIAR_GOOGLE_CLIENT_ID`, `CLINIAR_GOOGLE_CLIENT_SECRET`, `CLINIAR_GOOGLE_REDIRECT_URI`), supplied by the deployer.
+- A Google Cloud OAuth client (`HOJA_GOOGLE_CLIENT_ID`, `HOJA_GOOGLE_CLIENT_SECRET`, `HOJA_GOOGLE_REDIRECT_URI`), supplied by the deployer.
 - Encrypted storage for connected accounts and refresh tokens (existing `secrets_box.py`, AES-GCM keyed by `HOJA_SECRET_KEY`).
 - Migration-backed tables for connector accounts and pending write actions.
 - An MCP server process that the agent can reach.
@@ -38,8 +38,8 @@ Status: proposed, awaiting approval.
 - `connectors/google_workspace/` is a standalone package with its own `pyproject.toml`, a `FastMCP` server, and a `google-workspace-mcp` entry point.
 - Modules: `oauth.py`, `accounts.py`, `tools/gmail.py`, `tools/drive.py`, `tools/calendar.py`, `tools/docs.py`, `server.py`.
 - A small generic `Connector` protocol (name, scopes, tools, read/write tag per tool). Only Google implements it for now.
-- Agent wiring in `cliniar_server/agent_chat.py`: `build_agent` receives toolsets built from connected accounts, using `pydantic_ai` MCP client classes. Verify exact class names against the pinned `pydantic-ai-slim` version before coding.
-- OAuth and approval routes in a new `cliniar_server/connectors_api.py`, mounted in `app.py`.
+- Agent wiring in `hoja_server/agent_chat.py`: `build_agent` receives toolsets built from connected accounts, using `pydantic_ai` MCP client classes. Verify exact class names against the pinned `pydantic-ai-slim` version before coding.
+- OAuth and approval routes in a new `hoja_server/connectors_api.py`, mounted in `app.py`.
 
 ### Permissions model
 - Least-privilege Google scopes: Gmail read and send granted separately; Drive `drive.file` or readonly; Calendar readonly and events; Docs readonly and edit.

@@ -12,8 +12,8 @@ pytest.importorskip("starlette")
 from sqlalchemy import select, update
 from starlette.testclient import TestClient
 
-from cliniar_server.app import create_app
-from cliniar_server.db import issue, make_engine, migrate, seed_tenant, workflow_state
+from hoja_server.app import create_app
+from hoja_server.db import issue, make_engine, migrate, seed_tenant, workflow_state
 
 TOKEN = "sync-token"
 CREATE = "mutation($i: IssueCreateInput!) { issueCreate(input: $i) { success issue { id } } }"

@@ -37,7 +37,7 @@ ssh root@45.32.168.82 'docker exec hoja-app python -m pip list --format=freeze' 
 uvx pip-audit -r /tmp/server-freeze.txt
 ```
 
-The last command needs the local packages (`cliniar`,
+The last command needs the local packages (`hoja`,
 `google-workspace-connector`) removed from the freeze list first: they are not
 on PyPI, and `pip-audit` aborts instead of skipping them.
 

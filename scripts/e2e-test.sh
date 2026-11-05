@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Comprehensive E2E test for Cliniar
+# Comprehensive E2E test for Hoja
 # Tests every command in both human and JSON output modes.
 #
 # Requires: $LINEAR_TOKEN in environment. We never hardcode the token here.
@@ -10,14 +10,14 @@ if [ -z "${LINEAR_TOKEN:-}" ]; then
     echo "Get a token at: https://linear.app/settings/api" >&2
     exit 3
 fi
-if [ -z "${CLINIAR_TEST_TEAM:-}" ] || [ -z "${CLINIAR_TEST_ISSUE:-}" ]; then
-    echo "ERROR: CLINIAR_TEST_TEAM and CLINIAR_TEST_ISSUE are required." >&2
+if [ -z "${HOJA_TEST_TEAM:-}" ] || [ -z "${HOJA_TEST_ISSUE:-}" ]; then
+    echo "ERROR: HOJA_TEST_TEAM and HOJA_TEST_ISSUE are required." >&2
     echo "Use identifiers from the Linear-compatible workspace under test." >&2
     exit 3
 fi
-CLI="${CLINIAR_CLI:-.venv/bin/cliniar}"
-TEAM_KEY="$CLINIAR_TEST_TEAM"
-ISSUE_ID="$CLINIAR_TEST_ISSUE"
+CLI="${HOJA_CLI:-.venv/bin/hoja}"
+TEAM_KEY="$HOJA_TEST_TEAM"
+ISSUE_ID="$HOJA_TEST_ISSUE"
 
 PASS=0
 FAIL=0
@@ -104,7 +104,7 @@ run_test "issue url" $CLI issue url "$ISSUE_ID"
 run_test "issue search login" $CLI issue search login -n 3
 
 # --- Dry-run mutations ---
-run_test "issue create --dry-run" $CLI --dry-run issue create --team "$TEAM_KEY" --title "Test from Cliniar" --priority 3
+run_test "issue create --dry-run" $CLI --dry-run issue create --team "$TEAM_KEY" --title "Test from Hoja" --priority 3
 run_test "issue update --dry-run" $CLI --dry-run issue update "$ISSUE_ID" --priority 2
 
 # --- Output formats ---
@@ -121,19 +121,19 @@ EXPECT_FAIL=1 run_test "non-existent issue (expect error 4)" $CLI issue get FAKE
 
 # --- MCP / Skill smoke tests (no live API; pure-Python import + content) ---
 run_test "mcp: content module imports + loads all topics" \
-    python3 -c "from cliniar.mcp.content import Topic, CliniarGuide, load_topic
+    python3 -c "from hoja.mcp.content import Topic, HojaGuide, load_topic
 for t in Topic:
     g = load_topic(t)
-    assert isinstance(g, CliniarGuide), f'{t}: bad type'
+    assert isinstance(g, HojaGuide), f'{t}: bad type'
     assert g.title, f'{t}: missing title'
     assert g.instructions, f'{t}: empty instructions'
 print('ok')"
 
 run_test "mcp: resources module imports without mcp SDK" \
-    python3 -c "from cliniar.mcp import resources; assert callable(resources.viewer); print('ok')"
+    python3 -c "from hoja.mcp import resources; assert callable(resources.viewer); print('ok')"
 
 run_test "mcp: prompts module produces non-empty templates" \
-    python3 -c "from cliniar.mcp import prompts
+    python3 -c "from hoja.mcp import prompts
 for fn, args in [(prompts.triage, ('ENG',)),
                   (prompts.daily_standup, ()),
                   (prompts.hand_off, ('ENG-1', 'Bob', 'note')),
@@ -142,18 +142,18 @@ for fn, args in [(prompts.triage, ('ENG',)),
                   (prompts.create_from_error, ('TypeError', 'ENG', 2))]:
     out = fn(*args)
     assert isinstance(out, str) and len(out) > 100, f'{fn.__name__}: too short'
-    assert 'cliniar' in out, f'{fn.__name__}: no cliniar command'
+    assert 'hoja' in out, f'{fn.__name__}: no hoja command'
     assert 'REMINDER' in out, f'{fn.__name__}: missing reminder'
 print('ok')"
 
-run_test "skill: SKILL.md frontmatter is valid YAML and lists cliniar bin" \
+run_test "skill: SKILL.md frontmatter is valid YAML and lists hoja bin" \
     python3 -c "import re, pathlib
-text = pathlib.Path('skills/cliniar/SKILL.md').read_text()
+text = pathlib.Path('skills/hoja/SKILL.md').read_text()
 m = re.match(r'^---\n(.*?)\n---', text, re.DOTALL)
 assert m, 'frontmatter missing'
 fm = m.group(1)
-assert 'name: cliniar' in fm, 'name missing/incorrect'
-assert '\"cliniar\"' in fm, 'requires.bins must include cliniar'
+assert 'name: hoja' in fm, 'name missing/incorrect'
+assert '\"hoja\"' in fm, 'requires.bins must include hoja'
 print('ok')"
 
 echo ""

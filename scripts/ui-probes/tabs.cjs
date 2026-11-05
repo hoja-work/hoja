@@ -2,7 +2,7 @@ const { chromium } = require('../../local-e2e/node_modules/playwright');
 (async () => {
   const b = await chromium.launch({ headless: true });
   const p = await b.newPage({ viewport: { width: 320, height: 800 } });
-  await p.addInitScript(() => localStorage.setItem('hoja_token', 'cliniar_probe_token_12345'));
+  await p.addInitScript(() => localStorage.setItem('hoja_token', 'hoja_probe_token_12345'));
   await p.goto('http://127.0.0.1:8797/');
   await p.waitForTimeout(1200);
   const r = await p.evaluate(() => {

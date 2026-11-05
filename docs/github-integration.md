@@ -2,7 +2,7 @@
 
 ## Purpose and scope
 
-Plan a future, optional GitHub integration for the self-hosted Hoja/Cliniar
+Plan a future, optional GitHub integration for the self-hosted Hoja/Hoja
 workspace: associate work items with GitHub repositories, issues, and pull
 requests, and show useful linked-code context in the workspace. This document
 is a proposal, not a description of shipped functionality. Repository
@@ -14,15 +14,15 @@ service. Do not infer integration capability from those names.
 
 ## Existing architecture to build on
 
-- The ASGI application in `cliniar_server/app.py` authenticates requests,
+- The ASGI application in `hoja_server/app.py` authenticates requests,
   creates a request context containing `store`, `writer`, `org_id`, and
   `user_id`, then invokes the Ariadne GraphQL schema. Browser sessions and API
   tokens are existing auth mechanisms; there is no OAuth provider flow here.
-- `cliniar_server/resolvers.py` maps GraphQL operations to storage and writer
+- `hoja_server/resolvers.py` maps GraphQL operations to storage and writer
   calls. Its `_ctx` helper is currently the boundary for extracting the
   org-scoped store/writer and authenticated identity.
-- `cliniar_server/store.py` provides org-scoped data access and serializes
-  responses in the Linear-compatible camelCase shape. `cliniar_server/db.py`
+- `hoja_server/store.py` provides org-scoped data access and serializes
+  responses in the Linear-compatible camelCase shape. `hoja_server/db.py`
   defines SQLAlchemy Core tables and ordered schema revisions. `writer.py`
   handles transactional domain writes.
 - The backend is designed for SQLite or PostgreSQL, and the project README
@@ -128,24 +128,24 @@ as authorization.
 ## Existing documentation and evidence
 
 This plan deliberately does not repeat server setup/deployment or the
-Linear-compatible GraphQL domain contract. See [backend overview](../cliniar_server/README.md)
+Linear-compatible GraphQL domain contract. See [backend overview](../hoja_server/README.md)
 for current endpoints, authentication, tenant isolation, storage, and
 architecture, and [deployment guide](DEPLOYMENT.md) for operational setup.
 `AGENTS.md` documents repository change, security, and verification conventions.
 
 Architecture evidence inspected while drafting:
 
-- `cliniar_server/app.py`: `create_app`, `_auth`, GraphQL request context, and
+- `hoja_server/app.py`: `create_app`, `_auth`, GraphQL request context, and
   route registration establish authentication/context boundaries.
-- `cliniar_server/resolvers.py`: `_ctx` and resolver bindings establish the
+- `hoja_server/resolvers.py`: `_ctx` and resolver bindings establish the
   GraphQL-to-store/writer seam and org/user context.
-- `cliniar_server/store.py`: `Store.resolve_token` and module/class contract
+- `hoja_server/store.py`: `Store.resolve_token` and module/class contract
   establish existing token resolution and storage responsibility.
-- `cliniar_server/db.py`: SQLAlchemy Core tables and `CURRENT_SCHEMA_REVISION`
+- `hoja_server/db.py`: SQLAlchemy Core tables and `CURRENT_SCHEMA_REVISION`
   establish migration-backed persistence structure.
-- `cliniar_server/writer.py`: writer module contract and transactional write
+- `hoja_server/writer.py`: writer module contract and transactional write
   paths establish the domain mutation seam.
-- `cliniar_server/README.md`: “What it implements”, “Multi-tenancy”,
+- `hoja_server/README.md`: “What it implements”, “Multi-tenancy”,
   “Storage”, and “Architecture” describe the current backend contract.
 - `docs/DESIGN.md`: documents existing compatibility/schema context; it does
   not prescribe a GitHub service implementation.

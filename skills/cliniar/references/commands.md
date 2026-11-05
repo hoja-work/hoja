@@ -1,1 +1,0 @@
-../../../cliniar/skill_content/commands.md

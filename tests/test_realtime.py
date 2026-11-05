@@ -10,9 +10,9 @@ pytest.importorskip("starlette")
 from sqlalchemy import select
 from starlette.testclient import TestClient
 
-from cliniar_server import sync
-from cliniar_server.app import create_app
-from cliniar_server.db import (
+from hoja_server import sync
+from hoja_server.app import create_app
+from hoja_server.db import (
     api_key,
     inbox_notification,
     make_engine,
@@ -26,7 +26,7 @@ from cliniar_server.db import (
     token_hash,
     user,
 )
-from cliniar_server.store import Store
+from hoja_server.store import Store
 
 ADMIN = "rt-admin-token"
 MEMBER = "rt-member-token"

@@ -15,8 +15,8 @@ pytest.importorskip("starlette")
 
 from starlette.testclient import TestClient
 
-from cliniar_server.app import create_app
-from cliniar_server.db import (
+from hoja_server.app import create_app
+from hoja_server.db import (
     api_key,
     make_engine,
     migrate,
