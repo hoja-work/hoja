@@ -165,3 +165,11 @@ bash scripts/e2e-local-backend.sh
 
 Use a disposable test database. The gated test creates uniquely named
 organizations and removes its rows afterward.
+
+## Upgrading a deployment that used the previous name
+
+An existing installation keeps its database, its `POSTGRES_*` role and its data
+volume; only the image, the Compose file and the `HOJA_*` environment-variable
+prefix change. Follow `DEPLOY-RENAME.md` for the ordered steps (image tag,
+volume pinning, `.env` rewrite, migrate, verification) and the rollback path.
+Do not rename the database or its role in place.

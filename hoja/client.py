@@ -116,18 +116,18 @@ class LinearClient:
         # Handle HTTP-level errors
         if resp.status_code == 401:
             raise AuthError(
-                "Linear rejected the token (HTTP 401)",
-                hint="Generate a new token at https://linear.app/settings/api",
+                "The API rejected the token (HTTP 401)",
+                hint="Mint a new token in your workspace, or check $HOJA_TOKEN",
             )
         if resp.status_code == 429:
             retry = resp.headers.get("Retry-After")
             raise RateLimitError(
-                "Linear API rate limit exceeded",
+                "API rate limit exceeded",
                 retry_after=int(retry) if retry and retry.isdigit() else None,
             )
         if resp.status_code >= 500:
             raise APIError(
-                f"Linear API returned HTTP {resp.status_code}",
+                f"The API returned HTTP {resp.status_code}",
                 hint="This is usually transient — retry in a few seconds",
             )
         if resp.status_code >= 400:

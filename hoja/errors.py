@@ -64,7 +64,7 @@ class ValidationError(HojaError):
 
 
 class APIError(HojaError):
-    """Linear API returned an error."""
+    """The GraphQL API returned an error."""
 
     exit_code = ExitCode.API_ERROR
 
@@ -91,7 +91,7 @@ class NetworkError(HojaError):
 
 
 class RateLimitError(HojaError):
-    """Linear API rate limit exceeded."""
+    """The API rate limit was exceeded."""
 
     exit_code = ExitCode.RATE_LIMITED
 
