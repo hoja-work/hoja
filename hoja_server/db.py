@@ -780,15 +780,33 @@ def display_database_target(target: str | Path) -> str:
     return make_url(value).render_as_string(hide_password=True)
 
 
+def _pool_setting(name: str, default: int, *, minimum: int) -> int:
+    """A bounded integer from the environment, refusing nonsense loudly."""
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer, got {raw!r}.") from exc
+    if value < minimum:
+        raise ValueError(f"{name} must be at least {minimum}, got {value}.")
+    return value
+
+
 def make_engine(target: str | Path) -> Engine:
     url = _as_sqlalchemy_url(target)
     backend = make_url(url).get_backend_name()
     kwargs = {"future": True}
     if backend == "postgresql":
         kwargs["pool_pre_ping"] = True
-        kwargs["pool_size"] = 40
-        kwargs["max_overflow"] = 20
-        kwargs["pool_timeout"] = 60
+        # Pool sizing is a deployment decision, not a constant: instances are
+        # per tenant and they all point at one server, so N * (size + overflow)
+        # must stay under the server's max_connections with room for psql and
+        # migrations. The old 40 + 20 let two instances alone exceed 100.
+        kwargs["pool_size"] = _pool_setting("HOJA_DB_POOL_SIZE", 5, minimum=1)
+        kwargs["max_overflow"] = _pool_setting("HOJA_DB_MAX_OVERFLOW", 5, minimum=0)
+        kwargs["pool_timeout"] = _pool_setting("HOJA_DB_POOL_TIMEOUT", 30, minimum=1)
     eng = create_engine(url, **kwargs)
 
     if backend == "sqlite":
