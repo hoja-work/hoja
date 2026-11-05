@@ -199,6 +199,27 @@ def _scope_teams(conn, stmt, org_id, viewer_id, team_id_col, *, nullable=False):
         return stmt
     return stmt.where(or_(team_id_col.is_(None), clause) if nullable else clause)
 
+def _scope_projects(conn, stmt, org_id, viewer_id):
+    """Hide projects whose every team link is invisible to the viewer.
+
+    A project with no team links keeps the historical behaviour and stays org-wide:
+    it has no team to be private about. A project linked only to teams the viewer
+    cannot see disappears, mirroring Linear's rule that a project becomes private
+    once its last public team is removed.
+    """
+    if viewer_id is None:
+        return stmt
+    clause = visible_team_clause(conn, org_id, viewer_id, team.c.id)
+    if clause is None:
+        return stmt
+    visible_ids = (
+        select(project_team.c.project_id)
+        .select_from(project_team.join(team, team.c.id == project_team.c.team_id))
+        .where(clause)
+    )
+    any_linked = select(project_team.c.project_id)
+    return stmt.where(or_(~project.c.id.in_(any_linked), project.c.id.in_(visible_ids)))
+
 
 class Store:
     def __init__(self, engine: Engine) -> None:
@@ -1608,14 +1629,17 @@ class Store:
                     out[row["id"]] = self.ser_issue(row)
         return out
 
-    def projects_by_ids(self, org_id: str, project_ids: list[str]) -> dict[str, dict]:
+    def projects_by_ids(self, org_id: str, project_ids: list[str],
+                        viewer_id: str | None = None) -> dict[str, dict]:
         out: dict[str, dict] = {}
         with self.engine.connect() as conn:
             for start in range(0, len(project_ids), 500):
                 chunk = project_ids[start:start + 500]
-                for row in _conn_rows(conn, select(project).where(and_(
-                        project.c.organization_id == org_id, project.c.id.in_(chunk),
-                        project.c.archived_at.is_(None)))):
+                stmt = select(project).where(and_(
+                    project.c.organization_id == org_id, project.c.id.in_(chunk),
+                    project.c.archived_at.is_(None)))
+                stmt = _scope_projects(conn, stmt, org_id, viewer_id)
+                for row in _conn_rows(conn, stmt):
                     out[row["id"]] = self.ser_project(row)
         return out
 
@@ -1708,11 +1732,13 @@ class Store:
             return conn.execute(stmt).first() is not None
 
     def projects(self, org_id: str, flt: dict | None = None,
-                 after: tuple[str, str] | None = None, limit: int | None = None) -> list[dict]:
+                 after: tuple[str, str] | None = None, limit: int | None = None,
+                 viewer_id: str | None = None) -> list[dict]:
         with self.engine.connect() as conn:
             stmt = select(project).where(and_(
                 project.c.organization_id == org_id, project.c.archived_at.is_(None)))
             stmt = _apply_project_filter(stmt, flt, conn, org_id)
+            stmt = _scope_projects(conn, stmt, org_id, viewer_id)
             if after:
                 stmt = stmt.where(project.c.created_at >= after[0]).where((project.c.created_at > after[0]) |
                                   ((project.c.created_at == after[0]) & (project.c.id > after[1])))
@@ -1728,11 +1754,13 @@ class Store:
             stmt = _scope_teams(conn, stmt, org_id, viewer_id, cycle.c.team_id)
             return self.ser_cycle(_one(conn, stmt))
 
-    def project_by_id(self, org_id: str, pid: str) -> dict | None:
+    def project_by_id(self, org_id: str, pid: str, viewer_id: str | None = None) -> dict | None:
         with self.engine.connect() as conn:
-            return self.ser_project(_one(conn, select(project).where(and_(
+            stmt = select(project).where(and_(
                 project.c.organization_id == org_id, project.c.id == pid,
-                project.c.archived_at.is_(None)))))
+                project.c.archived_at.is_(None)))
+            stmt = _scope_projects(conn, stmt, org_id, viewer_id)
+            return self.ser_project(_one(conn, stmt))
 
     def initiatives(self, org_id: str, after: tuple[str, str] | None = None, status: str | None = None, limit: int = 51) -> list[dict]:
         stmt = select(initiative).where(and_(initiative.c.organization_id == org_id, initiative.c.archived_at.is_(None)))

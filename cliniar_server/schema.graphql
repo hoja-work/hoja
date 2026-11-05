@@ -465,6 +465,6 @@ input CommentUpdateInput { body: String }
 input IssueLabelUpdateInput { name: String color: String description: String }
 input IssueLabelCreateInput { name: String! teamId: String color: String description: String }
 input ProjectCreateInput { name: String! description: String teamIds: [String!] leadId: String state: String color: String icon: String startDate: TimelessDate targetDate: TimelessDate }
-input ProjectUpdateInput { name: String description: String leadId: String state: String color: String icon: String startDate: TimelessDate targetDate: TimelessDate }
+input ProjectUpdateInput { name: String description: String leadId: String state: String color: String icon: String startDate: TimelessDate targetDate: TimelessDate teamIds: [String!] }
 input ProjectUpdateCreateInput { projectId: String! body: String! status: String }
 input AttachmentCreateInput { issueId: String! url: String! title: String! subtitle: String }
