@@ -58,6 +58,11 @@
 }
 
 /* The one provider button — the entire first screen's decision. */
+.signin-providers {
+  display: grid;
+  gap: 12px;
+}
+
 .signin-provider {
   display: flex;
   align-items: center;
@@ -84,17 +89,28 @@
   flex: none;
 }
 
-.signin-alt {
-  margin: 44px 0 0;
-  color: var(--muted);
-  font-size: 12.5px;
-  line-height: 1.65;
+.signin-provider.is-pending {
+  opacity: 0.62;
+  cursor: not-allowed;
+  border-style: dashed;
 }
 
-.signin-alt a {
-  color: var(--text);
-  text-decoration: underline;
-  text-underline-offset: 2px;
+.signin-provider.is-pending:hover {
+  border-color: var(--line);
+  background: var(--panel);
+}
+
+.signin-pending {
+  margin-left: 2px;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
 /* Second screen: the workspace address. */

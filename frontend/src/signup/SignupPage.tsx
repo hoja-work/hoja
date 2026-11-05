@@ -170,12 +170,12 @@ export function SignupPage() {
   const signedIn = Boolean(session?.googleVerified);
   const heading = queued
     ? (queued.alreadyQueued ? 'You already asked for this address' : 'Request received')
-    : signedIn ? 'Name your workspace' : 'Sign up or sign in';
+    : signedIn ? 'Name your workspace' : 'Sign up with your identity provider';
   const sub = queued
     ? 'Your request is queued. Nothing else is needed from you right now.'
     : signedIn
       ? 'Signed in with Google. Your team will reach this workspace at ' + preview + '.hoja.work.'
-      : 'One Google account, one workspace. We check that a person is asking before a workspace is queued.';
+      : "You'll use this provider to sign in to your workspace. We check that a person is asking before a workspace is queued.";
 
   return (
     <main className="signin-page">
@@ -228,10 +228,32 @@ export function SignupPage() {
                     are and Cloudflare Turnstile to check that a person is asking — your Google
                     password is never shared with us.
                   </p>
-                  <a className="signin-provider" href={config.signInUrl ?? undefined}>
-                    <GoogleMark/>
-                    <span>Sign up with Google</span>
-                  </a>
+                  <div className="signin-providers">
+                    <a className="signin-provider" href={config.signInUrl ?? undefined}>
+                      <GoogleMark/>
+                      <span>Sign up with Google</span>
+                    </a>
+                    <button type="button" className="signin-provider is-pending" disabled aria-disabled="true">
+                      <MicrosoftMark/>
+                      <span>Sign up with Microsoft</span>
+                      <em className="signin-pending">Pending</em>
+                    </button>
+                    <button type="button" className="signin-provider is-pending" disabled aria-disabled="true">
+                      <GitHubMark/>
+                      <span>Sign up with GitHub</span>
+                      <em className="signin-pending">Pending</em>
+                    </button>
+                    <button type="button" className="signin-provider is-pending" disabled aria-disabled="true">
+                      <AppleMark/>
+                      <span>Sign up with Apple</span>
+                      <em className="signin-pending">Pending</em>
+                    </button>
+                    <button type="button" className="signin-provider is-pending" disabled aria-disabled="true">
+                      <OidcMark/>
+                      <span>Sign up with OIDC</span>
+                      <em className="signin-pending">Pending</em>
+                    </button>
+                  </div>
                 </>
               )
               : (
@@ -301,11 +323,6 @@ export function SignupPage() {
             <p>Creating it is an operator step, so nothing else is needed from you right now.</p>
           </div>
         )}
-
-        <p className="signin-alt">
-          Prefer to run it yourself?{' '}
-          <a href="https://hoja.work/docs/self-host">Self-host Hoja</a>
-        </p>
       </div>
     </main>
   );
@@ -318,6 +335,41 @@ function GoogleMark() {
       <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.81.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"/>
       <path fill="#FBBC05" d="M3.97 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33z"/>
       <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/>
+    </svg>
+  );
+}
+
+function MicrosoftMark() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 17 17" aria-hidden="true" focusable="false">
+      <rect x="1" y="1" width="7" height="7" fill="#f25022"/>
+      <rect x="9" y="1" width="7" height="7" fill="#7fba00"/>
+      <rect x="1" y="9" width="7" height="7" fill="#00a4ef"/>
+      <rect x="9" y="9" width="7" height="7" fill="#ffb900"/>
+    </svg>
+  );
+}
+
+function GitHubMark() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
+    </svg>
+  );
+}
+
+function AppleMark() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path fill="currentColor" d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/>
+    </svg>
+  );
+}
+
+function OidcMark() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path fill="currentColor" d="M14 6a5 5 0 1 0-4.9 6.5L11 14v2h2v2h2v2h4v-3.2l-4.1-4.1A5 5 0 0 0 14 6zm-6 4a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"/>
     </svg>
   );
 }
