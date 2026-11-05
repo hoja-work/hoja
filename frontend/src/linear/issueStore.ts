@@ -1,7 +1,118 @@
-import {useEffect, useState} from 'react';
+import {useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore} from 'react';
 import type {RefObject} from 'react';
+import {gql} from '../main';
+import type {Issue} from '../main';
+import {getSync} from '../sync';
 
-/* useScrollWindow: the visible slice of a long list inside a scroll container. */
+/* Helpers the issue list/board/views build on top of the local-first store (../sync).
+ *
+ * - runBounded: concurrent mutations with a cap, collecting per-item failures.
+ * - optimistic bulk update/archive/delete: every overlay is applied before the first
+ *   request leaves, requests run 6 at a time, failures roll back only their own rows.
+ * - hidden ids: archive/delete use the store's hide() overlay; the local hidden set is only
+ *   a fallback when no store is running.
+ * - useScrollWindow: the visible slice of a long list inside a scroll container.
+ */
+
+export const BULK_CONCURRENCY = 6;
+
+export async function runBounded<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<{item: T; error: Error}[]> {
+  const failures: {item: T; error: Error}[] = [];
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const item = items[next++];
+      try { await fn(item); } catch (e) { failures.push({item, error: e instanceof Error ? e : new Error(String(e))}); }
+    }
+  };
+  await Promise.all(Array.from({length: Math.min(limit, items.length)}, worker));
+  return failures;
+}
+
+/* ---------------- locally hidden (archived/deleted, not yet confirmed by a delta) ---------------- */
+
+let hidden: ReadonlySet<string> = new Set();
+const hiddenListeners = new Set<() => void>();
+function setHidden(ids: string[], on: boolean) {
+  const next = new Set(hidden);
+  for (const id of ids) { if (on) next.add(id); else next.delete(id); }
+  hidden = next;
+  for (const cb of hiddenListeners) cb();
+}
+const subscribeHidden = (cb: () => void) => { hiddenListeners.add(cb); return () => { hiddenListeners.delete(cb); }; };
+/** Ids removed optimistically; filter them out of anything derived from useIssues(). */
+export function useHiddenIssueIds(): ReadonlySet<string> {
+  return useSyncExternalStore(subscribeHidden, () => hidden);
+}
+
+/* ---------------- optimistic bulk mutations ---------------- */
+
+const UPDATE = `mutation($id:String!,$input:IssueUpdateInput!){issueUpdate(id:$id,input:$input){success}}`;
+
+function summarize(failures: {error: Error}[], total: number, verb: string): string {
+  if (!failures.length) return '';
+  const first = failures[0].error.message || 'Request failed';
+  return total === 1 ? first : `${failures.length} of ${total} issues could not be ${verb}: ${first}`;
+}
+
+/** Overlay every update at once, then send them BULK_CONCURRENCY at a time. Returns failed ids + message. */
+export async function bulkUpdate(ids: string[], inputFor: (id: string) => Record<string, unknown> | null): Promise<{failed: string[]; error: string}> {
+  const sync = getSync();
+  const work: {id: string; input: Record<string, unknown>; settle?: (ok: boolean) => void}[] = [];
+  for (const id of ids) {
+    const input = inputFor(id);
+    if (!input) continue;
+    work.push({id, input, settle: sync?.patch(id, sync.patchFromInput(input))});
+  }
+  const failures = await runBounded(work, BULK_CONCURRENCY, async w => {
+    try {
+      const d = await gql(UPDATE, {id: w.id, input: w.input});
+      if (!d.issueUpdate?.success) throw new Error('Update was rejected');
+    } catch (e) { w.settle?.(false); throw e; }
+    w.settle?.(true);
+  });
+  return {failed: failures.map(f => f.item.id), error: summarize(failures, work.length, 'updated')};
+}
+
+/** Archive or delete: hide rows immediately, unhide failures, drop the rest once the delta removed them. */
+export async function bulkRemove(ids: string[], kind: 'archive' | 'delete'): Promise<{failed: string[]; error: string}> {
+  const mutation = kind === 'archive'
+    ? `mutation($id:String!){issueArchive(id:$id){success}}`
+    : `mutation($id:String!){issueDelete(id:$id){success}}`;
+  const sync = getSync();
+  const settle = sync?.hide(ids);
+  if (!settle) setHidden(ids, true);
+  const failures = await runBounded(ids, BULK_CONCURRENCY, async id => {
+    const d = await gql(mutation, {id});
+    const payload = kind === 'archive' ? d.issueArchive : d.issueDelete;
+    if (!payload?.success) throw new Error(kind === 'archive' ? 'Archive was rejected' : 'Delete was rejected');
+  });
+  const failed = failures.map(f => f.item);
+  const failedSet = new Set(failed);
+  const done = ids.filter(id => !failedSet.has(id));
+  if (settle) {
+    if (failed.length) settle(false, failed);
+    if (done.length) settle(true, done);
+  } else if (failed.length) {
+    setHidden(failed, false); // without a store nothing brings removed rows back; keep the rest hidden
+  }
+  return {failed, error: summarize(failures, ids.length, kind === 'archive' ? 'archived' : 'deleted')};
+}
+
+/** Add one label to each issue, keeping each issue's own labels. */
+export function addLabelInput(issue: Pick<Issue, 'labels'> | undefined, labelId: string): Record<string, unknown> | null {
+  const own = (issue?.labels?.nodes || []).map(l => l.id);
+  return own.includes(labelId) ? null : {labelIds: [...own, labelId]};
+}
+
+/* ---------------- stable callbacks ---------------- */
+
+/** A callback identity that never changes but always calls the latest function (keeps memoized rows memoized). */
+export function useStableCallback<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {
+  const ref = useRef(fn);
+  useLayoutEffect(() => { ref.current = fn; });
+  return useCallback((...args: A) => ref.current(...args), []);
+}
 
 /* ---------------- windowing ---------------- */
 
