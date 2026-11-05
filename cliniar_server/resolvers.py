@@ -18,6 +18,8 @@ from ariadne import (
     ScalarType,
     make_executable_schema,
 )
+from cliniar_server.deployment import single_org_mode
+
 query = QueryType()
 mutation = MutationType()
 Initiative = ObjectType("Initiative")
@@ -484,8 +486,8 @@ def m_team_cycle_cadence_enable(_, info, teamId, weekday):
 
 @query.field("cycle")
 def r_cycle(_, info, id):
-    store, _w, org, _uid = _ctx(info)
-    return store.cycle_by_id(org, id)
+    store, _w, org, uid = _ctx(info)
+    return store.cycle_by_id(org, id, viewer_id=uid)
 
 
 @query.field("issueLabels")
@@ -534,6 +536,23 @@ def t_members(obj, info, first=100):
     store, _w, org, uid = _ctx(info)
     first = _page_size(first, 100)
     return _conn(store.team_members(org, obj["id"], viewer_id=uid)[:first])
+
+
+@Team.field("parent")
+def t_parent(obj, info):
+    store, _w, org, uid = _ctx(info)
+    parent_id = obj.get("parentTeamId")
+    if not parent_id:
+        return None
+    row = store.team_by_id_or_key(org, parent_id, viewer_id=uid)
+    return store.ser_team(row) if row else None
+
+
+@Team.field("children")
+def t_children(obj, info, first=100):
+    store, _w, org, uid = _ctx(info)
+    first = _page_size(first, 100)
+    return _conn(store.team_children(org, obj["id"], viewer_id=uid)[:first])
 
 
 @Team.field("cycles")
@@ -799,6 +818,10 @@ def c_user(obj, info):
 # ----------------------------------------------------------------- Mutations
 @mutation.field("workspaceCreate")
 def m_workspace_create(_, info, input):
+    if single_org_mode():
+        raise GraphQLError(
+            "Creating a workspace is unavailable: this instance runs in single-organization mode.",
+            extensions={"code": "SINGLE_ORG_MODE", "field": "input"})
     store, writer, org, uid = _ctx(info)
     identity_id = info.context.get("identity_id")
     if not identity_id:
@@ -894,6 +917,10 @@ def m_notification_preference_set(_, info, kind, enabled):
 
 @mutation.field("workspaceSwitch")
 def m_workspace_switch(_, info, organizationId):
+    if single_org_mode():
+        raise GraphQLError(
+            "Switching workspace is unavailable: this instance runs in single-organization mode.",
+            extensions={"code": "SINGLE_ORG_MODE", "field": "organizationId"})
     store, _w, org, uid = _ctx(info)
     if not info.context.get("browser_session"):
         return {"success": False, "organization": None}
@@ -990,7 +1017,7 @@ def m_member_invite(_, info, input):
     return {"success": True, "user": store.ser_user(user_row, uid), "apiKey": api_key}
 
 
-def _set_team_membership(info, team_id, user_id, *, add: bool):
+def _set_team_membership(info, team_id, user_id, *, add: bool, role: str = "member"):
     store, _w, org, uid = _ctx(info)
     actor = store.get_user(org, uid)
     if not actor or not actor.get("admin"):
@@ -1000,13 +1027,13 @@ def _set_team_membership(info, team_id, user_id, *, add: bool):
     target = store.get_user(org, user_id)
     if not target:
         raise GraphQLError("User not found", extensions={"code": "BAD_USER_INPUT", "field": "userId"})
-    store.set_team_membership(org, team_id, user_id, add=add)
+    store.set_team_membership(org, team_id, user_id, add=add, role=role)
     return {"success": True, "user": store.ser_user(store.get_user(org, user_id), uid), "apiKey": None}
 
 
 @mutation.field("teamMemberAdd")
-def m_team_member_add(_, info, teamId, userId):
-    return _set_team_membership(info, teamId, userId, add=True)
+def m_team_member_add(_, info, teamId, userId, role="member"):
+    return _set_team_membership(info, teamId, userId, add=True, role=role)
 
 
 @mutation.field("teamMemberRemove")
