@@ -1407,6 +1407,16 @@ class Store:
             stmt = _scope_teams(conn, stmt, org_id, viewer_id, issue.c.team_id)
             return self.ser_issue(_one(conn, stmt))
 
+    def issue_children(self, org_id: str, issue_id: str, viewer_id: str | None = None) -> list[dict]:
+        with self.engine.connect() as conn:
+            stmt = select(issue).where(and_(
+                issue.c.organization_id == org_id,
+                issue.c.parent_id == issue_id,
+                issue.c.archived_at.is_(None),
+            )).order_by(issue.c.number)
+            stmt = _scope_teams(conn, stmt, org_id, viewer_id, issue.c.team_id)
+            return [self.ser_issue(row) for row in _conn_rows(conn, stmt)]
+
     def inbox_notifications(self, org_id: str, user_id: str, after=None, limit=51,
                             unread_only=False, archived=False) -> list[dict]:
         with self.engine.connect() as conn:
