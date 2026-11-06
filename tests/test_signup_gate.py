@@ -976,6 +976,40 @@ def test_signup_status_turns_active_into_the_workspace_url(harness):
     assert harness.client.get("/api/signup/status?slug=acme").headers["cache-control"] == "no-store"
 
 
+def test_signup_state_returns_the_signed_in_users_active_workspace(harness):
+    harness.sign_in(email="founder@example.test")
+    assert harness.signup("acme", token="token-one").status_code == 201
+    body = harness.client.get("/api/signup").json()
+    assert body["workspace"]["slug"] == "acme"
+    assert body["workspace"]["status"] == "eligible"
+    assert body["workspace"]["workspaceUrl"] is None
+
+    with harness.engine.begin() as conn:
+        conn.execute(
+            update(signup_eligibility)
+            .where(signup_eligibility.c.slug == "acme")
+            .values(status="active")
+        )
+    body = harness.client.get("/api/signup").json()
+    assert body["workspace"] == {
+        "slug": "acme",
+        "status": "active",
+        "workspaceUrl": "https://acme.hoja.work",
+        "signInUrl": "https://acme.hoja.work/auth/google/start?return_to=%2F",
+        "message": "Your workspace is ready.",
+    }
+    assert harness.client.get("/api/signup").headers["cache-control"] == "no-store"
+
+
+def test_signup_state_never_exposes_another_identitys_workspace(harness):
+    harness.sign_in(subject="sub-1", email="one@example.test")
+    assert harness.signup("acme", token="token-one").status_code == 201
+    harness.sign_in(subject="sub-2", email="two@example.test")
+    body = harness.client.get("/api/signup").json()
+    assert body["googleVerified"] is True
+    assert "workspace" not in body
+
+
 def test_signup_state_endpoint_reports_the_state_machine(harness):
     assert harness.client.get("/api/signup").json()["state"] == "anonymous"
     harness.sign_in(email="person@example.test")

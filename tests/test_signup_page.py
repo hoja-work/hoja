@@ -398,6 +398,9 @@ def test_the_page_is_accessible_by_construction():
     assert "aria-describedby" in page
     # The submit button is disabled in flight and never hidden.
     assert "disabled={submitting}" in page
+    # A returning, already-provisioned identity is redirected before the form.
+    assert "body.workspace" in page
+    assert "window.location.replace" in page
     # The three modes are distinguished.
     assert "mode === 'closed'" in page
     assert "Sign-ups are invite-only" in page
