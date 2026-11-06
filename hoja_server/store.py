@@ -1407,13 +1407,25 @@ class Store:
             stmt = _scope_teams(conn, stmt, org_id, viewer_id, issue.c.team_id)
             return self.ser_issue(_one(conn, stmt))
 
-    def issue_children(self, org_id: str, issue_id: str, viewer_id: str | None = None) -> list[dict]:
+    def issue_children(
+        self, org_id: str, issue_id: str, viewer_id: str | None = None,
+        after: tuple[str, str] | None = None, limit: int | None = None,
+    ) -> list[dict]:
         with self.engine.connect() as conn:
             stmt = select(issue).where(and_(
                 issue.c.organization_id == org_id,
                 issue.c.parent_id == issue_id,
                 issue.c.archived_at.is_(None),
-            )).order_by(issue.c.number)
+            ))
+            if after:
+                created_at, cursor_id = after
+                stmt = stmt.where(or_(
+                    issue.c.created_at > created_at,
+                    and_(issue.c.created_at == created_at, issue.c.id > cursor_id),
+                ))
+            stmt = stmt.order_by(issue.c.created_at, issue.c.id)
+            if limit is not None:
+                stmt = stmt.limit(limit)
             stmt = _scope_teams(conn, stmt, org_id, viewer_id, issue.c.team_id)
             return [self.ser_issue(row) for row in _conn_rows(conn, stmt)]
 

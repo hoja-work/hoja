@@ -802,6 +802,13 @@ class Writer:
                 self._require_team_visible(conn, org_id, actor_id, issue_row["team_id"])
                 if inp.get("teamId") is not None:
                     raise InvalidReferenceError("teamId")
+            if inp.get("parentId"):
+                # PostgreSQL: serialize reparenting per team so two transactions cannot
+                # independently validate opposite edges and commit a cycle. SQLite ignores
+                # FOR UPDATE and serializes writes at the database level instead.
+                conn.execute(select(team.c.id).where(and_(
+                    team.c.organization_id == org_id, team.c.id == issue_row["team_id"],
+                )).with_for_update()).scalar_one()
             parent_id = _validate_issue_references(
                 conn, org_id, issue_row["team_id"], inp, issue_id=iid
             )

@@ -136,3 +136,34 @@ def test_graphql_rejects_self_parent_cycles_and_cross_team_parents(world) -> Non
         })
         assert result["data"]["issueCreate"] is None
         assert result["errors"][0]["extensions"] == {"code": "BAD_USER_INPUT", "field": "parentId"}
+
+
+def test_graphql_children_cursor_returns_every_page(world) -> None:
+    client, token = world
+    root = _create(client, token, "Paginated parent")
+    children = [_create(client, token, f"Step {number}", parentId=root["id"]) for number in range(3)]
+    query = """
+    query($id: String!, $after: String) {
+      issue(id: $id) {
+        children(first: 1, after: $after) {
+          nodes { id identifier }
+          pageInfo { hasNextPage hasPreviousPage startCursor endCursor }
+        }
+      }
+    }
+    """
+    seen, after = [], None
+    for page_number in range(3):
+        result = _gql(client, token, query, {"id": root["identifier"], "after": after})
+        assert "errors" not in result, result
+        page = result["data"]["issue"]["children"]
+        assert len(page["nodes"]) == 1
+        seen.append(page["nodes"][0]["id"])
+        assert page["pageInfo"]["hasPreviousPage"] is (page_number > 0)
+        assert page["pageInfo"]["hasNextPage"] is (page_number < 2)
+        after = page["pageInfo"]["endCursor"]
+    assert set(seen) == {child["id"] for child in children}
+    assert len(seen) == len(set(seen))
+
+    invalid = _gql(client, token, query, {"id": root["id"], "after": "not-a-cursor"})
+    assert invalid["errors"][0]["extensions"] == {"code": "BAD_USER_INPUT", "field": "after"}
