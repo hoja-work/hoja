@@ -51,6 +51,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 
 from starlette.websockets import WebSocketDisconnect
+from hoja_server import tenant_context
 
 from hoja_server import sync
 
@@ -234,14 +235,18 @@ class RealtimeHub:
 
     async def start(self) -> None:
         try:
-            self.cursor = await asyncio.to_thread(self.store.max_change_seq)
+            with tenant_context.system():  # the global head, before any tenant
+                self.cursor = await asyncio.to_thread(self.store.max_change_seq)
         except Exception:
             log.warning("realtime feed starting without change_event (schema not migrated?)")
-        self._tasks.append(asyncio.create_task(self._poll_loop()))
-        self._tasks.append(asyncio.create_task(self._revalidate_loop()))
-        self._tasks.append(asyncio.create_task(self._evict_loop()))
+        # The hub serves every organization: its loops are system context, and
+        # frames are still filtered per viewer before they are sent.
+        sys_task = lambda coro: asyncio.create_task(tenant_context.as_system(coro))
+        self._tasks.append(sys_task(self._poll_loop()))
+        self._tasks.append(sys_task(self._revalidate_loop()))
+        self._tasks.append(sys_task(self._evict_loop()))
         if self.dialect == "postgresql":
-            self._tasks.append(asyncio.create_task(self._listen_loop()))
+            self._tasks.append(sys_task(self._listen_loop()))
 
     async def stop(self) -> None:
         for task in self._tasks:
@@ -399,7 +404,7 @@ class RealtimeHub:
                               "entityId": entity_id, "action": action, "teamId": team_id,
                               "recipientId": rest[0] if rest else None})
         if self._flush_task is None or self._flush_task.done():
-            self._flush_task = asyncio.create_task(self._flush_notifies())
+            self._flush_task = asyncio.create_task(tenant_context.as_system(self._flush_notifies()))
 
     async def _flush_notifies(self) -> None:
         await asyncio.sleep(NOTIFY_COALESCE)

@@ -21,7 +21,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from ariadne import format_error, graphql, graphql_sync
 from graphql import (
@@ -76,7 +76,7 @@ from hoja_server.meetings import MeetingService
 from hoja_server.meetings_api import MeetingHub, meeting_routes
 from hoja_server.resolvers import build_schema
 from hoja_server.secrets_box import SecretBoxError
-from hoja_server import google_oidc
+from hoja_server import google_login, identity_transfer, google_oidc
 from hoja_server.signup_config import (
     TURNSTILE_SCRIPT_URL,
     SignupConfigError,
@@ -89,6 +89,7 @@ from hoja_server.signup_gate import (
 )
 from hoja_server.signup_store import SignupStore
 from hoja_server.store import Store
+from hoja_server import tenant_context
 from hoja_server import realtime, sync
 from hoja_server.writer import Writer
 
@@ -476,6 +477,18 @@ def create_app(
         return None, None, None, False
 
     def _auth(request: Request):
+        """Resolve the caller, then scope the rest of this request to its organization.
+
+        Credential lookups run before any tenant is known, so they are a system
+        operation; everything after a successful resolution is tenant-scoped.
+        """
+        with tenant_context.system():
+            result = _resolve_auth(request)
+        if result[0]:
+            tenant_context.bind(result[1])
+        return result
+
+    def _resolve_auth(request: Request):
         raw = request.headers.get("authorization", "") or request.headers.get("Authorization", "")
         token = raw[7:].strip() if raw.lower().startswith("bearer ") else raw.strip()
         if raw and token:
@@ -526,6 +539,8 @@ def create_app(
         hit = sync_auth_cache.get(key)
         if hit is not None and now - hit[0] < _SYNC_AUTH_TTL:
             request.state.api_key_access = hit[2]
+            # a cache hit skips _auth, so it must scope the request itself
+            tenant_context.bind(hit[1][1])
             return hit[1]
         result = _auth(request)
         if result[0]:
@@ -745,6 +760,8 @@ def create_app(
             *([(b"authorization", token_header.encode())] if token_header else []),
         ]
         uid, org, cred = await run_in_threadpool(_socket_identity, websocket)
+        if uid:  # resolved in a worker thread: its context copy is gone, bind here
+            tenant_context.bind(org)
         await websocket.accept(subprotocol=subprotocol)
         if not uid:
             await websocket.close(code=4401)
@@ -875,6 +892,8 @@ def create_app(
 
     async def graphql_server(request: Request):
         uid, org, identity_id, is_browser_session = await run_in_threadpool(_auth, request)
+        if uid:  # resolved in a worker thread: its context copy is gone, bind here
+            tenant_context.bind(org)
         if not uid:
             return JSONResponse(
                 {
@@ -1344,6 +1363,10 @@ def create_app(
             return "/"
         return candidate
 
+    def _tenant_transfer_target(value: str | None) -> str | None:
+        """A return target on one of OUR tenant hosts, normalised, or None."""
+        return identity_transfer.tenant_target(value)
+
     def _signup_host(request: Request) -> str:
         forwarded = (
             request.headers.get("x-forwarded-host")
@@ -1383,6 +1406,14 @@ def create_app(
         )
 
     async def google_sign_in_start(request: Request):
+        host = _signup_host(request).split(":")[0].lower()
+        control_plane = signup_config.control_plane_url
+        if control_plane and host != urlsplit(control_plane).hostname:
+            # A tenant origin has no registered Google redirect of its own, so it
+            # borrows the control plane's and comes back to /auth/google/finish.
+            back = _tenant_transfer_target(f"https://{host}/") or f"https://{host}/"
+            target = f"{control_plane}/auth/google/start?return_to={quote(back, safe='')}"
+            return RedirectResponse(target, status_code=302)
         if not signup_config.configured:
             return JSONResponse(
                 {"error": "Sign-up is not configured on this deployment.",
@@ -1406,7 +1437,8 @@ def create_app(
             nonce=nonce,
             code_verifier=verifier,
             redirect_uri=redirect_uri,
-            return_to=_safe_return_to(request.query_params.get("return_to")),
+            return_to=(_tenant_transfer_target(request.query_params.get("return_to"))
+                       or _safe_return_to(request.query_params.get("return_to"))),
             ttl_seconds=signup_config.flow_ttl_seconds,
         )
         location = google_oidc.authorization_url(
@@ -1499,6 +1531,35 @@ def create_app(
                 {"error": "Google sign-in could not be verified.", "reason": exc.reason},
                 status_code=400,
             )
+        tenant_target = _tenant_transfer_target(flow["return_to"])
+        if tenant_target is not None:
+            # This origin is the control plane for a tenant sign-in. The address
+            # is verified; the tenant decides whether it belongs.
+            master = signup_config.identity_transfer_master
+            if not master:
+                return JSONResponse(
+                    {"error": "Identity handoff is not configured on this deployment.",
+                     "reason": "transfer_unconfigured"},
+                    status_code=503,
+                )
+            target_host = urlsplit(tenant_target).hostname or ""
+            # Sign with the target's own derived key: the master never leaves here.
+            transfer = identity_transfer.issue(
+                key=identity_transfer.tenant_key(master, target_host),
+                audience=target_host,
+                email=email.strip().lower(),
+                subject=claims["sub"],
+                name=claims.get("name"),
+                picture=claims.get("picture"),
+                email_verified=True,
+            )
+            response = RedirectResponse(
+                f"{tenant_target.rstrip('/')}/auth/google/finish?t={quote(transfer, safe='')}",
+                status_code=302,
+            )
+            response.delete_cookie(_OIDC_FLOW_COOKIE, path="/")
+            return response
+
         identity = signup_store.upsert_identity(
             subject=claims["sub"],
             email=email.strip().lower(),
@@ -1522,6 +1583,67 @@ def create_app(
             **_session_cookie_attrs(request),
         )
         response.delete_cookie(_OIDC_FLOW_COOKIE, path="/")
+        return response
+
+    async def google_sign_in_finish(request: Request):
+        """Redeem a handoff token on this tenant origin and sign the person in."""
+        host = _signup_host(request).split(":")[0].lower()
+        transfer_key = signup_config.identity_transfer_key
+        if not transfer_key:
+            return JSONResponse(
+                {"error": "Sign-in is not configured on this workspace.",
+                 "reason": "transfer_unconfigured"},
+                status_code=503,
+            )
+        try:
+            claims = identity_transfer.redeem(
+                key=transfer_key,
+                token=request.query_params.get("t"),
+                audience=host,
+            )
+        except identity_transfer.TransferError as exc:
+            return JSONResponse(
+                {"error": "This sign-in link is invalid or has expired.",
+                 "reason": exc.reason},
+                status_code=400,
+            )
+        try:
+            with engine.begin() as conn:
+                resolved = google_login.resolve_verified_email(
+                    conn,
+                    email=claims["email"],
+                    subject=claims["sub"],
+                    name=claims.get("name"),
+                    picture=claims.get("picture"),
+                    workspace_slug=host.split(".")[0],
+                )
+        except Exception:
+            logger.exception("google sign-in could not be resolved")
+            return JSONResponse(
+                {"error": "Sign-in could not be completed.", "reason": "resolve_failed"},
+                status_code=500,
+            )
+        if resolved["action"] == google_login.ACTION_DENIED:
+            return JSONResponse(
+                {"error": "This Google account is not a member of this workspace.",
+                 "reason": resolved.get("reason", "denied")},
+                status_code=403,
+            )
+        session_token, _details = store.create_session_for_membership(
+            resolved["identity_id"], resolved["user_id"], resolved["organization_id"]
+        )
+        if not session_token:
+            return JSONResponse(
+                {"error": "Sign-in could not be completed.", "reason": "session_failed"},
+                status_code=500,
+            )
+        response = RedirectResponse(_safe_return_to(request.query_params.get("to")), status_code=302)
+        response.set_cookie(
+            "hoja_session",
+            session_token,
+            max_age=14 * 24 * 60 * 60,
+            **_session_cookie_attrs(request),
+        )
         return response
 
     async def signup_endpoint(request: Request):
@@ -1656,6 +1778,8 @@ def create_app(
 
     async def sync_bootstrap(request: Request):
         uid, org, identity_id, is_browser = await run_in_threadpool(_auth_sync, request)
+        if uid:  # resolved in a worker thread: its context copy is gone, bind here
+            tenant_context.bind(org)
         if not uid:
             return JSONResponse({"error": "Authentication required"}, status_code=401)
         try:
@@ -1730,6 +1854,8 @@ def create_app(
 
     async def sync_delta(request: Request):
         uid, org, identity_id, is_browser = await run_in_threadpool(_auth_sync, request)
+        if uid:  # resolved in a worker thread: its context copy is gone, bind here
+            tenant_context.bind(org)
         if not uid:
             return JSONResponse({"error": "Authentication required"}, status_code=401)
         try:
@@ -1903,6 +2029,7 @@ def create_app(
             Route("/auth/me", auth_me, methods=["GET"]),
             Route("/auth/google/start", google_sign_in_start, methods=["GET"]),
             Route("/auth/google/callback", google_sign_in_callback, methods=["GET"]),
+            Route("/auth/google/finish", google_sign_in_finish, methods=["GET"]),
             Route("/auth/google/logout", signup_logout, methods=["POST"]),
             Route("/api/signup/config", signup_public_config, methods=["GET"]),
             Route("/api/signup", signup_endpoint, methods=["GET", "POST"]),
@@ -1935,5 +2062,8 @@ def create_app(
     app.add_middleware(_SecurityHeaders)
     # Compress JSON and static assets; SSE streams are excluded by Starlette.
     app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
+    # Outermost: enumerated pre-tenant paths run in system context; every other
+    # request has no tenant until _auth binds one (fail closed under RLS).
+    app.add_middleware(tenant_context.TenantContextMiddleware)
     app.add_exception_handler(json.JSONDecodeError, _malformed_json_handler)
     return app

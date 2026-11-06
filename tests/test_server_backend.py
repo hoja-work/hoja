@@ -15,6 +15,7 @@ from sqlalchemy import inspect, select
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from tests import rls_mode
 from hoja_server.app import create_app
 from hoja_server.db import (
     CURRENT_SCHEMA_REVISION,
@@ -269,12 +270,10 @@ def test_mcp_oauth_http_authorization_code_pkce_flow(tmp_path, monkeypatch) -> N
     monkeypatch.setenv("HOJA_TRUSTED_PUBLIC_HOST", "mcp.example.test")
     monkeypatch.setenv("HOJA_TRUSTED_PUBLIC_SCHEME", "https")
 
-    path = tmp_path / "oauth-pkce-http.db"
-    engine = make_engine(path)
-    migrate(engine)
+    engine, where = rls_mode.workspace(tmp_path, "oauth-pkce-http")
     seeded = seed_tenant(engine, org_name="OAuth Browser", org_url_key="oauth-browser",
                          user_name="OAuth User", user_email="oauth-browser@example.test", demo_issues=False)
-    app = create_app(db_path=str(path), trusted_proxy_cidrs="127.0.0.1/32",
+    app = create_app(**where, trusted_proxy_cidrs="127.0.0.1/32",
                      trusted_public_host="mcp.example.test", open_mode=False)
     with TestClient(app, base_url="https://mcp.example.test", client=("127.0.0.1", 44321), follow_redirects=False) as client:
         assert client.post("/auth/setup", json={"token": seeded["token"],
@@ -349,11 +348,9 @@ def test_mcp_streamable_http_lifecycle_and_host_validation(tmp_path) -> None:
     from hoja_server import db
     from hoja_server.mcp_oauth import READ_SCOPE, HojaOAuthProvider
 
-    path = tmp_path / "mcp-sdk-lifecycle.db"
-    engine = make_engine(path)
-    migrate(engine)
+    engine, where = rls_mode.workspace(tmp_path, "mcp-sdk-lifecycle")
     tenant = _seed(engine, name="MCP lifecycle", key="mcp-life", email="mcp-life@example.test")
-    app = create_app(db_path=str(path), trusted_proxy_cidrs="127.0.0.1/32", trusted_public_host="mcp.example.test")
+    app = create_app(**where, trusted_proxy_cidrs="127.0.0.1/32", trusted_public_host="mcp.example.test")
     provider = HojaOAuthProvider(engine, Store(engine), True)
     with engine.begin() as conn:
         conn.execute(db.oauth_client.insert().values(client_id="synthetic", client_json='{"client_id":"synthetic","redirect_uris":["https://client.test/cb"],"token_endpoint_auth_method":"none"}', created_at=now_iso()))

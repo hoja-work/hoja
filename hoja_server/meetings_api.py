@@ -26,6 +26,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from hoja_server import tenant_context
 from hoja_server import meeting_policy as P
 from hoja_server.cloudflare_realtime import CloudflareRealtime, SFUError
 from hoja_server.db import meeting, rate_limit_blocked, rate_limit_record
@@ -89,7 +90,7 @@ class MeetingHub:
     # ---------------------------------------------------------------- background work
     def start(self) -> None:
         if self._reminders is None:
-            self._reminders = asyncio.get_running_loop().create_task(self._remind_loop())
+            self._reminders = asyncio.get_running_loop().create_task(tenant_context.as_system(self._remind_loop()))
 
     async def _remind_loop(self) -> None:
         while True:
@@ -107,7 +108,7 @@ class MeetingHub:
             except Exception:
                 log.exception("scheduled meeting task failed")
 
-        task = asyncio.get_running_loop().create_task(run())
+        task = asyncio.get_running_loop().create_task(tenant_context.as_system(run()))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
@@ -222,7 +223,7 @@ class MeetingHub:
             await self.dispatch(meeting_id, events)
 
         with suppress(RuntimeError):
-            self._pending[pid] = asyncio.get_running_loop().create_task(later())
+            self._pending[pid] = asyncio.get_running_loop().create_task(tenant_context.as_system(later()))
 
     async def close_all(self) -> None:
         for task in [*self._pending.values(), *self._tasks, *([self._reminders] if self._reminders else [])]:
@@ -345,13 +346,39 @@ def meeting_routes(engine, service: MeetingService, hub: MeetingHub, *, auth: Ca
     app_url = os.environ.get("HOJA_APP_URL", "").rstrip("/")
 
     # ------------------------------------------------------------------ helpers
+    async def authenticate(conn):
+        """The app's auth runs in a worker thread whose context copy is discarded,
+        so the tenant is bound here, in the request's own context."""
+        uid, org, identity, browser = await run_in_threadpool(auth, conn)
+        tenant_context.bind(org if uid else None)
+        return uid, org, identity, browser
+
+    async def scope_to_meeting(conn, org: str | None) -> None:
+        """A meeting link is shared across workspaces. A member of the meeting's own
+        workspace stays bound to it; anyone else (guest, anonymous visitor, member of
+        another workspace) runs as a system path, so the meeting policy, not a missing
+        row, decides what they may do."""
+        code = conn.path_params.get("code")
+        if code is None:
+            return
+        if org is not None:
+            with tenant_context.system():
+                owner = await run_in_threadpool(service.organization_of, code)
+            if owner is None or owner == org:
+                return
+        tenant_context.enter_system()
+
     async def who(request: Request) -> Principal | None:
-        uid, org, _identity, _browser = await run_in_threadpool(auth, request)
+        uid, org, _identity, _browser = await authenticate(request)
+        await scope_to_meeting(request, org if uid else None)
         if uid:
             return Principal("member", uid, org, getattr(request.state, "api_key_access", None),
                              seat_token=request.headers.get("x-hoja-seat", "").strip() or None)
         token = request.headers.get("x-hoja-guest-token", "").strip()
-        return Principal("guest", guest_token=token) if token else None
+        if not token:
+            return None
+        tenant_context.enter_system()  # a guest belongs to no tenant; the token is the credential
+        return Principal("guest", guest_token=token)
 
     def unauthorized() -> JSONResponse:
         return JSONResponse({"error": "Authentication required."}, status_code=401)
@@ -425,6 +452,7 @@ def meeting_routes(engine, service: MeetingService, hub: MeetingHub, *, auth: Ca
         ip = client_ip(request)
         if (limited := throttled("meeting_code_miss", [f"ip:{ip}"], CODE_MISSES)):
             return limited
+        tenant_context.enter_system()  # public, rate-limited preview: the meeting code is the credential
         try:
             return JSONResponse({"meeting": await run_in_threadpool(service.preview, request.path_params["code"])})
         except NotFound:
@@ -809,6 +837,7 @@ def meeting_routes(engine, service: MeetingService, hub: MeetingHub, *, auth: Ca
         principal: Principal | None = None
         subprotocol = None
         if after("guest"):
+            tenant_context.enter_system()  # a guest belongs to no tenant; the token is the credential
             principal, subprotocol = Principal("guest", guest_token=after("guest")), "guest"
         else:
             if after("bearer"):
@@ -817,8 +846,9 @@ def meeting_routes(engine, service: MeetingService, hub: MeetingHub, *, auth: Ca
                                               (b"authorization", f"Bearer {after('bearer')}".encode())]
             elif after("seat"):
                 subprotocol = "seat"
-            uid, org, _identity, _browser = await run_in_threadpool(auth, websocket)
+            uid, org, _identity, _browser = await authenticate(websocket)
             if uid:
+                await scope_to_meeting(websocket, org)
                 principal = Principal("member", uid, org, getattr(websocket.state, "api_key_access", None),
                                       seat_token=after("seat"))
         if principal is None:
@@ -840,7 +870,7 @@ def meeting_routes(engine, service: MeetingService, hub: MeetingHub, *, auth: Ca
             subprotocol = "bearer"
             websocket.scope["headers"] = [*websocket.scope["headers"],
                                           (b"authorization", f"Bearer {offered[1]}".encode())]
-        uid, org, _identity, _browser = await run_in_threadpool(auth, websocket)
+        uid, org, _identity, _browser = await authenticate(websocket)
         if not uid:
             await websocket.accept(subprotocol=subprotocol)
             await websocket.close(code=4401)

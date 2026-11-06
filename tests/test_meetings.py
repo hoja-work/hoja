@@ -16,6 +16,7 @@ from hoja_server.abac import Policy, deny, permit
 from hoja_server.app import create_app
 from hoja_server.db import make_engine, migrate, seed_tenant
 from hoja_server.store import Store
+from tests import rls_mode
 
 INVITE = "mutation($i: MemberInviteInput!) { memberInvite(input: $i) { success user { id } } }"
 
@@ -78,7 +79,10 @@ class World:
                                  token="host-token", demo_issues=False)
         self.store = Store(self.engine)
         self.sfu = FakeSFU() if sfu == "fake" else sfu
-        self.app = create_app(None if self.pg_url else str(self.db), database_url=self.pg_url, open_mode=False,
+        self.app_url = self.pg_url
+        if self.pg_url and rls_mode.ENABLED:  # the app runs as a restricted role under RLS
+            self.app_url = rls_mode.restrict(self.pg_url, self.schema)
+        self.app = create_app(None if self.pg_url else str(self.db), database_url=self.app_url, open_mode=False,
                               meeting_sfu=self.sfu)
         self.client = TestClient(self.app)
         self.client.__enter__()
@@ -89,6 +93,8 @@ class World:
             self.engine.dispose()
             with self._pg_admin.begin() as conn:
                 conn.exec_driver_sql(f"DROP SCHEMA {self.schema} CASCADE")
+            if self.app_url != self.pg_url:
+                rls_mode.drop_role(POSTGRES_URL, self.app_url)
             self._pg_admin.dispose()
 
     def member(self, email, access="read_write"):

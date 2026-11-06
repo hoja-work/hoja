@@ -20,6 +20,7 @@ pytest.importorskip("sqlalchemy")
 from playwright.sync_api import sync_playwright  # noqa: E402
 
 from hoja_server.db import make_engine, migrate, seed_tenant  # noqa: E402
+from tests import rls_mode  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 TOKEN = "e2e-realtime-token"
@@ -41,12 +42,12 @@ def _database_url(tmp_path: Path) -> str:
     from sqlalchemy import text
     from sqlalchemy.engine import make_url
 
-    admin = make_engine(postgres.replace("/" + make_url(postgres).database, "/postgres"))
+    admin = make_engine(make_url(postgres).set(database="postgres").render_as_string(hide_password=False))
     name = f"hoja_e2e_{uuid.uuid4().hex[:12]}"
     with admin.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
         conn.execute(text(f'CREATE DATABASE "{name}"'))
     admin.dispose()
-    return str(make_url(postgres).set(database=name))
+    return make_url(postgres).set(database=name).render_as_string(hide_password=False)
 
 
 def _drop_postgres(url: str) -> None:
@@ -56,7 +57,7 @@ def _drop_postgres(url: str) -> None:
     from sqlalchemy.engine import make_url
 
     parsed = make_url(url)
-    admin = make_engine(str(parsed.set(database="postgres")))
+    admin = make_engine(parsed.set(database="postgres").render_as_string(hide_password=False))
     with admin.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
         conn.execute(text(f'DROP DATABASE IF EXISTS "{parsed.database}" WITH (FORCE)'))
     admin.dispose()
@@ -77,9 +78,11 @@ def server(tmp_path):
         seeded["org_id"], "Other Actor", "other@example.test", team_ids=[seeded["team_id"]]
     )
     OTHER_TOKENS["token"] = other_token
+    engine.dispose()
+    app_url = rls_mode.restrict(url) if rls_mode.ENABLED and url.startswith("postgresql") else url
     port = _free_port()
     proc = subprocess.Popen(
-        [sys.executable, "-m", "hoja_server.cli", "serve", "--database-url", url,
+        [sys.executable, "-m", "hoja_server.cli", "serve", "--database-url", app_url,
          "--port", str(port), "--host", "127.0.0.1"],
         cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
     )
@@ -97,12 +100,14 @@ def server(tmp_path):
         raise RuntimeError("hoja-serve did not become ready")
     yield base
     proc.terminate()
-    _drop_postgres(url)
     try:
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait(timeout=5)
+    if app_url != url:
+        rls_mode.drop_role(url, app_url)
+    _drop_postgres(url)
 
 
 def _graphql(base: str, token: str, query: str, variables: dict | None = None) -> dict:
