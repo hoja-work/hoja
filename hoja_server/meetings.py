@@ -214,6 +214,15 @@ class MeetingService:
             raise NotFound("Meeting not found.")
         return row
 
+    def organization_of(self, code: str) -> str | None:
+        """The workspace a meeting code belongs to (a system lookup: links cross workspaces)."""
+        try:
+            code = normalize_code(code)
+        except NotFound:
+            return None
+        with self.engine.connect() as conn:
+            return conn.execute(select(meeting.c.organization_id).where(meeting.c.code == code)).scalar()
+
     def _me(self, conn, m, principal: Principal):
         if principal.kind == "member":
             if principal.seat_token:  # a companion device presents the seat it was given

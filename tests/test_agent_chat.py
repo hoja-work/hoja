@@ -16,6 +16,7 @@ from starlette.testclient import TestClient
 
 from hoja_server.app import create_app
 from hoja_server.db import make_engine, migrate, seed_tenant
+from tests import rls_mode
 
 CREATE = (
     "mutation($k: String!, $u: String!) { modelProviderCreate(name: \"Stub\", provider: \"openai\", "
@@ -65,6 +66,13 @@ def _secret_key(monkeypatch):
 
 
 def _setup(tmp_path):
+    if rls_mode.ENABLED:  # PostgreSQL, the app as a restricted role under row-level security
+        owner_url, schema = rls_mode.new_schema_url()
+        engine = make_engine(owner_url)
+        migrate(engine)
+        admin = seed_tenant(engine, org_name="Chat Org", org_url_key="chat-org",
+                            user_email="owner@chat.test", token="owner-token", demo_issues=False)
+        return engine, create_app(None, database_url=rls_mode.restrict(owner_url, schema), open_mode=False), admin
     db_path = tmp_path / "chat.db"
     engine = make_engine(db_path)
     migrate(engine)

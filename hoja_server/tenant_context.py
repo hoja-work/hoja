@@ -21,6 +21,14 @@ Context sources:
 Both live in ContextVars, so they follow a request through awaits and into
 Starlette's thread pool, and never leak across requests (each runs in its own
 task with its own context copy).
+
+A context set inside a worker thread does NOT come back: whoever authenticates
+with ``run_in_threadpool(auth, ...)`` must ``bind`` after it returns.
+
+Gate: ``HOJA_TEST_RLS=1 HOJA_TEST_POSTGRES_URL=... pytest tests/test_meetings.py
+tests/test_meetings_social.py tests/test_agent_chat.py tests/test_agent_durable.py tests/e2e``
+runs those suites with the app as a restricted role under the production
+policies (see tests/rls_mode.py).
 """
 from __future__ import annotations
 
@@ -54,6 +62,15 @@ _SET = "SELECT set_config('hoja.org_id', %s, true), set_config('hoja.system', %s
 def bind(org: str | None) -> None:
     """Scope the rest of the current context (one request) to ``org``."""
     _org.set(org or None)
+
+
+def enter_system() -> None:
+    """Mark the rest of the current context (one request) as a system path.
+
+    For requests whose credential is not a tenant member: a meeting guest token
+    or a public meeting code. The service's own predicates scope those queries.
+    """
+    _system.set(True)
 
 
 def current() -> tuple[str | None, bool]:
