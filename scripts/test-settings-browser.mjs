@@ -233,10 +233,11 @@ await click('.team-card-delete .outline');
 report.interactions.teamDeleteGate = true;
 
 await navigate('members');
-await click('[role=combobox][aria-label="Role for Local User"]');
-assert.match(await evaluate(`document.querySelector('[role=listbox][aria-label="Role for Local User"]').textContent`), /Manage the workspace, members, and teams/);
+await click('[role=combobox][aria-label^="Role for "]');
+assert.match(await evaluate(`document.querySelector('.settings-select-panel[role=listbox]').textContent`), /Manage the workspace, members, and teams/);
+const roleBefore = await evaluate(`document.querySelector('[role=combobox][aria-label^="Role for "] .settings-select-value b').textContent`);
 await key('Escape');
-assert.equal(await evaluate(`document.querySelector('[aria-label="Role for Local User"] .settings-select-value b').textContent`), 'Admin', 'Escape does not change a workspace role.');
+assert.equal(await evaluate(`document.querySelector('[role=combobox][aria-label^="Role for "] .settings-select-value b').textContent`), roleBefore, 'Escape does not change a workspace role.');
 report.interactions.dropdownRoleContext = true;
 
 if (allowMutations) {
