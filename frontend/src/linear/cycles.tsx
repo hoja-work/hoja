@@ -1,5 +1,5 @@
-import React, {useEffect, useMemo, useRef, useState, useSyncExternalStore} from 'react';
-import {Bell, CalendarDays, Check, ChevronDown, ChevronRight, Copy, Download, Link2, ListFilter, Plus, Settings2, SlidersHorizontal, X} from 'lucide-react';
+import React, {useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore} from 'react';
+import {ArrowUpRight, Bell, CalendarDays, Check, ChevronDown, ChevronRight, Copy, Download, Link2, ListFilter, Plus, Settings2, SlidersHorizontal, X} from 'lucide-react';
 import {gql, stateKey} from '../main';
 import type {Cycle, Issue, IssueLabel, IssueState, Project, Team, Viewer} from '../main';
 import {getSync, useEntityVersion, useIssues, useSyncMeta, useSyncStatus} from '../sync';
@@ -7,6 +7,7 @@ import {applyLinFilters, defaultDisplay, emptyFilters, groupLinIssues, orderLinI
 import {Avatar, CycleGlyph, FavStar, IconBtn, LabelChip, LinMenu, LinearStatusIcon, PriorityIcon, Ring, Tip, cx, fmtDate, fmtRange, useDismiss, useFavorite} from './shared';
 import {asPct, cycleStats, deliveryRate, dropoutRate, remainingSteps, scopeCompletion} from './cycleMetrics';
 import type {CycleStats} from './cycleMetrics';
+import {cycleKeyTarget} from './cycleSelection';
 
 /* Linear 1:1 Cycles views. */
 
@@ -263,6 +264,7 @@ export function BurndownChart({cycle, stats, issues, height = 200}: {cycle: Cycl
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [issues, stats, start, end]);
   const last = steps.length ? steps[steps.length - 1][1] : stats.scope;
+  const until = Math.max(start, Math.min(now, end));
   const d = (t: number) => new Date(t).toLocaleDateString(undefined, {month: 'short', day: 'numeric'});
   const hatchId = `hatch-${cycle.id}`;
   return (
@@ -282,9 +284,9 @@ export function BurndownChart({cycle, stats, issues, height = 200}: {cycle: Cycl
       {steps.length > 1
         ? <polyline fill="none" stroke="#8a94a6" strokeWidth="1.8" strokeLinejoin="round"
             points={steps.map(([t, v]) => `${X(t).toFixed(1)},${Y(v).toFixed(1)}`).join(' ')} />
-        : <line x1={X(start)} y1={Y(stats.scope)} x2={X(Math.min(now, end))} y2={Y(stats.scope)} stroke="#8a94a6" strokeWidth="1.8" />}
+        : <line x1={X(start)} y1={Y(stats.scope)} x2={X(until)} y2={Y(stats.scope)} stroke="#8a94a6" strokeWidth="1.8" />}
       <circle cx={X(start)} cy={Y(stats.scope)} r="3.4" fill="#e5b800" />
-      <circle cx={X(Math.min(now, end))} cy={Y(last)} r="3.4" fill="#5e6ad2" />
+      <circle cx={X(until)} cy={Y(last)} r="3.4" fill="#5e6ad2" />
       <text className="axis" x={X(start)} y={H - 6} textAnchor="middle">{d(start)}</text>
       <text className="axis" x={X(end)} y={H - 6} textAnchor="middle">{d(end)}</text>
     </svg>
@@ -312,41 +314,37 @@ function Legend({stats}: {stats: CycleStats}) {
 
 /* ---------------- overview rows ---------------- */
 
-const CycleOverviewRow = React.memo(function CycleOverviewRow({cycle, state, stats, issues, onCycle, showChart}: {
-  cycle: Cycle; state: CycleState; stats: CycleStats; issues: LinIssue[]; onCycle: (c: Cycle) => void; showChart: boolean;
+const CycleOverviewRow = React.memo(function CycleOverviewRow({cycle, state, stats, selected, controls, onSelect, onKeyDown, buttons}: {
+  cycle: Cycle; state: CycleState; stats: CycleStats; selected: boolean; controls: string;
+  onSelect: (c: Cycle) => void; onKeyDown: (e: React.KeyboardEvent, c: Cycle) => void;
+  buttons: {current: Map<string, HTMLButtonElement>};
 }) {
   const name = cycle.name || `Cycle ${cycle.number ?? ''}`;
   const ofScope = asPct(scopeCompletion(stats)) ?? 0;
-  const ofKept = asPct(deliveryRate(stats));
   const dropped = asPct(dropoutRate(stats)) ?? 0;
   const badge = state === 'current' ? 'Current' : state === 'upcoming' ? 'Upcoming' : state === 'completed' ? 'Completed' : 'Planned';
   return (
-    <div className="lin-cycle-row">
+    <div className={cx('lin-cycle-row', selected && 'selected')} role="listitem">
       <div className={cx('lin-cycle-tmark', state === 'current' && 'now')}>
         <span>{fmtDate(cycle.startsAt).replace(' ', '\n')}</span><i />
       </div>
       <div className="lin-cycle-body">
         <div className="top">
-          <button type="button" className="cname" onClick={() => onCycle(cycle)}>
-            <CycleStateIcon state={state} />{name}
+          <button type="button" className="cname" title={name}
+            ref={node => { if (node) buttons.current.set(cycle.id, node); else buttons.current.delete(cycle.id); }}
+            aria-pressed={selected} aria-controls={controls}
+            onClick={() => onSelect(cycle)} onKeyDown={e => onKeyDown(e, cycle)}>
+            <CycleStateIcon state={state} /><span className="lin-cycle-name-text">{name}</span>
+            <ChevronRight className="lin-cycle-select-chevron" size={14} aria-hidden="true" />
           </button>
           <span className="stats">
             <span className={cx('lin-badge', state === 'current' && 'current')}>{badge}</span>
-            <span className="lin-cap"><Ring frac={ofScope / 100} /> <b>{ofScope}%</b> of scope</span>
-            {state === 'completed' && <span><b>{stats.completed}</b> completed</span>}
+            <span className="lin-cap"><Ring frac={ofScope / 100} /> <b>{stats.scope ? `${ofScope}%` : '—'}</b><span className="lin-cycle-stat-label"> of scope</span></span>
             {stats.canceled > 0 && <span><b>{stats.canceled}</b> canceled · {dropped}%</span>}
-            {stats.canceled > 0 && ofKept !== null && <span><b>{ofKept}%</b> of what it kept</span>}
             <span><b>{stats.scope}</b> scope</span>
             <span className="range">{fmtRange(cycle.startsAt, cycle.endsAt)}</span>
-            <button type="button" className="lin-cycle-detail-btn" onClick={() => onCycle(cycle)}>Cycle detail</button>
           </span>
         </div>
-        {showChart && (
-          <div className="lin-cycle-chart">
-            <div className="chart"><BurndownChart cycle={cycle} stats={stats} issues={issues} height={180} /></div>
-            <Legend stats={stats} />
-          </div>
-        )}
       </div>
     </div>
   );
@@ -371,11 +369,41 @@ export function CycleOverviewRows({cycles, issuesByCycle, onCycle, emptyHint}: {
   cycles: Cycle[]; issuesByCycle: Map<string, LinIssue[]>; onCycle: (c: Cycle) => void; emptyHint?: string;
 }) {
   const ordered = useMemo(() => orderCycles(cycles), [cycles]);
-  const current = ordered.find(o => o.state === 'current');
-  // Rows are memoized; keep their callback stable even when the parent passes a fresh closure.
-  const onCycleRef = useRef(onCycle);
-  onCycleRef.current = onCycle;
-  const openCycle = useMemo(() => (c: Cycle) => onCycleRef.current(c), []);
+  const orderedIds = useMemo(() => ordered.map(o => o.cycle.id), [ordered]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = ordered.find(o => o.cycle.id === selectedId)
+    || ordered.find(o => o.state === 'current') || ordered[0];
+  const selectedCycleId = selected?.cycle.id;
+  const previewId = `${useId()}-cycle-preview`;
+  const buttons = useRef(new Map<string, HTMLButtonElement>());
+  const select = useCallback((cycle: Cycle) => setSelectedId(cycle.id), []);
+  useEffect(() => {
+    if (!selectedCycleId) return;
+    const button = buttons.current.get(selectedCycleId);
+    const scroller = button?.closest('.lin-cycles-tl');
+    if (!button || !(scroller instanceof HTMLElement)) return;
+    const reveal = () => {
+      // Modify only horizontal overflow. scrollIntoView would also move the
+      // workspace's vertical scroller when multiple teams have cycle sections.
+      if (scroller.scrollWidth <= scroller.clientWidth) return;
+      const card = button.getBoundingClientRect();
+      const lane = scroller.getBoundingClientRect();
+      if (card.left < lane.left) scroller.scrollLeft -= lane.left - card.left;
+      else if (card.right > lane.right) scroller.scrollLeft += card.right - lane.right;
+    };
+    reveal();
+    const observer = new ResizeObserver(reveal);
+    observer.observe(scroller);
+    return () => observer.disconnect();
+  }, [selectedCycleId]);
+  const navigateSelection = useCallback((e: React.KeyboardEvent, cycle: Cycle) => {
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    const target = cycleKeyTarget(orderedIds, cycle.id, e.key);
+    if (!target) return;
+    e.preventDefault();
+    setSelectedId(target);
+    buttons.current.get(target)?.focus();
+  }, [orderedIds]);
   if (!ordered.length) {
     return (
       <div className="lin-empty">
@@ -386,17 +414,87 @@ export function CycleOverviewRows({cycles, issuesByCycle, onCycle, emptyHint}: {
     );
   }
   return (
-    <div className="lin-cycles-tl">
-      <div className="lin-cycles-spine" />
-      {ordered.map(({cycle, state}) => {
-        const issues = issuesByCycle.get(cycle.id) || EMPTY;
-        return (
-          <CycleOverviewRow key={cycle.id} cycle={cycle} state={state} issues={issues}
-            stats={cachedStats(issues)}
-            onCycle={openCycle} showChart={current?.cycle.id === cycle.id} />
-        );
-      })}
+    <div className="lin-cycle-workbench">
+      <div className="lin-cycle-browser">
+        <div className="lin-cycle-nav-head"><span>Iteration timeline</span><span>Use arrow keys to explore</span></div>
+        <div className="lin-cycles-tl" role="list" aria-label="Cycle selector">
+          <div className="lin-cycles-spine" aria-hidden="true" />
+          {ordered.map(({cycle, state}) => {
+            const issues = issuesByCycle.get(cycle.id) || EMPTY;
+            return (
+              <CycleOverviewRow key={cycle.id} cycle={cycle} state={state}
+                stats={cachedStats(issues)} selected={selected?.cycle.id === cycle.id} controls={previewId}
+                onSelect={select} onKeyDown={navigateSelection}
+                buttons={buttons} />
+            );
+          })}
+        </div>
+      </div>
+      {selected && <CyclePreview id={previewId} cycle={selected.cycle} state={selected.state}
+        issues={issuesByCycle.get(selected.cycle.id) || EMPTY} onOpen={onCycle} />}
     </div>
+  );
+}
+
+function CyclePreview({id, cycle, state, issues, onOpen}: {
+  id: string; cycle: Cycle; state: CycleState; issues: LinIssue[]; onOpen: (cycle: Cycle) => void;
+}) {
+  const name = cycle.name || `Cycle ${cycle.number ?? ''}`;
+  const stats = cachedStats(issues);
+  const ofScope = asPct(scopeCompletion(stats));
+  const badge = state === 'current' ? 'Current' : state === 'upcoming' ? 'Upcoming' : state === 'completed' ? 'Completed' : 'Planned';
+  const shown = issues.slice(0, 4);
+  const headingId = `${id}-heading`;
+  return (
+    <aside className="lin-cycle-preview" id={id} aria-labelledby={headingId}>
+      <div className="lin-cycle-preview-content" key={cycle.id}>
+        <header className="lin-cycle-preview-head">
+          <div className="lin-cycle-preview-kicker">
+            <span className={cx('lin-cycle-live-dot', state === 'current' && 'current')} aria-hidden="true" />
+            {cycle.number != null ? `Cycle ${cycle.number}` : 'Cycle'} · {badge}
+          </div>
+          <h2 id={headingId}>{name}</h2>
+          <p>{fmtRange(cycle.startsAt, cycle.endsAt)}</p>
+          <button type="button" className="lin-btn primary lin-cycle-open" onClick={() => onOpen(cycle)}>
+            Open cycle <ArrowUpRight size={14} aria-hidden="true" />
+          </button>
+        </header>
+
+        <div className="lin-cycle-preview-progress">
+          <div className="lin-cycle-progress-ring"><Ring frac={(ofScope ?? 0) / 100} size={44} /></div>
+          <div><strong>{ofScope === null ? 'No scope yet' : `${ofScope}% delivered`}</strong>
+            <span>{ofScope === null ? 'Issues added to this cycle will establish its scope.' : `${stats.completed} of ${stats.scope} issues completed`}</span></div>
+        </div>
+        <dl className="lin-cycle-preview-stats">
+          <div><dt>Scope</dt><dd>{stats.scope}</dd></div>
+          <div><dt>Open</dt><dd>{stats.open}</dd></div>
+          <div><dt>Delivered</dt><dd>{stats.completed}</dd></div>
+          <div><dt>Canceled</dt><dd>{stats.canceled}</dd></div>
+        </dl>
+
+        <section className="lin-cycle-preview-chart" aria-label="Cycle burndown">
+          <header><h3>Burndown</h3><span>{stats.open} remaining</span></header>
+          {issues.length > 0 && state !== 'upcoming' && state !== 'planned'
+            ? <BurndownChart cycle={cycle} stats={stats} issues={issues} height={168} />
+            : <div className="lin-cycle-preview-empty">{issues.length
+              ? `Burndown starts when the cycle begins on ${fmtDate(cycle.startsAt)}.`
+              : 'No issue activity to chart yet.'}</div>}
+        </section>
+
+        <section className="lin-cycle-preview-work" aria-label="Cycle work snapshot">
+          <header><h3>Work snapshot</h3><span>{issues.length} {issues.length === 1 ? 'issue' : 'issues'}</span></header>
+          {shown.length ? <ul>
+            {shown.map(issue => <li key={issue.id}>
+              <LinearStatusIcon state={issue.state} size={14} />
+              <span className="lin-cycle-issue-id">{issue.identifier}</span>
+              <span className="lin-cycle-issue-title" title={issue.title}>{issue.title}</span>
+              <Avatar name={issue.assignee?.name} size={20} />
+            </li>)}
+          </ul> : <div className="lin-cycle-preview-empty">This cycle is ready for its first issue.</div>}
+          {issues.length > shown.length && <p className="lin-cycle-preview-more">+ {issues.length - shown.length} more in the full cycle</p>}
+        </section>
+      </div>
+    </aside>
   );
 }
 

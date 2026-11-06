@@ -20,7 +20,7 @@
 "test:project-activity": "node ../scripts/test-project-activity.cjs",
 "test:markdown": "node ../scripts/test-markdown-conformance.cjs && node ../scripts/test-markdown-surfaces.cjs",
 "test:markdown:spec": "node ../scripts/test-markdown-conformance.cjs",
-"test:cycles": "node ../scripts/test-cycle-metrics.mjs",
+"test:cycles": "node ../scripts/test-cycle-metrics.mjs && node ../scripts/test-cycle-selection.mjs",
 "test:status-age": "node ../scripts/test-status-age.mjs"
   },
   "dependencies": {
