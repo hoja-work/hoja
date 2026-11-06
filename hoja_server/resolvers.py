@@ -654,6 +654,32 @@ def i_parent(obj, info):
                  lambda: store.issue_by_id_or_identifier(org, obj["_parent_id"], viewer_id=uid)) if obj.get("_parent_id") else None
 
 
+@Issue.field("children")
+def i_children(obj, info, first=50, after=None):
+    store, _w, org, uid = _ctx(info)
+    first = _page_size(first)
+    cursor = _decode_issue_cursor(after)
+    return _memo(
+        info, "issue_children", (org, uid, obj["id"], first, cursor), lambda: _children_conn(
+            store, org, uid, obj["id"], first, cursor,
+        ),
+    )
+
+
+def _children_conn(store, org, uid, issue_id, first, cursor):
+    rows = store.issue_children(org, issue_id, viewer_id=uid, after=cursor, limit=first + 1)
+    nodes = rows[:first]
+    return {
+        "nodes": nodes,
+        "pageInfo": {
+            "hasNextPage": len(rows) > first,
+            "hasPreviousPage": cursor is not None,
+            "startCursor": _issue_cursor(nodes[0], "createdAt") if nodes else None,
+            "endCursor": _issue_cursor(nodes[-1], "createdAt") if nodes else None,
+        },
+    }
+
+
 @Issue.field("labels")
 def i_labels(obj, info, first=50):
     store, _w, org, _uid = _ctx(info)

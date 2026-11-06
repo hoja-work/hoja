@@ -106,7 +106,8 @@ def _validate_issue_references(
     *,
     issue_id: str | None = None,
     default_state_id: str | None = None,
-) -> None:
+) -> str | None:
+    """Validate issue references and return the normalized internal parent id."""
     state_id = inp.get("stateId") if "stateId" in inp else default_state_id
     if state_id:
         _require_org_reference(
@@ -130,12 +131,30 @@ def _validate_issue_references(
         _require_org_reference(
             conn, cycle, org_id, cycle_id, "cycleId", cycle.c.team_id == team_id
         )
-    if parent_id := inp.get("parentId"):
+    parent_id = None
+    if supplied_parent_id := inp.get("parentId"):
+        parent = conn.execute(select(issue.c.id).where(and_(
+            issue.c.organization_id == org_id,
+            issue.c.team_id == team_id,
+            issue.c.archived_at.is_(None),
+            or_(issue.c.id == supplied_parent_id,
+                issue.c.identifier == str(supplied_parent_id).upper()),
+        ))).first()
+        if not parent:
+            raise InvalidReferenceError("parentId")
+        parent_id = parent[0]
         if parent_id == issue_id:
             raise InvalidReferenceError("parentId")
-        _require_org_reference(
-            conn, issue, org_id, parent_id, "parentId", issue.c.team_id == team_id
-        )
+        if issue_id is not None:
+            # Reparenting below any descendant would make parent traversal cyclic.
+            ancestor_id, seen = parent_id, set()
+            while ancestor_id:
+                if ancestor_id == issue_id or ancestor_id in seen:
+                    raise InvalidReferenceError("parentId")
+                seen.add(ancestor_id)
+                ancestor_id = conn.execute(select(issue.c.parent_id).where(and_(
+                    issue.c.organization_id == org_id, issue.c.id == ancestor_id,
+                ))).scalar()
     label_ids = inp.get("labelIds") if "labelIds" in inp else None
     if label_ids:
         expected = set(label_ids)
@@ -158,6 +177,7 @@ def _validate_issue_references(
         )
         if found != expected:
             raise InvalidReferenceError("labelIds")
+    return parent_id
 
 
 class Writer:
@@ -722,7 +742,7 @@ class Writer:
             trow = dict(trow._mapping)
             tid = trow["id"]
             self._require_team_visible(conn, org_id, viewer_id, tid)
-            _validate_issue_references(
+            parent_id = _validate_issue_references(
                 conn,
                 org_id,
                 tid,
@@ -755,7 +775,7 @@ class Writer:
                 estimate=inp.get("estimate"), state_id=state_id, state_changed_at=ts,
                 assignee_id=inp.get("assigneeId"), creator_id=viewer_id,
                 project_id=inp.get("projectId"), cycle_id=cycle_id,
-                parent_id=inp.get("parentId"),
+                parent_id=parent_id,
                 url=entity_url(url_key, "issue", ident),
                 branch_name=f"{viewer_id[:8]}/{ident.lower()}-{_slug(inp['title'])}",
                 due_date=inp.get("dueDate"), created_at=ts, updated_at=ts,
@@ -782,7 +802,14 @@ class Writer:
                 self._require_team_visible(conn, org_id, actor_id, issue_row["team_id"])
                 if inp.get("teamId") is not None:
                     raise InvalidReferenceError("teamId")
-            _validate_issue_references(
+            if inp.get("parentId"):
+                # PostgreSQL: serialize reparenting per team so two transactions cannot
+                # independently validate opposite edges and commit a cycle. SQLite ignores
+                # FOR UPDATE and serializes writes at the database level instead.
+                conn.execute(select(team.c.id).where(and_(
+                    team.c.organization_id == org_id, team.c.id == issue_row["team_id"],
+                )).with_for_update()).scalar_one()
+            parent_id = _validate_issue_references(
                 conn, org_id, issue_row["team_id"], inp, issue_id=iid
             )
             ts = now_iso()
@@ -795,6 +822,8 @@ class Writer:
             for k, col in mapping.items():
                 if k in inp:
                     values[col] = inp[k]
+            if "parentId" in inp:
+                values["parent_id"] = parent_id
             if "priority" in inp:
                 p = int(inp["priority"] or 0)
                 values["priority"] = p

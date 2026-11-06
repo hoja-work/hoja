@@ -336,6 +336,7 @@ type Issue {
   project: Project
   cycle: Cycle
   parent: Issue
+  children(first: Int = 50, after: String): IssueConnection
   labels(first: Int = 50): IssueLabelConnection
   subscribers(first: Int = 50): UserConnection
   comments(first: Int = 50): CommentConnection

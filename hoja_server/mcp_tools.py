@@ -52,7 +52,10 @@ READ_TOOLS: dict[str, str] = {
         '{"team": {"key": {"eq": "ENG"}}, "state": {"type": {"nin": ["completed", "canceled"]}}}. '
         "State types: backlog, unstarted, started, completed, canceled."
     ),
-    "issue": "One issue by identifier (ENG-12) or id, with state, assignee, labels and comments.",
+    "issue": (
+        "One issue by identifier (ENG-12) or id, with state, assignee, labels, comments, "
+        "its parent and sub-issues in children."
+    ),
     "searchIssues": "Text search over issue titles, descriptions and identifiers.",
     "myIssueActivity": "Recent activity on issues involving the signed-in user.",
     "inboxNotifications": "The signed-in user's inbox notifications.",
@@ -70,11 +73,17 @@ READ_TOOLS: dict[str, str] = {
 }
 
 WRITE_TOOLS: dict[str, str] = {
-    "issueCreate": "Create an issue. Returns the created issue including its identifier.",
+    "issueCreate": (
+        "Create an issue. For multi-step work, create or reuse one parent issue, then create actionable "
+        "sub-issues with parentId instead of separate root issues; omit parentId for a standalone "
+        "issue or the parent itself. Returns the created issue including its identifier, parent and children."
+    ),
     "issueUpdate": (
         "Update an issue: title, description, priority, state (by name), assignee "
-        "('me', email or name), project, cycle, labels, estimate, due date. Send ONLY the fields to change; "
-        "every field you send is written (labelIds replaces all labels). Returns the updated issue."
+        "('me', email or name), project, cycle, labels, estimate, due date and parent. "
+        "parentId reparents an issue within its team; null detaches it from its parent. "
+        "Send ONLY the fields to change; every field you send is written (labelIds replaces all labels). "
+        "Returns the updated issue."
     ),
     "issueArchive": "Archive an issue (reversible; prefer this over delete).",
     "issueDelete": "Permanently delete an issue. Confirm with the user first.",
@@ -119,7 +128,7 @@ FIELD_HINTS = {
     "projectId": "Project name or id.",
     "projectIds": "Project names or ids.",
     "issueId": "Issue identifier (e.g. ENG-12) or id.",
-    "parentId": "Parent issue id.",
+    "parentId": "Parent issue identifier (e.g. ENG-12) or id. Must be in the same team; null detaches.",
     "priority": "1 urgent, 2 high, 3 medium, 4 low (or those names). On updates use \"none\" to clear; 0 is ignored.",
     "first": "Page size.",
     "after": "Cursor from a previous pageInfo.endCursor.",
@@ -300,6 +309,9 @@ class _Spec:
                 required.append(name)
         for name, schema_part in props.items():
             hint = ID_HINTS.get(entity) if name == "id" and entity else FIELD_HINTS.get(name)
+            if name == "parentId" and schema_part.get("type") == "string":
+                # GraphQL accepts null to detach; validating MCP clients must accept it too.
+                schema_part["type"] = ["string", "null"]
             if op in ("team", "teamCycleCadence", "teamCycleCadenceEnable") and name in ("id", "teamId"):
                 hint = ID_HINTS["team"]
             if hint and "$ref" not in schema_part:
@@ -555,7 +567,9 @@ INSTRUCTIONS = (
     "issue argument accepts that identifier. Start with hoja_viewer and hoja_teams to learn who you are and "
     "which team keys exist; hoja_team(id: KEY) shows a team's workflow states and members. Reference fields "
     "accept friendly values: teamId takes a team key; assigneeId/leadId/userId take 'me', an email or an exact "
-    "member name; stateId takes a state name like 'In Progress'; labelIds and projectId take names. Results "
+    "member name; stateId takes a state name like 'In Progress'; labelIds and projectId take names. For "
+    "multi-step work, create or reuse a parent issue and put actionable steps under it with parentId rather than "
+    "creating a stack of unrelated root issues; keep genuinely standalone issues flat. Results "
     "contain the affected entity, so read them to confirm what changed. Errors name the argument that was "
     "wrong; fix it instead of guessing other parameters. Omit optional arguments you do not need: empty "
     "strings/lists and 0 for priority/estimate on updates are ignored (use priority \"none\" to clear it). "

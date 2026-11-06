@@ -1,413 +1,188 @@
-# AGENTS.md — Contributing to Hoja
-
-> Guide for humans and AI agents who modify this codebase.
+# AGENTS.md — Hoja contributor operations
 
 Hoja is a standalone, generic, self-hosted, offline-first, agent-native
-work-management product with a Linear-compatible GraphQL interface. Do not encode a particular
-organization, repository owner, or deployment as a product default. New work
-uses `hoja`, `hoja-mcp`, `hoja-serve`, `HOJA_*`, and `hoja`
-config/data paths. Preserve the wire-facing Linear GraphQL names, and keep
-`HOJA_TOKEN`/`HOJA_API_URL` canonical while honouring the deprecated
-`LINEAR_TOKEN`/`LINEAR_API_URL` aliases.
+work-management product with a Linear-compatible GraphQL interface. Keep product
+defaults independent of any organization, repository owner, or deployment.
 
----
+## Non-negotiables
 
-## TL;DR (the rules)
+- Use `hoja`, `hoja-mcp`, `hoja-serve`, `HOJA_*`, and Hoja config/data paths for
+  new work. Keep `HOJA_TOKEN` and `HOJA_API_URL` canonical; honor the deprecated
+  `LINEAR_TOKEN` and `LINEAR_API_URL` aliases and the Linear GraphQL wire names.
+- Preserve existing user changes. Inspect `git status --short` before editing and
+  use a separate worktree when the checkout already contains unrelated work.
+- Never commit credentials, `.env` files, logs, private keys, or
+  `schema/linear-schema.json`. Install `scripts/pre-commit.sh` before committing;
+  it also runs the anti-slop policy against the complete staged index.
+- Do not add runtime dependencies without justification and security review.
+- Do not weaken authorization, tenant isolation, TLS verification, or error
+  handling to make a change easier.
 
-1. **Version and changelog follow release policy.** Update `VERSION`, `pyproject.toml`, and `CHANGELOG.md` for a release; do not bump versions for every local edit.
-2. **Run relevant checks.** Start with focused pytest tests and frontend build for affected areas; run the live API E2E script only when its required credentials and test data are configured.
-4. **Every commit goes through the pre-commit hook.** No secrets, no `.log`, no `.env`, no `schema/linear-schema.json`.
-5. **Every release gets a git tag (`vX.Y.Z`) and a GitHub release.** No exceptions.
+## Documentation contract
 
----
+Git stores **durable documentation for what exists now**, not the process used to
+produce it.
 
-## Architecture
+Allowed repository prose:
 
-```
-hoja/
-├── VERSION                    Source of truth for __version__
-├── pyproject.toml             Build metadata (must match VERSION)
-├── CHANGELOG.md               Keep-a-Changelog format
-│
-├── hoja/                   Package
-│   ├── __init__.py            Reads VERSION
-│   ├── cli.py                 Root Typer app, global flags, error wrapper
-│   ├── cli_state.py           Per-invocation state container
-│   ├── config.py              TOML config + token resolution
-│   ├── client.py              Async httpx GraphQL client
-│   ├── auth.py                Viewer caching
-│   ├── filters.py             Filter DSL → IssueFilter GraphQL input
-│   ├── output.py              Six output formatters
-│   ├── errors.py              Typed exit codes
-│   ├── models/                Pydantic v2 models (User, Team, Issue, ...)
-│   ├── graphql/               Query/mutation strings + fragments
-│   ├── commands/              One file per command group
-│   ├── skill_content/         Canonical markdown for the agent skill (shipped in wheel)
-│   │   ├── overview.md
-│   │   ├── commands.md
-│   │   ├── workflows.md
-│   │   ├── filters.md
-│   │   ├── output-formats.md
-│   │   └── examples.md
-│   └── mcp/                   Optional MCP server (`pip install 'hoja[mcp]'`)
-│       ├── content.py         HojaGuide Pydantic model + load_topic()
-│       ├── resources.py       7 read-only resource handlers
-│       ├── prompts.py         6 workflow prompt templates
-│       └── server.py          FastMCP wire-up; entry point of `hoja-mcp`
-│
-├── skills/                    Agent skill bundle (installable into ~/.swarmos and ~/.claude)
-│   ├── install.sh             Symlinks skills/hoja into both skill dirs
-│   └── hoja/
-│       ├── SKILL.md           Frontmatter + body (mechanics + behavior + safety)
-│       └── references/        Symlinks → ../../hoja/skill_content/*.md
-│
-├── schema/
-│   ├── linear-schema.json     2.3 MB introspection result (GITIGNORED)
-│   └── schema-summary.json    Categorized summary (committed)
-│
-├── scripts/
-│   ├── e2e-test.sh            Live API E2E test suite
-│   ├── pre-commit.sh          Secret-blocking pre-commit hook
-│   └── install-hooks.sh       Install pre-commit hook
-│
-└── tests/                     Pytest regression tests
-```
+- Root community and release files such as `README.md`, `AGENTS.md`, `LICENSE`,
+  `CHANGELOG.md`, `CONTRIBUTING.md`, and `SECURITY.md`.
+- Reviewed product, architecture, API, and operations guides in `docs/`.
+- Registered `README.md` files that document a real component or package next to
+  its code.
+- Markdown under `hoja/skill_content/`, `skills/`, and `.agents/skills/` when it
+  is functional packaged instruction content.
 
-### Data flow for any command
+Do not commit implementation plans, proposals, roadmaps, meeting notes, context
+snapshots, copied conversations, branch summaries, status reports, generated
+audits, or verification transcripts. Keep those in the relevant issue or pull
+request, or in local storage outside the repository. Do not rename a work artifact
+to make it look like durable documentation.
 
-```
-User CLI input
-  └─► hoja.cli.app (Typer)
-        └─► global flags resolved → cli_state.CLIState
-              └─► subcommand handler (hoja/commands/*.py)
-                    └─► hoja.client.LinearClient.execute_as()
-                          ├─► httpx POST to the configured self-hosted /graphql endpoint
-                          ├─► JSON → dict
-                          └─► dict → Pydantic model (validation)
-                                └─► hoja.output.render(model, fmt)
-                                      └─► stdout
-```
+Every standalone Markdown path is registered in `scripts/check_docs.py`; there
+are no directory-wide exemptions for random files. A new durable guide or
+component README must describe current behavior and be registered in the same
+reviewed change. Packaged skill references must also be registered explicitly.
+Update existing documentation when behavior changes; do not add daily summaries,
+host-specific details, or point-in-time test results.
 
-### Adding a new command
-
-1. Pick the right file in `hoja/commands/` (or create one).
-2. Add a Typer command with rich `--help` text.
-3. Write the GraphQL string in `hoja/graphql/queries.py` or `mutations.py`. Use fragments from `fragments.py`.
-4. If the response shape is new, add or extend a Pydantic model in `hoja/models/`.
-5. Register the new command group in `hoja/cli.py` via `app.add_typer(...)`.
-6. Add focused pytest coverage; update `scripts/e2e-test.sh` only for live end-to-end behavior.
-7. Update release metadata only when preparing a release.
-
-### Adding a new model
-
-```python
-# hoja/models/your_entity.py
-from hoja.models.base import Timestamped
-
-class YourEntity(Timestamped):
-    id: str
-    name: str
-    # use Field(alias="camelCase") for GraphQL → snake_case mapping
-```
-
-### Adding GraphQL fragments
-
-Keep fragments **DRY** and **small**. One fragment per entity "view":
-- `YourEntityCore` → fields included in lists
-- `YourEntityFull` → extra fields included on detail views
-
-```python
-# hoja/graphql/fragments.py
-YOUR_ENTITY_CORE = """
-fragment YourEntityCore on YourEntity {
-  id
-  name
-  createdAt
-}
-"""
-```
-
----
-
-## Development Workflow
-
-### Setup
+Run the local equivalent of the required GitHub check:
 
 ```bash
-git clone <repository-url> hoja
-cd hoja
-bash scripts/install-hooks.sh        # MANDATORY — installs the secret-blocking pre-commit hook
-uv venv
-source .venv/bin/activate
-uv pip install -e ".[dev]"
+python3 scripts/check_docs.py
+python3 -m unittest discover -s tests -p 'test_check_docs.py' -v
 ```
 
-### Day-to-day
+## Repository map
+
+```text
+hoja/                    Python CLI, API client, models, GraphQL operations
+  mcp/                   Optional stdio MCP server
+  skill_content/         Canonical packaged agent reference content
+hoja_server/             ASGI app, GraphQL schema/resolvers, storage, writers
+frontend/                React/TypeScript browser application
+connectors/              Optional connector packages and their local READMEs
+docs/                    Reviewed durable product and operations guides
+schema/                  GraphQL schema summary (large introspection is ignored)
+scripts/                 Development, verification, release, and hook scripts
+tests/                   Python unit/integration tests
+skills/                  Installable agent skill bundle
+.agents/skills/          Repository-local packaged agent skills
+.github/workflows/       GitHub Actions checks and release automation
+vendor/                  Vendored package documentation and content
+web/                     Static web assets
+```
+
+Important entry points:
+
+- `hoja/cli.py`: root Typer application and command registration.
+- `hoja/client.py`: async HTTPX GraphQL client.
+- `hoja/models/`: Pydantic response models.
+- `hoja_server/app.py`: HTTP routes and request context.
+- `hoja_server/schema.graphql`: GraphQL API contract.
+- `hoja_server/resolvers.py`: API behavior and authorization boundaries.
+- `hoja_server/store.py`, `writer.py`, `db.py`: reads, transactional writes, and
+  ordered database migrations.
+- `frontend/src/main.tsx`: application composition and primary routes.
+
+## Development setup
+
+Python 3.10 or newer is required.
 
 ```bash
-# 1. Set your token (one-time per shell)
-export HOJA_TOKEN="lin_api_..."
+bash scripts/install-hooks.sh
+uv sync --extra dev --extra server
+cd frontend && npm ci
+```
 
-# 2. Edit code
+Run the application locally with the Docker instructions in `README.md`. Keep
+test databases disposable and credentials outside source control.
 
-# 3. Smoke test live API
-.venv/bin/hoja me
+## Change workflow
 
-# 4. Full E2E suite (takes ~30s)
-bash scripts/e2e-test.sh
+1. Read the implementation and its consumers before editing. Establish relevant
+   behavior and security invariants.
+2. Make the smallest coherent change. Preserve existing routes, API names, and
+   user-visible behavior unless the task explicitly changes them.
+3. Add focused regression coverage for behavior changes. Use integration or
+   browser checks when the behavior crosses process or rendering boundaries.
+4. Update only durable docs affected by the behavior. Never create a completion
+   report to explain the change; the diff, tests, commit, and pull request carry
+   that information.
+5. Run the documentation check and relevant tests below.
+6. Review `git diff --check`, `git diff --stat`, and the exact final diff. Confirm
+   unrelated checkout changes are absent.
 
-# 5. Lint + type check
-uv run ruff check hoja/
+### CLI or GraphQL client changes
+
+- Register command groups in `hoja/cli.py`; put command behavior in
+  `hoja/commands/` and GraphQL fields in `hoja/graphql/`.
+- Validate new response shapes with Pydantic models. Do not leak `dict[str, Any]`
+  out of `hoja.client` into command handlers.
+- Keep fragments small and reusable. Surface actionable errors rather than
+  silently ignoring failure.
+
+### Backend changes
+
+- Derive organization and user authority from authenticated request context, not
+  client-supplied IDs.
+- Preserve resolver authorization for every new operation.
+- Use the existing Store/Writer boundaries and ordered, contiguous migrations.
+  Account for both SQLite and PostgreSQL semantics where persistence changes.
+- Never log tokens or return stored secrets through API responses.
+
+### Frontend changes
+
+- Preserve accessible names, keyboard behavior, focus, responsive layout, and
+  reduced-motion behavior. Check long content and narrow/short viewports.
+- Reuse `frontend/src/markdown.tsx` for user-authored Markdown. Do not introduce
+  `dangerouslySetInnerHTML` or a second renderer for those bodies.
+- Run style lint and the production build. Add browser geometry or behavior
+  assertions when layout or interaction changes; CSS fixtures alone do not prove
+  an authenticated application journey.
+
+### Agent skill changes
+
+- Treat `hoja/skill_content/` as the canonical packaged content.
+- Preserve `skills/hoja/references/` symlinks rather than copying files.
+- Check both the installed skill behavior and the Python package entry points.
+
+## Verification commands
+
+Use the commands relevant to the changed surface:
+
+```bash
+# Documentation and its policy tests
+python3 scripts/check_docs.py
+python3 -m unittest discover -s tests -p 'test_check_docs.py' -v
+
+# Python tests
+uv run pytest
+uv run ruff check hoja/ hoja_server/
 uv run mypy hoja/
 
-# 6. Bump version (see "Versioning" below)
+# Frontend
+cd frontend
+npm run lint:ui
+npm run lint:styles
+npm run build
 
-# 7. Commit (hook will refuse if you touch secrets)
-git add -A
-git commit -m "fix(issue): handle null state in IssueSearchResult"
+# Disposable local backend integration
+bash scripts/e2e-local-backend.sh
 ```
 
----
+`scripts/e2e-test.sh` is a separate live API matrix. Run it only with explicitly
+configured test credentials and test data. Report unrun or unavailable checks
+honestly; never convert a failing exploratory probe into a passing result by
+weakening its assertions.
 
-## Testing
+## GitHub and releases
 
-### E2E (configured backend — primary suite)
-
-`scripts/e2e-test.sh` exercises every command against the configured
-Linear-compatible endpoint. For standalone product work, prefer the local
-backend suite below so verification does not depend on a hosted service.
-
-```bash
-export HOJA_TOKEN="lin_api_..."  # issued by hoja-serve seed or another configured backend
-bash scripts/e2e-test.sh
-```
-
-The script reads `HOJA_TOKEN` from your env (falling back to the deprecated
-`LINEAR_TOKEN`). **It does not contain any hardcoded tokens.** If you find one,
-that's a bug — fix it immediately and rotate the leaked credential.
-
-Pass condition: `SUMMARY: N passed, 0 failed`.
-
-### Unit and regression tests
-
-The `tests/` directory contains pytest coverage for CLI account resolution and
-the backend, including optional PostgreSQL checks. Run `uv run pytest`; tests
-requiring optional services or drivers may skip when those dependencies are not
-installed. The live API matrix in `scripts/e2e-test.sh` is separate and requires
-`HOJA_TOKEN` (deprecated alias `LINEAR_TOKEN`), `HOJA_TEST_TEAM`, and
-`HOJA_TEST_ISSUE`.
-
-### UI styling checks
-
-Run `cd frontend && npm ci && npm run lint:styles && npm run build` for UI changes.
-Stylelint checks structural CSS errors (invalid properties/units/colors, duplicate
-declarations and malformed selectors), not whether rendered elements overlap.
-The pre-commit hook lints **staged** `frontend/src/*.css` using the index; install
-dependencies with `npm ci` before committing CSS. Run browser layout checks with
-`cd frontend && npm run test:layout` after installing the local-only
-Playwright tooling (`cd local-e2e && npm ci && npx playwright install chromium`).
-They test project detail, settings panels and provider cards, issue breadcrumbs and
-touch board cards against the actual stylesheet at desktop and mobile widths, including
-long content, tall properties, navigation open/closed, and form controls. CSS-backed
-fixtures are not authenticated app journeys. These checks
-are not part of the fast pre-commit hook and do not require a backend.
-
-### Markdown bodies
-
-Every user-authored body (issue and description, comments, project updates, project and
-team descriptions, meeting agenda/notes, meeting chat, agent replies) renders through
-`frontend/src/markdown.tsx`. Do not add a second renderer and do not pass bodies through
-`dangerouslySetInnerHTML`. The contract: GFM, raw HTML dropped, `javascript:`/`data:` URLs
-stripped, headings demoted by two levels (a body can never emit h1) and clamped at h6,
-external links get `target=_blank rel="noopener noreferrer nofollow"`, tables wrapped in
-their own scroll box, bodies over 20k characters shown verbatim. Editors keep the raw
-source; only the read view renders. Titles, list-cell snippets and system text stay literal.
-
-Prove a change with `cd frontend && npm run test:markdown:spec` (the official CommonMark
-0.31.2 corpus, 652 examples, run against the real component) and
-`npm run test:markdown` (seeded server + Playwright over the rendered surfaces). The corpus
-is vendored at `scripts/fixtures/`; refresh it deliberately and re-review the skips, which
-are limited to three named buckets (raw HTML, unsafe hrefs, GFM autolink literals).
-
-### UI audit method: define what a component must never do
-
-Before adding or changing a view, inventory its components (inputs, cards, menus,
-navigation, actions) and write down **negative invariants** for each. A textbox
-must not extend beyond its card, hide entered text, or obscure its label. A card
-must not overlap the next card or clip its actions. A menu must not open outside
-the visible scroll area. Tabs and buttons must not be covered by another control.
-Touch interactions must not disable scrolling unless an equivalent gesture works.
-Keep intentional scrolling and truncation, but never truncate a required action.
-
-For each invariant, specify route/component, viewport **width and height**, long
-or unbroken content, open/closed/focused state, and expected visible result.
-Reproduce the failure in a browser before changing CSS. Trace markup → parent
-layout/overflow → child dimensions/position → rendered bounding boxes. Prefer
-bounding-box nonintersection, visible-area and control-reachability assertions
-over screenshots or tests that only check a CSS class. Check breakpoint neighbors
-(for example 700px and 701px), desktop and narrow mobile, short-height screens,
-long text, scroll edges, keyboard focus, and touch where relevant. Prove a new
-check fails against the old or deliberately faulty styling, then passes after
-the fix. Add the narrow check to `npm run test:layout` only once it passes; do
-not turn a known failing exploratory probe into a blocking check. Run style lint
-and the frontend build afterward. CSS fixtures cannot prove authenticated route
-behavior: report that gap and run an app journey when the state needs one.
-
-When parallelizing, assign each agent an independent component/route and its
-own worktree. Record its reproduction and invariant, reserve shared CSS/tests
-for one integrator, and re-run combined checks after merging. Keep the audit
-inventory honest: distinguish fixed, reproduced but pending, and uninspected.
-
----
-
-## Versioning
-
-We follow [Semantic Versioning](https://semver.org/):
-
-| Bump | When |
-|------|------|
-| **Patch** `0.3.0 → 0.3.1` | Bugfixes, typo corrections, internal refactors with no behavior change. |
-| **Minor** `0.3.x → 0.4.0` | New commands, new flags, new output formats. Backward-compatible. |
-| **Major** `0.x → 1.0` (then `1 → 2`) | Removed/renamed commands, changed exit codes, changed default output. |
-
-### Version bump checklist (every change)
-
-1. Edit `VERSION` to the new number.
-2. Edit `pyproject.toml` → `version = "X.Y.Z"` (must match `VERSION`).
-3. Add a new section to `CHANGELOG.md`:
-   ```markdown
-   ## [X.Y.Z] — YYYY-MM-DD
-
-   ### Added
-   - ...
-
-   ### Changed
-   - ...
-
-   ### Fixed
-   - ...
-   ```
-4. Run the E2E suite. Must pass.
-5. Commit with message: `release: vX.Y.Z`.
-6. Tag: `git tag -a vX.Y.Z -m "vX.Y.Z"` and push: `git push origin vX.Y.Z`.
-7. Create GitHub release (see Release Process).
-8. Publish to PyPI (see Release Process).
-
----
-
-## Release Process
-
-### 1. Pre-flight
-
-```bash
-# Tests pass?
-bash scripts/e2e-test.sh
-
-# Lint passes?
-uv run ruff check hoja/
-
-# Version is bumped in BOTH places?
-cat VERSION
-grep '^version =' pyproject.toml
-
-# CHANGELOG has the new section?
-head -20 CHANGELOG.md
-```
-
-### 2. Tag and push
-
-```bash
-git add -A
-git commit -m "release: v0.3.0"
-git push origin main
-
-git tag -a v0.3.0 -m "v0.3.0"
-git push origin v0.3.0
-```
-
-### 3. Build with uv
-
-```bash
-rm -rf dist/
-uv build
-# → dist/hoja-0.3.0-py3-none-any.whl
-# → dist/hoja-0.3.0.tar.gz
-```
-
-### 4. Publish to PyPI
-
-```bash
-# Token MUST come from environment — never paste into a shell that gets logged.
-export UV_PUBLISH_TOKEN="pypi-..."
-uv publish
-```
-
-### 5. Create GitHub release
-
-```bash
-gh release create v0.3.0 \
-    --title "v0.3.0" \
-    --notes-file <(awk '/^## \[0.3.0\]/,/^## \[/{if (!/^## \[/) print; if (/^## \[/ && !found) found=1; else if (/^## \[/) exit}' CHANGELOG.md) \
-    dist/hoja-0.3.0-py3-none-any.whl \
-    dist/hoja-0.3.0.tar.gz
-```
-
-### 6. Verify
-
-```bash
-# Wait ~60s for PyPI to propagate, then:
-uv tool install --refresh hoja
-hoja --version  # should print the new version
-```
-
----
-
-## Pre-commit Hook
-
-`scripts/pre-commit.sh` is installed via `bash scripts/install-hooks.sh`. It runs on `git commit` and **refuses** to commit any staged file that contains:
-
-- Linear API tokens (`lin_api_...`)
-- PyPI API tokens (`pypi-...`)
-- AWS access keys (`AKIA...`)
-- GitHub PATs (`ghp_`, `ghs_`, `gho_`, `ghu_`, `ghr_`)
-- Google service account JSON
-- SSH/PGP private keys
-- Slack tokens
-
-It also blocks these file types entirely:
-- `*.log`
-- `.env`, `.env.*`
-- `schema/linear-schema.json` (regenerable; it's 2 MB)
-- Anything under `.secrets/` or `vault/`
-
-**Bypassing:** `git commit --no-verify` (use only for vetted false positives; audit first).
-
----
-
-## House Rules
-
-1. **No new runtime dependencies without a security review.** Every dep is a supply-chain attack vector. The dependency tree is currently: `pydantic + pydantic-core (Rust binary) + httpx + httpcore + h11 + idna + certifi + sniffio + anyio + typer + click + shellingham + rich + markdown-it-py + mdurl + pygments + typing-extensions + annotated-types + annotated-doc + exceptiongroup + tomli (py<3.11)`. Don't add to it without justification.
-2. **No `dict[str, Any]` leaks** out of `hoja.client`. Everything that hits a command handler must be a Pydantic model.
-3. **No silent failures.** If something can't be done, raise a `HojaError` subclass with a helpful `hint`.
-4. **No print statements** outside `hoja/output.py` and a couple of init-related scripts. All output goes through the formatter.
-5. **No `--insecure` flag, ever.** TLS verification is non-negotiable.
-
----
-
-## When something breaks
-
-1. Re-run `bash scripts/e2e-test.sh -v` (verbose flag prints full output).
-2. Linear API errors will be in the error message verbatim — look for `GRAPHQL_VALIDATION_FAILED` (your query is wrong) vs. `AUTHENTICATION_ERROR` (token issue).
-3. Pydantic validation errors mean the response shape changed or the model is wrong. Run with `--verbose` to see the raw response.
-4. `hoja raw query 'query { ... }'` is your friend — bypass our models, talk directly to Linear's GraphQL.
-5. Re-fetch the schema from the configured backend (for example, `http://127.0.0.1:8787/graphql`) with `curl`, rather than assuming a hosted endpoint. Update fragments/models as needed.
-
----
-
-## Roadmap
-
-- v0.3 (current) — agent skill bundle + `hoja-mcp` MCP server (1 tool + 7 resources + 6 prompts).
-- v0.4 — pytest unit tests, hash-pinned `requirements.txt`, `docs/COMMANDS.md`, `hoja completions` for shell completion install
-- v0.5 — `hoja initiative`, `hoja document`, `hoja customer` (next-tier domains)
-- v0.6 — config-defined views (`--view my-bugs`), aliases
-- v1.0 — stable command surface, full integration with the 8 priority domains
+- `main` requires a pull request, up-to-date branches, resolved conversations, a
+  linear history, and the `Anti-slop documentation` status check. Force pushes
+  and deletions are disabled, and the protection applies to administrators.
+- Do not bypass branch protection or use force pushes to `main`.
+- Follow the existing security and dependency workflows for relevant changes.
+- Do not bump versions for ordinary edits. For a release, update `VERSION`,
+  `pyproject.toml`, and `CHANGELOG.md` together, run verification, tag `vX.Y.Z`,
+  and publish using the existing release workflow.
