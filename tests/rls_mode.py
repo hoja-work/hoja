@@ -132,3 +132,20 @@ def new_schema_url() -> tuple[str, str]:
         engine.dispose()
     sep = "&" if "?" in base else "?"
     return f"{base}{sep}options=-csearch_path%3D{schema}", schema
+
+
+def workspace(tmp_path, name: str):
+    """A migrated database: (owner engine, create_app kwargs). SQLite by default;
+    under HOJA_TEST_RLS a Postgres schema whose app URL is the restricted role.
+    Policies are not forced, so the owner engine still seeds and inspects freely."""
+    from hoja_server.db import migrate
+
+    if ENABLED:
+        owner_url, schema = new_schema_url()
+        engine = make_engine(owner_url)
+        migrate(engine)
+        return engine, {"db_path": None, "database_url": restrict(owner_url, schema)}
+    path = tmp_path / f"{name}.db"
+    engine = make_engine(path)
+    migrate(engine)
+    return engine, {"db_path": str(path)}
