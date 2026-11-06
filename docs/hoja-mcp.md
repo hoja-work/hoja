@@ -32,6 +32,17 @@ revoked-token rejection, and wrong-host rejection. Administrative mutations
 remain subject to Hoja resolver role checks; OAuth scopes never grant admin
 status.
 
+## Issue hierarchies
+
+For multi-step work, create or reuse one parent issue and create actionable sub-issues with
+`hoja_issueCreate(parentId: "ENG-12", ...)`. Keep genuinely standalone issues flat by
+omitting `parentId`. Both MCP and GraphQL accept an issue identifier (case-insensitive) or
+internal id, and the parent must be an unarchived issue in the same team. Use
+`hoja_issueUpdate` with a new `parentId` to reparent, or with `parentId: null` to detach;
+omitting the field leaves the hierarchy unchanged. Self-parenting and ancestor cycles are
+rejected. Issue results include `parent` and `children`, so agents can verify the resulting
+structure without manufacturing separate root issues.
+
 The feature remains experimental. Before production enablement, review the
 deployment's TLS-terminating proxy and forwarded-header stripping policy, test
 PostgreSQL migrations/concurrency, verify each operation's fixed result shape

@@ -92,13 +92,21 @@ def test_tool_schemas_are_typed_and_annotated(hoja) -> None:
     mcp = hoja()
     tools = mcp.tools()
     assert "TEAMKEY-N" in mcp.instructions
+    assert "parent issue" in mcp.instructions and "parentId" in mcp.instructions
+    create = tools["hoja_issueCreate"]
+    assert "multi-step work" in create["description"]
+    assert "sub-issues" in create["description"]
+    assert "omit parentId" in create["description"]
+    assert "ENG-12" in create["inputSchema"]["properties"]["parentId"]["description"]
+    assert set(create["inputSchema"]["properties"]["parentId"]["type"]) == {"string", "null"}
     update = tools["hoja_issueUpdate"]
     props = update["inputSchema"]["properties"]
     assert {"id", "title", "stateId", "assigneeId", "labelIds"} <= set(props)
+    assert "null detaches" in update["description"]
     assert "arguments" not in props
     assert update["inputSchema"]["required"] == ["id"]
     assert update["inputSchema"]["additionalProperties"] is False
-    assert tools["hoja_issueCreate"]["inputSchema"]["required"] == ["title", "teamId"]
+    assert create["inputSchema"]["required"] == ["title", "teamId"]
     assert tools["hoja_issues"]["annotations"]["readOnlyHint"] is True
     assert tools["hoja_issueDelete"]["annotations"]["destructiveHint"] is True
     # Credential- and admin-plumbing operations are not exposed to agents.
@@ -144,6 +152,41 @@ def test_writes_accept_friendly_references_and_return_entity(hoja) -> None:
     # Nested `input` objects are accepted too.
     ok, nested = mcp.call("hoja_issueUpdate", id=issue["identifier"], input={"title": "Renamed"})
     assert ok and nested["issueUpdate"]["issue"]["title"] == "Renamed"
+
+
+def test_subissue_writes_accept_identifiers_nested_input_and_detach(hoja) -> None:
+    mcp = hoja()
+    ok, created = mcp.call("hoja_issueCreate", teamId="ENG", title="Parent work")
+    assert ok, created
+    parent = created["issueCreate"]["issue"]
+    assert parent["parent"] is None and parent["children"]["nodes"] == []
+
+    ok, child_result = mcp.call(
+        "hoja_issueCreate", teamId="ENG", title="Investigate", parentId=parent["identifier"].lower()
+    )
+    assert ok, child_result
+    child = child_result["issueCreate"]["issue"]
+    assert child["parent"]["id"] == parent["id"]
+
+    # Agents using the GraphQL-shaped nested input can create and reparent too.
+    ok, standalone_result = mcp.call(
+        "hoja_issueCreate", input={"teamId": "ENG", "title": "Implementation step"}
+    )
+    assert ok, standalone_result
+    standalone = standalone_result["issueCreate"]["issue"]
+    assert standalone["parent"] is None
+    ok, reparented = mcp.call(
+        "hoja_issueUpdate", id=standalone["identifier"], input={"parentId": child["identifier"]}
+    )
+    assert ok, reparented
+    assert reparented["issueUpdate"]["issue"]["parent"]["id"] == child["id"]
+
+    ok, root = mcp.call("hoja_issue", id=parent["identifier"])
+    assert ok, root
+    assert [node["id"] for node in root["issue"]["children"]["nodes"]] == [child["id"]]
+    ok, detached = mcp.call("hoja_issueUpdate", id=standalone["identifier"], parentId=None)
+    assert ok, detached
+    assert detached["issueUpdate"]["issue"]["parent"] is None
 
 
 def test_empty_placeholder_arguments_are_ignored(hoja) -> None:
