@@ -32,6 +32,7 @@ async function call(query: string, variables: Record<string, unknown> = {}) {
 
 export function ModelProvidersSettings() {
   const [providers, setProviders] = useState<ModelProvider[]>([]);
+  const [loading, setLoading] = useState(true);
   const [name, setName] = useState('');
   const [provider, setProvider] = useState('openai');
   const [modelId, setModelId] = useState('');
@@ -45,7 +46,8 @@ export function ModelProvidersSettings() {
     let live = true;
     call(LIST)
       .then((d) => live && setProviders(d.modelProviders))
-      .catch((e) => live && setMessage((e as Error).message));
+      .catch((e) => live && setMessage((e as Error).message))
+      .finally(() => live && setLoading(false));
     return () => {
       live = false;
     };
@@ -95,8 +97,11 @@ export function ModelProvidersSettings() {
         <h1>Model providers</h1>
         <p>Models available to the workspace agent. Users never supply their own keys.</p>
       </header>
-      <div className="settings-group">
-        <form onSubmit={create}>
+      <div className="settings-group model-provider-create">
+        <span className="settings-section-kicker">Workspace agent</span>
+        <h2>Add a model provider</h2>
+        <p className="settings-section-intro">Connect an OpenAI-compatible model. Credentials are encrypted and cannot be viewed again.</p>
+        <form className="settings-form-grid" onSubmit={create}>
           <label>
             Display name
             <input aria-label="Model display name" required maxLength={80} value={name} onChange={(e) => setName(e.target.value)} />
@@ -109,7 +114,7 @@ export function ModelProvidersSettings() {
             Model ID
             <input aria-label="Model ID" required value={modelId} onChange={(e) => setModelId(e.target.value)} />
           </label>
-          <label>
+          <label className="settings-field-wide">
             Base URL (OpenAI-compatible)
             <input aria-label="Base URL" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
           </label>
@@ -117,18 +122,21 @@ export function ModelProvidersSettings() {
             API key
             <input aria-label="API key" type="password" required value={apiKey} onChange={(e) => setApiKey(e.target.value)} autoComplete="off" />
           </label>
-          <button className="primary" disabled={busy || !name.trim() || !modelId.trim() || !apiKey}>
+          <div className="settings-form-actions settings-field-wide"><button className="primary" disabled={busy || !name.trim() || !modelId.trim() || !apiKey}>
             {busy ? 'Saving…' : 'Add model'}
-          </button>
+          </button><span>Stored securely for workspace use.</span></div>
         </form>
         {message && <p role={message.startsWith('Model added') ? 'status' : 'alert'}>{message}</p>}
-        <div className="issue-card">
+      </div>
+      <div className="settings-group model-provider-list">
+        <div className="settings-section-head"><div><span className="settings-section-kicker">Available models</span><h2>Provider inventory</h2></div><span className="settings-badge">{providers.length} configured</span></div>
+        <div className="issue-card settings-resource-list">
           {providers.map((p) => (
-            <div className="issue-row" key={p.id}>
+            <div className="issue-row settings-resource-row" key={p.id}>
               <span className="issue-copy">
-                <b>{p.name}</b>
+                <span className="resource-title"><b>{p.name}</b><span className={`settings-badge ${p.enabled ? 'success' : ''}`}>{p.enabled ? 'Enabled' : 'Disabled'}</span></span>
                 <small>
-                  {p.provider} · {p.modelId} · {p.hasApiKey ? 'key stored' : 'no key'}
+                  <span>{p.provider}</span><code>{p.modelId}</code><span>{p.hasApiKey ? 'Encrypted key stored' : 'No key stored'}</span>
                 </small>
               </span>
               <button type="button" className="outline" onClick={() => void toggle(p)}>
@@ -139,9 +147,14 @@ export function ModelProvidersSettings() {
               </button>
             </div>
           ))}
-          {!providers.length && <p>No models configured. The agent will say so until one is added.</p>}
+          {loading && <p role="status" className="settings-empty-state">Loading model providers…</p>}
+          {!loading && !providers.length && <div className="settings-empty-state"><BotAvatar/><b>No models configured</b><p>Add a provider above to make a model available to the workspace agent.</p></div>}
         </div>
       </div>
     </section>
   );
+}
+
+function BotAvatar() {
+  return <span className="settings-empty-mark" aria-hidden="true">AI</span>;
 }

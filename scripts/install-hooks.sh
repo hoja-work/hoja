@@ -2,11 +2,14 @@
 # Install the Hoja pre-commit hook into .git/hooks/pre-commit
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-HOOK="$ROOT/.git/hooks/pre-commit"
-if [ ! -d "$ROOT/.git" ]; then
+if ! HOOK="$(git -C "$ROOT" rev-parse --git-path hooks/pre-commit)"; then
     echo "ERROR: $ROOT is not a git repository. Run 'git init' first." >&2
     exit 1
 fi
+if [[ "$HOOK" != /* ]]; then
+    HOOK="$ROOT/$HOOK"
+fi
+mkdir -p "$(dirname "$HOOK")"
 cp "$ROOT/scripts/pre-commit.sh" "$HOOK"
 chmod +x "$HOOK"
 echo "Installed pre-commit hook at $HOOK"

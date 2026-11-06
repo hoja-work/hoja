@@ -206,6 +206,10 @@ uv run pytest
 
 Build the browser app with `npm ci && npm run build` in `frontend/`. The local backend integration script is `bash scripts/e2e-local-backend.sh`; it uses a disposable local database. The live API CLI matrix in `scripts/e2e-test.sh` requires `HOJA_TOKEN`, `HOJA_TEST_TEAM`, and `HOJA_TEST_ISSUE`.
 
+Contributor and agent operations, including the documentation contract, are in
+[AGENTS.md](AGENTS.md). Run `python3 scripts/check_docs.py` before submitting
+changes that add or modify documentation.
+
 Product architecture is described in [Design](docs/DESIGN.md); deployment instructions are in [Deployment](docs/DEPLOYMENT.md). The [changelog](CHANGELOG.md) records release-level behavior changes.
 
 ## First run in the browser

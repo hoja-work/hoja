@@ -35,6 +35,7 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
   const [accounts, setAccounts] = useState<ConnectorAccount[]>([]);
   const [actions, setActions] = useState<PendingAction[]>([]);
   const [message, setMessage] = useState('');
+  const [loading, setLoading] = useState(true);
   const [refresh, setRefresh] = useState(0);
 
   useEffect(() => {
@@ -48,7 +49,8 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
         setAccounts(a.accounts);
         setActions(p.actions);
       })
-      .catch((e) => live && setMessage((e as Error).message));
+      .catch((e) => live && setMessage((e as Error).message))
+      .finally(() => live && setLoading(false));
     return () => {
       live = false;
     };
@@ -77,12 +79,15 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
   return (
     <section className="settings-page">
       <header className="settings-page-heading">
+        <span className="eyebrow">Personal</span>
         <h1>Connections</h1>
         <p>Connect Google Workspace so the assistant can read your Gmail, Drive, Calendar, and Docs.</p>
       </header>
 
-      <div className="settings-group">
-        <h2>Google Workspace</h2>
+      <div className="settings-group connector-settings">
+        <span className="settings-section-kicker">Google Workspace</span>
+        <h2>Connected accounts</h2>
+        <p className="settings-section-intro">Read-only access for Gmail, Drive, Calendar, and Docs. Writes always require approval.</p>
         {message && <p role="alert">{message}</p>}
         <div className="setting-row">
           <div>
@@ -100,27 +105,31 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
             <a href="/api/connectors/google/start?scope=org">Connect organization account</a>
           </div>
         )}
-        <ul aria-label="Connected accounts">
-          {accounts.length === 0 && <li>No Google accounts connected.</li>}
+        <ul aria-label="Connected accounts" className="connector-account-list">
+          {loading && <li role="status">Checking connected accounts…</li>}
+          {!loading && accounts.length === 0 && <li className="connector-empty">No Google accounts connected.</li>}
           {accounts.map((a) => (
             <li key={a.id}>
-              {a.externalAccount} · {a.scope === 'org' ? 'Organization' : 'Personal'}
-              <button onClick={() => revoke(a.id)}>Disconnect</button>
+              <span className="connector-account-icon" aria-hidden="true">{a.externalAccount.slice(0, 1).toUpperCase()}</span>
+              <span className="connector-account-copy"><b>{a.externalAccount}</b><small>{a.scope === 'org' ? 'Organization account' : 'Personal account'} · {a.status}</small></span>
+              <button className="outline danger" onClick={() => revoke(a.id)}>Disconnect</button>
             </li>
           ))}
         </ul>
       </div>
 
-      <div className="settings-group">
+      <div className="settings-group connector-settings">
+        <span className="settings-section-kicker">Human in the loop</span>
         <h2>Pending actions</h2>
-        <ul aria-label="Pending actions">
-          {actions.length === 0 && <li>Nothing waiting for approval.</li>}
+        <p className="settings-section-intro">Review every proposed write before the assistant can act.</p>
+        <ul aria-label="Pending actions" className="connector-action-list">
+          {!loading && actions.length === 0 && <li className="connector-empty">Nothing waiting for approval.</li>}
           {actions.map((a) => (
             <li key={a.id}>
               <b>{a.tool}</b>
               <pre>{JSON.stringify(a.args, null, 2)}</pre>
-              <button onClick={() => decide(a.id, 'approve')}>Approve</button>
-              <button onClick={() => decide(a.id, 'reject')}>Reject</button>
+              <div className="connector-action-buttons"><button className="primary" onClick={() => decide(a.id, 'approve')}>Approve</button>
+              <button className="outline" onClick={() => decide(a.id, 'reject')}>Reject</button></div>
             </li>
           ))}
         </ul>

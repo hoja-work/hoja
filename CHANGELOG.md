@@ -63,7 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the GraphQL type names are unchanged. Local state under the old name must be
   moved by hand: the CLI config directory (`~/.config/<old-name>/` →
   `~/.config/hoja/`) and any `.<old-name>/memory.yaml` board (→
-  `.hoja/memory.yaml`). A running deployment should follow `DEPLOY-RENAME.md`;
+  `.hoja/memory.yaml`). A running deployment retains its existing database;
   its database must not be renamed in place.
 - Frontend TypeScript is pinned to 6.0.3 instead of 7.0.2: typescript-eslint
   (used by `npm run lint:ui`) refuses TS 7 and does not support it in any
@@ -149,10 +149,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   response.
 - Added an SMTP transport adapter for future email workflows. Invitations do
   not send email through this adapter yet.
-- Added GitHub integration, webhook, and feature-parity design proposals. These
-  documents describe possible future work; they do not indicate shipped
-  integrations.
-
 ## [0.21.2] — 2026-10-01
 
 ### Fixed
