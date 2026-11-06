@@ -59,6 +59,7 @@ frontend/node_modules/
 # Local-only E2E tooling
 local-e2e/
 .fastapi-reference/
+artifacts/settings-*/
 
 # swarm execution records (generated)
 .swarmpi/

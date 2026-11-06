@@ -1,4 +1,5 @@
 import React, {useEffect, useMemo, useState} from 'react';
+import {SettingsSelect} from './SettingsSelect';
 
 type ApiKey={id:string;label:string;access?:string;hint?:string;expiresAt?:string;lastUsedAt?:string;createdAt?:string;revokedAt?:string};
 type Access='read'|'read_write';
@@ -23,6 +24,10 @@ function keyStatus(k:ApiKey, now:number):'active'|'expired'|'revoked'{
 }
 
 const STATUS_LABEL={active:'Active',expired:'Expired',revoked:'Revoked'} as const;
+const ACCESS_OPTIONS=[
+  {value:'read_write',label:'Read and write',description:'View and change workspace data',meta:'Full access'},
+  {value:'read',label:'Read only',description:'View data without making changes',meta:'Restricted'},
+];
 
 function formatDate(value?:string){return value?new Date(value).toLocaleString():'Never'}
 
@@ -102,9 +107,8 @@ export function ApiKeysSettings(){
     catch{setMessage({kind:'error',text:'Copy failed. Select the key and copy it manually.'})}
   };
 
-  return <section className="modal workspace-settings-form api-keys-settings">
-    <h2>Personal API keys</h2>
-    <p>Use API keys to access Hoja from the CLI, scripts, and integrations. A key acts as you, with the access level you choose.</p>
+  return <div className="settings-stack api-keys-settings">
+    <p className="settings-leading-note">A key acts as you, with the access level you choose. Full secrets are shown only once.</p>
 
     {secret&&<div className="api-key-secret" role="status">
       <b>Copy “{secret.label}” now</b>
@@ -116,24 +120,22 @@ export function ApiKeysSettings(){
       <button type="button" className="auth-switch" onClick={()=>{setSecret(null);setCopied(false)}}>I’ve saved it</button>
     </div>}
 
+    <section className="settings-group api-key-create-panel" aria-labelledby="api-key-create-title">
+      <span className="settings-section-kicker">New credential</span>
+      <h2 id="api-key-create-title">Create an API key</h2>
+      <p className="settings-section-intro">Name the key by its purpose so it is easy to recognize and revoke later.</p>
     <form className="api-key-create" onSubmit={create}>
       <label>Name<input aria-label="API key name" maxLength={80} required value={label} onChange={e=>setLabel(e.target.value)} placeholder="e.g. Laptop CLI, CI deploys"/></label>
-      <label>Access
-        <select aria-label="API key access" value={access} onChange={e=>setAccess(e.target.value as Access)}>
-          <option value="read_write">Read and write: can view and change data</option>
-          <option value="read">Read only: can view data, cannot change it</option>
-        </select>
-      </label>
-      <label>Expires
-        <select aria-label="API key expiration" value={expiry} onChange={e=>setExpiry(e.target.value)}>
-          {EXPIRY_OPTIONS.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
-      </label>
+      <div className="settings-field"><span className="settings-field-label">Access</span><SettingsSelect label="API key access" value={access} options={ACCESS_OPTIONS} onChange={value=>setAccess(value as Access)}/></div>
+      <div className="settings-field"><span className="settings-field-label">Expires</span><SettingsSelect label="API key expiration" value={expiry} options={EXPIRY_OPTIONS.map(o=>({value:o.value,label:o.label,description:o.value==='never'?'Stays valid until you revoke it':`Valid until ${formatDate(new Date(Date.now()+Number(o.value)*86400000).toISOString())}`,meta:o.value==='never'?'No expiry':`${o.value} days`}))} onChange={setExpiry}/></div>
       <button className="primary" disabled={busy||!label.trim()}>{busy?'Creating…':'Create API key'}</button>
     </form>
+    </section>
 
     {message&&<p role={message.kind==='error'?'alert':'status'} className={message.kind==='error'?'error':'api-key-note'}>{message.text}</p>}
 
+    <section className="settings-group api-key-inventory" aria-labelledby="api-key-list-title">
+    <div className="settings-section-head"><div><span className="settings-section-kicker">Inventory</span><h2 id="api-key-list-title">Your API keys</h2></div><span className="settings-badge">{keys.length} {keys.length===1?'key':'keys'}</span></div>
     <div className="api-key-toolbar">
       <input type="search" aria-label="Search API keys" placeholder="Search by name or key ending" value={query} onChange={e=>setQuery(e.target.value)}/>
       <div role="group" aria-label="Filter by status" className="api-key-filters">
@@ -173,5 +175,6 @@ export function ApiKeysSettings(){
         </li>;
       })}
     </ul>
-  </section>;
+    </section>
+  </div>;
 }

@@ -37,35 +37,50 @@ export function AgentConversationsSettings() {
     };
   }, []);
 
-  if (error) return <p role="alert">Could not load conversations: {error}</p>;
-  if (!summary) return <p role="status">Loading conversations…</p>;
+  const heading = <header className="settings-page-heading">
+    <span className="eyebrow">Personal</span>
+    <h1>Agent conversations</h1>
+    <p>Review the conversation history stored for your agent, including message count and local storage use.</p>
+  </header>;
+
+  if (error) return <section className="settings-page">{heading}<div className="settings-group settings-empty-state" role="alert"><b>Could not load conversations</b><p>{error}</p></div></section>;
+  if (!summary) return <section className="settings-page">{heading}<div className="settings-group settings-empty-state" role="status">Loading conversation storage…</div></section>;
 
   return (
     <section className="settings-page" aria-label="Agent conversations">
       <header className="settings-page-heading">
+        <span className="eyebrow">Personal</span>
         <h1>Agent conversations</h1>
         <p>
-          {summary.count} saved {summary.count === 1 ? 'conversation' : 'conversations'} · {formatBytes(summary.totalBytes)} total
+          Stored agent history for this account. Review activity and storage without exposing conversation content.
         </p>
       </header>
-      <table>
-        <thead>
-          <tr>
-            <th>Updated</th>
-            <th>Messages</th>
-            <th>Size</th>
-          </tr>
-        </thead>
-        <tbody>
-          {summary.conversations.map((c) => (
-            <tr key={c.id}>
-              <td>{new Date(c.updatedAt).toLocaleString()}</td>
-              <td>{c.messageCount}</td>
-              <td>{formatBytes(c.bytes)}</td>
+      <div className="conversation-summary" aria-label="Conversation storage summary">
+        <div><span>Saved conversations</span><b>{summary.count}</b><small>Across your agent history</small></div>
+        <div><span>Total storage</span><b>{formatBytes(summary.totalBytes)}</b><small>Messages and conversation data</small></div>
+      </div>
+      <div className="settings-group conversation-log">
+        <div className="settings-section-head"><div><span className="settings-section-kicker">History</span><h2>Conversation activity</h2></div><span className="settings-badge">Most recent first</span></div>
+        {summary.conversations.length ? <div className="conversation-table-wrap"><table className="conversation-table">
+          <caption>Saved agent conversations, message counts, and storage size</caption>
+          <thead>
+            <tr>
+              <th scope="col">Last updated</th>
+              <th scope="col">Messages</th>
+              <th scope="col">Size</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {summary.conversations.map((c) => (
+              <tr key={c.id}>
+                <td>{new Date(c.updatedAt).toLocaleString()}</td>
+                <td>{c.messageCount}</td>
+                <td>{formatBytes(c.bytes)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table></div> : <div className="settings-empty-state"><span className="settings-empty-mark" aria-hidden="true">0</span><b>No saved conversations</b><p>Agent conversations will appear here after you start a conversation.</p></div>}
+      </div>
     </section>
   );
 }
