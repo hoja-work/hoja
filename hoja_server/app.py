@@ -1074,6 +1074,13 @@ def create_app(
             return JSONResponse(
                 {"error": "Complete all fields with a valid email."}, status_code=400
             )
+        # A hosted tenant is provisioned with an owner address before it has a
+        # user. The onboarding form must not let another address claim it first.
+        owner = google_login.owner_email()
+        if owner and email != owner:
+            return JSONResponse(
+                {"error": "This workspace is reserved for its owner."}, status_code=403
+            )
         if len(password) < 12:
             return JSONResponse(
                 {"error": "Password must be at least 12 characters."}, status_code=400
@@ -1681,6 +1688,48 @@ def create_app(
         )
         return JSONResponse(decision.as_dict(), status_code=decision.status_code)
 
+    async def signup_status(request: Request):
+        """The signed-in requester's own workspace state, for the sign-up page.
+
+        Deliberately not public: the sign-up session identifies the requester,
+        and the slug must belong to that identity. It answers no secrets and no
+        other person's queue position.
+        """
+        identity = _signup_identity(request)
+        if identity is None:
+            return JSONResponse(
+                {"ok": False, "reason": "not_authenticated"}, status_code=401
+            )
+        slug = (request.query_params.get("slug") or "").strip().lower()
+        if not slug or len(slug) > 63:
+            return JSONResponse({"ok": False, "reason": "invalid_slug"}, status_code=400)
+        row = signup_store.eligibility_for(identity["identity_id"], slug)
+        if row is None:
+            return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+        status = str(row.get("status") or "eligible")
+        if status == "active":
+            workspace_url = f"https://{slug}.{signup_config.tenant_base_domain}"
+            message = "Your workspace is ready."
+        elif status == "provisioning":
+            workspace_url = None
+            message = "Your workspace is being created."
+        elif status == "failed":
+            workspace_url = None
+            message = "We could not finish creating this workspace."
+        else:
+            workspace_url = None
+            message = "Your workspace request is queued for creation."
+        return JSONResponse(
+            {
+                "ok": True,
+                "slug": slug,
+                "status": status,
+                "workspaceUrl": workspace_url,
+                "message": message,
+            },
+            headers={"cache-control": "no-store"},
+        )
+
     async def signup_logout(request: Request):
         if not _same_origin(request.headers.get("origin"), request.headers):
             return JSONResponse({"error": "Cross-site request rejected."}, status_code=403)
@@ -2032,6 +2081,7 @@ def create_app(
             Route("/auth/google/finish", google_sign_in_finish, methods=["GET"]),
             Route("/auth/google/logout", signup_logout, methods=["POST"]),
             Route("/api/signup/config", signup_public_config, methods=["GET"]),
+            Route("/api/signup/status", signup_status, methods=["GET"]),
             Route("/api/signup", signup_endpoint, methods=["GET", "POST"]),
             Route("/api/uploads", upload_create, methods=["POST"]),
             Route("/api/uploads/{file_id}", upload_serve, methods=["GET"]),

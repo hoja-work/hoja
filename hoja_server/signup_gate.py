@@ -282,10 +282,16 @@ class SignupGate:
         #     before the caps — which a repeat would otherwise trip by definition.
         already = store.eligibility_by_subject_slug(identity["subject"], candidate)
         if already is not None:
+            message = {
+                "active": "Your workspace is ready.",
+                "provisioning": "Your workspace is being created.",
+                "failed": "Your workspace request needs attention.",
+            }.get(str(already.get("status") or ""),
+                  "Your workspace request was already queued.")
             return SignupDecision(
                 state=SignupState.ELIGIBLE,
                 reason=None,
-                message="Your workspace request was already queued.",
+                message=message,
                 status_code=200,
                 google_verified=google_verified,
                 human_verified=human_verified,

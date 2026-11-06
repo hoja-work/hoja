@@ -11,7 +11,13 @@ export const SIGNUP_ENDPOINT = '/api/signup';
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
 export type SignupResult =
-  | {kind: 'queued'; slug: string; message: string; alreadyQueued: boolean}
+  | {
+      kind: 'queued';
+      slug: string;
+      message: string;
+      alreadyQueued: boolean;
+      status: 'eligible' | 'provisioning' | 'active' | 'failed';
+    }
   | {
       kind: 'refused';
       reason: string;
@@ -35,6 +41,7 @@ type SignupBody = {
   reason?: unknown;
   message?: unknown;
   slug?: unknown;
+  status?: unknown;
   alreadyEligible?: unknown;
 };
 
@@ -90,11 +97,16 @@ export async function submitSignup({
   const serverMessage = typeof body.message === 'string' ? body.message : null;
 
   if (body.ok === true) {
+    const state = body.status;
     return {
       kind: 'queued',
       slug: typeof body.slug === 'string' && body.slug ? body.slug : slug,
       message: serverMessage?.trim() || 'Your workspace request is queued.',
       alreadyQueued: body.alreadyEligible === true,
+      status:
+        state === 'provisioning' || state === 'active' || state === 'failed'
+          ? state
+          : 'eligible',
     };
   }
 

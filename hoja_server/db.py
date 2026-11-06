@@ -32,7 +32,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 36
+CURRENT_SCHEMA_REVISION = 37
 
 
 def now_iso() -> str:
@@ -239,6 +239,13 @@ signup_eligibility = Table(
     Column("turnstile_hostname", String),
     Column("created_at", String, nullable=False),
     Column("claimed_at", String),
+    # Provisioning lease/audit fields. ``attempts`` is incremented when a worker
+    # claims the row; ``provisioned_at`` is written only after the tenant is
+    # healthy through the edge. ``last_error`` holds a stable code, never a
+    # secret or a raw subprocess error.
+    Column("attempts", Integer, nullable=False, server_default="0", default=0),
+    Column("provisioned_at", String),
+    Column("last_error", String),
     UniqueConstraint("google_sub", "slug", name="uq_signup_eligibility_subject_slug"),
 )
 
@@ -1409,6 +1416,21 @@ def _apply_meeting_devices(conn) -> None:
             conn.exec_driver_sql(f"ALTER TABLE meeting_participant ADD COLUMN {name} VARCHAR")
 
 
+def _apply_signup_provisioning(conn) -> None:
+    """Add the worker lease fields to an existing sign-up outbox."""
+    existing = {column["name"] for column in inspect(conn).get_columns("signup_eligibility")}
+    additions = {
+        "attempts": "INTEGER NOT NULL DEFAULT 0",
+        "provisioned_at": "VARCHAR",
+        "last_error": "VARCHAR",
+    }
+    for name, sql_type in additions.items():
+        if name not in existing:
+            conn.exec_driver_sql(
+                f"ALTER TABLE signup_eligibility ADD COLUMN {name} {sql_type}"
+            )
+
+
 def _apply_team_hierarchy(conn) -> None:
     """Departments (team.parent_team_id), team.visibility and team_member.role.
 
@@ -1509,6 +1531,7 @@ _MIGRATIONS = {
         signup_eligibility.create(conn, checkfirst=True),
         turnstile_use.create(conn, checkfirst=True),
     ),
+    37: _apply_signup_provisioning,
 }
 
 
