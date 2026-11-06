@@ -1,4 +1,4 @@
-import {useEffect, useRef, type ReactNode} from 'react';
+import {useLayoutEffect, useRef, type ReactNode} from 'react';
 
 type PopoverProps = {
   className?: string;
@@ -22,28 +22,33 @@ export function Popover({
   children,
 }: PopoverProps) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const onOpenChangeRef = useRef(onOpenChange);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    onOpenChangeRef.current = onOpenChange;
+  }, [onOpenChange]);
+
+  useLayoutEffect(() => {
     if (!open) return;
 
     const onPointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) onOpenChange(false);
+      if (!rootRef.current?.contains(event.target as Node)) onOpenChangeRef.current(false);
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onOpenChange(false);
+      if (event.key === 'Escape') onOpenChangeRef.current(false);
     };
 
     document.addEventListener('pointerdown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keydown', onKeyDown, true);
     return () => {
       document.removeEventListener('pointerdown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('keydown', onKeyDown, true);
     };
-  }, [open, onOpenChange]);
+  }, [open]);
 
   return (
     <div className={className} ref={rootRef}>
-      {trigger(open, () => onOpenChange(!open))}
+      {trigger(open, () => onOpenChangeRef.current(!open))}
       {open && (
         <div className={`popover-panel ${panelClassName}`} id={panelId} role={panelRole}>
           {children}
