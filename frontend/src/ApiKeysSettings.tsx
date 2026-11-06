@@ -161,7 +161,7 @@ export function ApiKeysSettings(){
             <span className="api-key-badge access">{k.access==='read'?'Read only':'Read and write'}</span>
           </div>
           <small>
-            Ends in <code>…{k.hint||'????'}</code> · Created {formatDate(k.createdAt)} · Last used {k.lastUsedAt?formatDate(k.lastUsedAt):'never'}
+            {k.hint ? <>Ends in <code>…{k.hint}</code></> : 'Key ending unavailable'} · Created {formatDate(k.createdAt)} · Last used {k.lastUsedAt?formatDate(k.lastUsedAt):'never'}
             {' · '}{k.expiresAt?`Expires ${formatDate(k.expiresAt)}`:'No expiration'}
             {status==='revoked'&&k.revokedAt?` · Revoked ${formatDate(k.revokedAt)}`:''}
           </small>
