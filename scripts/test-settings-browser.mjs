@@ -75,7 +75,7 @@ async function click(selector) {
   await wait(120);
 }
 async function key(key, code = key) {
-  const virtual = {Tab: 9, Enter: 13, Escape: 27, Space: 32}[key];
+  const virtual = {Tab: 9, Enter: 13, Escape: 27, Space: 32, ArrowDown: 40, ArrowUp: 38, Home: 36, End: 35}[key];
   const domKey = key === 'Space' ? ' ' : key;
   const text = key === 'Enter' ? '\r' : key === 'Space' ? ' ' : undefined;
   await cdp('Input.dispatchKeyEvent', {type: 'keyDown', key: domKey, code, text, windowsVirtualKeyCode: virtual, nativeVirtualKeyCode: virtual});
@@ -150,6 +150,33 @@ await key('Enter');
 await waitFor(`document.documentElement.dataset.theme === 'light'`);
 report.interactions.keyboardTheme = true;
 
+// Context-rich select: native keyboard exploration, Escape cancellation,
+// typeahead, contextual copy, persistence, and real server-backed restoration.
+const fontSelect = '[role=combobox][aria-label="Font size"]';
+await click(fontSelect);
+assert.match(await evaluate(`document.querySelector('[role=listbox][aria-label="Font size"]').textContent`), /The balanced Hoja reading size/);
+assert.equal(await evaluate(`document.querySelector('[role=option][data-value="100"]').getAttribute('aria-selected')`), 'true');
+await key('ArrowDown');
+assert.equal(await evaluate(`document.querySelector('[role=option][data-active=true]').dataset.value`), '110');
+await key('Enter');
+await waitFor(`document.documentElement.style.getPropertyValue('--font-scale') === '1.1'`);
+await waitFor(`[...document.querySelectorAll('.settings-page [role=status]')].some(el=>el.textContent.includes('Saved'))`);
+await key('ArrowDown');
+await key('Home');
+assert.equal(await evaluate(`document.querySelector('[role=option][data-active=true]').dataset.value`), '90');
+await key('Escape');
+assert.equal(await evaluate(`document.querySelector('[role=combobox][aria-label="Font size"] .settings-select-value b').textContent`), 'Large');
+await key('c');
+await key('Enter');
+await waitFor(`document.documentElement.style.getPropertyValue('--font-scale') === '0.9'`);
+await key('d');
+await key('Enter');
+await waitFor(`document.documentElement.style.getPropertyValue('--font-scale') === '1'`);
+await click(fontSelect);
+await shot('desktop-font-dropdown');
+await key('Escape');
+report.interactions.dropdownKeyboardAndTypeahead = true;
+
 await evaluate(`document.querySelector('.settings-search input').focus();true`);
 await cdp('Input.insertText', {text: 'model'});
 await waitFor(`document.querySelectorAll('.settings-sidebar .nav-item').length === 1`);
@@ -172,6 +199,22 @@ await waitFor(`document.querySelector('.setting-switch').checked === ${beforeSwi
 report.interactions.nativeSwitchKeyboard = true;
 
 await navigate('api-keys');
+await click('[role=combobox][aria-label="API key access"]');
+assert.match(await evaluate(`document.querySelector('[role=listbox][aria-label="API key access"]').textContent`), /View data without making changes/);
+await key('ArrowDown');
+await key('Enter');
+assert.equal(await evaluate(`document.querySelector('[aria-label="API key access"] .settings-select-value b').textContent`), 'Read only');
+await key('Home');
+await key('Enter');
+assert.equal(await evaluate(`document.querySelector('[aria-label="API key access"] .settings-select-value b').textContent`), 'Read and write');
+await click('[role=combobox][aria-label="API key expiration"]');
+assert.match(await evaluate(`document.querySelector('[role=listbox][aria-label="API key expiration"]').textContent`), /Valid until/);
+assert.match(await evaluate(`document.querySelector('[role=listbox][aria-label="API key expiration"]').textContent`), /Stays valid until you revoke it/);
+const desktopMenu = await evaluate(`document.querySelector('[role=listbox][aria-label="API key expiration"]').getBoundingClientRect().toJSON()`);
+assert.ok(desktopMenu.left >= 0 && desktopMenu.right <= 1440 && desktopMenu.top >= 0 && desktopMenu.bottom <= 1000, 'Desktop menu is placed inside the viewport.');
+await shot('desktop-api-expiration-dropdown');
+await key('Escape');
+report.interactions.dropdownCredentialContext = true;
 await click('.api-key-row > button.outline');
 assert.equal(await evaluate(`document.querySelectorAll('.api-key-confirm').length`), 1);
 await click('.api-key-confirm .outline');
@@ -179,6 +222,9 @@ assert.equal(await evaluate(`document.querySelectorAll('.api-key-confirm').lengt
 report.interactions.revokeCancel = true;
 
 await navigate('teams');
+assert.equal(await evaluate(`document.querySelector('[aria-label="Add a member to Engineering"]').getAttribute('aria-disabled')`), 'true');
+await click('[aria-label="Add a member to Engineering"]');
+assert.equal(await evaluate(`document.querySelectorAll('[role=listbox]').length`), 0, 'Exhausted team membership does not open an empty menu.');
 await click('.team-card-actions .outline.danger');
 assert.equal(await evaluate(`document.querySelector('.team-card-delete button.danger').disabled`), true);
 await fill('.team-card-delete-confirm input', 'ENG');
@@ -186,20 +232,29 @@ assert.equal(await evaluate(`document.querySelector('.team-card-delete button.da
 await click('.team-card-delete .outline');
 report.interactions.teamDeleteGate = true;
 
+await navigate('members');
+await click('[role=combobox][aria-label="Role for Local User"]');
+assert.match(await evaluate(`document.querySelector('[role=listbox][aria-label="Role for Local User"]').textContent`), /Manage the workspace, members, and teams/);
+await key('Escape');
+assert.equal(await evaluate(`document.querySelector('[aria-label="Role for Local User"] .settings-select-value b').textContent`), 'Admin', 'Escape does not change a workspace role.');
+report.interactions.dropdownRoleContext = true;
+
 if (allowMutations) {
+  const verificationLabel = `UI verification ${Date.now()}`;
   await navigate('api-keys');
-  await fill('input[aria-label="API key name"]', 'UI verification key');
+  await fill('input[aria-label="API key name"]', verificationLabel);
   await click('.api-key-create > button');
   await waitFor(`document.querySelector('.api-key-secret code')?.textContent.length > 20`);
   const leak = await evaluate(`Object.values(localStorage).some(value=>value.includes(document.querySelector('.api-key-secret code').textContent))`);
   assert.equal(leak, false, 'The one-time secret is not persisted in localStorage.');
   await click('.api-key-secret .auth-switch');
-  const created = await evaluate(`[...document.querySelectorAll('.api-key-row')].findIndex(row=>row.textContent.includes('UI verification key'))`);
+  const label = JSON.stringify(verificationLabel);
+  const created = await evaluate(`[...document.querySelectorAll('.api-key-row')].findIndex(row=>row.textContent.includes(${label}))`);
   assert.ok(created >= 0, 'Created key appears in inventory.');
-  await evaluate(`[...document.querySelectorAll('.api-key-row')].find(row=>row.textContent.includes('UI verification key')).querySelector('button').click();true`);
+  await evaluate(`[...document.querySelectorAll('.api-key-row')].find(row=>row.textContent.includes(${label})&&row.querySelector('button'))?.querySelector('button').click();true`);
   await waitFor(`document.querySelector('.api-key-confirm') !== null`);
   await click('.api-key-confirm button.danger');
-  await waitFor(`[...document.querySelectorAll('.api-key-row')].some(row=>row.textContent.includes('UI verification key')&&row.textContent.includes('Revoked'))`);
+  await waitFor(`[...document.querySelectorAll('.api-key-row')].some(row=>row.textContent.includes(${label})&&row.textContent.includes('Revoked'))`);
   report.mutations = 'create/reveal/dismiss/revoke passed; raw secret not logged or persisted';
 }
 
@@ -211,6 +266,13 @@ for (const section of sections) {
   assert.ok(geometry.left >= 0 && geometry.right <= 390, `mobile ${section}: settings page escapes viewport`);
 }
 await navigate('preferences');
+await click(fontSelect);
+const mobileMenu = await evaluate(`document.querySelector('[role=listbox][aria-label="Font size"]').getBoundingClientRect().toJSON()`);
+assert.ok(mobileMenu.left >= 0 && mobileMenu.right <= 390 && mobileMenu.top >= 0 && mobileMenu.bottom <= 844, 'Mobile menu is placed inside the viewport.');
+await key('End');
+assert.equal(await evaluate(`document.querySelector('[role=option][data-active=true]').dataset.value`), '110');
+await key('Escape');
+report.interactions.dropdownMobilePlacement = true;
 await click('.mobile-nav-toggle');
 assert.equal(await evaluate(`document.querySelector('.settings-sidebar').getAttribute('role')`), 'dialog');
 assert.equal(await evaluate(`document.activeElement.classList.contains('settings-drawer-close')`), true);
