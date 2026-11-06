@@ -34,6 +34,7 @@ from starlette.testclient import TestClient
 from hoja_server import google_oidc, signup_gate, turnstile
 from hoja_server.app import create_app
 from hoja_server.db import (
+    _apply_signup_provisioning,
     make_engine,
     migrate,
     organization,
@@ -149,6 +150,7 @@ def _clear_signup_env(monkeypatch) -> None:
         "HOJA_SIGNUP_IP_CAP",
         "HOJA_SIGNUP_IP_WINDOW_SECONDS",
         "HOJA_TENANT_REGISTRY",
+        "HOJA_TENANT_BASE_DOMAIN",
         *REQUIRED_ENV,
     ):
         monkeypatch.delenv(name, raising=False)
@@ -718,6 +720,19 @@ def test_anonymous_cannot_reach_the_gate(harness):
     assert harness.eligibility() == []
 
 
+def test_existing_outbox_gains_the_worker_lease_columns(tmp_path):
+    engine = make_engine(tmp_path / "old-outbox.db")
+    with engine.begin() as conn:
+        conn.exec_driver_sql("CREATE TABLE signup_eligibility (id VARCHAR PRIMARY KEY)")
+        _apply_signup_provisioning(conn)
+    with engine.connect() as conn:
+        columns = {
+            row[1]
+            for row in conn.exec_driver_sql("PRAGMA table_info(signup_eligibility)")
+        }
+    assert {"attempts", "provisioned_at", "last_error"} <= columns
+
+
 def test_signup_is_closed_by_default(tmp_path, monkeypatch):
     harness = _build_harness(tmp_path, monkeypatch, mode="closed")
     try:
@@ -919,6 +934,46 @@ def test_gate_module_has_no_provisioning_machinery():
     for verb in ("subprocess", "docker ", "psql", "cloudflare.com", "socket.", "requests."):
         assert verb not in source
     assert "httpx" not in source
+
+
+def test_signup_status_requires_the_same_google_identity(harness):
+    assert harness.client.get("/api/signup/status?slug=acme").status_code == 401
+    harness.sign_in(subject="sub-1", email="one@example.test")
+    assert harness.signup("acme", token="token-one").status_code == 201
+    assert harness.client.get("/api/signup/status?slug=acme").status_code == 200
+
+    harness.sign_in(subject="sub-2", email="two@example.test")
+    response = harness.client.get("/api/signup/status?slug=acme")
+    assert response.status_code == 404
+    assert response.json()["reason"] == "not_found"
+
+
+def test_signup_status_turns_active_into_the_workspace_url(harness):
+    harness.sign_in(email="founder@example.test")
+    assert harness.signup("acme", token="token-one").status_code == 201
+
+    body = harness.client.get("/api/signup/status?slug=acme").json()
+    assert body == {
+        "ok": True,
+        "slug": "acme",
+        "status": "eligible",
+        "workspaceUrl": None,
+        "signInUrl": None,
+        "message": "Your workspace request is queued for creation.",
+    }
+
+    with harness.engine.begin() as conn:
+        conn.execute(
+            update(signup_eligibility)
+            .where(signup_eligibility.c.slug == "acme")
+            .values(status="active")
+        )
+    body = harness.client.get("/api/signup/status?slug=acme").json()
+    assert body["status"] == "active"
+    assert body["workspaceUrl"] == "https://acme.hoja.work"
+    assert body["signInUrl"] == "https://acme.hoja.work/auth/google/start?return_to=%2F"
+    assert body["message"] == "Your workspace is ready."
+    assert harness.client.get("/api/signup/status?slug=acme").headers["cache-control"] == "no-store"
 
 
 def test_signup_state_endpoint_reports_the_state_machine(harness):

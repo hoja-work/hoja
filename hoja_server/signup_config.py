@@ -53,6 +53,11 @@ IP_CAP_ENV = "HOJA_SIGNUP_IP_CAP"
 IP_WINDOW_ENV = "HOJA_SIGNUP_IP_WINDOW_SECONDS"
 TENANT_REGISTRY_ENV = "HOJA_TENANT_REGISTRY"
 
+#: The suffix under which a provisioned workspace lives. The control plane uses
+#: it only to tell an authenticated requester where their ready workspace is.
+TENANT_BASE_DOMAIN_ENV = "HOJA_TENANT_BASE_DOMAIN"
+DEFAULT_TENANT_BASE_DOMAIN = "hoja.work"
+
 #: Where a tenant origin sends its sign-in. Google cannot register a wildcard
 #: redirect, so every tenant delegates the code exchange to this one origin.
 CONTROL_PLANE_ENV = "HOJA_CONTROL_PLANE_URL"
@@ -136,6 +141,7 @@ class SignupConfig:
     ip_cap: int = 2
     ip_window_seconds: int = 24 * 60 * 60
     tenant_registry: str | None = None
+    tenant_base_domain: str = DEFAULT_TENANT_BASE_DOMAIN
     #: Where tenant origins delegate Google sign-in, and the key they share with
     #: it. Both empty on a single-origin install; both set on a hosted one.
     control_plane_url: str | None = None
@@ -237,6 +243,11 @@ def load_signup_config(environ: dict[str, str] | None = None) -> SignupConfig:
         ip_cap=_int_env(env, IP_CAP_ENV, 2),
         ip_window_seconds=_int_env(env, IP_WINDOW_ENV, 24 * 60 * 60, minimum=60),
         tenant_registry=(env.get(TENANT_REGISTRY_ENV) or "").strip() or None,
+        tenant_base_domain=(
+            _validate_hostname((env.get(TENANT_BASE_DOMAIN_ENV) or "").strip())
+            if (env.get(TENANT_BASE_DOMAIN_ENV) or "").strip()
+            else DEFAULT_TENANT_BASE_DOMAIN
+        ),
         control_plane_url=control_plane_url(env),
         identity_transfer_key=identity_transfer_key(env),
         identity_transfer_master=identity_transfer_master(env),

@@ -1074,6 +1074,13 @@ def create_app(
             return JSONResponse(
                 {"error": "Complete all fields with a valid email."}, status_code=400
             )
+        # A hosted tenant is provisioned with an owner address before it has a
+        # user. The onboarding form must not let another address claim it first.
+        owner = google_login.owner_email()
+        if owner and email != owner:
+            return JSONResponse(
+                {"error": "This workspace is reserved for its owner."}, status_code=403
+            )
         if len(password) < 12:
             return JSONResponse(
                 {"error": "Password must be at least 12 characters."}, status_code=400
@@ -1392,14 +1399,27 @@ def create_app(
         "sign-up unavailable" instead of a widget that could never be verified.
         ``no-store`` because a stale mode or a stale key is a trap after a deploy.
         """
+        host = _signup_host(request).split(":")[0].lower()
+        control_plane = signup_config.control_plane_url
+        tenant_origin = bool(
+            control_plane and host != (urlsplit(control_plane).hostname or "").lower()
+        )
+        if tenant_origin:
+            # A tenant borrows the control plane's registered Google redirect.
+            # Returning to `/` means the verified handoff lands in the app, not
+            # on the tenant's closed sign-up page.
+            sign_in_url = "/auth/google/start?return_to=%2F"
+        elif signup_config.configured:
+            sign_in_url = _GOOGLE_SIGN_IN_URL
+        else:
+            sign_in_url = None
         return JSONResponse(
             {
                 "mode": signup_config.mode,
                 "available": signup_config.public_widget_available,
                 "sitekey": signup_config.turnstile_site_key or None,
-                "signInUrl": (
-                    _GOOGLE_SIGN_IN_URL if signup_config.configured else None
-                ),
+                "signInUrl": sign_in_url,
+                "hosted": bool(control_plane),
                 "widgetScriptUrl": TURNSTILE_SCRIPT_URL,
             },
             headers={"cache-control": "no-store"},
@@ -1680,6 +1700,49 @@ def create_app(
             client_ip=_client_ip(request),
         )
         return JSONResponse(decision.as_dict(), status_code=decision.status_code)
+
+    async def signup_status(request: Request):
+        """The signed-in requester's own workspace state, for the sign-up page.
+
+        Deliberately not public: the sign-up session identifies the requester,
+        and the slug must belong to that identity. It answers no secrets and no
+        other person's queue position.
+        """
+        identity = _signup_identity(request)
+        if identity is None:
+            return JSONResponse(
+                {"ok": False, "reason": "not_authenticated"}, status_code=401
+            )
+        slug = (request.query_params.get("slug") or "").strip().lower()
+        if not slug or len(slug) > 63:
+            return JSONResponse({"ok": False, "reason": "invalid_slug"}, status_code=400)
+        row = signup_store.eligibility_for(identity["identity_id"], slug)
+        if row is None:
+            return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+        status = str(row.get("status") or "eligible")
+        workspace_url = None
+        sign_in_url = None
+        if status == "active":
+            workspace_url = f"https://{slug}.{signup_config.tenant_base_domain}"
+            sign_in_url = f"{workspace_url}/auth/google/start?return_to=%2F"
+            message = "Your workspace is ready."
+        elif status == "provisioning":
+            message = "Your workspace is being created."
+        elif status == "failed":
+            message = "We could not finish creating this workspace."
+        else:
+            message = "Your workspace request is queued for creation."
+        return JSONResponse(
+            {
+                "ok": True,
+                "slug": slug,
+                "status": status,
+                "workspaceUrl": workspace_url,
+                "signInUrl": sign_in_url,
+                "message": message,
+            },
+            headers={"cache-control": "no-store"},
+        )
 
     async def signup_logout(request: Request):
         if not _same_origin(request.headers.get("origin"), request.headers):
@@ -2032,6 +2095,7 @@ def create_app(
             Route("/auth/google/finish", google_sign_in_finish, methods=["GET"]),
             Route("/auth/google/logout", signup_logout, methods=["POST"]),
             Route("/api/signup/config", signup_public_config, methods=["GET"]),
+            Route("/api/signup/status", signup_status, methods=["GET"]),
             Route("/api/signup", signup_endpoint, methods=["GET", "POST"]),
             Route("/api/uploads", upload_create, methods=["POST"]),
             Route("/api/uploads/{file_id}", upload_serve, methods=["GET"]),

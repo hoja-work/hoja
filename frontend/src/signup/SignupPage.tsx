@@ -16,6 +16,8 @@ import {checkSlug} from './slugValidation';
 import {describeReason} from './reasonCopy';
 import {submitSignup} from './submitSignup';
 import {loadTurnstile} from './turnstile';
+import {fetchWorkspaceStatus} from './workspaceStatus';
+import type {WorkspaceState} from './workspaceStatus';
 import './signup.css';
 
 /** What GET /api/signup/config may answer with. */
@@ -36,6 +38,15 @@ type SessionInfo = {
 
 type Alert = {title: string; message: string};
 
+type WorkspaceRequest = {
+  slug: string;
+  message: string;
+  alreadyQueued: boolean;
+  status: WorkspaceState;
+  workspaceUrl: string | null;
+  signInUrl: string | null;
+};
+
 /** Refusals that mean "the address, not the session" — refocus the field. */
 const SLUG_REFUSALS = new Set(['slug_required', 'invalid_slug', 'reserved_slug', 'slug_taken']);
 
@@ -48,7 +59,7 @@ export function SignupPage() {
   const [challengeError, setChallengeError] = useState('');
   const [alert, setAlert] = useState<Alert | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [queued, setQueued] = useState<{slug: string; message: string; alreadyQueued: boolean} | null>(null);
+  const [request, setRequest] = useState<WorkspaceRequest | null>(null);
   const widgetRef = useRef<HTMLDivElement | null>(null);
   const widgetId = useRef<string | null>(null);
   const slugInput = useRef<HTMLInputElement | null>(null);
@@ -73,7 +84,7 @@ export function SignupPage() {
   // has a Google session: a missing site key is a fail-closed "unavailable", never
   // a widget that produces tokens nothing can spend.
   const ready = Boolean(config && !closed && config.available && config.signInUrl);
-  const showForm = ready && Boolean(session?.googleVerified) && !queued;
+  const showForm = ready && Boolean(session?.googleVerified) && !request;
 
   // 2. The widget. Explicit render into this component's node, one callback that
   //    stores the token; the effect removes it on unmount (or on success).
@@ -134,7 +145,14 @@ export function SignupPage() {
     try {
       const result = await submitSignup({slug: checked.slug, token});
       if (result.kind === 'queued') {
-        setQueued({slug: result.slug, message: result.message, alreadyQueued: result.alreadyQueued});
+        setRequest({
+          slug: result.slug,
+          message: result.message,
+          alreadyQueued: result.alreadyQueued,
+          status: result.status,
+          workspaceUrl: null,
+          signInUrl: null,
+        });
         return;
       }
       if (result.kind === 'unreachable') {
@@ -149,6 +167,54 @@ export function SignupPage() {
       setSubmitting(false);
     }
   };
+
+  // 4. The accepted request is asynchronous. Poll only while it can still
+  //    change; a transient failure is retried, never rendered as a rejection.
+  const requestSlug = request?.slug;
+  const requestStatus = request?.status;
+  useEffect(() => {
+    if (!requestSlug || requestStatus === 'active' || requestStatus === 'failed') return;
+    let live = true;
+    let timer: number | undefined;
+    const poll = async () => {
+      const result = await fetchWorkspaceStatus({slug: requestSlug});
+      if (!live) return;
+      if (result.kind === 'unauthenticated') {
+        setSession({googleVerified: false});
+        setRequest(null);
+        return;
+      }
+      if (result.kind === 'state') {
+        setRequest(previous => previous && previous.slug === result.slug
+          ? {
+              ...previous,
+              status: result.status,
+              workspaceUrl: result.workspaceUrl,
+              signInUrl: result.signInUrl,
+              message: result.status === 'eligible' ? previous.message : result.message,
+            }
+          : previous);
+        if (result.status === 'active' || result.status === 'failed') return;
+      }
+      timer = window.setTimeout(poll, 1500);
+    };
+    timer = window.setTimeout(poll, 300);
+    return () => {
+      live = false;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [requestSlug, requestStatus]);
+
+  // 5. A ready workspace opens itself. The tenant still asks Google to sign in;
+  //    the control-plane session is intentionally not a cross-origin cookie.
+  useEffect(() => {
+    const target = request?.signInUrl || request?.workspaceUrl;
+    if (request?.status !== 'active' || !target) return;
+    const timer = window.setTimeout(() => {
+      window.location.assign(target);
+    }, 1800);
+    return () => window.clearTimeout(timer);
+  }, [request?.status, request?.signInUrl, request?.workspaceUrl]);
 
   const signOut = async () => {
     try {
@@ -168,11 +234,23 @@ export function SignupPage() {
   const preview = typed && (!liveCheck || !liveCheck.ok) ? typed.toLowerCase() : 'your-workspace';
 
   const signedIn = Boolean(session?.googleVerified);
-  const heading = queued
-    ? (queued.alreadyQueued ? 'You already asked for this address' : 'Request received')
+  const heading = request
+    ? request.status === 'active'
+      ? 'Your workspace is ready'
+      : request.status === 'failed'
+        ? 'We could not finish your workspace'
+        : request.status === 'provisioning'
+          ? 'Building your workspace'
+          : request.alreadyQueued ? 'You already asked for this address' : 'Request received'
     : signedIn ? 'Name your workspace' : 'Sign up with your identity provider';
-  const sub = queued
-    ? 'Your request is queued. Nothing else is needed from you right now.'
+  const sub = request
+    ? request.status === 'active'
+      ? 'Opening it now. You will sign in there with the same Google account.'
+      : request.status === 'failed'
+        ? 'Your request is still recorded, but setting it up did not finish.'
+        : request.status === 'provisioning'
+          ? 'The database, application and address are being prepared. This page updates itself.'
+          : 'Your request is accepted. Creation starts automatically; this page updates itself.'
     : signedIn
       ? 'Signed in with Google. Your team will reach this workspace at ' + preview + '.hoja.work.'
       : "You'll use this provider to sign in to your workspace.";
@@ -214,7 +292,7 @@ export function SignupPage() {
           </div>
         )}
 
-        {config && !closed && config.available && !queued && (
+        {config && !closed && config.available && !request && (
           session === null
             ? <p className="signin-loading" role="status">Checking your Google sign-in…</p>
             : !session.googleVerified
@@ -318,11 +396,21 @@ export function SignupPage() {
               )
         )}
 
-        {queued && (
-          <div className="signin-notice" role="status">
-            <h2><code>{queued.slug}.hoja.work</code></h2>
-            <p>{queued.message}</p>
-            <p>Creating it is an operator step, so nothing else is needed from you right now.</p>
+        {request && (
+          <div className="signin-notice" role="status" aria-live="polite">
+            <h2><code>{request.slug}.hoja.work</code></h2>
+            <p>{request.message}</p>
+            {request.status === 'active' && (request.signInUrl || request.workspaceUrl) ? (
+              <p>
+                <a className="signin-workspace-link" href={request.signInUrl || request.workspaceUrl || undefined}>
+                  Open {request.slug}.hoja.work
+                </a>
+              </p>
+            ) : request.status === 'failed' ? (
+              <p>Contact Hoja support and quote this workspace address so it can be retried.</p>
+            ) : (
+              <p>You can leave this page open; it will update when the workspace is ready.</p>
+            )}
           </div>
         )}
       </div>
