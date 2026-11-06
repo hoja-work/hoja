@@ -142,8 +142,7 @@ else's (server-driven offers never collide with mine).
   two- and three-way audio/video, guest by link, chat/hand/reactions, lock, screen share, reminder,
   end for everyone, usage, plus layout audits (controls reachable and uncovered, no overflow or
   overlap at 1440 / 901 / 899 / 621 / 619 / 390 / 360 / 780×360). Needs `HOJA_CF_*` in the
-  environment or in `../vault/env/env.hoja-cloudflare-realtime`. Screenshots land in
-  `local-e2e/artifacts/meetings-*.png`.
+  environment. Keep credentials and generated test artifacts outside the tracked repository.
 
 ## Known limits
 
