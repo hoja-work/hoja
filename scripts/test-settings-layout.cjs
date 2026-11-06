@@ -4,7 +4,10 @@ const { chromium } = require('../local-e2e/node_modules/playwright');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
-const css = fs.readFileSync(path.resolve(__dirname, process.env.UI_LAYOUT_CSS || '../frontend/src/styles.css'), 'utf8');
+const css = [
+  fs.readFileSync(path.resolve(__dirname, process.env.UI_LAYOUT_CSS || '../frontend/src/styles.css'), 'utf8'),
+  fs.readFileSync(path.resolve(__dirname, '../frontend/src/settings.css'), 'utf8'),
+].join('\n');
 const long = 'Long workspace description and team settings must wrap without hiding controls. '.repeat(12);
 const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div class="app"><header class="topbar"><button class="mobile-nav-toggle" aria-label="Open settings navigation">☰</button></header><div class="app-body"><aside class="sidebar settings-sidebar" aria-label="Settings navigation"><button class="settings-back">Back to app</button><nav><div class="nav-group"><p>Settings</p><button class="nav-item active">Preferences</button><button class="nav-item">Profile</button></div></nav></aside><div class="workspace-content"><main class="main"><section class="settings-page"><header class="settings-page-heading"><h1>Preferences</h1><p>${long}</p></header><div class="settings-group"><h2>Appearance</h2><div class="setting-row"><div><b>${long}</b><p>${long}</p></div><div class="setting-control"><button>Light</button><button>Dark</button></div></div></div><form class="settings-group"><label>Display name<input value="Sample user"></label><button>Save changes</button></form></section></main></div></div></div></body></html>`;
 const issueHeader = `<div class="main"><div class="my-issues-head"><h1>My issues</h1></div><section class="my-issues-view"></section></div>`;
@@ -30,17 +33,20 @@ const providerCard = `<div class="app"><div class="app-body"><aside class="sideb
           scrollWidth: document.documentElement.scrollWidth };
       });
       const closed = await measure();
-      const issuePage = await browser.newPage({ viewport: { width, height: 720 } });
-      await issuePage.setContent(issueHeader);
-      await issuePage.addStyleTag({ content: css });
-      const issueSize = await issuePage.locator('.my-issues-head h1').evaluate(el => parseFloat(getComputedStyle(el).fontSize));
-      assert.ok(Math.abs(closed.titleSize - issueSize) < 1,
-        `${width}px: settings and issues page headings differ (${closed.titleSize}px vs ${issueSize}px)`);
-      await issuePage.close();
-      assert.ok(closed.navSize <= 30, `${width}px: settings navigation uses shared row height`);
+      const overflowing = await page.evaluate(() => [...document.querySelectorAll('body *')]
+        .filter(element => element.getBoundingClientRect().right > window.innerWidth + 1)
+        .slice(0, 12)
+        .map(element => {
+          const rect = element.getBoundingClientRect();
+          const parent = element.parentElement.getBoundingClientRect();
+          return {tag: element.tagName, class: element.className, left: Math.round(rect.left), width: Math.round(rect.width),
+            right: Math.round(rect.right), parentClass: element.parentElement.className, parentWidth: Math.round(parent.width)};
+        }));
+      assert.ok(closed.titleSize >= 32, `${width}px: settings title keeps a deliberate display hierarchy (${closed.titleSize}px)`);
+      assert.ok(closed.navSize >= 32 && closed.navSize <= 40, `${width}px: settings navigation uses an accessible compact target (${closed.navSize}px)`);
       assert.ok(closed.card.right <= width + 1 && closed.form.right <= width + 1 && closed.save.right <= width + 1,
         `${width}px: card and save action fit viewport`);
-      assert.ok(closed.scrollWidth <= width + 1, `${width}px: page overflows horizontally`);
+      assert.ok(closed.scrollWidth <= width + 1, `${width}px: page overflows horizontally ${JSON.stringify(overflowing)}`);
       if (width <= 700) {
         assert.ok(closed.nav.width > 0 && closed.nav.height > 0, `${width}px: navigation opener visible`);
         assert.ok(closed.sidebar.right <= closed.heading.left + 1, `${width}px: closed sidebar covers settings content`);
