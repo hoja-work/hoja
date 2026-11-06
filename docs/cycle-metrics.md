@@ -34,8 +34,7 @@ The tempting fix for "canceled issues are counting against me" is
 `completed / (scope - canceled)`. That makes the number gameable at the exact
 moment it is read: cancel the leftovers and the cycle becomes 100%.
 
-Consider TREBOL Cycle 3 (2026-10-27 → 2026-11-03), measured from the live API on
-2026-11-03:
+For example, a closed cycle can have these totals:
 
 ```
 issues in scope            204
@@ -49,13 +48,8 @@ delivery of kept work      100% (completed / 162 kept)
 
 Both statements are true, and the pair is the honest answer: *every issue that
 survived was delivered; one in five was dropped.* Reporting only the first
-number rewards the dropping.
-
-On this cycle the 42 canceled issues were not phantom scope. All 42 were
-created into a started state during the cycle and canceled 10–45 minutes later
-(`createdAt == startedAt`, `canceledAt` spread across the week). They are work
-that was attempted and not delivered — the single most informative thing about
-the cycle, not noise to be hidden.
+number rewards the dropping. Canceled issues remain visible instead of being
+treated as noise or removed from the historical scope.
 
 Different cancellation *reasons* (duplicate, superseded, no longer needed,
 abandoned) deserve different treatment, but that distinction does not exist in

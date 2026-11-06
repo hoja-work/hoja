@@ -15,11 +15,14 @@
 #   - *.env / .env.*
 #   - schema/linear-schema.json   (2 MB, regenerable)
 #   - anything under .secrets/ or vault/
+# Also checks the complete staged documentation tree against the anti-slop policy.
 #
 # Bypass (use only for vetted false positives):
 #   git commit --no-verify
 
 set -u
+
+root=$(git rev-parse --show-toplevel)
 
 red()    { printf '\033[31m%s\033[0m\n' "$*" >&2; }
 yellow() { printf '\033[33m%s\033[0m\n' "$*" >&2; }
@@ -99,6 +102,14 @@ if [ "$errors" -gt 0 ]; then
     exit 1
 fi
 
+# Check exactly what will be committed, so unstaged fixes cannot mask slop in
+# the index and newly registered paths cannot bypass the repository policy.
+if ! python3 "$root/scripts/check_docs.py" --staged; then
+    red "Commit refused: staged documentation failed the anti-slop policy."
+    yellow "Run: python3 scripts/check_docs.py --staged"
+    exit 1
+fi
+
 # Lint only staged frontend styles, including newly added files. Use the index
 # content rather than the worktree so unstaged fixes cannot mask a bad commit.
 styles=()
@@ -106,7 +117,6 @@ for f in "${staged[@]}"; do
     case "$f" in frontend/src/*.css) styles+=("$f") ;; esac
 done
 if [ "${#styles[@]}" -gt 0 ]; then
-    root=$(git rev-parse --show-toplevel)
     if [ ! -x "$root/frontend/node_modules/.bin/stylelint" ]; then
         red "Stylelint is not installed. Run: cd frontend && npm ci"
         exit 1
@@ -125,5 +135,5 @@ if [ "${#styles[@]}" -gt 0 ]; then
     fi
 fi
 
-green "pre-commit OK (${#staged[@]} files scanned, no secrets / forbidden paths or style errors)"
+green "pre-commit OK (${#staged[@]} files scanned, no secrets / forbidden paths, documentation or style errors)"
 exit 0

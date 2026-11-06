@@ -166,10 +166,10 @@ bash scripts/e2e-local-backend.sh
 Use a disposable test database. The gated test creates uniquely named
 organizations and removes its rows afterward.
 
-## Upgrading a deployment that used the previous name
+## Upgrading an existing deployment
 
-An existing installation keeps its database, its `POSTGRES_*` role and its data
-volume; only the image, the Compose file and the `HOJA_*` environment-variable
-prefix change. Follow `DEPLOY-RENAME.md` for the ordered steps (image tag,
-volume pinning, `.env` rewrite, migrate, verification) and the rollback path.
-Do not rename the database or its role in place.
+Keep a verified database backup before upgrading. Preserve the database, its
+role, and its data volume; deploy the reviewed image and Compose configuration,
+apply pending migrations with `hoja-serve migrate`, and verify `/ready` before
+returning the service to traffic. Do not rename the database or role as part of
+an application upgrade.
