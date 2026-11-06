@@ -958,6 +958,7 @@ def test_signup_status_turns_active_into_the_workspace_url(harness):
         "slug": "acme",
         "status": "eligible",
         "workspaceUrl": None,
+        "signInUrl": None,
         "message": "Your workspace request is queued for creation.",
     }
 
@@ -970,6 +971,7 @@ def test_signup_status_turns_active_into_the_workspace_url(harness):
     body = harness.client.get("/api/signup/status?slug=acme").json()
     assert body["status"] == "active"
     assert body["workspaceUrl"] == "https://acme.hoja.work"
+    assert body["signInUrl"] == "https://acme.hoja.work/auth/google/start?return_to=%2F"
     assert body["message"] == "Your workspace is ready."
     assert harness.client.get("/api/signup/status?slug=acme").headers["cache-control"] == "no-store"
 

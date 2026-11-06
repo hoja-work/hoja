@@ -15,6 +15,7 @@ export type WorkspaceStatus =
       slug: string;
       status: WorkspaceState;
       workspaceUrl: string | null;
+      signInUrl: string | null;
       message: string;
     }
   | {kind: 'unauthenticated'}
@@ -73,6 +74,10 @@ export async function fetchWorkspaceStatus({
     workspaceUrl:
       typeof body.workspaceUrl === 'string' && body.workspaceUrl.startsWith('https://')
         ? body.workspaceUrl
+        : null,
+    signInUrl:
+      typeof body.signInUrl === 'string' && body.signInUrl.startsWith('https://')
+        ? body.signInUrl
         : null,
     message:
       typeof body.message === 'string' && body.message.trim()

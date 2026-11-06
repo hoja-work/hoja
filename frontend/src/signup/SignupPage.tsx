@@ -44,6 +44,7 @@ type WorkspaceRequest = {
   alreadyQueued: boolean;
   status: WorkspaceState;
   workspaceUrl: string | null;
+  signInUrl: string | null;
 };
 
 /** Refusals that mean "the address, not the session" — refocus the field. */
@@ -150,6 +151,7 @@ export function SignupPage() {
           alreadyQueued: result.alreadyQueued,
           status: result.status,
           workspaceUrl: null,
+          signInUrl: null,
         });
         return;
       }
@@ -188,6 +190,7 @@ export function SignupPage() {
               ...previous,
               status: result.status,
               workspaceUrl: result.workspaceUrl,
+              signInUrl: result.signInUrl,
               message: result.status === 'eligible' ? previous.message : result.message,
             }
           : previous);
@@ -205,12 +208,13 @@ export function SignupPage() {
   // 5. A ready workspace opens itself. The tenant still asks Google to sign in;
   //    the control-plane session is intentionally not a cross-origin cookie.
   useEffect(() => {
-    if (request?.status !== 'active' || !request.workspaceUrl) return;
+    const target = request?.signInUrl || request?.workspaceUrl;
+    if (request?.status !== 'active' || !target) return;
     const timer = window.setTimeout(() => {
-      window.location.assign(request.workspaceUrl as string);
+      window.location.assign(target);
     }, 1800);
     return () => window.clearTimeout(timer);
-  }, [request?.status, request?.workspaceUrl]);
+  }, [request?.status, request?.signInUrl, request?.workspaceUrl]);
 
   const signOut = async () => {
     try {
@@ -396,9 +400,9 @@ export function SignupPage() {
           <div className="signin-notice" role="status" aria-live="polite">
             <h2><code>{request.slug}.hoja.work</code></h2>
             <p>{request.message}</p>
-            {request.status === 'active' && request.workspaceUrl ? (
+            {request.status === 'active' && (request.signInUrl || request.workspaceUrl) ? (
               <p>
-                <a className="signin-workspace-link" href={request.workspaceUrl}>
+                <a className="signin-workspace-link" href={request.signInUrl || request.workspaceUrl || undefined}>
                   Open {request.slug}.hoja.work
                 </a>
               </p>
