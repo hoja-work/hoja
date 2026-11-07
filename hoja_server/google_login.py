@@ -15,6 +15,7 @@ that answer it are decided atomically.
 
 from __future__ import annotations
 
+import os
 import re
 from datetime import datetime, timezone
 
@@ -44,6 +45,18 @@ ACTION_DENIED = "denied"
 def _titleise(slug: str) -> str:
     words = [w for w in _NON_SLUG.split(slug.replace(".", "-").lower()) if w]
     return " ".join(w.capitalize() for w in words) or "Workspace"
+
+
+def owner_email() -> str | None:
+    """The Google address allowed to bootstrap this empty instance, if set.
+
+    The provisioner writes ``HOJA_OWNER_EMAIL`` into a new tenant before its
+    first request. Without this check, whoever discovered the new hostname
+    first could become its admin. An unset value preserves the self-hosted
+    behaviour (the first verified Google user owns a fresh instance).
+    """
+    value = (os.environ.get("HOJA_OWNER_EMAIL") or "").strip().lower()
+    return value or None
 
 
 def _slugify(text: str) -> str:
@@ -85,6 +98,9 @@ def resolve_verified_email(
     existing_org = conn.execute(select(organization.c.id).limit(1)).first()
 
     if existing_org is None:
+        owner = owner_email()
+        if owner and address != owner:
+            return {"action": ACTION_DENIED, "reason": "owner_only"}
         slug_source = workspace_slug or address.split("@", 1)[1]
         workspace_key = _slugify(slug_source)
         org_id, uid, identity_id, tid = new_id(), new_id(), new_id(), new_id()

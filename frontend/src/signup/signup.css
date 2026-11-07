@@ -334,6 +334,24 @@
   margin-bottom: 0;
 }
 
+.signin-workspace-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid #242424;
+  border-radius: 4px;
+  background: #242424;
+  color: #fff;
+  font-size: 12.8px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.signin-workspace-link:hover {
+  background: #000;
+}
+
 .signin-inline-note {
   max-width: 448px;
   margin: 0 auto 16px;

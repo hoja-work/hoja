@@ -144,6 +144,20 @@ def test_a_second_sign_in_logs_the_same_person_in(engine):
     assert second["organization_id"] == first["organization_id"]
 
 
+def test_a_provisioned_owner_address_is_the_only_address_that_can_bootstrap(engine, monkeypatch):
+    monkeypatch.setenv("HOJA_OWNER_EMAIL", "owner@hoja.work")
+    stranger = _resolve(engine, email="stranger@hoja.work", subject="sub-stranger")
+    assert stranger["action"] == google_login.ACTION_DENIED
+    assert stranger["reason"] == "owner_only"
+    with engine.connect() as conn:
+        assert conn.execute(select(user.c.id)).first() is None
+
+    owner = _resolve(engine, email="OWNER@hoja.work", subject="sub-owner")
+    assert owner["action"] == google_login.ACTION_BOOTSTRAPPED
+    with engine.connect() as conn:
+        assert conn.execute(select(user.c.email)).scalar_one() == "owner@hoja.work"
+
+
 def test_a_stranger_is_refused_on_a_workspace_that_already_exists(engine):
     _resolve(engine)
     stranger = _resolve(engine, email="someone@elsewhere.test", subject="sub-2")

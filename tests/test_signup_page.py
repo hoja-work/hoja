@@ -55,7 +55,7 @@ ROOT = Path(__file__).resolve().parent.parent
 FRONTEND = ROOT / "frontend"
 SIGNUP_SRC = FRONTEND / "src" / "signup"
 
-PUBLIC_CONFIG_KEYS = {"mode", "available", "sitekey", "signInUrl", "widgetScriptUrl"}
+PUBLIC_CONFIG_KEYS = {"mode", "available", "sitekey", "signInUrl", "hosted", "widgetScriptUrl"}
 
 SITE_KEY = "0x4AAAAAAF0T6-JuMDYB9gPf"
 #: Deliberately distinctive strings, so a leak is unambiguous in the failure.
@@ -132,6 +132,7 @@ def test_public_config_is_exactly_the_public_fields(app_client):
     body = response.json()
     assert set(body) == PUBLIC_CONFIG_KEYS, "the endpoint grew a field nobody reviewed"
     assert body["mode"] == "open"
+    assert body["hosted"] is False
     assert body["available"] is True
     assert body["sitekey"] == SITE_KEY
     assert body["signInUrl"] == "/auth/google/start?return_to=%2Fsignup"
@@ -179,10 +180,27 @@ def test_public_config_on_an_unconfigured_deployment(app_client):
     body = client.get("/api/signup/config").json()
 
     assert body["mode"] == "closed"  # the fail-closed default
+    assert body["hosted"] is False
     assert body["available"] is False
     assert body["sitekey"] is None
     assert body["signInUrl"] is None
     assert "render=explicit" in body["widgetScriptUrl"]
+
+
+def test_a_hosted_tenant_exposes_its_delegated_google_sign_in(tmp_path, monkeypatch):
+    _clear_signup_env(monkeypatch)
+    monkeypatch.setenv("HOJA_SIGNUP_MODE", "closed")
+    monkeypatch.setenv("HOJA_CONTROL_PLANE_URL", "https://app.hoja.work")
+    db_path = tmp_path / "tenant-signin.db"
+    engine = make_engine(db_path)
+    migrate(engine)
+    app = create_app(str(db_path), open_mode=False)
+    with TestClient(app, base_url="https://acme.hoja.work") as client:
+        body = client.get("/api/signup/config").json()
+    assert body["hosted"] is True
+    assert body["mode"] == "closed"
+    assert body["available"] is False
+    assert body["signInUrl"] == "/auth/google/start?return_to=%2F"
 
 
 def test_the_site_key_must_not_be_the_secret_key():
@@ -380,6 +398,9 @@ def test_the_page_is_accessible_by_construction():
     assert "aria-describedby" in page
     # The submit button is disabled in flight and never hidden.
     assert "disabled={submitting}" in page
+    # A returning, already-provisioned identity is redirected before the form.
+    assert "body.workspace" in page
+    assert "window.location.replace" in page
     # The three modes are distinguished.
     assert "mode === 'closed'" in page
     assert "Sign-ups are invite-only" in page

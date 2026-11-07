@@ -1074,6 +1074,13 @@ def create_app(
             return JSONResponse(
                 {"error": "Complete all fields with a valid email."}, status_code=400
             )
+        # A hosted tenant is provisioned with an owner address before it has a
+        # user. The onboarding form must not let another address claim it first.
+        owner = google_login.owner_email()
+        if owner and email != owner:
+            return JSONResponse(
+                {"error": "This workspace is reserved for its owner."}, status_code=403
+            )
         if len(password) < 12:
             return JSONResponse(
                 {"error": "Password must be at least 12 characters."}, status_code=400
@@ -1392,28 +1399,101 @@ def create_app(
         "sign-up unavailable" instead of a widget that could never be verified.
         ``no-store`` because a stale mode or a stale key is a trap after a deploy.
         """
+        host = _signup_host(request).split(":")[0].lower()
+        control_plane = signup_config.control_plane_url
+        tenant_origin = bool(
+            control_plane and host != (urlsplit(control_plane).hostname or "").lower()
+        )
+        if tenant_origin:
+            # A tenant borrows the control plane's registered Google redirect.
+            # Returning to `/` means the verified handoff lands in the app, not
+            # on the tenant's closed sign-up page.
+            sign_in_url = "/auth/google/start?return_to=%2F"
+        elif signup_config.configured:
+            sign_in_url = _GOOGLE_SIGN_IN_URL
+        else:
+            sign_in_url = None
         return JSONResponse(
             {
                 "mode": signup_config.mode,
                 "available": signup_config.public_widget_available,
                 "sitekey": signup_config.turnstile_site_key or None,
-                "signInUrl": (
-                    _GOOGLE_SIGN_IN_URL if signup_config.configured else None
-                ),
+                "signInUrl": sign_in_url,
+                "hosted": bool(control_plane),
                 "widgetScriptUrl": TURNSTILE_SCRIPT_URL,
             },
             headers={"cache-control": "no-store"},
         )
 
+    def _tenant_transfer_redirect(
+        *,
+        email: str,
+        subject: str,
+        name: str | None,
+        picture: str | None,
+        tenant_target: str,
+        source: str,
+    ) -> Response:
+        """Mint the per-tenant handoff from an already verified identity."""
+        master = signup_config.identity_transfer_master
+        if not master:
+            return JSONResponse(
+                {"error": "Identity handoff is not configured on this deployment.",
+                 "reason": "transfer_unconfigured"},
+                status_code=503,
+            )
+        target_host = urlsplit(tenant_target).hostname or ""
+        transfer = identity_transfer.issue(
+            key=identity_transfer.tenant_key(master, target_host),
+            audience=target_host,
+            email=email.strip().lower(),
+            subject=subject,
+            name=name,
+            picture=picture,
+            email_verified=True,
+        )
+        _security_log.info(
+            "auth.handoff source=%s target_host=%s", source, target_host
+        )
+        response = RedirectResponse(
+            f"{tenant_target.rstrip('/')}/auth/google/finish?t={quote(transfer, safe='')}",
+            status_code=302,
+        )
+        response.delete_cookie(_OIDC_FLOW_COOKIE, path="/")
+        return response
+
     async def google_sign_in_start(request: Request):
         host = _signup_host(request).split(":")[0].lower()
         control_plane = signup_config.control_plane_url
+        raw_return_to = request.query_params.get("return_to")
+        tenant_target = _tenant_transfer_target(raw_return_to)
+        identity = _signup_identity(request)
+        _security_log.info(
+            "auth.start host=%s control_session=%s tenant_target=%s",
+            host,
+            bool(identity),
+            urlsplit(tenant_target).hostname if tenant_target else "-",
+        )
         if control_plane and host != urlsplit(control_plane).hostname:
             # A tenant origin has no registered Google redirect of its own, so it
             # borrows the control plane's and comes back to /auth/google/finish.
             back = _tenant_transfer_target(f"https://{host}/") or f"https://{host}/"
             target = f"{control_plane}/auth/google/start?return_to={quote(back, safe='')}"
             return RedirectResponse(target, status_code=302)
+        if identity is not None and tenant_target is not None:
+            # The browser already completed Google OIDC on this control plane.
+            # Do not send it through the account chooser again: the tenant only
+            # needs a freshly minted, audience-bound handoff token.
+            full_identity = signup_store.identity_by_subject(identity["subject"]) or identity
+            if full_identity.get("email_verified") is True:
+                return _tenant_transfer_redirect(
+                    email=full_identity["email"],
+                    subject=full_identity["subject"],
+                    name=full_identity.get("name"),
+                    picture=full_identity.get("picture"),
+                    tenant_target=tenant_target,
+                    source="control_session",
+                )
         if not signup_config.configured:
             return JSONResponse(
                 {"error": "Sign-up is not configured on this deployment.",
@@ -1535,30 +1615,14 @@ def create_app(
         if tenant_target is not None:
             # This origin is the control plane for a tenant sign-in. The address
             # is verified; the tenant decides whether it belongs.
-            master = signup_config.identity_transfer_master
-            if not master:
-                return JSONResponse(
-                    {"error": "Identity handoff is not configured on this deployment.",
-                     "reason": "transfer_unconfigured"},
-                    status_code=503,
-                )
-            target_host = urlsplit(tenant_target).hostname or ""
-            # Sign with the target's own derived key: the master never leaves here.
-            transfer = identity_transfer.issue(
-                key=identity_transfer.tenant_key(master, target_host),
-                audience=target_host,
-                email=email.strip().lower(),
+            return _tenant_transfer_redirect(
+                email=email,
                 subject=claims["sub"],
                 name=claims.get("name"),
                 picture=claims.get("picture"),
-                email_verified=True,
+                tenant_target=tenant_target,
+                source="google_callback",
             )
-            response = RedirectResponse(
-                f"{tenant_target.rstrip('/')}/auth/google/finish?t={quote(transfer, safe='')}",
-                status_code=302,
-            )
-            response.delete_cookie(_OIDC_FLOW_COOKIE, path="/")
-            return response
 
         identity = signup_store.upsert_identity(
             subject=claims["sub"],
@@ -1575,6 +1639,7 @@ def create_app(
             user_agent=request.headers.get("user-agent"),
             days=signup_config.session_days,
         )
+        _security_log.info("auth.callback action=control_session")
         response = RedirectResponse(flow["return_to"] or "/", status_code=302)
         response.set_cookie(
             _SIGNUP_SESSION_COOKIE,
@@ -1623,6 +1688,9 @@ def create_app(
                 {"error": "Sign-in could not be completed.", "reason": "resolve_failed"},
                 status_code=500,
             )
+        _security_log.info(
+            "auth.finish host=%s action=%s", host, resolved["action"]
+        )
         if resolved["action"] == google_login.ACTION_DENIED:
             return JSONResponse(
                 {"error": "This Google account is not a member of this workspace.",
@@ -1646,17 +1714,44 @@ def create_app(
         )
         return response
 
+    def _signup_workspace_payload(row: dict) -> dict:
+        """One requester's own workspace/request state, safe for the page."""
+        slug = str(row.get("slug") or "")
+        status = str(row.get("status") or "eligible")
+        workspace_url = None
+        sign_in_url = None
+        if status == "active":
+            workspace_url = f"https://{slug}.{signup_config.tenant_base_domain}"
+            sign_in_url = f"{workspace_url}/auth/google/start?return_to=%2F"
+            message = "Your workspace is ready."
+        elif status == "provisioning":
+            message = "Your workspace is being created."
+        elif status == "failed":
+            message = "We could not finish creating this workspace."
+        else:
+            message = "Your workspace request is queued for creation."
+        return {
+            "slug": slug,
+            "status": status,
+            "workspaceUrl": workspace_url,
+            "signInUrl": sign_in_url,
+            "message": message,
+        }
+
     async def signup_endpoint(request: Request):
         if request.method == "GET":
             identity = _signup_identity(request)
-            return JSONResponse(
-                {
-                    "state": "google_verified" if identity else "anonymous",
-                    "googleVerified": bool(identity),
-                    "humanVerified": False,
-                    "email": (identity or {}).get("email"),
-                }
-            )
+            payload = {
+                "state": "google_verified" if identity else "anonymous",
+                "googleVerified": bool(identity),
+                "humanVerified": False,
+                "email": (identity or {}).get("email"),
+            }
+            if identity is not None:
+                row = signup_store.latest_eligibility_for_identity(identity["identity_id"])
+                if row is not None:
+                    payload["workspace"] = _signup_workspace_payload(row)
+            return JSONResponse(payload, headers={"cache-control": "no-store"})
         if not _same_origin(request.headers.get("origin"), request.headers):
             return JSONResponse(
                 {"ok": False, "reason": CROSS_SITE_REQUEST,
@@ -1681,9 +1776,33 @@ def create_app(
         )
         return JSONResponse(decision.as_dict(), status_code=decision.status_code)
 
+    async def signup_status(request: Request):
+        """The signed-in requester's own workspace state, for the sign-up page.
+
+        Deliberately not public: the sign-up session identifies the requester,
+        and the slug must belong to that identity. It answers no secrets and no
+        other person's queue position.
+        """
+        identity = _signup_identity(request)
+        if identity is None:
+            return JSONResponse(
+                {"ok": False, "reason": "not_authenticated"}, status_code=401
+            )
+        slug = (request.query_params.get("slug") or "").strip().lower()
+        if not slug or len(slug) > 63:
+            return JSONResponse({"ok": False, "reason": "invalid_slug"}, status_code=400)
+        row = signup_store.eligibility_for(identity["identity_id"], slug)
+        if row is None:
+            return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+        return JSONResponse(
+            {"ok": True, **_signup_workspace_payload(row)},
+            headers={"cache-control": "no-store"},
+        )
+
     async def signup_logout(request: Request):
         if not _same_origin(request.headers.get("origin"), request.headers):
             return JSONResponse({"error": "Cross-site request rejected."}, status_code=403)
+        _security_log.info("auth.logout scope=signup")
         signup_store.revoke_session(request.cookies.get(_SIGNUP_SESSION_COOKIE))
         response = JSONResponse({"status": "logged_out"})
         response.delete_cookie(_SIGNUP_SESSION_COOKIE, path="/")
@@ -2032,6 +2151,7 @@ def create_app(
             Route("/auth/google/finish", google_sign_in_finish, methods=["GET"]),
             Route("/auth/google/logout", signup_logout, methods=["POST"]),
             Route("/api/signup/config", signup_public_config, methods=["GET"]),
+            Route("/api/signup/status", signup_status, methods=["GET"]),
             Route("/api/signup", signup_endpoint, methods=["GET", "POST"]),
             Route("/api/uploads", upload_create, methods=["POST"]),
             Route("/api/uploads/{file_id}", upload_serve, methods=["GET"]),

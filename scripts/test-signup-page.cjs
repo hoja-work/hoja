@@ -41,6 +41,7 @@ function loadTs(file) {
 const slug = loadTs(path.join(src, 'slugValidation'));
 const copy = loadTs(path.join(src, 'reasonCopy'));
 const submit = loadTs(path.join(src, 'submitSignup'));
+const status = loadTs(path.join(src, 'workspaceStatus'));
 
 if (process.argv.includes('--slug-check')) {
   const cases = JSON.parse(fs.readFileSync(0, 'utf8'));
@@ -186,6 +187,42 @@ check('not_authenticated asks for a new Google sign-in', async () => {
   const result = await submit.submitSignup({ slug: 'acme', token: 't', fetcher });
   assert.equal(result.retrySignIn, true);
   assert.equal(result.retryChallenge, false);
+});
+
+check('workspace status is scoped by slug and returns the ready URL', async () => {
+  const { fetcher, calls } = fakeFetch(jsonResponse({
+    ok: true, slug: 'acme', status: 'active',
+    workspaceUrl: 'https://acme.hoja.work', signInUrl: 'https://acme.hoja.work/auth/google/start?return_to=%2F', message: 'Your workspace is ready.',
+  }));
+  const result = await status.fetchWorkspaceStatus({ slug: 'acme', fetcher });
+  assert.equal(result.kind, 'state');
+  assert.equal(result.status, 'active');
+  assert.equal(result.workspaceUrl, 'https://acme.hoja.work');
+  assert.equal(result.signInUrl, 'https://acme.hoja.work/auth/google/start?return_to=%2F');
+  assert.equal(calls[0].input, '/api/signup/status?slug=acme');
+  assert.equal(calls[0].init.credentials, 'include');
+});
+
+check('a status poll can fail without inventing a failed workspace', async () => {
+  const { fetcher } = fakeFetch({ status: 502, json: async () => { throw new Error('not json') } });
+  const result = await status.fetchWorkspaceStatus({ slug: 'acme', fetcher });
+  assert.equal(result.kind, 'unavailable');
+  assert.match(result.message, /502/);
+});
+
+check('an expired sign-up session is reported explicitly', async () => {
+  const { fetcher } = fakeFetch(jsonResponse({ ok: false, reason: 'not_authenticated' }, 401));
+  const result = await status.fetchWorkspaceStatus({ slug: 'acme', fetcher });
+  assert.equal(result.kind, 'unauthenticated');
+});
+
+check('a non-https workspace URL is never treated as ready', async () => {
+  const { fetcher } = fakeFetch(jsonResponse({
+    ok: true, slug: 'acme', status: 'active', workspaceUrl: 'http://evil.example', signInUrl: 'http://evil.example',
+  }));
+  const result = await status.fetchWorkspaceStatus({ slug: 'acme', fetcher });
+  assert.equal(result.workspaceUrl, null);
+  assert.equal(result.signInUrl, null);
 });
 
 check('a network failure is a result, not a throw', async () => {
