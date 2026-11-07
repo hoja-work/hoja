@@ -53,7 +53,8 @@ export async function extensionsGql<T>(query: string, variables: Record<string, 
   if (first) {
     const field = typeof first.extensions?.field === 'string' ? first.extensions.field : undefined;
     const text = first.message || 'Request failed';
-    throw new ExtensionError(field ? `${field}: ${text}` : text, first.extensions?.code, field);
+    const labelled = field && !text.startsWith(field) ? `${field}: ${text}` : text;
+    throw new ExtensionError(labelled, first.extensions?.code, field);
   }
   if (!res.ok || !body?.data) throw new ExtensionError(`Request failed (${res.status})`);
   return body.data;

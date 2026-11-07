@@ -1092,10 +1092,11 @@ def m_team_member_remove(_, info, teamId, userId):
     return _set_team_membership(info, teamId, userId, add=False)
 
 
-def _extension_hooks(store, org, uid, event, input, current):
+def _extension_hooks(info, store, org, uid, event, input, current, input_type):
     """Run extension hooks; a veto becomes an EXTENSION_REJECTED error, nothing is written."""
     try:
-        return extensions.run_hooks(store.engine, org, uid, event, input, current)
+        return extensions.run_hooks(store.engine, org, uid, event, input, current,
+                                    info.schema.get_type(input_type))
     except extensions.ExtensionRejectedError as exc:
         raise GraphQLError(str(exc), extensions={
             "code": "EXTENSION_REJECTED", "extension": exc.extension_name, "reason": exc.reason}) from exc
@@ -1104,7 +1105,12 @@ def _extension_hooks(store, org, uid, event, input, current):
 @mutation.field("issueCreate")
 def m_issue_create(_, info, input):
     store, w, org, uid = _ctx(info)
-    input, patches = _extension_hooks(store, org, uid, "issue.beforeCreate", input, None)
+    if store.team_by_id_or_key(org, str(input.get("teamId") or ""), viewer_id=uid):
+        # Only ask extensions about a write the caller is allowed to attempt.
+        input, patches = _extension_hooks(info, store, org, uid, "issue.beforeCreate", input, None,
+                                          "IssueCreateInput")
+    else:
+        patches = []
     iid = w.issue_create(org, uid, input)
     if not iid:
         return {"success": False, "issue": None}
@@ -1118,8 +1124,9 @@ def m_issue_update(_, info, id, input):
     current = store.issue_by_id_or_identifier(org, id, viewer_id=uid)
     if current is None:  # do not ask extensions about an issue the caller cannot see
         return {"success": False, "issue": None}
-    input, patches = _extension_hooks(store, org, uid, "issue.beforeUpdate", input,
-                                      extensions.issue_data(store.engine, org, current["id"]))
+    input, patches = _extension_hooks(info, store, org, uid, "issue.beforeUpdate", input,
+                                      extensions.issue_data(store.engine, org, current["id"]),
+                                      "IssueUpdateInput")
     iid = w.issue_update(org, id, input, actor_id=uid)
     if not iid:
         return {"success": False, "issue": None}
