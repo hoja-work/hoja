@@ -2,7 +2,10 @@
 
 **A self-hosted workspace for issues, projects, cycles, and team work.** Hoja includes a browser UI and a Python CLI. It can run against its own SQLite or PostgreSQL-backed service; the GraphQL API also implements a Linear-compatible surface for clients that use it.
 
-The Python distribution and commands are named **Hoja**: `hoja`, `hoja-serve`, and the optional `hoja-mcp`.
+The Python package is published on PyPI as **`hoja-cli`** and installs the
+commands **`hoja`**, **`hoja-serve`**, and the optional **`hoja-mcp`**. The
+distribution carries the `-cli` suffix because the `hoja` project on PyPI is
+unrelated software; install `hoja-cli`, then run `hoja`.
 
 ## What you can do
 
@@ -108,7 +111,7 @@ checks, and multi-organization token provisioning.
 For an isolated SQLite instance instead:
 
 ```bash
-python -m pip install 'hoja[server]'
+python -m pip install 'hoja-cli[server]'
 hoja-serve seed --tenant local --org "Local Workspace" \
   --org-key local --team-key ENG --email user@example.test
 hoja-serve serve --tenant local --host 127.0.0.1 --port 8787
@@ -119,7 +122,9 @@ hoja-serve serve --tenant local --host 127.0.0.1 --port 8787
 Install the CLI from PyPI or from a checkout:
 
 ```bash
-python -m pip install hoja
+python -m pip install hoja-cli
+# or, isolated from your system Python:
+uv tool install hoja-cli
 # or, from this repository:
 uv sync --extra dev --extra server
 ```
@@ -153,7 +158,7 @@ The CLI also supports projects, cycles, comments, labels, raw GraphQL queries, a
 The optional MCP server provides one guide tool, seven read-only resources, and six workflow prompts. It does not expose mutation tools; make changes through the CLI.
 
 ```bash
-python -m pip install 'hoja[mcp]'
+python -m pip install 'hoja-cli[mcp]'
 ```
 
 Register `hoja-mcp` as a stdio MCP server in your client, passing the needed token through that client's environment configuration. The server reads the same account configuration as the CLI. See [the MCP section below](#mcp-server-setup) for a complete example.
@@ -171,7 +176,7 @@ It installs the `skills/hoja` instructions into the selected agent skill directo
 Install the optional MCP dependency alongside the CLI:
 
 ```bash
-python -m pip install 'hoja[mcp]'
+python -m pip install 'hoja-cli[mcp]'
 ```
 
 For Claude Desktop, add a server entry to its MCP configuration. Use an absolute

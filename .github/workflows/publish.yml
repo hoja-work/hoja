@@ -1,17 +1,24 @@
 name: Publish to PyPI
 
-# Publishes clinear to PyPI using PyPI Trusted Publishing (OIDC) — no API
-# token is stored in the repo. Triggers when a GitHub Release is published,
-# or manually via workflow_dispatch.
+# Publishes the Hoja Python package to PyPI as `hoja-cli`. The distribution
+# name carries the suffix because `hoja` on PyPI belongs to an unrelated
+# project; the wheel installs the `hoja`, `hoja-mcp`, and `hoja-serve`
+# commands, and its metadata summary, keywords, and URLs say so.
 #
-# One-time setup on PyPI (https://pypi.org/manage/project/clinear/settings/publishing/):
+# Publishing uses PyPI Trusted Publishing (OIDC) - no API token is stored in
+# the repository. Triggers when a GitHub Release is published, or manually via
+# workflow_dispatch.
+#
+# One-time setup on PyPI (https://pypi.org/manage/project/hoja-cli/settings/publishing/):
 #   - Add a "Trusted Publisher":
-#       Owner:            rinadelph
-#       Repository name:  clinear
+#       Owner:            hoja-work
+#       Repository name:  hoja
 #       Workflow name:    publish.yml
 #       Environment name: pypi
 #
-# After that, every published GitHub Release ships the corresponding version.
+# Deploying by hand with an API token instead is documented in
+# docs/DEPLOYMENT.md ("Publish the Python package") and implemented by
+# scripts/ship.sh, which uploads with UV_PUBLISH_TOKEN.
 
 on:
   release:
@@ -20,6 +27,11 @@ on:
 
 permissions:
   contents: read
+
+env:
+  # Normalized distribution name used in artifact filenames.
+  DIST_NAME: hoja_cli
+  DIST_LABEL: hoja-cli
 
 jobs:
   build:
@@ -36,13 +48,27 @@ jobs:
           rm -rf dist
           uv build
 
-      - name: Verify version matches VERSION file
+      - name: Verify the build matches VERSION and the distribution label
         run: |
-          VER=$(cat VERSION)
+          VER=$(tr -d '[:space:]' < VERSION)
           echo "VERSION file: $VER"
           ls -la dist/
-          test -f "dist/clinear-${VER}-py3-none-any.whl"
-          test -f "dist/clinear-${VER}.tar.gz"
+          test -f "dist/${DIST_NAME}-${VER}-py3-none-any.whl"
+          test -f "dist/${DIST_NAME}-${VER}.tar.gz"
+          python - "$VER" <<'PY'
+          import pathlib, sys, zipfile
+
+          version = sys.argv[1]
+          wheel = next(pathlib.Path("dist").glob("*.whl"))
+          with zipfile.ZipFile(wheel) as zf:
+              name = next(n for n in zf.namelist() if n.endswith(".dist-info/METADATA"))
+              text = zf.read(name).decode()
+          fields = dict(line.split(": ", 1) for line in text.splitlines() if ": " in line)
+          assert fields["Name"] == "hoja-cli", fields["Name"]
+          assert fields["Version"] == version, fields["Version"]
+          assert fields["Summary"].startswith("Hoja CLI"), fields["Summary"]
+          print("OK", fields["Name"], fields["Version"], fields["Summary"])
+          PY
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
@@ -56,7 +82,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/clinear/
+      url: https://pypi.org/project/hoja-cli/
     permissions:
       id-token: write  # required for Trusted Publishing (OIDC)
     steps:

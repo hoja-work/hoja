@@ -3,16 +3,20 @@ requires = ["hatchling>=1.21"]
 build-backend = "hatchling.build"
 
 [project]
-name = "hoja"
+# The PyPI distribution is `hoja-cli`; it installs the `hoja`, `hoja-mcp`, and
+# `hoja-serve` commands. It cannot be named `hoja` because that PyPI project
+# belongs to unrelated software, so the distribution carries the `-cli` suffix
+# while its summary, keywords, and URLs state that it is the Hoja CLI.
+name = "hoja-cli"
 version = "0.21.4"
-description = "Self-hosted, offline-first, agent-native work management with Linear compatibility"
+description = "Hoja CLI and local server: self-hosted, offline-first, agent-native work management with a Linear-compatible GraphQL API"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
 maintainers = [
     { name = "Rinadelph" },
 ]
-keywords = ["linear", "cli", "issue-tracker", "pydantic", "graphql"]
+keywords = ["hoja", "linear", "cli", "issue-tracker", "work-management", "pydantic", "graphql"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
@@ -73,9 +77,11 @@ hoja-mcp = "hoja.mcp.server:main"
 hoja-serve = "hoja_server.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/rinadelph/hoja"
-Documentation = "https://github.com/rinadelph/hoja/blob/main/docs/DESIGN.md"
-Issues = "https://github.com/rinadelph/hoja/issues"
+Homepage = "https://github.com/hoja-work/hoja"
+Repository = "https://github.com/hoja-work/hoja"
+Documentation = "https://github.com/hoja-work/hoja/blob/main/docs/DESIGN.md"
+Issues = "https://github.com/hoja-work/hoja/issues"
+Changelog = "https://github.com/hoja-work/hoja/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["hoja", "hoja_server"]

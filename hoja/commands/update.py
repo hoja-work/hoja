@@ -11,7 +11,7 @@ from typing import Any
 
 import typer
 
-from hoja import __version__
+from hoja import DISTRIBUTION_NAME, __version__
 from hoja.cli_state import get_state
 from hoja.errors import UsageError
 from hoja.models.enums import OutputFormat
@@ -19,7 +19,7 @@ from hoja.models.enums import OutputFormat
 update_app = typer.Typer(help="Update hoja to the latest version")
 
 
-PYPI_JSON_URL = "https://pypi.org/pypi/hoja/json"
+PYPI_JSON_URL = f"https://pypi.org/pypi/{DISTRIBUTION_NAME}/json"
 
 
 @update_app.callback(invoke_without_command=True)
@@ -48,9 +48,9 @@ def update(
 
     manager = _detect_package_manager()
     if manager == "pipx":
-        cmd = ["pipx", "upgrade", "hoja"]
+        cmd = ["pipx", "upgrade", DISTRIBUTION_NAME]
     else:
-        cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "hoja"]
+        cmd = [sys.executable, "-m", "pip", "install", "--upgrade", DISTRIBUTION_NAME]
 
     result: dict[str, Any] = {
         "current": current,
@@ -142,7 +142,9 @@ def _detect_package_manager() -> str:
             )
             data = _json.loads(out.stdout)
             venvs = data.get("venvs", {})
-            if "hoja" in venvs:
+            # The current distribution is `hoja-cli`; `hoja` covers installs
+            # made with the pre-release name.
+            if DISTRIBUTION_NAME in venvs or "hoja" in venvs:
                 return "pipx"
         except (subprocess.SubprocessError, _json.JSONDecodeError, FileNotFoundError):
             pass
