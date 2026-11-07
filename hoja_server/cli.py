@@ -51,6 +51,14 @@ def _cmd_serve(args):
     import uvicorn
 
     from hoja_server.app import create_app
+    from hoja_server.logging_setup import configure_logging
+
+    # The application's own loggers are not reachable from --log-level: uvicorn
+    # configures the ``uvicorn.*`` loggers and leaves the root logger at WARNING,
+    # so ``_security_log.info`` was discarded before formatting. Enable them here,
+    # separately, so the auth funnel is visible without switching on uvicorn's
+    # access log (which would print ?code= and ?t= from the request line).
+    configure_logging(args.security_log_level)
     target = _database_target(args)
     print(f"hoja-serve v{__version__}")
     print(f"  tenant : {args.tenant}")
@@ -146,6 +154,13 @@ def main(argv=None):
     s.add_argument("--port", type=int, default=8787)
     s.add_argument("--open", action="store_true", help="offline open mode: any token → first identity")
     s.add_argument("--log-level", default="warning")
+    s.add_argument(
+        "--security-log-level",
+        default="info",
+        help="level for the application's own hoja_server.* loggers (auth funnel "
+             "events); independent of --log-level, which governs uvicorn and its "
+             "access log",
+    )
     s.add_argument("--workers", type=int, default=1,
                    help="server processes; realtime clients are spread across them")
     s.add_argument("--no-ws-deflate", dest="ws_deflate", action="store_false",
