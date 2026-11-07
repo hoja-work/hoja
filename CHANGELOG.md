@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.21.5] — 2026-11-07
+
+### Changed
+
+- The README leads with the product story the website tells, adds the repository
+  banner and PyPI badges, and documents the published `hoja-cli` distribution.
+  The same text is the project description on PyPI.
+
+### Fixed
+
+- The stdio MCP server's missing-extra hint told users to install `hoja[mcp]`,
+  which is unrelated software on PyPI. It now names `hoja-cli[mcp]`.
+
 ## [Unreleased]
 
 ### Added
