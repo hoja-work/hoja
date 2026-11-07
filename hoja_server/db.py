@@ -16,6 +16,7 @@ from sqlalchemy import (
     Column,
     Float,
     ForeignKey,
+    Index,
     Integer,
     MetaData,
     String,
@@ -32,7 +33,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 37
+CURRENT_SCHEMA_REVISION = 38
 
 
 def now_iso() -> str:
@@ -599,6 +600,69 @@ issue_activity = Table(
     Column("event_type", String, nullable=False),
     Column("changes", Text),
     Column("created_at", String, nullable=False, index=True),
+)
+
+# Outgoing webhooks (Linear-compatible). A webhook only receives change events
+# committed after start_seq. The dispatcher turns change_event rows into frozen
+# delivery payloads; the sender posts them with retries.
+webhook = Table(
+    "webhook",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("url", String, nullable=False),
+    Column("label", String),
+    Column("enabled", Boolean, nullable=False, default=True),
+    # AES-GCM sealed with HOJA_SECRET_KEY: the HMAC signing key must be recoverable.
+    Column("secret_sealed", Text, nullable=False),
+    Column("resource_types", Text, nullable=False),
+    Column("team_id", String, ForeignKey("team.id")),
+    Column("all_public_teams", Boolean, nullable=False, default=False),
+    Column("creator_id", String, ForeignKey("user.id")),
+    Column("start_seq", Integer, nullable=False),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+    Column("archived_at", String),
+)
+
+# One per organization: change_event rows up to seq are already dispatched.
+webhook_cursor = Table(
+    "webhook_cursor",
+    metadata,
+    Column("organization_id", String, ForeignKey("organization.id"), primary_key=True),
+    Column("seq", Integer, nullable=False),
+    Column("updated_at", String, nullable=False),
+)
+
+# Last dispatched state of each issue: the source of updatedFrom, because
+# change_event records that a row changed but not its previous values.
+webhook_issue_snapshot = Table(
+    "webhook_issue_snapshot",
+    metadata,
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("issue_id", String, primary_key=True),
+    Column("data", Text, nullable=False),
+)
+
+webhook_delivery = Table(
+    "webhook_delivery",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("webhook_id", String, ForeignKey("webhook.id", ondelete="CASCADE"), nullable=False),
+    Column("seq", Integer, nullable=False),
+    Column("event", String, nullable=False),
+    Column("payload", Text, nullable=False),
+    # pending -> sending -> delivered | pending (retry) | failed | canceled
+    Column("status", String, nullable=False),
+    Column("attempts", Integer, nullable=False, default=0),
+    Column("next_attempt_at", String, nullable=False),
+    Column("lease_until", String),
+    Column("last_status", Integer),
+    Column("last_error", Text),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+    Index("ix_webhook_delivery_queue", "webhook_id", "status", "seq"),
 )
 
 initiative = Table(
@@ -1532,6 +1596,12 @@ _MIGRATIONS = {
         turnstile_use.create(conn, checkfirst=True),
     ),
     37: _apply_signup_provisioning,
+    38: lambda conn: (
+        webhook.create(conn, checkfirst=True),
+        webhook_cursor.create(conn, checkfirst=True),
+        webhook_issue_snapshot.create(conn, checkfirst=True),
+        webhook_delivery.create(conn, checkfirst=True),
+    ),
 }
 
 
