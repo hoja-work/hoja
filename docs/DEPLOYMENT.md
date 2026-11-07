@@ -9,11 +9,14 @@ the server assumes no particular owner or hosting environment.
 ## Install
 
 ```bash
-python -m pip install 'hoja[server]'
+python -m pip install 'hoja-cli[server]'
 ```
 
 The server extra includes Ariadne, Starlette/FastAPI, Uvicorn, SQLAlchemy,
 SQLite support, and the psycopg 3 binary PostgreSQL driver.
+
+The PyPI distribution is `hoja-cli` because the `hoja` project on PyPI belongs
+to unrelated software; the installed commands are `hoja-serve` and `hoja`.
 
 ## Database target resolution
 
@@ -165,6 +168,33 @@ bash scripts/e2e-local-backend.sh
 
 Use a disposable test database. The gated test creates uniquely named
 organizations and removes its rows afterward.
+
+## Publish the Python package
+
+The PyPI distribution is **`hoja-cli`**. The `hoja` project on PyPI is
+unrelated software, so `pip install hoja` does not install this product;
+`pip install hoja-cli` installs the `hoja`, `hoja-mcp`, and `hoja-serve`
+commands.
+
+CI publishes from `.github/workflows/publish.yml` with PyPI Trusted Publishing
+when a GitHub Release is published. The workflow fails unless the build
+produces `hoja_cli-<VERSION>-py3-none-any.whl` and
+`hoja_cli-<VERSION>.tar.gz` and the wheel metadata names `hoja-cli` with a
+`Hoja CLI` summary. No token is stored in the repository.
+
+To publish from a workstation with an API token instead:
+
+```bash
+export UV_PUBLISH_TOKEN=...   # PyPI API token for the hoja-cli project
+bash scripts/ship.sh
+```
+
+`PYPI_API_TOKEN` is accepted as an alias for `UV_PUBLISH_TOKEN`.
+`scripts/ship.sh` refuses a dirty checkout, runs the release gate, builds,
+creates the `v<VERSION>` GitHub release with the CHANGELOG notes, and uploads
+the same two files. A token scoped to a different PyPI project cannot create
+`hoja-cli`: the first upload needs an account-scoped token, after which the
+project exists and Trusted Publishing can be configured.
 
 ## Upgrading an existing deployment
 

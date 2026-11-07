@@ -49,7 +49,7 @@ def main() -> None:
         from mcp.server.mcpserver import MCPServer  # noqa: F401
     except ImportError:
         sys.stderr.write(
-            "hoja-mcp requires the [mcp] extra.\nInstall with:\n  pip install 'hoja[mcp]'\n"
+            "hoja-mcp requires the [mcp] extra.\nInstall with:\n  pip install 'hoja-cli[mcp]'\n"
         )
         sys.exit(2)
 
