@@ -303,6 +303,26 @@ def _with_agent_hint(body: bytes, status: int) -> bytes:
     return json.dumps(data).encode()
 
 
+class _BareMount:
+    """Serve a mount's bare prefix (``/mcp``) as if it were requested as ``/mcp/``.
+
+    Starlette's Mount keeps ``path`` and appends the matched prefix to
+    ``root_path``; this builds the same child scope for the slash-less URL.
+    """
+
+    def __init__(self, app, prefix: str) -> None:
+        self.app = app
+        self.prefix = prefix.rstrip("/")
+
+    async def __call__(self, scope, receive, send) -> None:
+        child = dict(scope)
+        child["path"] = self.prefix + "/"
+        if "raw_path" in child:
+            child["raw_path"] = child["path"].encode()
+        child["root_path"] = scope.get("root_path", "") + self.prefix
+        await self.app(child, receive, send)
+
+
 class _SecurityHeaders:
     """Adds baseline security headers to every HTTP response."""
 
@@ -671,7 +691,7 @@ def create_app(
         except ValueError:
             return False
         return bool(address and any(address in network for network in proxy_networks))
-    mcp_provider = HojaOAuthProvider(engine, store, trusted_proxy=trust_proxy)
+    mcp_provider = HojaOAuthProvider(engine, store, trusted_proxy=trust_proxy, public_host=public_host)
     mcp_server = build_server(mcp_provider, public_host=public_host)
     # SDK auth and protected-resource routes are root-relative to its Starlette
     # app; Mount strips /mcp while preserving it in root_path for metadata URLs.
@@ -2078,7 +2098,8 @@ def create_app(
         from hoja_server.mcp_oauth import HojaOAuthProvider, build_server
 
         runtime_server = build_server(
-            HojaOAuthProvider(engine, store, trusted_proxy=trust_proxy), public_host=public_host
+            HojaOAuthProvider(engine, store, trusted_proxy=trust_proxy, public_host=public_host),
+            public_host=public_host,
         )
         runtime_app = runtime_server.streamable_http_app(
             streamable_http_path="/", stateless_http=True,
@@ -2169,6 +2190,11 @@ def create_app(
                 resource_metadata_endpoint,
                 methods=["GET", "OPTIONS"],
             ),
+            # The protected-resource metadata advertises https://<host>/mcp, and
+            # spec-following clients POST to exactly that URL. Mount("/mcp") only
+            # matches /mcp/..., so the bare path fell through to the SPA fallback
+            # (POST 405, GET returned the web page). Serve it as the mount would.
+            Route("/mcp", _BareMount(mcp_endpoint, "/mcp")),
             Mount("/mcp", app=mcp_endpoint),
             Route("/", web_index, methods=["GET"]),
             Route("/assets/{name:path}", web_asset, methods=["GET"]),

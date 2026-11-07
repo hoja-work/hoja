@@ -94,10 +94,12 @@ def _secret() -> str:
 class HojaOAuthProvider(OAuthAuthorizationServerProvider):
     """SDK OAuth provider. Raw bearer values are never persisted."""
 
-    def __init__(self, engine, store, trusted_proxy: bool = False):
+    def __init__(self, engine, store, trusted_proxy: bool = False, public_host: str | None = None):
         self.engine = engine
         self.store = store
         self.trusted_proxy = trusted_proxy
+        # The same host the metadata and token audience use; None falls back to the env.
+        self.public_host = public_host
         from hoja_server.writer import Writer
 
         self.writer = Writer(engine)
@@ -432,7 +434,7 @@ class HojaOAuthProvider(OAuthAuthorizationServerProvider):
         )
 
     def _resource_url(self) -> str:
-        return _public_origin(self.trusted_proxy) + "/mcp"
+        return _public_origin(self.trusted_proxy, self.public_host) + "/mcp"
 
     async def finish_consent(self, request: Request, pending_id: str, accepted: bool, csrf_token: str):
         auth = request.scope.get("hoja_auth")
