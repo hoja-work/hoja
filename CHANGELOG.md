@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.21.5] — 2026-11-07
+
+### Changed
+
+- The README leads with the product story the website tells, adds the repository
+  banner and PyPI badges, and documents the published `hoja-cli` distribution.
+  The same text is the project description on PyPI.
+
+### Fixed
+
+- The stdio MCP server's missing-extra hint told users to install `hoja[mcp]`,
+  which is unrelated software on PyPI. It now names `hoja-cli[mcp]`.
+
 ## [Unreleased]
 
 ### Added
@@ -16,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Google Workspace connection. Reloading resumes unfinished setup, a lost response
   is reconciled against the server instead of creating a duplicate, and creating
   another workspace reuses the later steps without asking for an account again.
+- Linear-compatible outgoing webhooks (`webhookCreate` and friends, Linear signatures,
+  `docs/webhooks.md`) and Hoja Extensions (`docs/extensions.md`): an admin installs a manifest
+  that declares event subscriptions, synchronous `issue.beforeCreate`/`issue.beforeUpdate`
+  hooks that may veto or patch a change, and issue actions shown in the issue menu. Each
+  extension gets its own bot user and API key; uninstalling replays the recorded effects
+  in reverse, so nothing it created survives.
 - Durable agent chat turns when `CLINIAR_AGENT_DBOS_URL` is set: each turn is a DBOS
   workflow, so a server crash or restart resumes the turn instead of losing the reply, and
   a completed GraphQL mutation is not executed again on recovery. The transcript is read
@@ -54,9 +73,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Webhook targets must use port 443 unless `HOJA_WEBHOOK_ALLOW_PRIVATE_NETWORKS=1` is set.
+- Expected GraphQL user errors (bad input, forbidden) are no longer logged with a traceback;
+  unexpected resolver exceptions still are.
+
 - **Breaking: the product's previous name is gone.** The Python distribution
-  is `hoja`, the packages are `hoja/` and `hoja_server/`, and the console
-  scripts are `hoja`, `hoja-mcp` and `hoja-serve`; the pre-rename scripts no
+  is `hoja-cli` on PyPI, the packages are `hoja/` and `hoja_server/`, and the
+  console scripts are `hoja`, `hoja-mcp` and `hoja-serve`; the pre-rename scripts no
   longer exist. Every environment variable that used the old upper-case prefix
   is now `HOJA_*`, including `HOJA_WEB_ROOT`, `HOJA_DATABASE_URL`,
   `HOJA_CONFIG`, `HOJA_PORT`, `HOJA_APP_URL` and `HOJA_CF_*`. The Docker image
@@ -70,6 +93,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `~/.config/hoja/`) and any `.<old-name>/memory.yaml` board (→
   `.hoja/memory.yaml`). A running deployment retains its existing database;
   its database must not be renamed in place.
+- **The PyPI distribution is `hoja-cli`.** The `hoja` project on PyPI belongs
+  to unrelated software, so the package publishes under `hoja-cli` while the
+  commands stay `hoja`, `hoja-mcp`, and `hoja-serve`. Its summary, keywords,
+  project URLs, and README now say that it is the Hoja CLI. `hoja update`
+  queries the `hoja-cli` project and upgrades `hoja-cli`, the publish workflow
+  verifies the `hoja_cli-<version>` artifacts and the wheel metadata, and
+  `scripts/ship.sh` builds and uploads those same files.
 - Frontend TypeScript is pinned to 6.0.3 instead of 7.0.2: typescript-eslint
   (used by `npm run lint:ui`) refuses TS 7 and does not support it in any
   release yet. Move back to 7 when it does.

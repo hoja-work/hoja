@@ -2,7 +2,7 @@
 
 This package is **optional**. Install with:
 
-    pip install 'hoja[mcp]'
+    pip install 'hoja-cli[mcp]'
 
 The server exposes:
   - 1 tool:       hoja_guide(topic)

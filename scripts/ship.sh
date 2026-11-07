@@ -35,8 +35,11 @@ bash scripts/pre-commit.sh
 echo "==> Building Hoja $VERSION"
 rm -rf dist build
 uv build
-WHEEL="dist/hoja-${VERSION}-py3-none-any.whl"
-SDIST="dist/hoja-${VERSION}.tar.gz"
+# The PyPI distribution is `hoja-cli` (the `hoja` name on PyPI is unrelated
+# software); artifact filenames normalize the hyphen to an underscore.
+DIST_NAME="hoja_cli"
+WHEEL="dist/${DIST_NAME}-${VERSION}-py3-none-any.whl"
+SDIST="dist/${DIST_NAME}-${VERSION}.tar.gz"
 test -f "$WHEEL"
 test -f "$SDIST"
 
@@ -57,12 +60,17 @@ gh release create "$TAG" "${REPOSITORY_ARGS[@]}" \
     --notes-file "$NOTES_FILE" \
     "$WHEEL" "$SDIST"
 
+# Accept either the uv-native variable or a plain PyPI API token name so the
+# token can be injected from the vault without rewriting it.
+if [ -z "${UV_PUBLISH_TOKEN:-}" ] && [ -n "${PYPI_API_TOKEN:-}" ]; then
+    export UV_PUBLISH_TOKEN="$PYPI_API_TOKEN"
+fi
 if [ -z "${UV_PUBLISH_TOKEN:-}" ]; then
-    echo "ABORT: UV_PUBLISH_TOKEN is not set" >&2
+    echo "ABORT: UV_PUBLISH_TOKEN (or PYPI_API_TOKEN) is not set" >&2
     exit 3
 fi
 uv publish "$WHEEL" "$SDIST"
 
 echo "Hoja $VERSION published. Verify with:"
-echo "  uv tool install --refresh hoja"
+echo "  uv tool install --refresh hoja-cli"
 echo "  hoja --version"

@@ -11,7 +11,7 @@ from typing import Optional
 
 import typer
 
-from hoja import __version__
+from hoja import DISTRIBUTION_NAME, __version__
 from hoja.cli_state import CLIState, set_state
 from hoja.commands.auth_cmd import auth_app, me_app
 from hoja.commands.comment import comment_app
@@ -31,7 +31,10 @@ from hoja.output import emit_error
 
 app = typer.Typer(
     name="hoja",
-    help="Agent-native work management for Hoja and Linear-compatible services",
+    help=(
+        "Hoja CLI — agent-native work management for Hoja and Linear-compatible "
+        f"services (installed from the PyPI package {DISTRIBUTION_NAME})"
+    ),
     no_args_is_help=True,
     pretty_exceptions_enable=False,
 )
@@ -39,7 +42,7 @@ app = typer.Typer(
 
 def _version_cb(value: bool) -> None:
     if value:
-        typer.echo(f"hoja {__version__}")
+        typer.echo(f"hoja {__version__} (PyPI: {DISTRIBUTION_NAME})")
         raise typer.Exit()
 
 

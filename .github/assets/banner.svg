@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" role="img" aria-labelledby="title desc">
+  <title id="title">Hoja</title>
+  <desc id="desc">Hoja — keep every agent task on the same page. Self-hosted, MIT licensed, with a CLI, GraphQL API and read-only MCP.</desc>
+  <defs>
+    <clipPath id="card">
+      <rect width="1200" height="300" rx="18"/>
+    </clipPath>
+  </defs>
+  <rect width="1200" height="300" rx="18" fill="#fbfbfa"/>
+  <rect x="0.5" y="0.5" width="1199" height="299" rx="17.5" fill="none" stroke="#e5e7eb"/>
+  <g clip-path="url(#card)">
+    <circle cx="1040" cy="34" r="210" fill="#2f6b45" opacity="0.07"/>
+    <circle cx="1168" cy="268" r="130" fill="#2f6b45" opacity="0.05"/>
+  </g>
+  <g transform="translate(72 78) scale(2.3)" fill="#1f2937">
+    <path d="M19.8 18.2C14.1 12.6 9.6 8 12.4 4.8c2.7-3.1 7.7-1.2 7.6 4.2.4-5.4 5.1-7.3 7.7-4.1 2.7 3.3-1.8 7.8-7.6 13.3l-.3.3Z"/>
+    <path d="M21.8 19.8c5.6-5.7 10.2-10.2 13.4-7.4 3.1 2.7 1.2 7.7-4.2 7.6 5.4.4 7.3 5.1 4.1 7.7-3.3 2.7-7.8-1.8-13.3-7.6l-.3-.3Z"/>
+    <path d="M20.2 21.8c-5.7 5.6-10.2 10.2-7.4 13.4 2.7 3.1 7.7 1.2 7.6-4.2.4 5.4 5.1 7.3 7.7 4.1 2.7-3.3-1.8-7.8-7.6-13.3l-.3-.3Z"/>
+    <path d="M18.2 20.2C12.6 14.5 8 10 4.8 12.8c-3.1 2.7-1.2 7.7 4.2 7.6-5.4.4-7.3 5.1-4.1 7.7 3.3 2.7 7.8-1.8 13.3-7.6l.3-.3Z"/>
+  </g>
+  <circle cx="118" cy="124" r="5.2" fill="#fbfbfa"/>
+  <text x="218" y="146" fill="#111827" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="74" font-weight="600" letter-spacing="-2">hoja</text>
+  <text x="221" y="196" fill="#374151" font-family="Geist, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="27">Keep every agent task on the same page.</text>
+  <text x="221" y="234" fill="#6b7280" font-family="Geist, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="19">Self-hosted · MIT licensed · CLI, GraphQL API, read-only MCP</text>
+</svg>

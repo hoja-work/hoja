@@ -317,7 +317,7 @@ esac
 hoja also ships an optional MCP server (`hoja-mcp`) that exposes the
 same teaching content as an MCP tool, plus read-only workspace resources
 (`hoja://issue/{id}`, `hoja://team/{key}`, etc.) and prompt templates
-for common workflows. Install with `pip install 'hoja[mcp]'` and add to
+for common workflows. Install with `pip install 'hoja-cli[mcp]'` and add to
 your MCP client config:
 
 ```json

@@ -23,7 +23,7 @@ Open `http://localhost:8787/` and paste the token printed by `seed`.
 ## Install
 
 ```bash
-pip install 'hoja[server]'  # includes the SQLite and psycopg 3 PostgreSQL drivers
+pip install 'hoja-cli[server]'  # includes the SQLite and psycopg 3 PostgreSQL drivers
 ```
 
 ## Quick start (offline, 60 seconds)

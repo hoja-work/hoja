@@ -2,6 +2,13 @@
 
 from pathlib import Path
 
+#: PyPI distribution that ships this package. The project cannot be named
+#: ``hoja`` on PyPI (that name belongs to unrelated software), so it is
+#: published as ``hoja-cli``. Anything that talks to PyPI — the ``hoja update``
+#: command, install instructions, release tooling — must use this name. The
+#: commands stay ``hoja``, ``hoja-mcp``, and ``hoja-serve``.
+DISTRIBUTION_NAME = "hoja-cli"
+
 
 def _read_version() -> str:
     """Read version from VERSION file at the repo root.
@@ -19,4 +26,4 @@ def _read_version() -> str:
 
 
 __version__ = _read_version()
-__all__ = ["__version__"]
+__all__ = ["DISTRIBUTION_NAME", "__version__"]
