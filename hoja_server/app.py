@@ -1425,15 +1425,75 @@ def create_app(
             headers={"cache-control": "no-store"},
         )
 
+    def _tenant_transfer_redirect(
+        *,
+        email: str,
+        subject: str,
+        name: str | None,
+        picture: str | None,
+        tenant_target: str,
+        source: str,
+    ) -> Response:
+        """Mint the per-tenant handoff from an already verified identity."""
+        master = signup_config.identity_transfer_master
+        if not master:
+            return JSONResponse(
+                {"error": "Identity handoff is not configured on this deployment.",
+                 "reason": "transfer_unconfigured"},
+                status_code=503,
+            )
+        target_host = urlsplit(tenant_target).hostname or ""
+        transfer = identity_transfer.issue(
+            key=identity_transfer.tenant_key(master, target_host),
+            audience=target_host,
+            email=email.strip().lower(),
+            subject=subject,
+            name=name,
+            picture=picture,
+            email_verified=True,
+        )
+        _security_log.info(
+            "auth.handoff source=%s target_host=%s", source, target_host
+        )
+        response = RedirectResponse(
+            f"{tenant_target.rstrip('/')}/auth/google/finish?t={quote(transfer, safe='')}",
+            status_code=302,
+        )
+        response.delete_cookie(_OIDC_FLOW_COOKIE, path="/")
+        return response
+
     async def google_sign_in_start(request: Request):
         host = _signup_host(request).split(":")[0].lower()
         control_plane = signup_config.control_plane_url
+        raw_return_to = request.query_params.get("return_to")
+        tenant_target = _tenant_transfer_target(raw_return_to)
+        identity = _signup_identity(request)
+        _security_log.info(
+            "auth.start host=%s control_session=%s tenant_target=%s",
+            host,
+            bool(identity),
+            urlsplit(tenant_target).hostname if tenant_target else "-",
+        )
         if control_plane and host != urlsplit(control_plane).hostname:
             # A tenant origin has no registered Google redirect of its own, so it
             # borrows the control plane's and comes back to /auth/google/finish.
             back = _tenant_transfer_target(f"https://{host}/") or f"https://{host}/"
             target = f"{control_plane}/auth/google/start?return_to={quote(back, safe='')}"
             return RedirectResponse(target, status_code=302)
+        if identity is not None and tenant_target is not None:
+            # The browser already completed Google OIDC on this control plane.
+            # Do not send it through the account chooser again: the tenant only
+            # needs a freshly minted, audience-bound handoff token.
+            full_identity = signup_store.identity_by_subject(identity["subject"]) or identity
+            if full_identity.get("email_verified") is True:
+                return _tenant_transfer_redirect(
+                    email=full_identity["email"],
+                    subject=full_identity["subject"],
+                    name=full_identity.get("name"),
+                    picture=full_identity.get("picture"),
+                    tenant_target=tenant_target,
+                    source="control_session",
+                )
         if not signup_config.configured:
             return JSONResponse(
                 {"error": "Sign-up is not configured on this deployment.",
@@ -1555,30 +1615,14 @@ def create_app(
         if tenant_target is not None:
             # This origin is the control plane for a tenant sign-in. The address
             # is verified; the tenant decides whether it belongs.
-            master = signup_config.identity_transfer_master
-            if not master:
-                return JSONResponse(
-                    {"error": "Identity handoff is not configured on this deployment.",
-                     "reason": "transfer_unconfigured"},
-                    status_code=503,
-                )
-            target_host = urlsplit(tenant_target).hostname or ""
-            # Sign with the target's own derived key: the master never leaves here.
-            transfer = identity_transfer.issue(
-                key=identity_transfer.tenant_key(master, target_host),
-                audience=target_host,
-                email=email.strip().lower(),
+            return _tenant_transfer_redirect(
+                email=email,
                 subject=claims["sub"],
                 name=claims.get("name"),
                 picture=claims.get("picture"),
-                email_verified=True,
+                tenant_target=tenant_target,
+                source="google_callback",
             )
-            response = RedirectResponse(
-                f"{tenant_target.rstrip('/')}/auth/google/finish?t={quote(transfer, safe='')}",
-                status_code=302,
-            )
-            response.delete_cookie(_OIDC_FLOW_COOKIE, path="/")
-            return response
 
         identity = signup_store.upsert_identity(
             subject=claims["sub"],
@@ -1595,6 +1639,7 @@ def create_app(
             user_agent=request.headers.get("user-agent"),
             days=signup_config.session_days,
         )
+        _security_log.info("auth.callback action=control_session")
         response = RedirectResponse(flow["return_to"] or "/", status_code=302)
         response.set_cookie(
             _SIGNUP_SESSION_COOKIE,
@@ -1643,6 +1688,9 @@ def create_app(
                 {"error": "Sign-in could not be completed.", "reason": "resolve_failed"},
                 status_code=500,
             )
+        _security_log.info(
+            "auth.finish host=%s action=%s", host, resolved["action"]
+        )
         if resolved["action"] == google_login.ACTION_DENIED:
             return JSONResponse(
                 {"error": "This Google account is not a member of this workspace.",
@@ -1754,6 +1802,7 @@ def create_app(
     async def signup_logout(request: Request):
         if not _same_origin(request.headers.get("origin"), request.headers):
             return JSONResponse({"error": "Cross-site request rejected."}, status_code=403)
+        _security_log.info("auth.logout scope=signup")
         signup_store.revoke_session(request.cookies.get(_SIGNUP_SESSION_COOKIE))
         response = JSONResponse({"status": "logged_out"})
         response.delete_cookie(_SIGNUP_SESSION_COOKIE, path="/")
