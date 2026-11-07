@@ -1,7 +1,9 @@
 import { defineConfig, type ProxyOptions } from 'vite';
 import react from '@vitejs/plugin-react';
 
-const backend = 'http://127.0.0.1:8787';
+// The dev/test harness can point the proxy at a disposable backend.
+const backend = process.env.HOJA_DEV_BACKEND || 'http://127.0.0.1:8787';
+const port = Number(process.env.HOJA_DEV_PORT || 5173);
 const backendProxy: ProxyOptions = {
   target: backend,
   // Keep Origin and Host identical for the backend's cookie CSRF check.
@@ -23,7 +25,7 @@ const backendProxy: ProxyOptions = {
 export default defineConfig({
   plugins: [react()],
   server: {
-    port: 5173,
+    port,
     proxy: {
       '/graphql': backendProxy,
       '/api': backendProxy,
