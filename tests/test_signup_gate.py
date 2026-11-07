@@ -31,7 +31,7 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from sqlalchemy import func, select, update
 from starlette.testclient import TestClient
 
-from hoja_server import google_oidc, signup_gate, turnstile
+from hoja_server import google_oidc, identity_transfer, signup_gate, turnstile
 from hoja_server.app import create_app
 from hoja_server.db import (
     _apply_signup_provisioning,
@@ -731,6 +731,46 @@ def test_existing_outbox_gains_the_worker_lease_columns(tmp_path):
             for row in conn.exec_driver_sql("PRAGMA table_info(signup_eligibility)")
         }
     assert {"attempts", "provisioned_at", "last_error"} <= columns
+
+
+def test_a_live_control_session_hands_off_without_a_second_google_round_trip(tmp_path, monkeypatch):
+    master = "identity-master-" + "m" * 40
+    harness = _build_harness(
+        tmp_path, monkeypatch, env={"HOJA_IDENTITY_TRANSFER_MASTER": master}
+    )
+    try:
+        harness.sign_in(subject="google-sub-1", email="person@example.test")
+        google_calls = len(harness.google.token_calls)
+        response = harness.client.get(
+            "/auth/google/start",
+            params={"return_to": "https://acme.hoja.work/"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302, response.text
+        location = response.headers["location"]
+        assert location.startswith("https://acme.hoja.work/auth/google/finish?t=")
+        assert len(harness.google.token_calls) == google_calls, "Google was called again"
+
+        token = parse_qs(urlsplit(location).query)["t"][0]
+        claims = identity_transfer.redeem(
+            key=identity_transfer.tenant_key(master, "acme.hoja.work"),
+            token=token,
+            audience="acme.hoja.work",
+        )
+        assert claims["email"] == "person@example.test"
+        assert claims["sub"] == "google-sub-1"
+    finally:
+        harness.client.__exit__(None, None, None)
+
+
+def test_no_control_session_still_starts_google_normally(harness):
+    response = harness.client.get(
+        "/auth/google/start",
+        params={"return_to": "https://acme.hoja.work/"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    assert response.headers["location"].startswith("https://accounts.google.com/")
 
 
 def test_signup_is_closed_by_default(tmp_path, monkeypatch):
