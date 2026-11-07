@@ -353,14 +353,20 @@ def _matching(hooks: list[dict], seq: int, team_id: str | None, visibility: dict
     return out
 
 
-def _actor(conn: Connection, org_id: str, issue_id: str, updated_at: str | None) -> dict | None:
-    """Who made the change: the writer records activity and updated_at in one transaction."""
-    if not updated_at:
+# Writer activities stamped with the same timestamp as the change they describe.
+_ACTOR_EVENTS = ("issueCreated", "issueUpdated", "commentCreated", "commentUpdated")
+
+
+def _actor(conn: Connection, org_id: str, issue_id: str, changed_at: str | None) -> dict | None:
+    """Who made the change: the writer records the activity and the change's timestamp
+    in one transaction. Unknown (None) when no writer activity carries that timestamp."""
+    if not changed_at:
         return None
     actor_id = conn.execute(select(issue_activity.c.actor_id).where(and_(
         issue_activity.c.organization_id == org_id, issue_activity.c.issue_id == issue_id,
-        issue_activity.c.created_at == updated_at, issue_activity.c.actor_id.is_not(None),
-    )).order_by(issue_activity.c.id).limit(1)).scalar()
+        issue_activity.c.created_at == changed_at, issue_activity.c.actor_id.is_not(None),
+        issue_activity.c.event_type.in_(_ACTOR_EVENTS),
+    )).order_by(issue_activity.c.event_type, issue_activity.c.actor_id).limit(1)).scalar()
     if not actor_id:
         return None
     who = conn.execute(select(user.c.id, user.c.name, user.c.email, user.c.kind).where(
@@ -439,9 +445,16 @@ def _dispatch_org(engine: Engine, org_id: str) -> int:
                 else:
                     conn.execute(webhook_issue_snapshot.update().where(
                         webhook_issue_snapshot.c.issue_id == row["id"]).values(data=payload_snapshot))
-            actor = _actor(conn, org_id, ev["entity_id"], data.get("updatedAt")) if row is not None else None
-            for hook in _matching(hooks, ev["seq"], data.get("teamId") or ev["team_id"], visibility,
-                                  actor["id"] if actor else None, bots):
+            # Archiving stamps archivedAt, not updatedAt: use the timestamp of this change.
+            changed_at = data.get("archivedAt") if "archivedAt" in (updated_from or {}) else data.get("updatedAt")
+            actor = _actor(conn, org_id, ev["entity_id"], changed_at) if row is not None else None
+            actor_id = actor["id"] if actor else None
+            targets = _matching(hooks, ev["seq"], data.get("teamId") or ev["team_id"], visibility, actor_id, bots)
+            if updated_from and updated_from.get("teamId"):  # moved: tell the old team's subscribers too
+                seen = {hook["id"] for hook in targets}
+                targets += [hook for hook in _matching(hooks, ev["seq"], updated_from["teamId"], visibility,
+                                                       actor_id, bots) if hook["id"] not in seen]
+            for hook in targets:
                 payload = {
                     "action": action, "type": "Issue", "actor": actor,
                     "createdAt": ev["created_at"], "data": data, "url": data["url"],

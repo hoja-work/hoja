@@ -28,12 +28,13 @@ from sqlalchemy import (
     func,
     inspect,
     select,
+    text,
 )
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 39
+CURRENT_SCHEMA_REVISION = 40
 
 
 def now_iso() -> str:
@@ -690,6 +691,8 @@ extension = Table(
     Column("updated_at", String, nullable=False),
     # Tombstone: uninstalled rows stay for the action-run audit trail.
     Column("uninstalled_at", String),
+    Index("uq_extension_live_key", "organization_id", "key", unique=True,
+          sqlite_where=text("uninstalled_at IS NULL"), postgresql_where=text("uninstalled_at IS NULL")),
 )
 
 extension_effect = Table(
@@ -1626,7 +1629,9 @@ def _apply_team_hierarchy(conn) -> None:
 
 
 def _apply_extensions(conn):
-    columns = lambda t: {c["name"] for c in inspect(conn).get_columns(t)}
+    def columns(table_name):
+        return {c["name"] for c in inspect(conn).get_columns(table_name)}
+
     if "kind" not in columns("user"):
         conn.exec_driver_sql("ALTER TABLE \"user\" ADD COLUMN kind VARCHAR NOT NULL DEFAULT 'human'")
     for name in ("extension_id", "event_key"):
@@ -1711,6 +1716,9 @@ _MIGRATIONS = {
         webhook_delivery.create(conn, checkfirst=True),
     ),
     39: _apply_extensions,
+    # One live extension per key (revision 39 databases predate the index).
+    40: lambda conn: next(i for i in extension.indexes if i.name == "uq_extension_live_key").create(
+        conn, checkfirst=True),
 }
 
 

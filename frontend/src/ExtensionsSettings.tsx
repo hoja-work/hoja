@@ -13,7 +13,7 @@ const EXAMPLE_MANIFEST = JSON.stringify({
   version: '1.0.0',
   url: 'https://ext.example.com',
   access: 'read_write',
-  events: [{resourceTypes: ['Issue'], teamId: 'ENG'}],
+  events: [{key: 'issues', resourceTypes: ['Issue'], teamId: 'ENG'}],
   hooks: [{key: 'guard', on: 'issue.beforeCreate', path: '/hooks/guard', failurePolicy: 'allow'}],
   actions: [{key: 'provision', title: 'Provision environment', entity: 'Issue', path: '/actions/provision'}],
 }, null, 2);
@@ -201,7 +201,7 @@ export function ExtensionsSettings() {
 
       <section className="settings-group extension-inventory" aria-labelledby="extension-list-title">
         <div className="settings-section-head">
-          <div><span className="settings-section-kicker">Installed</span><h2 id="extension-list-title">Wireless integrations</h2></div>
+          <div><span className="settings-section-kicker">Installed</span><h2 id="extension-list-title">Installed extensions</h2></div>
           <span className="settings-badge">{extensions.length} {extensions.length === 1 ? 'extension' : 'extensions'}</span>
         </div>
 

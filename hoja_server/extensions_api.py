@@ -107,7 +107,7 @@ def m_extension_install(_, info, manifest):
     try:
         result = extensions.install(store.engine, org, uid, manifest)
     except (extensions.ExtensionError, secrets_box.SecretBoxError) as exc:
-        raise _bad(exc) from exc
+        raise _bad(exc) from None  # the message is the whole story; a chain only slows error logging
     return {"success": True, **result}
 
 
@@ -117,7 +117,7 @@ def m_extension_update(_, info, id, manifest):
     try:
         updated = extensions.update(store.engine, org, id, manifest)
     except (extensions.ExtensionError, secrets_box.SecretBoxError) as exc:
-        raise _bad(exc) from exc
+        raise _bad(exc) from None  # the message is the whole story; a chain only slows error logging
     if not updated:
         raise _not_found()
     return {"success": True, "extension": updated}
@@ -136,7 +136,7 @@ def m_extension_action_run(_, info, **args):
         return extensions.run_action(ctx["store"].engine, ctx["store"], ctx["org_id"], ctx["user_id"],
                                      args["actionId"], args["entityId"])
     except extensions.ExtensionError as exc:
-        raise _bad(exc) from exc
+        raise _bad(exc) from None  # the message is the whole story; a chain only slows error logging
 
 
 @extension_type.field("botUser")

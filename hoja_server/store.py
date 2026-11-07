@@ -1337,7 +1337,8 @@ class Store:
                 return []
             stmt = select(user).select_from(
                 user.join(team_member, team_member.c.user_id == user.c.id)
-            ).where(and_(team_member.c.team_id == team_id, user.c.organization_id == org_id))
+            ).where(and_(team_member.c.team_id == team_id, user.c.organization_id == org_id,
+                         user.c.kind == "human"))  # extension bots hold seats but are not members
             return [self.ser_user(r) for r in _conn_rows(conn, stmt)]
 
     def team_children(self, org_id: str, team_id: str, viewer_id: str | None = None) -> list[dict]:
