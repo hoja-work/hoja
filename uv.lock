@@ -1143,7 +1143,7 @@ wheels = [
 ]
 
 [[package]]
-name = "hoja"
+name = "hoja-cli"
 version = "0.21.4"
 source = { editable = "." }
 dependencies = [
