@@ -297,8 +297,9 @@ def test_mcp_oauth_http_authorization_code_pkce_flow(tmp_path, monkeypatch) -> N
         }))
         assert authorize.status_code in (302, 303)
         consent_url = authorize.headers["location"]
-        assert "/oauth/consent?" in consent_url
-        consent_path = "/mcp" + urlparse(consent_url).path.rstrip("/") + "?" + urlparse(consent_url).query
+        # Followed verbatim by a browser, so it must be the consent page under /mcp.
+        assert consent_url.startswith("https://mcp.example.test/mcp/oauth/consent?pending=")
+        consent_path = urlparse(consent_url).path + "?" + urlparse(consent_url).query
         consent = client.get(consent_path, headers={"host": "mcp.example.test"})
         assert consent.status_code == 200
         assert "Authorize MCP client" in consent.text
@@ -309,7 +310,7 @@ def test_mcp_oauth_http_authorization_code_pkce_flow(tmp_path, monkeypatch) -> N
         assert denied.status_code == 400
         approved = client.post(consent_path, data={"decision": "allow", "csrf_token": csrf},
                                headers={"host": "mcp.example.test"})
-        assert approved.status_code in (302, 303, 307)
+        assert approved.status_code == 303  # RFC 9700 4.11: not 307
         redirect = urlparse(approved.headers["location"])
         result = parse_qs(redirect.query)
         assert redirect.netloc == "client.example" and result["state"] == [state]

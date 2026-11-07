@@ -187,14 +187,17 @@ async def _sdk_connect(edge: Edge, host: str, browser: httpx2.AsyncClient, seen:
         authorize = await browser.get(authorize_url)
         assert authorize.status_code in (302, 303), authorize.text
         location = authorize.headers["location"]
-        consent_url = location if location.startswith("http") else (
-            "/mcp" + location if location.startswith("/oauth/") else location)
+        # A real browser follows Location as-is: it must name the consent page under the
+        # MCP mount on this host, not a root path the web app would answer instead.
+        assert location.startswith(f"https://{host}/mcp/oauth/consent?pending="), location
+        consent_url = location
         page = await browser.get(consent_url)
         assert page.status_code == 200, page.text
         seen["consent"] = page.text
         csrf = re.search(r'name=csrf_token value="([^"]+)"', page.text).group(1)
         approved = await browser.post(consent_url, data={"decision": "allow", "csrf_token": csrf})
-        assert approved.status_code in (302, 303, 307), approved.text
+        # RFC 9700 4.11: never 307 here, or the browser re-POSTs the consent form to the client.
+        assert approved.status_code == 303, approved.status_code
         back = urlparse(approved.headers["location"])
         assert f"{back.scheme}://{back.netloc}{back.path}" == REDIRECT
         query = parse_qs(back.query)

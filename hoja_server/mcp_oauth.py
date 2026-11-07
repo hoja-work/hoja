@@ -188,7 +188,9 @@ class HojaOAuthProvider(OAuthAuthorizationServerProvider):
                 state=params.state, csrf_token=csrf_token, resource=params.resource,
                 expires_at=_iso(expires), consumed_at=None,
             ))
-        return f"/oauth/consent?{urlencode({'pending': pending_id})}"
+        # Absolute, under the MCP mount: a root-relative "/oauth/consent" sends the
+        # browser to the web app's fallback page and the consent screen never shows.
+        return f"{self._resource_url()}/oauth/consent?{urlencode({'pending': pending_id})}"
 
     async def load_authorization_code(self, client, authorization_code: str):
         with self.engine.connect() as conn:
@@ -467,7 +469,12 @@ class HojaOAuthProvider(OAuthAuthorizationServerProvider):
         query = {"code": code}
         if row["state"]:
             query["state"] = row["state"]
-        return RedirectResponse(row["redirect_uri"] + ("&" if "?" in row["redirect_uri"] else "?") + urlencode(query))
+        # 303, never Starlette's default 307: after the consent form POST a 307 makes
+        # the browser re-POST csrf_token and decision to the client (RFC 9700 4.11).
+        return RedirectResponse(
+            row["redirect_uri"] + ("&" if "?" in row["redirect_uri"] else "?") + urlencode(query),
+            status_code=303,
+        )
 
 
 def _parse_dt(value: str) -> datetime:
@@ -574,7 +581,8 @@ def build_server(provider: HojaOAuthProvider, public_host: str | None = None) ->
         auth = request.scope.get("hoja_auth")
         if not auth:
             response = RedirectResponse(
-                "/auth/login?next=" + request.url.path + "%3Fpending%3D" + (pending_id or "")
+                "/auth/login?next=" + request.url.path + "%3Fpending%3D" + (pending_id or ""),
+                status_code=303,
             )
             return response
         if request.method == "POST":
