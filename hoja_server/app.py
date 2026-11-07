@@ -1224,11 +1224,25 @@ def create_app(
     async def auth_login(request: Request):
         body = await request.json()
         keys = _limit_keys(request, str(body.get("email", "")).strip().lower())
+        method = "api_key" if body.get("apiKey") else "password"
         if limiter.blocked(keys):
+            _security_log.info("auth.login method=%s outcome=rate_limited", method)
             return _too_many_attempts()
         response = await _login(request)
         if response.status_code == 401:
             limiter.record(keys)
+        _security_log.info(
+            "auth.login method=%s status=%s outcome=%s",
+            method,
+            response.status_code,
+            {
+                200: "authenticated",
+                409: "workspace_choice",
+                401: "invalid_credentials",
+                403: "forbidden",
+                503: "schema_outdated",
+            }.get(response.status_code, "refused"),
+        )
         return response
 
     async def _login(request: Request):
@@ -1320,15 +1334,37 @@ def create_app(
             return JSONResponse({"error": "Invalid credentials"}, status_code=401)
         return JSONResponse({"workspaces": store.matching_login_workspaces(email)})
 
+    def _revoke_every_session(request: Request) -> list[str]:
+        """Revoke every session this browser holds, and name the ones it held.
+
+        A workspace session (``hoja_session``) and a hosted sign-up session
+        (``hoja_signup_session``) are independent families. Signing out of one and
+        leaving the other live is how a "signed out" browser signs itself back in:
+        ``/signup`` reads a live sign-up session as ``google_verified`` and, when
+        the person already has an active workspace, redirects them straight back
+        into it. That is the "sign out doesn't kick me out" report.
+        """
+        cleared: list[str] = []
+        workspace_token = request.cookies.get("hoja_session")
+        if workspace_token:
+            store.revoke_browser_session(workspace_token)
+            cleared.append("workspace")
+        signup_token = request.cookies.get(_SIGNUP_SESSION_COOKIE)
+        if signup_token:
+            signup_store.revoke_session(signup_token)
+            cleared.append("signup")
+        return cleared
+
     async def auth_logout(request: Request):
         csrf = _cookie_csrf_error(request, json_only=False)
         if csrf:
+            _security_log.info("auth.logout scope=all outcome=refused_csrf")
             return csrf
-        session_token = request.cookies.get("hoja_session")
-        if session_token:
-            store.revoke_browser_session(session_token)
-        response = JSONResponse({"status": "logged_out"})
-        response.delete_cookie("hoja_session", path="/")
+        cleared = _revoke_every_session(request)
+        _security_log.info("auth.logout scope=all cleared=%s", ",".join(cleared) or "-")
+        response = JSONResponse({"status": "logged_out", "cleared": cleared})
+        for cookie in ("hoja_session", _SIGNUP_SESSION_COOKIE):
+            response.delete_cookie(cookie, **_session_cookie_attrs(request))
         return response
 
     async def auth_me(request: Request):
@@ -1773,6 +1809,18 @@ def create_app(
             slug=body.get("slug"),
             turnstile_token=token if isinstance(token, str) else None,
             client_ip=_client_ip(request),
+        )
+        # One line per gate decision: the funnel is the sequence of these states
+        # (anonymous → google_verified → human_verified → eligible), and the reason
+        # code says which wall a person hit. No token, cookie or email is logged.
+        # The field is ``signup_state``, not ``state``: ``state=`` is an OAuth
+        # parameter that the log formatter redacts, and reusing the name would
+        # silently blank the one field that identifies the funnel step.
+        _security_log.info(
+            "auth.signup.decision signup_state=%s reason=%s status=%s",
+            decision.state.value,
+            decision.reason.value if decision.reason else "-",
+            decision.status_code,
         )
         return JSONResponse(decision.as_dict(), status_code=decision.status_code)
 
