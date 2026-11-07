@@ -253,6 +253,25 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
             conn.execute(connector_account.insert().values(**row))
         return RedirectResponse("/?connector=google-connected", status_code=302)
 
+    async def connector_config(request: Request):
+        """Which connectors this *deployment* can actually run.
+
+        The setup wizard must not offer a connection that could never complete,
+        and it must not make the deployment's secrets public to answer that.
+        Invitations never leave this endpoint: they are shared as links.
+        """
+        # Public on purpose: one boolean that lets a pre-session setup page hide
+        # an impossible step. No client id, secret, tenant or account is exposed.
+        try:
+            GoogleOAuthConfig.from_env()
+            google_available = True
+        except (ConnectorConfigError, SecretBoxError):
+            google_available = False
+        return JSONResponse(
+            {"googleWorkspace": google_available},
+            headers={"cache-control": "no-store"},
+        )
+
     async def accounts_list(request: Request):
         uid, org, failure = await _require_user(request)
         if failure:
@@ -365,6 +384,7 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
         return JSONResponse({"status": "rejected"})
 
     return [
+        Route("/api/connectors/config", connector_config, methods=["GET"]),
         Route("/api/connectors/google/start", google_start, methods=["GET"]),
         Route("/api/connectors/google/callback", google_callback, methods=["GET"]),
         Route("/api/connectors/accounts", accounts_list, methods=["GET"]),

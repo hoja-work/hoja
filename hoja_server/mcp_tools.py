@@ -42,6 +42,10 @@ from hoja_server.denials import DENY_HINT
 log = logging.getLogger("hoja.mcp")
 
 READ_TOOLS: dict[str, str] = {
+    "extensionActions": (
+        "List actions installed extensions offer for an entity type (entity: \"Issue\"). "
+        "Run one with hoja_extensionActionRun."
+    ),
     "viewer": "The signed-in user (id, name, email, admin).",
     "workspace": "The current workspace (organization).",
     "organizationMembers": "People in the workspace. Use to find someone before assigning.",
@@ -73,6 +77,11 @@ READ_TOOLS: dict[str, str] = {
 }
 
 WRITE_TOOLS: dict[str, str] = {
+    "extensionActionRun": (
+        "Run an installed extension's action on an issue (for example 'Provision environment'). "
+        "List available actions with hoja_extensionActions(entity: \"Issue\") first. "
+        "Runs once with no automatic retry and returns the extension's status and message."
+    ),
     "issueCreate": (
         "Create an issue. For multi-step work, create or reuse one parent issue, then create actionable "
         "sub-issues with parentId instead of separate root issues; omit parentId for a standalone "

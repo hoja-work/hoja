@@ -394,3 +394,11 @@
 .lin-card-pop input{padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px}
 .lin-card-pop button{padding:4px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text);font-size:12px}
 .lin-bcard-error{margin-top:2px;color:var(--danger);font-size:11px}
+
+/* Issue options menu opens from the far-right header control: anchor it to its right edge so
+ * extension action entries ("Title · Extension") cannot push the panel past the viewport. */
+.lin-dd-panel.lin-dd-right{right:0;left:auto;}
+/* Result of an extension action, shown in the issue body: status on success, error on veto. */
+.lin-action-notice{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0 0;padding:10px 14px;border:1px solid var(--line);border-radius:8px;background:var(--subtle);color:var(--text);font-size:13px;}
+.lin-action-notice > span{flex:1 1 220px;min-width:0;overflow-wrap:anywhere;line-height:1.5;}
+.lin-action-notice.error{border-color:color-mix(in srgb,var(--danger) 40%,var(--line));background:color-mix(in srgb,var(--danger) 6%,var(--panel));color:var(--danger);}

@@ -21,7 +21,9 @@
 "test:markdown": "node ../scripts/test-markdown-conformance.cjs && node ../scripts/test-markdown-surfaces.cjs",
 "test:markdown:spec": "node ../scripts/test-markdown-conformance.cjs",
 "test:cycles": "node ../scripts/test-cycle-metrics.mjs && node ../scripts/test-cycle-selection.mjs",
-"test:status-age": "node ../scripts/test-status-age.mjs"
+"test:status-age": "node ../scripts/test-status-age.mjs",
+    "test:setup": "node ../scripts/test-setup-wizard.cjs",
+    "test:setup:browser": "node ../scripts/test-setup-wizard-browser.cjs"
   },
   "dependencies": {
     "@fontsource-variable/inter": "5.3.0",
