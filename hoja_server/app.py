@@ -1059,7 +1059,15 @@ def create_app(
             initialized = store.is_initialized()
         except Exception:
             return JSONResponse({"error": "Setup status unavailable"}, status_code=503)
-        return JSONResponse({"initialized": initialized, "singleOrg": single_org_mode()})
+        # `ownerBound` says only that a provisioner pinned this instance to one
+        # address; it never returns the address itself.
+        return JSONResponse(
+            {
+                "initialized": initialized,
+                "singleOrg": single_org_mode(),
+                "ownerBound": google_login.owner_email() is not None,
+            }
+        )
 
     async def onboarding_bootstrap(request: Request):
         body = await request.json()
