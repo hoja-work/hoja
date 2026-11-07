@@ -108,13 +108,13 @@ Python dependencies, so it needs internet access.
    database migrations before serving.
 
 3. Open [http://localhost:8787](http://localhost:8787). A fresh database starts
-   the setup wizard: language, your admin profile and password, then your
-   workspace and first team. Existing databases go straight to sign-in.
-   `curl -i http://localhost:8787/health` reports liveness and
-   `curl -i http://localhost:8787/ready` reports schema readiness.
+   the setup wizard for your admin profile, workspace and first team. Existing
+   databases go straight to sign-in. `curl -i http://localhost:8787/health`
+   reports liveness and `curl -i http://localhost:8787/ready` reports schema
+   readiness.
 
-4. The wizard can add teammates. Hoja creates each member and hands you a
-   single-use invite link valid for 72 hours; it does not send invitation email.
+4. Optional steps create a first project and invite teammates. Each invitation
+   is a single-use link valid for 72 hours; Hoja does not send invitation email.
    The finish step shows the admin API key once for CLI setup. Browser sign-in
    uses an HttpOnly cookie.
 
