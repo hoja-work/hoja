@@ -55,7 +55,16 @@ ROOT = Path(__file__).resolve().parent.parent
 FRONTEND = ROOT / "frontend"
 SIGNUP_SRC = FRONTEND / "src" / "signup"
 
-PUBLIC_CONFIG_KEYS = {"mode", "available", "sitekey", "signInUrl", "hosted", "widgetScriptUrl"}
+PUBLIC_CONFIG_KEYS = {
+    "mode",
+    "available",
+    "sitekey",
+    "signInUrl",
+    "loginUrl",
+    "credentialSignIn",
+    "hosted",
+    "widgetScriptUrl",
+}
 
 SITE_KEY = "0x4AAAAAAF0T6-JuMDYB9gPf"
 #: Deliberately distinctive strings, so a leak is unambiguous in the failure.

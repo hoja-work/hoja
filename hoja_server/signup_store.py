@@ -24,7 +24,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from sqlalchemy import and_, case, func, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from hoja_server.db import (
@@ -466,6 +466,48 @@ class SignupStore:
                 )
                 .limit(1),
             )
+
+    def workspaces_for(self, *, subject: str | None, email: str | None) -> list[dict]:
+        """Every workspace this verified identity can be routed to, most useful first.
+
+        This is the control plane's only directory: the workspaces whose sign-up
+        it accepted, matched by the stable Google subject (preferred) or the
+        verified address. A tenant that was provisioned out of band has no row
+        here, which is why the sign-in page still honours the ``next`` workspace
+        the person arrived from.
+        """
+        subject = (subject or "").strip()
+        address = (email or "").strip().lower()
+        if not subject and not address:
+            return []
+        match = []
+        if subject:
+            match.append(signup_eligibility.c.google_sub == subject)
+        if address:
+            match.append(signup_eligibility.c.email == address)
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                select(signup_eligibility)
+                .where(
+                    and_(
+                        or_(*match),
+                        signup_eligibility.c.status.in_(("active", "provisioning", "eligible")),
+                    )
+                )
+                .order_by(
+                    case((signup_eligibility.c.status == "active", 1), else_=0).desc(),
+                    signup_eligibility.c.created_at.desc(),
+                )
+            ).all()
+        seen: set[str] = set()
+        workspaces: list[dict] = []
+        for row in rows:
+            slug = str(row.slug)
+            if slug in seen:
+                continue
+            seen.add(slug)
+            workspaces.append({"slug": slug, "status": str(row.status)})
+        return workspaces
 
     def eligibility_by_subject_slug(self, subject: str, slug: str) -> dict | None:
         with self.engine.connect() as conn:

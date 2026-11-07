@@ -8,6 +8,10 @@ user" means:
 * a database that is already set up only ever *matches* an address. Google
   proves who you are; it does not grant access to someone else's workspace.
   An unknown or uninvited address is refused, not created.
+* the one exception is the address the provisioner recorded as the workspace
+  owner (``HOJA_OWNER_EMAIL``). It is authoritative for its own workspace at
+  any time, not only while the database is empty, because otherwise a restored
+  or previously-initialised instance locks its real owner out permanently.
 
 The caller owns the transaction so that "is this instance empty?" and the rows
 that answer it are decided atomically.
@@ -57,6 +61,121 @@ def owner_email() -> str | None:
     """
     value = (os.environ.get("HOJA_OWNER_EMAIL") or "").strip().lower()
     return value or None
+
+
+def _admit_owner(conn, *, address: str, display: str, stamp: str, org_id: str) -> dict:
+    """Admit the address the provisioner named as this workspace's owner.
+
+    ``HOJA_OWNER_EMAIL`` is written by the provisioner from the address that
+    created (and is billed for) the workspace. Honouring it only while the
+    database is empty made the owner unrecoverable the moment an organization
+    existed: a restored instance, a first-run wizard, or an earlier sign-in from
+    another address left the real owner refused with ``not_invited`` forever.
+    That is the observed failure on clover.hoja.work.
+
+    The address is not a bypass. Google has already verified it, and it admits
+    no other address. A deliberately deactivated profile stays deactivated.
+    """
+    row = conn.execute(
+        select(user.c.id, user.c.active, user.c.organization_id).where(user.c.email == address)
+    ).first()
+    if row is not None:
+        if not row[1]:
+            return {"action": ACTION_DENIED, "reason": "account_disabled"}
+        uid = row[0]
+        # The profile's own organization, never "the first organization": a
+        # multi-organization database would otherwise attach the owner to a
+        # workspace their profile does not belong to.
+        profile_org = row[2]
+        identity = conn.execute(
+            select(global_identity.c.id).where(global_identity.c.email == address)
+        ).first()
+        identity_id = identity[0] if identity is not None else new_id()
+        if identity is None:
+            conn.execute(
+                global_identity.insert().values(id=identity_id, email=address, created_at=stamp)
+            )
+        # A profile can have at most one membership row; find it by profile, not
+        # only by identity, or a stale identity row makes the insert violate the
+        # profile uniqueness constraint (a 500 instead of a sign-in).
+        membership = conn.execute(
+            select(
+                organization_membership.c.id,
+                organization_membership.c.active,
+                organization_membership.c.identity_id,
+                organization_membership.c.organization_id,
+            ).where(organization_membership.c.profile_user_id == uid)
+        ).first()
+        if membership is not None and not membership[1]:
+            # Revoked is revoked. The owner address proves identity, not that an
+            # administrator's removal should be undone.
+            return {"action": ACTION_DENIED, "reason": "no_membership"}
+        if membership is None:
+            conn.execute(
+                organization_membership.insert().values(
+                    id=new_id(),
+                    identity_id=identity_id,
+                    organization_id=profile_org,
+                    profile_user_id=uid,
+                    active=True,
+                    created_at=stamp,
+                )
+            )
+        elif membership[2] != identity_id or membership[3] != profile_org:
+            # Repair the link to the verified identity and the profile's own
+            # workspace. The old identity row is left intact and unlinked.
+            conn.execute(
+                organization_membership.update()
+                .where(organization_membership.c.id == membership[0])
+                .values(identity_id=identity_id, organization_id=profile_org)
+            )
+        return {
+            "action": ACTION_LOGIN,
+            "user_id": uid,
+            "organization_id": profile_org,
+            "identity_id": identity_id,
+            "owner": True,
+            "linked": identity is None,
+        }
+
+    # No profile carries the owner address (a restored or provisioned
+    # workspace). Adopt it as the admin profile of the existing organization.
+    uid, identity_id = new_id(), new_id()
+    conn.execute(
+        user.insert().values(
+            id=uid,
+            organization_id=org_id,
+            name=display,
+            display_name=display,
+            email=address,
+            active=True,
+            admin=True,
+            timezone="UTC",
+            created_at=stamp,
+            updated_at=stamp,
+        )
+    )
+    conn.execute(
+        global_identity.insert().values(id=identity_id, email=address, created_at=stamp)
+    )
+    conn.execute(
+        organization_membership.insert().values(
+            id=new_id(),
+            identity_id=identity_id,
+            organization_id=org_id,
+            profile_user_id=uid,
+            active=True,
+            created_at=stamp,
+        )
+    )
+    return {
+        "action": ACTION_LOGIN,
+        "user_id": uid,
+        "organization_id": org_id,
+        "identity_id": identity_id,
+        "owner": True,
+        "adopted": True,
+    }
 
 
 def _slugify(text: str) -> str:
@@ -165,7 +284,15 @@ def resolve_verified_email(
             "team_id": tid,
         }
 
-    # Set up already: match, never create a workspace-less account.
+    # Set up already. The provisioned owner address is still authoritative: it
+    # resolves to its own workspace even when the profile rows disagree.
+    owner = owner_email()
+    if owner and address == owner:
+        return _admit_owner(
+            conn, address=address, display=display, stamp=stamp, org_id=existing_org[0]
+        )
+
+    # Otherwise: match, never create a workspace-less account.
     identity = conn.execute(
         select(global_identity.c.id).where(global_identity.c.email == address)
     ).first()

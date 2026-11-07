@@ -18,6 +18,7 @@ import base64
 import hashlib
 import hmac
 import json
+import os
 import time
 
 #: Prefix keeps the format versionable and makes a stray value easy to reject.
@@ -183,7 +184,7 @@ def redeem(
 def tenant_target(
     value: str | None,
     *,
-    apex: str = "hoja.work",
+    apex: str | None = None,
     reserved: tuple[str, ...] = ("app", "www"),
 ) -> str | None:
     """Normalise a return target on a *tenant* origin of ours, or return None.
@@ -195,6 +196,10 @@ def tenant_target(
     """
     from urllib.parse import urlsplit
 
+    if apex is None:
+        # The deployment's own suffix, not an assumption: a control plane on
+        # another apex would otherwise refuse its own tenants.
+        apex = (os.environ.get("HOJA_TENANT_BASE_DOMAIN") or "hoja.work").strip().lower()
     candidate = (value or "").strip()
     parts = urlsplit(candidate)
     host = (parts.hostname or "").lower()

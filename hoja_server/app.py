@@ -76,7 +76,7 @@ from hoja_server.meetings import MeetingService
 from hoja_server.meetings_api import MeetingHub, meeting_routes
 from hoja_server.resolvers import build_schema
 from hoja_server.secrets_box import SecretBoxError
-from hoja_server import google_login, identity_transfer, google_oidc, mail_events
+from hoja_server import google_login, identity_transfer, google_oidc, mail_events, signin_pages
 from hoja_server.signup_config import (
     TURNSTILE_SCRIPT_URL,
     SignupConfigError,
@@ -1001,6 +1001,15 @@ def create_app(
         return JSONResponse(result, status_code=200)
 
     async def auth_setup(request: Request):
+        if _is_tenant_origin(request):
+            # A workspace subdomain has no local credential surface: there is one
+            # sign-in page, on the control plane.
+            return JSONResponse(
+                {"error": "Sign in at the workspace entry.",
+                 "reason": "sign_in_moved",
+                 "signInUrl": _canonical_login_url(request)},
+                status_code=403,
+            )
         if request.method == "GET":
             return JSONResponse(
                 {"setup": True, "message": "Set a password using a valid local API token."}
@@ -1270,6 +1279,13 @@ def create_app(
         return response
 
     async def _login(request: Request):
+        if _is_tenant_origin(request):
+            return JSONResponse(
+                {"error": "Sign in at the workspace entry.",
+                 "reason": "sign_in_moved",
+                 "signInUrl": _canonical_login_url(request)},
+                status_code=403,
+            )
         body = await request.json()
         email = str(body.get("email", ""))
         password = str(body.get("password", ""))
@@ -1348,6 +1364,13 @@ def create_app(
         return response
 
     async def auth_workspaces(request: Request):
+        if _is_tenant_origin(request):
+            return JSONResponse(
+                {"error": "Sign in at the workspace entry.",
+                 "reason": "sign_in_moved",
+                 "signInUrl": _canonical_login_url(request)},
+                status_code=403,
+            )
         body = await request.json()
         email = str(body.get("email", "")).strip().lower()
         keys = _limit_keys(request, email)
@@ -1420,9 +1443,95 @@ def create_app(
         )
         return (forwarded or request.headers.get("host") or "").split(",")[0].strip()
 
+    def _wants_html(request: Request) -> bool:
+        """Content negotiation: a browser gets a page, a client keeps the JSON contract."""
+        if request.query_params.get("format") == "json":
+            return False
+        accept = request.headers.get("accept", "")
+        first = accept.split(",")[0].lower()
+        return "text/html" in first
+
     def _signup_identity(request: Request):
         """The google_verified person behind the sign-up cookie, or None."""
         return signup_store.resolve_session(request.cookies.get(_SIGNUP_SESSION_COOKIE))
+
+    def _control_plane_host() -> str:
+        return (urlsplit(signup_config.control_plane_url or "").hostname or "").lower()
+
+    def _is_tenant_origin(request: Request) -> bool:
+        """True on a provisioned tenant host, false on the control plane or bare OSS."""
+        if not signup_config.control_plane_url:
+            return False
+        return _signup_host(request).split(":")[0].lower() != _control_plane_host()
+
+    def _tenant_origin_for(request: Request) -> str | None:
+        host = _signup_host(request).split(":")[0].lower()
+        return _tenant_transfer_target(f"https://{host}/")
+
+    def _canonical_login_url(request: Request) -> str | None:
+        """The one sign-in entry for this request's host, or None if unhosted."""
+        control_plane = signup_config.control_plane_url
+        if not control_plane:
+            return None
+        if not _is_tenant_origin(request):
+            return "/signin"
+        back = _tenant_origin_for(request)
+        if back is None:
+            return f"{control_plane}/signin"
+        return f"{control_plane}/signin?next={quote(back, safe='')}"
+
+    def _switch_account_url(request: Request) -> str:
+        """A retry that actually changes something: it ends the control session first.
+
+        Linking straight back to /signin re-mints a handoff for the same verified
+        identity, so a refused person would loop forever between the entry and the
+        refusal. Signing out is the only action that can produce a different
+        Google account.
+        """
+        control_plane = signup_config.control_plane_url or ""
+        next_param = request.query_params.get("next") or ""
+        back = _tenant_transfer_target(next_param) if next_param else None
+        if back is None:
+            back = _tenant_origin_for(request)
+        suffix = f"?next={quote(back, safe='')}" if back else ""
+        if _is_tenant_origin(request):
+            return f"{control_plane}/signin/signout{suffix}"
+        return f"/signin/signout{suffix}"
+
+    def _signin_failure(
+        request: Request,
+        *,
+        error: str,
+        reason: str,
+        status_code: int,
+        host: str | None = None,
+        email: str | None = None,
+    ) -> Response:
+        """One refusal, two audiences: a page a person can act on, and the JSON contract.
+
+        The refusal stays a refusal: same status, same reason code, no statement about
+        whether the address or workspace exists. The error id is the only new data, and
+        it is what makes a support conversation possible instead of a dead end.
+        """
+        error_id = secrets.token_hex(6)
+        _security_log.warning(f"auth.denied id={error_id} host={host or '-'} reason={reason}")
+        headers = {"X-Hoja-Error-Id": error_id}
+        if _wants_html(request):
+            page = signin_pages.denial_page(
+                host=host or _signup_host(request),
+                email=email,
+                reason=reason,
+                error_id=error_id,
+                entry_url=_switch_account_url(request),
+            )
+            return HTMLResponse(
+                page, status_code=status_code, headers={**headers, "cache-control": "no-store"}
+            )
+        return JSONResponse(
+            {"error": error, "reason": reason, "errorId": error_id},
+            status_code=status_code,
+            headers=headers,
+        )
 
     async def signup_public_config(request: Request):
         """Everything the sign-up page needs, and nothing it must not have.
@@ -1457,6 +1566,12 @@ def create_app(
                 "available": signup_config.public_widget_available,
                 "sitekey": signup_config.turnstile_site_key or None,
                 "signInUrl": sign_in_url,
+            # The one sign-in entry. On a tenant host it points at the control
+            # plane and carries the tenant to return to; on the control plane it
+            # is the local page. `credentialSignIn` is false on a tenant: there
+            # is no email/password or API-key form on a workspace subdomain.
+            "loginUrl": _canonical_login_url(request),
+            "credentialSignIn": not tenant_origin,
                 "hosted": bool(control_plane),
                 "widgetScriptUrl": TURNSTILE_SCRIPT_URL,
             },
@@ -1500,6 +1615,92 @@ def create_app(
         response.delete_cookie(_OIDC_FLOW_COOKIE, path="/")
         return response
 
+    def _workspace_origin(slug: str) -> str:
+        return f"https://{slug}.{signup_config.tenant_base_domain}/"
+
+    def _handoff_start_url(origin: str) -> str:
+        """Start the handoff for a specific workspace using the control session."""
+        control_plane = signup_config.control_plane_url or ""
+        return f"{control_plane}/auth/google/start?return_to={quote(origin, safe='')}"
+
+    async def sign_in_signout(request: Request):
+        """End the control session, then offer the entry again.
+
+        This is the action behind "try a different account" on a refusal page.
+        Without it the page's primary link re-mints the same handoff and the
+        person bounces between ``/signin`` and the same refusal.
+        """
+        control_plane = signup_config.control_plane_url
+        if control_plane and _is_tenant_origin(request):
+            back = _tenant_origin_for(request)
+            suffix = f"?next={quote(back, safe='')}" if back else ""
+            return RedirectResponse(f"{control_plane}/signin/signout{suffix}", status_code=302)
+        signup_store.revoke_session(request.cookies.get(_SIGNUP_SESSION_COOKIE))
+        back = _tenant_transfer_target(request.query_params.get("next") or "")
+        target = "/signin" + (f"?next={quote(back, safe='')}" if back else "")
+        response = RedirectResponse(target, status_code=302)
+        response.delete_cookie(_SIGNUP_SESSION_COOKIE, path="/")
+        return response
+
+    async def sign_in_entry(request: Request):
+        """One sign-in entry: verify identity once, then open the right workspace."""
+        control_plane = signup_config.control_plane_url
+        if not control_plane:
+            return JSONResponse(
+                {"error": "This deployment has no hosted sign-in.", "reason": "signin_unconfigured"},
+                status_code=404,
+            )
+        host = _signup_host(request).split(":")[0].lower()
+        if host != _control_plane_host():
+            back = _tenant_origin_for(request)
+            if back is None:
+                return JSONResponse(
+                    {"error": "Unknown host.", "reason": "unknown_host"}, status_code=400
+                )
+            return RedirectResponse(
+                f"{control_plane}/signin?next={quote(back, safe='')}", status_code=302
+            )
+
+        next_target = _tenant_transfer_target(request.query_params.get("next") or "")
+        identity = _signup_identity(request)
+        if identity is not None:
+            rows = signup_store.workspaces_for(
+                subject=identity.get("subject"), email=identity.get("email")
+            )
+            active = [row for row in rows if row["status"] == "active"]
+            if next_target is not None:
+                # The person named a workspace. The directory is a fallback for
+                # an entry reached without one, not an override of their choice.
+                return RedirectResponse(_handoff_start_url(next_target), status_code=302)
+            if len(active) == 1:
+                return RedirectResponse(
+                    _handoff_start_url(_workspace_origin(active[0]["slug"])), status_code=302
+                )
+            if len(active) > 1:
+                return HTMLResponse(
+                    signin_pages.choose_workspace_page(
+                        workspaces=[
+                            (row["slug"], _handoff_start_url(_workspace_origin(row["slug"])))
+                            for row in active
+                        ]
+                    )
+                )
+            return HTMLResponse(
+                signin_pages.no_workspace_page(
+                    email=identity.get("email"), sign_out_url="/auth/google/logout"
+                ),
+                headers={"cache-control": "no-store"},
+            )
+
+        return_to = "/signin" + (
+            f"?next={quote(next_target, safe='')}" if next_target is not None else ""
+        )
+        google_url = "/auth/google/start?return_to=" + quote(return_to, safe="")
+        return HTMLResponse(
+            signin_pages.sign_in_page(google_url=google_url),
+            headers={"cache-control": "no-store"},
+        )
+
     async def google_sign_in_start(request: Request):
         host = _signup_host(request).split(":")[0].lower()
         control_plane = signup_config.control_plane_url
@@ -1513,10 +1714,11 @@ def create_app(
             urlsplit(tenant_target).hostname if tenant_target else "-",
         )
         if control_plane and host != urlsplit(control_plane).hostname:
-            # A tenant origin has no registered Google redirect of its own, so it
-            # borrows the control plane's and comes back to /auth/google/finish.
+            # A tenant origin has no sign-in of its own. Send the browser to the one
+            # canonical entry, carrying this workspace as the place to return to.
+            # The control plane borrows the only registered Google redirect.
             back = _tenant_transfer_target(f"https://{host}/") or f"https://{host}/"
-            target = f"{control_plane}/auth/google/start?return_to={quote(back, safe='')}"
+            target = f"{control_plane}/signin?next={quote(back, safe='')}"
             return RedirectResponse(target, status_code=302)
         if identity is not None and tenant_target is not None:
             # The browser already completed Google OIDC on this control plane.
@@ -1652,7 +1854,10 @@ def create_app(
         tenant_target = _tenant_transfer_target(flow["return_to"])
         if tenant_target is not None:
             # This origin is the control plane for a tenant sign-in. The address
-            # is verified; the tenant decides whether it belongs.
+            # is verified; the tenant decides whether it belongs. The workspace
+            # the person asked for is honoured: the tenant is the authority on
+            # its own members, and a wrong guess here would sign them in
+            # somewhere they did not ask for.
             return _tenant_transfer_redirect(
                 email=email,
                 subject=claims["sub"],
@@ -1705,10 +1910,12 @@ def create_app(
                 audience=host,
             )
         except identity_transfer.TransferError as exc:
-            return JSONResponse(
-                {"error": "This sign-in link is invalid or has expired.",
-                 "reason": exc.reason},
+            return _signin_failure(
+                request,
+                error="This sign-in link is invalid or has expired.",
+                reason=exc.reason,
                 status_code=400,
+                host=host,
             )
         try:
             with engine.begin() as conn:
@@ -1730,10 +1937,18 @@ def create_app(
             "auth.finish host=%s action=%s", host, resolved["action"]
         )
         if resolved["action"] == google_login.ACTION_DENIED:
-            return JSONResponse(
-                {"error": "This Google account is not a member of this workspace.",
-                 "reason": resolved.get("reason", "denied")},
+            return _signin_failure(
+                request,
+                error="This Google account is not a member of this workspace.",
+                reason=resolved.get("reason", "denied"),
                 status_code=403,
+                host=host,
+                email=claims.get("email"),
+            )
+        if resolved.get("owner") or resolved.get("adopted"):
+            _security_log.warning(
+                f"auth.owner_admitted host={host} adopted={bool(resolved.get('adopted'))}"
+                f" linked={bool(resolved.get('linked'))}"
             )
         session_token, _details = store.create_session_for_membership(
             resolved["identity_id"], resolved["user_id"], resolved["organization_id"]
@@ -2177,6 +2392,8 @@ def create_app(
                 csrf=lambda request: _cookie_csrf_error(request, json_only=True),
                 read_json=_read_json_object, client_ip=_client_ip, same_origin=_same_origin, sfu=sfu),
             WebSocketRoute("/ws", realtime_socket),
+            Route("/signin", sign_in_entry, methods=["GET"]),
+            Route("/signin/signout", sign_in_signout, methods=["GET"]),
             Route("/auth/setup", auth_setup, methods=["GET", "POST"]),
             Route("/auth/invite/accept", auth_invite_accept, methods=["POST"]),
             Route("/onboarding/status", onboarding_status, methods=["GET"]),
