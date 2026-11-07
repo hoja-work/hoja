@@ -133,6 +133,21 @@ def _cmd_token(args):
     print(tok)
 
 
+def _cmd_mail(args):
+    """Drain the mail outbox once. Safe to run on a schedule, safe to re-run."""
+    from hoja_server import mail_config, mail_outbox
+
+    config = mail_config.current()
+    if not config.configured:
+        print("Email is not configured (HOJA_MAIL_TRANSPORT=disabled); nothing sent.",
+              file=sys.stderr)
+        raise SystemExit(2)
+    engine = make_engine(_database_target(args))
+    result = mail_outbox.deliver_pending(engine, config, limit=args.limit)
+    print(f"claimed={result['claimed']} sent={result['sent']} failed={result['failed']}")
+    raise SystemExit(0 if result["failed"] == 0 else 1)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="hoja-serve", description="hoja local backend")
     p.add_argument("--version", action="version", version=f"hoja-serve {__version__}")
@@ -182,6 +197,13 @@ def main(argv=None):
     t.add_argument("--token", default=None)
     t.add_argument("--label", default="cli")
     t.set_defaults(func=_cmd_token)
+
+    md = sub.add_parser("mail", help="deliver queued application email once")
+    md.add_argument("--tenant", default="default")
+    md.add_argument("--database-url", default=None)
+    md.add_argument("--db", default=None)
+    md.add_argument("--limit", type=int, default=25)
+    md.set_defaults(func=_cmd_mail)
 
     args = p.parse_args(argv)
     args.func(args)

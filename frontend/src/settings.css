@@ -745,3 +745,26 @@
 .settings-page .setting-control { flex: none; max-width: 100%; }
 .theme-control > button { background: var(--settings-card); color: var(--settings-ink); }
 .theme-control > button .theme-choice-copy small { color: var(--settings-muted); }
+
+/* Invitation result: one card that states the outcome (sent, or share it
+ * yourself) before it offers the fallback link. Monochrome only. */
+.invite-result.is-sent { background: var(--settings-accent-soft); }
+.invite-result-head { display: flex; gap: 14px; align-items: flex-start; }
+.invite-result-mark {
+  flex: none; display: grid; place-items: center; width: 30px; height: 30px;
+  border: 1px solid var(--settings-line); border-radius: 9px;
+  background: var(--settings-card); color: var(--settings-ink);
+  font-size: 13px; font-weight: 700; letter-spacing: -.2px;
+}
+.invite-result-head h2 { margin: 0 0 6px; font-size: 17px; letter-spacing: -.02em; }
+.invite-result-head p { margin: 0; }
+.invite-result-actions { display: flex; gap: 10px; align-items: flex-end; margin-top: 14px; }
+.invite-result-actions label { flex: 1 1 auto; margin: 0; min-width: 0; }
+.invite-result-actions input { width: 100%; font-size: 13px; }
+.invite-result-actions .outline { flex: none; }
+.invite-result-note { margin: 10px 0 0; font-size: 12px; color: var(--settings-muted); }
+
+@media (max-width: 700px) {
+  .invite-result-actions { flex-direction: column; align-items: stretch; }
+  .invite-result-actions .outline { width: 100%; }
+}

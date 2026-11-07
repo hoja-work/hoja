@@ -76,7 +76,7 @@ from hoja_server.meetings import MeetingService
 from hoja_server.meetings_api import MeetingHub, meeting_routes
 from hoja_server.resolvers import build_schema
 from hoja_server.secrets_box import SecretBoxError
-from hoja_server import google_login, identity_transfer, google_oidc
+from hoja_server import google_login, identity_transfer, google_oidc, mail_events
 from hoja_server.signup_config import (
     TURNSTILE_SCRIPT_URL,
     SignupConfigError,
@@ -1209,6 +1209,16 @@ def create_app(
                 "teamId": tid,
                 "workspace": {"id": org_id, "name": workspace_name, "urlKey": workspace_key},
             }
+        )
+        # Best-effort: the workspace already exists, so a mail failure is logged
+        # and leaves a queued row, never a failed sign-up.
+        mail_events.send_welcome(
+            engine,
+            organization_id=org_id,
+            organization_name=workspace_name,
+            user_id=uid,
+            name=name,
+            email=email,
         )
         response.set_cookie(
             "hoja_session",

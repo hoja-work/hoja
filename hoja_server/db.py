@@ -222,6 +222,26 @@ signup_invite = Table(
     Column("consumed_by_identity_id", String, ForeignKey("signup_identity.id")),
 )
 
+# The application email outbox. One row is one logical message; the unique
+# idempotency_key is what makes a retried request send nothing twice.
+mail_outbox = Table(
+    "mail_outbox",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, index=True),
+    Column("template", String, nullable=False),
+    Column("recipient", String, nullable=False, index=True),
+    Column("payload", Text, nullable=False),
+    Column("idempotency_key", String, nullable=False, unique=True, index=True),
+    Column("status", String, nullable=False, default="queued", index=True),
+    Column("attempts", Integer, nullable=False, default=0),
+    Column("created_at", String, nullable=False),
+    Column("last_attempt_at", String),
+    Column("sent_at", String),
+    Column("provider_message_id", String),
+    Column("last_error", Text),
+)
+
 signup_eligibility = Table(
     "signup_eligibility",
     metadata,
@@ -1532,6 +1552,7 @@ _MIGRATIONS = {
         turnstile_use.create(conn, checkfirst=True),
     ),
     37: _apply_signup_provisioning,
+    38: lambda conn: mail_outbox.create(conn, checkfirst=True),
 }
 
 

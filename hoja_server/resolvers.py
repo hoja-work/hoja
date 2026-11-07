@@ -18,6 +18,7 @@ from ariadne import (
     ScalarType,
     make_executable_schema,
 )
+from hoja_server import mail_events
 from hoja_server.deployment import single_org_mode
 
 query = QueryType()
@@ -988,10 +989,24 @@ def m_membership_invitation_create(_, info, userId):
     actor = store.get_user(org, uid)
     target = store.get_user(org, userId)
     if not actor or not actor.get("admin") or not target:
-        return {"success": False, "user": None, "inviteCode": None}
+        return {"success": False, "user": None, "inviteCode": None, "emailQueued": False}
     code = store.create_membership_invitation(org, userId, uid)
+    email_queued = False
+    if code and target.get("email"):
+        workspace = store.workspace(org) or {}
+        # Delivery is best-effort on purpose: the invite row is already committed,
+        # and the caller still gets the link to share if sending fails.
+        email_queued = mail_events.send_invite(
+            store.engine,
+            organization_id=org,
+            organization_name=workspace.get("name") or "your workspace",
+            inviter_name=actor.get("name") or "",
+            invitee_name=target.get("name") or "",
+            invitee_email=target.get("email"),
+            code=code,
+        )
     return {"success": bool(code), "user": store.ser_user(store.get_user(org, userId), uid),
-            "inviteCode": code}
+            "inviteCode": code, "emailQueued": email_queued}
 
 
 @query.field("pendingMembershipInvitations")

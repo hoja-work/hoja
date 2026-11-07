@@ -1184,6 +1184,17 @@ class Store:
             ))
             seats: dict[str, None] = {}
             for team_id in dict.fromkeys(team_ids or []):
+                # Resolve a team key to its row id first: `team_member.team_id`
+                # is a foreign key, and the change-event trigger derives the
+                # organization from that team row, so an unresolved key would
+                # insert a dangling seat and fail the whole invitation.
+                canonical = conn.execute(select(team.c.id).where(and_(
+                    team.c.organization_id == org_id,
+                    or_(team.c.id == team_id, team.c.key == team_id.upper()),
+                ))).first()
+                if canonical is None:
+                    continue
+                team_id = canonical[0]
                 # Same rule as set_team_membership: a sub-team seat implies its ancestors.
                 for ancestor in self._team_and_ancestors(conn, org_id, team_id):
                     seats[ancestor] = None

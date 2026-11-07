@@ -238,3 +238,39 @@
   background: var(--accent-soft);
   color: var(--accent);
 }
+
+/* Invite acceptance: one email, one password, no other fields competing with
+ * them. The code stays available but folded away. */
+.onboarding-invite h1 { margin-bottom: 10px; }
+.onboarding-invite form { margin-top: 20px; }
+.onboarding-invite label small { display: block; margin-top: 6px; color: var(--muted); font-size: 12px; }
+.onboarding-steps { margin: 18px 0 22px; padding-left: 20px; color: var(--muted); font-size: 14px; line-height: 1.7; }
+.onboarding-invite-code { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 12px; }
+.onboarding-invite-code summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.onboarding-invite-code code { display: block; margin-top: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; font-size: 12px; word-break: break-all; background: var(--panel); }
+
+/* Field hint: quiet, and only there while it is true. The empty field already
+ * carries its placeholder, so an unreachable "12 more characters" would just
+ * add noise above the button. */
+.onboarding-invite label small.onboarding-hint {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.onboarding-invite label small.onboarding-hint.is-ok { color: var(--text); }
+.onboarding-invite form { display: grid; gap: 2px; }
+.onboarding-invite .primary.full { margin-top: 22px; }
+
+/* The invitation email and the page it opens are one surface: same radius,
+ * same type scale, same single black action. */
+.onboarding-card.onboarding-invite {
+  border-radius: 14px;
+  padding: 34px 32px 30px;
+  box-shadow: 0 1px 2px #0000000a, 0 18px 40px -28px #00000033;
+}
+.onboarding-invite .onboarding-eyebrow { color: var(--muted); letter-spacing: .12em; }
+.onboarding-invite h1 { font-size: 30px; line-height: 1.15; margin-bottom: 10px; letter-spacing: -.03em; }
+.onboarding-invite > p { font-size: 14px; }
+.onboarding-invite-code summary { font-weight: 500; }

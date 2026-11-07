@@ -59,6 +59,8 @@ type UserPayload {
   user: User
   apiKey: String
   inviteCode: String
+  """True when the invitation email was accepted by the mail provider."""
+  emailQueued: Boolean
 }
 
 input InitiativeCreateInput { name: String! summary: String status: String priority: Int ownerId: String targetDate: TimelessDate projectIds: [String!] }
