@@ -24,7 +24,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.exc import IntegrityError
 
 from hoja_server.db import (
@@ -447,6 +447,24 @@ class SignupStore:
                         signup_eligibility.c.slug == slug,
                     )
                 ),
+            )
+
+    def latest_eligibility_for_identity(self, identity_id: str) -> dict | None:
+        """The request this person should see on a fresh page load.
+
+        An active workspace wins over a newer failed/duplicate row, so a
+        completed workspace can never be hidden behind queue history.
+        """
+        with self.engine.connect() as conn:
+            return _one(
+                conn,
+                select(signup_eligibility)
+                .where(signup_eligibility.c.identity_id == identity_id)
+                .order_by(
+                    case((signup_eligibility.c.status == "active", 1), else_=0).desc(),
+                    signup_eligibility.c.created_at.desc(),
+                )
+                .limit(1),
             )
 
     def eligibility_by_subject_slug(self, subject: str, slug: str) -> dict | None:

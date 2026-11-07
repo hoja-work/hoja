@@ -1666,17 +1666,44 @@ def create_app(
         )
         return response
 
+    def _signup_workspace_payload(row: dict) -> dict:
+        """One requester's own workspace/request state, safe for the page."""
+        slug = str(row.get("slug") or "")
+        status = str(row.get("status") or "eligible")
+        workspace_url = None
+        sign_in_url = None
+        if status == "active":
+            workspace_url = f"https://{slug}.{signup_config.tenant_base_domain}"
+            sign_in_url = f"{workspace_url}/auth/google/start?return_to=%2F"
+            message = "Your workspace is ready."
+        elif status == "provisioning":
+            message = "Your workspace is being created."
+        elif status == "failed":
+            message = "We could not finish creating this workspace."
+        else:
+            message = "Your workspace request is queued for creation."
+        return {
+            "slug": slug,
+            "status": status,
+            "workspaceUrl": workspace_url,
+            "signInUrl": sign_in_url,
+            "message": message,
+        }
+
     async def signup_endpoint(request: Request):
         if request.method == "GET":
             identity = _signup_identity(request)
-            return JSONResponse(
-                {
-                    "state": "google_verified" if identity else "anonymous",
-                    "googleVerified": bool(identity),
-                    "humanVerified": False,
-                    "email": (identity or {}).get("email"),
-                }
-            )
+            payload = {
+                "state": "google_verified" if identity else "anonymous",
+                "googleVerified": bool(identity),
+                "humanVerified": False,
+                "email": (identity or {}).get("email"),
+            }
+            if identity is not None:
+                row = signup_store.latest_eligibility_for_identity(identity["identity_id"])
+                if row is not None:
+                    payload["workspace"] = _signup_workspace_payload(row)
+            return JSONResponse(payload, headers={"cache-control": "no-store"})
         if not _same_origin(request.headers.get("origin"), request.headers):
             return JSONResponse(
                 {"ok": False, "reason": CROSS_SITE_REQUEST,
@@ -1719,28 +1746,8 @@ def create_app(
         row = signup_store.eligibility_for(identity["identity_id"], slug)
         if row is None:
             return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
-        status = str(row.get("status") or "eligible")
-        workspace_url = None
-        sign_in_url = None
-        if status == "active":
-            workspace_url = f"https://{slug}.{signup_config.tenant_base_domain}"
-            sign_in_url = f"{workspace_url}/auth/google/start?return_to=%2F"
-            message = "Your workspace is ready."
-        elif status == "provisioning":
-            message = "Your workspace is being created."
-        elif status == "failed":
-            message = "We could not finish creating this workspace."
-        else:
-            message = "Your workspace request is queued for creation."
         return JSONResponse(
-            {
-                "ok": True,
-                "slug": slug,
-                "status": status,
-                "workspaceUrl": workspace_url,
-                "signInUrl": sign_in_url,
-                "message": message,
-            },
+            {"ok": True, **_signup_workspace_payload(row)},
             headers={"cache-control": "no-store"},
         )
 

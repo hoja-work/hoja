@@ -34,6 +34,13 @@ type SessionInfo = {
   state?: string;
   googleVerified?: boolean;
   email?: string | null;
+  workspace?: {
+    slug: string;
+    status: WorkspaceState;
+    workspaceUrl: string | null;
+    signInUrl: string | null;
+    message: string;
+  };
 };
 
 type Alert = {title: string; message: string};
@@ -74,7 +81,22 @@ export function SignupPage() {
       .catch(() => { if (live) setConfigError('Hoja could not load the sign-up settings. Reload the page to try again.') });
     fetch('/api/signup', {credentials: 'include'})
       .then(response => (response.ok ? response.json() as Promise<SessionInfo> : Promise.reject(new Error(`HTTP ${response.status}`))))
-      .then((body) => { if (live) setSession(body) })
+      .then((body) => {
+        if (!live) return;
+        setSession(body);
+        // A returning person must not be asked to name a second workspace.
+        // The server attaches only this identity's own latest request.
+        if (body.workspace) {
+          setRequest({
+            slug: body.workspace.slug,
+            message: body.workspace.message,
+            alreadyQueued: true,
+            status: body.workspace.status,
+            workspaceUrl: body.workspace.workspaceUrl,
+            signInUrl: body.workspace.signInUrl,
+          });
+        }
+      })
       .catch(() => { if (live) setConfigError('Hoja could not tell whether you are signed in with Google. Reload the page.') });
     return () => { live = false };
   }, []);
@@ -211,8 +233,8 @@ export function SignupPage() {
     const target = request?.signInUrl || request?.workspaceUrl;
     if (request?.status !== 'active' || !target) return;
     const timer = window.setTimeout(() => {
-      window.location.assign(target);
-    }, 1800);
+      window.location.replace(target);
+    }, 600);
     return () => window.clearTimeout(timer);
   }, [request?.status, request?.signInUrl, request?.workspaceUrl]);
 
