@@ -2094,6 +2094,11 @@ def create_app(
         await hub.ensure_started()
         meeting_hub.start()
         maintenance = asyncio.create_task(_sqlite_maintenance()) if engine.dialect.name == "sqlite" else None
+        webhook_worker = None
+        if os.environ.get("HOJA_WEBHOOK_WORKER", "1").strip().lower() not in ("0", "false", "no"):
+            from hoja_server import webhooks
+
+            webhook_worker = asyncio.create_task(tenant_context.as_system(webhooks.run_forever(engine)))
         async with runtime_app.router.lifespan_context(runtime_app):
             if agent_dbos_url := os.environ.get("HOJA_AGENT_DBOS_URL"):
                 from dbos import DBOS
@@ -2119,6 +2124,8 @@ def create_app(
             await sfu.aclose()
         if maintenance is not None:
             maintenance.cancel()
+        if webhook_worker is not None:
+            webhook_worker.cancel()
 
     async def _malformed_json_handler(request: Request, exc: Exception):
         return JSONResponse({"error": "Malformed JSON body."}, status_code=400)
