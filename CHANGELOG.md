@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- First-run setup is a guided wizard with a live workspace preview: account,
+  workspace, first team, an optional first project, invitations and an optional
+  Google Workspace connection. Reloading resumes unfinished setup, a lost response
+  is reconciled against the server instead of creating a duplicate, and creating
+  another workspace reuses the later steps without asking for an account again.
 - Durable agent chat turns when `CLINIAR_AGENT_DBOS_URL` is set: each turn is a DBOS
   workflow, so a server crash or restart resumes the turn instead of losing the reply, and
   a completed GraphQL mutation is not executed again on recovery. The transcript is read

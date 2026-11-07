@@ -215,6 +215,34 @@ Contributor and agent operations are in
 - [Cycle metrics](https://github.com/hoja-work/hoja/blob/main/docs/cycle-metrics.md) and [meetings](https://github.com/hoja-work/hoja/blob/main/docs/meetings.md).
 - [Changelog](https://github.com/hoja-work/hoja/blob/main/CHANGELOG.md) — release-level behavior changes.
 
+## First run in the browser
+
+On a fresh database, opening Hoja starts the setup wizard: your admin profile and
+password, the workspace name and address, and the first team. The workspace,
+admin, team, default workflow states and browser session are created together in
+one step, so a failed attempt cannot leave a half-created workspace.
+
+The remaining steps are optional and can be skipped:
+
+- **First project** — created with the selected team; skip and add one later from
+  **Projects**.
+- **Invite teammates** — each invitation is a single-use link that expires after
+  72 hours. A self-hosted server does not send email, so share the link yourself.
+  A retry finds the person by email instead of adding a duplicate.
+- **Google Workspace** — shown only when the deployment configured its Google
+  OAuth client. It grants read-only Gmail, Drive, Calendar and Docs access, and
+  this step connects it for the whole workspace (admins only).
+
+Progress is kept in the browser: names and the ids the server created, never
+passwords, API keys or invite codes. Reloading resumes the first unfinished step
+after checking it against server state. Existing workspaces continue to show the
+sign-in screen, and **Create workspace** in the workspace menu reuses the team,
+project and invitation steps without asking for an account again.
+
+The finish step summarizes only what exists and offers one action into the
+workspace. The admin API key, when the server returns one, is shown once there
+for CLI configuration.
+
 ## License
 
 MIT. See [LICENSE](https://github.com/hoja-work/hoja/blob/main/LICENSE).
