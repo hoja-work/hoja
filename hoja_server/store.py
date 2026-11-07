@@ -988,7 +988,7 @@ class Store:
         with self.engine.begin() as conn:
             target = conn.execute(select(user.c.id, user.c.admin, user.c.active).where(and_(
                 user.c.organization_id == org_id, user.c.id == user_id,
-                user.c.archived_at.is_(None),
+                user.c.archived_at.is_(None), user.c.kind == "human",
             ))).first()
             if not target:
                 return None
@@ -1121,13 +1121,14 @@ class Store:
             return _conn_rows(conn, select(user).where(and_(
                 user.c.organization_id == org_id,
                 user.c.archived_at.is_(None),
+                user.c.kind == "human",  # extension bots are not members
             )).order_by(user.c.name, user.c.email))
 
     def set_member_admin_role(self, org_id: str, user_id: str, is_admin: bool) -> dict | None:
         with self.engine.begin() as conn:
             target = conn.execute(select(user.c.admin).where(and_(
                 user.c.organization_id == org_id, user.c.id == user_id,
-                user.c.archived_at.is_(None),
+                user.c.archived_at.is_(None), user.c.kind == "human",
             ))).first()
             if not target:
                 return None

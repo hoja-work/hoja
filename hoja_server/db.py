@@ -33,7 +33,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 38
+CURRENT_SCHEMA_REVISION = 39
 
 
 def now_iso() -> str:
@@ -442,6 +442,8 @@ user = Table(
     Column("created_at", String),
     Column("updated_at", String),
     Column("archived_at", String),
+    # "human" or "bot" (an extension's identity: no login, no membership).
+    Column("kind", String, nullable=False, server_default="human"),
 )
 
 team = Table(
@@ -623,6 +625,9 @@ webhook = Table(
     Column("created_at", String, nullable=False),
     Column("updated_at", String, nullable=False),
     Column("archived_at", String),
+    # Set when an extension owns this webhook: managed only through the extension.
+    Column("extension_id", String),
+    Column("event_key", String),
 )
 
 # One per organization: change_event rows up to seq are already dispatched.
@@ -663,6 +668,93 @@ webhook_delivery = Table(
     Column("created_at", String, nullable=False),
     Column("updated_at", String, nullable=False),
     Index("ix_webhook_delivery_queue", "webhook_id", "status", "seq"),
+)
+
+# Extensions: an install is a set of registrations, each recorded with its
+# inverse in extension_effect so uninstall can replay them in reverse order.
+extension = Table(
+    "extension",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("key", String, nullable=False),
+    Column("name", String, nullable=False),
+    Column("version", String, nullable=False),
+    Column("url", String, nullable=False),
+    Column("access", String, nullable=False),
+    Column("manifest", Text, nullable=False),
+    Column("secret_sealed", Text, nullable=False),
+    Column("bot_user_id", String, ForeignKey("user.id")),
+    Column("installed_by", String, ForeignKey("user.id")),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+    # Tombstone: uninstalled rows stay for the action-run audit trail.
+    Column("uninstalled_at", String),
+)
+
+extension_effect = Table(
+    "extension_effect",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("extension_id", String, ForeignKey("extension.id"), nullable=False, index=True),
+    Column("kind", String, nullable=False),
+    Column("ref", String, nullable=False),
+    Column("created_at", String, nullable=False),
+)
+
+extension_hook = Table(
+    "extension_hook",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("extension_id", String, ForeignKey("extension.id"), nullable=False, index=True),
+    Column("key", String, nullable=False),
+    Column("on_event", String, nullable=False),
+    Column("path", String, nullable=False),
+    Column("failure_policy", String, nullable=False),
+    Column("position", Integer, nullable=False),
+)
+
+extension_action = Table(
+    "extension_action",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("extension_id", String, ForeignKey("extension.id"), nullable=False, index=True),
+    Column("key", String, nullable=False),
+    Column("title", String, nullable=False),
+    Column("entity", String, nullable=False),
+    Column("path", String, nullable=False),
+)
+
+extension_action_run = Table(
+    "extension_action_run",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("extension_id", String, ForeignKey("extension.id"), nullable=False, index=True),
+    Column("action_key", String, nullable=False),
+    Column("entity_id", String, nullable=False),
+    Column("actor_id", String, ForeignKey("user.id")),
+    Column("status", String, nullable=False),
+    Column("http_status", Integer),
+    Column("message", Text),
+    Column("created_at", String, nullable=False),
+)
+
+# Hook calls that failed (timeouts, errors, vetoes are not failures).
+extension_failure = Table(
+    "extension_failure",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("extension_id", String, ForeignKey("extension.id"), nullable=False, index=True),
+    Column("kind", String, nullable=False),
+    Column("key", String),
+    Column("http_status", Integer),
+    Column("message", Text),
+    Column("created_at", String, nullable=False),
 )
 
 initiative = Table(
@@ -918,7 +1010,10 @@ def _apply_identity_memberships(conn) -> None:
     global_identity.create(conn, checkfirst=True)
     organization_membership.create(conn, checkfirst=True)
     identity_credential.create(conn, checkfirst=True)
-    profiles = conn.execute(select(user)).mappings().all()
+    # Explicit columns: later revisions add user columns this revision predates.
+    profiles = conn.execute(select(
+        user.c.id, user.c.organization_id, user.c.email, user.c.active,
+        user.c.archived_at, user.c.created_at)).mappings().all()
     for profile in profiles:
         identity_id = new_id()
         created_at = profile.get("created_at") or now_iso()
@@ -1529,6 +1624,19 @@ def _apply_team_hierarchy(conn) -> None:
             f"UPDATE team SET visibility = 'private' WHERE private = {truthy}")
 
 
+
+def _apply_extensions(conn):
+    columns = lambda t: {c["name"] for c in inspect(conn).get_columns(t)}
+    if "kind" not in columns("user"):
+        conn.exec_driver_sql("ALTER TABLE \"user\" ADD COLUMN kind VARCHAR NOT NULL DEFAULT 'human'")
+    for name in ("extension_id", "event_key"):
+        if name not in columns("webhook"):
+            conn.exec_driver_sql(f"ALTER TABLE webhook ADD COLUMN {name} VARCHAR")
+    for table in (extension, extension_effect, extension_hook, extension_action,
+                  extension_action_run, extension_failure):
+        table.create(conn, checkfirst=True)
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -1602,6 +1710,7 @@ _MIGRATIONS = {
         webhook_issue_snapshot.create(conn, checkfirst=True),
         webhook_delivery.create(conn, checkfirst=True),
     ),
+    39: _apply_extensions,
 }
 
 
