@@ -122,6 +122,28 @@ token = "TOKEN_FROM_A_SECRET_STORE"
 `LINEAR_API_URL` is still read when `HOJA_API_URL` is unset. Both are separate
 from `HOJA_APP_URL`.
 
+## Sign-in identity in hosted workspaces
+
+`HOJA_OWNER_EMAIL` is the address the provisioner recorded as the workspace
+owner. It is authoritative for its own workspace at any time: when the owner
+signs in and no profile carries that address, the single active admin profile
+is claimed (keeping its history) instead of a second admin being created. Two
+admins and no matching profile is ambiguous, and the owner is refused until the
+profile is named.
+
+Profiles that predate Google sign-in (for example `name@old-domain`) can be
+claimed by a verified Google address with an explicit mapping:
+
+```bash
+HOJA_IDENTITY_LINKS="new@gmail.com=old@domain,other@gmail.com=second@domain"
+```
+
+Pairs may be separated by `,` or `;`. A mapping attaches the verified identity
+to the existing profile's single membership; the profile row, its admin flag
+and its data are untouched, and the old address stops resolving. A mapping to a
+missing or deactivated profile, or to a profile whose membership was revoked, is
+refused. Leave the variable unset to disable mappings.
+
 ## Health, readiness, and operation
 
 - `GET /health` is a process liveness endpoint and returns HTTP 200 without

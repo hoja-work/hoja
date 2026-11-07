@@ -44,7 +44,7 @@ def engine(tmp_path):
     return eng
 
 
-def _seed_workspace(engine, *, profile_email: str, active: bool = True) -> str:
+def _seed_workspace(engine, *, profile_email: str, active: bool = True, admin: bool = False) -> str:
     """An organization that already exists, with one profile that is not the owner."""
     org_id = "org-1"
     with engine.begin() as conn:
@@ -65,7 +65,7 @@ def _seed_workspace(engine, *, profile_email: str, active: bool = True) -> str:
                 display_name="Existing",
                 email=profile_email,
                 active=active,
-                admin=False,
+                admin=admin,
                 timezone="UTC",
                 created_at="2026-01-01T00:00:00+00:00",
                 updated_at="2026-01-01T00:00:00+00:00",
@@ -205,6 +205,102 @@ def test_a_stranger_is_still_refused_when_the_owner_is_configured(engine, monkey
         assert conn.execute(
             select(user.c.id).where(user.c.email == "someone@elsewhere.test")
         ).first() is None
+
+
+def test_the_owner_claims_the_existing_admin_profile(engine, monkeypatch):
+    """The old admin profile is the person: keep it, no second admin profile."""
+    monkeypatch.setenv("HOJA_OWNER_EMAIL", OWNER)
+    org_id = _seed_workspace(engine, profile_email="luisrincon@clover4.app", admin=True)
+
+    result = _resolve(engine, OWNER)
+
+    assert result["action"] == google_login.ACTION_LOGIN
+    assert result["user_id"] == "user-1"
+    assert result["organization_id"] == org_id
+    with engine.connect() as conn:
+        assert conn.execute(select(user.c.id)).all() == [("user-1",)]
+        linked = conn.execute(
+            select(global_identity.c.email).join(
+                organization_membership,
+                organization_membership.c.identity_id == global_identity.c.id,
+            ).where(organization_membership.c.profile_user_id == "user-1")
+        ).scalar_one()
+        assert linked == OWNER
+
+
+def test_two_admin_profiles_are_not_guessed(engine, monkeypatch):
+    monkeypatch.setenv("HOJA_OWNER_EMAIL", OWNER)
+    _seed_workspace(engine, profile_email="one@clover4.app", admin=True)
+    with engine.begin() as conn:
+        conn.execute(
+            user.insert().values(
+                id="user-2", organization_id="org-1", name="Two", display_name="Two",
+                email="two@clover4.app", active=True, admin=True, timezone="UTC",
+                created_at="2026-01-01T00:00:00+00:00", updated_at="2026-01-01T00:00:00+00:00",
+            )
+        )
+
+    result = _resolve(engine, OWNER)
+
+    assert result["action"] == google_login.ACTION_DENIED
+    assert result["reason"] == "owner_profile_ambiguous"
+
+
+def test_an_invitation_mapping_links_the_google_address_to_the_old_profile(engine, monkeypatch):
+    monkeypatch.setenv("HOJA_IDENTITY_LINKS", f"{OWNER}=luisrincon@clover4.app")
+    org_id = _seed_workspace(engine, profile_email="luisrincon@clover4.app")
+
+    result = _resolve(engine, OWNER)
+
+    assert result["action"] == google_login.ACTION_LOGIN
+    assert result["user_id"] == "user-1"
+    assert result["organization_id"] == org_id
+    with engine.connect() as conn:
+        assert conn.execute(select(user.c.id)).all() == [("user-1",)]
+        assert conn.execute(
+            select(organization_membership.c.active).where(
+                organization_membership.c.profile_user_id == "user-1"
+            )
+        ).scalar_one()
+
+
+def test_a_mapping_to_an_unknown_profile_is_refused(engine, monkeypatch):
+    monkeypatch.setenv("HOJA_IDENTITY_LINKS", f"{OWNER}=nobody@clover4.app")
+    _seed_workspace(engine, profile_email="luisrincon@clover4.app")
+
+    result = _resolve(engine, OWNER)
+
+    assert result["action"] == google_login.ACTION_DENIED
+    assert result["reason"] == "profile_not_found"
+
+
+def test_a_mapping_to_a_deactivated_profile_is_refused(engine, monkeypatch):
+    monkeypatch.setenv("HOJA_IDENTITY_LINKS", f"{OWNER}=luisrincon@clover4.app")
+    _seed_workspace(engine, profile_email="luisrincon@clover4.app", active=False)
+
+    result = _resolve(engine, OWNER)
+
+    assert result["action"] == google_login.ACTION_DENIED
+    assert result["reason"] == "account_disabled"
+
+
+def test_an_already_linked_identity_never_creates_a_second_profile(engine, monkeypatch):
+    monkeypatch.setenv("HOJA_OWNER_EMAIL", OWNER)
+    org_id = _seed_workspace(engine, profile_email="luisrincon@clover4.app", admin=True)
+    with engine.begin() as conn:
+        conn.execute(global_identity.insert().values(
+            id="gmail-identity", email=OWNER, created_at="2026-01-01T00:00:00+00:00"))
+        conn.execute(organization_membership.update().where(
+            organization_membership.c.profile_user_id == "user-1"
+        ).values(identity_id="gmail-identity"))
+
+    result = _resolve(engine, OWNER)
+
+    assert result["action"] == google_login.ACTION_LOGIN
+    assert result["user_id"] == "user-1"
+    assert result["organization_id"] == org_id
+    with engine.connect() as conn:
+        assert conn.execute(select(user.c.id)).all() == [("user-1",)]
 
 
 # --------------------------------------------------------------------------- #
