@@ -43,11 +43,14 @@ from hoja_server import secrets_box, tenant_context
 from hoja_server.db import (
     app_url,
     change_event,
+    extension,
     issue,
+    issue_activity,
     issue_label_link,
     new_id,
     now_iso,
     team,
+    user,
     webhook,
     webhook_cursor,
     webhook_delivery,
@@ -106,7 +109,10 @@ def check_target(url: str, resolve: Callable[[str, int], list[str]] | None = Non
         raise WebhookError("Webhook URL must not embed credentials.", "url")
     if allow_private:
         return
-    port = parts.port or (443 if parts.scheme == "https" else 80)
+    if parts.port not in (None, 443):
+        raise WebhookError(
+            f"Webhook URL must use port 443 (set {ALLOW_PRIVATE_ENV}=1 to allow other ports).", "url")
+    port = 443
     resolve = resolve or _resolve
     try:
         addresses = resolve(parts.hostname, port)
@@ -137,14 +143,14 @@ def _head_seq(conn: Connection, org_id: str) -> int:
         change_event.c.organization_id == org_id)).scalar_one()
 
 
-def _resource_types(values: list[str] | None) -> list[str]:
-    if not values:
-        raise WebhookError("resourceTypes must name at least one resource type.", "resourceTypes")
-    unsupported = sorted(set(values) - set(SUPPORTED_RESOURCE_TYPES))
+def _resource_types(values: list[str] | None, field: str = "resourceTypes") -> list[str]:
+    if not values or not isinstance(values, list):
+        raise WebhookError("resourceTypes must name at least one resource type.", field)
+    unsupported = sorted(set(map(str, values)) - set(SUPPORTED_RESOURCE_TYPES))
     if unsupported:
         raise WebhookError(
             f"Unsupported resourceTypes {unsupported}; supported: {list(SUPPORTED_RESOURCE_TYPES)}.",
-            "resourceTypes")
+            field)
     return sorted(set(values))
 
 
@@ -166,36 +172,48 @@ def _active_count(conn: Connection, org_id: str) -> int:
         webhook.c.archived_at.is_(None)))).scalar_one()
 
 
-def create_webhook(engine: Engine, org_id: str, creator_id: str, inp: dict[str, Any]) -> dict:
-    url = (inp.get("url") or "").strip()
-    check_target(url)
-    types = _resource_types(inp.get("resourceTypes"))
+def resolve_team(conn: Connection, org_id: str, team_id: str, field: str = "teamId") -> str:
+    found = conn.execute(select(team.c.id).where(and_(
+        team.c.organization_id == org_id,
+        (team.c.id == team_id) | (team.c.key == str(team_id).upper()),
+    ))).scalar()
+    if not found:
+        raise WebhookError(f"{field} does not name a team in this workspace.", field)
+    return found
+
+
+def insert_webhook(conn: Connection, org_id: str, creator_id: str | None, inp: dict[str, Any], *,
+                   sealed_secret: str, extension_id: str | None = None,
+                   event_key: str | None = None, field_prefix: str = "") -> str:
+    """Insert a webhook inside the caller's transaction (no network: check_target first)."""
+    types = _resource_types(inp.get("resourceTypes"), field_prefix + "resourceTypes")
     team_id = inp.get("teamId")
     all_public = bool(inp.get("allPublicTeams"))
     if bool(team_id) == all_public:
-        raise WebhookError("Provide exactly one of teamId or allPublicTeams: true.", "teamId")
-    secret = inp.get("secret") or "hoja_wh_" + secrets.token_hex(24)
-    sealed = secrets_box.encrypt_secret(secret)
+        raise WebhookError("Provide exactly one of teamId or allPublicTeams: true.", field_prefix + "teamId")
+    if team_id:
+        team_id = resolve_team(conn, org_id, team_id, field_prefix + "teamId")
     enabled = inp.get("enabled", True) is not False
     ts = now_iso()
+    head = _head_seq(conn, org_id)
+    if enabled and _active_count(conn, org_id) == 0:
+        _seed(conn, org_id, head)
+    wid = inp.get("id") or new_id()
+    conn.execute(webhook.insert().values(
+        id=wid, organization_id=org_id, url=inp["url"].strip(), label=inp.get("label"), enabled=enabled,
+        secret_sealed=sealed_secret, resource_types=json.dumps(types), team_id=team_id,
+        all_public_teams=all_public, creator_id=creator_id, start_seq=head,
+        created_at=ts, updated_at=ts, extension_id=extension_id, event_key=event_key))
+    return wid
+
+
+def create_webhook(engine: Engine, org_id: str, creator_id: str, inp: dict[str, Any]) -> dict:
+    url = (inp.get("url") or "").strip()
+    check_target(url)
+    secret = inp.get("secret") or "hoja_wh_" + secrets.token_hex(24)
+    sealed = secrets_box.encrypt_secret(secret)
     with engine.begin() as conn:
-        if team_id:
-            found = conn.execute(select(team.c.id).where(and_(
-                team.c.organization_id == org_id,
-                (team.c.id == team_id) | (team.c.key == str(team_id).upper()),
-            ))).scalar()
-            if not found:
-                raise WebhookError("teamId does not name a team in this workspace.", "teamId")
-            team_id = found
-        head = _head_seq(conn, org_id)
-        if enabled and _active_count(conn, org_id) == 0:
-            _seed(conn, org_id, head)
-        wid = inp.get("id") or new_id()
-        conn.execute(webhook.insert().values(
-            id=wid, organization_id=org_id, url=url, label=inp.get("label"), enabled=enabled,
-            secret_sealed=sealed, resource_types=json.dumps(types), team_id=team_id,
-            all_public_teams=all_public, creator_id=creator_id, start_seq=head,
-            created_at=ts, updated_at=ts))
+        wid = insert_webhook(conn, org_id, creator_id, dict(inp, url=url), sealed_secret=sealed)
     return get_webhook(engine, org_id, wid)
 
 
@@ -213,7 +231,7 @@ def update_webhook(engine: Engine, org_id: str, wid: str, inp: dict[str, Any]) -
     with engine.begin() as conn:
         row = conn.execute(select(webhook).where(and_(
             webhook.c.id == wid, webhook.c.organization_id == org_id,
-            webhook.c.archived_at.is_(None)))).mappings().first()
+            webhook.c.archived_at.is_(None), webhook.c.extension_id.is_(None)))).mappings().first()
         if not row:
             return None
         if "enabled" in inp and inp["enabled"] is not None and bool(inp["enabled"]) != row["enabled"]:
@@ -229,13 +247,21 @@ def update_webhook(engine: Engine, org_id: str, wid: str, inp: dict[str, Any]) -
     return get_webhook(engine, org_id, wid)
 
 
+def remove_webhook(conn: Connection, org_id: str, wid: str) -> bool:
+    conn.execute(webhook_delivery.delete().where(and_(
+        webhook_delivery.c.webhook_id == wid, webhook_delivery.c.organization_id == org_id)))
+    result = conn.execute(webhook.delete().where(and_(
+        webhook.c.id == wid, webhook.c.organization_id == org_id)))
+    return result.rowcount > 0
+
+
 def delete_webhook(engine: Engine, org_id: str, wid: str) -> bool:
     with engine.begin() as conn:
-        conn.execute(webhook_delivery.delete().where(and_(
-            webhook_delivery.c.webhook_id == wid, webhook_delivery.c.organization_id == org_id)))
-        result = conn.execute(webhook.delete().where(and_(
-            webhook.c.id == wid, webhook.c.organization_id == org_id)))
-    return result.rowcount > 0
+        owned = conn.execute(select(webhook.c.extension_id).where(and_(
+            webhook.c.id == wid, webhook.c.organization_id == org_id))).first()
+        if owned is None or owned[0] is not None:
+            return False  # absent, or owned by an extension (uninstall it instead)
+        return remove_webhook(conn, org_id, wid)
 
 
 def _ser(conn: Connection, row: dict) -> dict:
@@ -261,7 +287,8 @@ def _ser(conn: Connection, row: dict) -> dict:
 def get_webhook(engine: Engine, org_id: str, wid: str) -> dict | None:
     with engine.connect() as conn:
         row = conn.execute(select(webhook).where(and_(
-            webhook.c.id == wid, webhook.c.organization_id == org_id))).mappings().first()
+            webhook.c.id == wid, webhook.c.organization_id == org_id,
+            webhook.c.extension_id.is_(None)))).mappings().first()
         return _ser(conn, dict(row)) if row else None
 
 
@@ -269,6 +296,7 @@ def list_webhooks(engine: Engine, org_id: str) -> list[dict]:
     with engine.connect() as conn:
         rows = conn.execute(select(webhook).where(and_(
             webhook.c.organization_id == org_id, webhook.c.archived_at.is_(None),
+            webhook.c.extension_id.is_(None),
         )).order_by(webhook.c.created_at, webhook.c.id)).mappings().all()
         return [_ser(conn, dict(r)) for r in rows]
 
@@ -307,10 +335,14 @@ def _tracked(data: dict) -> dict:
     return {k: data.get(k) for k in _TRACKED} | {"_data": data}
 
 
-def _matching(hooks: list[dict], seq: int, team_id: str | None, visibility: dict[str, str]) -> list[dict]:
+def _matching(hooks: list[dict], seq: int, team_id: str | None, visibility: dict[str, str],
+              actor_id: str | None = None, bots: dict[str, str] | None = None) -> list[dict]:
     out = []
     for hook in hooks:
         if seq <= hook["start_seq"] or "Issue" not in json.loads(hook["resource_types"]):
+            continue
+        # Loop guard: an extension is never told about changes its own bot made.
+        if actor_id and hook.get("extension_id") and (bots or {}).get(hook["extension_id"]) == actor_id:
             continue
         if hook["team_id"]:
             if hook["team_id"] != team_id:
@@ -319,6 +351,24 @@ def _matching(hooks: list[dict], seq: int, team_id: str | None, visibility: dict
             continue
         out.append(hook)
     return out
+
+
+def _actor(conn: Connection, org_id: str, issue_id: str, updated_at: str | None) -> dict | None:
+    """Who made the change: the writer records activity and updated_at in one transaction."""
+    if not updated_at:
+        return None
+    actor_id = conn.execute(select(issue_activity.c.actor_id).where(and_(
+        issue_activity.c.organization_id == org_id, issue_activity.c.issue_id == issue_id,
+        issue_activity.c.created_at == updated_at, issue_activity.c.actor_id.is_not(None),
+    )).order_by(issue_activity.c.id).limit(1)).scalar()
+    if not actor_id:
+        return None
+    who = conn.execute(select(user.c.id, user.c.name, user.c.email, user.c.kind).where(
+        user.c.id == actor_id)).mappings().first()
+    if not who:
+        return None
+    return {"id": who["id"], "type": "integration" if who["kind"] == "bot" else "user",
+            "name": who["name"], "email": who["email"] if who["kind"] != "bot" else None}
 
 
 def dispatch_once(engine: Engine) -> int:
@@ -352,9 +402,14 @@ def _dispatch_org(engine: Engine, org_id: str) -> int:
             webhook.c.archived_at.is_(None)))).mappings()]
         visibility = dict(conn.execute(select(team.c.id, team.c.visibility).where(
             team.c.organization_id == org_id)).all())
+        bots = dict(conn.execute(select(extension.c.id, extension.c.bot_user_id).where(
+            extension.c.organization_id == org_id)).all())
         ts = now_iso()
+        # Several events of one issue in a batch are reported once, at the last one:
+        # its seq decides which webhooks (by start_seq) receive the coalesced change.
+        last_seq = {ev["entity_id"]: ev["seq"] for ev in events if ev["entity"] == "issue"}
         for ev in events:
-            if ev["entity"] != "issue":
+            if ev["entity"] != "issue" or last_seq[ev["entity_id"]] != ev["seq"]:
                 continue
             snap_row = conn.execute(select(webhook_issue_snapshot.c.data).where(
                 webhook_issue_snapshot.c.issue_id == ev["entity_id"])).scalar()
@@ -384,9 +439,11 @@ def _dispatch_org(engine: Engine, org_id: str) -> int:
                 else:
                     conn.execute(webhook_issue_snapshot.update().where(
                         webhook_issue_snapshot.c.issue_id == row["id"]).values(data=payload_snapshot))
-            for hook in _matching(hooks, ev["seq"], data.get("teamId") or ev["team_id"], visibility):
+            actor = _actor(conn, org_id, ev["entity_id"], data.get("updatedAt")) if row is not None else None
+            for hook in _matching(hooks, ev["seq"], data.get("teamId") or ev["team_id"], visibility,
+                                  actor["id"] if actor else None, bots):
                 payload = {
-                    "action": action, "type": "Issue", "actor": None,
+                    "action": action, "type": "Issue", "actor": actor,
                     "createdAt": ev["created_at"], "data": data, "url": data["url"],
                     "organizationId": org_id, "webhookId": hook["id"],
                 }
@@ -438,12 +495,27 @@ def _claim(engine: Engine, now: datetime) -> list[dict]:
 Poster = Callable[[str, bytes, dict[str, str]], int]
 
 
-def _http_post(url: str, body: bytes, headers: dict[str, str]) -> int:
+MAX_RESPONSE_BYTES = 64 * 1024
+
+
+def post_capped(url: str, body: bytes, headers: dict[str, str],
+                timeout: float = SEND_TIMEOUT_SECONDS) -> tuple[int, bytes]:
+    """POST without following redirects; read at most MAX_RESPONSE_BYTES of the reply."""
     import httpx
 
-    response = httpx.post(url, content=body, headers=headers, timeout=SEND_TIMEOUT_SECONDS,
-                          follow_redirects=False)
-    return response.status_code
+    with httpx.stream("POST", url, content=body, headers=headers, timeout=timeout,
+                      follow_redirects=False) as response:
+        chunks, size = [], 0
+        for chunk in response.iter_bytes():
+            chunks.append(chunk)
+            size += len(chunk)
+            if size >= MAX_RESPONSE_BYTES:
+                break
+        return response.status_code, b"".join(chunks)[:MAX_RESPONSE_BYTES]
+
+
+def _http_post(url: str, body: bytes, headers: dict[str, str]) -> int:
+    return post_capped(url, body, headers)[0]
 
 
 def build_request(secret: str, payload: dict, delivery_id: str, event: str,
