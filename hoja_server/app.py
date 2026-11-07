@@ -157,6 +157,12 @@ _UNBUILT_HTML = (
     "<code>HOJA_WEB_ROOT</code> at a built bundle.</p></body></html>"
 )
 _graphql_log = logging.getLogger("hoja_server.graphql")
+# Ariadne logs every resolver error, expected user errors included, with a full
+# traceback; under a rich handler that costs seconds per bad request. Unexpected
+# errors are logged once by _format_graphql_error, so Ariadne's copy is muted.
+_ARIADNE_LOGGER = "hoja_server.graphql.ariadne"
+logging.getLogger(_ARIADNE_LOGGER).addHandler(logging.NullHandler())
+logging.getLogger(_ARIADNE_LOGGER).propagate = False
 _security_log = logging.getLogger("hoja_server.security")
 
 
@@ -951,6 +957,7 @@ def create_app(
                 data,
                 context_value=context,
                 error_formatter=_format_graphql_error,
+                logger=_ARIADNE_LOGGER,
                 debug=(os.environ.get("HOJA_SERVER_DEBUG", "0") == "1"),
             )
         if isinstance(query, str) and "mutation" in query:
@@ -1887,7 +1894,7 @@ def create_app(
                    "browser_session": is_browser,
                    "access": getattr(request.state, "api_key_access", "read_write")}
         _ok, result = graphql_sync(_schema, {"query": sync.META_QUERY}, context_value=context,
-                                   error_formatter=_format_graphql_error)
+                                   error_formatter=_format_graphql_error, logger=_ARIADNE_LOGGER)
         if result.get("errors"):
             raise RuntimeError(result["errors"][0].get("message", "metadata query failed"))
         return {**result["data"], "users": sync.org_users(store, org)}

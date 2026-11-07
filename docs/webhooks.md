@@ -29,6 +29,9 @@ mutation {
 - `webhookDelete(id:)` removes the webhook and its pending deliveries.
 - `secret` is generated (`hoja_wh_…`) when omitted.
 
+Webhooks created by an [extension](extensions.md) are managed through the extension and do not
+appear here.
+
 Only the `Issue` resource type is supported. Any other value is rejected with a
 `BAD_USER_INPUT` error.
 
@@ -42,6 +45,7 @@ Each event is an HTTP `POST` with a JSON body:
 | `type` | `Issue` |
 | `data` | The issue: `id`, `identifier`, `title`, `branchName`, `url`, `stateId`, `state {id name type color}`, `teamId`, `team {id key name}`, `assigneeId`, `labelIds`, timestamps, and more |
 | `updatedFrom` | For `update`: the previous value of every changed field |
+| `actor` | Who made the change when known: `{id, type, name, email}`, `type` is `user` or `integration` (an extension bot) |
 | `url`, `createdAt`, `organizationId`, `webhookId` | Event context |
 | `webhookTimestamp` | Send time in Unix milliseconds |
 
@@ -92,5 +96,5 @@ def verify(secret: str, raw_body: bytes, signature: str) -> dict:
 | --- | --- |
 | `HOJA_SECRET_KEY` | Required. Encrypts webhook signing secrets at rest. |
 | `HOJA_APP_URL` | Base of the issue links in `url` and `data.url`. |
-| `HOJA_WEBHOOK_ALLOW_PRIVATE_NETWORKS=1` | Allows loopback, private, and link-local targets and plain `http`, for receivers on your own machine or LAN. Without it, only `https` URLs that resolve to public addresses are accepted, checked both on save and before each send. |
+| `HOJA_WEBHOOK_ALLOW_PRIVATE_NETWORKS=1` | Allows loopback, private, and link-local targets, plain `http`, and ports other than 443, for receivers on your own machine or LAN. Without it, only `https` URLs on port 443 that resolve to public addresses are accepted, checked both on save and before each send. |
 | `HOJA_WEBHOOK_WORKER=0` | Stops this server process from dispatching and sending. |

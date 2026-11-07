@@ -18,6 +18,7 @@ from ariadne import (
     ScalarType,
     make_executable_schema,
 )
+from hoja_server import extensions
 from hoja_server.deployment import single_org_mode
 
 query = QueryType()
@@ -1091,21 +1092,45 @@ def m_team_member_remove(_, info, teamId, userId):
     return _set_team_membership(info, teamId, userId, add=False)
 
 
+def _extension_hooks(info, store, org, uid, event, input, current, input_type):
+    """Run extension hooks; a veto becomes an EXTENSION_REJECTED error, nothing is written."""
+    try:
+        return extensions.run_hooks(store.engine, org, uid, event, input, current,
+                                    info.schema.get_type(input_type))
+    except extensions.ExtensionRejectedError as exc:
+        raise GraphQLError(str(exc), extensions={
+            "code": "EXTENSION_REJECTED", "extension": exc.extension_name, "reason": exc.reason}) from exc
+
+
 @mutation.field("issueCreate")
 def m_issue_create(_, info, input):
     store, w, org, uid = _ctx(info)
+    if store.team_by_id_or_key(org, str(input.get("teamId") or ""), viewer_id=uid):
+        # Only ask extensions about a write the caller is allowed to attempt.
+        input, patches = _extension_hooks(info, store, org, uid, "issue.beforeCreate", input, None,
+                                          "IssueCreateInput")
+    else:
+        patches = []
     iid = w.issue_create(org, uid, input)
     if not iid:
         return {"success": False, "issue": None}
+    extensions.record_patches(store.engine, org, iid, patches)
     return {"success": True, "issue": store.issue_by_id_or_identifier(org, iid, viewer_id=uid)}
 
 
 @mutation.field("issueUpdate")
 def m_issue_update(_, info, id, input):
     store, w, org, uid = _ctx(info)
+    current = store.issue_by_id_or_identifier(org, id, viewer_id=uid)
+    if current is None:  # do not ask extensions about an issue the caller cannot see
+        return {"success": False, "issue": None}
+    input, patches = _extension_hooks(info, store, org, uid, "issue.beforeUpdate", input,
+                                      extensions.issue_data(store.engine, org, current["id"]),
+                                      "IssueUpdateInput")
     iid = w.issue_update(org, id, input, actor_id=uid)
     if not iid:
         return {"success": False, "issue": None}
+    extensions.record_patches(store.engine, org, iid, patches)
     return {"success": True, "issue": store.issue_by_id_or_identifier(org, iid, viewer_id=uid)}
 
 
@@ -1273,10 +1298,12 @@ def build_schema():
     from hoja_server import model_providers
     from hoja_server.agent_conversations import SDL as CONVERSATION_SDL, query as conversation_query
     from hoja_server import webhooks_api
+    from hoja_server import extensions_api
     return make_executable_schema(
-        [sdl, PROVIDER_SDL, CONVERSATION_SDL, webhooks_api.SDL], query, mutation,
+        [sdl, PROVIDER_SDL, CONVERSATION_SDL, webhooks_api.SDL, extensions_api.SDL], query, mutation,
         model_providers.query, model_providers.mutation,
         webhooks_api.query, webhooks_api.mutation, webhooks_api.webhook_type,
+        extensions_api.query, extensions_api.mutation, extensions_api.extension_type,
         conversation_query,
         model_providers.model_provider_type, Team, Initiative, Issue, IssueActivity, MyIssueActivity, Project, ProjectUpdate, Comment,
         WorkflowState, Cycle, Attachment,

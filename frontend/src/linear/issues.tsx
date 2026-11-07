@@ -1,12 +1,13 @@
 import React, {memo, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState} from 'react';
 import {confirmDialog, promptDialog} from '../dialogs';
-import {Bell, Check, ChevronDown, ChevronRight, Copy, ExternalLink, Link2, ListFilter, Plus, Search, Settings2, SlidersHorizontal, Trash2, X} from 'lucide-react';
+import {Bell, Check, ChevronDown, ChevronRight, Copy, ExternalLink, Link2, ListFilter, Plus, Search, Settings2, SlidersHorizontal, Trash2, X, Zap} from 'lucide-react';
 import {gql, relTime, stateKey} from '../main';
 import type {Cycle, Issue, IssueActivityEvent, IssueLabel, IssueState, Project, Team, Viewer} from '../main';
 import {Markdown} from '../markdown';
 import {addLocalIssue, getSync, guessNextIdentifier, isLocalIssueId, localIssueId, onEntityChange, useEntityVersion, useIssueSelect, useIssues, useSyncMeta, useSyncStatus} from '../sync';
 import {addLabelInput, bulkRemove, bulkUpdate, useHiddenIssueIds, useScrollWindow, useStableCallback, visibleRange} from './issueStore';
-import {Avatar, CycleChip, CycleGlyph, DueChip, FavStar, IconBtn, LabelChip, LinMenu, LinearStatusIcon, PriorityIcon, ProjectChip, Ring, StatusAgeIcon, SubIssuePill, Tip, cx, dueIsOverdue, fmtDate, fmtFullDate, formatDueDay, parseDueDay, useDismiss, useFavorite} from './shared';
+import {Avatar, CycleChip, CycleGlyph, DueChip, FavStar, IconBtn, LabelChip, LinMenu, LinearStatusIcon, PriorityIcon, ProjectChip, Ring, StatusAgeIcon, SubIssuePill, Tip, cx, dueIsOverdue, fmtDate, fmtFullDate, formatDueDay, parseDueDay, useDismiss, useFavorite, type MenuItem} from './shared';
+import {runExtensionAction, useIssueExtensionActions, type ExtensionAction} from '../extensions';
 
 /* Linear 1:1 Issues list + board + detail. */
 
@@ -1155,6 +1156,11 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
   const [uploading, setUploading] = useState(false);
   const [newSubTitle, setNewSubTitle] = useState('');
   const [addingSub, setAddingSub] = useState(false);
+  /* Extension actions come from one session-cached query (extensionActions(entity:"Issue"));
+   * a failed query leaves the list empty, so the menu simply has no action entries. */
+  const extensionActions = useIssueExtensionActions();
+  const [runningActionId, setRunningActionId] = useState<string | null>(null);
+  const [actionNotice, setActionNotice] = useState<{kind: 'status' | 'error'; text: string} | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const titleFocused = useRef(false);
   const moreRef = useDismiss(() => setMoreOpen(false));
@@ -1445,6 +1451,34 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
   };
   const archive = () => { void onArchive().catch(e => setUpdateError((e as Error).message)); };
   const remove = () => { void onDelete().catch(e => setUpdateError((e as Error).message)); };
+  /* Run one extension action for this issue. The server answers with a status and the
+   * extension's own message; a hook veto or transport failure arrives as an EXTENSION error. */
+  const runAction = async (action: ExtensionAction) => {
+    setRunningActionId(action.id);
+    setActionNotice(null);
+    try {
+      const result = await runExtensionAction(action.id, detail.id);
+      if (!result?.success) throw new Error(result?.message || 'The extension did not accept this action.');
+      const outcome = [result.status, result.message].filter(Boolean).join(' — ');
+      setActionNotice({kind: 'status', text: `${action.title} · ${action.extensionName}${outcome ? ` — ${outcome}` : ''}`});
+    } catch (e) {
+      setActionNotice({kind: 'error', text: `${action.title} · ${action.extensionName} — ${(e as Error).message}`});
+    } finally {
+      setRunningActionId(null);
+    }
+  };
+  const actionMenuItems: MenuItem[] = extensionActions.actions.length
+    ? [
+        {key: 'extensions-divider', divider: true},
+        ...extensionActions.actions.map<MenuItem>(action => ({
+          key: `extension:${action.id}`,
+          label: `${action.title} · ${action.extensionName}`,
+          icon: <Zap size={14} />,
+          disabled: runningActionId === action.id,
+          onSelect: () => void runAction(action),
+        })),
+      ]
+    : [];
   const subsView = [...(entry?.subs || []), ...pendingSubs];
   const subsDone = subsView.filter(s => s.state?.type === 'completed').length;
 
@@ -1463,9 +1497,10 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
           <FavStar kind="issues" id={detail.id} label={detail.identifier} />
           <span style={{position: 'relative'}} ref={moreRef}>
             <IconBtn label="Issue options" title="Issue options" onClick={() => setMoreOpen(v => !v)}><span style={{fontWeight: 700}}>···</span></IconBtn>
-            {moreOpen && <LinMenu onClose={() => setMoreOpen(false)} className="lin-dd-panel" items={[
+            {moreOpen && <LinMenu onClose={() => setMoreOpen(false)} className="lin-dd-panel lin-dd-right" items={[
               {key: 'copy', label: 'Copy as prompt', icon: <Copy size={14} />, onSelect: () => void copyText(asPrompt)},
               {key: 'branch', label: 'Copy branch name', icon: <Copy size={14} />, onSelect: () => void copyText(branchName)},
+              ...actionMenuItems,
               {key: 'div', divider: true},
               {key: 'archive', label: 'Archive issue', onSelect: async () => { if (await confirmDialog(`Archive ${detail.identifier}?`)) archive(); }},
               {key: 'delete', label: 'Delete issue', danger: true, onSelect: async () => { if (await confirmDialog(`Permanently delete ${detail.identifier}? This cannot be undone.`)) remove(); }},
@@ -1509,6 +1544,10 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
             onBlur={() => { titleFocused.current = false; const t = title.trim(); if (t && t !== detail.title) void change({title: t}); else setTitle(detail.title); }}
             onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }} />
           {updateError && <p className="lin-error" role="alert">{updateError}</p>}
+          {actionNotice && <p className={actionNotice.kind === 'error' ? 'lin-action-notice error' : 'lin-action-notice'} role={actionNotice.kind === 'error' ? 'alert' : 'status'}>
+            <span>{actionNotice.text}</span>
+            <button type="button" className="lin-btn" onClick={() => setActionNotice(null)}>Dismiss</button>
+          </p>}
           {loadError && <p className="lin-error" role="alert">{loadError} <button type="button" className="lin-btn" onClick={() => { setRetryTick(n => n + 1); onRetry?.(); }}>Retry</button></p>}
           {descEdit ? (
             <div>

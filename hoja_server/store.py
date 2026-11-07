@@ -988,7 +988,7 @@ class Store:
         with self.engine.begin() as conn:
             target = conn.execute(select(user.c.id, user.c.admin, user.c.active).where(and_(
                 user.c.organization_id == org_id, user.c.id == user_id,
-                user.c.archived_at.is_(None),
+                user.c.archived_at.is_(None), user.c.kind == "human",
             ))).first()
             if not target:
                 return None
@@ -1121,13 +1121,14 @@ class Store:
             return _conn_rows(conn, select(user).where(and_(
                 user.c.organization_id == org_id,
                 user.c.archived_at.is_(None),
+                user.c.kind == "human",  # extension bots are not members
             )).order_by(user.c.name, user.c.email))
 
     def set_member_admin_role(self, org_id: str, user_id: str, is_admin: bool) -> dict | None:
         with self.engine.begin() as conn:
             target = conn.execute(select(user.c.admin).where(and_(
                 user.c.organization_id == org_id, user.c.id == user_id,
-                user.c.archived_at.is_(None),
+                user.c.archived_at.is_(None), user.c.kind == "human",
             ))).first()
             if not target:
                 return None
@@ -1336,7 +1337,8 @@ class Store:
                 return []
             stmt = select(user).select_from(
                 user.join(team_member, team_member.c.user_id == user.c.id)
-            ).where(and_(team_member.c.team_id == team_id, user.c.organization_id == org_id))
+            ).where(and_(team_member.c.team_id == team_id, user.c.organization_id == org_id,
+                         user.c.kind == "human"))  # extension bots hold seats but are not members
             return [self.ser_user(r) for r in _conn_rows(conn, stmt)]
 
     def team_children(self, org_id: str, team_id: str, viewer_id: str | None = None) -> list[dict]:
