@@ -1,135 +1,62 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/hoja-work/hoja/main/.github/assets/banner.svg" alt="Hoja — keep every agent task on the same page" width="100%">
+</p>
+
+<p align="center">
+  <a href="https://pypi.org/project/hoja-cli/"><img alt="PyPI" src="https://img.shields.io/pypi/v/hoja-cli?label=pypi"></a>
+  <a href="https://pypi.org/project/hoja-cli/"><img alt="Python versions" src="https://img.shields.io/pypi/pyversions/hoja-cli"></a>
+  <a href="https://pypi.org/project/hoja-cli/"><img alt="Downloads" src="https://img.shields.io/pypi/dm/hoja-cli"></a>
+  <a href="https://github.com/hoja-work/hoja/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/pypi/l/hoja-cli"></a>
+  <a href="https://github.com/hoja-work/hoja/actions/workflows/documentation.yml"><img alt="Documentation check" src="https://github.com/hoja-work/hoja/actions/workflows/documentation.yml/badge.svg"></a>
+  <a href="https://github.com/hoja-work/hoja/actions/workflows/security-audit.yml"><img alt="Dependency audit" src="https://github.com/hoja-work/hoja/actions/workflows/security-audit.yml/badge.svg"></a>
+</p>
+
 # Hoja
 
-**A self-hosted workspace for issues, projects, cycles, and team work.** Hoja includes a browser UI and a Python CLI. It can run against its own SQLite or PostgreSQL-backed service; the GraphQL API also implements a Linear-compatible surface for clients that use it.
+**One self-hosted place where people and agents plan, assign and review work.**
+Hoja is a workspace for issues, projects, cycles and teams. Keep your editor,
+terminal and harness; reach the same work through the browser app, the `hoja`
+CLI, a Linear-compatible GraphQL API and a read-only MCP server.
 
-The Python package is published on PyPI as **`hoja-cli`** and installs the
-commands **`hoja`**, **`hoja-serve`**, and the optional **`hoja-mcp`**. The
-distribution carries the `-cli` suffix because the `hoja` project on PyPI is
-unrelated software; install `hoja-cli`, then run `hoja`.
+Self-host it under the MIT license, or use [Hoja Cloud](https://app.hoja.work)
+at $15 per organization each month. Neither path is priced per seat.
 
-## What you can do
+## Why teams use it
 
-- Sign in to a workspace, switch between memberships, and create workspaces, teams, and members.
-- Create, search, filter, assign, and update issues; browse team boards and cycles; open issue details and comment.
-- Organize projects, review project issues and updates, and manage initiatives.
-- Use Inbox for future issue notifications, with unread/read and archive controls. Existing historical events are not backfilled.
-- Save issue and project views in the browser. These views are local to that browser, not shared workspace records.
-- Use the CLI for shell workflows and automation. Responses are validated models; `--output json` and `--output ids` are suitable for scripts.
+- **One record for people and agents.** A person triages in the browser, an agent
+  updates the same issue from a shell, and everyone sees one current state.
+- **Your harness stays yours.** Hoja is a shared work record, not an agent
+  runtime. It does not run, host or watch your agents.
+- **Self-hosted and offline-first.** SQLite for a laptop or a single box,
+  PostgreSQL for a team server. No Linear Cloud account required.
+- **Scriptable by default.** Every CLI response is a validated model, and
+  `--output json` / `--output ids` are built for scripts, CI and agents.
 
-Hoja does not require Linear Cloud. The API uses Linear-compatible GraphQL names and authenticates with `HOJA_TOKEN` / `HOJA_API_URL`, so compatible clients can target a Hoja server. The former `LINEAR_TOKEN` and `LINEAR_API_URL` names are still read as deprecated aliases (the `HOJA_*` variable wins when both are set). Compatibility does not mean every Linear feature is implemented. Unsupported screens or controls are presented as unavailable rather than simulated as working.
+> Plan in Hoja. Build in your existing harness.
 
-## Run the workspace locally with Docker
+## Three ways in
 
-This is the recommended way to try Hoja locally. Docker Compose builds the web
-app and starts it with PostgreSQL. You will need Docker Desktop (or Docker
-Engine with the Compose plugin) installed and running. The first build needs
-internet access to download the base images and frontend/Python dependencies.
+| Surface | What it gives you |
+| --- | --- |
+| **Workspace** | Inbox, My issues, Projects, Cycles, Teams and saved Views in the browser. Create, assign, discuss and review issues; group them into projects; use cycles as time-bounded reviews of what shipped, what is open and what was canceled. |
+| **CLI** | `me`, `auth`, `init`, `team`, `issue`, `project`, `cycle`, `comment`, `label`, `memory`, `raw` and `update` — enough to drive real work from a terminal or a script. |
+| **API** | A GraphQL endpoint with Linear-compatible names. Point your own tools at `HOJA_API_URL` with a workspace token. |
+| **Agents** | An optional stdio MCP server with one guide tool, seven read-only resources and six workflow prompts. It has no mutation tools; changes go through the CLI or API. |
 
-1. In the repository root, create a `.env` file with a password for the local
-   PostgreSQL database:
-
-   ```dotenv
-   POSTGRES_PASSWORD=replace-with-a-long-random-password
-   ```
-
-   Keep this file private; do not commit it. Compose currently has a
-   development fallback password, so setting your own avoids relying on that
-   default. If port `8787` is already in use, add `HOJA_PORT=8788` to this
-   same file and use port 8788 in the browser URL below.
-
-2. Build and start the services:
-
-   ```bash
-   docker compose up --build -d
-   ```
-
-   The first build can take a few minutes. Compose waits for PostgreSQL to
-   become healthy; the app applies database migrations when it starts.
-
-3. Open [http://localhost:8787](http://localhost:8787) (or the port you chose).
-   On a fresh database, the browser wizard guides you through choosing a
-   language preference, creating your admin profile/password, and naming your
-   workspace and first team. Existing databases go to the sign-in screen.
-
-   To confirm the server responds before opening the UI, run
-   `curl -i http://localhost:8787/health`; a healthy server returns HTTP 200
-   with a JSON status body. The `/ready` endpoint reports whether the database
-   schema is ready; if it is not, inspect the app logs below.
-
-4. When prompted, optionally add teammates. Hoja creates each member and
-   provides a copyable invite link. Share it with that person; they can open it,
-   enter the invited email, and set their password. Links expire after 72 hours
-   and work once. Hoja does not email invitations. You can skip this and invite
-   people later from **Members**. The finish step can show the admin API key for
-   CLI setup. Browser sign-in uses an HttpOnly cookie.
-
-### Stop, restart, and reset
-
-Stop the containers while keeping your workspace data:
+## Install the CLI
 
 ```bash
-docker compose down
+uv tool install hoja-cli     # or: python -m pip install hoja-cli
+hoja --version
 ```
 
-Start them again later with `docker compose up -d`. PostgreSQL data is stored
-in the named `hoja-postgres` volume and survives ordinary container stops
-and rebuilds. To permanently delete the local database and all demo data, use
-`docker compose down -v`; this is destructive and the data cannot be recovered
-without a backup.
+The PyPI distribution is **`hoja-cli`** and it installs the commands **`hoja`**,
+**`hoja-serve`** and the optional **`hoja-mcp`**. The distribution carries the
+`-cli` suffix because the `hoja` project on PyPI is unrelated software: install
+`hoja-cli`, then run `hoja`.
 
-### Troubleshooting
-
-- **Docker is unavailable:** start Docker Desktop / Docker Engine, then retry.
-- **`docker compose` is not a command:** install or enable the Docker Compose
-  v2 plugin (included with current Docker Desktop), then verify with
-  `docker compose version`. This guide uses the `docker compose` subcommand,
-  not the legacy standalone `docker-compose` command.
-- **Port is already allocated:** set `HOJA_PORT=8788` in `.env` and browse
-  to `http://localhost:8788`.
-- **The app cannot connect to PostgreSQL:** check `docker compose ps` and
-  `docker compose logs db app`; Compose starts the app only after the database
-  health check passes. Correct `.env` changes may require recreating services
-  with `docker compose up -d`.
-- **The app starts but is not ready:** check `docker compose logs app db` and
-  `curl -i http://localhost:8787/ready`. The app runs migrations at startup;
-  wait for the app container to finish starting, then retry. Do not remove the
-  PostgreSQL volume as a first troubleshooting step.
-- **The wizard reports that the instance is already set up:** use the existing
-  sign-in screen. Bootstrap is only available on a fresh database. To restart a
-  disposable demo from scratch, use the destructive `docker compose down -v`
-  command above.
-
-This Compose setup is intended for a local demo. The fallback database password
-in `docker-compose.yml` is for development only; set a private password in
-`.env` before using the configuration beyond a disposable local instance. Use
-letters and numbers in that password because Compose interpolates it into the
-PostgreSQL connection URL.
-
-See [deployment](docs/DEPLOYMENT.md) for database setup, migrations, readiness
-checks, and multi-organization token provisioning.
-
-For an isolated SQLite instance instead:
-
-```bash
-python -m pip install 'hoja-cli[server]'
-hoja-serve seed --tenant local --org "Local Workspace" \
-  --org-key local --team-key ENG --email user@example.test
-hoja-serve serve --tenant local --host 127.0.0.1 --port 8787
-```
-
-## Use the CLI
-
-Install the CLI from PyPI or from a checkout:
-
-```bash
-python -m pip install hoja-cli
-# or, isolated from your system Python:
-uv tool install hoja-cli
-# or, from this repository:
-uv sync --extra dev --extra server
-```
-
-Configure an account in `~/.config/hoja/config.toml`:
+Point it at a workspace with `HOJA_API_URL` and `HOJA_TOKEN`, or configure an
+account once in `~/.config/hoja/config.toml`:
 
 ```toml
 [accounts.local]
@@ -140,85 +67,154 @@ token_env = "HOJA_TOKEN"
 default_account = "local"
 ```
 
-Export the token as `HOJA_TOKEN` (or choose a different `token_env` for the
-account), then try:
-
 ```bash
 hoja me
-hoja team list
 hoja issue list --assignee me
 hoja issue create --team ENG --title "Review onboarding flow"
 hoja -o json issue list --state Todo
+hoja <command> --help          # current flags for every command
 ```
 
-The CLI also supports projects, cycles, comments, labels, raw GraphQL queries, and dry-run previews for supported mutations. Run `hoja --help` or `hoja <command> --help` for the current command and option list. Clients written against the Linear-compatible surface can point at Hoja with `LINEAR_TOKEN` and `LINEAR_API_URL`; those names remain accepted as deprecated aliases of `HOJA_TOKEN` and `HOJA_API_URL`.
+`HOJA_TOKEN` and `HOJA_API_URL` are canonical. The former `LINEAR_TOKEN` and
+`LINEAR_API_URL` names are still read as deprecated aliases, and the GraphQL type
+names match Linear, so compatible clients can target Hoja without a rewrite.
 
-## Agent integrations
+## Run the workspace
 
-The optional MCP server provides one guide tool, seven read-only resources, and six workflow prompts. It does not expose mutation tools; make changes through the CLI.
+### Docker Compose (recommended)
+
+Docker Desktop, or Docker Engine with the Compose plugin, builds the web app and
+starts it against PostgreSQL. The first build pulls base images and frontend and
+Python dependencies, so it needs internet access.
+
+1. Create `.env` in the repository root. `POSTGRES_PASSWORD` is required;
+   Compose refuses to start without it.
+
+   ```dotenv
+   POSTGRES_PASSWORD=replace-with-a-long-random-password
+   ```
+
+   Keep this file private and do not commit it. Use letters and numbers: Compose
+   interpolates the password into the PostgreSQL connection URL. If port `8787`
+   is taken, add `HOJA_PORT=8788`.
+
+2. Build and start:
+
+   ```bash
+   docker compose up --build -d
+   ```
+
+   Compose waits for PostgreSQL to pass its health check, then the app applies
+   database migrations before serving.
+
+3. Open [http://localhost:8787](http://localhost:8787). A fresh database starts
+   the setup wizard: language, your admin profile and password, then your
+   workspace and first team. Existing databases go straight to sign-in.
+   `curl -i http://localhost:8787/health` reports liveness and
+   `curl -i http://localhost:8787/ready` reports schema readiness.
+
+4. The wizard can add teammates. Hoja creates each member and hands you a
+   single-use invite link valid for 72 hours; it does not send invitation email.
+   The finish step shows the admin API key once for CLI setup. Browser sign-in
+   uses an HttpOnly cookie.
+
+### SQLite, no Docker
+
+```bash
+python -m pip install 'hoja-cli[server]'
+hoja-serve seed --tenant local --org "Local Workspace" \
+  --org-key local --team-key ENG --email user@example.test
+hoja-serve serve --tenant local --host 127.0.0.1 --port 8787
+```
+
+`hoja-serve seed` prints the token to export as `HOJA_TOKEN`.
+
+### Operating it
+
+- `docker compose down` stops the stack and keeps data in the `hoja-postgres`
+  volume; `docker compose up -d` brings it back.
+- `docker compose down -v` deletes the volume and every record in it. It cannot
+  be undone without a backup.
+- If the app is not ready, read `docker compose logs app db` before touching the
+  volume. The container runs migrations on start.
+- If `docker compose` is not a command, enable the Compose v2 plugin and check it
+  with `docker compose version`. This guide does not use legacy `docker-compose`.
+
+## Connect an agent
 
 ```bash
 python -m pip install 'hoja-cli[mcp]'
+which hoja-mcp
 ```
 
-Register `hoja-mcp` as a stdio MCP server in your client, passing the needed token through that client's environment configuration. The server reads the same account configuration as the CLI. See [the MCP section below](#mcp-server-setup) for a complete example.
-
-The repository also includes an installable agent skill:
-
-```bash
-bash skills/install.sh --claude-only
-```
-
-It installs the `skills/hoja` instructions into the selected agent skill directory; `--copy` copies rather than symlinks.
-
-## MCP server setup
-
-Install the optional MCP dependency alongside the CLI:
-
-```bash
-python -m pip install 'hoja-cli[mcp]'
-```
-
-For Claude Desktop, add a server entry to its MCP configuration. Use an absolute
-executable path if the GUI does not inherit your shell `PATH`:
+Register `hoja-mcp` as a stdio server in your client, passing the token through
+that client's environment. Use an absolute path when the client does not inherit
+your shell `PATH`:
 
 ```json
 {
   "mcpServers": {
     "hoja": {
       "command": "/absolute/path/to/hoja-mcp",
-      "env": {
-        "HOJA_TOKEN": "<workspace-token>"
-      }
+      "env": { "HOJA_TOKEN": "<workspace-token>" }
     }
   }
 }
 ```
 
-Replace the command path with the result of `which hoja-mcp`. If the selected
-account sets a custom `token_env`, pass that variable instead. The MCP server
-provides one guide tool, seven read-only resources, and six workflow prompts;
-it does not provide mutation tools.
+The server reads the same account configuration as the CLI. It exposes one guide
+tool, seven read-only resources and six workflow prompts, and it deliberately has
+no mutation tools.
+
+The repository also ships an agent skill:
+
+```bash
+bash skills/install.sh --claude-only     # or --swarm-only
+bash skills/install.sh --copy            # copy instead of symlink
+```
+
+## Where Hoja stops
+
+Honest boundaries keep the product predictable:
+
+- Hoja does not run or monitor agents. Your harness does that; Hoja holds the
+  work record they read and update.
+- The MCP server is read-only. Mutations belong to the CLI and the API, where a
+  token and its permissions are explicit.
+- No prebuilt GitHub, Slack or meeting sync connectors are included. Use the CLI
+  or API for your own integrations.
+- Linear compatibility covers the GraphQL surface Hoja implements, not every
+  Linear feature. Unsupported screens say so instead of pretending to work.
+- Saved Views live in the browser, not in the shared workspace.
 
 ## Development
 
-Python 3.10 or newer is required. Install development and backend dependencies, then run the tests:
+Python 3.10 or newer.
 
 ```bash
 uv sync --extra dev --extra server
 uv run pytest
+
+cd frontend && npm ci && npm run build
 ```
 
-Build the browser app with `npm ci && npm run build` in `frontend/`. The local backend integration script is `bash scripts/e2e-local-backend.sh`; it uses a disposable local database. The live API CLI matrix in `scripts/e2e-test.sh` requires `HOJA_TOKEN`, `HOJA_TEST_TEAM`, and `HOJA_TEST_ISSUE`.
+- `bash scripts/e2e-local-backend.sh` runs the backend integration pass against a
+  disposable local database.
+- `bash scripts/e2e-test.sh` runs the live CLI matrix and needs `HOJA_TOKEN`,
+  `HOJA_TEST_TEAM` and `HOJA_TEST_ISSUE`.
+- `python3 scripts/check_docs.py` is the documentation check CI enforces.
 
-Contributor and agent operations, including the documentation contract, are in
-[AGENTS.md](AGENTS.md). Run `python3 scripts/check_docs.py` before submitting
-changes that add or modify documentation.
+Contributor and agent operations are in
+[AGENTS.md](https://github.com/hoja-work/hoja/blob/main/AGENTS.md).
 
-Product architecture is described in [Design](docs/DESIGN.md); deployment instructions are in [Deployment](docs/DEPLOYMENT.md). The [changelog](CHANGELOG.md) records release-level behavior changes.
+## Documentation
 
-## First run in the browser
+- [Design](https://github.com/hoja-work/hoja/blob/main/docs/DESIGN.md) — product and architecture.
+- [Deployment](https://github.com/hoja-work/hoja/blob/main/docs/DEPLOYMENT.md) — databases, migrations, readiness, tokens and release publishing.
+- [Remote MCP](https://github.com/hoja-work/hoja/blob/main/docs/hoja-mcp.md) — the experimental OAuth-protected remote server; the stdio server is covered above.
+- [Cycle metrics](https://github.com/hoja-work/hoja/blob/main/docs/cycle-metrics.md) and [meetings](https://github.com/hoja-work/hoja/blob/main/docs/meetings.md).
+- [Changelog](https://github.com/hoja-work/hoja/blob/main/CHANGELOG.md) — release-level behavior changes.
 
-On a fresh database, open Hoja in your browser to start the setup wizard. Choose a language preference (English is currently available), create your admin profile and password, then name your workspace and first team. You’ll be signed in when setup completes. Existing workspaces continue to show the sign-in screen.
+## License
 
-The wizard can create teammates and show each generated API key once for you to share. It does not send invitation email. Save or share each key securely; it is not shown again. You can skip invitations and add people later from **Members**. Your admin API key is available once in the finish step for CLI configuration.
+MIT. See [LICENSE](https://github.com/hoja-work/hoja/blob/main/LICENSE).
