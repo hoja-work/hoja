@@ -53,7 +53,12 @@ mcp = [
     "mcp>=2.2.0,<3.0.0",
 ]
 server = [
-    "ariadne>=0.23",
+    # ariadne 0.23 caps graphql-core at <3.3, but hoja_server/extensions.py
+    # imports validate_input_value, which only exists in graphql-core 3.3+.
+    # Declare both halves of the pair so the resolver cannot pick an
+    # importable-looking but unstartable combination.
+    "ariadne>=1.1",
+    "graphql-core>=3.3,<4",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "sqlalchemy>=2.0",

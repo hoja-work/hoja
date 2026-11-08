@@ -85,16 +85,16 @@ wheels = [
 
 [[package]]
 name = "ariadne"
-version = "1.1.0"
+version = "1.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "graphql-core" },
     { name = "starlette" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c8/e6/731c5ae5546893a2220f4a5fa635124033b2f5123d3720b978b85fdbd054/ariadne-1.1.0.tar.gz", hash = "sha256:847b5b399e56e4781f851b4ee3f3fd443d6c379e64a4828a792e8264b597c9e4", size = 90720, upload-time = "2026-06-15T11:07:36.795Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f1/81/0dd688084f4dcf1a65ab7d77f2ed51d60b9ab753238a83039056008ce421/ariadne-1.1.1.tar.gz", hash = "sha256:72fd197925408520f3b22c718396bb3bdaf6ab5deca1cbd2ebb64be7e5b35358", size = 92476, upload-time = "2026-10-07T11:59:51.497Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f6/48/e0bd1918ef56b1a570dfc1882a036286bf4b3f13e5a659a8d9e16d888c69/ariadne-1.1.0-py3-none-any.whl", hash = "sha256:1f5ee6fa0a2fe855b7587cccb8a5d24ff8c982789b15d860aed58c509aad9b48", size = 127587, upload-time = "2026-06-15T11:07:35.561Z" },
+    { url = "https://files.pythonhosted.org/packages/46/f3/26840f06bd2e31810a478cfda1b72ae8481ec7413ca285cf779cf8a482cf/ariadne-1.1.1-py3-none-any.whl", hash = "sha256:af71765ac085b333545bbf7a08217308e2f9c5db62737fea03b2de958b1b446c", size = 129598, upload-time = "2026-10-07T11:59:49.847Z" },
 ]
 
 [[package]]
@@ -1013,11 +1013,11 @@ requires-dist = [
 
 [[package]]
 name = "graphql-core"
-version = "3.2.12"
+version = "3.3.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/11/7f/671c1046fe72ba5b62be2de3979ea9e61cb3dba8f1edfb880b811f8bdf8b/graphql_core-3.2.12.tar.gz", hash = "sha256:4579094d5fc8a1a59555a9b18e51b320779d9bbc63e2302c519af0c4919d9543", size = 531478, upload-time = "2026-08-27T20:25:48.607Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0d/11/511b9487dd338a9cd98a8040a1f20feaa99b2f2e4921c049cb9cbbff2870/graphql_core-3.3.2.tar.gz", hash = "sha256:15d6eee7d4364fbc202833bc6bd0d504004d8ae7c0aaf620fa884d8e437622f2", size = 794346, upload-time = "2026-11-06T21:41:54.017Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4e/b6/304c572e79b9e82982dbd5091e26a89f5018e565868091d804c2142f6ba5/graphql_core-3.2.12-py3-none-any.whl", hash = "sha256:3d8f104532070485e13caa4092c1e71cda2ba6cffd96e98f285111ee10ed1e51", size = 216042, upload-time = "2026-08-27T20:25:47.234Z" },
+    { url = "https://files.pythonhosted.org/packages/9b/c0/dec5c3a96d9e47c7aaaa6a062e065e6c738d67d11a9cda15705592f45409/graphql_core-3.3.2-py3-none-any.whl", hash = "sha256:d83f49ee18d2db89fb575dab6ffefa8aa1bf5f60dff8a6781db6f63420041348", size = 366135, upload-time = "2026-11-06T21:41:52.327Z" },
 ]
 
 [[package]]
@@ -1179,6 +1179,7 @@ server = [
     { name = "aiosqlite" },
     { name = "ariadne" },
     { name = "fastapi" },
+    { name = "graphql-core" },
     { name = "psycopg", extra = ["binary"] },
     { name = "sqlalchemy" },
     { name = "uvicorn", extra = ["standard"] },
@@ -1187,11 +1188,12 @@ server = [
 [package.metadata]
 requires-dist = [
     { name = "aiosqlite", marker = "extra == 'server'", specifier = ">=0.20" },
-    { name = "ariadne", marker = "extra == 'server'", specifier = ">=0.23" },
+    { name = "ariadne", marker = "extra == 'server'", specifier = ">=1.1" },
     { name = "asyncpg", marker = "extra == 'saas'", specifier = ">=0.29" },
     { name = "cryptography", specifier = ">=42,<60" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.115" },
     { name = "google-workspace-connector", marker = "extra == 'agent'", editable = "connectors/google_workspace" },
+    { name = "graphql-core", marker = "extra == 'server'", specifier = ">=3.3,<4" },
     { name = "httpx", specifier = ">=0.27,<1.0" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2.2.0,<3.0.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.13" },
