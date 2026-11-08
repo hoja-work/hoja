@@ -1093,6 +1093,42 @@ def create_app(
             return JSONResponse({"error": "Invalid API token"}, status_code=401)
         return JSONResponse({"status": "password_set"}, status_code=201)
 
+    async def internal_membership(request: Request):
+        """A tenant announcing that an address belongs to it.
+
+        Authenticated by the tenant's own derived key: the control plane holds
+        the master, so it can reconstruct the only key that host may sign with,
+        and a compromised tenant cannot forge an announcement for another.
+        """
+        import hashlib
+        import hmac as hmac_module
+
+        master = signup_config.identity_transfer_master
+        if not master:
+            return JSONResponse({"error": "Federation is not configured."}, status_code=503)
+        raw = await request.body()
+        try:
+            payload = json.loads(raw or b"{}")
+        except ValueError:
+            return JSONResponse({"error": "Invalid body."}, status_code=400)
+        slug = str(payload.get("slug") or "").strip().lower()
+        email = str(payload.get("email") or "").strip().lower()
+        if not slug or "@" not in email:
+            return JSONResponse({"error": "slug and email are required."}, status_code=400)
+        key = identity_transfer.tenant_key(
+            master, f"{slug}.{signup_config.tenant_base_domain}").encode()
+        expected = hmac_module.new(key, raw, hashlib.sha256).hexdigest()
+        given = request.headers.get("x-hoja-signature") or ""
+        if not hmac_module.compare_digest(expected, given):
+            _security_log.warning("membership.announce_rejected slug=%s", slug)
+            return JSONResponse({"error": "Bad signature."}, status_code=401)
+        signup_store.record_membership_hint(
+            slug=slug, email=email,
+            role=str(payload.get("role") or "member"),
+            expires_at=payload.get("expires_at") or None,
+        )
+        return JSONResponse({"ok": True})
+
     async def auth_invite_probe(request: Request):
         """Is this invitation code still usable, and where does it lead?
 
@@ -2650,6 +2686,7 @@ def create_app(
             Route("/auth/setup", auth_setup, methods=["GET", "POST"]),
             Route("/auth/invite/accept", auth_invite_accept, methods=["POST"]),
             Route("/auth/invite/probe", auth_invite_probe, methods=["POST"]),
+            Route("/internal/membership", internal_membership, methods=["POST"]),
             Route("/onboarding/status", onboarding_status, methods=["GET"]),
             Route("/onboarding/bootstrap", onboarding_bootstrap, methods=["POST"]),
             Route("/auth/login", auth_login, methods=["POST"]),

@@ -28,6 +28,11 @@ export const REASON_COPY = {
       'Your Google sign-in is missing or has expired. Start again with “Continue with Google”.',
   },
   // -- policy ---------------------------------------------------------------
+  already_member: {
+    title: 'You already have a workspace',
+    message:
+      'That account is already a member of a workspace. Sign in there instead — an invitation from a teammate lands in it.',
+  },
   signup_closed: {
     title: 'Sign-ups are invite-only',
     message:

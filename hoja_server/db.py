@@ -34,7 +34,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 41
+CURRENT_SCHEMA_REVISION = 42
 
 
 def now_iso() -> str:
@@ -242,6 +242,26 @@ mail_outbox = Table(
     Column("sent_at", String),
     Column("provider_message_id", String),
     Column("last_error", Text),
+)
+
+#: What a tenant told the control plane about its own members.
+#:
+#: The control plane cannot see a tenant's membership rows, so the sign-in
+#: directory was blind to everyone who had been invited rather than signed up.
+#: A tenant announces each invitation it issues, signed with the key derived for
+#: its own host; this table is the control plane's memory of that, and it is the
+#: only reason `/signin` can route an invited person without guessing.
+tenant_membership_hint = Table(
+    "tenant_membership_hint",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("slug", String, nullable=False, index=True),
+    Column("email", String, nullable=False, index=True),
+    Column("role", String, nullable=False, default="member"),
+    Column("expires_at", String),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+    UniqueConstraint("slug", "email", name="uq_tenant_membership_hint"),
 )
 
 signup_eligibility = Table(
@@ -1741,6 +1761,7 @@ _MIGRATIONS = {
     40: _apply_extensions,
     41: lambda conn: next(i for i in extension.indexes if i.name == "uq_extension_live_key").create(
         conn, checkfirst=True),
+    42: lambda conn: tenant_membership_hint.create(conn, checkfirst=True),
 }
 
 
