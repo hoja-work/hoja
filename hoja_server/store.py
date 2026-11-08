@@ -960,7 +960,8 @@ class Store:
             return None
         return {
             "id": row["id"], "url": row.get("url"), "title": row.get("title"),
-            "subtitle": row.get("subtitle"), "createdAt": row.get("created_at"),
+            "subtitle": row.get("subtitle"), "contentType": row.get("content_type"),
+            "createdAt": row.get("created_at"),
             "_issue_id": row.get("issue_id"),
         }
 

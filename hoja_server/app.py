@@ -99,6 +99,7 @@ from hoja_server.signup_store import SignupStore
 from hoja_server.store import Store
 from hoja_server import tenant_context
 from hoja_server import realtime, sync
+from hoja_server import uploads
 from hoja_server.writer import Writer
 
 _schema = build_schema()
@@ -2378,16 +2379,6 @@ def create_app(
         return response
 
     # ---- Attachment file uploads (images/files/videos for issue attachments)
-    _UPLOAD_MAX_BYTES = 10 * 1024 * 1024
-    _UPLOAD_TYPE_PREFIXES = ("image/", "video/")
-    _UPLOAD_TYPE_EXACT = {"application/pdf", "text/plain", "text/markdown"}
-
-    def _uploads_dir() -> Path:
-        from hoja_server.db import default_db_dir
-        d = default_db_dir() / "uploads"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-
     async def upload_create(request: Request):
         uid, org, _identity_id, _browser_session = _auth(request)
         if not uid:
@@ -2403,51 +2394,45 @@ def create_app(
         if upload is None or not hasattr(upload, "read"):
             return JSONResponse({"error": "Missing 'file' field"}, status_code=400)
         content_type = (getattr(upload, "content_type", "") or "").split(";")[0].strip().lower()
-        allowed = content_type in _UPLOAD_TYPE_EXACT or any(
-            content_type.startswith(p) for p in _UPLOAD_TYPE_PREFIXES)
-        if not allowed:
+        original = (getattr(upload, "filename", "") or "file")
+        # A concrete declared type wins; octet-stream/empty falls back to the extension
+        # so `notes.md` from a client that sends no type is still a Markdown document.
+        resolved = uploads.resolve_content_type(original, content_type)
+        if not resolved:
             return JSONResponse({"error": "File type not allowed"}, status_code=415)
         body = await upload.read()
-        if len(body) > _UPLOAD_MAX_BYTES:
+        if len(body) > uploads.MAX_BYTES:
             return JSONResponse({"error": "File too large (10 MB max)"}, status_code=413)
-        original = (getattr(upload, "filename", "") or "file").split("/")[-1].split("\\")[-1]
-        ext = "".join(c for c in Path(original).suffix.lower() if c.isalnum() or c == ".")[:12]
-        file_id = secrets.token_hex(16)
-        stored = _uploads_dir() / f"{file_id}{ext}"
-        stored.write_bytes(body)
-        (_uploads_dir() / f"{file_id}.json").write_text(
-            json.dumps({"org": org, "filename": original[:120],
-                        "content_type": content_type, "size": len(body)}))
-        return JSONResponse({"url": f"/api/uploads/{file_id}",
-                             "title": original[:120] or "file"})
+        url, title = uploads.save_blob(org, original, resolved, body)
+        return JSONResponse({"url": url, "title": title, "contentType": resolved})
 
     async def upload_serve(request: Request):
         uid, org, _identity_id, _browser_session = _auth(request)
         if not uid:
             return JSONResponse({"error": "Authentication required"}, status_code=401)
-        file_id = request.path_params.get("file_id", "")
-        if not file_id.replace("_", "").replace("-", "").isalnum() or len(file_id) > 64:
+        # The URL carries the extension (`<id>.png`); the id itself is the part before it.
+        file_id = uploads.blob_id_from_segment(request.path_params.get("file_id", ""))
+        if not file_id:
             return JSONResponse({"error": "Not found"}, status_code=404)
-        meta_path = _uploads_dir() / f"{file_id}.json"
-        try:
-            meta = json.loads(meta_path.read_text())
-        except (OSError, ValueError):
-            return JSONResponse({"error": "Not found"}, status_code=404)
+        meta = uploads.read_meta(file_id) or {}
         if meta.get("org") != org:
             return JSONResponse({"error": "Not found"}, status_code=404)
         # An uploaded file inherits its issue's team visibility: knowing the (random)
         # file id is not authority to read a private team's material.
         if not store.upload_visible(org, uid, file_id):
             return JSONResponse({"error": "Not found"}, status_code=404)
-        candidates = [p for p in _uploads_dir().glob(f"{file_id}.*")
-                      if p.suffix != ".json" and p.name != f"{file_id}.json"]
-        if not candidates:
+        stored = uploads.blob_for(file_id)
+        if stored is None:
             return JSONResponse({"error": "Not found"}, status_code=404)
+        content_type = meta.get("content_type") or "application/octet-stream"
         return FileResponse(
-            candidates[0],
-            media_type=meta.get("content_type") or "application/octet-stream",
+            stored,
+            media_type=content_type,
             filename=meta.get("filename") or "file",
-            content_disposition_type="inline",
+            # SVG (and anything else not on the inline list) downloads instead of
+            # rendering as a document on the app origin, where its script would run.
+            content_disposition_type="inline" if uploads.inline_disposition(content_type) else "attachment",
+            headers=dict(uploads.BLOB_HEADERS),
         )
 
     def _sync_meta(request: Request, uid: str, org: str, identity_id, is_browser: bool) -> dict:

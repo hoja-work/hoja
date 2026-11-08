@@ -380,6 +380,7 @@ type Attachment {
   url: String!
   title: String!
   subtitle: String
+  contentType: String
   issue: Issue
   createdAt: DateTime
 }

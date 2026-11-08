@@ -1,6 +1,6 @@
 import React, {memo, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState} from 'react';
 import {confirmDialog, promptDialog} from '../dialogs';
-import {Bell, Check, ChevronDown, ChevronRight, Copy, ExternalLink, Link2, ListFilter, Plus, Search, Settings2, SlidersHorizontal, Trash2, X, Zap} from 'lucide-react';
+import {Bell, Check, ChevronDown, ChevronRight, Copy, ExternalLink, FileText, Link2, ListFilter, Plus, Search, Settings2, SlidersHorizontal, Trash2, X, Zap} from 'lucide-react';
 import {gql, relTime, stateKey} from '../main';
 import type {Cycle, Issue, IssueActivityEvent, IssueLabel, IssueState, Project, Team, Viewer} from '../main';
 import {Markdown} from '../markdown';
@@ -12,7 +12,7 @@ import {createView, fieldsFromFilters, filtersFromFields, listViews, type Server
 
 /* Linear 1:1 Issues list + board + detail. */
 
-export type LinAttachment = {id: string; title?: string; subtitle?: string; url: string; createdAt?: string};
+export type LinAttachment = {id: string; title?: string; subtitle?: string; url: string; contentType?: string | null; createdAt?: string};
 export type LinIssue = Omit<Issue, 'subscribers'> & {
   estimate?: number | null;
   branchName?: string | null;
@@ -980,13 +980,25 @@ function PropDropdown({label, icon, value, onPick, options, disabled}: {
 
 /* ---------------- issue detail ---------------- */
 
+/* Which renderer an attachment row uses. The recorded content type is the truth; the
+ * URL path is only the fallback for external links and for rows created before the
+ * type was stored. Query and fragment are stripped so `/shot.png?v=2` still reads as
+ * an image, and an extensionless upload id is never guessed at from its characters. */
+const IMAGE_PATH = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i;
+export function attachmentKind(a: {url?: string | null; contentType?: string | null}): 'image' | 'document' {
+  const type = (a.contentType || '').split(';')[0].trim().toLowerCase();
+  if (type) return type.startsWith('image/') ? 'image' : 'document';
+  const path = (a.url || '').split(/[?#]/)[0];
+  return IMAGE_PATH.test(path) ? 'image' : 'document';
+}
+
 // canEdit/canDelete come from the server's comment policy; the UI never re-derives them.
 const commentFields = `{id body createdAt editedAt canEdit canDelete user{id name}}`;
 const detailFields = `{ id identifier title description createdAt updatedAt dueDate priority priorityLabel estimate branchName url
   state{id name color type} team{id key name} project{id name} assignee{id name} creator{id name}
   cycle{id name number} parent{id identifier title}
   labels{nodes{id name color}} subscribers{nodes{id name}}
-  attachments{nodes{id url title subtitle createdAt}}
+  attachments{nodes{id url title subtitle contentType createdAt}}
   activity(first:50){nodes{id eventType createdAt actor{name} changes}}
   comments{nodes${commentFields}} }`;
 
@@ -1145,6 +1157,9 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
   const [desc, setDesc] = useState<string | null>(null);
   const [descEdit, setDescEdit] = useState(false);
   const [updateError, setUpdateError] = useState('');
+  // Ids whose preview failed to load, so a dead URL degrades to an icon instead of
+  // leaving the browser's torn-page glyph in the row.
+  const [brokenThumbs, setBrokenThumbs] = useState<Record<string, boolean>>({});
   const [comment, setComment] = useState('');
   const [commentError, setCommentError] = useState('');
   const [pendingComments, setPendingComments] = useState<PendingComment[]>([]);
@@ -1369,7 +1384,7 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
       });
       const b = await r.json();
       if (!r.ok) throw new Error(b.error || 'Upload failed');
-      const d = await gql(`mutation($input:AttachmentCreateInput!){attachmentCreate(input:$input){success attachment{id url title subtitle createdAt}}}`,
+      const d = await gql(`mutation($input:AttachmentCreateInput!){attachmentCreate(input:$input){success attachment{id url title subtitle contentType createdAt}}}`,
         {input: {issueId: detail.id, url: b.url, title: b.title || file.name}});
       if (!d.attachmentCreate?.success) throw new Error('Attachment was rejected');
       updateCachedDetail(detail.id, en => ({...en, detail: {...en.detail, attachments: {nodes: [...(en.detail.attachments?.nodes || []), d.attachmentCreate.attachment]}}}));
@@ -1381,7 +1396,7 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
     if (!attachUrl.trim()) return;
     setUploading(true); setUpdateError('');
     try {
-      const d = await gql(`mutation($input:AttachmentCreateInput!){attachmentCreate(input:$input){success attachment{id url title subtitle createdAt}}}`,
+      const d = await gql(`mutation($input:AttachmentCreateInput!){attachmentCreate(input:$input){success attachment{id url title subtitle contentType createdAt}}}`,
         {input: {issueId: detail.id, url: attachUrl.trim(), title: attachTitle.trim() || attachUrl.trim()}});
       if (!d.attachmentCreate?.success) throw new Error('Attachment was rejected');
       updateCachedDetail(detail.id, en => ({...en, detail: {...en.detail, attachments: {nodes: [...(en.detail.attachments?.nodes || []), d.attachmentCreate.attachment]}}}));
@@ -1629,7 +1644,7 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
                       <button type="button" className="lin-btn" disabled={uploading} onClick={() => fileRef.current?.click()}>
                         {uploading ? 'Uploading…' : 'Upload file'}
                       </button>
-                      <input ref={fileRef} type="file" hidden accept="image/*,video/*,.pdf,.txt,.md"
+                      <input ref={fileRef} type="file" hidden accept="image/*,video/*,.pdf,.txt,.md,.markdown,.csv,.tsv,.json,.rtf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.odt,.ods,.odp"
                         onChange={e => { const f = e.target.files?.[0]; if (f) void doUpload(f); e.target.value = ''; }} />
                     </div>
                     <div className="lin-menu-divider" />
@@ -1645,10 +1660,13 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
             </header>
             <div className="lin-attach-list">
               {(detail.attachments?.nodes || []).map(a => {
-                const isImg = /\.(png|jpe?g|gif|webp|svg)$/i.test(a.url);
+                const preview = attachmentKind(a) === 'image' && !brokenThumbs[a.id];
                 return (
                   <div key={a.id} className="lin-attach">
-                    {isImg ? <img className="thumb" src={a.url} alt="" /> : <Link2 size={16} color="var(--muted)" />}
+                    {preview
+                      ? <img className="thumb" src={a.url} alt="" loading="lazy" decoding="async"
+                          onError={() => setBrokenThumbs(m => ({...m, [a.id]: true}))} />
+                      : <FileText size={16} color="var(--muted)" aria-hidden="true" />}
                     <a href={a.url} target="_blank" rel="noopener noreferrer">{a.title}</a>
                     {a.subtitle && <small>{a.subtitle}</small>}
                     <small style={{marginLeft: 'auto'}}>{relTime(a.createdAt)}</small>
