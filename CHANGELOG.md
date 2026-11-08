@@ -24,6 +24,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `memberArchive(userId)` removes a member from a workspace without destroying the
+  record: the user row is soft-archived, their API keys are revoked and the org
+  membership is deactivated. Self-removal and removing the last active admin are
+  refused. Re-inviting a removed address restores the same profile (one user row,
+  issue history intact) instead of failing on the existing global identity.
+- `scripts/test-settings-routes.mjs` tests the path -> view table without a browser,
+  and `scripts/ui-probes/settings-e2e.cjs` drives the cycle-settings route and the
+  member Remove action in a real browser.
+
+### Fixed
+
+- The team cycle-settings page (`/workspace/team/<key>/cycles/settings`) opened the
+  workspace Settings page instead. Routing tested `includes('/settings')` before the
+  team-scoped branches, so the cycle-settings route was unreachable — reported as
+  "cant set up cycles anymore". The path table now lives in `frontend/src/routes.ts`
+  and matches team routes first.
+
 - First-run setup is a guided wizard with a live workspace preview: account,
   workspace, first team, an optional first project, invitations and an optional
   Google Workspace connection. Reloading resumes unfinished setup, a lost response

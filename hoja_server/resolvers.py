@@ -338,6 +338,16 @@ def r_organization_members(_, info, first=100):
     return _conn([store.ser_user(member, uid) for member in store.organization_members(org)[:first]])
 
 
+@query.field("archivedMembers")
+def r_archived_members(_, info):
+    """Removed members, visible only to admins so a removal can be audited and undone."""
+    store, _w, org, uid = _ctx(info)
+    actor = store.get_user(org, uid)
+    if not actor or not actor.get("admin"):
+        return []
+    return [store.ser_user(row, uid) for row in store.archived_members(org)]
+
+
 @query.field("workspace")
 def r_workspace(_, info):
     store, _w, org, _uid = _ctx(info)
@@ -1021,6 +1031,28 @@ def m_member_deactivate(_, info, userId):
 @mutation.field("memberReactivate")
 def m_member_reactivate(_, info, userId):
     return _set_member_active(info, userId, active=True)
+
+
+@mutation.field("memberArchive")
+def m_member_archive(_, info, userId):
+    """Remove a member from the workspace: archived, keys revoked, re-invitable."""
+    store, _w, org, uid = _ctx(info)
+    actor = store.get_user(org, uid)
+    if not actor or not actor.get("admin"):
+        return {"success": False, "user": None}
+    target = store.archive_member(org, uid, userId)
+    return {"success": bool(target), "user": store.ser_user(target, uid)}
+
+
+@mutation.field("memberRestore")
+def m_member_restore(_, info, userId):
+    """Undo a removal so the admin does not have to re-invite to get someone back."""
+    store, _w, org, uid = _ctx(info)
+    actor = store.get_user(org, uid)
+    if not actor or not actor.get("admin"):
+        return {"success": False, "user": None}
+    target = store.restore_member(org, uid, userId)
+    return {"success": bool(target), "user": store.ser_user(target, uid)}
 
 
 def _set_member_active(info, user_id, *, active: bool):

@@ -1007,6 +1007,87 @@ class Store:
                 active=bool(active), updated_at=now))
         return self.get_user(org_id, user_id)
 
+    def archive_member(self, org_id: str, actor_id: str, user_id: str) -> dict | None:
+        """Remove a member from this workspace without destroying their record.
+
+        Soft-archives the user row, deactivates the org membership and revokes every
+        API key they hold in this org. Refuses to remove yourself or the last active
+        admin. Archiving is reversible through invite_member (same profile, same
+        history) and the row is hidden everywhere archived_at is filtered.
+        """
+        from hoja_server.db import api_key as api_key_table
+
+        now = datetime.now(timezone.utc).isoformat()
+        with self.engine.begin() as conn:
+            target = conn.execute(select(user.c.id, user.c.admin, user.c.active).where(and_(
+                user.c.organization_id == org_id, user.c.id == user_id,
+                user.c.archived_at.is_(None), user.c.kind == "human",
+            ))).first()
+            if not target:
+                return None
+            if user_id == actor_id:
+                return None
+            if target.admin and target.active:
+                other_admins = conn.execute(select(user.c.id).where(and_(
+                    user.c.organization_id == org_id, user.c.admin.is_(True),
+                    user.c.active.is_(True), user.c.archived_at.is_(None),
+                    user.c.id != user_id,
+                )).with_for_update()).all()
+                if not other_admins:
+                    return None
+            conn.execute(user.update().where(user.c.id == user_id).values(
+                active=False, archived_at=now, updated_at=now))
+            conn.execute(organization_membership.update().where(and_(
+                organization_membership.c.organization_id == org_id,
+                organization_membership.c.profile_user_id == user_id,
+            )).values(active=False))
+            conn.execute(api_key_table.update().where(and_(
+                api_key_table.c.user_id == user_id,
+                api_key_table.c.organization_id == org_id,
+                api_key_table.c.revoked_at.is_(None),
+            )).values(revoked_at=now))
+            # A removal must end access everywhere, not just in this request path:
+            # live browser sessions and the stored credential would otherwise keep
+            # working after the admin believed the person was gone.
+            conn.execute(browser_session.delete().where(
+                browser_session.c.user_id == user_id))
+            identity_id = conn.execute(select(organization_membership.c.identity_id).where(and_(
+                organization_membership.c.organization_id == org_id,
+                organization_membership.c.profile_user_id == user_id,
+            ))).scalar_one_or_none()
+            if identity_id:
+                conn.execute(identity_credential.delete().where(
+                    identity_credential.c.identity_id == identity_id))
+        return self.get_user(org_id, user_id)
+
+    def archived_members(self, org_id: str) -> list[dict]:
+        """Members removed from this workspace, so an admin can see and undo it."""
+        with self.engine.connect() as conn:
+            rows = conn.execute(select(user).where(and_(
+                user.c.organization_id == org_id,
+                user.c.archived_at.is_not(None),
+                user.c.kind == "human",
+            )).order_by(user.c.archived_at.desc())).mappings().all()
+        return [dict(r) for r in rows]
+
+    def restore_member(self, org_id: str, actor_id: str, user_id: str) -> dict | None:
+        """Undo an archive: the same profile returns with its history intact."""
+        now = datetime.now(timezone.utc).isoformat()
+        with self.engine.begin() as conn:
+            target = conn.execute(select(user.c.id).where(and_(
+                user.c.organization_id == org_id, user.c.id == user_id,
+                user.c.archived_at.is_not(None), user.c.kind == "human",
+            ))).first()
+            if not target:
+                return None
+            conn.execute(user.update().where(user.c.id == user_id).values(
+                active=True, archived_at=None, updated_at=now))
+            conn.execute(organization_membership.update().where(and_(
+                organization_membership.c.organization_id == org_id,
+                organization_membership.c.profile_user_id == user_id,
+            )).values(active=True))
+        return self.get_user(org_id, user_id)
+
     def accept_membership_invitation(self, identity_id: str, raw: str,
                                      invitee_password: str) -> dict | None:
         now = datetime.now(timezone.utc).isoformat()
@@ -1159,6 +1240,27 @@ class Store:
         uid = new_id()
         now = datetime.now(timezone.utc).isoformat()
         with self.engine.begin() as conn:
+            removed = conn.execute(select(user.c.id).where(and_(
+                user.c.organization_id == org_id,
+                func.lower(user.c.email) == normalized_email,
+                user.c.archived_at.is_not(None),
+            ))).first()
+            if removed and conn.execute(select(global_identity.c.id).where(
+                    global_identity.c.email == normalized_email)).first():
+                # Re-inviting a removed member restores the same profile: issue history,
+                # attribution and team seats survive, and no duplicate row is created.
+                conn.execute(user.update().where(user.c.id == removed.id).values(
+                    name=clean_name, display_name=clean_name, active=True,
+                    admin=bool(is_admin), archived_at=None, updated_at=now))
+                conn.execute(organization_membership.update().where(and_(
+                    organization_membership.c.organization_id == org_id,
+                    organization_membership.c.profile_user_id == removed.id,
+                )).values(active=True))
+                conn.execute(api_key_table.insert().values(
+                    id=new_id(), token_hash=token_hash(raw_token), label="member invite",
+                    user_id=removed.id, organization_id=org_id, created_at=now,
+                ))
+                return self.get_user(org_id, removed.id), raw_token
             if conn.execute(select(global_identity.c.id).where(
                 global_identity.c.email == normalized_email)).first():
                 return None
