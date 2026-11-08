@@ -1242,3 +1242,9 @@ html.hoja-modal-open{overflow:hidden;scrollbar-gutter:stable}
 .activity-burst details[open] summary>span:before{transform:rotate(90deg)}
 .activity-burst ol{margin:6px 0 2px 14px;padding:0 0 0 10px;border-left:1px solid var(--line);list-style:none}
 .activity-burst-item{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:2px 10px;padding:3px 0;font-size:12px}
+
+/* Workspace drawer backdrop on phone widths; mirrors the settings drawer scrim so a tap
+   outside the open drawer closes it, and it never covers the desktop sidebar. */
+.workspace-drawer-scrim{display:none}
+@media(max-width:700px){.workspace-drawer-scrim{position:fixed;z-index:34;inset:60px 0 0;display:block;visibility:hidden;background:#14141466;opacity:0;transition:opacity .18s ease,visibility .18s ease}.workspace-drawer-scrim.visible{visibility:visible;opacity:1}}
+@media (prefers-reduced-motion: reduce){.workspace-drawer-scrim{transition:none !important}}
