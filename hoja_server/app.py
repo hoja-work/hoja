@@ -44,6 +44,7 @@ from starlette.routing import Route, WebSocketRoute
 from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocket
 
+from hoja_server import cors
 from hoja_server.cloudflare_realtime import CloudflareRealtime
 from hoja_server.connectors_api import connector_binding_for, connector_routes
 from hoja_server.db import (
@@ -2772,5 +2773,8 @@ def create_app(
     # Outermost: enumerated pre-tenant paths run in system context; every other
     # request has no tenant until _auth binds one (fail closed under RLS).
     app.add_middleware(tenant_context.TenantContextMiddleware)
+    # Outermost of all when configured: preflight OPTIONS and error responses
+    # must carry CORS headers even when no tenant has been bound yet.
+    cors.install_cors(app)
     app.add_exception_handler(json.JSONDecodeError, _malformed_json_handler)
     return app
