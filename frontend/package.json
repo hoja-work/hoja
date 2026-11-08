@@ -16,6 +16,7 @@
     "test:modal": "node ../scripts/test-issue-modal-polish.cjs",
     "test:my-issues": "node ../scripts/test-my-issues-completed.cjs",
 "test:issue-parity": "node ../scripts/test-issue-surface-parity.cjs",
+"test:board-prefill": "node ../scripts/test-board-create-prefill.cjs",
 "test:project-overview": "node ../scripts/test-project-overview.cjs",
 "test:project-activity": "node ../scripts/test-project-activity.cjs",
 "test:markdown": "node ../scripts/test-markdown-conformance.cjs && node ../scripts/test-markdown-surfaces.cjs",
