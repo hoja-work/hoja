@@ -427,6 +427,9 @@ def create_app(
         open_mode = os.environ.get("HOJA_SERVER_OPEN", "0") == "1"
 
     limiter = _FailureLimiter(engine, "login_failure", _LOGIN_FAILURE_LIMIT, _LOGIN_FAILURE_WINDOW_SECONDS)
+    #: Probing is unauthenticated and names a workspace for a valid code, so it
+    #: gets its own small budget rather than sharing the sign-in bucket.
+    probe_limiter = _FailureLimiter(engine, "invite_probe", 20, 60.0)
 
     def _same_origin(origin: str | None, headers) -> bool:
         if origin is None:
@@ -1078,12 +1081,21 @@ def create_app(
         nothing they could not read off the link. An invalid code never says
         whether it existed.
         """
+        keys = [f"ip:{_client_ip(request)}"]
         payload, body_error = await _read_json_object(request, _SIGNUP_BODY_LIMIT)
         if body_error is not None:
             return JSONResponse({"valid": False, "reason": "invalid_request"},
                                 status_code=body_error.status_code)
         found = store.peek_membership_invitation(str((payload or {}).get("code") or ""))
         if found is None:
+            # The budget is spent by misses only, and asked after the lookup, so
+            # a shared address never loses the answer to its own invitation.
+            if probe_limiter.blocked(keys):
+                return JSONResponse(
+                    {"valid": False, "reason": "too_many_attempts"}, status_code=429,
+                    headers={"cache-control": "no-store", "Retry-After": "60"},
+                )
+            probe_limiter.record(keys)
             return JSONResponse(
                 {"valid": False, "reason": "invite_invalid_or_expired"},
                 status_code=404, headers={"cache-control": "no-store"},
