@@ -362,7 +362,7 @@ class HojaOAuthProvider(OAuthAuthorizationServerProvider):
                 .first()
             )
         if not row or row["expires_at"] <= _iso(_now()):
-            return None
+            return await self._load_api_key(token)
         tenant_context.bind(row["organization_id"])
         subject = json.dumps({"user_id": row["user_id"], "org_id": row["organization_id"]})
         return AccessToken(
@@ -372,6 +372,29 @@ class HojaOAuthProvider(OAuthAuthorizationServerProvider):
             expires_at=int(_parse_dt(row["expires_at"]).timestamp()),
             resource=row["resource"],
             subject=subject,
+        )
+
+    async def _load_api_key(self, token: str):
+        """Accept a Hoja API key at the MCP endpoint.
+
+        A key authenticates the same identity as an OAuth access token, so the MCP
+        surface does not require a second credential type. Its read/read_write access
+        becomes hoja:read [hoja:write], which keeps write tools gated by scope rather
+        than by a separate code path.
+        """
+        with tenant_context.system():
+            key = self.store.resolve_token(token)
+        if not key:
+            return None
+        tenant_context.bind(key["organization_id"])
+        scopes = [READ_SCOPE] if key.get("access") == "read" else list(ALL_SCOPES)
+        return AccessToken(
+            token=token,
+            client_id="api-key",
+            scopes=scopes,
+            expires_at=None,
+            resource=self._resource_url(),
+            subject=json.dumps({"user_id": key["user_id"], "org_id": key["organization_id"]}),
         )
 
     async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
