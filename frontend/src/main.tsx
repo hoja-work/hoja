@@ -6,7 +6,7 @@ import {Popover} from './Popover';
 import {Activity, ArrowLeft, Bell, Blocks, Bot, Building2, CalendarDays, Check, ChevronDown, ChevronRight, CircleDot, Command, FolderKanban, Inbox, KeyRound, LayoutDashboard, ListFilter, LogOut, Menu, Moon, MoreHorizontal, Plus, Plug, Search, Settings, Shield, SlidersHorizontal, Sun, Tags, Target, UserRound, Users, X, Zap, BarChart3, MoreVertical, MessageCircle, Layers3, List as ListIcon, PanelLeftClose, PanelLeftOpen, Video } from 'lucide-react';
 import {ApiKeysSettings} from './ApiKeysSettings';
 import {ExtensionsSettings} from './ExtensionsSettings';
-import {connectRealtime} from './realtime';
+import {connectRealtime, onRealtimeFrame} from './realtime';
 import {publishChangeEvents, startSync, type SyncHandle, type SyncMeta} from './sync';
 import './styles.css';
 import {confirmDialog, promptDialog, alertDialog, DialogHost} from './dialogs';
@@ -113,8 +113,61 @@ useEffect(()=>{if(!token||view!=='Project detail'&&view!=='Project view')return;
 useEffect(()=>{if(!token||view!=='Team cycle')return;const path=location.pathname;const parts=path.split('/').filter(Boolean);const team=teams.find(t=>t.key.toLowerCase()===parts[2]?.toLowerCase());if(!team){setTeamCycle(null);setTeamCycleLoading(false);setTeamCycleError('Team not found in this workspace.');return}const upcoming=parts[4]==='upcoming';if(!upcoming&&team.activeCycle){setTeamCycle({...team.activeCycle,team:{id:team.id,key:team.key,name:team.name}});setTeamCycleError('');setTeamCycleLoading(false);return}let live=true;setTeamCycle(null);setTeamCycleLoading(true);setTeamCycleError('');gql(`query TeamCycle($filter:CycleFilter){cycles(first:10,filter:$filter){nodes{id name number startsAt endsAt completedAt progress team{id key name}}}}`,{filter:{team:{id:{eq:team.id}},[upcoming?'isNext':'isActive']:{eq:true}}}).then(d=>{if(live&&location.pathname===path)setTeamCycle(d.cycles.nodes[0]||null)}).catch(e=>{if(live&&location.pathname===path)setTeamCycleError((e as Error).message)}).finally(()=>{if(live&&location.pathname===path)setTeamCycleLoading(false)});return()=>{live=false}},[token,view,workspace.id,teams,teamCycleRoute]);
 useEffect(()=>{if(!token||view!=='Cycle detail')return;const id=location.pathname.split('/').filter(Boolean)[2];if(!id)return;let live=true;const known=cycles.find(c=>c.id===id);setCycleDetailError('');if(known){setActiveCycle(old=>old?.id===id?{...known,description:old.description}:known);setCycleDetailLoading(false)}else{setCycleDetailLoading(true);setActiveCycle(null)}gql(`query OneCycle($id:String!){cycle(id:$id){id name description number startsAt endsAt completedAt progress team{id key name}}}`,{id}).then(d=>{if(!live)return;if(!d.cycle)throw Error('Cycle not found in this workspace.');setActiveCycle(d.cycle)}).catch(e=>{if(live&&!known)setCycleDetailError((e as Error).message)}).finally(()=>{if(live)setCycleDetailLoading(false)});return()=>{live=false}},[token,view,workspace.id,cycles]);
 const loadMoreProjects=async()=>{if(projectLoadRef.current||!projectHasMore||!projectCursor)return;projectLoadRef.current=true;const generation=projectGeneration.current;setProjectLoading(true);setProjectError('');try{const d=await gql(`query MoreProjects($after:String){projects(first:100,after:$after){nodes{id name description state progress startDate targetDate health lead{name} teams{nodes{id name key}}} pageInfo{hasNextPage endCursor}}}`,{after:projectCursor});if(generation!==projectGeneration.current)return;const page=d.projects;if(page.pageInfo?.hasNextPage&&(!page.pageInfo.endCursor||page.pageInfo.endCursor===projectCursor||!page.nodes.length))throw Error('Projects pagination did not advance.');setProjects(old=>{const ids=new Set(old.map(p=>p.id));return [...old,...page.nodes.filter((p:Project)=>!ids.has(p.id))]});setProjectCursor(page.pageInfo?.endCursor||null);setProjectHasMore(Boolean(page.pageInfo?.hasNextPage))}catch(e){if(generation===projectGeneration.current)setProjectError((e as Error).message)}finally{projectLoadRef.current=false;if(generation===projectGeneration.current)setProjectLoading(false)}};
-const loadActivity=async(after:string|null=null)=>{if(activityLoadRef.current)return;activityLoadRef.current=true;const generation=activityGeneration.current;setActivityLoading(true);setActivityError('');try{const d=await gql(`query MyIssueActivity($after:String){myIssueActivity(first:50,after:$after){nodes{id eventType createdAt actor{name} changes issue ${issueFields}} pageInfo{hasNextPage endCursor}}}`,{after});if(generation!==activityGeneration.current)return;const page=d.myIssueActivity;const events:IssueActivityEvent[]=page.nodes;const next=page.pageInfo;if(next?.hasNextPage&&(!next.endCursor||next.endCursor===after||!events.length))throw Error('Activity pagination did not advance. Retry later.');setActivityEvents(previous=>{const seen=new Set((after?previous:[]).map(e=>e.id));return [...(after?previous:[]),...events.filter(e=>!seen.has(e.id))]});setActivityCursor(next?.endCursor||null);setActivityHasMore(Boolean(next?.hasNextPage))}catch(e){if(generation===activityGeneration.current)setActivityError((e as Error).message)}finally{activityLoadRef.current=false;if(generation===activityGeneration.current)setActivityLoading(false)}};
-useEffect(()=>{if(token&&view==='My issues'&&myIssuesTab==='Activity')void loadActivity()},[token,view,myIssuesTab,workspace.id]);
+// Live activity state: one in-flight request at a time. A refresh dropped by a load-more (or the
+// reverse) is queued once and retried when the in-flight request settles, so neither is lost.
+const activityRows=useRef(activityEvents);activityRows.current=activityEvents;
+const activityNext=useRef<{after:string|null;refresh:boolean}|null>(null);
+const loadActivity=async(after:string|null=null,refresh=false)=>{
+  if(activityLoadRef.current){activityNext.current={after,refresh};return}
+  activityLoadRef.current=true;const generation=activityGeneration.current;
+  // A background refresh keeps the rows on screen instead of flipping the panel back to "Loading activity…".
+  if(!refresh)setActivityLoading(true);
+  setActivityError('');
+  try{
+    const d=await gql(`query MyIssueActivity($after:String){myIssueActivity(first:50,after:$after){nodes{id eventType createdAt actor{name} changes issue ${issueFields}} pageInfo{hasNextPage endCursor}}}`,{after});
+    if(generation!==activityGeneration.current)return;
+    const page=d.myIssueActivity;const events:IssueActivityEvent[]=page.nodes;const next=page.pageInfo;
+    if(next?.hasNextPage&&(!next.endCursor||next.endCursor===after||!events.length))throw Error('Activity pagination did not advance. Retry later.');
+    if(refresh){
+      // Newest page first, then the pages already loaded, de-duplicated by event id. The loaded tail keeps
+      // its own cursor, so "Load more activity" still continues from where it stopped. If more than a page
+      // of new events landed since the last refresh the old rows sit past a gap, so restart from this page.
+      const previous=activityRows.current;const known=new Set(previous.map(e=>e.id));
+      const continuous=!previous.length||events.some(e=>known.has(e.id));
+      setActivityEvents(old=>{
+        if(!continuous)return events;
+        const seen=new Set(events.map(e=>e.id));
+        return [...events,...old.filter(e=>!seen.has(e.id))].sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+      });
+      if(!continuous||!previous.length){setActivityCursor(next?.endCursor||null);setActivityHasMore(Boolean(next?.hasNextPage))}
+    }else{
+      setActivityEvents(previous=>{const seen=new Set((after?previous:[]).map(e=>e.id));return [...(after?previous:[]),...events.filter(e=>!seen.has(e.id))]});
+      setActivityCursor(next?.endCursor||null);setActivityHasMore(Boolean(next?.hasNextPage));
+    }
+  }catch(e){if(generation===activityGeneration.current)setActivityError((e as Error).message)}
+  finally{
+    activityLoadRef.current=false;
+    if(generation===activityGeneration.current)setActivityLoading(false);
+    const queued=activityNext.current;activityNext.current=null;
+    if(queued&&generation===activityGeneration.current)void loadActivity(queued.after,queued.refresh);
+  }
+};
+// Stable handle for the effects below: they call through the ref, so their dependency lists stay honest.
+const loadActivityRef=useRef(loadActivity);loadActivityRef.current=loadActivity;
+useEffect(()=>{if(token&&view==='My issues'&&myIssuesTab==='Activity')void loadActivityRef.current()},[token,view,myIssuesTab,workspace.id]);
+// The activity panel follows the same realtime feed that keeps the issue list current: issue/comment
+// change events bump `activityVersion`, which refetches the newest page and merges it (see loadActivity).
+const activityVersion=useEntityVersion(['issue','comment'],undefined,500);
+const activitySeenVersion=useRef(activityVersion);
+useEffect(()=>{
+  const fresh=activityVersion!==activitySeenVersion.current;activitySeenVersion.current=activityVersion;
+  if(fresh&&token&&view==='My issues'&&myIssuesTab==='Activity')void loadActivityRef.current(null,true);
+},[activityVersion,token,view,myIssuesTab]);
+// A reconnect the server answers with {reset:true} carries no events, so refresh the panel directly.
+useEffect(()=>{
+  if(!(token&&view==='My issues'&&myIssuesTab==='Activity'))return;
+  return onRealtimeFrame(frame=>{if(frame.reset)void loadActivityRef.current(null,true)});
+},[token,view,myIssuesTab]);
 // Closed issues older than the sync window, limited to the viewer's own (assigned or created). Fetched once per
 // sync generation when a My issues view needs them, then adopted into the store so they stay live.
 const loadOlderMine=async(field:OlderField,retry=false)=>{const cur=olderMineRef.current[field];if(!closedCutoff||!viewer.id||(cur&&!(retry&&cur.status==='error')))return;const generation=issueLoadGeneration.current;const set=(v:NonNullable<OlderMine[OlderField]>)=>{if(generation!==issueLoadGeneration.current)return;olderMineRef.current={...olderMineRef.current,[field]:v};setOlderMine(olderMineRef.current)};set({status:'loading'});let after:string|null=null;try{do{const d=await gql(`query MyOlderClosedIssues($after:String,$filter:IssueFilter){issues(first:100,after:$after,filter:$filter,orderBy:updatedAt){nodes ${issueFields} pageInfo{hasNextPage endCursor}}}`,{after,filter:{[field]:{id:{eq:viewer.id}},state:{type:{in:['completed','canceled']}},updatedAt:{lt:closedCutoff}}});if(generation!==issueLoadGeneration.current)return;const page=d.issues;const rows:Issue[]=page.nodes;if(page.pageInfo?.hasNextPage&&(!page.pageInfo.endCursor||page.pageInfo.endCursor===after||!rows.length))throw Error('Issue pagination did not advance. Retry later.');if(rows.length){if(syncRef.current)syncRef.current.adopt(rows);else setIssues(previous=>{const seen=new Set(previous.map(x=>x.id));return [...previous,...rows.filter(x=>!seen.has(x.id))]})}after=page.pageInfo?.hasNextPage?page.pageInfo.endCursor:null}while(after);set({status:'done'})}catch(e){set({status:'error',error:(e as Error).message})}};
