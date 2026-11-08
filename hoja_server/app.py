@@ -16,12 +16,13 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import secrets
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import quote, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 from ariadne import format_error, graphql, graphql_sync
 from graphql import (
@@ -101,6 +102,10 @@ _WEB_ROOT = Path(
 
 # Content-hashed brand mark: the URL changes with the bytes, so CDN caches cannot pin an old response.
 BRAND_MARK = "hoja-clover.8371400e.svg"
+
+#: The shape ``secrets.token_urlsafe(32)`` produces. Anything else is not an
+#: invitation code and must never be reflected into a link or a cookie.
+_INVITE_CODE_RE = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
 
 
 def _first_identity(engine):
@@ -1066,9 +1071,32 @@ def create_app(
 
     async def auth_invite_accept(request: Request):
         body = await request.json()
+        code = str(body.get("code", ""))
+        if body.get("password") in (None, ""):
+            # A workspace that signs people in with Google has no password to
+            # create. The code plus the verified session is the whole proof, and
+            # the store re-checks that the session's address is the invited one.
+            session_token = request.cookies.get("hoja_session")
+            session = store.resolve_browser_session(session_token) if session_token else None
+            identity_id = None
+            if session:
+                member = store.membership_for_profile(
+                    session["organization_id"], session["user_id"]
+                )
+                identity_id = member.get("identity_id") if member else None
+            organization = store.accept_membership_invitation_by_identity(identity_id, code)
+            if not organization:
+                return JSONResponse(
+                    {
+                        "error": "Invite code is invalid, expired, or does not match this account.",
+                        "reason": "invite_refused",
+                    },
+                    status_code=401,
+                )
+            return JSONResponse({"status": "accepted", "organization": organization})
         try:
             result = store.accept_new_member_invitation(
-                str(body.get("code", "")), str(body.get("email", "")), str(body.get("password", ""))
+                code, str(body.get("email", "")), str(body.get("password", ""))
             )
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
@@ -1450,6 +1478,14 @@ def create_app(
     _SIGNUP_SESSION_COOKIE = "hoja_signup_session"
     _OIDC_FLOW_COOKIE = "hoja_oidc_flow"
     _SIGNUP_BODY_LIMIT = 8 * 1024
+    #: Carries an invitation code across the Google round-trip. The browser
+    #: leaves this origin for the control plane and comes back, so the code has
+    #: to live somewhere that survives that hop without being trusted as a
+    #: return URL: a short-lived, httpOnly cookie on this host.
+    _INVITE_COOKIE = "hoja_invite_pending"
+    #: Long enough for one Google round-trip on a slow phone, short enough that
+    #: a stale code is not resurrected days later.
+    _INVITE_COOKIE_MAX_AGE = 15 * 60
     #: Where the page starts Google sign-in: same origin, back to the page itself.
     _GOOGLE_SIGN_IN_URL = "/auth/google/start?return_to=%2Fsignup"
 
@@ -1497,6 +1533,16 @@ def create_app(
     def _signup_identity(request: Request):
         """The google_verified person behind the sign-up cookie, or None."""
         return signup_store.resolve_session(request.cookies.get(_SIGNUP_SESSION_COOKIE))
+
+    def _invite_code(value: object) -> str | None:
+        """An invitation code in the only shape we issue, or None.
+
+        Codes come from ``secrets.token_urlsafe(32)``, so requiring that
+        alphabet is not a limit on real users: it is what keeps an arbitrary
+        string from being reflected into a link or a cookie.
+        """
+        candidate = str(value or "").strip()
+        return candidate if _INVITE_CODE_RE.fullmatch(candidate) else None
 
     def _control_plane_host() -> str:
         return (urlsplit(signup_config.control_plane_url or "").hostname or "").lower()
@@ -1651,8 +1697,12 @@ def create_app(
         _security_log.info(
             "auth.handoff source=%s target_host=%s", source, target_host
         )
+        # Build the handoff from the host, never from the whole target: a target
+        # may carry `?invite=<code>`, and concatenating a path onto that both
+        # swallows `/auth/google/finish` into the parameter and puts the signed
+        # token in a URL that lands in history and access logs.
         response = RedirectResponse(
-            f"{tenant_target.rstrip('/')}/auth/google/finish?t={quote(transfer, safe='')}",
+            f"https://{target_host}/auth/google/finish?t={quote(transfer, safe='')}",
             status_code=302,
         )
         response.delete_cookie(_OIDC_FLOW_COOKIE, path="/")
@@ -1665,6 +1715,61 @@ def create_app(
         """Start the handoff for a specific workspace using the control session."""
         control_plane = signup_config.control_plane_url or ""
         return f"{control_plane}/auth/google/start?return_to={quote(origin, safe='')}"
+
+    async def sign_in_invited(request: Request):
+        """Send a person to the workspace their invitation link names.
+
+        The control plane keeps no membership directory, so this does not try to
+        guess who invited whom. The link itself names the host, and
+        ``_tenant_transfer_target`` refuses anything that is not one of our own
+        tenant origins — which is what keeps a pasted link from becoming an open
+        redirect. Identity is not asserted here at all: the tenant still runs its
+        own sign-in and its own membership check on arrival.
+        """
+        if not _same_origin(request.headers.get("origin"), request.headers):
+            # A form post from anywhere could otherwise bounce a signed-in person
+            # to a workspace of someone else's choosing. It grants nothing, but a
+            # redirect is still something we should not perform on request.
+            return HTMLResponse(
+                signin_pages.no_workspace_page(
+                    email=None,
+                    sign_out_url="/auth/google/logout",
+                    invite_action="/signin/invited",
+                    invite_error="That form came from another site. Paste the link again.",
+                ),
+                status_code=403,
+                headers={"cache-control": "no-store"},
+            )
+        length = request.headers.get("content-length")
+        if length and length.isdigit() and int(length) > 8 * 1024:
+            return JSONResponse({"error": "Request too large."}, status_code=413)
+        form = await request.form()
+        raw = str(form.get("link") or "").strip()
+        candidate = raw if "://" in raw else f"https://{raw}"
+        parts = urlsplit(candidate)
+        code = ""
+        for chunk in (parts.query, parts.fragment):
+            code = code or (parse_qs(chunk).get("invite") or [""])[0]
+        target = _tenant_transfer_target(f"https://{parts.hostname or ''}/")
+        identity = _signup_identity(request)
+        if target is None or _invite_code(code) is None:
+            page = signin_pages.no_workspace_page(
+                email=(identity or {}).get("email"),
+                sign_out_url="/auth/google/logout",
+                invite_action="/signin/invited",
+                invite_error=(
+                    "That doesn't look like an invitation link. Paste the whole "
+                    "link from the email, including the code after #invite=."
+                ),
+            )
+            return HTMLResponse(
+                page, status_code=400, headers={"cache-control": "no-store"}
+            )
+        host = urlsplit(target).hostname or ""
+        _security_log.info("auth.invited_link host=%s", host)
+        return RedirectResponse(
+            f"https://{host}/?invite={quote(code, safe='')}", status_code=303
+        )
 
     async def sign_in_signout(request: Request):
         """End the control session, then offer the entry again.
@@ -1730,7 +1835,9 @@ def create_app(
                 )
             return HTMLResponse(
                 signin_pages.no_workspace_page(
-                    email=identity.get("email"), sign_out_url="/auth/google/logout"
+                    email=identity.get("email"),
+                    sign_out_url="/auth/google/logout",
+                    invite_action="/signin/invited",
                 ),
                 headers={"cache-control": "no-store"},
             )
@@ -1762,7 +1869,22 @@ def create_app(
             # The control plane borrows the only registered Google redirect.
             back = _tenant_transfer_target(f"https://{host}/") or f"https://{host}/"
             target = f"{control_plane}/signin?next={quote(back, safe='')}"
-            return RedirectResponse(target, status_code=302)
+            response = RedirectResponse(target, status_code=302)
+            invite = _invite_code(request.query_params.get("invite"))
+            if invite:
+                # The code has to survive the control-plane hop and come back:
+                # it is the only thing that will still be true when the browser
+                # returns to this host, signed in but not yet a member.
+                response.set_cookie(
+                    _INVITE_COOKIE,
+                    invite,
+                    max_age=_INVITE_COOKIE_MAX_AGE,
+                    httponly=True,
+                    secure=_cookie_secure(request),
+                    samesite="lax",
+                    path="/",
+                )
+            return response
         if identity is not None and tenant_target is not None:
             # The browser already completed Google OIDC on this control plane.
             # Do not send it through the account chooser again: the tenant only
@@ -2001,13 +2123,24 @@ def create_app(
                 {"error": "Sign-in could not be completed.", "reason": "session_failed"},
                 status_code=500,
             )
-        response = RedirectResponse(_safe_return_to(request.query_params.get("to")), status_code=302)
+        # An invitation in flight outranks the generic landing: the person did
+        # not come here to browse, they came to accept, and the SPA only reads
+        # the code from the URL. The cookie is single-use.
+        pending_invite = _invite_code(request.cookies.get(_INVITE_COOKIE))
+        landing = (
+            f"/?invite={quote(pending_invite, safe='')}"
+            if pending_invite
+            else _safe_return_to(request.query_params.get("to"))
+        )
+        response = RedirectResponse(landing, status_code=302)
         response.set_cookie(
             "hoja_session",
             session_token,
             max_age=14 * 24 * 60 * 60,
             **_session_cookie_attrs(request),
         )
+        if pending_invite:
+            response.delete_cookie(_INVITE_COOKIE, path="/")
         return response
 
     def _signup_workspace_payload(row: dict) -> dict:
@@ -2456,6 +2589,7 @@ def create_app(
             WebSocketRoute("/ws", realtime_socket),
             Route("/signin", sign_in_entry, methods=["GET"]),
             Route("/signin/signout", sign_in_signout, methods=["GET"]),
+            Route("/signin/invited", sign_in_invited, methods=["POST"]),
             Route("/auth/setup", auth_setup, methods=["GET", "POST"]),
             Route("/auth/invite/accept", auth_invite_accept, methods=["POST"]),
             Route("/onboarding/status", onboarding_status, methods=["GET"]),

@@ -34,28 +34,47 @@ h1 { font-size: 26px; line-height: 1.2; letter-spacing: -.03em; margin: 0 0 12px
 p { margin: 0 0 14px; color: #4a4a4a; }
 .who { font-weight: 600; color: #171717; overflow-wrap: anywhere; }
 .actions { display: grid; gap: 10px; margin: 26px 0 18px; }
-a.button, a.secondary, button.secondary {
+/* One button rule for both elements: a <button> that inherits the default UA
+   font resets the weight a sibling <a> keeps, which is how the same visual
+   role ended up looking like two different controls. */
+a.button, button.button, a.secondary, button.secondary {
   display: flex; align-items: center; justify-content: space-between;
   padding: 13px 16px; border-radius: 10px; text-decoration: none;
-  font-weight: 550; border: 1px solid #171717;
+  font-family: inherit; font-size: inherit; line-height: inherit;
+  font-weight: 550; border: 1px solid #171717; cursor: pointer;
 }
-button.secondary { width: 100%; background: transparent; color: inherit; border-color: #d8d8d8; font: inherit; cursor: pointer; }
-a.button { background: #171717; color: #fff; }
-a.secondary { background: transparent; color: #171717; border-color: #d8d8d8; }
-a.secondary:hover { border-color: #171717; }
+button.button, button.secondary { width: 100%; }
+a.button, button.button { background: #171717; color: #fff; }
+a.secondary, button.secondary { background: transparent; color: inherit; border-color: #d8d8d8; }
+a.secondary:hover, button.secondary:hover { border-color: #171717; }
 .meta { border-top: 1px solid #e2e2e2; padding-top: 14px; font-size: 13px; color: #6a6a6a; }
 .meta code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #171717; }
 .error { border: 1px solid #d8d8d8; background: #fff; border-radius: 10px; padding: 10px 12px; margin-bottom: 16px; font-size: 14px; }
 ul { margin: 0 0 18px; padding: 0; list-style: none; display: grid; gap: 8px; }
+h2 { font-size: 15px; letter-spacing: -.01em; margin: 26px 0 6px; }
+.invite-form { display: grid; gap: 8px; margin: 0 0 20px; }
+.invite-form label { font-size: 13px; font-weight: 600; }
+.invite-form input {
+  width: 100%; padding: 12px 14px; border-radius: 10px;
+  font: inherit; background: #fff; color: #171717;
+  border: 1px solid #d8d8d8;
+}
+.invite-form input:focus { outline: 2px solid #171717; outline-offset: 1px; }
+.invite-form button { margin-top: 2px; }
+.or { display: flex; align-items: center; gap: 10px; margin: 22px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: #6a6a6a; }
+.or::before, .or::after { content: ""; height: 1px; background: #e2e2e2; flex: 1; }
 @media (prefers-color-scheme: dark) {
   body { background: #111; color: #f2f2f2; }
   p { color: #b9b9b9; }
   a.button { background: #f2f2f2; color: #111; border-color: #f2f2f2; }
+  button.button { background: #f2f2f2; color: #111; border-color: #f2f2f2; }
   a.secondary { color: #f2f2f2; border-color: #3a3a3a; }
   .meta { border-color: #2b2b2b; color: #9a9a9a; }
   .meta code { color: #f2f2f2; }
   .error { background: #1a1a1a; border-color: #3a3a3a; }
   .mark { background: #f2f2f2; }
+  .invite-form input { background: #1a1a1a; border: 1px solid #3a3a3a; color: #f2f2f2; }
+  .or::before, .or::after { background: #2b2b2b; }
 }
 """
 
@@ -178,13 +197,45 @@ def choose_workspace_page(*, workspaces: list[tuple[str, str]]) -> str:
     return _page("Choose a workspace · Hoja", body)
 
 
-def no_workspace_page(*, email: str | None, sign_out_url: str) -> str:
-    """Verified identity with no workspace behind it."""
+def no_workspace_page(
+    *,
+    email: str | None,
+    sign_out_url: str,
+    invite_action: str | None = None,
+    invite_error: str | None = None,
+) -> str:
+    """Verified identity with no workspace behind it.
+
+    Two people reach this page and they need different things. Someone who was
+    invited already holds a link that names their workspace, so the way out is
+    to use it — not to create a second workspace beside the one that invited
+    them. Someone who was not invited needs an admin. The invitation path comes
+    first because it is the one that was previously a dead end; "ask an admin"
+    survives underneath it for the case that actually needs it.
+    """
     who = f" as <span class=\"who\">{_e(email)}</span>" if email else ""
+    invite_block = ""
+    if invite_action:
+        problem = f"<div class=\"error\">{_e(invite_error)}</div>" if invite_error else ""
+        invite_block = (
+            f"{problem}"
+            "<h2>Were you invited?</h2>"
+            "<p>Paste the invitation link from your email. It already names the "
+            "workspace you were added to.</p>"
+            f"<form class=\"invite-form\" method=\"post\" action=\"{_e(invite_action)}\">"
+            "<label for=\"invite-link\">Invitation link</label>"
+            "<input id=\"invite-link\" name=\"link\" required autocomplete=\"off\" "
+            "spellcheck=\"false\" placeholder=\"https://acme.hoja.work/#invite=…\">"
+            "<button class=\"button\" type=\"submit\">Open my invitation<span>→</span></button>"
+            "</form>"
+            "<h2>Not invited yet?</h2>"
+        )
     body = (
         f"<h1>No workspace yet</h1>"
-        f"<p>You're signed in{who}, but this account isn't a member of a workspace.</p>"
-        "<p>Ask a workspace admin for an invitation, then sign in again.</p>"
+        f"<p>You're signed in{who}, but this account isn't a member of a workspace "
+        "yet.</p>"
+        f"{invite_block}"
+        "<p>Ask a workspace admin to invite this address, then sign in again.</p>"
         "<div class=\"actions\">"
         f"<form method=\"post\" action=\"{_e(sign_out_url)}\">"
         "<button class=\"secondary\" type=\"submit\">Use a different account<span>→</span></button>"

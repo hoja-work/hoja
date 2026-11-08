@@ -1057,6 +1057,57 @@ class Store:
             return {"id": org_row["id"], "name": org_row["name"],
                     "urlKey": org_row["url_key"]} if org_row else None
 
+    def accept_membership_invitation_by_identity(self, identity_id: str | None,
+                                                 raw: str) -> dict | None:
+        """Accept an invitation for an already verified identity, with no password.
+
+        A workspace that signs people in with Google has no credential to
+        create: the invitation names an address and Google proved it. Every
+        check that made the password path safe stays here — the code exists, is
+        unspent and unexpired, the profile belongs to the inviting organization,
+        the profile is not deactivated, and the verified address is the invited
+        address. Nothing about the *identity* is inferred from the code.
+        """
+        if not identity_id or not raw:
+            return None
+        now = datetime.now(timezone.utc).isoformat()
+        with self.engine.begin() as conn:
+            invite = conn.execute(select(membership_invitation).where(and_(
+                membership_invitation.c.token_hash == token_hash(raw),
+                membership_invitation.c.accepted_at.is_(None),
+                membership_invitation.c.expires_at > now,
+            ))).mappings().first()
+            if not invite:
+                return None
+            identity_email = conn.execute(select(global_identity.c.email).where(
+                global_identity.c.id == identity_id)).scalar_one_or_none()
+            profile = conn.execute(select(user.c.id, user.c.email).where(and_(
+                user.c.id == invite["profile_user_id"],
+                user.c.organization_id == invite["organization_id"],
+                user.c.active.is_(True), user.c.archived_at.is_(None),
+            ))).first()
+            if not profile or not identity_email:
+                return None
+            if identity_email.strip().lower() != (profile[1] or "").strip().lower():
+                return None
+            membership = conn.execute(select(organization_membership.c.id).where(and_(
+                organization_membership.c.profile_user_id == profile[0],
+                organization_membership.c.organization_id == invite["organization_id"],
+            ))).first()
+            if membership is None:
+                return None
+            conn.execute(organization_membership.update().where(
+                organization_membership.c.id == membership[0]).values(
+                identity_id=identity_id, active=True))
+            conn.execute(membership_invitation.update().where(
+                membership_invitation.c.id == invite["id"]).values(
+                accepted_at=now, accepted_identity_id=identity_id))
+            org_row = conn.execute(select(organization.c.id, organization.c.name,
+                                          organization.c.url_key).where(
+                organization.c.id == invite["organization_id"])).mappings().first()
+        return {"id": org_row["id"], "name": org_row["name"],
+                "urlKey": org_row["url_key"]} if org_row else None
+
     def accept_new_member_invitation(self, raw: str, email: str,
                                      password: str) -> tuple[str, dict] | None:
         """Set credentials for a pre-created invited profile and consume its code."""

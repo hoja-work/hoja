@@ -19,6 +19,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 
 #: Prefix keeps the format versionable and makes a stray value easy to reject.
@@ -212,4 +213,13 @@ def tenant_target(
     path = parts.path or "/"
     if not path.startswith("/"):
         return None
+    # An invitation code is the one query a return target may carry: without it
+    # a person who signs in through Google lands back on the workspace root and
+    # the invite screen they were sent for is gone. Only that one parameter is
+    # preserved, and only in the shape an invite code actually has.
+    from urllib.parse import parse_qs
+
+    code = (parse_qs(parts.query).get("invite") or [""])[0]
+    if code and re.fullmatch(r"[A-Za-z0-9_-]{16,128}", code):
+        return f"https://{host}{path}?invite={code}"
     return f"https://{host}{path}"
