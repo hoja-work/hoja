@@ -433,6 +433,12 @@ function InviteAcceptance({code,onDone}:{code:string;onDone:()=>void}){
   if(hosted)setGoogleUrl(`/auth/google/start?invite=${encodeURIComponent(code)}&return_to=%2F`);
   /* Coming back from Google means a session already exists: accept with the
    * code alone instead of asking for a password the person never had. */
+  /* Validate the code before asking for anything: an expired invitation should
+   * say so on arrival, not after someone has chosen a password. */
+  let valid=true;
+  try{const probe=await fetch(`/auth/invite/probe?code=${encodeURIComponent(code)}`);valid=probe.ok;if(!valid)setError('This invitation has expired or been replaced. Ask a workspace admin to resend it.')}catch{}
+  if(!live)return;
+  if(!valid){setMode('failed');return}
   let signedIn=false;
   try{signedIn=(await fetch('/auth/me')).ok}catch{}
   if(!live)return;

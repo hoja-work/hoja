@@ -318,3 +318,12 @@ def test_surrounding_whitespace_from_a_paste_is_tolerated(control_client):
         follow_redirects=False,
     )
     assert r.status_code == 303
+
+
+def test_the_probe_route_tells_the_screen_whether_the_code_is_still_good(control_client):
+    """An expired code is refused on arrival, not after a password is chosen."""
+    client, _engine = control_client
+
+    missing = client.get("/auth/invite/probe?code=" + "z" * 43)
+    assert missing.status_code == 404
+    assert missing.json()["valid"] is False

@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 import base64
 import binascii
 import json
+import logging
 
 from graphql import GraphQLError
 from ariadne import (
@@ -19,6 +20,9 @@ from ariadne import (
     make_executable_schema,
 )
 from hoja_server import mail_events
+
+logger = logging.getLogger(__name__)
+from hoja_server import store as store_module
 from hoja_server import extensions
 from hoja_server.deployment import single_org_mode
 
@@ -997,7 +1001,7 @@ def m_membership_invitation_create(_, info, userId):
         workspace = store.workspace(org) or {}
         # Delivery is best-effort on purpose: the invite row is already committed,
         # and the caller still gets the link to share if sending fails.
-        email_queued = mail_events.send_invite(
+        delivery = mail_events.send_invite(
             store.engine,
             organization_id=org,
             organization_name=workspace.get("name") or "your workspace",
@@ -1006,6 +1010,9 @@ def m_membership_invitation_create(_, info, userId):
             invitee_email=target.get("email"),
             code=code,
         )
+        email_queued = delivery == "sent"
+        if not email_queued:
+            logger.info("mail.invite_not_sent reason=%s", delivery)
     return {"success": bool(code), "user": store.ser_user(store.get_user(org, userId), uid),
             "inviteCode": code, "emailQueued": email_queued}
 
@@ -1075,8 +1082,14 @@ def m_member_invite(_, info, input):
     for team_id in team_ids:
         if not store.team_by_id_or_key(org, team_id, viewer_id=uid):
             raise GraphQLError("Team not found", extensions={"code": "BAD_USER_INPUT", "field": "teamIds"})
-    created = store.invite_member(org, input.get("name", ""), input.get("email", ""),
-                                  bool(input.get("admin", False)), team_ids)
+    try:
+        created = store.invite_member(org, input.get("name", ""), input.get("email", ""),
+                                      bool(input.get("admin", False)), team_ids)
+    except store_module.InviteRefused as refused:
+        # A stable reason so the screen can offer the one action that fixes it
+        # instead of four guesses behind a single "invite failed".
+        raise GraphQLError(refused.message, extensions={
+            "code": "INVITE_REFUSED", "reason": refused.reason}) from refused
     if not created:
         return {"success": False, "user": None, "apiKey": None}
     user_row, api_key = created

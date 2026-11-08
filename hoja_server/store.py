@@ -16,6 +16,18 @@ from graphql import GraphQLError
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.engine import Engine
 
+from hoja_server import addresses
+
+
+class InviteRefused(Exception):
+    """An invitation the workspace will not issue. ``reason`` is a stable code."""
+
+    def __init__(self, reason: str, message: str):
+        super().__init__(message)
+        self.reason = reason
+        self.message = message
+
+
 from hoja_server.db import (
     api_key,
     attachment,
@@ -1057,6 +1069,28 @@ class Store:
             return {"id": org_row["id"], "name": org_row["name"],
                     "urlKey": org_row["url_key"]} if org_row else None
 
+    def peek_membership_invitation(self, raw: str) -> dict | None:
+        """The workspace a still-valid code belongs to, without spending it.
+
+        The invite screen needs this before it asks for anything: telling
+        someone their code expired only after they have chosen a password is
+        the same dead end, one screen later.
+        """
+        if not raw:
+            return None
+        now = datetime.now(timezone.utc).isoformat()
+        with self.engine.connect() as conn:
+            invite = conn.execute(select(membership_invitation.c.organization_id).where(and_(
+                membership_invitation.c.token_hash == token_hash(raw),
+                membership_invitation.c.accepted_at.is_(None),
+                membership_invitation.c.expires_at > now,
+            ))).first()
+            if invite is None:
+                return None
+            org_row = conn.execute(select(organization.c.name, organization.c.url_key).where(
+                organization.c.id == invite[0])).mappings().first()
+        return dict(org_row) if org_row else None
+
     def accept_membership_invitation_by_identity(self, identity_id: str | None,
                                                  raw: str) -> dict | None:
         """Accept an invitation for an already verified identity, with no password.
@@ -1088,7 +1122,7 @@ class Store:
             ))).first()
             if not profile or not identity_email:
                 return None
-            if identity_email.strip().lower() != (profile[1] or "").strip().lower():
+            if not addresses.same(identity_email, profile[1]):
                 return None
             membership = conn.execute(select(organization_membership.c.id).where(and_(
                 organization_membership.c.profile_user_id == profile[0],
@@ -1118,7 +1152,7 @@ class Store:
         digest = self._password_digest(password, salt)
         identity_id = new_id()
         session_token = secrets.token_urlsafe(48)
-        normalized_email = email.strip().lower()
+        normalized_email = addresses.canonical(email)
         with self.engine.begin() as conn:
             invite = conn.execute(select(membership_invitation).where(and_(
                 membership_invitation.c.token_hash == token_hash(raw),
@@ -1200,25 +1234,73 @@ class Store:
 
     def invite_member(self, org_id: str, name: str, email: str, is_admin: bool = False,
                       team_ids: list[str] | None = None) -> tuple[dict, str] | None:
+        """Add a profile for someone who is not in this workspace yet.
+
+        A returning member is not an error: if the profile exists but was
+        deactivated, the invitation reactivates *that* profile so its history
+        and its team seats survive. Every other refusal names its cause, because
+        "invite failed" made the admin guess between four different situations.
+        """
         from hoja_server.db import api_key as api_key_table, gen_token, new_id, token_hash
 
-        normalized_email = email.strip().lower()
+        normalized_email = addresses.canonical(email)
         clean_name = name.strip()
         if not clean_name or "@" not in normalized_email:
-            return None
+            raise InviteRefused("invalid_input", "A name and an email address are required.")
         raw_token = gen_token()
         uid = new_id()
         now = datetime.now(timezone.utc).isoformat()
         with self.engine.begin() as conn:
-            if conn.execute(select(global_identity.c.id).where(
-                global_identity.c.email == normalized_email)).first():
-                return None
-            if conn.execute(select(user.c.id).where(and_(
+            existing = conn.execute(select(
+                user.c.id, user.c.active, user.c.email, user.c.name,
+            ).where(and_(
                 user.c.organization_id == org_id,
                 func.lower(user.c.email) == normalized_email,
                 user.c.archived_at.is_(None),
-            ))).first():
-                return None
+            ))).first()
+            if existing is not None:
+                if existing[1]:
+                    raise InviteRefused(
+                        "already_member",
+                        f"{existing[3] or existing[2] or normalized_email} is already a member of this workspace.",
+                    )
+                # Removed earlier: restore the profile instead of minting a second
+                # one, and hand back a fresh member invite key.
+                conn.execute(user.update().where(user.c.id == existing[0]).values(
+                    active=True, updated_at=now))
+                conn.execute(api_key_table.insert().values(
+                    id=new_id(), token_hash=token_hash(raw_token), label="member invite",
+                    user_id=existing[0], organization_id=org_id, created_at=now,
+                ))
+                uid = existing[0]
+                identity = conn.execute(select(global_identity.c.id).where(
+                    global_identity.c.email == normalized_email)).first()
+                if identity is None:
+                    identity_id = new_id()
+                    conn.execute(global_identity.insert().values(
+                        id=identity_id, email=normalized_email, created_at=now))
+                else:
+                    identity_id = identity[0]
+                membership = conn.execute(select(organization_membership.c.id).where(and_(
+                    organization_membership.c.profile_user_id == uid,
+                    organization_membership.c.organization_id == org_id,
+                ))).first()
+                if membership is None:
+                    conn.execute(organization_membership.insert().values(
+                        id=new_id(), identity_id=identity_id, organization_id=org_id,
+                        profile_user_id=uid, active=True, created_at=now))
+                else:
+                    conn.execute(organization_membership.update().where(
+                        organization_membership.c.id == membership[0]).values(
+                        identity_id=identity_id, active=True))
+                restored = conn.execute(select(user).where(user.c.id == uid)).mappings().first()
+                return dict(restored), raw_token
+            if conn.execute(select(global_identity.c.id).where(
+                global_identity.c.email == normalized_email)).first():
+                raise InviteRefused(
+                    "identity_exists",
+                    "That address already has an account on this workspace. Ask an admin to restore it instead.",
+                )
             conn.execute(user.insert().values(
                 id=uid, organization_id=org_id, name=clean_name, display_name=clean_name,
                 email=normalized_email, active=True, admin=bool(is_admin),

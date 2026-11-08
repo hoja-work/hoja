@@ -1069,6 +1069,26 @@ def create_app(
             return JSONResponse({"error": "Invalid API token"}, status_code=401)
         return JSONResponse({"status": "password_set"}, status_code=201)
 
+    async def auth_invite_probe(request: Request):
+        """Is this invitation code still usable, and where does it lead?
+
+        Deliberately answers with the workspace name only: a valid code is a
+        secret the holder already has, so naming its workspace tells them
+        nothing they could not read off the link. An invalid code never says
+        whether it existed.
+        """
+        found = store.peek_membership_invitation(str(request.query_params.get("code") or ""))
+        if found is None:
+            return JSONResponse(
+                {"valid": False, "reason": "invite_invalid_or_expired"},
+                status_code=404, headers={"cache-control": "no-store"},
+            )
+        return JSONResponse(
+            {"valid": True, "workspace": {"name": found.get("name"),
+                                          "urlKey": found.get("url_key")}},
+            headers={"cache-control": "no-store"},
+        )
+
     async def auth_invite_accept(request: Request):
         body = await request.json()
         code = str(body.get("code", ""))
@@ -2592,6 +2612,7 @@ def create_app(
             Route("/signin/invited", sign_in_invited, methods=["POST"]),
             Route("/auth/setup", auth_setup, methods=["GET", "POST"]),
             Route("/auth/invite/accept", auth_invite_accept, methods=["POST"]),
+            Route("/auth/invite/probe", auth_invite_probe, methods=["GET"]),
             Route("/onboarding/status", onboarding_status, methods=["GET"]),
             Route("/onboarding/bootstrap", onboarding_bootstrap, methods=["POST"]),
             Route("/auth/login", auth_login, methods=["POST"]),

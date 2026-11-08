@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
+from hoja_server import addresses
 from hoja_server import schema_sdl  # noqa: F401  (keeps table imports honest)
 from hoja_server.db import (
     global_identity,
@@ -271,7 +272,7 @@ def resolve_verified_email(
     ``action`` is one of ``bootstrapped`` (first user, admin), ``login``
     (existing member) or ``denied`` with a ``reason``.
     """
-    address = (email or "").strip().lower()
+    address = addresses.canonical(email)
     if "@" not in address:
         return {"action": ACTION_DENIED, "reason": "invalid_email"}
     if not subject:

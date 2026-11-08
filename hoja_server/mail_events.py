@@ -25,12 +25,17 @@ def _key(*parts: str) -> str:
 
 def send_invite(engine, *, organization_id: str, organization_name: str,
                 inviter_name: str, invitee_name: str, invitee_email: str,
-                code: str, expires_hours: int = 72) -> bool:
+                code: str, expires_hours: int = 72) -> str:
+    """One of ``sent``, ``not_configured`` or ``failed``.
+
+    A single boolean could not tell an admin which of those happened, so the
+    screen said "invite ready" for a send that never left.
+    """
     config = mail_config.current()
     if not config.configured:
-        return False
+        return "not_configured"
     try:
-        return mail_outbox.send_now(
+        sent = mail_outbox.send_now(
             engine,
             config,
             template="invite",
@@ -47,9 +52,10 @@ def send_invite(engine, *, organization_id: str, organization_name: str,
             idempotency_key=_key("invite", organization_id, invitee_email, code),
             organization_id=organization_id,
         )
+        return "sent" if sent else "failed"
     except Exception:
         log.exception("mail.invite_failed")
-        return False
+        return "failed"
 
 
 def send_welcome(engine, *, organization_id: str, organization_name: str,
