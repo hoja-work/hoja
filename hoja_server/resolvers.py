@@ -1342,6 +1342,13 @@ def m_cycle_update(_, info, id, input):
     return {"success": bool(updated), "cycle": updated}
 
 
+@Issue.field("decisions")
+def i_decisions(obj, info, status=None, first=None):
+    store, _w, org, uid = _ctx(info)
+    return store.decisions_for_issue(org, uid, obj["id"], status=status,
+                                     limit=min(max(int(first or 50), 1), 200))
+
+
 @Attachment.field("issue")
 def a_issue(obj, info):
     store, _w, org, uid = _ctx(info)
@@ -1366,13 +1373,15 @@ def build_schema():
     from hoja_server import webhooks_api
     from hoja_server import extensions_api
     from hoja_server import views_api
+    from hoja_server import decisions_api
     return make_executable_schema(
         [sdl, PROVIDER_SDL, CONVERSATION_SDL, webhooks_api.SDL, extensions_api.SDL,
-         views_api.SDL], query, mutation,
+         views_api.SDL, decisions_api.SDL], query, mutation,
         model_providers.query, model_providers.mutation,
         webhooks_api.query, webhooks_api.mutation, webhooks_api.webhook_type,
         extensions_api.query, extensions_api.mutation, extensions_api.extension_type,
         views_api.query, views_api.mutation, views_api.view_type,
+        decisions_api.query, decisions_api.mutation, decisions_api.decision_type,
         conversation_query,
         model_providers.model_provider_type, Team, Initiative, Issue, IssueActivity, MyIssueActivity, Project, ProjectUpdate, Comment,
         WorkflowState, Cycle, Attachment,

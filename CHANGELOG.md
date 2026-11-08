@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Decisions: an agent can ask a human a question on an issue (`issueDecisionCreate`),
+  the issue reports `decisionNeeded` and is flagged on a board or list, and the human
+  answers in the issue detail with one click (`issueDecisionAnswer`, idempotent and
+  recording `answeredBy`). Agents read the answer back over GraphQL, MCP or
+  `hoja decision ask|list|get|wait|answer|cancel`, so a worker can block on a real
+  answer instead of writing prose into a comment. See `docs/decisions.md`.
 - `memberArchive(userId)` removes a member from a workspace: the row is soft-archived,
   API keys are revoked, browser sessions and the stored credential are deleted, and the
   org membership is deactivated. Self-removal and removing the last active admin are

@@ -16,6 +16,7 @@ from hoja.cli_state import CLIState, set_state
 from hoja.commands.auth_cmd import auth_app, me_app
 from hoja.commands.comment import comment_app
 from hoja.commands.cycle import cycle_app
+from hoja.commands.decision import decision_app
 from hoja.commands.init import init_app
 from hoja.commands.issue import issue_app
 from hoja.commands.label import label_app
@@ -126,6 +127,7 @@ app.add_typer(issue_app, name="issue")
 app.add_typer(project_app, name="project")
 app.add_typer(cycle_app, name="cycle")
 app.add_typer(comment_app, name="comment")
+app.add_typer(decision_app, name="decision")
 app.add_typer(label_app, name="label")
 app.add_typer(memory_app, name="memory")
 app.add_typer(raw_app, name="raw")
