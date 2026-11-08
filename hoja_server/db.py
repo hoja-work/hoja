@@ -1792,7 +1792,7 @@ def _apply_issue_decisions(conn):
             conn.exec_driver_sql(statement)
     elif conn.dialect.name == "postgresql":
         conn.exec_driver_sql(f"""CREATE OR REPLACE FUNCTION chg_issue_decision() RETURNS trigger LANGUAGE plpgsql AS $fn$
-DECLARE v_team TEXT; v_issue_id TEXT;
+DECLARE v_org TEXT; v_seq BIGINT; v_team TEXT; v_issue_id TEXT;
 BEGIN
   v_issue_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.issue_id ELSE NEW.issue_id END;
   SELECT i.team_id INTO v_team FROM issue i WHERE i.id = v_issue_id;
