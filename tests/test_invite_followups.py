@@ -153,3 +153,51 @@ def test_an_unconfigured_mailer_is_not_reported_as_sent(engine, monkeypatch):
         invitee_email="kevin@hoja.work", code="c" * 43)
 
     assert delivery == "not_configured"
+
+
+def test_a_restored_member_can_accept_the_invitation_they_were_sent(engine):
+    """Reactivation must not leave a stale credential that blocks acceptance."""
+    store = _workspace(engine)
+    created, _key = store.invite_member("org-hoja", "Kevin", "kevin@hoja.work")
+    first_code = store.create_membership_invitation("org-hoja", created["id"], "u-luis")
+    assert store.accept_new_member_invitation(first_code, "kevin@hoja.work", "a-long-password")
+
+    with engine.begin() as conn:
+        conn.execute(update(user).where(user.c.id == created["id"]).values(active=False))
+
+    restored, _fresh_key = store.invite_member("org-hoja", "Kevin", "kevin@hoja.work")
+    second_code = store.create_membership_invitation("org-hoja", restored["id"], "u-luis")
+
+    accepted = store.accept_new_member_invitation(second_code, "kevin@hoja.work", "another-long-password")
+    assert accepted is not None
+    assert accepted[1]["user_id"] == created["id"]
+
+
+def test_reactivation_takes_the_role_the_inviter_asked_for(engine):
+    """A deactivated admin must not come back as an admin by accident."""
+    store = _workspace(engine)
+    created, _key = store.invite_member("org-hoja", "Second", "second@hoja.work", True)
+    with engine.begin() as conn:
+        conn.execute(update(user).where(user.c.id == created["id"]).values(active=False))
+
+    restored, _fresh = store.invite_member("org-hoja", "Second", "second@hoja.work", False)
+
+    assert restored["id"] == created["id"]
+    assert bool(restored["admin"]) is False
+
+
+def test_reactivation_clears_the_old_password(engine):
+    store = _workspace(engine)
+    created, _key = store.invite_member("org-hoja", "Kevin", "kevin@hoja.work")
+    code = store.create_membership_invitation("org-hoja", created["id"], "u-luis")
+    store.accept_new_member_invitation(code, "kevin@hoja.work", "a-long-password")
+    with engine.begin() as conn:
+        conn.execute(update(user).where(user.c.id == created["id"]).values(active=False))
+
+    store.invite_member("org-hoja", "Kevin", "kevin@hoja.work")
+
+    with engine.connect() as conn:
+        credentials = conn.execute(select(func.count()).select_from(
+            __import__("hoja_server.db", fromlist=["identity_credential"]).identity_credential
+        )).scalar_one()
+    assert credentials == 0

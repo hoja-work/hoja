@@ -960,11 +960,13 @@ class Store:
             ))).first()
             if not valid:
                 return None
-            # Replace any still-pending invitation for this profile so it remains one-time.
-            conn.execute(membership_invitation.delete().where(and_(
+            # One row per profile: the column is UNIQUE, so an accepted
+            # invitation left behind made re-inviting a former member fail with
+            # an IntegrityError. Replace the row either way; the acceptance is
+            # recorded on the membership, not here.
+            conn.execute(membership_invitation.delete().where(
                 membership_invitation.c.profile_user_id == profile_user_id,
-                membership_invitation.c.accepted_at.is_(None),
-            )))
+            ))
             conn.execute(membership_invitation.insert().values(
                 id=new_id(), token_hash=token_hash(raw), organization_id=org_id,
                 profile_user_id=profile_user_id, created_by_profile_id=creator_profile_id,
@@ -1052,7 +1054,7 @@ class Store:
             profile_email = conn.execute(select(user.c.email).where(
                 user.c.id == profile[0])).scalar_one_or_none()
             if (not identity_email or not profile_email or identity_id == target_identity or
-                    identity_email.strip().lower() != profile_email.strip().lower() or
+                    not addresses.same(identity_email, profile_email) or
                     not target_credential):
                 return None
             if not self._verify_password(invitee_password, target_credential["password_hash"]):
@@ -1080,11 +1082,17 @@ class Store:
             return None
         now = datetime.now(timezone.utc).isoformat()
         with self.engine.connect() as conn:
-            invite = conn.execute(select(membership_invitation.c.organization_id).where(and_(
-                membership_invitation.c.token_hash == token_hash(raw),
-                membership_invitation.c.accepted_at.is_(None),
-                membership_invitation.c.expires_at > now,
-            ))).first()
+            invite = conn.execute(
+                select(membership_invitation.c.organization_id).select_from(
+                    membership_invitation.join(
+                        user, user.c.id == membership_invitation.c.profile_user_id)
+                ).where(and_(
+                    membership_invitation.c.token_hash == token_hash(raw),
+                    membership_invitation.c.accepted_at.is_(None),
+                    membership_invitation.c.expires_at > now,
+                    user.c.active.is_(True),
+                    user.c.archived_at.is_(None),
+                ))).first()
             if invite is None:
                 return None
             org_row = conn.execute(select(organization.c.name, organization.c.url_key).where(
@@ -1266,8 +1274,18 @@ class Store:
                     )
                 # Removed earlier: restore the profile instead of minting a second
                 # one, and hand back a fresh member invite key.
+                # Reactivation is a *new* relationship, not a resumption: the
+                # inviter decides the role, and the old password and browser
+                # sessions belong to the access that was revoked.
                 conn.execute(user.update().where(user.c.id == existing[0]).values(
-                    active=True, updated_at=now))
+                    active=True, admin=bool(is_admin), updated_at=now))
+                stale = conn.execute(select(organization_membership.c.identity_id).where(
+                    organization_membership.c.profile_user_id == existing[0])).scalar_one_or_none()
+                if stale:
+                    conn.execute(identity_credential.delete().where(
+                        identity_credential.c.identity_id == stale))
+                conn.execute(browser_session.delete().where(
+                    browser_session.c.user_id == existing[0]))
                 conn.execute(api_key_table.insert().values(
                     id=new_id(), token_hash=token_hash(raw_token), label="member invite",
                     user_id=existing[0], organization_id=org_id, created_at=now,
@@ -1293,6 +1311,20 @@ class Store:
                     conn.execute(organization_membership.update().where(
                         organization_membership.c.id == membership[0]).values(
                         identity_id=identity_id, active=True))
+                for team_id in dict.fromkeys(team_ids or []):
+                    resolved = conn.execute(select(team.c.id).where(and_(
+                        team.c.organization_id == org_id,
+                        or_(team.c.id == team_id, team.c.key == team_id.upper()),
+                    ))).first()
+                    if resolved is None:
+                        continue
+                    for seat in self._team_and_ancestors(conn, org_id, resolved[0]):
+                        already = conn.execute(select(team_member.c.team_id).where(and_(
+                            team_member.c.team_id == seat,
+                            team_member.c.user_id == uid))).first()
+                        if already is None:
+                            conn.execute(team_member.insert().values(
+                                team_id=seat, user_id=uid, role="member"))
                 restored = conn.execute(select(user).where(user.c.id == uid)).mappings().first()
                 return dict(restored), raw_token
             if conn.execute(select(global_identity.c.id).where(

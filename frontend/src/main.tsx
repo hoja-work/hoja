@@ -436,7 +436,13 @@ function InviteAcceptance({code,onDone}:{code:string;onDone:()=>void}){
   /* Validate the code before asking for anything: an expired invitation should
    * say so on arrival, not after someone has chosen a password. */
   let valid=true;
-  try{const probe=await fetch(`/auth/invite/probe?code=${encodeURIComponent(code)}`);valid=probe.ok;if(!valid)setError('This invitation has expired or been replaced. Ask a workspace admin to resend it.')}catch{}
+  try{
+   const probe=await fetch('/auth/invite/probe',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code})});
+   /* Only an explicit "this code is dead" blocks the form. An outage, a 429 or
+    * an older server without the route must not tell someone their invitation
+    * expired. */
+   if(probe.status===404){const b=await probe.json().catch(()=>({}));if(b?.valid===false){valid=false;setError('This invitation has expired or been replaced. Ask a workspace admin to resend it.')}}
+  }catch{}
   if(!live)return;
   if(!valid){setMode('failed');return}
   let signedIn=false;

@@ -1077,7 +1077,11 @@ def create_app(
         nothing they could not read off the link. An invalid code never says
         whether it existed.
         """
-        found = store.peek_membership_invitation(str(request.query_params.get("code") or ""))
+        payload, body_error = await _read_json_object(request, _SIGNUP_BODY_LIMIT)
+        if body_error is not None:
+            return JSONResponse({"valid": False, "reason": "invalid_request"},
+                                status_code=body_error.status_code)
+        found = store.peek_membership_invitation(str((payload or {}).get("code") or ""))
         if found is None:
             return JSONResponse(
                 {"valid": False, "reason": "invite_invalid_or_expired"},
@@ -2612,7 +2616,7 @@ def create_app(
             Route("/signin/invited", sign_in_invited, methods=["POST"]),
             Route("/auth/setup", auth_setup, methods=["GET", "POST"]),
             Route("/auth/invite/accept", auth_invite_accept, methods=["POST"]),
-            Route("/auth/invite/probe", auth_invite_probe, methods=["GET"]),
+            Route("/auth/invite/probe", auth_invite_probe, methods=["POST"]),
             Route("/onboarding/status", onboarding_status, methods=["GET"]),
             Route("/onboarding/bootstrap", onboarding_bootstrap, methods=["POST"]),
             Route("/auth/login", auth_login, methods=["POST"]),

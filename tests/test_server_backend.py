@@ -1663,7 +1663,9 @@ def test_workspace_members_and_admin_update_are_org_scoped(tmp_path) -> None:
     assert invited_user["apiKey"].startswith("lin_api_")
     duplicate = gql(one["token"], "mutation($input:MemberInviteInput!){memberInvite(input:$input){success}}",
                     {"input": {"name": "Duplicate", "email": f"new-{suffix}@example.test"}})
-    assert duplicate["data"]["memberInvite"]["success"] is False
+    # A refusal is now typed rather than a bare success:false.
+    assert duplicate["data"]["memberInvite"] is None
+    assert duplicate["errors"][0]["extensions"]["reason"] == "already_member"
     denied_invite = gql(two["token"], "mutation($input:MemberInviteInput!){memberInvite(input:$input){success}}",
                         {"input": {"name": "No admin", "email": f"not-admin-{suffix}@example.test"}})
     assert denied_invite["data"]["memberInvite"]["success"] is True
