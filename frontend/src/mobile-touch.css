@@ -9,3 +9,7 @@
 @media(max-width:700px){.project-add-view{position:static!important;right:auto!important;top:auto!important;margin:0 4px 0 0!important}.side-card button,.mt-segment button,.mt-link-btn{min-height:44px!important}}
 @media(max-width:700px){.lin-crumb{min-width:0}.lin-crumb a,.lin-crumb button.crumb-link{white-space:normal;min-width:0;max-width:100%}}
 @media(max-width:700px){.lin-head{flex-wrap:wrap;row-gap:4px}.lin-crumb{flex-wrap:wrap;row-gap:2px}}
+/* Drawer navigation rows used the 28px desktop-rail density, below the 44px touch minimum.
+   Widen only the <=700px drawer (workspace + settings); the >=701px rail, including the
+   collapsed 44px rail, keeps its compact rows. Parity port of hoja-work/hoja-cloud#54 (HOJA-110). */
+@media(max-width:700px){.sidebar .nav-item,.sidebar .nav-group-toggle,.sidebar .team-row .team-name{height:auto!important;min-height:44px!important}.sidebar .team-nav-links button,.sidebar .team-cycle-links button{min-height:44px!important}.sidebar .sidebar-icon,.sidebar .logout-button{width:44px!important;height:44px!important}.sidebar .sidebar-top .workspace-trigger{height:44px!important}.settings-sidebar .nav-item,.settings-sidebar .settings-back{height:auto!important;min-height:44px!important}.settings-sidebar .settings-drawer-close{flex:none!important;width:44px!important;height:44px!important}}
