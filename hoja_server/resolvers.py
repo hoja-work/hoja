@@ -1365,11 +1365,14 @@ def build_schema():
     from hoja_server.agent_conversations import SDL as CONVERSATION_SDL, query as conversation_query
     from hoja_server import webhooks_api
     from hoja_server import extensions_api
+    from hoja_server import views_api
     return make_executable_schema(
-        [sdl, PROVIDER_SDL, CONVERSATION_SDL, webhooks_api.SDL, extensions_api.SDL], query, mutation,
+        [sdl, PROVIDER_SDL, CONVERSATION_SDL, webhooks_api.SDL, extensions_api.SDL,
+         views_api.SDL], query, mutation,
         model_providers.query, model_providers.mutation,
         webhooks_api.query, webhooks_api.mutation, webhooks_api.webhook_type,
         extensions_api.query, extensions_api.mutation, extensions_api.extension_type,
+        views_api.query, views_api.mutation, views_api.view_type,
         conversation_query,
         model_providers.model_provider_type, Team, Initiative, Issue, IssueActivity, MyIssueActivity, Project, ProjectUpdate, Comment,
         WorkflowState, Cycle, Attachment,

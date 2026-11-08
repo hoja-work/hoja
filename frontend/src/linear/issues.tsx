@@ -8,6 +8,7 @@ import {addLocalIssue, getSync, guessNextIdentifier, isLocalIssueId, localIssueI
 import {addLabelInput, bulkRemove, bulkUpdate, useHiddenIssueIds, useScrollWindow, useStableCallback, visibleRange} from './issueStore';
 import {Avatar, CycleChip, CycleGlyph, DueChip, FavStar, IconBtn, LabelChip, LinMenu, LinearStatusIcon, PriorityIcon, ProjectChip, Ring, StatusAgeIcon, SubIssuePill, Tip, cx, dueIsOverdue, fmtDate, fmtFullDate, formatDueDay, parseDueDay, useDismiss, useFavorite, type MenuItem} from './shared';
 import {runExtensionAction, useIssueExtensionActions, type ExtensionAction} from '../extensions';
+import {createView, fieldsFromFilters, filtersFromFields, listViews, type ServerView} from '../views';
 
 /* Linear 1:1 Issues list + board + detail. */
 
@@ -632,7 +633,7 @@ function BulkBar({selected, byId, team, cycles, labels, onClear, onDone}: {
 
 /* ---------------- the team issues page ---------------- */
 
-type SavedView = {id: string; name: string; query: string; state: string};
+type SavedView = Pick<ServerView, 'id' | 'name' | 'filters'>;
 
 /* Rows come from the local-first store (useIssues): the open set and recently closed issues
  * render instantly from cache and stay live through deltas. Only closed issues older than the
@@ -686,10 +687,9 @@ export function LinearTeamIssues({team, teams, orgId, workspaceName, projects, l
   const deferredFilters = React.useDeferredValue(filters);
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(`hoja_saved_views_${orgId}`);
-      if (raw) setViews(JSON.parse(raw).filter((v: {kind?: string}) => (v.kind || 'issues') === 'issues'));
-    } catch { /* ignore */ }
+    let live = true;
+    listViews('issue').then(rows => { if (live) setViews(rows); }).catch(() => { /* the list is an affordance, not a blocker */ });
+    return () => { live = false; };
   }, [orgId]);
 
   useEffect(() => { olderGen.current++; setOlder(olderInitial); setSelected([]); }, [teamId, closedCutoff]);
@@ -766,16 +766,22 @@ export function LinearTeamIssues({team, teams, orgId, workspaceName, projects, l
     + (filters.dueFrom || filters.dueTo || filters.createdFrom || filters.createdTo ? 1 : 0);
 
   const applyView = (v: SavedView) => {
-    setFilters({...emptyFilters, q: v.query || '', status: v.state ? [v.state] : []});
+    const saved = fieldsFromFilters(v.filters);
+    setFilters({...emptyFilters, q: saved.query, status: saved.state ? [saved.state] : []});
     setViewsOpen(false);
   };
   const saveCurrentView = async () => {
     const name = await promptDialog('Name this view:');
     if (!name?.trim()) return;
-    const v = {id: `v${Date.now()}`, name: name.trim(), query: filters.q, state: filters.status[0] || '', kind: 'issues'};
-    const next = [...views, v];
-    setViews(next);
-    try { localStorage.setItem(`hoja_saved_views_${orgId}`, JSON.stringify(next)); } catch { /* ignore */ }
+    try {
+      const created = await createView({
+        name: name.trim(), kind: 'issue',
+        scope: team ? 'team' : 'workspace', ...(team ? {teamId: team.id} : {}),
+        visibility: team ? 'team' : 'workspace',
+        filters: filtersFromFields('issue', filters.q, filters.status[0] || ''), display: {},
+      });
+      setViews(current => [...current, created]);
+    } catch { /* the prompt keeps the page usable when the server refuses */ }
   };
 
   if (!team) return <section className="lin-page"><p className="lin-error" role="alert">Team not found in this workspace.</p></section>;
@@ -823,7 +829,7 @@ export function LinearTeamIssues({team, teams, orgId, workspaceName, projects, l
         </div>
         <div className="lin-viewchips">
           {views.map(v => (
-            <button key={v.id} type="button" className="lin-chipbtn" onClick={() => applyView(v)} title={v.query || 'Saved view'}>{v.name}</button>
+            <button key={v.id} type="button" className="lin-chipbtn" onClick={() => applyView(v)} title={fieldsFromFilters(v.filters).query || 'Saved view'}>{v.name}</button>
           ))}
           <Tip label="Save current filters as a view">
             <button type="button" className="lin-chipbtn" aria-label="Add new view" onClick={saveCurrentView}><Plus size={13} /></button>
