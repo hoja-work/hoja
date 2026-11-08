@@ -39,6 +39,15 @@ import {MeetingNotifier, MeetingBadge} from './meetings/Notifier';
 import {MeetStandalone} from './meetings/MeetRoom';
 import {LinearTeamCycles, LinearCycleDetail, LinearTeamCycle, LinearTeamCycleSettings, LinearWorkspaceCycles} from './linear/cycles';
 
+/* Dev-only: says once which backend the Vite proxy targets. `import.meta.env.DEV` is a
+ * compile-time false in `npm run build`, so the import and the log leave the production bundle. */
+if(import.meta.env.DEV){
+  void import('./dev/devBackend').then(({devBackendOrigin})=>{
+    const devBackend=devBackendOrigin();
+    if(devBackend)console.info(`[hoja dev] API calls proxy to ${devBackend}`);
+  });
+}
+
 export type Team={id:string;name:string;key:string;description?:string;states:{nodes:{id:string;name:string;color:string;type:string}[]};members?:{nodes:{id:string;name:string;email?:string}[]};activeCycle?:Cycle};
 export type Comment={id:string;body:string;user?:{id?:string;name?:string};createdAt?:string;editedAt?:string|null;canEdit?:boolean;canDelete?:boolean};export type IssueActivityEvent={id:string;eventType:string;createdAt:string;issue:Issue;actor?:{name?:string};changes?:Record<string,unknown>};export type IssueLabel={id:string;name:string;color?:string};
 export type Issue={id:string;identifier:string;title:string;description?:string;createdAt?:string;updatedAt?:string;stateChangedAt?:string;dueDate?:string;priority:number;priorityLabel?:string;state?:{id:string;name:string;color:string;type:string};team?:{id:string;key:string;name:string};project?:{id:string;name:string};assignee?:{id:string;name:string};creator?:{id:string;name?:string};subscribers?:{nodes:{id:string}[]};cycle?:{id:string;name?:string;number?:number};labels?:{nodes:IssueLabel[]};comments?:{nodes:Comment[]}};

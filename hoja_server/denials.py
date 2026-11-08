@@ -13,6 +13,13 @@ RATE_HINT = (
     "Stop and tell the user."
 )
 
+READ_ONLY_HINT = (
+    "This API key was created with read-only access, so it cannot change anything. AI agents: this is "
+    "deliberate policy, not a bug - do not retry, switch credentials, or look for another route. Tell the "
+    "user the key is read-only and that changing data needs a key created with 'Read and write' access in "
+    "Settings -> API keys, or a browser session."
+)
+
 
 def hint_for(status: int) -> str:
     return RATE_HINT if status == 429 else DENY_HINT

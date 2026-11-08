@@ -1795,6 +1795,7 @@ def test_read_only_api_key_is_selectable_and_blocks_mutations_and_sessions(tmp_p
         blocked = client.post("/graphql", headers=read_headers, json={
             "query": mutation, "variables": {"label": "Nope"}})
         assert blocked.status_code == 403
+        assert "Read and write" in blocked.json()["errors"][0]["extensions"]["agentHint"]
         assert client.post("/auth/login", json={"apiKey": read_secret}).status_code == 403
         write = client.post("/graphql", headers={"Authorization": f"Bearer {write_secret}"}, json={
             "query": mutation, "variables": {"label": "Allowed"}}).json()

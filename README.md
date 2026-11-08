@@ -198,6 +198,22 @@ uv run pytest
 cd frontend && npm ci && npm run build
 ```
 
+To run the browser app against a local backend, `bash scripts/dev-local.sh` seeds a
+disposable workspace in `.hoja/dev/`, serves the API on `127.0.0.1:8787` and the
+Vite dev server on `127.0.0.1:5173`, and proxies `/graphql`, `/api`, `/auth`,
+`/onboarding`, `/sync` and `/ws` to it. Both bind loopback, the script refuses to
+start with `HOJA_DATABASE_URL` or a non-local `HOJA_APP_URL` set, and the dev proxy
+rejects a non-loopback `HOJA_DEV_BACKEND`. Sign in with the API key it prints, using
+the login screen's **API key** mode. `HOJA_DEV_RESET=1` reseeds the database.
+
+Add `--tailscale` (`HOJA_DEV_TAILSCALE=1`) to bind only the Vite UI to this
+machine's `100.x` Tailscale address so another device on the same tailnet can open
+it; the backend stays on `127.0.0.1` and keeps proxying through Vite. If the host
+firewall is active, allow the UI port on the tailnet interface once:
+`sudo ufw allow in on tailscale0 to any port 5173 proto tcp`. Plain HTTP on a
+`100.x` address is not a secure browser context, so clipboard copy, local view
+creation and camera/microphone meetings may be unavailable there.
+
 - `bash scripts/e2e-local-backend.sh` runs the backend integration pass against a
   disposable local database.
 - `bash scripts/e2e-test.sh` runs the live CLI matrix and needs `HOJA_TOKEN`,
