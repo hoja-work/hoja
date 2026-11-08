@@ -263,7 +263,7 @@
 .connector-action-buttons { display: flex; gap: 8px; }
 .connector-empty { justify-content: center; color: var(--settings-muted); font-size: 12px; }
 
-@media (min-width: 701px) {
+@media (min-width: 701px) and (min-height: 501px), (min-width: 1001px) {
   .app:has(.settings-sidebar) { grid-template-columns: 264px minmax(0, 1fr); }
   .app:has(.settings-sidebar) .main { padding: 43px clamp(26px, 4.5vw, 70px); background: radial-gradient(ellipse at 95% 0%, color-mix(in srgb, var(--settings-accent-soft) 38%, transparent), transparent 34%); }
 }
@@ -277,7 +277,7 @@
   .member-status { grid-column: 4; grid-row: 1; }
 }
 
-@media (max-width: 700px) {
+@media (max-width: 700px), (max-width: 1000px) and (max-height: 500px) {
   .settings-sidebar { width: min(310px, 88vw); flex-basis: auto; padding-top: 14px; }
   .settings-drawer-close { display: grid; }
   .settings-drawer-scrim { position: fixed; z-index: 34; inset: 60px 0 0; display: block; visibility: hidden; background: #14141466; opacity: 0; transition: opacity .18s ease, visibility .18s ease; }
@@ -541,7 +541,7 @@
 :root[data-theme=dark] .settings-page > .workspace-settings-form:has(+ .member-roster),
 :root[data-theme=dark] .settings-page > .workspace-settings-form:has(+ .pending-invites) { border-color: #484848; background: #2d2d2d; }
 
-@media (min-width: 701px) {
+@media (min-width: 701px) and (min-height: 501px), (min-width: 1001px) {
   .app:has(.settings-sidebar) .workspace-content { background: #f6f6f6; }
   .app:has(.settings-sidebar) .main { background: transparent; }
   :root[data-theme=dark] .app:has(.settings-sidebar) .workspace-content { background: #181818; }
@@ -552,7 +552,7 @@
   .settings-workspace-screen > .settings-page-heading { margin-bottom: 4px; }
 }
 
-@media (max-width: 700px) {
+@media (max-width: 700px), (max-width: 1000px) and (max-height: 500px) {
   .app:has(.settings-sidebar) .workspace-content { background: #f6f6f6; }
   :root[data-theme=dark] .app:has(.settings-sidebar) .workspace-content { background: #181818; }
   .settings-page-heading { margin-bottom: 27px; padding-bottom: 20px; }
@@ -728,12 +728,12 @@
 :root[data-theme=dark] .settings-select-trigger.open { border-color: #aaa; box-shadow: 0 0 0 3px #ffffff12; }
 :root[data-theme=dark] .settings-select-trigger:focus-visible { outline-color: #ddd; }
 
-@media (min-width: 701px) {
+@media (min-width: 701px) and (min-height: 501px), (min-width: 1001px) {
   .app:has(.settings-sidebar) .workspace-content { background: #f7f7f7; }
   :root[data-theme=dark] .app:has(.settings-sidebar) .workspace-content { background: #151515; }
 }
 
-@media (max-width: 700px) {
+@media (max-width: 700px), (max-width: 1000px) and (max-height: 500px) {
   .app:has(.settings-sidebar) .workspace-content { background: #f7f7f7; }
   :root[data-theme=dark] .app:has(.settings-sidebar) .workspace-content { background: #151515; }
   .settings-page-heading h1 { font-size: 32px; }
@@ -794,7 +794,7 @@
 .extension-empty-state b { color: var(--settings-ink); font-size: 12px; }
 .extension-empty-state p { max-width: 420px; margin: 0; overflow-wrap: anywhere; font-size: 11px; line-height: 1.55; }
 
-@media (max-width: 700px) {
+@media (max-width: 700px), (max-width: 1000px) and (max-height: 500px) {
   .extension-card { padding: 14px; }
   .extension-card-head { flex-direction: column; align-items: stretch; }
   .extension-meta { grid-template-columns: minmax(0, 1fr); gap: 2px; }
