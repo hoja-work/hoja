@@ -63,3 +63,7 @@ artifacts/settings-*/
 
 # swarm execution records (generated)
 .swarmpi/
+
+# A node_modules symlink is a file, not a directory: the trailing-slash
+# rule above never matched it, so CI got a dangling link instead of deps.
+node_modules
