@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Completing a Google sign-in answered "Internal Server Error": the tenant's
+  `_announce_member` called `membership_announce.announce` while the module was
+  never imported, so every successful sign-in and every accepted invitation
+  failed after the identity had already been verified. The resolve-failure
+  branch of the same handler logged through an undefined `logger`. Imports are
+  fixed, and `tests/test_undefined_globals.py` now fails on any module that
+  references a global it never binds.
 - `/workspace/team/<key>/cycles/settings` opened workspace Settings instead of the cycle
   settings page: the generic `includes('/settings')` test ran before the team-scoped
   branches. Routing moved to `app/frontend/src/routes.ts` and matches team routes first.

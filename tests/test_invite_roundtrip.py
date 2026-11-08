@@ -12,6 +12,7 @@ import pytest
 pytest.importorskip("sqlalchemy")
 pytest.importorskip("starlette")
 
+from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
 from sqlalchemy import select
@@ -100,6 +101,33 @@ def test_a_round_trip_without_an_invitation_lands_on_the_plain_root(tenant):
 
     assert finished.status_code == 302
     assert finished.headers["location"] == "/"
+
+
+def test_a_completed_sign_in_announces_the_member(tenant, monkeypatch):
+    """The finish route must reach the announcement module, not die looking for it.
+
+    This is the regression: `_announce_member` called `membership_announce.announce`
+    while the module was never imported, so every completed Google sign-in on every
+    tenant answered 500 — after the identity had already been verified.
+    """
+    client, _engine, _live = tenant
+    calls = []
+    monkeypatch.setattr(
+        "hoja_server.membership_announce.announce",
+        lambda **kwargs: calls.append(kwargs) or True,
+    )
+
+    finished = client.get(
+        f"/auth/google/finish?t={quote(_token(), safe='')}", follow_redirects=False)
+
+    assert finished.status_code == 302
+    assert len(calls) == 1
+    assert calls[0]["tenant_key"] == KEY
+    assert calls[0]["control_plane_url"] == CONTROL
+    assert calls[0]["slug"] == "hoja"
+    assert calls[0]["email"] == "kevin@hoja.work"
+    assert datetime.fromisoformat(calls[0]["expires_at"]) > (
+        datetime.now(timezone.utc) + timedelta(days=300))
 
 
 def test_the_cookie_is_not_accepted_in_a_shape_we_never_issue(tenant):

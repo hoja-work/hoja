@@ -77,7 +77,14 @@ from hoja_server.meetings import MeetingService
 from hoja_server.meetings_api import MeetingHub, meeting_routes
 from hoja_server.resolvers import build_schema
 from hoja_server.secrets_box import SecretBoxError
-from hoja_server import google_login, identity_transfer, google_oidc, mail_events, signin_pages
+from hoja_server import (
+    google_login,
+    identity_transfer,
+    google_oidc,
+    mail_events,
+    membership_announce,
+    signin_pages,
+)
 from hoja_server.signup_config import (
     TURNSTILE_SCRIPT_URL,
     SignupConfigError,
@@ -2213,7 +2220,7 @@ def create_app(
                     workspace_slug=host.split(".")[0],
                 )
         except Exception:
-            logger.exception("google sign-in could not be resolved")
+            _security_log.exception("sign-in resolve failed host=%s", host)
             return JSONResponse(
                 {"error": "Sign-in could not be completed.", "reason": "resolve_failed"},
                 status_code=500,
