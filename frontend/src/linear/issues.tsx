@@ -487,7 +487,7 @@ function LinearBoard({issues, states, team, onOpen, onMoved, onUpdate, onNew, di
   issues: LinIssue[]; states: IssueState[]; team?: Team; onOpen: (i: LinIssue) => void;
   onMoved: (issueId: string, state: IssueState) => Promise<void>;
   onUpdate: (issueId: string, input: Record<string, unknown>) => Promise<void>;
-  onNew: () => void; display: LinDisplay; setDisplay: (d: LinDisplay) => void;
+  onNew: (stateId?: string) => void; display: LinDisplay; setDisplay: (d: LinDisplay) => void;
 }) {
   const [colMenu, setColMenu] = useState<string | null>(null);
   const [dropCol, setDropCol] = useState<string | null>(null);
@@ -522,7 +522,7 @@ function LinearBoard({issues, states, team, onOpen, onMoved, onUpdate, onNew, di
             <LinearStatusIcon state={state} size={13} />
             <span>{state.name}</span><span className="count">{items.length}</span>
             <span className="sp" />
-            <button type="button" aria-label={`Add issue to ${state.name}`} onClick={onNew}><Plus size={14} /></button>
+            <button type="button" aria-label={`Add issue to ${state.name}`} onClick={() => onNew(state.id)}><Plus size={14} /></button>
             <span style={{position: 'relative'}}>
               <button type="button" aria-label={`${state.name} column options`} onClick={() => setColMenu(m => m === stateKey(state) ? null : stateKey(state))}>···</button>
               {colMenu === stateKey(state) && (
@@ -649,7 +649,7 @@ export function LinearTeamIssues({team, teams, orgId, workspaceName, projects, l
   onMoved: (issueId: string, state: IssueState) => Promise<void>;
   onUpdate: (issueId: string, input: Record<string, unknown>) => Promise<void>;
   /** Ignored: the page is live through the store; kept so callers needn't change. */
-  onNew: () => void; revision: number;
+  onNew: (stateId?: string) => void; revision: number;
   layout: 'List' | 'Board'; onLayoutChange: (l: 'List' | 'Board') => void;
   onNavigate: (view: string, path?: string) => void;
 }) {
@@ -893,7 +893,7 @@ export function LinearTeamIssues({team, teams, orgId, workspaceName, projects, l
                       <b>{g.name}</b><span className="count">{g.items.length}</span>
                       <span className="grow" />
                       <Tip label={`Create issue in ${g.name}`}>
-                        <button type="button" className="add" aria-label={`Create issue in ${g.name}`} onClick={onNew}><Plus size={14} /></button>
+                        <button type="button" className="add" aria-label={`Create issue in ${g.name}`} onClick={() => onNew(g.state?.id)}><Plus size={14} /></button>
                       </Tip>
                     </header>
                   )}
@@ -914,7 +914,7 @@ export function LinearTeamIssues({team, teams, orgId, workspaceName, projects, l
                   <ListFilter size={30} strokeWidth={1.4} />
                   <h2>No issues match</h2>
                   <p>Try clearing filters or create a new issue.</p>
-                  <button type="button" className="lin-btn primary" onClick={onNew}><Plus size={14} /> New issue</button>
+                  <button type="button" className="lin-btn primary" onClick={() => onNew()}><Plus size={14} /> New issue</button>
                 </div>
               )}
               {showOlder && (
