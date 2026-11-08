@@ -108,3 +108,68 @@ def test_create_fails_clearly_without_master_key(tmp_path, monkeypatch) -> None:
         assert res.get("errors"), res
         assert "HOJA_SECRET_KEY" in res["errors"][0]["message"]
         assert SECRET not in str(res)
+
+
+# --- managed providers: internal URL must never be exposed -------------------
+
+MANAGED_ROW = {
+    "id": "default-trefoil",
+    "name": "Trefoil (included)",
+    "provider": "openai",
+    "model_id": "wafer-glm-5.2",
+    "base_url": "http://100.77.155.122:8080/v1",
+    "encrypted_api_key": "ciphertext",
+    "enabled": True,
+    "created_at": "2026-11-08T00:00:00Z",
+    "updated_at": "2026-11-08T00:00:00Z",
+}
+
+
+def test_managed_provider_base_url_is_never_serialized():
+    from hoja_server.model_providers import _serialize
+
+    out = _serialize(MANAGED_ROW)
+    assert out["managed"] is True
+    assert out["baseUrl"] is None, "internal endpoint leaked to the API"
+    assert "100.77" not in repr(out)
+
+
+def test_user_provider_base_url_is_unchanged():
+    from hoja_server.model_providers import _serialize
+
+    out = _serialize({**MANAGED_ROW, "id": "custom-openai"})
+    assert out["managed"] is False
+    assert out["baseUrl"] == MANAGED_ROW["base_url"]
+
+
+def test_internal_host_rejected_without_allowlist(monkeypatch):
+    from hoja_server.model_providers import ALLOWLIST_ENV, validate_model_base_url
+
+    monkeypatch.delenv("HOJA_ALLOW_INSECURE_MODEL_URL", raising=False)
+    monkeypatch.delenv(ALLOWLIST_ENV, raising=False)
+    with pytest.raises(ValueError, match="must use https"):
+        validate_model_base_url("http://100.77.155.122:8080/v1")
+    with pytest.raises(ValueError, match="must not point to a local or private"):
+        validate_model_base_url("https://100.77.155.122:8080/v1")
+
+
+def test_allowlist_permits_only_named_networks(monkeypatch):
+    from hoja_server.model_providers import ALLOWLIST_ENV, validate_model_base_url
+
+    monkeypatch.delenv("HOJA_ALLOW_INSECURE_MODEL_URL", raising=False)
+    monkeypatch.setenv(ALLOWLIST_ENV, "100.64.0.0/10")
+    # inside the tailnet range: allowed over plain http because the network is a
+    # WireGuard tunnel, and the URL is never handed to a client anyway
+    assert validate_model_base_url("http://100.77.155.122:8080/v1") == "http://100.77.155.122:8080/v1"
+    # a different private network is still refused
+    with pytest.raises(ValueError):
+        validate_model_base_url("http://10.0.0.5/v1")
+
+
+def test_public_urls_unaffected_by_allowlist(monkeypatch):
+    from hoja_server.model_providers import ALLOWLIST_ENV, validate_model_base_url
+
+    monkeypatch.delenv("HOJA_ALLOW_INSECURE_MODEL_URL", raising=False)
+    monkeypatch.setenv(ALLOWLIST_ENV, "100.64.0.0/10")
+    assert validate_model_base_url("https://api.openai.com/v1") == "https://api.openai.com/v1"
+    assert validate_model_base_url(None) is None
