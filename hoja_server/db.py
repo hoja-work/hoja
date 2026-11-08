@@ -34,7 +34,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 43
+CURRENT_SCHEMA_REVISION = 44
 
 
 def now_iso() -> str:
@@ -415,6 +415,11 @@ model_provider = Table(
     Column("provider", String, nullable=False),
     Column("model_id", String, nullable=False),
     Column("base_url", String),
+    # Advertised context window of the provider's model, in tokens. Optional: a
+    # workspace admin's own provider may not declare one, and it is not needed to
+    # call the model - it lets the UI state the limit and lets a managed offering
+    # register the model it seeds (see infra/tenants/default-provider.json).
+    Column("context_window", Integer),
     Column("encrypted_api_key", String, nullable=False),
     Column("enabled", Boolean, nullable=False, default=True),
     Column("created_at", String, nullable=False),
@@ -1467,6 +1472,17 @@ def _apply_agent_conversation_title(conn) -> None:
         conn.exec_driver_sql("ALTER TABLE agent_conversation ADD COLUMN title VARCHAR")
 
 
+def _apply_model_provider_context_window(conn) -> None:
+    """Record the model's advertised context window on a provider row.
+
+    Nullable: providers added by workspace admins need no window, and existing rows
+    keep working unchanged. The included offering (infra/tenants/default-provider.json)
+    sets it so the workspace the seed touches has the model described in full.
+    """
+    if "context_window" not in {c["name"] for c in inspect(conn).get_columns("model_provider")}:
+        conn.exec_driver_sql("ALTER TABLE model_provider ADD COLUMN context_window INTEGER")
+
+
 def rate_limit_key_hash(key: str) -> str:
     """Rate-limit keys (emails, IPs) are stored only as SHA-256 digests."""
     return hashlib.sha256(key.encode()).hexdigest()
@@ -1808,6 +1824,8 @@ _MIGRATIONS = {
         saved_view.create(conn, checkfirst=True),
         saved_view_favorite.create(conn, checkfirst=True),
     ),
+    # Renumbered 43 -> 44 on rebase: main already shipped revision 43 (saved views).
+    44: _apply_model_provider_context_window,
 }
 
 
