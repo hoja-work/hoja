@@ -129,6 +129,7 @@ type Mutation {
   membershipInvitationRevoke(userId: String!): DeletePayload
   memberDeactivate(userId: String!): UserPayload
   memberReactivate(userId: String!): UserPayload
+  memberArchive(userId: String!): UserPayload
   workspaceUpdate(input: WorkspaceUpdateInput!): OrganizationPayload
   memberInvite(input: MemberInviteInput!): UserPayload
   memberRoleUpdate(userId: String!, admin: Boolean!): UserPayload

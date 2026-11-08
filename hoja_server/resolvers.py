@@ -1023,6 +1023,17 @@ def m_member_reactivate(_, info, userId):
     return _set_member_active(info, userId, active=True)
 
 
+@mutation.field("memberArchive")
+def m_member_archive(_, info, userId):
+    """Remove a member from the workspace: archived, keys revoked, re-invitable."""
+    store, _w, org, uid = _ctx(info)
+    actor = store.get_user(org, uid)
+    if not actor or not actor.get("admin"):
+        return {"success": False, "user": None}
+    target = store.archive_member(org, uid, userId)
+    return {"success": bool(target), "user": store.ser_user(target, uid)}
+
+
 def _set_member_active(info, user_id, *, active: bool):
     store, _w, org, uid = _ctx(info)
     actor = store.get_user(org, uid)
