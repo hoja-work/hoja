@@ -17,6 +17,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.engine import Engine
 
 from hoja_server import addresses
+from hoja_server import decisions as decisiondocs
 from hoja_server import views as viewdocs
 
 
@@ -38,6 +39,7 @@ from hoja_server.db import (
     cycle,
     issue,
     issue_activity,
+    issue_decision,
     inbox_notification,
     initiative,
     initiative_project,
@@ -317,6 +319,63 @@ class Store:
                 return None
             favorites = self._favorite_ids(conn, org_id, viewer_id)
             return self.ser_view(row, favorite=row["id"] in favorites)
+
+    # ------------------------------------------------------------- decisions
+    def ser_decision(self, row: dict) -> dict:
+        """issue_decision row → IssueDecision; options decode here, never in callers."""
+        return {
+            "id": row["id"], "question": row["question"],
+            "options": decisiondocs.load_options(row.get("options")),
+            "context": row.get("context"), "status": row.get("status"),
+            "answered": row.get("status") == decisiondocs.ANSWERED,
+            "answer": row.get("answer"), "chosenOption": row.get("chosen_option"),
+            "askedByAgent": row.get("asked_by_agent"),
+            "answeredAt": row.get("answered_at"), "canceledAt": row.get("canceled_at"),
+            "createdAt": row.get("created_at"), "updatedAt": row.get("updated_at"),
+            "_issue_id": row.get("issue_id"), "_asked_by_id": row.get("asked_by_id"),
+            "_answered_by_id": row.get("answered_by_id"),
+        }
+
+    def decisions_for_issue(self, org_id: str, viewer_id: str, issue_ref: str,
+                            *, status: str | None = None,
+                            limit: int = 50) -> list[dict]:
+        """Decisions on one issue, newest first. The issue must be readable by the viewer."""
+        with self.engine.connect() as conn:
+            issue_row = self._issue_ref_row(conn, org_id, viewer_id, issue_ref)
+            if not issue_row:
+                return []
+            stmt = select(issue_decision).where(and_(
+                issue_decision.c.organization_id == org_id,
+                issue_decision.c.issue_id == issue_row["id"]))
+            if status:
+                stmt = stmt.where(issue_decision.c.status == status)
+            stmt = stmt.order_by(issue_decision.c.created_at.desc(),
+                                 issue_decision.c.id.desc()).limit(limit)
+            return [self.ser_decision(row) for row in _conn_rows(conn, stmt)]
+
+    def decision_by_id(self, org_id: str, viewer_id: str, decision_id: str) -> dict | None:
+        """One decision the viewer may read; another org's id is indistinguishable from missing."""
+        with self.engine.connect() as conn:
+            row = _one(conn, select(issue_decision).where(and_(
+                issue_decision.c.organization_id == org_id,
+                issue_decision.c.id == decision_id)))
+            if not row:
+                return None
+            issue_row = self._issue_ref_row(conn, org_id, viewer_id, row["issue_id"])
+            if not issue_row:
+                return None
+            return self.ser_decision(row)
+
+    def _issue_ref_row(self, conn, org_id: str, viewer_id: str, issue_ref: str) -> dict | None:
+        """Resolve an issue by identifier or id, honouring team visibility."""
+        stmt = select(issue.c.id, issue.c.identifier, issue.c.team_id).where(and_(
+            issue.c.organization_id == org_id,
+            or_(issue.c.id == issue_ref, issue.c.identifier == issue_ref)))
+        clause = visible_team_clause(conn, org_id, viewer_id, issue.c.team_id)
+        if clause is not None:
+            stmt = stmt.where(clause)
+        row = conn.execute(stmt).mappings().first()
+        return dict(row) if row else None
 
     def project_visible(self, org_id: str, viewer_id: str | None, project_id: str) -> bool:
         """Whether a project is visible to the viewer, using the same rule as project lists."""
@@ -982,6 +1041,8 @@ class Store:
             "_creator_id": row.get("creator_id"), "_team_id": row.get("team_id"),
             "_project_id": row.get("project_id"), "_cycle_id": row.get("cycle_id"),
             "_parent_id": row.get("parent_id"), "_org_id": row.get("organization_id"),
+            # Maintained by decision writes, so a board flags a blocked issue in one read.
+            "decisionNeeded": bool(row.get("decision_needed")),
         }
 
     # ------------------------------------------------------------------ reads
