@@ -14,13 +14,15 @@ from sqlalchemy import func, select
 from starlette.testclient import TestClient
 
 from hoja_server.app import create_app, create_app as _create_app  # noqa: F401
-from hoja_server.db import (api_key as api_key_table, make_engine, migrate,
-                            organization_membership, seed_tenant, user as user_table)
+from hoja_server.db import (api_key as api_key_table, browser_session, identity_credential,
+                            make_engine, migrate, organization_membership, seed_tenant,
+                            user as user_table)
 
 INVITE = "mutation($i: MemberInviteInput!) { memberInvite(input: $i) { success user { id email } } }"
 ARCHIVE = "mutation($u: String!) { memberArchive(userId: $u) { success user { id active } } }"
 ROLE = "mutation($u: String!, $a: Boolean!) { memberRoleUpdate(userId: $u, admin: $a) { success } }"
 MEMBERS = "{ organizationMembers { nodes { id email active } } }"
+RESTORE = "mutation($u: String!) { memberRestore(userId: $u) { success user { id active } } }"
 
 
 def _setup(tmp_path):
@@ -106,3 +108,48 @@ def test_guards_refuse_self_removal_and_non_admins(tmp_path):
     assert twice["data"]["memberArchive"]["success"] is True, twice
     again = _gql(client, "owner-token", ARCHIVE, {"u": member_id})
     assert again["data"]["memberArchive"]["success"] is False, "archiving twice must not report success"
+
+
+def test_removal_ends_live_sessions_and_stored_credentials(tmp_path):
+    """A removal that leaves sessions alive is not a removal."""
+    engine, app = _setup(tmp_path)
+    client = TestClient(app)
+    member_id = _invite(client, "session@archive.test")
+
+    with engine.begin() as conn:
+        identity_id = conn.execute(select(organization_membership.c.identity_id).where(
+            organization_membership.c.profile_user_id == member_id)).scalar_one()
+        conn.execute(identity_credential.insert().values(
+            identity_id=identity_id, password_hash="x", created_at="now", updated_at="now"))
+        conn.execute(browser_session.insert().values(
+            id="sess-1", token_hash="hash-1", user_id=member_id,
+            organization_id=conn.execute(select(user_table.c.organization_id).where(
+                user_table.c.id == member_id)).scalar_one(),
+            created_at="now", expires_at="later"))
+
+    assert _gql(client, "owner-token", ARCHIVE, {"u": member_id})["data"]["memberArchive"]["success"] is True
+
+    with engine.connect() as conn:
+        assert conn.execute(select(func.count()).select_from(browser_session).where(
+            browser_session.c.user_id == member_id)).scalar_one() == 0
+        assert conn.execute(select(func.count()).select_from(identity_credential).where(
+            identity_credential.c.identity_id == identity_id)).scalar_one() == 0
+
+
+def test_removed_members_are_listed_and_restorable(tmp_path):
+    _engine, app = _setup(tmp_path)
+    client = TestClient(app)
+    member_id = _invite(client, "undo@archive.test")
+    assert _gql(client, "owner-token", ARCHIVE, {"u": member_id})["data"]["memberArchive"]["success"] is True
+
+    listed = _gql(client, "owner-token", "{ archivedMembers { id email active } }")["data"]["archivedMembers"]
+    assert member_id in [m["id"] for m in listed], "a removed member must be visible to an admin"
+
+    restored = _gql(client, "owner-token", RESTORE, {"u": member_id})
+    assert restored["data"]["memberRestore"]["success"] is True, restored
+    assert restored["data"]["memberRestore"]["user"]["active"] is True
+
+    members = _gql(client, "owner-token", MEMBERS)["data"]["organizationMembers"]["nodes"]
+    assert member_id in [m["id"] for m in members], "restored member must be a member again"
+    still_removed = _gql(client, "owner-token", "{ archivedMembers { id } }")["data"]["archivedMembers"]
+    assert member_id not in [m["id"] for m in still_removed]

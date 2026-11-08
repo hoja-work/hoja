@@ -89,6 +89,7 @@ type Query {
   issueLabelSettings: [IssueLabel!]!
   myWorkspaces: [WorkspaceMembership!]!
   organizationMembers(first: Int = 100): UserConnection
+  archivedMembers: [User!]!
   pendingMembershipInvitations: [PendingMembershipInvitation!]!
   workspace: Organization
   teams(first: Int = 50, after: String, filter: TeamFilter): TeamConnection
@@ -130,6 +131,7 @@ type Mutation {
   memberDeactivate(userId: String!): UserPayload
   memberReactivate(userId: String!): UserPayload
   memberArchive(userId: String!): UserPayload
+  memberRestore(userId: String!): UserPayload
   workspaceUpdate(input: WorkspaceUpdateInput!): OrganizationPayload
   memberInvite(input: MemberInviteInput!): UserPayload
   memberRoleUpdate(userId: String!, admin: Boolean!): UserPayload

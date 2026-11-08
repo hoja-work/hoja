@@ -1046,6 +1046,46 @@ class Store:
                 api_key_table.c.organization_id == org_id,
                 api_key_table.c.revoked_at.is_(None),
             )).values(revoked_at=now))
+            # A removal must end access everywhere, not just in this request path:
+            # live browser sessions and the stored credential would otherwise keep
+            # working after the admin believed the person was gone.
+            conn.execute(browser_session.delete().where(
+                browser_session.c.user_id == user_id))
+            identity_id = conn.execute(select(organization_membership.c.identity_id).where(and_(
+                organization_membership.c.organization_id == org_id,
+                organization_membership.c.profile_user_id == user_id,
+            ))).scalar_one_or_none()
+            if identity_id:
+                conn.execute(identity_credential.delete().where(
+                    identity_credential.c.identity_id == identity_id))
+        return self.get_user(org_id, user_id)
+
+    def archived_members(self, org_id: str) -> list[dict]:
+        """Members removed from this workspace, so an admin can see and undo it."""
+        with self.engine.connect() as conn:
+            rows = conn.execute(select(user).where(and_(
+                user.c.organization_id == org_id,
+                user.c.archived_at.is_not(None),
+                user.c.kind == "human",
+            )).order_by(user.c.archived_at.desc())).mappings().all()
+        return [dict(r) for r in rows]
+
+    def restore_member(self, org_id: str, actor_id: str, user_id: str) -> dict | None:
+        """Undo an archive: the same profile returns with its history intact."""
+        now = datetime.now(timezone.utc).isoformat()
+        with self.engine.begin() as conn:
+            target = conn.execute(select(user.c.id).where(and_(
+                user.c.organization_id == org_id, user.c.id == user_id,
+                user.c.archived_at.is_not(None), user.c.kind == "human",
+            ))).first()
+            if not target:
+                return None
+            conn.execute(user.update().where(user.c.id == user_id).values(
+                active=True, archived_at=None, updated_at=now))
+            conn.execute(organization_membership.update().where(and_(
+                organization_membership.c.organization_id == org_id,
+                organization_membership.c.profile_user_id == user_id,
+            )).values(active=True))
         return self.get_user(org_id, user_id)
 
     def accept_membership_invitation(self, identity_id: str, raw: str,
