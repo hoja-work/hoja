@@ -70,7 +70,7 @@ from hoja_server.db import (
     token_hash,
     user,
 )
-from hoja_server.denials import DENY_HINT, hint_for
+from hoja_server.denials import DENY_HINT, READ_ONLY_HINT, hint_for
 from hoja_server.deployment import single_org_mode
 from hoja_server.meetings import MeetingService
 from hoja_server.meetings_api import MeetingHub, meeting_routes
@@ -839,7 +839,8 @@ def create_app(
             )
         if request.method != "GET" and getattr(request.state, "api_key_access", "read_write") == "read":
             return None, None, JSONResponse(
-                {"errors": [{"message": "This API key is read-only.", "extensions": {"code": "FORBIDDEN"}}]},
+                {"errors": [{"message": "This API key is read-only.",
+                             "extensions": {"code": "FORBIDDEN", "agentHint": READ_ONLY_HINT}}]},
                 status_code=403,
             )
         csrf = _cookie_csrf_error(request, json_only=True)
@@ -934,7 +935,7 @@ def create_app(
             if read_only_violation(query, access):
                 return JSONResponse(
                     {"errors": [{"message": "This API key is read-only.",
-                                 "extensions": {"code": "FORBIDDEN"}}]},
+                                 "extensions": {"code": "FORBIDDEN", "agentHint": READ_ONLY_HINT}}]},
                     status_code=403,
                 )
         context = {
