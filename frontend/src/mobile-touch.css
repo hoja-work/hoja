@@ -9,3 +9,9 @@
 @media(max-width:700px){.project-add-view{position:static!important;right:auto!important;top:auto!important;margin:0 4px 0 0!important}.side-card button,.mt-segment button,.mt-link-btn{min-height:44px!important}}
 @media(max-width:700px){.lin-crumb{min-width:0}.lin-crumb a,.lin-crumb button.crumb-link{white-space:normal;min-width:0;max-width:100%}}
 @media(max-width:700px){.lin-head{flex-wrap:wrap;row-gap:4px}.lin-crumb{flex-wrap:wrap;row-gap:2px}}
+/* Members and API keys: the settings density layer pins submits to 36px and filter chips to 27px,
+   below the 44px touch floor. The <=700px blocks above cover portrait; phone landscape is wider
+   than 700px but still a coarse pointer, so it needs the same floor. Desktop keeps its density. */
+@media(max-width:700px),(pointer:coarse){
+  :is(.workspace-settings-form,.pending-invites,.member-roster,.api-keys-settings) :is(button,input:not([type=checkbox]):not([type=radio]):not([type=hidden]),select,textarea){min-height:44px!important}
+}
