@@ -34,7 +34,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 43
+CURRENT_SCHEMA_REVISION = 46
 
 
 def now_iso() -> str:
@@ -415,6 +415,11 @@ model_provider = Table(
     Column("provider", String, nullable=False),
     Column("model_id", String, nullable=False),
     Column("base_url", String),
+    # Advertised context window of the provider's model, in tokens. Optional: a
+    # workspace admin's own provider may not declare one, and it is not needed to
+    # call the model - it lets the UI state the limit and lets a managed offering
+    # register the model it seeds (see infra/tenants/default-provider.json).
+    Column("context_window", Integer),
     Column("encrypted_api_key", String, nullable=False),
     Column("enabled", Boolean, nullable=False, default=True),
     Column("created_at", String, nullable=False),
@@ -574,7 +579,35 @@ issue = Table(
     Column("created_at", String, index=True),
     Column("updated_at", String, index=True),
     Column("archived_at", String),
+    # Maintained by issue_decision writes: true while one of its decisions is open, so a
+    # board or list reads "waiting on me" without a subquery per row (docs/decisions.md).
+    Column("decision_needed", Boolean, nullable=False, default=False),
     UniqueConstraint("team_id", "number", name="uq_issue_team_number"),
+)
+
+
+# A question an agent asks while working on an issue, answered by a human (docs/decisions.md).
+# The row outlives the asking process: an agent polls it, a board flags the issue it blocks.
+issue_decision = Table(
+    "issue_decision",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("issue_id", String, ForeignKey("issue.id"), nullable=False, index=True),
+    Column("question", Text, nullable=False),
+    # JSON [{key,label,description}]; "[]" means a free-form answer is expected.
+    Column("options", Text, nullable=False, default="[]"),
+    Column("context", Text),
+    Column("status", String, nullable=False, default="open", index=True),
+    Column("asked_by_id", String, ForeignKey("user.id")),
+    Column("asked_by_agent", String),
+    Column("answer", Text),
+    Column("chosen_option", String),
+    Column("answered_by_id", String, ForeignKey("user.id")),
+    Column("answered_at", String),
+    Column("canceled_at", String),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
 )
 
 issue_label = Table(
@@ -849,6 +882,9 @@ attachment = Table(
     Column("url", String, nullable=False),
     Column("title", String, nullable=False),
     Column("subtitle", String),
+    # Resolved media type of an uploaded blob (NULL for external links), recorded at
+    # create time so a client can choose a renderer without probing the URL.
+    Column("content_type", String),
     Column("created_at", String),
 )
 
@@ -1467,6 +1503,17 @@ def _apply_agent_conversation_title(conn) -> None:
         conn.exec_driver_sql("ALTER TABLE agent_conversation ADD COLUMN title VARCHAR")
 
 
+def _apply_model_provider_context_window(conn) -> None:
+    """Record the model's advertised context window on a provider row.
+
+    Nullable: providers added by workspace admins need no window, and existing rows
+    keep working unchanged. The included offering (infra/tenants/default-provider.json)
+    sets it so the workspace the seed touches has the model described in full.
+    """
+    if "context_window" not in {c["name"] for c in inspect(conn).get_columns("model_provider")}:
+        conn.exec_driver_sql("ALTER TABLE model_provider ADD COLUMN context_window INTEGER")
+
+
 def rate_limit_key_hash(key: str) -> str:
     """Rate-limit keys (emails, IPs) are stored only as SHA-256 digests."""
     return hashlib.sha256(key.encode()).hexdigest()
@@ -1724,6 +1771,56 @@ def _apply_extensions(conn):
         table.create(conn, checkfirst=True)
 
 
+def _apply_issue_decisions(conn):
+    """Decisions (docs/decisions.md): the row, the issue's maintained flag, and its capture.
+
+    A decision publishes as its own ``issueDecision`` event and, through the issue row's
+    ``decision_needed`` update, as an ``issue`` update: a client watching either learns that
+    the round trip started or finished.
+    """
+    if "decision_needed" not in {c["name"] for c in inspect(conn).get_columns("issue")}:
+        conn.exec_driver_sql(
+            'ALTER TABLE issue ADD COLUMN decision_needed BOOLEAN NOT NULL DEFAULT FALSE')
+    issue_decision.create(conn, checkfirst=True)
+    # Team scope is read from the issue so the event honours team visibility; the org comes
+    # from the decision row itself and is what change_event requires.
+    team_expr = "(SELECT team_id FROM issue WHERE id = {row}.issue_id)"
+    if conn.dialect.name == "sqlite":
+        for statement in _change_trigger_sql(
+                "sqlite", "issue_decision", "issueDecision", "id", team_expr,
+                "{row}.organization_id"):
+            conn.exec_driver_sql(statement)
+    elif conn.dialect.name == "postgresql":
+        conn.exec_driver_sql(f"""CREATE OR REPLACE FUNCTION chg_issue_decision() RETURNS trigger LANGUAGE plpgsql AS $fn$
+DECLARE v_org TEXT; v_seq BIGINT; v_team TEXT; v_issue_id TEXT;
+BEGIN
+  v_issue_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.issue_id ELSE NEW.issue_id END;
+  SELECT i.team_id INTO v_team FROM issue i WHERE i.id = v_issue_id;
+  IF TG_OP = 'DELETE' THEN
+{_pg_publish_body("OLD.organization_id", "'issueDecision'", "CAST(OLD.id AS TEXT)", "'delete'", "v_team")}
+  ELSE
+{_pg_publish_body("NEW.organization_id", "'issueDecision'", "CAST(NEW.id AS TEXT)",
+                  "CASE WHEN TG_OP = 'INSERT' THEN 'create' ELSE 'update' END", "v_team")}
+  END IF;
+  RETURN NULL;
+END;
+$fn$;""")
+        _pg_deferred_trigger(conn, "issue_decision")
+    else:
+        raise RuntimeError(f"Realtime capture is not implemented for {conn.dialect.name}")
+
+
+def _apply_attachment_content_type(conn) -> None:
+    """Record the media type of an uploaded blob on its attachment row.
+
+    Existing rows stay NULL: an external link has no type we could know without
+    fetching it, and the client falls back to the URL extension for those.
+    """
+    columns = {c["name"] for c in inspect(conn).get_columns("attachment")}
+    if "content_type" not in columns:
+        conn.exec_driver_sql("ALTER TABLE attachment ADD COLUMN content_type VARCHAR")
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -1808,6 +1905,14 @@ _MIGRATIONS = {
         saved_view.create(conn, checkfirst=True),
         saved_view_favorite.create(conn, checkfirst=True),
     ),
+    44: _apply_attachment_content_type,
+    # Renumbered 43 -> 44 -> 45 across rebases: main shipped revision 43 (saved views)
+    # and 44 (attachment content_type), so the context window takes the next number
+    # after the merge queue agreed #53 lands second.
+    45: _apply_model_provider_context_window,
+    # Renumbered 44 -> 46 on merge: main already shipped revisions 44 (attachment
+    # content_type) and 45 (model_provider.context_window), so decisions takes 46.
+    46: _apply_issue_decisions,
 }
 
 

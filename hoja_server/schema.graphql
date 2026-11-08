@@ -347,6 +347,10 @@ type Issue {
   comments(first: Int = 50): CommentConnection
   attachments(first: Int = 50): AttachmentConnection
   activity(first: Int = 50, after: String): IssueActivityConnection
+  "True while at least one decision on this issue is open (docs/decisions.md)."
+  decisionNeeded: Boolean!
+  "Questions asked on this issue, newest first."
+  decisions(status: String, first: Int = 50): [IssueDecision!]!
 }
 
 type UserConnection { nodes: [User!]! pageInfo: PageInfo! }
@@ -380,6 +384,7 @@ type Attachment {
   url: String!
   title: String!
   subtitle: String
+  contentType: String
   issue: Issue
   createdAt: DateTime
 }

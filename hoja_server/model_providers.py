@@ -32,6 +32,7 @@ SDL = gql(
       provider: String!
       modelId: String!
       baseUrl: String
+      contextWindow: Int
       enabled: Boolean!
       hasApiKey: Boolean!
       managed: Boolean!
@@ -189,6 +190,7 @@ def _serialize(row) -> dict:
         # never returned - not to admins, not to the UI, not in a mutation result -
         # so it cannot leak through an API client or a screenshot.
         "baseUrl": None if managed else row["base_url"],
+        "contextWindow": row.get("context_window"),
         "managed": managed,
         "enabled": bool(row["enabled"]),
         "hasApiKey": bool(row["encrypted_api_key"]),

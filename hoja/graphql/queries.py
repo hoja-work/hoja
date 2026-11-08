@@ -6,6 +6,7 @@ it needs at the bottom.
 
 from hoja.graphql.fragments import (
     CYCLE_CORE,
+    DECISION_FIELDS,
     ISSUE_CORE,
     ISSUE_FULL,
     LABEL_CORE,
@@ -242,4 +243,32 @@ SEARCH_ISSUES = (
     }
     """
     + assemble(USER_CORE, STATE_CORE)
+)
+
+# ---------------------------------------------------------------------------
+# Decisions (docs/decisions.md)
+# ---------------------------------------------------------------------------
+
+ISSUE_DECISIONS = (
+    """
+    query IssueDecisions($issueId: String!, $status: String) {
+      issueDecisions(issueId: $issueId, status: $status) {
+        """
+    + DECISION_FIELDS
+    + """
+      }
+    }
+    """
+)
+
+ISSUE_DECISION = (
+    """
+    query IssueDecision($id: String!) {
+      issueDecision(id: $id) {
+        """
+    + DECISION_FIELDS
+    + """
+      }
+    }
+    """
 )

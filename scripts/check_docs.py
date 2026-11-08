@@ -36,10 +36,12 @@ DURABLE_DOCS = {
     "docs/cycle-metrics.md",
     "docs/dependency-security.md",
     "docs/email-adapter.md",
+    "docs/email-delivery.md",
     "docs/hoja-mcp.md",
     "docs/extensions.md",
     "docs/webhooks.md",
     "docs/meetings.md",
+    "docs/decisions.md",
     "docs/views.md",
 }
 
