@@ -12,7 +12,7 @@ import typer
 
 from hoja.auth import get_viewer
 from hoja.cli_state import build_client, get_state
-from hoja.errors import NotFoundError, UsageError
+from hoja.errors import APIError, NotFoundError, UsageError
 from hoja.filters import build_issue_filter
 from hoja.graphql import mutations, queries
 from hoja.models.issue import Issue
@@ -37,6 +37,14 @@ def list_issues(
     creator: Optional[str] = typer.Option(None, "--creator", help="User who created the issue"),
     project: Optional[str] = typer.Option(None, "--project", "-p", help="Project name or UUID"),
     cycle: Optional[str] = typer.Option(None, "--cycle", "-c", help="'current', 'next', UUID, or name"),
+    parent: Optional[str] = typer.Option(
+        None, "--parent",
+        help="Only direct children of this issue (identifier or UUID)",
+    ),
+    no_parent: bool = typer.Option(
+        False, "--no-parent",
+        help="Only issues with no parent (orphans)",
+    ),
     label: Optional[str] = typer.Option(None, "--label", "-l", help="Label name. Comma-sep for OR."),
     priority: Optional[int] = typer.Option(None, "--priority", min=0, max=4, help="Priority 0-4"),
     contains: Optional[str] = typer.Option(None, "--contains", help="Free-text in title/description"),
@@ -50,6 +58,7 @@ def list_issues(
     asyncio.run(_run_list(
         team=team, state=state, not_state=not_state, state_type=state_type,
         assignee=assignee, creator=creator, project=project, cycle=cycle,
+        parent=parent, no_parent=no_parent,
         label=label, priority=priority, contains=contains,
         updated_after=updated_after, updated_before=updated_before,
         due_before=due_before, due_after=due_after, limit=limit,
@@ -96,6 +105,14 @@ def update_issue(
     project: Optional[str] = typer.Option(None, "--project", help="Project UUID, slugId, or name"),
     cycle: Optional[str] = typer.Option(None, "--cycle", help="Cycle UUID"),
     due_date: Optional[str] = typer.Option(None, "--due-date", help="ISO date"),
+    parent: Optional[str] = typer.Option(
+        None, "--parent",
+        help="Parent issue (identifier or UUID). Pass '' to detach, or use --no-parent.",
+    ),
+    no_parent: bool = typer.Option(
+        False, "--no-parent",
+        help="Detach this issue from its parent",
+    ),
     label: Optional[list[str]] = typer.Option(
         None, "--label", "-l",
         help="Replace labels (use multiple --label or comma-separated)",
@@ -105,7 +122,7 @@ def update_issue(
     asyncio.run(_run_update(
         id=id, title=title, description=description, state=state,
         assignee=assignee, priority=priority, project=project, cycle=cycle,
-        due_date=due_date, label=label or [],
+        due_date=due_date, parent=parent, no_parent=no_parent, label=label or [],
     ))
 
 
@@ -166,14 +183,36 @@ async def _run_list(**kwargs) -> None:
             viewer = await get_viewer(client)
             viewer_id = viewer.id
 
+        parent_ref = kwargs.pop("parent", None)
+        no_parent = bool(kwargs.pop("no_parent", False))
+        if parent_ref and no_parent:
+            raise UsageError("--parent and --no-parent are mutually exclusive")
+        if parent_ref:
+            # Resolve here: a child is stored by UUID, so an identifier such as
+            # ENG-12 must be translated before it reaches the filter.
+            kwargs["parent"] = (await _fetch_issue(client, parent_ref)).id
+        elif no_parent:
+            kwargs["no_parent"] = True
+
         filt = build_issue_filter(viewer_id=viewer_id, **kwargs)
-        issues = await client.execute_list(
-            Issue,
-            queries.ISSUES_LIST,
-            {"filter": filt or None, "first": limit},
-            path=["issues"],
-            operation="Issues",
-        )
+        try:
+            issues = await client.execute_list(
+                Issue,
+                queries.ISSUES_LIST,
+                {"filter": filt or None, "first": limit},
+                path=["issues"],
+                operation="Issues",
+            )
+        except APIError as e:
+            # An older server has no ``IssueParentFilter.isNull``; say so instead
+            # of leaking the schema validation error.
+            if no_parent and "isNull" in e.message:
+                raise UsageError(
+                    "--no-parent needs a Hoja server that supports "
+                    "IssueParentFilter.isNull (this one does not).",
+                    hint="Upgrade the server, or filter with `--parent <issue>`.",
+                ) from e
+            raise
         render(issues, fmt=state.output, title="Issues")
 
 
@@ -246,6 +285,72 @@ async def _resolve_user_id(client, user: str) -> str:
     )
 
 
+async def _fetch_issue(client, value: str) -> Issue:
+    """Fetch one issue by identifier (ENG-12) or UUID, with a precise failure.
+
+    Returns the full Issue record (the query includes ``parent { id identifier
+    title }``), which the parent helpers need to walk the hierarchy.
+    """
+    ref = (value or "").strip()
+    if not ref:
+        raise UsageError("Expected an issue identifier (e.g. ENG-12) or UUID")
+    data = await client.execute(
+        queries.ISSUE_BY_IDENTIFIER, {"id": ref}, operation="IssueByIdentifier",
+    )
+    node = (data or {}).get("issue")
+    if not node:
+        raise NotFoundError(
+            f"No issue with identifier or id {ref!r}",
+            hint="List candidates with `hoja issue list` or `hoja issue search <term>`.",
+        )
+    return Issue.model_validate(node)
+
+
+async def _resolve_parent(client, value: str, *, team: dict | None = None) -> Issue:
+    """Resolve a ``--parent`` value and check it can legally be a parent.
+
+    The server validates both cases, but its error is a bare
+    ``Invalid reference``; resolving first lets the CLI say which value was
+    wrong and why.
+    """
+    parent = await _fetch_issue(client, value)
+    if team and parent.team and parent.team.get("id") != team.get("id"):
+        raise UsageError(
+            f"{parent.identifier} is in team "
+            f"{parent.team.get('key') or parent.team.get('id')}, but this issue is in "
+            f"{team.get('key') or team.get('id')} — a parent must be in the same team.",
+            hint="Only issues from the same team can be nested.",
+        )
+    return parent
+
+
+async def _assert_no_parent_cycle(client, issue: Issue, parent: Issue) -> None:
+    """Refuse a re-parent that would make ``issue`` its own ancestor."""
+    seen: set[str] = set()
+    cursor: Issue | None = parent
+    chain: list[str] = [parent.identifier]
+    while cursor is not None and cursor.id not in seen:
+        if cursor.id == issue.id:
+            if len(chain) == 1:
+                raise UsageError(
+                    f"Cannot make {issue.identifier} its own parent: an issue cannot be "
+                    "its own ancestor.",
+                    hint="Pick a different issue as the parent.",
+                )
+            raise UsageError(
+                f"Cannot make {issue.identifier} a child of {parent.identifier}: "
+                f"{issue.identifier} is already an ancestor of {parent.identifier} "
+                f"({' -> '.join(reversed(chain))}), so the link would create a cycle.",
+                hint="A parent must not be the issue itself or one of its own sub-issues.",
+            )
+        seen.add(cursor.id)
+        ancestor_id = (cursor.parent or {}).get("id")
+        if not ancestor_id:
+            break
+        cursor = await _fetch_issue(client, ancestor_id)
+        chain.append(cursor.identifier)
+
+
 async def _resolve_state_id(client, issue_id: str, state_name: str) -> str:
     """Look up the state UUID for a given state name on the issue's team."""
     issue = await client.execute_as(
@@ -290,7 +395,12 @@ async def _run_create(**kwargs) -> None:
         if kwargs.get("due_date"):
             input_["dueDate"] = kwargs["due_date"]
         if kwargs.get("parent"):
-            input_["parentId"] = kwargs["parent"]
+            team_ref = kwargs["team"]
+            team_hint: dict = {"id": team_id}
+            if not (len(team_ref) == 36 and team_ref.count("-") == 4):
+                team_hint["key"] = team_ref.upper()
+            parent = await _resolve_parent(client, kwargs["parent"], team=team_hint)
+            input_["parentId"] = parent.id
         labels = kwargs.get("label") or []
         # Allow comma-separated single flag value too
         flat_labels: list[str] = []
@@ -307,11 +417,14 @@ async def _run_create(**kwargs) -> None:
             emit_error("dry-run: not executing", hint=str({"input": input_}))
             return
 
-        data = await client.execute(
-            mutations.ISSUE_CREATE,
-            {"input": input_},
-            operation="IssueCreate",
-        )
+        try:
+            data = await client.execute(
+                mutations.ISSUE_CREATE,
+                {"input": input_},
+                operation="IssueCreate",
+            )
+        except APIError as e:
+            raise _parent_error(e, input_.get("parentId")) from e
         payload = data.get("issueCreate", {})
         if not payload.get("success"):
             raise NotFoundError("issueCreate returned success=false")
@@ -341,6 +454,23 @@ async def _run_update(**kwargs) -> None:
         if kwargs.get("state"):
             input_["stateId"] = await _resolve_state_id(client, issue_id, kwargs["state"])
 
+        # --parent / --no-parent. ``--parent ''`` is the shorthand for detach.
+        parent_ref = kwargs.get("parent")
+        detach = bool(kwargs.get("no_parent"))
+        if isinstance(parent_ref, str) and not parent_ref.strip():
+            parent_ref, detach = None, True
+        if parent_ref and detach:
+            raise UsageError("--parent and --no-parent are mutually exclusive")
+        if parent_ref:
+            issue = await _fetch_issue(client, issue_id)
+            parent = await _resolve_parent(client, parent_ref, team=issue.team)
+            await _assert_no_parent_cycle(client, issue, parent)
+            input_["parentId"] = parent.id
+        elif detach:
+            # Explicit detach. The client strips None from variables, so an empty
+            # string is the wire form the server reads as "clear parent_id".
+            input_["parentId"] = ""
+
         labels = kwargs.get("label") or []
         flat_labels: list[str] = []
         for v in labels:
@@ -366,16 +496,36 @@ async def _run_update(**kwargs) -> None:
             emit_error("dry-run: not executing", hint=str({"id": issue_id, "input": input_}))
             return
 
-        data = await client.execute(
-            mutations.ISSUE_UPDATE,
-            {"id": issue_id, "input": input_},
-            operation="IssueUpdate",
-        )
+        try:
+            data = await client.execute(
+                mutations.ISSUE_UPDATE,
+                {"id": issue_id, "input": input_},
+                operation="IssueUpdate",
+            )
+        except APIError as e:
+            raise _parent_error(e, input_.get("parentId")) from e
         payload = data.get("issueUpdate", {})
         if not payload.get("success"):
             raise NotFoundError("issueUpdate returned success=false")
         issue = Issue.model_validate(payload["issue"])
         render(issue, fmt=state.output, title=f"Updated {issue.identifier}")
+
+
+def _parent_error(error: APIError, parent_id: str | None) -> Exception:
+    """Explain a server-side parentId rejection instead of printing
+    "Invalid reference"."""
+    fields = {
+        (err.get("extensions") or {}).get("field") for err in error.errors
+    }
+    if parent_id and "parentId" in fields:
+        return UsageError(
+            f"The server refused parent {parent_id!r}: {error.message}",
+            hint=(
+                "A parent must be an active issue in the same team, and the link "
+                "must not make the issue its own ancestor."
+            ),
+        )
+    return error
 
 
 async def _run_url(id: str) -> None:

@@ -161,10 +161,10 @@ hoja --account acme me         # explicit override when needed
 - `hoja team members <KEY>`
 
 ### Issues
-- `hoja issue list [filters...]` — see `references/filters.md`
+- `hoja issue list [filters...]` — see `references/filters.md`; `--parent <ID>` lists a parent's sub-issues, `--no-parent` lists orphans
 - `hoja issue get <ID>`
 - `hoja issue create --team <KEY> --title "..." [--description ...] [--priority N] [--assignee NAME] [--label "a,b"]`
-- `hoja issue update <ID> [--title ...] [--priority N] [--label ...]`
+- `hoja issue update <ID> [--title ...] [--priority N] [--label ...] [--parent <ID>|--no-parent]`
 - `hoja issue state <ID> "<STATE_NAME>"`
 - `hoja issue assign <ID> <USER>`
 - `hoja issue prio <ID> <N>` (0=none 1=urgent 2=high 3=med 4=low)

@@ -36,7 +36,7 @@ ISSUE_UPDATE = (
     mutation IssueUpdate($id: String!, $input: IssueUpdateInput!) {
       issueUpdate(id: $id, input: $input) {
         success
-        issue { ...IssueCore }
+        issue { ...IssueCore parent { id identifier title } }
       }
     }
     """

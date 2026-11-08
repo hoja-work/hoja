@@ -437,7 +437,11 @@ input IssueFilter {
 }
 
 input ProjectFilter { id: IDComparator slugId: StringComparator name: StringComparator state: StringComparator team: TeamFilter }
-input IssueParentFilter { id: IDComparator }
+input IssueParentFilter {
+  id: IDComparator
+  "Hoja extension: true selects issues with no parent, false only issues that have one."
+  isNull: Boolean
+}
 input IssueLabelFilter { team: TeamFilter name: StringComparator }
 
 # ---- Mutation inputs ----

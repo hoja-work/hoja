@@ -167,3 +167,38 @@ def test_graphql_children_cursor_returns_every_page(world) -> None:
 
     invalid = _gql(client, token, query, {"id": root["id"], "after": "not-a-cursor"})
     assert invalid["errors"][0]["extensions"] == {"code": "BAD_USER_INPUT", "field": "after"}
+
+
+LIST_ISSUES = """
+query($filter: IssueFilter) {
+  issues(filter: $filter, first: 100) { nodes { id identifier parent { id } } }
+}
+"""
+
+
+def test_graphql_issue_filter_finds_children_and_orphans(world) -> None:
+    """`parent.id` finds a parent's children; `parent.isNull` finds orphans.
+
+    ``isNull`` is a Hoja extension: ``eq: null`` is not expressible in GraphQL
+    and clients strip nulls from variables, so the boolean is the only way to
+    ask for "no parent" server-side.
+    """
+    client, token = world
+    root = _create(client, token, "Filter parent")
+    children = [_create(client, token, "Filter child", parentId=root["identifier"])
+                for _ in range(2)]
+    orphan = _create(client, token, "Filter orphan")
+
+    found = _data(client, token, LIST_ISSUES, {"filter": {"parent": {"id": {"eq": root["id"]}}}})
+    assert {node["id"] for node in found["issues"]["nodes"]} == {c["id"] for c in children}
+    assert all(node["parent"]["id"] == root["id"] for node in found["issues"]["nodes"])
+
+    parentless = _data(client, token, LIST_ISSUES, {"filter": {"parent": {"isNull": True}}})
+    ids = {node["id"] for node in parentless["issues"]["nodes"]}
+    assert orphan["id"] in ids
+    assert root["id"] in ids
+    assert not ids & {c["id"] for c in children}
+    assert all(node["parent"] is None for node in parentless["issues"]["nodes"])
+
+    nested = _data(client, token, LIST_ISSUES, {"filter": {"parent": {"isNull": False}}})
+    assert {node["id"] for node in nested["issues"]["nodes"]} == {c["id"] for c in children}
