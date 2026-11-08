@@ -34,7 +34,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 42
+CURRENT_SCHEMA_REVISION = 43
 
 
 def now_iso() -> str:
@@ -924,6 +924,48 @@ cycle = Table(
 )
 
 
+# A view is a saved query (docs/views.md): scope + filter tree + display options, owned by
+# one member and shared through ``visibility``. ``filters`` and ``display`` hold JSON
+# documents validated by hoja_server.views before they are written.
+saved_view = Table(
+    "saved_view",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("kind", String, nullable=False),
+    Column("name", String, nullable=False),
+    Column("description", Text),
+    Column("icon", String),
+    Column("color", String),
+    Column("slug_id", String, nullable=False),
+    Column("owner_id", String, ForeignKey("user.id"), nullable=False, index=True),
+    Column("creator_id", String, ForeignKey("user.id")),
+    Column("updated_by_id", String, ForeignKey("user.id")),
+    Column("scope", String, nullable=False, default="workspace"),
+    Column("team_id", String, ForeignKey("team.id"), index=True),
+    Column("project_id", String, ForeignKey("project.id"), index=True),
+    Column("initiative_id", String, ForeignKey("initiative.id"), index=True),
+    Column("visibility", String, nullable=False, default="private"),
+    Column("filters", Text, nullable=False, default="{}"),
+    Column("display", Text, nullable=False, default="{}"),
+    Column("archived_at", String),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+    UniqueConstraint("organization_id", "slug_id", name="uq_saved_view_org_slug"),
+)
+
+# Favorites are per user, so two members can favorite the same shared view independently.
+saved_view_favorite = Table(
+    "saved_view_favorite",
+    metadata,
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("view_id", String, ForeignKey("saved_view.id"), nullable=False, index=True),
+    Column("user_id", String, ForeignKey("user.id"), nullable=False, index=True),
+    Column("created_at", String, nullable=False),
+    UniqueConstraint("view_id", "user_id", name="uq_saved_view_favorite"),
+)
+
+
 # --------------------------------------------------------------------------
 # Seed workflow states (name, type, position)
 # --------------------------------------------------------------------------
@@ -1762,6 +1804,10 @@ _MIGRATIONS = {
     41: lambda conn: next(i for i in extension.indexes if i.name == "uq_extension_live_key").create(
         conn, checkfirst=True),
     42: lambda conn: tenant_membership_hint.create(conn, checkfirst=True),
+    43: lambda conn: (
+        saved_view.create(conn, checkfirst=True),
+        saved_view_favorite.create(conn, checkfirst=True),
+    ),
 }
 
 

@@ -17,6 +17,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.engine import Engine
 
 from hoja_server import addresses
+from hoja_server import views as viewdocs
 
 
 class InviteRefused(Exception):
@@ -53,6 +54,8 @@ from hoja_server.db import (
     project_update,
     project_member,
     project_team,
+    saved_view,
+    saved_view_favorite,
     team,
     team_member,
     token_hash,
@@ -233,9 +236,96 @@ def _scope_projects(conn, stmt, org_id, viewer_id):
     return stmt.where(or_(~project.c.id.in_(any_linked), project.c.id.in_(visible_ids)))
 
 
+def _scope_views(conn, stmt, org_id, viewer_id):
+    """Apply view visibility: private → owner only, team → that team's members, else workspace.
+
+    A private row is filtered here rather than after the query, so a copied id cannot leak
+    the view's name or filters to a non-owner (docs/views.md#sharing-and-visibility).
+    """
+    if viewer_id is None:
+        return stmt
+    team_clause = visible_team_clause(conn, org_id, viewer_id, saved_view.c.team_id)
+    shared = saved_view.c.visibility == "workspace"
+    private = and_(saved_view.c.visibility == "private",
+                   saved_view.c.owner_id == viewer_id)
+    team_shared = saved_view.c.visibility == "team"
+    if team_clause is not None:
+        team_shared = and_(team_shared, team_clause)
+    return stmt.where(or_(shared, private, team_shared))
+
+
 class Store:
     def __init__(self, engine: Engine) -> None:
         self.engine = engine
+
+    # ----------------------------------------------------------------- views
+    def ser_view(self, row: dict, *, favorite: bool = False) -> dict:
+        """saved_view row → View. Documents are decoded here so callers never parse JSON."""
+        return {
+            "id": row["id"], "name": row["name"], "description": row.get("description"),
+            "icon": row.get("icon"), "color": row.get("color"), "slugId": row.get("slug_id"),
+            "kind": row.get("kind"), "scope": row.get("scope"),
+            "visibility": row.get("visibility"), "shared": row.get("visibility") != "private",
+            "filters": viewdocs.load(row.get("filters")),
+            "display": viewdocs.load(row.get("display")),
+            "favorite": favorite,
+            "archivedAt": row.get("archived_at"),
+            "createdAt": row.get("created_at"), "updatedAt": row.get("updated_at"),
+            "_owner_id": row.get("owner_id"), "_creator_id": row.get("creator_id"),
+            "_updated_by_id": row.get("updated_by_id"), "_team_id": row.get("team_id"),
+            "_project_id": row.get("project_id"), "_initiative_id": row.get("initiative_id"),
+        }
+
+    @staticmethod
+    def _favorite_ids(conn, org_id: str, user_id: str | None) -> set[str]:
+        if not user_id:
+            return set()
+        return set(conn.execute(select(saved_view_favorite.c.view_id).where(and_(
+            saved_view_favorite.c.organization_id == org_id,
+            saved_view_favorite.c.user_id == user_id))).scalars())
+
+    def views(self, org_id: str, viewer_id: str, *, kind: str | None = None,
+              scope: str | None = None, include_archived: bool = False,
+              limit: int = 200) -> list[dict]:
+        """Views the viewer may read; private rows are the owner's alone."""
+        with self.engine.connect() as conn:
+            stmt = select(saved_view).where(saved_view.c.organization_id == org_id)
+            if not include_archived:
+                stmt = stmt.where(saved_view.c.archived_at.is_(None))
+            stmt = _scope_views(conn, stmt, org_id, viewer_id)
+            if kind:
+                stmt = stmt.where(saved_view.c.kind == kind)
+            if scope:
+                stmt = stmt.where(saved_view.c.scope == scope)
+            stmt = stmt.order_by(saved_view.c.created_at, saved_view.c.id).limit(limit)
+            favorites = self._favorite_ids(conn, org_id, viewer_id)
+            return [self.ser_view(row, favorite=row["id"] in favorites)
+                    for row in _conn_rows(conn, stmt)]
+
+    def view_by_id(self, org_id: str, viewer_id: str, ident: str,
+                   *, include_archived: bool = True) -> dict | None:
+        """Resolve by id or slug; visibility applies, so a copied link grants nothing."""
+        with self.engine.connect() as conn:
+            stmt = select(saved_view).where(and_(
+                saved_view.c.organization_id == org_id,
+                or_(saved_view.c.id == ident, saved_view.c.slug_id == ident)))
+            if not include_archived:
+                stmt = stmt.where(saved_view.c.archived_at.is_(None))
+            stmt = _scope_views(conn, stmt, org_id, viewer_id)
+            row = _one(conn, stmt)
+            if not row:
+                return None
+            favorites = self._favorite_ids(conn, org_id, viewer_id)
+            return self.ser_view(row, favorite=row["id"] in favorites)
+
+    def project_visible(self, org_id: str, viewer_id: str | None, project_id: str) -> bool:
+        """Whether a project is visible to the viewer, using the same rule as project lists."""
+        with self.engine.connect() as conn:
+            stmt = select(project.c.id).where(and_(
+                project.c.organization_id == org_id, project.c.id == project_id,
+                project.c.archived_at.is_(None)))
+            stmt = _scope_projects(conn, stmt, org_id, viewer_id)
+            return conn.execute(stmt).first() is not None
 
     def is_initialized(self) -> bool:
         """Whether this database already contains any workspace."""
@@ -2035,10 +2125,13 @@ class Store:
             stmt = _scope_projects(conn, stmt, org_id, viewer_id)
             return self.ser_project(_one(conn, stmt))
 
-    def initiatives(self, org_id: str, after: tuple[str, str] | None = None, status: str | None = None, limit: int = 51) -> list[dict]:
+    def initiatives(self, org_id: str, after: tuple[str, str] | None = None, status: str | None = None,
+                    statuses: list[str] | None = None, limit: int = 51) -> list[dict]:
         stmt = select(initiative).where(and_(initiative.c.organization_id == org_id, initiative.c.archived_at.is_(None)))
         if status:
             stmt = stmt.where(initiative.c.status == status)
+        if statuses:
+            stmt = stmt.where(initiative.c.status.in_(statuses))
         if after:
             stmt = stmt.where(initiative.c.created_at <= after[0]).where((initiative.c.created_at < after[0]) | ((initiative.c.created_at == after[0]) & (initiative.c.id < after[1])))
         with self.engine.connect() as conn:

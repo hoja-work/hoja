@@ -11,11 +11,13 @@ from sqlalchemy.engine import Engine
 from hoja_server.store import (
     PUBLIC,
     TEAM_ACCESS_LEVELS,
+    _scope_projects,
     team_ancestor_ids,
     team_descendant_ids,
     team_visible,
 )
 from hoja_server import comment_policy
+from hoja_server import views as viewdocs
 from hoja_server.db import (
     PRIORITY_LABELS,
     attachment,
@@ -38,6 +40,8 @@ from hoja_server.db import (
     initiative,
     initiative_project,
     project_team,
+    saved_view,
+    saved_view_favorite,
     seed_states_for_team,
     team,
     team_member,
@@ -1260,3 +1264,195 @@ class Writer:
             if not self._require_project_owner(conn, org_id, viewer_id, pid):
                 return False
         return self._soft_delete(project, org_id, pid)
+
+    # --------------------------------------------------------------- views
+    # A view's validation lives in hoja_server.views (the extension-manifest pattern); the
+    # writer only resolves references, checks ownership, and stores the parsed documents.
+
+    def _view_scope_target(self, conn, org_id: str, viewer_id: str, scope: str,
+                           inp: dict) -> dict:
+        """Resolve the one reference ``scope`` requires and reject the others."""
+        wanted = {"workspace": None, "team": "teamId", "project": "projectId",
+                  "initiative": "initiativeId"}[scope]
+        supplied = {name: inp[name] for name in ("teamId", "projectId", "initiativeId")
+                    if inp.get(name)}
+        if wanted is None:
+            if supplied:
+                raise GraphQLError(
+                    f"A {scope} view does not take {sorted(supplied)[0]}.",
+                    extensions={"code": "BAD_USER_INPUT", "field": sorted(supplied)[0]})
+            return {}
+        if not supplied.get(wanted):
+            raise GraphQLError(f"A {scope} view requires {wanted}.",
+                               extensions={"code": "BAD_USER_INPUT", "field": wanted})
+        for name, value in supplied.items():
+            if name != wanted:
+                raise GraphQLError(f"A {scope} view does not take {name}.",
+                                   extensions={"code": "BAD_USER_INPUT", "field": name})
+            if not isinstance(value, str) or not value.strip():
+                raise GraphQLError(f"{name} must be a non-empty string.",
+                                   extensions={"code": "BAD_USER_INPUT", "field": name})
+        target = supplied[wanted]
+        if scope == "team":
+            self._team_row(conn, org_id, target)
+            self._require_team_visible(conn, org_id, viewer_id, target)
+            return {"team_id": target}
+        if scope == "project":
+            stmt = select(project.c.id).where(and_(
+                project.c.id == target, project.c.organization_id == org_id,
+                project.c.archived_at.is_(None)))
+            if not conn.execute(_scope_projects(conn, stmt, org_id, viewer_id)).first():
+                raise InvalidReferenceError("projectId")
+            return {"project_id": target}
+        stmt = select(initiative.c.id).where(and_(
+            initiative.c.id == target, initiative.c.organization_id == org_id,
+            initiative.c.archived_at.is_(None)))
+        if not conn.execute(stmt).first():
+            raise InvalidReferenceError("initiativeId")
+        return {"initiative_id": target}
+
+    @staticmethod
+    def _view_slug(name: str, view_id: str) -> str:
+        """A URL fragment that stays unique per organization even for duplicate names."""
+        return f"{_slug(name, 32) or 'view'}-{view_id[:8]}"
+
+    def view_create(self, org_id: str, viewer_id: str, inp: dict) -> str:
+        kind = inp.get("kind") or "issue"
+        name = inp.get("name")
+        if not isinstance(name, str) or not name.strip() or len(name.strip()) > 80:
+            raise GraphQLError("View name must be a non-empty string of at most 80 characters.",
+                               extensions={"code": "BAD_USER_INPUT", "field": "name"})
+        scope = inp.get("scope") or "workspace"
+        if scope not in viewdocs.SCOPES:
+            raise GraphQLError(f"scope must be one of {list(viewdocs.SCOPES)}.",
+                               extensions={"code": "BAD_USER_INPUT", "field": "scope"})
+        visibility = inp.get("visibility") or "private"
+        if visibility not in viewdocs.VISIBILITIES:
+            raise GraphQLError(f"visibility must be one of {list(viewdocs.VISIBILITIES)}.",
+                               extensions={"code": "BAD_USER_INPUT", "field": "visibility"})
+        if visibility == "team" and scope != "team":
+            raise GraphQLError("A team-shared view must be scoped to a team.",
+                               extensions={"code": "BAD_USER_INPUT", "field": "visibility"})
+        filters = viewdocs.parse_filters(kind, inp.get("filters"))
+        display = viewdocs.parse_display(kind, inp.get("display"))
+        view_id, ts = new_id(), now_iso()
+        with self.engine.begin() as conn:
+            target = self._view_scope_target(conn, org_id, viewer_id, scope, inp)
+            conn.execute(saved_view.insert().values(
+                id=view_id, organization_id=org_id, kind=kind, name=name.strip(),
+                description=inp.get("description"), icon=inp.get("icon"),
+                color=inp.get("color"), slug_id=self._view_slug(name.strip(), view_id),
+                owner_id=viewer_id, creator_id=viewer_id, updated_by_id=viewer_id,
+                scope=scope, visibility=visibility,
+                filters=viewdocs.dump(filters), display=viewdocs.dump(display),
+                created_at=ts, updated_at=ts, **target))
+        return view_id
+
+    def _view_row(self, conn, org_id: str, view_id: str) -> dict | None:
+        row = conn.execute(select(saved_view).where(and_(
+            saved_view.c.organization_id == org_id, saved_view.c.id == view_id))).mappings().first()
+        return dict(row) if row else None
+
+    def _require_view_owner(self, conn, org_id: str, viewer_id: str, owner_id: str) -> None:
+        if owner_id == viewer_id:
+            return
+        admin = conn.execute(select(user.c.id).where(and_(
+            user.c.id == viewer_id, user.c.organization_id == org_id,
+            user.c.active.is_(True), user.c.archived_at.is_(None), user.c.admin.is_(True),
+        ))).first()
+        if not admin:
+            raise GraphQLError(
+                "Only the view's owner or a workspace admin can change it.",
+                extensions={"code": "FORBIDDEN"})
+
+    def view_update(self, org_id: str, viewer_id: str, view_id: str, inp: dict) -> bool:
+        if "kind" in inp:
+            raise GraphQLError("A view's kind cannot change.",
+                               extensions={"code": "BAD_USER_INPUT", "field": "kind"})
+        with self.engine.begin() as conn:
+            row = self._view_row(conn, org_id, view_id)
+            if not row:
+                return False
+            self._require_view_owner(conn, org_id, viewer_id, row["owner_id"])
+            kind = row["kind"]
+            values: dict = {"updated_at": now_iso(), "updated_by_id": viewer_id}
+            if "name" in inp:
+                name = inp["name"]
+                if not isinstance(name, str) or not name.strip() or len(name.strip()) > 80:
+                    raise GraphQLError(
+                        "View name must be a non-empty string of at most 80 characters.",
+                        extensions={"code": "BAD_USER_INPUT", "field": "name"})
+                values["name"] = name.strip()
+            for field, column in (("description", "description"), ("icon", "icon"),
+                                  ("color", "color")):
+                if field in inp:
+                    values[column] = inp[field]
+            if "scope" in inp:
+                scope = inp["scope"]
+                if scope not in viewdocs.SCOPES:
+                    raise GraphQLError(f"scope must be one of {list(viewdocs.SCOPES)}.",
+                                       extensions={"code": "BAD_USER_INPUT", "field": "scope"})
+                target = self._view_scope_target(conn, org_id, viewer_id, scope, inp)
+                values.update({"scope": scope, "team_id": None, "project_id": None,
+                               "initiative_id": None})
+                values.update(target)
+            if "visibility" in inp:
+                visibility = inp["visibility"]
+                if visibility not in viewdocs.VISIBILITIES:
+                    raise GraphQLError(
+                        f"visibility must be one of {list(viewdocs.VISIBILITIES)}.",
+                        extensions={"code": "BAD_USER_INPUT", "field": "visibility"})
+                scope = values.get("scope", row["scope"])
+                if visibility == "team" and scope != "team":
+                    raise GraphQLError("A team-shared view must be scoped to a team.",
+                                       extensions={"code": "BAD_USER_INPUT",
+                                                   "field": "visibility"})
+                values["visibility"] = visibility
+            if "filters" in inp:
+                values["filters"] = viewdocs.dump(viewdocs.parse_filters(kind, inp["filters"]))
+            if "display" in inp:
+                values["display"] = viewdocs.dump(viewdocs.parse_display(kind, inp["display"]))
+            if "archived" in inp:
+                archived = inp["archived"]
+                if not isinstance(archived, bool):
+                    raise GraphQLError("archived must be true or false.",
+                                       extensions={"code": "BAD_USER_INPUT", "field": "archived"})
+                values["archived_at"] = now_iso() if archived else None
+            conn.execute(saved_view.update().where(and_(
+                saved_view.c.organization_id == org_id,
+                saved_view.c.id == view_id)).values(**values))
+        return True
+
+    def view_delete(self, org_id: str, viewer_id: str, view_id: str) -> bool:
+        """Archive, the recorded inverse of create: nothing is erased, so it can be restored."""
+        with self.engine.begin() as conn:
+            row = self._view_row(conn, org_id, view_id)
+            if not row:
+                return False
+            self._require_view_owner(conn, org_id, viewer_id, row["owner_id"])
+            conn.execute(saved_view.update().where(and_(
+                saved_view.c.organization_id == org_id,
+                saved_view.c.id == view_id)).values(archived_at=now_iso(), updated_at=now_iso()))
+        return True
+
+    def view_favorite_toggle(self, org_id: str, viewer_id: str, view_id: str) -> bool:
+        """Toggle this user's favorite; returns the new state. Any viewer who can read may favorite."""
+        from hoja_server.store import _scope_views
+
+        with self.engine.begin() as conn:
+            visible = select(saved_view.c.id).where(and_(
+                saved_view.c.organization_id == org_id, saved_view.c.id == view_id))
+            if not conn.execute(_scope_views(conn, visible, org_id, viewer_id)).first():
+                raise GraphQLError("View not found.", extensions={"code": "NOT_FOUND"})
+            existing = conn.execute(select(saved_view_favorite.c.view_id).where(and_(
+                saved_view_favorite.c.view_id == view_id,
+                saved_view_favorite.c.user_id == viewer_id))).first()
+            if existing:
+                conn.execute(saved_view_favorite.delete().where(and_(
+                    saved_view_favorite.c.view_id == view_id,
+                    saved_view_favorite.c.user_id == viewer_id)))
+                return False
+            conn.execute(saved_view_favorite.insert().values(
+                organization_id=org_id, view_id=view_id, user_id=viewer_id,
+                created_at=now_iso()))
+        return True

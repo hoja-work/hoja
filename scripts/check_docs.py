@@ -40,6 +40,7 @@ DURABLE_DOCS = {
     "docs/extensions.md",
     "docs/webhooks.md",
     "docs/meetings.md",
+    "docs/views.md",
 }
 
 # No directory gets a blanket Markdown exemption. New component docs and
