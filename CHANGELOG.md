@@ -29,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Google Workspace connection. Reloading resumes unfinished setup, a lost response
   is reconciled against the server instead of creating a duplicate, and creating
   another workspace reuses the later steps without asking for an account again.
+- Linear-compatible outgoing webhooks (`webhookCreate` and friends, Linear signatures,
+  `docs/webhooks.md`) and Hoja Extensions (`docs/extensions.md`): an admin installs a manifest
+  that declares event subscriptions, synchronous `issue.beforeCreate`/`issue.beforeUpdate`
+  hooks that may veto or patch a change, and issue actions shown in the issue menu. Each
+  extension gets its own bot user and API key; uninstalling replays the recorded effects
+  in reverse, so nothing it created survives.
 - Durable agent chat turns when `CLINIAR_AGENT_DBOS_URL` is set: each turn is a DBOS
   workflow, so a server crash or restart resumes the turn instead of losing the reply, and
   a completed GraphQL mutation is not executed again on recovery. The transcript is read
@@ -66,6 +72,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   20 000 characters render verbatim. Editors still show the raw source.
 
 ### Changed
+
+- Webhook targets must use port 443 unless `HOJA_WEBHOOK_ALLOW_PRIVATE_NETWORKS=1` is set.
+- Expected GraphQL user errors (bad input, forbidden) are no longer logged with a traceback;
+  unexpected resolver exceptions still are.
 
 - **Breaking: the product's previous name is gone.** The Python distribution
   is `hoja-cli` on PyPI, the packages are `hoja/` and `hoja_server/`, and the

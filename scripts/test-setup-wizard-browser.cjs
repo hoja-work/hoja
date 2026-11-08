@@ -145,6 +145,9 @@ async function main() {
   try {
     const context = await browser.newContext({viewport: {width: 1440, height: 900}});
     const page = await context.newPage();
+    // The first navigation also compiles the whole app in Vite; a cold start can
+    // exceed Playwright's 30s default on a busy machine.
+    page.setDefaultNavigationTimeout(90000);
     const pageErrors = [];
     page.on('pageerror', (error) => pageErrors.push(String(error)));
 
@@ -343,6 +346,7 @@ async function main() {
     await step('an invited teammate can accept the single-use link', async () => {
       const invitee = await browser.newContext({viewport: {width: 1000, height: 800}});
       const page2 = await invitee.newPage();
+      page2.setDefaultNavigationTimeout(90000);
       await page2.goto(inviteLink);
       await page2.getByRole('heading', {name: 'Join your team.'}).waitFor();
       await page2.fill('input[type=email]', 'sam@example.com');
@@ -419,6 +423,7 @@ async function main() {
     try {
       const contextB = await browser.newContext({viewport: {width: 1100, height: 800}});
       const pageB = await contextB.newPage();
+      pageB.setDefaultNavigationTimeout(90000);
       let dropped = 0;
       await pageB.route('**/onboarding/bootstrap', async (route) => {
         if (dropped > 0) return route.continue();

@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import re
+import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,7 +19,8 @@ import pytest
 pytest.importorskip("sqlalchemy")
 pytest.importorskip("starlette")
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, inspect, select
+from sqlalchemy.exc import IntegrityError
 from starlette.testclient import TestClient
 
 from hoja_server import db, extensions, webhooks
@@ -254,6 +257,12 @@ def test_update_reconciles_by_key_and_rolls_back_on_error(world):
 
 def _secret_ok(secret, headers, body):
     expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    sdk = os.environ.get("HOJA_LINEAR_SDK_DIR")
+    if sdk:  # independent check: Linear's official verifier must accept the request
+        script = Path(__file__).with_name("linear_sdk_verify.mjs")
+        out = subprocess.run(["node", str(script), sdk, secret, headers["linear-signature"]],
+                             input=body, capture_output=True, timeout=30)
+        assert out.returncode == 0, out.stderr.decode()
     return hmac.compare_digest(headers["linear-signature"], expected) and \
         abs(json.loads(body)["webhookTimestamp"] - time.time() * 1000) < 60_000
 
@@ -297,7 +306,8 @@ def test_hook_chain_order_and_update_context(world):
     a, b = [json.loads(body) for _p, _h, body in Ext.calls]
     assert a["data"]["title"] == "original" and a["input"] == {"priority": 1}
     assert b["input"] == {"priority": 1, "title": "from a"}
-    detail = ok(client, token, '{ issue(id: "%s") { title description } }' % issue["id"])["issue"]
+    detail = ok(client, token, "query($id: String!) { issue(id: $id) { title description } }",
+                {"id": issue["id"]})["issue"]
     assert detail == {"title": "from a", "description": "saw from a"}
 
 
@@ -379,3 +389,137 @@ def test_issue_writes_only_flow_through_hooked_resolvers():
     callers = sorted(p.name for p in root.glob("*.py")
                      if re.search(r"\.issue_(create|update)\(", p.read_text()) and p.name != "writer.py")
     assert callers == ["resolvers.py"], callers
+
+
+def test_user_errors_are_quiet_but_unexpected_errors_are_logged(world, monkeypatch):
+    """Ariadne's own traceback logging is muted; the server's formatter still logs real bugs."""
+    import logging
+
+    client, token, _engine, url = world
+    seen = []
+
+    class Counter(logging.Handler):
+        def emit(self, record):
+            seen.append((record.name, record.exc_info is not None))
+
+    root, graphql_log = logging.getLogger(), logging.getLogger("hoja_server.graphql")
+    handler = Counter(level=logging.DEBUG)
+    root.addHandler(handler)
+    graphql_log.addHandler(handler)  # in case the app disabled propagation for this logger
+    try:
+        assert err(client, token, INSTALL, {"m": manifest(url, key="Bad Key")})["extensions"]["code"] == "BAD_USER_INPUT"
+        assert not seen, seen
+        monkeypatch.setattr(extensions, "list_installed", lambda *_a: 1 / 0)
+        assert err(client, token, LIST)["extensions"]["code"] == "INTERNAL_SERVER_ERROR"
+    finally:
+        root.removeHandler(handler)
+        graphql_log.removeHandler(handler)
+    assert ("hoja_server.graphql", True) in seen
+    assert not [name for name, _tb in seen if "ariadne" in name], seen
+
+
+@pytest.mark.parametrize("patch", [{"title": None}, {"title": "  "}, {"priority": "high"}, {"labelIds": 7},
+                                   "not an object"])
+def test_hook_patch_values_are_typed_like_client_input(world, patch):
+    client, token, _engine, url = world
+    Ext.routes["/typed"] = (200, {"allow": True, "patch": patch}, 0)
+    install(client, token, manifest(url, key="soft", events=[], actions=[], hooks=[
+        {"key": "typed", "on": "issue.beforeCreate", "path": "/typed", "failurePolicy": "allow"}]))
+    created = new_issue(client, token, "kept")
+    assert "errors" not in created, created
+    assert created["data"]["issueCreate"]["issue"]["title"] == "kept"
+    failure = ok(client, token, LIST)["extensions"][0]["failures"][0]
+    assert failure["key"] == "typed" and "patch" in failure["message"]
+
+    install(client, token, manifest(url, key="strict", events=[], actions=[], hooks=[
+        {"key": "typed", "on": "issue.beforeCreate", "path": "/typed", "failurePolicy": "block"}]))
+    assert new_issue(client, token, "refused")["errors"][0]["extensions"]["code"] == "EXTENSION_REJECTED"
+
+
+def test_valid_patch_values_are_coerced(world):
+    client, token, _engine, url = world
+    Ext.routes["/p"] = (200, {"allow": True, "patch": {"priority": 2, "title": "Renamed"}}, 0)
+    install(client, token, manifest(url, events=[], actions=[], hooks=[
+        {"key": "p", "on": "issue.beforeCreate", "path": "/p"}]))
+    created = new_issue(client, token, "orig")["data"]["issueCreate"]["issue"]
+    detail = ok(client, token, "query($id: String!) { issue(id: $id) { title priority } }", {"id": created["id"]})
+    assert detail["issue"] == {"title": "Renamed", "priority": 2}
+
+
+def test_hooks_are_not_called_for_writes_the_caller_cannot_attempt(world):
+    client, token, _engine, url = world
+    Ext.routes["/hooks/guard"] = (200, {"allow": True}, 0)
+    install(client, token, manifest(url, events=[], actions=[]))
+    gql(client, token, CREATE, {"input": {"teamId": "NOPE", "title": "x"}})
+    assert "/hooks/guard" not in Ext.paths()
+
+
+def test_bots_hold_seats_but_are_not_team_members(world):
+    client, token, engine, url = world
+    ext = install(client, token, manifest(url, hooks=[], actions=[]))
+    bot_id = ext["extension"]["botUser"]["id"]
+    with engine.begin() as conn:
+        team_id = conn.execute(select(db.team.c.id).where(db.team.c.key == "ENG")).scalar_one()
+        if not conn.execute(select(db.team_member.c.user_id).where(and_(
+                db.team_member.c.team_id == team_id, db.team_member.c.user_id == bot_id))).first():
+            conn.execute(db.team_member.insert().values(team_id=team_id, user_id=bot_id))
+    members = ok(client, token, '{ team(id: "ENG") { members { nodes { id } } } }')["team"]["members"]["nodes"]
+    assert members and bot_id not in {m["id"] for m in members}
+
+
+def test_one_live_extension_per_key(world):
+    client, token, engine, url = world
+    ext = install(client, token, manifest(url, hooks=[], actions=[]))["extension"]
+    with engine.begin() as conn:
+        row = dict(conn.execute(select(db.extension).where(db.extension.c.id == ext["id"])).mappings().one())
+    row.update(id="dup")
+    with pytest.raises(IntegrityError), engine.begin() as conn:
+        conn.execute(db.extension.insert().values(**row))
+    row.update(uninstalled_at="2026-01-01T00:00:00.000Z")
+    with engine.begin() as conn:  # tombstones do not count
+        conn.execute(db.extension.insert().values(**row))
+    stored = json.loads(row["manifest"])
+    assert all(not k.startswith("_") for ev in stored["events"] for k in ev)
+
+
+def test_revision_39_database_gains_the_live_key_index(tmp_path):
+    engine = make_engine(tmp_path / "rev39.db")
+    migrate(engine)
+    with engine.begin() as conn:
+        conn.exec_driver_sql("DROP INDEX uq_extension_live_key")
+        conn.execute(db.schema_revision.delete().where(db.schema_revision.c.revision >= 40))
+    migrate(engine)
+    assert db.applied_schema_revision(engine) == db.CURRENT_SCHEMA_REVISION
+    indexes = {i["name"]: i for i in inspect(engine).get_indexes("extension")}
+    assert indexes["uq_extension_live_key"]["unique"]
+
+
+def test_archive_and_team_move_deliveries(world):
+    """Archive reports the archiving change (not the last editor); a move reaches the old team."""
+    client, token, engine, url = world
+    ext = install(client, token, manifest(url, hooks=[]))
+    ok(client, token, "mutation($i: WebhookCreateInput!) { webhookCreate(input: $i) { success } }",
+       {"i": {"url": url + "/plain", "teamId": "ENG", "resourceTypes": ["Issue"]}})
+    issue = new_issue(client, token, "moving")["data"]["issueCreate"]["issue"]
+    webhooks.dispatch_once(engine)
+    ok(client, ext["apiKey"], UPDATE_ISSUE, {"id": issue["id"], "input": {"title": "bot edit"}})
+    webhooks.dispatch_once(engine)
+    ok(client, token, 'mutation($id: String!) { issueArchive(id: $id) { success } }', {"id": issue["id"]})
+    webhooks.dispatch_once(engine)
+    while webhooks.deliver_due(engine):
+        pass
+    archived = [json.loads(b) for p, _h, b in Ext.calls if p == "/plain"][-1]
+    assert "archivedAt" in archived["updatedFrom"]
+    assert (archived["actor"] or {}).get("id") != ext["extension"]["botUser"]["id"]
+
+    ok(client, token, 'mutation { teamCreate(input: {name: "Ops", key: "OPS"}) { success } }')
+    with engine.begin() as conn:
+        ops = conn.execute(select(db.team.c.id).where(db.team.c.key == "OPS")).scalar_one()
+        conn.execute(db.issue.update().where(db.issue.c.id == issue["id"]).values(
+            team_id=ops, updated_at="2099-01-01T00:00:00.000Z"))
+    before = len([p for p in Ext.paths() if p == "/plain"])
+    webhooks.dispatch_once(engine)
+    while webhooks.deliver_due(engine):
+        pass
+    plain = [json.loads(b) for p, _h, b in Ext.calls if p == "/plain"]
+    assert len(plain) == before + 1 and "teamId" in plain[-1]["updatedFrom"]

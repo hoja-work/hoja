@@ -30,8 +30,11 @@ import time
 from typing import Any
 from urllib.parse import urlsplit
 
+from graphql import GraphQLInputObjectType, Undefined
+from graphql.utilities import coerce_input_value, validate_input_value
 from sqlalchemy import and_, select
 from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.exc import IntegrityError
 
 from hoja_server import secrets_box, tenant_context, webhooks
 from hoja_server.db import (
@@ -245,6 +248,13 @@ def _private_team_ids(conn: Connection, org_id: str, events: list[dict]) -> set[
     return ids
 
 
+def _stored(manifest: dict) -> str:
+    """The manifest as the admin wrote it (without server-resolved helper keys)."""
+    clean = dict(manifest, events=[{k: v for k, v in ev.items() if not k.startswith("_")}
+                                   for ev in manifest["events"]])
+    return json.dumps(clean)
+
+
 def _event_input(manifest: dict, ev: dict) -> dict:
     return {"url": manifest["url"] + ev["path"], "resourceTypes": ev["resourceTypes"],
             "teamId": ev.get("_team") or ev["teamId"], "allPublicTeams": ev["allPublicTeams"],
@@ -291,6 +301,14 @@ def install(engine: Engine, org_id: str, installer_id: str, raw_manifest: Any) -
     raw_token = gen_token()
     ts = now_iso()
     ext_id, bot_id, key_id = new_id(), new_id(), new_id()
+    try:
+        _install_rows(engine, org_id, installer_id, manifest, sealed, raw_token, ts, ext_id, bot_id, key_id)
+    except IntegrityError as exc:  # a concurrent install of the same key won the unique index
+        raise ExtensionError(f"An extension with key '{manifest['key']}' is already installed.", "key") from exc
+    return {"extension": get(engine, org_id, ext_id), "apiKey": raw_token, "signingSecret": secret}
+
+
+def _install_rows(engine, org_id, installer_id, manifest, sealed, raw_token, ts, ext_id, bot_id, key_id):
     with engine.begin() as conn:
         if conn.execute(select(extension.c.id).where(and_(
                 extension.c.organization_id == org_id, extension.c.key == manifest["key"],
@@ -305,7 +323,7 @@ def install(engine: Engine, org_id: str, installer_id: str, raw_manifest: Any) -
         conn.execute(extension.insert().values(
             id=ext_id, organization_id=org_id, key=manifest["key"], name=manifest["name"],
             version=manifest["version"], url=manifest["url"], access=manifest["access"],
-            manifest=json.dumps(manifest), secret_sealed=sealed, bot_user_id=bot_id,
+            manifest=_stored(manifest), secret_sealed=sealed, bot_user_id=bot_id,
             installed_by=installer_id, created_at=ts, updated_at=ts))
         _record(conn, org_id, ext_id, "bot_user", bot_id)
         conn.execute(api_key.insert().values(
@@ -321,7 +339,6 @@ def install(engine: Engine, org_id: str, installer_id: str, raw_manifest: Any) -
             _add_hook(conn, org_id, ext_id, hook)
         for action in manifest["actions"]:
             _add_action(conn, org_id, ext_id, action)
-    return {"extension": get(engine, org_id, ext_id), "apiKey": raw_token, "signingSecret": secret}
 
 
 def uninstall(engine: Engine, org_id: str, ext_id: str) -> bool:
@@ -412,7 +429,7 @@ def update(engine: Engine, org_id: str, ext_id: str, raw_manifest: Any) -> dict 
             name=manifest["name"], display_name=manifest["name"], updated_at=now_iso()))
         conn.execute(extension.update().where(extension.c.id == ext_id).values(
             name=manifest["name"], version=manifest["version"], url=manifest["url"],
-            access=manifest["access"], manifest=json.dumps(manifest), updated_at=now_iso()))
+            access=manifest["access"], manifest=_stored(manifest), updated_at=now_iso()))
     _BREAKER.forget(ext_id)
     return get(engine, org_id, ext_id)
 
@@ -546,9 +563,38 @@ def issue_data(engine: Engine, org_id: str, issue_id: str) -> dict | None:
         return webhooks._issue_data(conn, dict(row)) if row else None
 
 
+def _typed_patch(patch: Any, input_type: GraphQLInputObjectType | None) -> tuple[dict, str | None]:
+    """Coerce a hook patch exactly as GraphQL coerces client input; return (patch, error)."""
+    if not isinstance(patch, dict):
+        return {}, "patch must be an object"
+    bad = sorted(set(patch) - set(PATCHABLE))
+    if bad:
+        return {}, f"patch may only set {list(PATCHABLE)}; got {bad}"
+    if "title" in patch and (not isinstance(patch["title"], str) or not patch["title"].strip()):
+        return {}, "patch.title must be a non-empty string"
+    if input_type is None:
+        return patch, None
+    out = {}
+    for key, value in patch.items():
+        field = input_type.fields.get(key)
+        if field is None:
+            return {}, f"patch.{key} is not accepted by {input_type.name}"
+        coerced = coerce_input_value(value, field.type)
+        if coerced is Undefined:
+            problems: list[str] = []
+            validate_input_value(value, field.type, lambda err, _path, sink=problems: sink.append(err.message))
+            return {}, f"patch.{key}: {problems[0] if problems else 'invalid value'}"
+        out[key] = coerced
+    return out, None
+
+
 def run_hooks(engine: Engine, org_id: str, actor_id: str | None, event: str, inp: dict,
-              current: dict | None = None) -> tuple[dict, list[tuple[str, str, list[str]]]]:
+              current: dict | None = None,
+              input_type: GraphQLInputObjectType | None = None) -> tuple[dict, list[tuple[str, str, list[str]]]]:
     """Run the synchronous hook chain for one write. Returns (input, patches applied).
+
+    Patches are coerced through ``input_type`` (the mutation's GraphQL input type),
+    so a hook can never hand the writer a value a client could not send.
 
     Raises ExtensionRejectedError on a veto, or on a failure of a hook whose policy is block.
     """
@@ -587,14 +633,10 @@ def run_hooks(engine: Engine, org_id: str, actor_id: str | None, event: str, inp
                     _BREAKER.record(breaker_key, True)
                     raise ExtensionRejectedError(h["name"], str(body.get("message") or "rejected this change"))
                 else:
-                    patch = body.get("patch") or {}
-                    bad = sorted(set(patch) - set(PATCHABLE)) if isinstance(patch, dict) else ["<not an object>"]
-                    if bad:
-                        error = f"patch may only set {list(PATCHABLE)}; got {bad}"
-                    else:
+                    patch, error = _typed_patch(body.get("patch") or {}, input_type)
+                    if error is None and patch:
                         result.update(patch)
-                        if patch:
-                            patches.append((h["bot_user_id"], h["key"], sorted(patch)))
+                        patches.append((h["bot_user_id"], h["key"], sorted(patch)))
             except ExtensionRejectedError:
                 raise
             except Exception as exc:  # timeout, connection, TLS, refused target
@@ -605,7 +647,7 @@ def run_hooks(engine: Engine, org_id: str, actor_id: str | None, event: str, inp
         if not circuit_open:  # a skipped call is not a new failure (it would reset the breaker)
             _BREAKER.record(breaker_key, False)
             _record_failure(engine, org_id, ext_id, "hook", h["key"], status, error)
-        log.warning("extension %s hook %s failed: %s", h["key"], ext_id, error)
+        log.warning("extension %s hook %s failed: %s", ext_id, h["key"], error)
         if h["failure_policy"] == "block":
             raise ExtensionRejectedError(h["name"], f"is unavailable ({error}); the change was blocked")
     return result, patches
