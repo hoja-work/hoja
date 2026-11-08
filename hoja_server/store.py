@@ -1021,6 +1021,78 @@ class Store:
                 active=bool(active), updated_at=now))
         return self.get_user(org_id, user_id)
 
+    def archive_member(self, org_id: str, actor_id: str, user_id: str) -> dict | None:
+        """Remove a member: archived, sessions and keys ended, re-invitable."""
+        from hoja_server.db import api_key as api_key_table
+
+        now = datetime.now(timezone.utc).isoformat()
+        with self.engine.begin() as conn:
+            target = conn.execute(select(user.c.id, user.c.admin, user.c.active).where(and_(
+                user.c.organization_id == org_id, user.c.id == user_id,
+                user.c.archived_at.is_(None), user.c.kind == "human",
+            ))).first()
+            if not target:
+                return None
+            if user_id == actor_id:
+                return None
+            if target.admin and target.active:
+                other_admins = conn.execute(select(user.c.id).where(and_(
+                    user.c.organization_id == org_id, user.c.admin.is_(True),
+                    user.c.active.is_(True), user.c.archived_at.is_(None),
+                    user.c.id != user_id,
+                )).with_for_update()).all()
+                if not other_admins:
+                    return None
+            conn.execute(user.update().where(user.c.id == user_id).values(
+                active=False, archived_at=now, updated_at=now))
+            conn.execute(organization_membership.update().where(and_(
+                organization_membership.c.organization_id == org_id,
+                organization_membership.c.profile_user_id == user_id,
+            )).values(active=False))
+            conn.execute(api_key_table.update().where(and_(
+                api_key_table.c.user_id == user_id,
+                api_key_table.c.organization_id == org_id,
+                api_key_table.c.revoked_at.is_(None),
+            )).values(revoked_at=now))
+            conn.execute(browser_session.delete().where(
+                browser_session.c.user_id == user_id))
+            identity_id = conn.execute(select(organization_membership.c.identity_id).where(and_(
+                organization_membership.c.organization_id == org_id,
+                organization_membership.c.profile_user_id == user_id,
+            ))).scalar_one_or_none()
+            if identity_id:
+                conn.execute(identity_credential.delete().where(
+                    identity_credential.c.identity_id == identity_id))
+        return self.get_user(org_id, user_id)
+
+    def archived_members(self, org_id: str) -> list[dict]:
+        """Removed members, so an admin can audit and undo a removal."""
+        with self.engine.connect() as conn:
+            rows = conn.execute(select(user).where(and_(
+                user.c.organization_id == org_id,
+                user.c.archived_at.is_not(None),
+                user.c.kind == "human",
+            )).order_by(user.c.archived_at.desc())).mappings().all()
+        return [dict(r) for r in rows]
+
+    def restore_member(self, org_id: str, actor_id: str, user_id: str) -> dict | None:
+        """Undo an archive: the same profile returns with its history intact."""
+        now = datetime.now(timezone.utc).isoformat()
+        with self.engine.begin() as conn:
+            target = conn.execute(select(user.c.id).where(and_(
+                user.c.organization_id == org_id, user.c.id == user_id,
+                user.c.archived_at.is_not(None), user.c.kind == "human",
+            ))).first()
+            if not target:
+                return None
+            conn.execute(user.update().where(user.c.id == user_id).values(
+                active=True, archived_at=None, updated_at=now))
+            conn.execute(organization_membership.update().where(and_(
+                organization_membership.c.organization_id == org_id,
+                organization_membership.c.profile_user_id == user_id,
+            )).values(active=True))
+        return self.get_user(org_id, user_id)
+
     def accept_membership_invitation(self, identity_id: str, raw: str,
                                      invitee_password: str) -> dict | None:
         now = datetime.now(timezone.utc).isoformat()
@@ -1264,7 +1336,6 @@ class Store:
             ).where(and_(
                 user.c.organization_id == org_id,
                 func.lower(user.c.email) == normalized_email,
-                user.c.archived_at.is_(None),
             ))).first()
             if existing is not None:
                 if existing[1]:
@@ -1278,7 +1349,7 @@ class Store:
                 # inviter decides the role, and the old password and browser
                 # sessions belong to the access that was revoked.
                 conn.execute(user.update().where(user.c.id == existing[0]).values(
-                    active=True, admin=bool(is_admin), updated_at=now))
+                    active=True, admin=bool(is_admin), archived_at=None, updated_at=now))
                 stale = conn.execute(select(organization_membership.c.identity_id).where(
                     organization_membership.c.profile_user_id == existing[0])).scalar_one_or_none()
                 if stale:
