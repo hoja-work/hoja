@@ -34,7 +34,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 44
+CURRENT_SCHEMA_REVISION = 46
 
 
 def now_iso() -> str:
@@ -415,6 +415,11 @@ model_provider = Table(
     Column("provider", String, nullable=False),
     Column("model_id", String, nullable=False),
     Column("base_url", String),
+    # Advertised context window of the provider's model, in tokens. Optional: a
+    # workspace admin's own provider may not declare one, and it is not needed to
+    # call the model - it lets the UI state the limit and lets a managed offering
+    # register the model it seeds (see infra/tenants/default-provider.json).
+    Column("context_window", Integer),
     Column("encrypted_api_key", String, nullable=False),
     Column("enabled", Boolean, nullable=False, default=True),
     Column("created_at", String, nullable=False),
@@ -877,6 +882,9 @@ attachment = Table(
     Column("url", String, nullable=False),
     Column("title", String, nullable=False),
     Column("subtitle", String),
+    # Resolved media type of an uploaded blob (NULL for external links), recorded at
+    # create time so a client can choose a renderer without probing the URL.
+    Column("content_type", String),
     Column("created_at", String),
 )
 
@@ -1495,6 +1503,17 @@ def _apply_agent_conversation_title(conn) -> None:
         conn.exec_driver_sql("ALTER TABLE agent_conversation ADD COLUMN title VARCHAR")
 
 
+def _apply_model_provider_context_window(conn) -> None:
+    """Record the model's advertised context window on a provider row.
+
+    Nullable: providers added by workspace admins need no window, and existing rows
+    keep working unchanged. The included offering (infra/tenants/default-provider.json)
+    sets it so the workspace the seed touches has the model described in full.
+    """
+    if "context_window" not in {c["name"] for c in inspect(conn).get_columns("model_provider")}:
+        conn.exec_driver_sql("ALTER TABLE model_provider ADD COLUMN context_window INTEGER")
+
+
 def rate_limit_key_hash(key: str) -> str:
     """Rate-limit keys (emails, IPs) are stored only as SHA-256 digests."""
     return hashlib.sha256(key.encode()).hexdigest()
@@ -1791,6 +1810,17 @@ $fn$;""")
         raise RuntimeError(f"Realtime capture is not implemented for {conn.dialect.name}")
 
 
+def _apply_attachment_content_type(conn) -> None:
+    """Record the media type of an uploaded blob on its attachment row.
+
+    Existing rows stay NULL: an external link has no type we could know without
+    fetching it, and the client falls back to the URL extension for those.
+    """
+    columns = {c["name"] for c in inspect(conn).get_columns("attachment")}
+    if "content_type" not in columns:
+        conn.exec_driver_sql("ALTER TABLE attachment ADD COLUMN content_type VARCHAR")
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -1875,7 +1905,14 @@ _MIGRATIONS = {
         saved_view.create(conn, checkfirst=True),
         saved_view_favorite.create(conn, checkfirst=True),
     ),
-    44: _apply_issue_decisions,
+    44: _apply_attachment_content_type,
+    # Renumbered 43 -> 44 -> 45 across rebases: main shipped revision 43 (saved views)
+    # and 44 (attachment content_type), so the context window takes the next number
+    # after the merge queue agreed #53 lands second.
+    45: _apply_model_provider_context_window,
+    # Renumbered 44 -> 46 on merge: main already shipped revisions 44 (attachment
+    # content_type) and 45 (model_provider.context_window), so decisions takes 46.
+    46: _apply_issue_decisions,
 }
 
 
