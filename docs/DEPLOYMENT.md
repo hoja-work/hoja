@@ -128,6 +128,29 @@ token = "TOKEN_FROM_A_SECRET_STORE"
 `LINEAR_API_URL` is still read when `HOJA_API_URL` is unset. Both are separate
 from `HOJA_APP_URL`.
 
+## Browser clients and CORS
+
+Hoja's own web UI is served by `hoja-serve`, so its API calls are same-origin
+and need no CORS. A browser client served from a different origin — the Expo
+app's web build on Metro, or a preview deployment — is refused by the browser
+unless the server names that origin:
+
+```bash
+# Exact origins only; comma-separated. Off when unset.
+export HOJA_CORS_ORIGINS='http://localhost:8082,https://preview.example.com'
+hoja-serve serve --host 0.0.0.0 --port 8787
+```
+
+The server allows `GET`, `POST`, and `OPTIONS` with the `Authorization`,
+`Content-Type`, `Accept`, and `If-None-Match` request headers, and exposes
+`ETag` so the sync client can make conditional `/sync/bootstrap` requests.
+Cookie credentials are never allowed cross-origin (`allow_credentials=False`),
+so a hostile origin cannot ride an existing browser session. Wildcards and
+entries with a path are rejected at startup rather than silently ignored.
+
+The Expo web harness sets this variable for its own Metro origin; see
+`mobile/README.md`.
+
 ## Sign-in identity in hosted workspaces
 
 `HOJA_OWNER_EMAIL` is the address the provisioner recorded as the workspace
