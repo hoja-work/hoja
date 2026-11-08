@@ -547,7 +547,8 @@ export function LinearTeamCycles({team, teams, onCycle, onSettings, onNavigate, 
             <CycleOverviewRows cycles={cycles} issuesByCycle={issuesByCycle} onCycle={onCycle}
               emptyHint={`${team.name} has no cycles yet. Enable automatic cycles in cycle settings.`} />
           )}
-          {!loading && !error && !!cycles.length && (
+          {/* Shown with zero cycles too: settings are where cycles get enabled. */}
+          {!loading && !error && (
             <div style={{padding: '8px 28px'}}>
               <button type="button" className="lin-btn" onClick={onSettings}>Cycle settings</button>
             </div>
