@@ -34,7 +34,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 44
+CURRENT_SCHEMA_REVISION = 45
 
 
 def now_iso() -> str:
@@ -854,6 +854,9 @@ attachment = Table(
     Column("url", String, nullable=False),
     Column("title", String, nullable=False),
     Column("subtitle", String),
+    # Resolved media type of an uploaded blob (NULL for external links), recorded at
+    # create time so a client can choose a renderer without probing the URL.
+    Column("content_type", String),
     Column("created_at", String),
 )
 
@@ -1740,6 +1743,17 @@ def _apply_extensions(conn):
         table.create(conn, checkfirst=True)
 
 
+def _apply_attachment_content_type(conn) -> None:
+    """Record the media type of an uploaded blob on its attachment row.
+
+    Existing rows stay NULL: an external link has no type we could know without
+    fetching it, and the client falls back to the URL extension for those.
+    """
+    columns = {c["name"] for c in inspect(conn).get_columns("attachment")}
+    if "content_type" not in columns:
+        conn.exec_driver_sql("ALTER TABLE attachment ADD COLUMN content_type VARCHAR")
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -1824,8 +1838,11 @@ _MIGRATIONS = {
         saved_view.create(conn, checkfirst=True),
         saved_view_favorite.create(conn, checkfirst=True),
     ),
-    # Renumbered 43 -> 44 on rebase: main already shipped revision 43 (saved views).
-    44: _apply_model_provider_context_window,
+    44: _apply_attachment_content_type,
+    # Renumbered 43 -> 44 -> 45 across rebases: main shipped revision 43 (saved views)
+    # and 44 (attachment content_type), so the context window takes the next number
+    # after the merge queue agreed #53 lands second.
+    45: _apply_model_provider_context_window,
 }
 
 

@@ -17,6 +17,7 @@ from hoja_server.store import (
     team_visible,
 )
 from hoja_server import comment_policy
+from hoja_server import uploads
 from hoja_server import views as viewdocs
 from hoja_server.db import (
     PRIORITY_LABELS,
@@ -1008,6 +1009,9 @@ class Writer:
                 return None
             aid = new_id()
             created_at = now_iso()
+            # An uploaded blob's type is knowable from its sidecar; an external link's
+            # is not, so it stays NULL and the client falls back to the URL extension.
+            content_type = uploads.content_type_for_url(inp["url"])
             conn.execute(attachment.insert().values(
                 id=aid,
                 organization_id=org_id,
@@ -1016,6 +1020,7 @@ class Writer:
                 url=inp["url"],
                 title=inp["title"],
                 subtitle=inp.get("subtitle"),
+                content_type=content_type,
                 created_at=created_at,
             ))
             return {
@@ -1023,6 +1028,7 @@ class Writer:
                 "url": inp["url"],
                 "title": inp["title"],
                 "subtitle": inp.get("subtitle"),
+                "contentType": content_type,
                 "createdAt": created_at,
                 "_issue_id": irow[0],
             }
