@@ -598,6 +598,7 @@ html{font-size:calc(16px * var(--font-scale,1))}
 .sidebar .team-row .team-name svg{width:15px;height:15px;flex:none}
 .sidebar .nav-group-your-teams .team-block{margin-bottom:4px}
 .sidebar .nav-group-your-teams .team-block:first-of-type{margin-top:8px}
+.sidebar .nav-group-more-control .sidebar-more-menu{top:auto;bottom:calc(100% + 6px);transform-origin:bottom left}
 
 .projects-heading-actions{display:flex;align-items:center;gap:8px}
 
