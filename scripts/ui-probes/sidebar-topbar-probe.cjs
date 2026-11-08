@@ -47,6 +47,10 @@ async function scan(page, label, min) {
     const sidebarBtns = await page.locator('.sidebar .nav-item').allInnerTexts();
     for (const label of [...new Set(sidebarBtns.map(s => s.trim()))].filter(Boolean)) {
       try {
+        // Start from the workspace every time: a nav target can replace the sidebar (Settings)
+        // or sit at the very bottom (More), so the loop must not depend on the previous click.
+        await page.goto(url + '/');
+        await page.waitForTimeout(700);
         await page.locator('.sidebar .nav-item', { hasText: label }).first().click({ timeout: 3000 });
         await page.waitForTimeout(500);
         await scan(page, 'after-nav:' + label, min);
