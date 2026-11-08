@@ -43,6 +43,7 @@ DURABLE_DOCS = {
     "docs/meetings.md",
     "docs/decisions.md",
     "docs/views.md",
+    "docs/notifications/android-and-ux.md",
 }
 
 # No directory gets a blanket Markdown exemption. New component docs and
