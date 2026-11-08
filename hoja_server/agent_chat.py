@@ -29,7 +29,7 @@ from hoja_server.agent_prompt import compose_prompt, workspace_snapshot
 from hoja_server.agent_threads import _owned as _owned_thread
 from hoja_server.agent_threads import _title_from
 from hoja_server.db import model_provider
-from hoja_server.denials import DENY_HINT
+from hoja_server.denials import DENY_HINT, READ_ONLY_HINT
 from hoja_server.model_providers import validate_model_base_url
 from hoja_server.secrets_box import decrypt_secret
 
@@ -130,7 +130,7 @@ def build_agent(model, schema_sdl: str, connector: ConnectorBinding | None = Non
         """Run a GraphQL query or mutation against Hoja as the signed-in user.
         `query` is REQUIRED and must be a non-empty GraphQL string. Call `schema` first if you need field names."""
         if read_only_violation(query, ctx.deps.context.get("access", "read")):
-            return {"errors": [{"message": "This API key is read-only.", "extensions": {"code": "FORBIDDEN", "agentHint": DENY_HINT}}]}
+            return {"errors": [{"message": "This API key is read-only.", "extensions": {"code": "FORBIDDEN", "agentHint": READ_ONLY_HINT}}]}
         if ctx.deps.graphql_runner is not None:
             return await ctx.deps.graphql_runner(query, variables or {})
         _ok, result = await graphql_run(ctx.deps.schema, query, variables or {}, ctx.deps.context)
