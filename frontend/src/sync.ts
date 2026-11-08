@@ -203,6 +203,10 @@ function lookups(meta: SyncMeta): Lookups {
 }
 
 type Col = (row: Row) => unknown;
+function flag(value: unknown): boolean {
+  return value === true || value === 1 || value === '1' || value === 't';
+}
+
 function columnReader(columns: string[]): (name: string) => Col {
   const at = new Map(columns.map((c, i) => [c, i]));
   return name => { const i = at.get(name); return i === undefined ? () => undefined : row => row[i]; };
@@ -227,6 +231,8 @@ function hydrate(row: Row, col: (name: string) => Col, lk: Lookups, parentRow: R
     labels: {nodes: ((col('labelIds')(row) as string[]) || []).map(l => lk.labels.get(l)).filter(Boolean) as IssueLabel[]},
     subscribers: {nodes: ((col('subscriberIds')(row) as string[]) || []).map(u => ({id: u}))},
     estimate: (col('estimate')(row) as number | null) ?? null,
+    // SQLite stores the flag as 0/1, PostgreSQL as a boolean; both mean the same thing here.
+    decisionNeeded: flag(col('decisionNeeded')(row)) ? true : undefined,
     parent: parentRow
       ? {id: parentRow[0] as string, identifier: col('identifier')(parentRow) as string, title: col('title')(parentRow) as string}
       : (id('parentId') ? {id: id('parentId')!, identifier: '', title: ''} : null),
@@ -242,6 +248,7 @@ function dehydrate(issue: Issue, columns: string[]): Row {
     parentId: (issue as {parent?: {id: string} | null}).parent?.id, stateId: issue.state?.id, teamId: issue.team?.id, projectId: issue.project?.id,
     assigneeId: issue.assignee?.id, creatorId: issue.creator?.id, cycleId: issue.cycle?.id,
     labelIds: issue.labels?.nodes.map(l => l.id) || [], subscriberIds: issue.subscribers?.nodes.map(s => s.id) || [],
+    decisionNeeded: issue.decisionNeeded ? 1 : 0,
   };
   return columns.map(c => values[c] ?? null);
 }

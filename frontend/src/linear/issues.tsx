@@ -9,6 +9,7 @@ import {addLabelInput, bulkRemove, bulkUpdate, useHiddenIssueIds, useScrollWindo
 import {Avatar, CycleChip, CycleGlyph, DueChip, FavStar, IconBtn, LabelChip, LinMenu, LinearStatusIcon, PriorityIcon, ProjectChip, Ring, StatusAgeIcon, SubIssuePill, Tip, cx, dueIsOverdue, fmtDate, fmtFullDate, formatDueDay, parseDueDay, useDismiss, useFavorite, type MenuItem} from './shared';
 import {runExtensionAction, useIssueExtensionActions, type ExtensionAction} from '../extensions';
 import {createView, fieldsFromFilters, filtersFromFields, listViews, type ServerView} from '../views';
+import {answerDecision, cancelDecision, decisionFields, type IssueDecision} from '../decisions';
 
 /* Linear 1:1 Issues list + board + detail. */
 
@@ -21,9 +22,11 @@ export type LinIssue = Omit<Issue, 'subscribers'> & {
   subscribers?: {nodes: {id: string; name?: string; avatarUrl?: string}[]};
   attachments?: {nodes: LinAttachment[]};
   activity?: {nodes: IssueActivityEvent[]};
+  /** Open/deferred questions, newest first (docs/decisions.md); decisionNeeded flags them. */
+  decisions?: IssueDecision[];
 };
 
-export const linIssueFields = `{ id identifier title description createdAt updatedAt stateChangedAt dueDate priority priorityLabel estimate branchName url state { id name color type } team { id key name } project { id name } assignee { id name } creator { id name } cycle { id name number } parent { id identifier title } labels { nodes { id name color } } }`;
+export const linIssueFields = `{ id identifier title description createdAt updatedAt stateChangedAt dueDate priority priorityLabel estimate branchName url decisionNeeded state { id name color type } team { id key name } project { id name } assignee { id name } creator { id name } cycle { id name number } parent { id identifier title } labels { nodes { id name color } } }`;
 
 /* ---------------- filter + display models ---------------- */
 
@@ -321,6 +324,92 @@ export function DisplayPanel({display, setDisplay, onClose, anchorClass}: {
   );
 }
 
+/* ---------------- decisions ---------------- */
+
+/** "Waiting on me" marker: the issue has an open decision (docs/decisions.md). */
+export function DecisionFlag({label = 'Needs a decision'}: {label?: string}) {
+  return <span className="lin-df" role="img" aria-label={label} title={label}>?</span>;
+}
+
+function replaceDecision(list: IssueDecision[] | undefined, next: IssueDecision): IssueDecision[] {
+  const rows = list || [];
+  const at = rows.findIndex(d => d.id === next.id);
+  return at < 0 ? [next, ...rows] : rows.map(d => (d.id === next.id ? next : d));
+}
+
+/* An open decision sits above the issue body: one click on an option answers it. Answered
+ * and canceled decisions collapse to a line, so the issue keeps the record of what was
+ * decided without the banner shouting forever. */
+function DecisionPanel({decisions, onAnswer, onCancel}: {
+  decisions: IssueDecision[]; onAnswer: (d: IssueDecision, input: {option?: string; answer?: string}) => Promise<void>;
+  onCancel: (d: IssueDecision) => Promise<void>;
+}) {
+  const [pending, setPending] = useState<string | null>(null);
+  const [error, setError] = useState('');
+  const [draft, setDraft] = useState('');
+  const [showSettled, setShowSettled] = useState(false);
+  if (!decisions.length) return null;
+  const open = decisions.filter(d => d.status === 'open');
+  const settled = decisions.filter(d => d.status !== 'open');
+  const run = async (d: IssueDecision, input: {option?: string; answer?: string}) => {
+    setPending(d.id); setError('');
+    try { await onAnswer(d, input); } catch (e) { setError((e as Error).message); } finally { setPending(null); }
+  };
+  const cancel = async (d: IssueDecision) => {
+    setPending(d.id); setError('');
+    try { await onCancel(d); } catch (e) { setError((e as Error).message); } finally { setPending(null); }
+  };
+  return (
+    <section className="lin-decisions" aria-label="Decisions">
+      {open.map(d => (
+        <article className="lin-decision open" key={d.id}>
+          <header>
+            <span className="lin-decision-kicker">Decision needed</span>
+            <button type="button" className="lin-decision-dismiss" disabled={pending === d.id}
+              onClick={() => void cancel(d)} title="Withdraw this question">Withdraw</button>
+          </header>
+          <p className="lin-decision-q">{d.question}</p>
+          {d.context && <div className="lin-decision-context"><Markdown text={d.context} density="block" /></div>}
+          <div className="lin-decision-actions">
+            {d.options.length
+              ? d.options.map(o => (
+                <button type="button" key={o.key} className="lin-btn primary lin-decision-option"
+                  disabled={pending === d.id} title={o.description || o.label}
+                  onClick={() => void run(d, {option: o.key})}>
+                  <b>{o.label}</b>{o.description && <small>{o.description}</small>}
+                </button>
+              ))
+              : <form className="lin-decision-free"
+                  onSubmit={e => { e.preventDefault(); const text = draft.trim(); if (text) void run(d, {answer: text}); }}>
+                  <input aria-label={`Answer: ${d.question}`} placeholder="Type the answer…" value={draft}
+                    onChange={e => setDraft(e.target.value)} disabled={pending === d.id} />
+                  <button type="submit" className="lin-btn primary" disabled={!draft.trim() || pending === d.id}>Answer</button>
+                </form>}
+          </div>
+          <small className="lin-decision-meta">
+            {d.askedByAgent ? `Asked by ${d.askedByAgent}` : `Asked by ${d.askedBy?.name || 'an agent'}`}
+            {d.askedByAgent && d.askedBy?.name ? ` (${d.askedBy.name})` : ''} — agents are waiting on this
+          </small>
+        </article>
+      ))}
+      {error && <p className="lin-error" role="alert">{error}</p>}
+      {settled.length > 0 && (
+        <div className="lin-decision-settled">
+          <button type="button" className="lin-btn" aria-expanded={showSettled}
+            onClick={() => setShowSettled(v => !v)}>
+            {showSettled ? 'Hide' : 'Show'} {settled.length} answered decision{settled.length === 1 ? '' : 's'}
+          </button>
+          {showSettled && settled.map(d => (
+            <p key={d.id} className="lin-decision-answer">
+              <b>{d.question}</b> → {d.answer} <small>· answered by {d.answeredBy?.name || 'a member'}</small>
+            </p>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 /* ---------------- issue row ---------------- */
 
 /* Memoized: with stable onSelect/onOpen only rows whose issue/selection changed re-render. */
@@ -342,6 +431,7 @@ export const IssueRow = memo(function IssueRow({issue, display, selected, onSele
       {p.id && <span className="ident">{issue.identifier}</span>}
       {p.status && <StatusAgeIcon issue={issue} />}
       <button type="button" className="title" onClick={() => onOpen(issue)} title={issue.title}>{issue.title}</button>
+      {issue.decisionNeeded && <DecisionFlag />}
       {childCount > 0 && <SubIssuePill done={0} total={childCount} />}
       <span className="meta">
         {p.labels && issue.labels?.nodes.map(l => <LabelChip key={l.id} label={l} />)}
@@ -422,6 +512,7 @@ const BoardCard = memo(function BoardCard({issue, team, onOpen, onDragStart, onU
           )}
         </span>
       </span>
+      {issue.decisionNeeded && <DecisionFlag />}
       <button type="button" className="ttl lin-card-open" onClick={e => { e.stopPropagation(); onOpen(issue); }} aria-label={`Open ${issue.identifier}: ${issue.title}`}>{issue.title}</button>
       <span className="chips">
         {issue.labels?.nodes.map(l => <LabelChip key={l.id} label={l} />)}
@@ -988,6 +1079,8 @@ const detailFields = `{ id identifier title description createdAt updatedAt dueD
   labels{nodes{id name color}} subscribers{nodes{id name}}
   attachments{nodes{id url title subtitle createdAt}}
   activity(first:50){nodes{id eventType createdAt actor{name} changes}}
+  decisionNeeded
+  decisions(first:20){${decisionFields}}
   comments{nodes${commentFields}} }`;
 
 /* Detail cache. The sync store already holds every synced issue's properties; this keeps
@@ -1065,13 +1158,18 @@ export function issueIntentProps(issue: {id: string; identifier?: string}, delay
   return {onMouseEnter: start, onMouseLeave: cancel, onFocus: start, onTouchStart: () => prefetchIssueDetail(issue.identifier || issue.id, issue.id)};
 }
 // Comment/attachment events carry their own id, not the issue's, so a create may touch any cached issue.
-onEntityChange(['issue', 'comment', 'attachment'], events => {
+onEntityChange(['issue', 'comment', 'attachment', 'issueDecision'], events => {
   const entries = [...new Set(detailCache.values())];
   for (const e of events) {
     if (e.entity === 'issue') {
       for (const entry of entries) {
         if (entry.detail.id === e.entityId || entry.subs.some(s => s.id === e.entityId)) staleDetails.add(entry.detail.id);
       }
+      continue;
+    }
+    if (e.entity === 'issueDecision') {
+      // A decision event names the decision, not its issue, so every cached detail revalidates.
+      for (const entry of entries) staleDetails.add(entry.detail.id);
       continue;
     }
     const owner = e.entity === 'comment' && e.action !== 'create'
@@ -1102,6 +1200,7 @@ function mergeIssueView(base: LinIssue, live: Issue | undefined, users: Map<stri
       priority: live.priority, priorityLabel: live.priorityLabel, state: live.state || (sameVersion ? base.state : undefined),
       team: ref('team'), project: ref('project'), cycle: ref('cycle'), assignee: ref('assignee'), creator: ref('creator'),
       labels: live.labels, dueDate: live.dueDate, createdAt: base.createdAt || live.createdAt,
+      decisionNeeded: live.decisionNeeded ?? base.decisionNeeded,
       updatedAt: live.updatedAt && (!base.updatedAt || live.updatedAt > base.updatedAt) ? live.updatedAt : base.updatedAt,
     };
     if (Object.prototype.hasOwnProperty.call(live, 'description')) out.description = live.description;
@@ -1230,6 +1329,20 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
     }, 250);
     return () => clearTimeout(t);
   }, [parentQuery, parentSearch, detail?.id]);
+
+  /* A decision answer is written once server-side; the cached detail then carries the row
+   * that came back, so the banner and the badge agree without a refetch. */
+  const rememberDecision = (next: IssueDecision) => {
+    updateCachedDetail(detail!.id, e => ({...e, detail: {...e.detail, decisions: replaceDecision(e.detail.decisions, next)}}));
+    force();
+  };
+  const answerOne = async (decision: IssueDecision, input: {option?: string; answer?: string}) => {
+    const result = await answerDecision(decision.id, input);
+    rememberDecision(result.decision);
+  };
+  const cancelOne = async (decision: IssueDecision) => {
+    rememberDecision(await cancelDecision(decision.id));
+  };
 
   if (!detail) {
     if (loading || (!error && !loadError)) return <section className="lin-page"><p className="lin-loading" role="status">Loading issue…</p></section>;
@@ -1555,6 +1668,7 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
             <button type="button" className="lin-btn" onClick={() => setActionNotice(null)}>Dismiss</button>
           </p>}
           {loadError && <p className="lin-error" role="alert">{loadError} <button type="button" className="lin-btn" onClick={() => { setRetryTick(n => n + 1); onRetry?.(); }}>Retry</button></p>}
+          <DecisionPanel decisions={detail.decisions || []} onAnswer={answerOne} onCancel={cancelOne} />
           {descEdit ? (
             <div>
               <textarea aria-label="Description" value={desc ?? ''} rows={6}
