@@ -629,7 +629,27 @@ def create_app(
                 .first()
             )
         if not row:
-            return None
+            # An API key authenticates the same identity as an OAuth access token, so the
+            # MCP surface does not require a second credential type. read/read_write maps
+            # onto hoja:read/hoja:write, keeping write tools gated by scope.
+            with tenant_context.system():
+                key = store.resolve_token(raw[7:].strip())
+            if not key:
+                return None
+            member = store.membership_for_profile(key["organization_id"], key["user_id"])
+            if not member:
+                return None
+            from hoja_server.mcp_oauth import ALL_SCOPES, READ_SCOPE
+
+            scopes = [READ_SCOPE] if key.get("access") == "read" else list(ALL_SCOPES)
+            return {
+                "user_id": key["user_id"],
+                "org_id": key["organization_id"],
+                "identity_id": member.get("identity_id"),
+                "scopes": json.dumps(scopes),
+                "client_id": "api-key",
+                "org_name": (store.workspace(key["organization_id"]) or {}).get("name"),
+            }
         member = store.membership_for_profile(row["organization_id"], row["user_id"])
         if not member:
             return None
