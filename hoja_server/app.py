@@ -1111,6 +1111,11 @@ def create_app(
             payload = json.loads(raw or b"{}")
         except ValueError:
             return JSONResponse({"error": "Invalid body."}, status_code=400)
+        if not isinstance(payload, dict):
+            return JSONResponse({"error": "Invalid body."}, status_code=400)
+        expires_at = payload.get("expires_at")
+        if expires_at is not None and not isinstance(expires_at, str):
+            return JSONResponse({"error": "expires_at must be an ISO timestamp."}, status_code=400)
         slug = str(payload.get("slug") or "").strip().lower()
         email = str(payload.get("email") or "").strip().lower()
         if not slug or "@" not in email:
@@ -1119,13 +1124,15 @@ def create_app(
             master, f"{slug}.{signup_config.tenant_base_domain}").encode()
         expected = hmac_module.new(key, raw, hashlib.sha256).hexdigest()
         given = request.headers.get("x-hoja-signature") or ""
-        if not hmac_module.compare_digest(expected, given):
+        # Compare digests only on a hex string: compare_digest raises on
+        # non-ASCII input, which turned a junk header into a 500.
+        if not re.fullmatch(r"[0-9a-f]{64}", given) or not hmac_module.compare_digest(expected, given):
             _security_log.warning("membership.announce_rejected slug=%s", slug)
             return JSONResponse({"error": "Bad signature."}, status_code=401)
         signup_store.record_membership_hint(
             slug=slug, email=email,
             role=str(payload.get("role") or "member"),
-            expires_at=payload.get("expires_at") or None,
+            expires_at=expires_at,
         )
         return JSONResponse({"ok": True})
 
@@ -1160,6 +1167,25 @@ def create_app(
             {"valid": True, "workspace": {"name": found.get("name"),
                                           "urlKey": found.get("url_key")}},
             headers={"cache-control": "no-store"},
+        )
+
+    def _announce_member(request: Request, email: str) -> None:
+        """Tell the control plane about a membership we just proved.
+
+        Called only where the address is established: an accepted invitation
+        (holding the code proves control of the mailbox) or a completed Google
+        sign-in on this host. Best effort, and never on the request path's
+        critical section.
+        """
+        host = _signup_host(request).split(":")[0].lower()
+        slug = host.split(".")[0]
+        expires = (datetime.now(timezone.utc) + timedelta(days=400)).isoformat()
+        membership_announce.announce(
+            tenant_key=signup_config.identity_transfer_key,
+            control_plane_url=signup_config.control_plane_url,
+            slug=slug,
+            email=email,
+            expires_at=expires,
         )
 
     async def auth_invite_accept(request: Request):
@@ -1198,7 +1224,8 @@ def create_app(
                 {"error": "Invite code is invalid, expired, or does not match that email."},
                 status_code=401,
             )
-        session_token, _identity = result
+        session_token, identity = result
+        _announce_member(request, str(body.get("email") or "").strip().lower())
         response = JSONResponse({"status": "accepted"})
         response.set_cookie(
             "hoja_session",
@@ -2194,6 +2221,7 @@ def create_app(
         _security_log.info(
             "auth.finish host=%s action=%s", host, resolved["action"]
         )
+        _announce_member(request, claims.get("email") or "")
         if resolved["action"] == google_login.ACTION_DENIED:
             return _signin_failure(
                 request,

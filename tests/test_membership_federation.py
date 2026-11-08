@@ -175,3 +175,33 @@ def test_announcing_never_raises_when_the_control_plane_is_down(monkeypatch):
     assert membership_announce.announce(
         tenant_key=_tenant_key(), control_plane_url="https://app.hoja.work",
         slug=SLUG, email="kevin@hoja.work") is False
+
+
+def test_malformed_announcements_are_refused_not_crashed(control_client):
+    """A junk header must be a 401, never a 500."""
+    body = _announcement_body()
+    cases = [
+        (b"null", membership_announce.signature(_tenant_key(), b"null")),
+        (b"[1,2]", membership_announce.signature(_tenant_key(), b"[1,2]")),
+    ]
+    for raw, sig in cases:
+        r = control_client.post("/internal/membership", content=raw,
+                                headers={"content-type": "application/json",
+                                         "x-hoja-signature": sig})
+        assert r.status_code == 400
+
+    # A non-hex signature is refused before any comparison. (A non-ASCII header
+    # cannot even be sent by this client, so the guard is what is under test.)
+    junk = control_client.post(
+        "/internal/membership", content=body,
+        headers={"content-type": "application/json", "x-hoja-signature": "not-a-digest"})
+    assert junk.status_code == 401
+
+
+def test_a_non_string_expiry_is_refused(control_client):
+    body = _announcement_body(expires_at=99999999999)
+    r = control_client.post(
+        "/internal/membership", content=body,
+        headers={"content-type": "application/json",
+                 "x-hoja-signature": membership_announce.signature(_tenant_key(), body)})
+    assert r.status_code == 400

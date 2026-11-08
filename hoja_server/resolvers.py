@@ -21,7 +21,6 @@ from ariadne import (
     make_executable_schema,
 )
 from hoja_server import mail_events
-from hoja_server import membership_announce
 
 logger = logging.getLogger(__name__)
 from hoja_server import store as store_module
@@ -1015,17 +1014,11 @@ def m_membership_invitation_create(_, info, userId):
         email_queued = delivery == "sent"
         if not email_queued:
             logger.info("mail.invite_not_sent reason=%s", delivery)
-        # The control plane cannot see this workspace's members, so tell it.
-        request = info.context.get("request") if hasattr(info, "context") else None
-        host = ""
-        if request is not None:
-            host = (request.headers.get("host") or "").split(":")[0]
-        membership_announce.announce(
-            tenant_key=os.environ.get("HOJA_IDENTITY_TRANSFER_KEY", ""),
-            control_plane_url=os.environ.get("HOJA_CONTROL_PLANE_URL", ""),
-            slug=host.split(".")[0] if host else "",
-            email=target.get("email") or "",
-        )
+        # Deliberately NOT announced here. An invitation is an offer that names
+        # an address; it proves nothing about who controls it, and a hint built
+        # from an unverified claim would let one tenant route a stranger's
+        # sign-in to itself. The announcement happens when the address is
+        # proven: on acceptance, or on a Google sign-in to this workspace.
     return {"success": bool(code), "user": store.ser_user(store.get_user(org, userId), uid),
             "inviteCode": code, "emailQueued": email_queued}
 
