@@ -36,11 +36,13 @@ DURABLE_DOCS = {
     "docs/cycle-metrics.md",
     "docs/dependency-security.md",
     "docs/email-adapter.md",
+    "docs/email-delivery.md",
     "docs/hoja-mcp.md",
     "docs/extensions.md",
     "docs/webhooks.md",
     "docs/meetings.md",
     "docs/views.md",
+    "docs/notifications/android-and-ux.md",
 }
 
 # No directory gets a blanket Markdown exemption. New component docs and
