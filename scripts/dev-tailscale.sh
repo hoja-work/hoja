@@ -140,7 +140,8 @@ resolve_tailscale_ip() {
 
 ensure_backend_dependencies() {
   if command -v uv >/dev/null 2>&1; then
-    (cd "$ROOT" && uv sync --extra dev --extra server --extra mcp --extra agent)
+    # `server` already includes the MCP SDK; `agent` is what the chat panel needs.
+    (cd "$ROOT" && uv sync --extra dev --extra server --extra agent)
   elif [[ ! -x "$ROOT/.venv/bin/python" ]]; then
     echo "Creating the local Python environment at .venv/ ..."
     (cd "$ROOT" && python3 -m venv .venv)
@@ -151,7 +152,7 @@ ensure_backend_dependencies() {
     (
       cd "$ROOT"
       .venv/bin/python -m pip install \
-        -e './connectors/google_workspace' -e '.[server,mcp,agent]'
+        -e './connectors/google_workspace' -e '.[server,agent]'
     )
   fi
 }

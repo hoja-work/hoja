@@ -71,7 +71,7 @@ from hoja_server.db import (
     token_hash,
     user,
 )
-from hoja_server.denials import DENY_HINT, READ_ONLY_HINT, hint_for
+from hoja_server.denials import DENY_HINT, READ_ONLY_HINT, hint_for, read_only_violation
 from hoja_server.deployment import single_org_mode
 from hoja_server.meetings import MeetingService
 from hoja_server.meetings_api import MeetingHub, meeting_routes
@@ -105,6 +105,27 @@ _schema = build_schema()
 _WEB_ROOT = Path(
     os.environ.get("HOJA_WEB_ROOT", Path(__file__).resolve().parent.parent / "frontend" / "dist")
 )
+
+
+# Packages owned by an optional extra. Checked before importing their modules
+# so a documented install that omits one fails with the extra's name instead of
+# a bare ModuleNotFoundError.
+_SERVER_REQUIRED_PACKAGES = ("mcp",)
+_AGENT_REQUIRED_PACKAGES = ("openai", "fastmcp", "pydantic_ai")
+
+
+def _missing_packages(names: tuple[str, ...]) -> list[str]:
+    """Names from ``names`` that are not installed, without importing them."""
+    import importlib.util
+
+    missing = []
+    for name in names:
+        try:
+            if importlib.util.find_spec(name) is None:
+                missing.append(name)
+        except (ImportError, ValueError):  # a broken or half-installed parent
+            missing.append(name)
+    return missing
 
 
 # Content-hashed brand mark: the URL changes with the bytes, so CDN caches cannot pin an old response.
@@ -697,6 +718,14 @@ def create_app(
             "org_name": (store.workspace(row["organization_id"]) or {}).get("name"),
         }
 
+    missing = _missing_packages(_SERVER_REQUIRED_PACKAGES)
+    if missing:
+        raise RuntimeError(
+            "hoja-serve cannot start: the MCP endpoint at /mcp is mounted by the "
+            f"server, but {', '.join(missing)} is not installed. "
+            "Install the server extra: python -m pip install 'hoja-cli[server]' "
+            "(from a checkout: uv sync --extra dev --extra server)."
+        )
     from hoja_server.mcp_oauth import HojaOAuthProvider, build_server
 
     # OAuth stays fully disabled unless an explicit public origin and trusted
@@ -855,6 +884,17 @@ def create_app(
         messages = body.get("messages") if isinstance(body, dict) else None
         if not isinstance(messages, list) or not messages:
             return JSONResponse({"error": "messages is required"}, status_code=400)
+        missing = _missing_packages(_AGENT_REQUIRED_PACKAGES)
+        if missing:
+            return JSONResponse(
+                {
+                    "error": "Agent chat is unavailable on this server: the 'agent' extra is "
+                    f"not installed ({', '.join(missing)} missing). Install it with "
+                    "python -m pip install 'hoja-cli[server,agent]' "
+                    "(from a checkout: uv sync --extra dev --extra server --extra agent)."
+                },
+                status_code=503,
+            )
         from hoja_server.agent_chat import sse_response, stream_reply
         from hoja_server.schema_sdl import SCHEMA_SDL
         base_context = {
@@ -985,8 +1025,6 @@ def create_app(
             problem = _query_problem(query)
             if problem:
                 return _bad_request(problem)
-            from hoja_server.agent_chat import read_only_violation
-
             if read_only_violation(query, access):
                 return JSONResponse(
                     {"errors": [{"message": "This API key is read-only.",
@@ -2671,6 +2709,13 @@ def create_app(
             webhook_worker = asyncio.create_task(tenant_context.as_system(webhooks.run_forever(engine)))
         async with runtime_app.router.lifespan_context(runtime_app):
             if agent_dbos_url := os.environ.get("HOJA_AGENT_DBOS_URL"):
+                missing = _missing_packages(("dbos", *_AGENT_REQUIRED_PACKAGES))
+                if missing:
+                    raise RuntimeError(
+                        "HOJA_AGENT_DBOS_URL requires the durable agent, but the 'agent' "
+                        f"extra is not installed ({', '.join(missing)} missing). Install it with "
+                        "python -m pip install 'hoja-cli[server,agent]'."
+                    )
                 from dbos import DBOS
 
                 # Imported before launch: DBOS registers workflows at import and recovers them at launch.

@@ -13,7 +13,10 @@ python -m pip install 'hoja-cli[server]'
 ```
 
 The server extra includes Ariadne, Starlette/FastAPI, Uvicorn, SQLAlchemy,
-SQLite support, and the psycopg 3 binary PostgreSQL driver.
+SQLite support, the psycopg 3 binary PostgreSQL driver, and the MCP SDK the
+`/mcp` endpoint requires. The chat panel is separate: it needs the `agent`
+extra (`python -m pip install 'hoja-cli[server,agent]'`) and reports that
+requirement instead of failing with an ImportError.
 
 The PyPI distribution is `hoja-cli` because the `hoja` project on PyPI belongs
 to unrelated software; the installed commands are `hoja-serve` and `hoja`.

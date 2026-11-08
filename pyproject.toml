@@ -53,6 +53,11 @@ mcp = [
     "mcp>=2.2.0,<3.0.0",
 ]
 server = [
+    # `create_app` mounts the MCP endpoint at /mcp and its OAuth routes
+    # unconditionally, so a server that can actually serve needs the MCP SDK.
+    # Keep `mcp` listed here as well: the dedicated extra remains for installs
+    # that only want the stdio bridge, and both spell sites must agree.
+    "mcp>=2.2.0,<3.0.0",
     "ariadne>=0.23",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
