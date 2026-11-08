@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- `memberArchive(userId)` removes a member from a workspace: the row is soft-archived,
+  API keys are revoked, browser sessions and the stored credential are deleted, and the
+  org membership is deactivated. Self-removal and removing the last active admin are
+  refused. `archivedMembers` lists removed people and `memberRestore` brings one back;
+  re-inviting a removed address also un-archives that same profile.
+- `scripts/test-settings-routes.mjs` (path -> view table) and
+  `scripts/ui-probes/settings-e2e.cjs` (browser journeys).
+
+### Fixed
+
+- `/workspace/team/<key>/cycles/settings` opened workspace Settings instead of the cycle
+  settings page: the generic `includes('/settings')` test ran before the team-scoped
+  branches. Routing moved to `app/frontend/src/routes.ts` and matches team routes first.
+
 ## [0.21.5] — 2026-11-07
 
 ### Changed
@@ -19,148 +37,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The stdio MCP server's missing-extra hint told users to install `hoja[mcp]`,
   which is unrelated software on PyPI. It now names `hoja-cli[mcp]`.
-
-## [Unreleased]
-
-### Added
-
-- First-run setup is a guided wizard with a live workspace preview: account,
-  workspace, first team, an optional first project, invitations and an optional
-  Google Workspace connection. Reloading resumes unfinished setup, a lost response
-  is reconciled against the server instead of creating a duplicate, and creating
-  another workspace reuses the later steps without asking for an account again.
-- Linear-compatible outgoing webhooks (`webhookCreate` and friends, Linear signatures,
-  `docs/webhooks.md`) and Hoja Extensions (`docs/extensions.md`): an admin installs a manifest
-  that declares event subscriptions, synchronous `issue.beforeCreate`/`issue.beforeUpdate`
-  hooks that may veto or patch a change, and issue actions shown in the issue menu. Each
-  extension gets its own bot user and API key; uninstalling replays the recorded effects
-  in reverse, so nothing it created survives.
-- Durable agent chat turns when `CLINIAR_AGENT_DBOS_URL` is set: each turn is a DBOS
-  workflow, so a server crash or restart resumes the turn instead of losing the reply, and
-  a completed GraphQL mutation is not executed again on recovery. The transcript is read
-  from the server's thread, not the client's message list. Without the variable, behaviour
-  is unchanged.
-- My issues → Assigned has a "Completed issues" display option (None, Past week,
-  Past month, All; default Past week, remembered per browser). Done and cancelled
-  issues were previously always hidden there. Closed groups sort last.
-- The create-issue dialog has a due date field, and the optimistic issue it adds
-  to the board carries that date immediately.
-- Board cards can be edited in place: status, due date, priority and assignee are
-  changed from the card, on both the workspace/My-issues board and the team board,
-  without opening the issue. Edits are optimistic and roll back if the server
-  rejects them. Clicking the card title still opens the issue.
-- Team settings now manage membership directly on each team card: members are
-  listed with a remove control and a workspace member can be added from a picker.
-- The new-issue dialog has a documented motion budget (`--motion-*` tokens,
-  90–200 ms, transform/opacity only) with an entrance and an exit animation, a
-  softened and blurred backdrop, hover/press states on the property pills and
-  actions, a visible focus ring on the borderless title and description, a
-  spinner while creating, a sticky footer on short viewports, and a focus trap
-  that returns focus to the trigger. `prefers-reduced-motion` collapses the
-  tokens to 1 ms and the page keeps its scrollbar gutter, so opening the dialog
-  shifts nothing.
-- Every user-authored body renders Markdown through one component
-  (`frontend/src/markdown.tsx`): issue comments (including the optimistic echo),
-  issue descriptions, project and team descriptions, project updates on Pulse,
-  Overview and Activity, meeting chat and the meeting agenda. CommonMark plus
-  GFM: lists, task lists, fenced code, tables, quotes, links, images. The
-  contract is fixed and tested: raw HTML is never rendered, unknown URL
-  protocols are stripped with the label kept, headings are demoted by two levels
-  so a comment can never emit `h1`/`h2`, tables scroll in their own box,
-  external links carry `rel="noopener noreferrer nofollow"`, bare identifiers
-  such as `TREBOL-12` become issue chips outside code spans, and bodies over
-  20 000 characters render verbatim. Editors still show the raw source.
-
-### Changed
-
-- Webhook targets must use port 443 unless `HOJA_WEBHOOK_ALLOW_PRIVATE_NETWORKS=1` is set.
-- Expected GraphQL user errors (bad input, forbidden) are no longer logged with a traceback;
-  unexpected resolver exceptions still are.
-
-- **Breaking: the product's previous name is gone.** The Python distribution
-  is `hoja-cli` on PyPI, the packages are `hoja/` and `hoja_server/`, and the
-  console scripts are `hoja`, `hoja-mcp` and `hoja-serve`; the pre-rename scripts no
-  longer exist. Every environment variable that used the old upper-case prefix
-  is now `HOJA_*`, including `HOJA_WEB_ROOT`, `HOJA_DATABASE_URL`,
-  `HOJA_CONFIG`, `HOJA_PORT`, `HOJA_APP_URL` and `HOJA_CF_*`. The Docker image
-  runs as the `hoja` user/group and Compose defaults to `hoja` for
-  `POSTGRES_DB`/`POSTGRES_USER` and the `hoja-postgres` volume (still
-  overridable from `.env`). `HOJA_TOKEN` and `HOJA_API_URL` are the canonical
-  client variables; the Linear-compatible `LINEAR_TOKEN` and `LINEAR_API_URL`
-  are still read as deprecated aliases when the `HOJA_*` variable is unset, and
-  the GraphQL type names are unchanged. Local state under the old name must be
-  moved by hand: the CLI config directory (`~/.config/<old-name>/` →
-  `~/.config/hoja/`) and any `.<old-name>/memory.yaml` board (→
-  `.hoja/memory.yaml`). A running deployment retains its existing database;
-  its database must not be renamed in place.
-- **The PyPI distribution is `hoja-cli`.** The `hoja` project on PyPI belongs
-  to unrelated software, so the package publishes under `hoja-cli` while the
-  commands stay `hoja`, `hoja-mcp`, and `hoja-serve`. Its summary, keywords,
-  project URLs, and README now say that it is the Hoja CLI. `hoja update`
-  queries the `hoja-cli` project and upgrades `hoja-cli`, the publish workflow
-  verifies the `hoja_cli-<version>` artifacts and the wheel metadata, and
-  `scripts/ship.sh` builds and uploads those same files.
-- Frontend TypeScript is pinned to 6.0.3 instead of 7.0.2: typescript-eslint
-  (used by `npm run lint:ui`) refuses TS 7 and does not support it in any
-  release yet. Move back to 7 when it does.
-- My issues no longer has a "Load more issues" button. The sync now carries a
-  year of closed issues (`closedDays=365`; a cached 14-day snapshot re-bootstraps
-  once). Older closed issues are fetched automatically, only the viewer's own
-  (assigned for Assigned → All, created for Created), instead of paging the whole
-  workspace's closed history. The old button loaded issues that the Assigned tab
-  then hid.
-- Long My issues lists are windowed like the team list, replacing the
-  "Show N more" button.
-- The team settings screen renders one card per team (properties, members, actions
-  and a delete panel) instead of a single cramped row per team, and each card
-  reports its issue and project counts.
-- The issue description is no longer a `role="button"` wrapper: links inside it
-  are real links, a click no longer opens the editor, and a dedicated
-  hover/focus "Edit" control (always visible on touch) opens the raw Markdown.
-- Text bodies dropped `white-space:pre-wrap`, which fought rendered block
-  children, and the agent-chat Markdown rules became one `.md` system shared by
-  every surface.
-
-### Fixed
-
-- The new-issue dialog no longer hides keyboard focus on the title and
-  description, no longer lets Tab escape into the page behind it, and its
-  focus indicators meet 3:1 contrast.
-- Deleting a team no longer fails because it still has projects. `teamDelete`
-  only blocks on projects, cycles and issues for a plain delete; with
-  `deleteIssues: true` it deletes the team's issues, its cycles and its project
-  links, and leaves the projects in the workspace. The delete panel states what
-  goes with the team and, when the server refuses, explains the real blocker and
-  offers the retry.
-- Date-only due dates render on their own calendar day in every timezone; they
-  were previously parsed as UTC midnight and could show the previous day, and the
-  "overdue" highlight now uses one shared rule.
-- Issue chips in agent replies rendered as `href=""`: `react-markdown` blanks any
-  protocol outside http(s)/mailto/xmpp/irc, including the internal
-  `hoja-issue:` scheme. A wrapper now re-allows that one scheme and delegates
-  every other URL to the stock transform, so `javascript:` and `data:` stay
-  stripped.
-- An assignee or state id that is unknown to the current sync snapshot no longer
-  blanks the issue's field in the optimistic overlay.
-
-### Testing
-
-- Added `scripts/test-issue-modal-polish.cjs` (`npm run test:modal`), a browser
-  suite that measures the dialog instead of screenshotting it: animation
-  durations and animated properties, reduced-motion collapse, hover/press/focus
-  deltas, focus trap and focus restore, layout shift during interaction, WCAG
-  contrast in light and dark, and geometry at 1440×900, 390×844 and 320×568.
-- Added `scripts/test-markdown-conformance.cjs` (`npm run test:markdown:spec`),
-  which runs the official CommonMark 0.31.2 corpus (652 examples, vendored at
-  `scripts/fixtures/commonmark-spec-0.31.2.json` with a pinned sha256) against
-  the component the app ships — transpiled with the TypeScript API and rendered
-  with `renderToStaticMarkup` — comparing element structure instead of HTML
-  strings. 576 structural passes, 0 failures, and 76 skips confined to three
-  named buckets (raw HTML dropped, unsafe href stripped, GFM autolink literal),
-  plus 12 contract checks. Added `scripts/test-markdown-surfaces.cjs`
-  (`npm run test:markdown`), which seeds a server, writes Markdown through
-  GraphQL and asserts 31 DOM facts on the issue, Pulse, Overview and Activity
-  surfaces at 1440, 390 and 320. Both fail against the previous build.
 
 ## [0.21.4] — 2026-10-06
 
