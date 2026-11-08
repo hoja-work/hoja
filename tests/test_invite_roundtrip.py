@@ -54,12 +54,14 @@ def tenant(tmp_path, monkeypatch):
         conn.execute(organization_membership.insert().values(
             id="m-luis", identity_id="i-luis", organization_id="org-hoja",
             profile_user_id="u-luis", active=True, created_at=NOW))
-    Store(engine).invite_member("org-hoja", "Kevin", "kevin@hoja.work")
+    store = Store(engine)
+    member, _key = store.invite_member("org-hoja", "Kevin", "kevin@hoja.work")
+    live_code = store.create_membership_invitation("org-hoja", member["id"], "u-luis")
 
     from starlette.testclient import TestClient
 
     with TestClient(create_app(str(path), open_mode=False), base_url=f"https://{HOST}") as client:
-        yield client, engine
+        yield client, engine, live_code
 
 
 def _token(email="kevin@hoja.work", subject="sub-kevin"):
@@ -69,13 +71,18 @@ def _token(email="kevin@hoja.work", subject="sub-kevin"):
 
 
 def test_the_code_leaves_in_a_cookie_and_returns_in_the_url(tenant):
-    client, _engine = tenant
+    client, _engine, _live = tenant
 
     started = client.get(f"/auth/google/start?invite={CODE}", follow_redirects=False)
 
     assert started.status_code == 302
     assert started.headers["location"].startswith(f"{CONTROL}/signin?next=")
     assert client.cookies.get("hoja_invite_pending") == CODE
+    header = started.headers["set-cookie"].lower()
+    assert "httponly" in header
+    assert "secure" in header
+    assert "samesite=lax" in header
+    assert "max-age=900" in header
 
     finished = client.get(
         f"/auth/google/finish?t={quote(_token(), safe='')}", follow_redirects=False)
@@ -86,7 +93,7 @@ def test_the_code_leaves_in_a_cookie_and_returns_in_the_url(tenant):
 
 
 def test_a_round_trip_without_an_invitation_lands_on_the_plain_root(tenant):
-    client, _engine = tenant
+    client, _engine, _live = tenant
 
     finished = client.get(
         f"/auth/google/finish?t={quote(_token(), safe='')}", follow_redirects=False)
@@ -96,7 +103,7 @@ def test_a_round_trip_without_an_invitation_lands_on_the_plain_root(tenant):
 
 
 def test_the_cookie_is_not_accepted_in_a_shape_we_never_issue(tenant):
-    client, _engine = tenant
+    client, _engine, _live = tenant
     client.cookies.set("hoja_invite_pending", "not-a-code")
 
     finished = client.get(
@@ -105,11 +112,18 @@ def test_the_cookie_is_not_accepted_in_a_shape_we_never_issue(tenant):
     assert finished.headers["location"] == "/"
 
 
-def test_the_probe_is_rate_limited_but_does_not_punish_one_lookup(tenant):
-    client, _engine = tenant
+def test_the_probe_is_rate_limited_but_never_hides_a_live_invitation(tenant):
+    client, _engine, live_code = tenant
     first = client.post("/auth/invite/probe", json={"code": "z" * 43})
     assert first.status_code == 404
     for _ in range(25):
         client.post("/auth/invite/probe", json={"code": "z" * 43})
+
     blocked = client.post("/auth/invite/probe", json={"code": "z" * 43})
     assert blocked.status_code == 429
+
+    # Over budget or not, the holder of a real invitation gets an answer.
+    allowed = client.post("/auth/invite/probe", json={"code": live_code})
+    assert allowed.status_code == 200
+    assert allowed.json()["valid"] is True
+    assert allowed.json()["workspace"]["name"] == "Hoja"

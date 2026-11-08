@@ -1081,17 +1081,19 @@ def create_app(
         whether it existed.
         """
         keys = [f"ip:{_client_ip(request)}"]
-        if probe_limiter.blocked(keys):
-            return JSONResponse(
-                {"valid": False, "reason": "too_many_attempts"}, status_code=429,
-                headers={"cache-control": "no-store", "Retry-After": "60"},
-            )
         payload, body_error = await _read_json_object(request, _SIGNUP_BODY_LIMIT)
         if body_error is not None:
             return JSONResponse({"valid": False, "reason": "invalid_request"},
                                 status_code=body_error.status_code)
         found = store.peek_membership_invitation(str((payload or {}).get("code") or ""))
         if found is None:
+            # The budget is spent by misses only, and asked after the lookup, so
+            # a shared address never loses the answer to its own invitation.
+            if probe_limiter.blocked(keys):
+                return JSONResponse(
+                    {"valid": False, "reason": "too_many_attempts"}, status_code=429,
+                    headers={"cache-control": "no-store", "Retry-After": "60"},
+                )
             probe_limiter.record(keys)
             return JSONResponse(
                 {"valid": False, "reason": "invite_invalid_or_expired"},
