@@ -7,6 +7,7 @@ type ModelProvider = {
   provider: string;
   modelId: string;
   baseUrl: string | null;
+  contextWindow: number | null;
   managed: boolean;
   enabled: boolean;
   hasApiKey: boolean;
@@ -14,7 +15,7 @@ type ModelProvider = {
 
 // baseUrl is intentionally not requested: for a managed provider it is an internal
 // address that must never reach the browser.
-const LIST = 'query ModelProviders { modelProviders { id name provider modelId enabled hasApiKey managed } }';
+const LIST = 'query ModelProviders { modelProviders { id name provider modelId contextWindow enabled hasApiKey managed } }';
 const CREATE =
   'mutation($name:String!,$provider:String!,$modelId:String!,$baseUrl:String,$apiKey:String!){modelProviderCreate(name:$name,provider:$provider,modelId:$modelId,baseUrl:$baseUrl,apiKey:$apiKey){id}}';
 const UPDATE = 'mutation($id:String!,$enabled:Boolean){modelProviderUpdate(id:$id,enabled:$enabled){id enabled}}';
@@ -140,7 +141,9 @@ export function ModelProvidersSettings() {
                 <span className="resource-title"><b>{p.name}</b><span className={`settings-badge ${p.enabled ? 'success' : ''}`}>{p.enabled ? 'Enabled' : 'Disabled'}</span></span>
                 <small>
                   {p.managed && <span className="settings-badge">Internal · managed by Hoja</span>}
-                  <span>{p.provider}</span><code>{p.modelId}</code><span>{p.hasApiKey ? 'Encrypted key stored' : 'No key stored'}</span>
+                  <span>{p.provider}</span><code>{p.modelId}</code>
+                  {p.contextWindow && <span>{Math.round(p.contextWindow / 1000)}k context</span>}
+                  <span>{p.hasApiKey ? 'Encrypted key stored' : 'No key stored'}</span>
                 </small>
               </span>
               <button type="button" className="outline" onClick={() => void toggle(p)}>

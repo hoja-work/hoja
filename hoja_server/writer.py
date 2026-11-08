@@ -17,6 +17,8 @@ from hoja_server.store import (
     team_visible,
 )
 from hoja_server import comment_policy
+from hoja_server import decisions as decisiondocs
+from hoja_server import uploads
 from hoja_server import views as viewdocs
 from hoja_server.db import (
     PRIORITY_LABELS,
@@ -26,6 +28,7 @@ from hoja_server.db import (
     entity_url,
     issue,
     issue_activity,
+    issue_decision,
     inbox_notification,
     issue_label,
     issue_label_link,
@@ -793,6 +796,124 @@ class Writer:
             )
             return iid
 
+    # ------------------------------------------------------------- decisions
+    def _issue_row_for_decision(self, conn, org_id: str, viewer_id: str, ref: str) -> dict:
+        row = conn.execute(select(issue).where(and_(
+            issue.c.organization_id == org_id,
+            (issue.c.id == ref) | (issue.c.identifier == str(ref).upper()),
+            issue.c.archived_at.is_(None)))).mappings().first()
+        if not row:
+            raise GraphQLError("Issue not found.", extensions={"code": "NOT_FOUND"})
+        # Both an invisible team and another organization read as "no such decision", so a
+        # decision id never reveals that an issue exists.
+        if row["team_id"] and not team_visible(conn, org_id, viewer_id, row["team_id"]):
+            raise GraphQLError("Decision not found.", extensions={"code": "NOT_FOUND"})
+        return dict(row)
+
+    @staticmethod
+    def _refresh_decision_flag(conn, org_id: str, issue_id: str) -> bool:
+        """Recompute the issue's maintained flag from its open decisions; return it."""
+        open_count = conn.execute(select(func.count()).select_from(issue_decision).where(and_(
+            issue_decision.c.organization_id == org_id,
+            issue_decision.c.issue_id == issue_id,
+            issue_decision.c.status == decisiondocs.OPEN))).scalar() or 0
+        needed = bool(open_count)
+        conn.execute(issue.update().where(and_(
+            issue.c.organization_id == org_id, issue.c.id == issue_id)).values(
+                decision_needed=needed))
+        return needed
+
+    def decision_create(self, org_id: str, viewer_id: str, inp: dict) -> str:
+        """Ask a question on an issue. The issue is flagged in the same transaction."""
+        question = decisiondocs.parse_question(inp.get("question"))
+        options = decisiondocs.parse_options(inp.get("options"))
+        context = decisiondocs.parse_context(inp.get("context"))
+        agent = decisiondocs.parse_agent(inp.get("agent"))
+        ts = now_iso()
+        with self.engine.begin() as conn:
+            irow = self._issue_row_for_decision(conn, org_id, viewer_id, inp.get("issueId"))
+            open_count = conn.execute(select(func.count()).select_from(issue_decision).where(and_(
+                issue_decision.c.organization_id == org_id,
+                issue_decision.c.issue_id == irow["id"],
+                issue_decision.c.status == decisiondocs.OPEN))).scalar() or 0
+            if open_count >= decisiondocs.MAX_OPEN_PER_ISSUE:
+                raise GraphQLError(
+                    f"This issue already has {open_count} open decisions; answer or cancel "
+                    "one before asking another.",
+                    extensions={"code": "BAD_USER_INPUT", "field": "issueId"})
+            decision_id = new_id()
+            conn.execute(issue_decision.insert().values(
+                id=decision_id, organization_id=org_id, issue_id=irow["id"],
+                question=question, options=decisiondocs.dump_options(options),
+                context=context, status=decisiondocs.OPEN,
+                asked_by_id=viewer_id, asked_by_agent=agent,
+                created_at=ts, updated_at=ts))
+            self._refresh_decision_flag(conn, org_id, irow["id"])
+            self._record_activity(conn, org_id, irow["id"], viewer_id, "decisionCreated",
+                                  {"decisionId": decision_id, "question": question}, ts)
+            self._notify_issue_recipients(
+                conn, org_id, irow["id"], viewer_id,
+                [irow.get("assignee_id"), irow.get("creator_id")], "issueDecision", ts)
+        return decision_id
+
+    def decision_answer(self, org_id: str, viewer_id: str, decision_id: str,
+                        inp: dict) -> tuple[bool, bool]:
+        """Answer once. Returns ``(changed, replay)``; a replay stores nothing new."""
+        ts = now_iso()
+        with self.engine.begin() as conn:
+            row = conn.execute(select(issue_decision).where(and_(
+                issue_decision.c.organization_id == org_id,
+                issue_decision.c.id == decision_id))).mappings().first()
+            if not row:
+                raise GraphQLError("Decision not found.", extensions={"code": "NOT_FOUND"})
+            row = dict(row)
+            irow = self._issue_row_for_decision(conn, org_id, viewer_id, row["issue_id"])
+            if row["status"] == decisiondocs.CANCELED:
+                raise GraphQLError("This decision was canceled and cannot be answered.",
+                                   extensions={"code": "BAD_USER_INPUT", "field": "id"})
+            chosen, answer = decisiondocs.answer_for(
+                decisiondocs.load_options(row.get("options")),
+                option=inp.get("option"), answer=inp.get("answer"))
+            if row["status"] == decisiondocs.ANSWERED:
+                if decisiondocs.is_replay(row, chosen_option=chosen, answer=answer):
+                    return False, True
+                raise GraphQLError(
+                    "This decision is already answered; the first answer stands.",
+                    extensions={"code": "ALREADY_ANSWERED", "field": "id"})
+            conn.execute(issue_decision.update().where(and_(
+                issue_decision.c.organization_id == org_id,
+                issue_decision.c.id == decision_id)).values(
+                    status=decisiondocs.ANSWERED, answer=answer, chosen_option=chosen,
+                    answered_by_id=viewer_id, answered_at=ts, updated_at=ts))
+            self._refresh_decision_flag(conn, org_id, irow["id"])
+            self._record_activity(conn, org_id, irow["id"], viewer_id, "decisionAnswered",
+                                  {"decisionId": decision_id, "chosenOption": chosen,
+                                   "answer": answer}, ts)
+        return True, False
+
+    def decision_cancel(self, org_id: str, viewer_id: str, decision_id: str) -> bool:
+        """Withdraw an open decision question (the asker or an admin)."""
+        ts = now_iso()
+        with self.engine.begin() as conn:
+            row = conn.execute(select(issue_decision).where(and_(
+                issue_decision.c.organization_id == org_id,
+                issue_decision.c.id == decision_id))).mappings().first()
+            if not row:
+                raise GraphQLError("Decision not found.", extensions={"code": "NOT_FOUND"})
+            row = dict(row)
+            irow = self._issue_row_for_decision(conn, org_id, viewer_id, row["issue_id"])
+            if row["status"] != decisiondocs.OPEN:
+                return False
+            self._require_creator_or_admin(conn, org_id, viewer_id, row.get("asked_by_id"))
+            conn.execute(issue_decision.update().where(and_(
+                issue_decision.c.organization_id == org_id,
+                issue_decision.c.id == decision_id)).values(
+                    status=decisiondocs.CANCELED, canceled_at=ts, updated_at=ts))
+            self._refresh_decision_flag(conn, org_id, irow["id"])
+            self._record_activity(conn, org_id, irow["id"], viewer_id, "decisionCanceled",
+                                  {"decisionId": decision_id}, ts)
+        return True
+
     def issue_update(self, org_id: str, ident: str, inp: dict, actor_id: str | None = None) -> str | None:
         with self.engine.begin() as conn:
             row = conn.execute(select(issue).where(and_(
@@ -1008,6 +1129,9 @@ class Writer:
                 return None
             aid = new_id()
             created_at = now_iso()
+            # An uploaded blob's type is knowable from its sidecar; an external link's
+            # is not, so it stays NULL and the client falls back to the URL extension.
+            content_type = uploads.content_type_for_url(inp["url"])
             conn.execute(attachment.insert().values(
                 id=aid,
                 organization_id=org_id,
@@ -1016,6 +1140,7 @@ class Writer:
                 url=inp["url"],
                 title=inp["title"],
                 subtitle=inp.get("subtitle"),
+                content_type=content_type,
                 created_at=created_at,
             ))
             return {
@@ -1023,6 +1148,7 @@ class Writer:
                 "url": inp["url"],
                 "title": inp["title"],
                 "subtitle": inp.get("subtitle"),
+                "contentType": content_type,
                 "createdAt": created_at,
                 "_issue_id": irow[0],
             }

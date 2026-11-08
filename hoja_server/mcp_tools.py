@@ -74,6 +74,12 @@ READ_TOOLS: dict[str, str] = {
     "cycle": "One cycle by id.",
     "teamCycleCadence": "Whether cycles are enabled for a team, plus its active and upcoming cycles.",
     "issueLabels": "Issue labels (workspace-wide and per team).",
+    "issueDecisions": (
+        "Decisions (docs/decisions.md) on an issue, newest first. Poll this to read the "
+        "human's answer: an answered row carries answer, chosenOption, answeredBy and answeredAt. "
+        "filter with status: \"open\" | \"answered\" | \"canceled\"."
+    ),
+    "issueDecision": "One decision by id — the poll target for a single question.",
 }
 
 WRITE_TOOLS: dict[str, str] = {
@@ -119,6 +125,20 @@ WRITE_TOOLS: dict[str, str] = {
     "notificationMarkRead": "Mark an inbox notification read.",
     "notificationArchive": "Archive an inbox notification.",
     "notificationMarkAllRead": "Mark every inbox notification read.",
+    "issueDecisionCreate": (
+        "Ask a human a decision on an issue while you work (docs/decisions.md). Pass question, "
+        "optional options [{key,label,description}] and context; the issue is then flagged "
+        "decisionNeeded and appears as 'waiting on me'. Use agent to name this session. "
+        "Returns the decision id to poll with issueDecision."
+    ),
+    "issueDecisionAnswer": (
+        "Answer a decision. With options, pass option (the key or label); answer text defaults to "
+        "the option's label. Without options, answer is required. Answering is idempotent: replaying "
+        "the same answer returns replayed: true, a different answer is refused with ALREADY_ANSWERED."
+    ),
+    "issueDecisionCancel": (
+        "Withdraw an open decision you asked (the asker or an admin only); clears the issue's flag."
+    ),
 }
 
 DESTRUCTIVE = {"issueDelete", "commentDelete", "issueLabelDelete", "teamMemberRemove",
@@ -142,6 +162,9 @@ FIELD_HINTS = {
     "first": "Page size.",
     "after": "Cursor from a previous pageInfo.endCursor.",
     "dueDate": "ISO-8601 date-time.",
+    "issueDecisionId": "Decision id returned by issueDecisionCreate.",
+    "option": "Key (or label) of the chosen option.",
+    "agent": "Free-form agent/session identity, e.g. claw:run-30d5.",
 }
 ID_HINTS = {
     "issue": "Issue identifier (e.g. ENG-12) or id.",

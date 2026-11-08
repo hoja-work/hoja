@@ -44,6 +44,7 @@ from starlette.routing import Route, WebSocketRoute
 from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocket
 
+from hoja_server import cors
 from hoja_server.cloudflare_realtime import CloudflareRealtime
 from hoja_server.connectors_api import connector_binding_for, connector_routes
 from hoja_server.db import (
@@ -71,7 +72,7 @@ from hoja_server.db import (
     token_hash,
     user,
 )
-from hoja_server.denials import DENY_HINT, READ_ONLY_HINT, hint_for
+from hoja_server.denials import DENY_HINT, READ_ONLY_HINT, hint_for, read_only_violation
 from hoja_server.deployment import single_org_mode
 from hoja_server.meetings import MeetingService
 from hoja_server.meetings_api import MeetingHub, meeting_routes
@@ -99,12 +100,34 @@ from hoja_server.signup_store import SignupStore
 from hoja_server.store import Store
 from hoja_server import tenant_context
 from hoja_server import realtime, sync
+from hoja_server import uploads
 from hoja_server.writer import Writer
 
 _schema = build_schema()
 _WEB_ROOT = Path(
     os.environ.get("HOJA_WEB_ROOT", Path(__file__).resolve().parent.parent / "frontend" / "dist")
 )
+
+
+# Packages owned by an optional extra. Checked before importing their modules
+# so a documented install that omits one fails with the extra's name instead of
+# a bare ModuleNotFoundError.
+_SERVER_REQUIRED_PACKAGES = ("mcp",)
+_AGENT_REQUIRED_PACKAGES = ("openai", "fastmcp", "pydantic_ai")
+
+
+def _missing_packages(names: tuple[str, ...]) -> list[str]:
+    """Names from ``names`` that are not installed, without importing them."""
+    import importlib.util
+
+    missing = []
+    for name in names:
+        try:
+            if importlib.util.find_spec(name) is None:
+                missing.append(name)
+        except (ImportError, ValueError):  # a broken or half-installed parent
+            missing.append(name)
+    return missing
 
 
 # Content-hashed brand mark: the URL changes with the bytes, so CDN caches cannot pin an old response.
@@ -697,6 +720,14 @@ def create_app(
             "org_name": (store.workspace(row["organization_id"]) or {}).get("name"),
         }
 
+    missing = _missing_packages(_SERVER_REQUIRED_PACKAGES)
+    if missing:
+        raise RuntimeError(
+            "hoja-serve cannot start: the MCP endpoint at /mcp is mounted by the "
+            f"server, but {', '.join(missing)} is not installed. "
+            "Install the server extra: python -m pip install 'hoja-cli[server]' "
+            "(from a checkout: uv sync --extra dev --extra server)."
+        )
     from hoja_server.mcp_oauth import HojaOAuthProvider, build_server
 
     # OAuth stays fully disabled unless an explicit public origin and trusted
@@ -855,6 +886,17 @@ def create_app(
         messages = body.get("messages") if isinstance(body, dict) else None
         if not isinstance(messages, list) or not messages:
             return JSONResponse({"error": "messages is required"}, status_code=400)
+        missing = _missing_packages(_AGENT_REQUIRED_PACKAGES)
+        if missing:
+            return JSONResponse(
+                {
+                    "error": "Agent chat is unavailable on this server: the 'agent' extra is "
+                    f"not installed ({', '.join(missing)} missing). Install it with "
+                    "python -m pip install 'hoja-cli[server,agent]' "
+                    "(from a checkout: uv sync --extra dev --extra server --extra agent)."
+                },
+                status_code=503,
+            )
         from hoja_server.agent_chat import sse_response, stream_reply
         from hoja_server.schema_sdl import SCHEMA_SDL
         base_context = {
@@ -985,8 +1027,6 @@ def create_app(
             problem = _query_problem(query)
             if problem:
                 return _bad_request(problem)
-            from hoja_server.agent_chat import read_only_violation
-
             if read_only_violation(query, access):
                 return JSONResponse(
                     {"errors": [{"message": "This API key is read-only.",
@@ -2378,16 +2418,6 @@ def create_app(
         return response
 
     # ---- Attachment file uploads (images/files/videos for issue attachments)
-    _UPLOAD_MAX_BYTES = 10 * 1024 * 1024
-    _UPLOAD_TYPE_PREFIXES = ("image/", "video/")
-    _UPLOAD_TYPE_EXACT = {"application/pdf", "text/plain", "text/markdown"}
-
-    def _uploads_dir() -> Path:
-        from hoja_server.db import default_db_dir
-        d = default_db_dir() / "uploads"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-
     async def upload_create(request: Request):
         uid, org, _identity_id, _browser_session = _auth(request)
         if not uid:
@@ -2403,51 +2433,45 @@ def create_app(
         if upload is None or not hasattr(upload, "read"):
             return JSONResponse({"error": "Missing 'file' field"}, status_code=400)
         content_type = (getattr(upload, "content_type", "") or "").split(";")[0].strip().lower()
-        allowed = content_type in _UPLOAD_TYPE_EXACT or any(
-            content_type.startswith(p) for p in _UPLOAD_TYPE_PREFIXES)
-        if not allowed:
+        original = (getattr(upload, "filename", "") or "file")
+        # A concrete declared type wins; octet-stream/empty falls back to the extension
+        # so `notes.md` from a client that sends no type is still a Markdown document.
+        resolved = uploads.resolve_content_type(original, content_type)
+        if not resolved:
             return JSONResponse({"error": "File type not allowed"}, status_code=415)
         body = await upload.read()
-        if len(body) > _UPLOAD_MAX_BYTES:
+        if len(body) > uploads.MAX_BYTES:
             return JSONResponse({"error": "File too large (10 MB max)"}, status_code=413)
-        original = (getattr(upload, "filename", "") or "file").split("/")[-1].split("\\")[-1]
-        ext = "".join(c for c in Path(original).suffix.lower() if c.isalnum() or c == ".")[:12]
-        file_id = secrets.token_hex(16)
-        stored = _uploads_dir() / f"{file_id}{ext}"
-        stored.write_bytes(body)
-        (_uploads_dir() / f"{file_id}.json").write_text(
-            json.dumps({"org": org, "filename": original[:120],
-                        "content_type": content_type, "size": len(body)}))
-        return JSONResponse({"url": f"/api/uploads/{file_id}",
-                             "title": original[:120] or "file"})
+        url, title = uploads.save_blob(org, original, resolved, body)
+        return JSONResponse({"url": url, "title": title, "contentType": resolved})
 
     async def upload_serve(request: Request):
         uid, org, _identity_id, _browser_session = _auth(request)
         if not uid:
             return JSONResponse({"error": "Authentication required"}, status_code=401)
-        file_id = request.path_params.get("file_id", "")
-        if not file_id.replace("_", "").replace("-", "").isalnum() or len(file_id) > 64:
+        # The URL carries the extension (`<id>.png`); the id itself is the part before it.
+        file_id = uploads.blob_id_from_segment(request.path_params.get("file_id", ""))
+        if not file_id:
             return JSONResponse({"error": "Not found"}, status_code=404)
-        meta_path = _uploads_dir() / f"{file_id}.json"
-        try:
-            meta = json.loads(meta_path.read_text())
-        except (OSError, ValueError):
-            return JSONResponse({"error": "Not found"}, status_code=404)
+        meta = uploads.read_meta(file_id) or {}
         if meta.get("org") != org:
             return JSONResponse({"error": "Not found"}, status_code=404)
         # An uploaded file inherits its issue's team visibility: knowing the (random)
         # file id is not authority to read a private team's material.
         if not store.upload_visible(org, uid, file_id):
             return JSONResponse({"error": "Not found"}, status_code=404)
-        candidates = [p for p in _uploads_dir().glob(f"{file_id}.*")
-                      if p.suffix != ".json" and p.name != f"{file_id}.json"]
-        if not candidates:
+        stored = uploads.blob_for(file_id)
+        if stored is None:
             return JSONResponse({"error": "Not found"}, status_code=404)
+        content_type = meta.get("content_type") or "application/octet-stream"
         return FileResponse(
-            candidates[0],
-            media_type=meta.get("content_type") or "application/octet-stream",
+            stored,
+            media_type=content_type,
             filename=meta.get("filename") or "file",
-            content_disposition_type="inline",
+            # SVG (and anything else not on the inline list) downloads instead of
+            # rendering as a document on the app origin, where its script would run.
+            content_disposition_type="inline" if uploads.inline_disposition(content_type) else "attachment",
+            headers=dict(uploads.BLOB_HEADERS),
         )
 
     def _sync_meta(request: Request, uid: str, org: str, identity_id, is_browser: bool) -> dict:
@@ -2671,6 +2695,13 @@ def create_app(
             webhook_worker = asyncio.create_task(tenant_context.as_system(webhooks.run_forever(engine)))
         async with runtime_app.router.lifespan_context(runtime_app):
             if agent_dbos_url := os.environ.get("HOJA_AGENT_DBOS_URL"):
+                missing = _missing_packages(("dbos", *_AGENT_REQUIRED_PACKAGES))
+                if missing:
+                    raise RuntimeError(
+                        "HOJA_AGENT_DBOS_URL requires the durable agent, but the 'agent' "
+                        f"extra is not installed ({', '.join(missing)} missing). Install it with "
+                        "python -m pip install 'hoja-cli[server,agent]'."
+                    )
                 from dbos import DBOS
 
                 # Imported before launch: DBOS registers workflows at import and recovers them at launch.
@@ -2772,5 +2803,8 @@ def create_app(
     # Outermost: enumerated pre-tenant paths run in system context; every other
     # request has no tenant until _auth binds one (fail closed under RLS).
     app.add_middleware(tenant_context.TenantContextMiddleware)
+    # Outermost of all when configured: preflight OPTIONS and error responses
+    # must carry CORS headers even when no tenant has been bound yet.
+    cors.install_cors(app)
     app.add_exception_handler(json.JSONDecodeError, _malformed_json_handler)
     return app

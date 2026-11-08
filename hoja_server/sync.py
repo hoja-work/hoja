@@ -41,7 +41,7 @@ MAX_DELTA_EVENTS = 5000
 ISSUE_COLUMNS = (
     "id", "identifier", "title", "priority", "estimate", "createdAt", "updatedAt",
     "stateChangedAt", "dueDate", "stateId", "teamId", "projectId", "assigneeId",
-    "creatorId", "cycleId", "parentId", "labelIds", "subscriberIds",
+    "creatorId", "cycleId", "parentId", "decisionNeeded", "labelIds", "subscriberIds",
 )
 TEAM_COLUMN = ISSUE_COLUMNS.index("teamId")
 _CLOSED_TYPES = ("completed", "canceled")
@@ -140,7 +140,7 @@ def _issue_select(conn, org_id: str, viewer_id: str | None):
             issue.c.id, issue.c.identifier, issue.c.title, issue.c.priority, issue.c.estimate,
             issue.c.created_at, issue.c.updated_at, issue.c.state_changed_at, issue.c.due_date,
             issue.c.state_id, issue.c.team_id, issue.c.project_id, issue.c.assignee_id,
-            issue.c.creator_id, issue.c.cycle_id, issue.c.parent_id,
+            issue.c.creator_id, issue.c.cycle_id, issue.c.parent_id, issue.c.decision_needed,
         )
         .select_from(issue.outerjoin(workflow_state, workflow_state.c.id == issue.c.state_id))
         .where(and_(issue.c.organization_id == org_id, issue.c.archived_at.is_(None)))

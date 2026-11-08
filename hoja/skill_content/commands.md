@@ -166,6 +166,60 @@ hoja comment edit <COMMENT_ID> "Updated"
 hoja comment delete <COMMENT_ID>
 ```
 
+## Decisions (ask a human)
+
+A decision is a question an agent asks on an issue (docs/decisions.md). While it is open the
+issue reports `decisionNeeded`, a board flags it as waiting on a person, and the agent can
+block until the human answers. Use it instead of burying a question in a comment.
+
+```bash
+hoja decision ask ENG-35 --question "Is View a first-class entity?" \
+    --option view="First-class entity" --option flag="Just a saved filter" \
+    --context "Two Mor label concepts on HOJA-98." --agent claw:run-30d5
+
+hoja decision ask ENG-35 -q "Which repo owns this?" --wait   # ask and block for the answer
+
+hoja decision list ENG-35                 # newest first
+hoja decision list ENG-35 --status open
+hoja decision get <DECISION_ID>           # one poll: status, answered, answer, answeredBy
+hoja decision wait <DECISION_ID> --timeout 900
+hoja decision answer <DECISION_ID> --option view
+hoja decision answer <DECISION_ID> --answer "hoja-cloud"
+hoja decision cancel <DECISION_ID>        # the asker or an admin, while it is open
+```
+
+`answer` is idempotent: replaying the same answer succeeds and writes nothing, while a
+different answer is refused (`ALREADY_ANSWERED`) — the human's first answer stands.
+`wait` exits 0 once the decision is answered or canceled and prints the row; on timeout it
+exits with a usage error that names the poll to retry.
+
+## Decisions (ask a human)
+
+A decision is a question an agent asks on an issue (docs/decisions.md). While it is open the
+issue reports `decisionNeeded`, a board flags it as waiting on a person, and the agent can
+block until the human answers. Use it instead of burying a question in a comment.
+
+```bash
+hoja decision ask ENG-35 --question "Is View a first-class entity?" \
+    --option view="First-class entity" --option flag="Just a saved filter" \
+    --context "Two Mor label concepts on HOJA-98." --agent claw:run-30d5
+
+hoja decision ask ENG-35 -q "Which repo owns this?" --wait   # ask and block for the answer
+
+hoja decision list ENG-35                 # newest first
+hoja decision list ENG-35 --status open
+hoja decision get <DECISION_ID>           # one poll: status, answered, answer, answeredBy
+hoja decision wait <DECISION_ID> --timeout 900
+hoja decision answer <DECISION_ID> --option view
+hoja decision answer <DECISION_ID> --answer "hoja-cloud"
+hoja decision cancel <DECISION_ID>        # the asker or an admin, while it is open
+```
+
+`answer` is idempotent: replaying the same answer succeeds and writes nothing, while a
+different answer is refused (`ALREADY_ANSWERED`) — the human's first answer stands.
+`wait` exits 0 once the decision is answered or canceled and prints the row; on timeout it
+exits with a usage error that names the poll to retry.
+
 ## Labels
 
 ```bash

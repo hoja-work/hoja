@@ -402,3 +402,33 @@
 .lin-action-notice{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0 0;padding:10px 14px;border:1px solid var(--line);border-radius:8px;background:var(--subtle);color:var(--text);font-size:13px;}
 .lin-action-notice > span{flex:1 1 220px;min-width:0;overflow-wrap:anywhere;line-height:1.5;}
 .lin-action-notice.error{border-color:color-mix(in srgb,var(--danger) 40%,var(--line));background:color-mix(in srgb,var(--danger) 6%,var(--panel));color:var(--danger);}
+
+/* ---- decisions (docs/decisions.md) ------------------------------------------- */
+.lin-df{display:inline-grid;place-items:center;flex:none;width:16px;height:16px;border-radius:50%;
+  border:1px solid color-mix(in srgb,var(--warning, #f2c94c) 70%,var(--line));
+  background:color-mix(in srgb,var(--warning, #f2c94c) 18%,var(--panel));
+  color:var(--text);font-size:10px;font-weight:700;line-height:1;cursor:default}
+.lin-decisions{margin:14px 0 0;display:flex;flex-direction:column;gap:10px}
+.lin-decision{border:1px solid color-mix(in srgb,var(--warning, #f2c94c) 55%,var(--line));
+  border-radius:10px;padding:12px 14px;background:color-mix(in srgb,var(--warning, #f2c94c) 8%,var(--panel))}
+.lin-decision header{display:flex;align-items:center;gap:10px}
+.lin-decision-kicker{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.lin-decision-dismiss{margin-left:auto;background:none;border:0;padding:2px 4px;color:var(--muted);font-size:12px;cursor:pointer}
+.lin-decision-dismiss:hover{color:var(--text)}
+.lin-decision-q{margin:6px 0 0;font-size:14px;font-weight:600;line-height:1.45}
+.lin-decision-context{margin-top:6px;font-size:13px;color:var(--muted)}
+.lin-decision-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+/* Options are the answer, so they read as choices on the banner rather than two loud CTAs. */
+.lin-decisions .lin-decision-option{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;max-width:100%;
+  background:var(--panel);color:var(--text);border:1px solid color-mix(in srgb,var(--warning, #f2c94c) 60%,var(--line));
+  box-shadow:none;font-weight:600}
+.lin-decisions .lin-decision-option:hover{background:color-mix(in srgb,var(--warning, #f2c94c) 18%,var(--panel))}
+.lin-decision-option b{font-weight:650}
+.lin-decision-option small{font-weight:400;opacity:.8}
+.lin-decision-free{display:flex;gap:8px;flex:1 1 320px;min-width:0}
+.lin-decision-free input{flex:1;min-width:0;padding:8px 10px;border:1px solid var(--line);border-radius:7px;
+  background:var(--bg);color:var(--text);font-size:13px}
+.lin-decision-meta{display:block;margin-top:8px;color:var(--muted);font-size:12px}
+.lin-decision-settled{margin-top:2px}
+.lin-decision-answer{margin:6px 0 0;font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.lin-decision-answer small{color:var(--muted)}

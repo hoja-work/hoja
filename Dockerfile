@@ -13,7 +13,7 @@ COPY --from=frontend-build /frontend/dist /app/web
 # pip is part of the shipped image's attack surface (12 advisories on 25.0.1),
 # so it is upgraded before the project install rather than left at the base tag.
 RUN python -m pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir '.[server,mcp]' \
+    && pip install --no-cache-dir '.[server]' \
     && chown -R hoja:hoja /app
 ENV HOJA_WEB_ROOT=/app/web
 USER hoja
