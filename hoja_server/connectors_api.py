@@ -29,6 +29,14 @@ from notion.errors import ConnectorAPIError as NotionAPIError
 from notion.errors import ConnectorAuthError as NotionAuthError
 from notion.oauth import authorization_url as notion_authorization_url
 from notion.oauth import exchange_code as notion_exchange_code
+from slack import ConnectorConfigError as SlackConfigError
+from slack import SlackOAuthConfig
+from slack.client import revoke as slack_revoke
+from slack.errors import ConnectorAPIError as SlackAPIError
+from slack.errors import ConnectorAuthError as SlackAuthError
+from slack.oauth import USER_READ_SCOPES
+from slack.oauth import authorization_url as slack_authorization_url
+from slack.oauth import exchange_code as slack_exchange_code
 from sqlalchemy import and_, or_, select, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
@@ -42,6 +50,7 @@ from hoja_server.secrets_box import SecretBoxError, decrypt_secret, encrypt_secr
 
 PROVIDER = "google_workspace"
 NOTION_PROVIDER = "notion"
+SLACK_PROVIDER = "slack"
 STATE_TTL_SECONDS = 600
 GMAIL_PROFILE_URL = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
 GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
@@ -87,8 +96,8 @@ def _serialize(row) -> dict:
 def connector_binding_for(engine: Engine, org: str, uid: str):
     """Return the MCP binding for this user when they have an active connector account.
 
-    The connector MCP service registers the Google and Notion tools on one server, so one binding
-    covers either provider (or both).
+    The connector MCP service registers the Google, Notion and Slack tools on one server, so one
+    binding covers any provider (or several).
     """
     url = os.environ.get("HOJA_CONNECTOR_MCP_URL", "").strip()
     key = os.environ.get("HOJA_CONNECTOR_SIGNING_KEY", "").strip()
@@ -99,7 +108,9 @@ def connector_binding_for(engine: Engine, org: str, uid: str):
             select(connector_account.c.id).where(
                 and_(
                     connector_account.c.organization_id == org,
-                    connector_account.c.provider.in_((PROVIDER, NOTION_PROVIDER)),
+                    connector_account.c.provider.in_(
+                        (PROVIDER, NOTION_PROVIDER, SLACK_PROVIDER)
+                    ),
                     connector_account.c.status == "active",
                     or_(
                         connector_account.c.owner_user_id == uid,
@@ -396,6 +407,108 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
                 )
         return RedirectResponse("/?connector=notion-connected", status_code=302)
 
+    async def slack_start(request: Request):
+        """Begin the Slack OAuth flow. The grant is a **user** token, so it carries one person's
+        visibility; an organization-wide grant would hand that visibility to everyone and is
+        refused rather than silently downgraded."""
+        uid, org, failure = await _require_user(request)
+        if failure:
+            return failure
+        if request.query_params.get("scope", "user") != "user":
+            return _error("Slack connections are personal to the installing user.", 400)
+        try:
+            config = SlackOAuthConfig.from_env()
+            state = encrypt_secret(
+                json.dumps(
+                    {
+                        "uid": uid,
+                        "org": org,
+                        "exp": int(time.time()) + STATE_TTL_SECONDS,
+                        "nonce": uuid.uuid4().hex,
+                    }
+                )
+            )
+        except (SlackConfigError, SecretBoxError) as exc:
+            return _error(str(exc), 503, getattr(exc, "hint", None))
+        return RedirectResponse(slack_authorization_url(config, state=state), status_code=302)
+
+    async def slack_callback(request: Request):
+        uid, org, failure = await _require_user(request)
+        if failure:
+            return failure
+        if request.query_params.get("error"):
+            return _error("Slack did not grant access.", 400)
+        code = request.query_params.get("code", "")
+        sealed = request.query_params.get("state", "")
+        if not code or not sealed:
+            return _error("code and state are required", 400)
+        try:
+            pending = json.loads(decrypt_secret(sealed))
+            config = SlackOAuthConfig.from_env()
+        except (SecretBoxError, ValueError, SlackConfigError) as exc:
+            return _error("Invalid or expired connection request.", 400, getattr(exc, "hint", None))
+        if pending.get("exp", 0) < time.time():
+            return _error("Connection request expired. Start again.", 400)
+        if pending.get("uid") != uid or pending.get("org") != org:
+            return _error("Connection request belongs to a different session.", 403)
+        if not _consume_state(engine, str(pending.get("nonce", "")), int(pending["exp"])):
+            return _error("Connection request was already used. Start again.", 400)
+
+        async with httpx.AsyncClient(timeout=15) as http:
+            try:
+                token = await slack_exchange_code(http, config, code=code)
+            except SlackAuthError as exc:
+                return _error(str(exc), 400, exc.hint)
+            except (SlackAPIError, httpx.HTTPError) as exc:
+                # Provider failure, not the user's fault. The message carries no credential.
+                return _error(f"Could not reach Slack: {exc}", 502)
+
+        workspace = token.workspace
+        if not workspace:
+            return _error("Slack did not identify the connected workspace.", 502)
+        row = {
+            "id": uuid.uuid4().hex,
+            "organization_id": org,
+            "owner_user_id": uid,
+            "provider": SLACK_PROVIDER,
+            "external_account": workspace,
+            # Record the scopes Slack actually granted, not the ones we asked for, so a later
+            # write path cannot claim more than the consent screen showed.
+            "scopes": " ".join(token.scopes) if token.scopes else " ".join(USER_READ_SCOPES),
+            # Rotation is off, so Slack returns a long-lived `xoxp-` user token and no refresh
+            # token. It is sealed into the same credential column every connector uses.
+            "encrypted_refresh_token": encrypt_secret(token.access_token),
+            "status": "active",
+            "created_at": _now(),
+            "updated_at": _now(),
+        }
+        # Reconnecting the same workspace replaces its grant rather than adding a second row.
+        with engine.begin() as conn:
+            existing = conn.execute(
+                select(connector_account.c.id).where(
+                    and_(
+                        connector_account.c.organization_id == org,
+                        connector_account.c.provider == SLACK_PROVIDER,
+                        connector_account.c.external_account == workspace,
+                        connector_account.c.owner_user_id == uid,
+                        connector_account.c.status == "active",
+                    )
+                )
+            ).first()
+            if existing is None:
+                conn.execute(connector_account.insert().values(**row))
+            else:
+                conn.execute(
+                    update(connector_account)
+                    .where(connector_account.c.id == existing[0])
+                    .values(
+                        scopes=row["scopes"],
+                        encrypted_refresh_token=row["encrypted_refresh_token"],
+                        updated_at=row["updated_at"],
+                    )
+                )
+        return RedirectResponse("/?connector=slack-connected", status_code=302)
+
     async def connector_config(request: Request):
         """Which connectors this deployment can actually run.
 
@@ -424,12 +537,22 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
         notion_agent = notion_available and bool(
             os.environ.get("HOJA_CONNECTOR_SIGNING_KEY", "").strip()
         )
+        try:
+            SlackOAuthConfig.from_env()
+            slack_available = True
+        except (SlackConfigError, SecretBoxError):
+            slack_available = False
+        slack_agent = slack_available and bool(
+            os.environ.get("HOJA_CONNECTOR_SIGNING_KEY", "").strip()
+        )
         return JSONResponse(
             {
                 "googleWorkspace": google_available,
                 "googleWorkspaceAgent": agent_available,
                 "notion": notion_available,
                 "notionAgent": notion_agent,
+                "slack": slack_available,
+                "slackAgent": slack_agent,
             },
             headers={"cache-control": "no-store"},
         )
@@ -487,6 +610,14 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
             if response.status_code not in (200, 400):
                 return _error("Google did not confirm revocation. Try again.", 502)
             provider_revoked = True
+        elif row["provider"] == SLACK_PROVIDER:
+            # Slack stores its long-lived user token in the same sealed column; `auth.revoke`
+            # needs no scope because the token revokes itself.
+            async with httpx.AsyncClient(timeout=15) as http:
+                try:
+                    provider_revoked = await slack_revoke(http, refresh)
+                except SlackAPIError as exc:
+                    return _error(f"Slack did not confirm revocation: {exc}", 502)
         # Notion exposes no revocation endpoint: the credential can only be discarded here, and the
         # user must remove Hoja from the workspace's connections in Notion to invalidate it there.
 
@@ -563,6 +694,8 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
         Route("/api/connectors/google/callback", google_callback, methods=["GET"]),
         Route("/api/connectors/notion/start", notion_start, methods=["GET"]),
         Route("/api/connectors/notion/callback", notion_callback, methods=["GET"]),
+        Route("/api/connectors/slack/start", slack_start, methods=["GET"]),
+        Route("/api/connectors/slack/callback", slack_callback, methods=["GET"]),
         Route("/api/connectors/accounts", accounts_list, methods=["GET"]),
         Route("/api/connectors/accounts/{account_id}/revoke", account_revoke, methods=["POST"]),
         Route("/api/connectors/actions", actions_list, methods=["GET"]),
