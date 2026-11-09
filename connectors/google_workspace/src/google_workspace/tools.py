@@ -9,7 +9,11 @@ from datetime import datetime
 import httpx
 
 from google_workspace.client import (
+    CHAT_DEFAULT_PAGE,
     CalendarEvent,
+    ChatMembership,
+    ChatMessage,
+    ChatSpace,
     ConferenceRecord,
     Document,
     DriveFile,
@@ -95,6 +99,42 @@ async def meet_transcript_entries(
     http: httpx.AsyncClient, grant: AccountGrant, transcript: str, max_results: int = 100
 ) -> list[TranscriptEntry]:
     return await (await _client_for(http, grant)).meet_transcript_entries(transcript, max_results)
+
+
+async def chat_spaces(
+    http: httpx.AsyncClient,
+    grant: AccountGrant,
+    filter: str | None = None,
+    max_results: int = CHAT_DEFAULT_PAGE["spaces"],
+) -> list[ChatSpace]:
+    return await (await _client_for(http, grant)).chat_spaces(filter, max_results)
+
+
+async def chat_messages(
+    http: httpx.AsyncClient,
+    grant: AccountGrant,
+    space: str,
+    filter: str | None = None,
+    order_by: str | None = None,
+    max_results: int = CHAT_DEFAULT_PAGE["messages"],
+) -> list[ChatMessage]:
+    return await (await _client_for(http, grant)).chat_messages(
+        space, filter=filter, order_by=order_by, max_results=max_results
+    )
+
+
+async def chat_message(http: httpx.AsyncClient, grant: AccountGrant, name: str) -> ChatMessage:
+    return await (await _client_for(http, grant)).chat_message(name)
+
+
+async def chat_members(
+    http: httpx.AsyncClient,
+    grant: AccountGrant,
+    space: str,
+    filter: str | None = None,
+    max_results: int = CHAT_DEFAULT_PAGE["members"],
+) -> list[ChatMembership]:
+    return await (await _client_for(http, grant)).chat_members(space, filter, max_results)
 
 
 def require_read(principal: Principal) -> None:

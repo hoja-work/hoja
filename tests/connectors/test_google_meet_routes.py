@@ -279,6 +279,7 @@ def test_the_accounts_list_reports_which_capabilities_the_grant_covers(tmp_path)
         "calendar": False,
         "docs": False,
         "meet": True,
+        "chat": False,
     }
 
 
@@ -329,7 +330,9 @@ def test_an_upgrade_consented_with_a_different_google_account_is_refused(tmp_pat
         return_value=httpx.Response(200, json={"emailAddress": "someone-else@meet.test"})
     )
     with TestClient(app) as client:
-        res = _callback(client, admin["token"], _state(_start(client, admin["token"], addon="meet")))
+        res = _callback(
+            client, admin["token"], _state(_start(client, admin["token"], addon="meet"))
+        )
     assert res.status_code == 409
     rows = _rows(engine)
     assert len(rows) == 1
