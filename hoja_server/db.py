@@ -34,7 +34,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 48
+CURRENT_SCHEMA_REVISION = 49
 
 
 def now_iso() -> str:
@@ -394,6 +394,10 @@ connector_account = Table(
     # per-account. Sentry needs it on every exchange and refresh; providers without one leave it
     # NULL, and `external_account` keeps carrying the human-readable label.
     Column("external_id", String),
+    # The customer-supplied origin for connectors that address an instance rather than a hosted
+    # account (Grafana). It is not a secret, but it is per-account state, so it lives on the row
+    # rather than in deployment configuration.
+    Column("external_url", String),
     Column("status", String, nullable=False),
     Column("created_at", String, nullable=False),
     Column("updated_at", String, nullable=False),
@@ -1843,6 +1847,17 @@ def _apply_connector_access_token(conn) -> None:
             conn.exec_driver_sql(f"ALTER TABLE connector_account ADD COLUMN {name} VARCHAR")
 
 
+def _apply_connector_external_url(conn) -> None:
+    """Store the customer-supplied instance origin for instance-addressed connectors.
+
+    Grafana's token is only meaningful together with its instance URL, and the URL is per
+    connection. Existing rows keep NULL.
+    """
+    existing = {column["name"] for column in inspect(conn).get_columns("connector_account")}
+    if "external_url" not in existing:
+        conn.exec_driver_sql("ALTER TABLE connector_account ADD COLUMN external_url VARCHAR")
+
+
 def _apply_connector_external_id(conn) -> None:
     """Store the provider-side installation id for per-installation grants.
 
@@ -1951,6 +1966,8 @@ _MIGRATIONS = {
     # 47: a provider whose access token expires (Calendly) stores both halves of the grant.
     47: _apply_connector_access_token,
     48: _apply_connector_external_id,
+    # 49: an instance-addressed connector (Grafana) stores its origin on the account row.
+    49: _apply_connector_external_url,
 }
 
 

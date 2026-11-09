@@ -140,6 +140,8 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
             "github": False,
             "githubAgent": False,
             "githubInstallUrl": None,
+            "grafana": False,
+            "grafanaAgent": False,
         }
 
         client.post("/onboarding/bootstrap", json=BOOTSTRAP)
@@ -175,6 +177,8 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
             "github": False,
             "githubAgent": False,
             "githubInstallUrl": None,
+            "grafana": False,
+            "grafanaAgent": False,
         }
         assert off.headers["cache-control"] == "no-store"
 
@@ -200,6 +204,9 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
             "github": False,
             "githubAgent": False,
             "githubInstallUrl": None,
+            # Grafana needs no app credential, only the sealing key this fixture sets.
+            "grafana": True,
+            "grafanaAgent": False,
         }
         assert "GOCSPX" not in on.text
         assert "cid.apps" not in on.text
