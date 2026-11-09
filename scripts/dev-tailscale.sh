@@ -152,7 +152,8 @@ ensure_backend_dependencies() {
     (
       cd "$ROOT"
       .venv/bin/python -m pip install \
-        -e './connectors/google_workspace' -e '.[server,agent]'
+        -e './connectors/google_workspace' -e './connectors/notion' \
+        -e '.[server,agent]'
     )
   fi
 }
