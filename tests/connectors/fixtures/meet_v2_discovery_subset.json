@@ -1,0 +1,157 @@
+{
+  "methods": {
+    "conferenceRecords.list": {
+      "flatPath": "v2/conferenceRecords",
+      "httpMethod": "GET",
+      "meetScopes": [
+        "https://www.googleapis.com/auth/meetings.space.created",
+        "https://www.googleapis.com/auth/meetings.space.readonly"
+      ],
+      "parameters": [
+        "filter",
+        "pageSize",
+        "pageToken"
+      ],
+      "response": "ListConferenceRecordsResponse"
+    },
+    "conferenceRecords.participants.list": {
+      "flatPath": "v2/conferenceRecords/{conferenceRecordsId}/participants",
+      "httpMethod": "GET",
+      "meetScopes": [
+        "https://www.googleapis.com/auth/meetings.space.created",
+        "https://www.googleapis.com/auth/meetings.space.readonly"
+      ],
+      "parameters": [
+        "filter",
+        "pageSize",
+        "pageToken",
+        "parent"
+      ],
+      "response": "ListParticipantsResponse"
+    },
+    "conferenceRecords.recordings.list": {
+      "flatPath": "v2/conferenceRecords/{conferenceRecordsId}/recordings",
+      "httpMethod": "GET",
+      "meetScopes": [
+        "https://www.googleapis.com/auth/meetings.space.created",
+        "https://www.googleapis.com/auth/meetings.space.readonly"
+      ],
+      "parameters": [
+        "pageSize",
+        "pageToken",
+        "parent"
+      ],
+      "response": "ListRecordingsResponse"
+    },
+    "conferenceRecords.transcripts.entries.list": {
+      "flatPath": "v2/conferenceRecords/{conferenceRecordsId}/transcripts/{transcriptsId}/entries",
+      "httpMethod": "GET",
+      "meetScopes": [
+        "https://www.googleapis.com/auth/meetings.space.created",
+        "https://www.googleapis.com/auth/meetings.space.readonly"
+      ],
+      "parameters": [
+        "pageSize",
+        "pageToken",
+        "parent"
+      ],
+      "response": "ListTranscriptEntriesResponse"
+    },
+    "conferenceRecords.transcripts.list": {
+      "flatPath": "v2/conferenceRecords/{conferenceRecordsId}/transcripts",
+      "httpMethod": "GET",
+      "meetScopes": [
+        "https://www.googleapis.com/auth/meetings.space.created",
+        "https://www.googleapis.com/auth/meetings.space.readonly"
+      ],
+      "parameters": [
+        "pageSize",
+        "pageToken",
+        "parent"
+      ],
+      "response": "ListTranscriptsResponse"
+    }
+  },
+  "note": "Verbatim subset of Google's own discovery document, kept so a test can check the connector against it offline.",
+  "retrieved": "2026-11-09",
+  "revision": "20261107",
+  "schemas": {
+    "AnonymousUser": {
+      "displayName": "string"
+    },
+    "ConferenceRecord": {
+      "endTime": "string",
+      "expireTime": "string",
+      "name": "string",
+      "space": "string",
+      "startTime": "string"
+    },
+    "DocsDestination": {
+      "document": "string",
+      "exportUri": "string"
+    },
+    "DriveDestination": {
+      "exportUri": "string",
+      "file": "string"
+    },
+    "ListConferenceRecordsResponse": {
+      "conferenceRecords": "array<ConferenceRecord>",
+      "nextPageToken": "string"
+    },
+    "ListParticipantsResponse": {
+      "nextPageToken": "string",
+      "participants": "array<Participant>",
+      "totalSize": "integer"
+    },
+    "ListRecordingsResponse": {
+      "nextPageToken": "string",
+      "recordings": "array<Recording>"
+    },
+    "ListTranscriptEntriesResponse": {
+      "nextPageToken": "string",
+      "transcriptEntries": "array<TranscriptEntry>"
+    },
+    "ListTranscriptsResponse": {
+      "nextPageToken": "string",
+      "transcripts": "array<Transcript>"
+    },
+    "Participant": {
+      "anonymousUser": "AnonymousUser",
+      "earliestStartTime": "string",
+      "latestEndTime": "string",
+      "name": "string",
+      "phoneUser": "PhoneUser",
+      "signedinUser": "SignedinUser"
+    },
+    "PhoneUser": {
+      "displayName": "string"
+    },
+    "Recording": {
+      "driveDestination": "DriveDestination",
+      "endTime": "string",
+      "name": "string",
+      "startTime": "string",
+      "state": "string"
+    },
+    "SignedinUser": {
+      "displayName": "string",
+      "user": "string"
+    },
+    "Transcript": {
+      "docsDestination": "DocsDestination",
+      "endTime": "string",
+      "name": "string",
+      "startTime": "string",
+      "state": "string"
+    },
+    "TranscriptEntry": {
+      "endTime": "string",
+      "languageCode": "string",
+      "name": "string",
+      "participant": "string",
+      "startTime": "string",
+      "text": "string"
+    }
+  },
+  "source": "https://meet.googleapis.com/$discovery/rest?version=v2"
+}

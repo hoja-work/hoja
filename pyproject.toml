@@ -53,6 +53,11 @@ mcp = [
     "mcp>=2.2.0,<3.0.0",
 ]
 server = [
+    # `create_app` mounts the MCP endpoint at /mcp and its OAuth routes
+    # unconditionally, so a server that can actually serve needs the MCP SDK.
+    # Keep `mcp` listed here as well: the dedicated extra remains for installs
+    # that only want the stdio bridge, and both spell sites must agree.
+    "mcp>=2.2.0,<3.0.0",
     # ariadne 0.23 caps graphql-core at <3.3, but hoja_server/extensions.py
     # imports validate_input_value, which only exists in graphql-core 3.3+.
     # Declare both halves of the pair so the resolver cannot pick an
@@ -71,10 +76,20 @@ saas = [
 agent = [
     "pydantic-ai-slim[dbos,openai,mcp]>=2.54,<3.0",
     "google-workspace-connector",
+    "notion-connector",
+    "slack-connector",
+    "calendly-connector",
+    "sentry-connector",
+    "zoom-connector",
 ]
 
 [tool.uv.sources]
 google-workspace-connector = { path = "connectors/google_workspace", editable = true }
+notion-connector = { path = "connectors/notion", editable = true }
+slack-connector = { path = "connectors/slack", editable = true }
+calendly-connector = { path = "connectors/calendly", editable = true }
+sentry-connector = { path = "connectors/sentry", editable = true }
+zoom-connector = { path = "connectors/zoom", editable = true }
 
 [project.scripts]
 hoja = "hoja.cli:app"
@@ -96,6 +111,11 @@ artifacts = ["VERSION"]
 "VERSION" = "VERSION"
 "hoja_server/schema.graphql" = "hoja_server/schema.graphql"
 "connectors/google_workspace/src/google_workspace" = "google_workspace"
+"connectors/notion/src/notion" = "notion"
+"connectors/slack/src/slack" = "slack"
+"connectors/calendly/src/calendly" = "calendly"
+"connectors/sentry/src/sentry" = "sentry"
+"connectors/zoom/src/zoom" = "zoom"
 
 [tool.ruff]
 target-version = "py310"

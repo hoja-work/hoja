@@ -34,7 +34,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 40
+CURRENT_SCHEMA_REVISION = 48
 
 
 def now_iso() -> str:
@@ -224,6 +224,46 @@ signup_invite = Table(
     Column("consumed_by_identity_id", String, ForeignKey("signup_identity.id")),
 )
 
+# The application email outbox. One row is one logical message; the unique
+# idempotency_key is what makes a retried request send nothing twice.
+mail_outbox = Table(
+    "mail_outbox",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, index=True),
+    Column("template", String, nullable=False),
+    Column("recipient", String, nullable=False, index=True),
+    Column("payload", Text, nullable=False),
+    Column("idempotency_key", String, nullable=False, unique=True, index=True),
+    Column("status", String, nullable=False, default="queued", index=True),
+    Column("attempts", Integer, nullable=False, default=0),
+    Column("created_at", String, nullable=False),
+    Column("last_attempt_at", String),
+    Column("sent_at", String),
+    Column("provider_message_id", String),
+    Column("last_error", Text),
+)
+
+#: What a tenant told the control plane about its own members.
+#:
+#: The control plane cannot see a tenant's membership rows, so the sign-in
+#: directory was blind to everyone who had been invited rather than signed up.
+#: A tenant announces each invitation it issues, signed with the key derived for
+#: its own host; this table is the control plane's memory of that, and it is the
+#: only reason `/signin` can route an invited person without guessing.
+tenant_membership_hint = Table(
+    "tenant_membership_hint",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("slug", String, nullable=False, index=True),
+    Column("email", String, nullable=False, index=True),
+    Column("role", String, nullable=False, default="member"),
+    Column("expires_at", String),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+    UniqueConstraint("slug", "email", name="uq_tenant_membership_hint"),
+)
+
 signup_eligibility = Table(
     "signup_eligibility",
     metadata,
@@ -345,6 +385,15 @@ connector_account = Table(
     Column("external_account", String, nullable=False),
     Column("scopes", Text, nullable=False),
     Column("encrypted_refresh_token", Text, nullable=False),
+    # Calendly (and any provider with short-lived access tokens) stores both halves of the grant.
+    # The access token is cached with its expiry so a call does not rotate the refresh chain;
+    # providers whose token is long-lived leave these empty.
+    Column("encrypted_access_token", Text),
+    Column("access_token_expires_at", String),
+    # The provider's own id for the installation when the grant is per-installation rather than
+    # per-account. Sentry needs it on every exchange and refresh; providers without one leave it
+    # NULL, and `external_account` keeps carrying the human-readable label.
+    Column("external_id", String),
     Column("status", String, nullable=False),
     Column("created_at", String, nullable=False),
     Column("updated_at", String, nullable=False),
@@ -375,6 +424,11 @@ model_provider = Table(
     Column("provider", String, nullable=False),
     Column("model_id", String, nullable=False),
     Column("base_url", String),
+    # Advertised context window of the provider's model, in tokens. Optional: a
+    # workspace admin's own provider may not declare one, and it is not needed to
+    # call the model - it lets the UI state the limit and lets a managed offering
+    # register the model it seeds (see infra/tenants/default-provider.json).
+    Column("context_window", Integer),
     Column("encrypted_api_key", String, nullable=False),
     Column("enabled", Boolean, nullable=False, default=True),
     Column("created_at", String, nullable=False),
@@ -534,7 +588,35 @@ issue = Table(
     Column("created_at", String, index=True),
     Column("updated_at", String, index=True),
     Column("archived_at", String),
+    # Maintained by issue_decision writes: true while one of its decisions is open, so a
+    # board or list reads "waiting on me" without a subquery per row (docs/decisions.md).
+    Column("decision_needed", Boolean, nullable=False, default=False),
     UniqueConstraint("team_id", "number", name="uq_issue_team_number"),
+)
+
+
+# A question an agent asks while working on an issue, answered by a human (docs/decisions.md).
+# The row outlives the asking process: an agent polls it, a board flags the issue it blocks.
+issue_decision = Table(
+    "issue_decision",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("issue_id", String, ForeignKey("issue.id"), nullable=False, index=True),
+    Column("question", Text, nullable=False),
+    # JSON [{key,label,description}]; "[]" means a free-form answer is expected.
+    Column("options", Text, nullable=False, default="[]"),
+    Column("context", Text),
+    Column("status", String, nullable=False, default="open", index=True),
+    Column("asked_by_id", String, ForeignKey("user.id")),
+    Column("asked_by_agent", String),
+    Column("answer", Text),
+    Column("chosen_option", String),
+    Column("answered_by_id", String, ForeignKey("user.id")),
+    Column("answered_at", String),
+    Column("canceled_at", String),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
 )
 
 issue_label = Table(
@@ -809,6 +891,9 @@ attachment = Table(
     Column("url", String, nullable=False),
     Column("title", String, nullable=False),
     Column("subtitle", String),
+    # Resolved media type of an uploaded blob (NULL for external links), recorded at
+    # create time so a client can choose a renderer without probing the URL.
+    Column("content_type", String),
     Column("created_at", String),
 )
 
@@ -881,6 +966,48 @@ cycle = Table(
     Column("archived_at", String),
     UniqueConstraint("team_id", "number", name="uq_cycle_team_number"),
     UniqueConstraint("team_id", "cadence_boundary_at", name="uq_cycle_team_cadence_boundary"),
+)
+
+
+# A view is a saved query (docs/views.md): scope + filter tree + display options, owned by
+# one member and shared through ``visibility``. ``filters`` and ``display`` hold JSON
+# documents validated by hoja_server.views before they are written.
+saved_view = Table(
+    "saved_view",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("kind", String, nullable=False),
+    Column("name", String, nullable=False),
+    Column("description", Text),
+    Column("icon", String),
+    Column("color", String),
+    Column("slug_id", String, nullable=False),
+    Column("owner_id", String, ForeignKey("user.id"), nullable=False, index=True),
+    Column("creator_id", String, ForeignKey("user.id")),
+    Column("updated_by_id", String, ForeignKey("user.id")),
+    Column("scope", String, nullable=False, default="workspace"),
+    Column("team_id", String, ForeignKey("team.id"), index=True),
+    Column("project_id", String, ForeignKey("project.id"), index=True),
+    Column("initiative_id", String, ForeignKey("initiative.id"), index=True),
+    Column("visibility", String, nullable=False, default="private"),
+    Column("filters", Text, nullable=False, default="{}"),
+    Column("display", Text, nullable=False, default="{}"),
+    Column("archived_at", String),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+    UniqueConstraint("organization_id", "slug_id", name="uq_saved_view_org_slug"),
+)
+
+# Favorites are per user, so two members can favorite the same shared view independently.
+saved_view_favorite = Table(
+    "saved_view_favorite",
+    metadata,
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("view_id", String, ForeignKey("saved_view.id"), nullable=False, index=True),
+    Column("user_id", String, ForeignKey("user.id"), nullable=False, index=True),
+    Column("created_at", String, nullable=False),
+    UniqueConstraint("view_id", "user_id", name="uq_saved_view_favorite"),
 )
 
 
@@ -1385,6 +1512,17 @@ def _apply_agent_conversation_title(conn) -> None:
         conn.exec_driver_sql("ALTER TABLE agent_conversation ADD COLUMN title VARCHAR")
 
 
+def _apply_model_provider_context_window(conn) -> None:
+    """Record the model's advertised context window on a provider row.
+
+    Nullable: providers added by workspace admins need no window, and existing rows
+    keep working unchanged. The included offering (infra/tenants/default-provider.json)
+    sets it so the workspace the seed touches has the model described in full.
+    """
+    if "context_window" not in {c["name"] for c in inspect(conn).get_columns("model_provider")}:
+        conn.exec_driver_sql("ALTER TABLE model_provider ADD COLUMN context_window INTEGER")
+
+
 def rate_limit_key_hash(key: str) -> str:
     """Rate-limit keys (emails, IPs) are stored only as SHA-256 digests."""
     return hashlib.sha256(key.encode()).hexdigest()
@@ -1642,6 +1780,82 @@ def _apply_extensions(conn):
         table.create(conn, checkfirst=True)
 
 
+def _apply_issue_decisions(conn):
+    """Decisions (docs/decisions.md): the row, the issue's maintained flag, and its capture.
+
+    A decision publishes as its own ``issueDecision`` event and, through the issue row's
+    ``decision_needed`` update, as an ``issue`` update: a client watching either learns that
+    the round trip started or finished.
+    """
+    if "decision_needed" not in {c["name"] for c in inspect(conn).get_columns("issue")}:
+        conn.exec_driver_sql(
+            'ALTER TABLE issue ADD COLUMN decision_needed BOOLEAN NOT NULL DEFAULT FALSE')
+    issue_decision.create(conn, checkfirst=True)
+    # Team scope is read from the issue so the event honours team visibility; the org comes
+    # from the decision row itself and is what change_event requires.
+    team_expr = "(SELECT team_id FROM issue WHERE id = {row}.issue_id)"
+    if conn.dialect.name == "sqlite":
+        for statement in _change_trigger_sql(
+                "sqlite", "issue_decision", "issueDecision", "id", team_expr,
+                "{row}.organization_id"):
+            conn.exec_driver_sql(statement)
+    elif conn.dialect.name == "postgresql":
+        conn.exec_driver_sql(f"""CREATE OR REPLACE FUNCTION chg_issue_decision() RETURNS trigger LANGUAGE plpgsql AS $fn$
+DECLARE v_org TEXT; v_seq BIGINT; v_team TEXT; v_issue_id TEXT;
+BEGIN
+  v_issue_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.issue_id ELSE NEW.issue_id END;
+  SELECT i.team_id INTO v_team FROM issue i WHERE i.id = v_issue_id;
+  IF TG_OP = 'DELETE' THEN
+{_pg_publish_body("OLD.organization_id", "'issueDecision'", "CAST(OLD.id AS TEXT)", "'delete'", "v_team")}
+  ELSE
+{_pg_publish_body("NEW.organization_id", "'issueDecision'", "CAST(NEW.id AS TEXT)",
+                  "CASE WHEN TG_OP = 'INSERT' THEN 'create' ELSE 'update' END", "v_team")}
+  END IF;
+  RETURN NULL;
+END;
+$fn$;""")
+        _pg_deferred_trigger(conn, "issue_decision")
+    else:
+        raise RuntimeError(f"Realtime capture is not implemented for {conn.dialect.name}")
+
+
+def _apply_attachment_content_type(conn) -> None:
+    """Record the media type of an uploaded blob on its attachment row.
+
+    Existing rows stay NULL: an external link has no type we could know without
+    fetching it, and the client falls back to the URL extension for those.
+    """
+    columns = {c["name"] for c in inspect(conn).get_columns("attachment")}
+    if "content_type" not in columns:
+        conn.exec_driver_sql("ALTER TABLE attachment ADD COLUMN content_type VARCHAR")
+
+
+def _apply_connector_access_token(conn) -> None:
+    """Store the access half of a grant whose token expires.
+
+    Google refreshes on every call from the refresh token alone. Calendly rotates its refresh
+    token, so refreshing per call would burn the chain; the access token and its expiry are kept
+    so a call can reuse a still-valid token. Existing rows keep NULL in both columns.
+    """
+    existing = {column["name"] for column in inspect(conn).get_columns("connector_account")}
+    for name in ("encrypted_access_token", "access_token_expires_at"):
+        if name not in existing:
+            conn.exec_driver_sql(f"ALTER TABLE connector_account ADD COLUMN {name} VARCHAR")
+
+
+def _apply_connector_external_id(conn) -> None:
+    """Store the provider-side installation id for per-installation grants.
+
+    Sentry's token exchange and refresh both address
+    `/api/0/sentry-app-installations/{id}/authorizations/`, so the id has to survive a restart.
+    Keeping it in `external_account` would replace the organization label the UI shows. Existing
+    rows (Google, Notion, Slack, Calendly) keep NULL.
+    """
+    existing = {column["name"] for column in inspect(conn).get_columns("connector_account")}
+    if "external_id" not in existing:
+        conn.exec_driver_sql("ALTER TABLE connector_account ADD COLUMN external_id VARCHAR")
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -1709,16 +1923,34 @@ _MIGRATIONS = {
         turnstile_use.create(conn, checkfirst=True),
     ),
     37: _apply_signup_provisioning,
-    38: lambda conn: (
+    38: lambda conn: mail_outbox.create(conn, checkfirst=True),
+    # Cloud numbering: OSS revisions 38-40 (webhooks, extensions, live-key index)
+    # land here as 39-41 because Cloud's 38 is the mail outbox.
+    39: lambda conn: (
         webhook.create(conn, checkfirst=True),
         webhook_cursor.create(conn, checkfirst=True),
         webhook_issue_snapshot.create(conn, checkfirst=True),
         webhook_delivery.create(conn, checkfirst=True),
     ),
-    39: _apply_extensions,
-    # One live extension per key (revision 39 databases predate the index).
-    40: lambda conn: next(i for i in extension.indexes if i.name == "uq_extension_live_key").create(
+    40: _apply_extensions,
+    41: lambda conn: next(i for i in extension.indexes if i.name == "uq_extension_live_key").create(
         conn, checkfirst=True),
+    42: lambda conn: tenant_membership_hint.create(conn, checkfirst=True),
+    43: lambda conn: (
+        saved_view.create(conn, checkfirst=True),
+        saved_view_favorite.create(conn, checkfirst=True),
+    ),
+    44: _apply_attachment_content_type,
+    # Renumbered 43 -> 44 -> 45 across rebases: main shipped revision 43 (saved views)
+    # and 44 (attachment content_type), so the context window takes the next number
+    # after the merge queue agreed #53 lands second.
+    45: _apply_model_provider_context_window,
+    # Renumbered 44 -> 46 on merge: main already shipped revisions 44 (attachment
+    # content_type) and 45 (model_provider.context_window), so decisions takes 46.
+    46: _apply_issue_decisions,
+    # 47: a provider whose access token expires (Calendly) stores both halves of the grant.
+    47: _apply_connector_access_token,
+    48: _apply_connector_external_id,
 }
 
 

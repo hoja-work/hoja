@@ -6,6 +6,10 @@ type ConnectorAccount = {
   externalAccount: string;
   scope: 'user' | 'org';
   status: string;
+  scopes: string[];
+  /** Per-API answer for a Google grant: a user may untick individual permissions on the consent
+   *  screen, so "the account exists" is not the same as "Meet is available". */
+  capabilities?: Record<string, boolean>;
 };
 
 type PendingAction = {
@@ -37,6 +41,14 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const [refresh, setRefresh] = useState(0);
+  const googleAccounts = accounts.filter((a) => a.provider === 'google_workspace');
+  const meetAccounts = googleAccounts.filter((a) => a.capabilities?.meet);
+  const chatAccounts = googleAccounts.filter((a) => a.capabilities?.chat);
+  const notionAccounts = accounts.filter((a) => a.provider === 'notion');
+  const slackAccounts = accounts.filter((a) => a.provider === 'slack');
+  const calendlyAccounts = accounts.filter((a) => a.provider === 'calendly');
+  const sentryAccounts = accounts.filter((a) => a.provider === 'sentry');
+  const zoomAccounts = accounts.filter((a) => a.provider === 'zoom');
 
   useEffect(() => {
     let live = true;
@@ -81,13 +93,14 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
       <header className="settings-page-heading">
         <span className="eyebrow">Personal</span>
         <h1>Connections</h1>
-        <p>Connect Google Workspace so the assistant can read your Gmail, Drive, Calendar, and Docs.</p>
+        <p>Connect a workspace so the assistant can read the content you share with it.</p>
       </header>
 
       <div className="settings-group connector-settings">
-        <span className="settings-section-kicker">Google Workspace</span>
-        <h2>Connected accounts</h2>
-        <p className="settings-section-intro">Read-only access for Gmail, Drive, Calendar, and Docs. Writes always require approval.</p>
+        {/* The product name is the heading, not an uppercase kicker: app/docs/UI-RULES.md forbids
+            letter-spaced capitals, which `.settings-section-kicker` applies. */}
+        <h2>Google Workspace</h2>
+        <p className="settings-section-intro">Read-only access for Gmail, Drive, Calendar, Docs, Meet and Chat. Writes always require approval.</p>
         {message && <p role="alert">{message}</p>}
         <div className="setting-row">
           <div>
@@ -105,13 +118,167 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
             <a href="/api/connectors/google/start?scope=org">Connect organization account</a>
           </div>
         )}
-        <ul aria-label="Connected accounts" className="connector-account-list">
+        <div className="setting-row">
+          <div>
+            <b>Google Meet</b>
+            <p>Read past meetings, participants, recordings and transcripts. Meet rides on the same Google permission as the account above, so Disconnecting it also removes Meet access.</p>
+            {meetAccounts.length > 0 && (
+              <small>Added to {meetAccounts.map((a) => a.externalAccount).join(', ')}</small>
+            )}
+          </div>
+          {meetAccounts.length > 0 ? (
+            <small>Meet access granted</small>
+          ) : googleAccounts.length > 0 ? (
+            <a className="primary" href="/api/connectors/google/start?addon=meet">Add Meet access</a>
+          ) : (
+            <small>Connect Google first</small>
+          )}
+        </div>
+        <div className="setting-row">
+          <div>
+            <b>Google Chat</b>
+            <p>Read the spaces you belong to, their messages and their members. Chat rides on the same Google permission as the account above, so Disconnecting it also removes Chat access.</p>
+            {chatAccounts.length > 0 && (
+              <small>Added to {chatAccounts.map((a) => a.externalAccount).join(', ')}</small>
+            )}
+          </div>
+          {chatAccounts.length > 0 ? (
+            <small>Chat access granted</small>
+          ) : googleAccounts.length > 0 ? (
+            <a className="primary" href="/api/connectors/google/start?addon=chat">Add Chat access</a>
+          ) : (
+            <small>Connect Google first</small>
+          )}
+        </div>
+        <ul aria-label="Connected Google accounts" className="connector-account-list">
           {loading && <li role="status">Checking connected accounts…</li>}
-          {!loading && accounts.length === 0 && <li className="connector-empty">No Google accounts connected.</li>}
-          {accounts.map((a) => (
+          {!loading && googleAccounts.length === 0 && <li className="connector-empty">No Google accounts connected.</li>}
+          {googleAccounts.map((a) => (
             <li key={a.id}>
               <span className="connector-account-icon" aria-hidden="true">{a.externalAccount.slice(0, 1).toUpperCase()}</span>
-              <span className="connector-account-copy"><b>{a.externalAccount}</b><small>{a.scope === 'org' ? 'Organization account' : 'Personal account'} · {a.status}</small></span>
+              <span className="connector-account-copy"><b>{a.externalAccount}</b><small>{a.scope === 'org' ? 'Organization account' : 'Personal account'} · {a.status}{a.capabilities?.meet ? ' · Meet access' : ''}{a.capabilities?.chat ? ' · Chat access' : ''}</small></span>
+              <button className="outline danger" onClick={() => revoke(a.id)}>Disconnect</button>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="settings-group connector-settings">
+        {/* Product name as the heading: UI-RULES forbids the uppercase kicker. */}
+        <h2>Sentry</h2>
+        <p className="settings-section-intro">Read-only access to the projects, issues and latest event of one Sentry organization. Nothing is resolved, assigned or deleted.</p>
+        <div className="setting-row">
+          <div>
+            <b>Your organization</b>
+            <p>You choose the Sentry organization on Sentry’s install page. The connection is personal to you and reads only that organization.</p>
+          </div>
+          <a className="primary" href="/api/connectors/sentry/start">Connect Sentry</a>
+        </div>
+        <ul aria-label="Connected Sentry organizations" className="connector-account-list">
+          {loading && <li role="status">Checking connected organizations…</li>}
+          {!loading && sentryAccounts.length === 0 && <li className="connector-empty">No Sentry organization connected.</li>}
+          {sentryAccounts.map((a) => (
+            <li key={a.id}>
+              <span className="connector-account-icon" aria-hidden="true">{a.externalAccount.slice(0, 1).toUpperCase()}</span>
+              <span className="connector-account-copy"><b>{a.externalAccount}</b><small>Sentry organization · {a.status}</small></span>
+              <button className="outline danger" onClick={() => revoke(a.id)}>Disconnect</button>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="settings-group connector-settings">
+        {/* Product name as the heading: UI-RULES forbids the uppercase kicker. */}
+        <h2>Zoom</h2>
+        <p className="settings-section-intro">Read-only access to your meetings, cloud recordings and meeting transcripts. Nothing is scheduled, edited or shared.</p>
+        <div className="setting-row">
+          <div>
+            <b>Your meetings</b>
+            <p>Hoja reads with your own Zoom permissions. A Zoom connection is personal to you and is never shared with the workspace.</p>
+          </div>
+          <a className="primary" href="/api/connectors/zoom/start">Connect Zoom</a>
+        </div>
+        <ul aria-label="Connected Zoom accounts" className="connector-account-list">
+          {loading && <li role="status">Checking connected accounts…</li>}
+          {!loading && zoomAccounts.length === 0 && <li className="connector-empty">No Zoom account connected.</li>}
+          {zoomAccounts.map((a) => (
+            <li key={a.id}>
+              <span className="connector-account-icon" aria-hidden="true">{a.externalAccount.slice(0, 1).toUpperCase()}</span>
+              <span className="connector-account-copy"><b>{a.externalAccount}</b><small>Personal account · {a.status}</small></span>
+              <button className="outline danger" onClick={() => revoke(a.id)}>Disconnect</button>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="settings-group connector-settings">
+        <span className="settings-section-kicker">Notion</span>
+        <h2>Connected workspaces</h2>
+        <p className="settings-section-intro">Read-only access to the pages and databases you select in Notion. Nothing is created or edited.</p>
+        <div className="setting-row">
+          <div>
+            <b>Your workspace</b>
+            <p>Choose the pages to share on Notion’s consent screen. Reconnect if you shared nothing or want to add pages.</p>
+          </div>
+          <a className="primary" href="/api/connectors/notion/start">Connect Notion</a>
+        </div>
+        <ul aria-label="Connected Notion workspaces" className="connector-account-list">
+          {loading && <li role="status">Checking connected workspaces…</li>}
+          {!loading && notionAccounts.length === 0 && <li className="connector-empty">No Notion workspace connected.</li>}
+          {notionAccounts.map((a) => (
+            <li key={a.id}>
+              <span className="connector-account-icon" aria-hidden="true">{a.externalAccount.slice(0, 1).toUpperCase()}</span>
+              <span className="connector-account-copy"><b>{a.externalAccount}</b><small>Personal workspace · {a.status}</small></span>
+              <button className="outline danger" onClick={() => revoke(a.id)}>Disconnect</button>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="settings-group connector-settings">
+        {/* No `.settings-section-kicker` here: app/docs/UI-RULES.md forbids uppercase label
+            text, and that class sets `text-transform: uppercase`. The product name is the
+            group heading instead. */}
+        <h2>Slack</h2>
+        <p className="settings-section-intro">Read-only access to channels, channel history, search and the people directory. Nothing is posted or edited.</p>
+        <div className="setting-row">
+          <div>
+            <b>Your workspace</b>
+            <p>Hoja reads with your own Slack permissions. Private channels work only where you are a member.</p>
+          </div>
+          <a className="primary" href="/api/connectors/slack/start">Connect Slack</a>
+        </div>
+        <ul aria-label="Connected Slack workspaces" className="connector-account-list">
+          {loading && <li role="status">Checking connected workspaces…</li>}
+          {!loading && slackAccounts.length === 0 && <li className="connector-empty">No Slack workspace connected.</li>}
+          {slackAccounts.map((a) => (
+            <li key={a.id}>
+              <span className="connector-account-icon" aria-hidden="true">{a.externalAccount.slice(0, 1).toUpperCase()}</span>
+              <span className="connector-account-copy"><b>{a.externalAccount}</b><small>Personal workspace · {a.status}</small></span>
+              <button className="outline danger" onClick={() => revoke(a.id)}>Disconnect</button>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="settings-group connector-settings">
+        {/* Product name as the heading: UI-RULES forbids the uppercase kicker. */}
+        <h2>Calendly</h2>
+        <p className="settings-section-intro">Read-only access to your scheduling pages, booked meetings and their invitees. Nothing is booked, moved or cancelled.</p>
+        <div className="setting-row">
+          <div>
+            <b>Your calendar</b>
+            <p>Hoja reads with your own Calendly permissions. A Calendly connection is personal to you and is never shared with the workspace.</p>
+          </div>
+          <a className="primary" href="/api/connectors/calendly/start">Connect Calendly</a>
+        </div>
+        <ul aria-label="Connected Calendly accounts" className="connector-account-list">
+          {loading && <li role="status">Checking connected accounts…</li>}
+          {!loading && calendlyAccounts.length === 0 && <li className="connector-empty">No Calendly account connected.</li>}
+          {calendlyAccounts.map((a) => (
+            <li key={a.id}>
+              <span className="connector-account-icon" aria-hidden="true">{a.externalAccount.slice(0, 1).toUpperCase()}</span>
+              <span className="connector-account-copy"><b>{a.externalAccount}</b><small>Personal calendar · {a.status}</small></span>
               <button className="outline danger" onClick={() => revoke(a.id)}>Disconnect</button>
             </li>
           ))}
