@@ -34,7 +34,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 40
+CURRENT_SCHEMA_REVISION = 41
 
 
 def now_iso() -> str:
@@ -345,6 +345,11 @@ connector_account = Table(
     Column("external_account", String, nullable=False),
     Column("scopes", Text, nullable=False),
     Column("encrypted_refresh_token", Text, nullable=False),
+    # Calendly (and any provider with short-lived access tokens) stores both halves of the grant.
+    # The access token is cached with its expiry so a call does not rotate the refresh chain;
+    # providers whose token is long-lived leave these empty.
+    Column("encrypted_access_token", Text),
+    Column("access_token_expires_at", String),
     Column("status", String, nullable=False),
     Column("created_at", String, nullable=False),
     Column("updated_at", String, nullable=False),
@@ -1642,6 +1647,19 @@ def _apply_extensions(conn):
         table.create(conn, checkfirst=True)
 
 
+def _apply_connector_access_token(conn) -> None:
+    """Store the access half of a grant whose token expires.
+
+    Google refreshes on every call from the refresh token alone. Calendly rotates its refresh
+    token, so refreshing per call would burn the chain; the access token and its expiry are kept
+    so a call can reuse a still-valid token. Existing rows keep NULL in both columns.
+    """
+    existing = {column["name"] for column in inspect(conn).get_columns("connector_account")}
+    for name in ("encrypted_access_token", "access_token_expires_at"):
+        if name not in existing:
+            conn.exec_driver_sql(f"ALTER TABLE connector_account ADD COLUMN {name} VARCHAR")
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -1719,6 +1737,8 @@ _MIGRATIONS = {
     # One live extension per key (revision 39 databases predate the index).
     40: lambda conn: next(i for i in extension.indexes if i.name == "uq_extension_live_key").create(
         conn, checkfirst=True),
+    # 41: a provider whose access token expires (Calendly) stores both halves of the grant.
+    41: _apply_connector_access_token,
 }
 
 

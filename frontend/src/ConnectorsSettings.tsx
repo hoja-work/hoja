@@ -46,6 +46,7 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
   const chatAccounts = googleAccounts.filter((a) => a.capabilities?.chat);
   const notionAccounts = accounts.filter((a) => a.provider === 'notion');
   const slackAccounts = accounts.filter((a) => a.provider === 'slack');
+  const calendlyAccounts = accounts.filter((a) => a.provider === 'calendly');
 
   useEffect(() => {
     let live = true;
@@ -204,6 +205,30 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
             <li key={a.id}>
               <span className="connector-account-icon" aria-hidden="true">{a.externalAccount.slice(0, 1).toUpperCase()}</span>
               <span className="connector-account-copy"><b>{a.externalAccount}</b><small>Personal workspace · {a.status}</small></span>
+              <button className="outline danger" onClick={() => revoke(a.id)}>Disconnect</button>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="settings-group connector-settings">
+        {/* Product name as the heading: UI-RULES forbids the uppercase kicker. */}
+        <h2>Calendly</h2>
+        <p className="settings-section-intro">Read-only access to your scheduling pages, booked meetings and their invitees. Nothing is booked, moved or cancelled.</p>
+        <div className="setting-row">
+          <div>
+            <b>Your calendar</b>
+            <p>Hoja reads with your own Calendly permissions. A Calendly connection is personal to you and is never shared with the workspace.</p>
+          </div>
+          <a className="primary" href="/api/connectors/calendly/start">Connect Calendly</a>
+        </div>
+        <ul aria-label="Connected Calendly accounts" className="connector-account-list">
+          {loading && <li role="status">Checking connected accounts…</li>}
+          {!loading && calendlyAccounts.length === 0 && <li className="connector-empty">No Calendly account connected.</li>}
+          {calendlyAccounts.map((a) => (
+            <li key={a.id}>
+              <span className="connector-account-icon" aria-hidden="true">{a.externalAccount.slice(0, 1).toUpperCase()}</span>
+              <span className="connector-account-copy"><b>{a.externalAccount}</b><small>Personal calendar · {a.status}</small></span>
               <button className="outline danger" onClick={() => revoke(a.id)}>Disconnect</button>
             </li>
           ))}
