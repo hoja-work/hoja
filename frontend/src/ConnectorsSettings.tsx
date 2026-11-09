@@ -10,6 +10,8 @@ type ConnectorAccount = {
   /** Per-API answer for a Google grant: a user may untick individual permissions on the consent
    *  screen, so "the account exists" is not the same as "Meet is available". */
   capabilities?: Record<string, boolean>;
+  /** Customer-supplied Grafana origin. Not a secret; shown so an account is identifiable. */
+  externalUrl?: string | null;
 };
 
 type PendingAction = {
@@ -39,6 +41,10 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
   const [accounts, setAccounts] = useState<ConnectorAccount[]>([]);
   const [actions, setActions] = useState<PendingAction[]>([]);
   const [message, setMessage] = useState('');
+  const [grafanaUrl, setGrafanaUrl] = useState('');
+  const [grafanaToken, setGrafanaToken] = useState('');
+  const [grafanaNotice, setGrafanaNotice] = useState('');
+  const [grafanaBusy, setGrafanaBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refresh, setRefresh] = useState(0);
   const googleAccounts = accounts.filter((a) => a.provider === 'google_workspace');
@@ -49,6 +55,7 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
   const calendlyAccounts = accounts.filter((a) => a.provider === 'calendly');
   const sentryAccounts = accounts.filter((a) => a.provider === 'sentry');
   const zoomAccounts = accounts.filter((a) => a.provider === 'zoom');
+  const grafanaAccounts = accounts.filter((a) => a.provider === 'grafana');
 
   useEffect(() => {
     let live = true;
@@ -75,6 +82,33 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
       setRefresh((n) => n + 1);
     } catch (e) {
       setMessage((e as Error).message);
+    }
+  };
+
+  const grafana = async (path: 'validate' | 'connect') => {
+    setMessage('');
+    setGrafanaNotice('');
+    setGrafanaBusy(true);
+    try {
+      const body = await api<{ account: string; instance: string }>(
+        `/api/connectors/grafana/${path}`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ url: grafanaUrl.trim(), token: grafanaToken.trim() }),
+        },
+      );
+      if (path === 'validate') {
+        setGrafanaNotice(`Reached ${body.instance} as ${body.account}.`);
+      } else {
+        setGrafanaToken('');
+        setGrafanaNotice(`Connected ${body.instance}.`);
+        setRefresh((n) => n + 1);
+      }
+    } catch (e) {
+      setMessage((e as Error).message);
+    } finally {
+      setGrafanaBusy(false);
     }
   };
 
@@ -279,6 +313,72 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
             <li key={a.id}>
               <span className="connector-account-icon" aria-hidden="true">{a.externalAccount.slice(0, 1).toUpperCase()}</span>
               <span className="connector-account-copy"><b>{a.externalAccount}</b><small>Personal calendar · {a.status}</small></span>
+              <button className="outline danger" onClick={() => revoke(a.id)}>Disconnect</button>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="settings-group connector-settings">
+        {/* Product name as the heading: UI-RULES forbids the uppercase kicker. */}
+        <h2>Grafana</h2>
+        <p className="settings-section-intro">Read-only access to dashboards, data sources, alert rules and annotations of one Grafana instance. Queries are bounded and nothing is created, edited or deleted.</p>
+        <form
+          className="setting-row"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void grafana('connect');
+          }}
+        >
+          <div>
+            <b>Your instance</b>
+            <p>Use the instance origin (for example https://example.grafana.net) and a service-account token with the Viewer role. The token is stored sealed and checked with a live read.</p>
+            <label className="connector-field">
+              Instance URL
+              <input
+                type="url"
+                inputMode="url"
+                autoComplete="off"
+                placeholder="https://example.grafana.net"
+                value={grafanaUrl}
+                onChange={(event) => setGrafanaUrl(event.target.value)}
+                required
+              />
+            </label>
+            <label className="connector-field">
+              Service-account token
+              <input
+                type="password"
+                autoComplete="off"
+                placeholder="glsa_..."
+                value={grafanaToken}
+                onChange={(event) => setGrafanaToken(event.target.value)}
+                required
+              />
+            </label>
+            {grafanaNotice && <small role="status">{grafanaNotice}</small>}
+          </div>
+          <div className="connector-action-buttons">
+            <button
+              type="button"
+              className="outline"
+              disabled={grafanaBusy}
+              onClick={() => void grafana('validate')}
+            >
+              Test connection
+            </button>
+            <button type="submit" className="primary" disabled={grafanaBusy}>
+              Connect Grafana
+            </button>
+          </div>
+        </form>
+        <ul aria-label="Connected Grafana instances" className="connector-account-list">
+          {loading && <li role="status">Checking connected instances…</li>}
+          {!loading && grafanaAccounts.length === 0 && <li className="connector-empty">No Grafana instance connected.</li>}
+          {grafanaAccounts.map((a) => (
+            <li key={a.id}>
+              <span className="connector-account-icon" aria-hidden="true">{a.externalAccount.slice(0, 1).toUpperCase()}</span>
+              <span className="connector-account-copy"><b>{a.externalAccount}</b><small>{a.externalUrl || 'Grafana instance'} · {a.status}</small></span>
               <button className="outline danger" onClick={() => revoke(a.id)}>Disconnect</button>
             </li>
           ))}

@@ -10,6 +10,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -40,6 +41,12 @@ from google_workspace.oauth import (
     pkce_pair,
 )
 from google_workspace.principal import sign_principal
+from grafana import ConnectorConfigError as GrafanaConfigError
+from grafana import GrafanaConfig, UnsafeInstanceError
+from grafana.client import GrafanaClient
+from grafana.errors import ConnectorAPIError as GrafanaAPIError
+from grafana.errors import ConnectorAuthError as GrafanaAuthError
+from grafana.ssrf import validate_instance_url
 from notion import ConnectorConfigError as NotionConfigError
 from notion import NotionOAuthConfig
 from notion.errors import ConnectorAPIError as NotionAPIError
@@ -90,6 +97,11 @@ SLACK_PROVIDER = "slack"
 CALENDLY_PROVIDER = "calendly"
 SENTRY_PROVIDER = "sentry"
 ZOOM_PROVIDER = "zoom"
+GRAFANA_PROVIDER = "grafana"
+# A Grafana service-account token is `glsa_` + 41 URL-safe characters. Accept a slightly wider
+# charset and length so a self-managed instance with a legacy token still works, but never allow
+# whitespace or control characters into an Authorization header.
+GRAFANA_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_\-.]{16,512}$")
 STATE_TTL_SECONDS = 600
 # Calendly accepts exactly ONE redirect URI per app, so a multi-tenant deployment cannot register
 # a callback per tenant. It registers this path on a dedicated broker host instead; the broker
@@ -152,6 +164,9 @@ def _serialize(row) -> dict:
         # on the consent screen, so the Settings page needs the per-API answer rather than "the
         # account exists". Non-Google providers report nothing here.
         "capabilities": capabilities_for(row["scopes"]) if row["provider"] == PROVIDER else {},
+        # The customer-supplied origin for instance-addressed connectors (Grafana). It is not a
+        # secret: the UI needs it to show which instance an account belongs to.
+        "externalUrl": row["external_url"],
         "scope": "org" if row["owner_user_id"] is None else "user",
         "ownerUserId": row["owner_user_id"],
         "status": row["status"],
@@ -183,6 +198,7 @@ def connector_binding_for(engine: Engine, org: str, uid: str):
                             CALENDLY_PROVIDER,
                             SENTRY_PROVIDER,
                             ZOOM_PROVIDER,
+                            GRAFANA_PROVIDER,
                         )
                     ),
                     connector_account.c.status == "active",
@@ -1082,6 +1098,147 @@ def connector_routes(
                 )
         return RedirectResponse("/?connector=zoom-connected", status_code=302)
 
+    class _GrafanaStaticToken:
+        """The stored token as a source the package can ask for, never a string it can persist."""
+
+        def __init__(self, token: str) -> None:
+            self._token = token
+
+        async def access_token(self) -> str:
+            return self._token
+
+        async def invalidate(self) -> None:
+            return None
+
+    async def _grafana_probe(url: str, token: str):
+        """Validate a customer URL and token with one live read. Returns (user, instance)."""
+        instance = validate_instance_url(url)
+        async with httpx.AsyncClient(timeout=15) as http:
+            user = await GrafanaClient(http, _GrafanaStaticToken(token), instance.url).get_current_user()
+        return user, instance
+
+    async def grafana_validate(request: Request):
+        """Check a URL and token without storing either. The UI uses this before Connect."""
+        _uid, _org, failure = await _require_user(request)
+        if failure:
+            return failure
+        try:
+            body = await request.json()
+        except ValueError:
+            return _error("A JSON body with url and token is required.", 400)
+        url = str(body.get("url") or "").strip()
+        token = str(body.get("token") or "").strip()
+        if not GRAFANA_TOKEN_PATTERN.match(token):
+            return _error(
+                "That does not look like a Grafana service-account token.",
+                400,
+                hint="Create a token under Administration > Users and access > Service accounts.",
+            )
+        try:
+            GrafanaConfig.from_env()
+        except GrafanaConfigError as exc:
+            return _error(str(exc), 503, exc.hint)
+        try:
+            user, instance = await _grafana_probe(url, token)
+        except UnsafeInstanceError as exc:
+            return _error(str(exc), 400, exc.hint)
+        except GrafanaAuthError as exc:
+            return _error(str(exc), 400, exc.hint)
+        except GrafanaAPIError as exc:
+            return _error(str(exc), 502, exc.hint)
+        return JSONResponse(
+            {
+                "valid": True,
+                "instance": instance.url,
+                "account": user.label,
+                "isGrafanaAdmin": user.isGrafanaAdmin,
+            }
+        )
+
+    async def grafana_connect(request: Request):
+        """Store a customer instance URL and sealed service-account token.
+
+        There is no OAuth flow to start: the customer pastes the two values. The live read is what
+        proves both are usable before a row exists, and reconnecting the same instance replaces its
+        grant rather than adding a second row.
+        """
+        uid, org, failure = await _require_user(request)
+        if failure:
+            return failure
+        try:
+            body = await request.json()
+        except ValueError:
+            return _error("A JSON body with url and token is required.", 400)
+        url = str(body.get("url") or "").strip()
+        token = str(body.get("token") or "").strip()
+        if not GRAFANA_TOKEN_PATTERN.match(token):
+            return _error(
+                "That does not look like a Grafana service-account token.",
+                400,
+                hint="Create a token under Administration > Users and access > Service accounts.",
+            )
+        try:
+            GrafanaConfig.from_env()
+        except GrafanaConfigError as exc:
+            return _error(str(exc), 503, exc.hint)
+        try:
+            user, instance = await _grafana_probe(url, token)
+        except UnsafeInstanceError as exc:
+            return _error(str(exc), 400, exc.hint)
+        except GrafanaAuthError as exc:
+            return _error(str(exc), 400, exc.hint)
+        except GrafanaAPIError as exc:
+            return _error(str(exc), 502, exc.hint)
+
+        label = user.label
+        row = {
+            "id": uuid.uuid4().hex,
+            "organization_id": org,
+            "owner_user_id": uid,
+            "provider": GRAFANA_PROVIDER,
+            "external_account": label,
+            # No OAuth scopes exist; the role the customer granted is the only meaningful scope.
+            "scopes": "viewer",
+            "encrypted_refresh_token": encrypt_secret(token),
+            "external_id": user.uid,
+            "external_url": instance.url,
+            "status": "active",
+            "created_at": _now(),
+            "updated_at": _now(),
+        }
+        with engine.begin() as conn:
+            existing = conn.execute(
+                select(connector_account.c.id).where(
+                    and_(
+                        connector_account.c.organization_id == org,
+                        connector_account.c.provider == GRAFANA_PROVIDER,
+                        connector_account.c.external_url == instance.url,
+                        connector_account.c.owner_user_id == uid,
+                        connector_account.c.status == "active",
+                    )
+                )
+            ).first()
+            if existing is None:
+                conn.execute(connector_account.insert().values(**row))
+            else:
+                conn.execute(
+                    update(connector_account)
+                    .where(connector_account.c.id == existing[0])
+                    .values(
+                        external_account=row["external_account"],
+                        encrypted_refresh_token=row["encrypted_refresh_token"],
+                        external_id=row["external_id"],
+                        updated_at=row["updated_at"],
+                    )
+                )
+        return JSONResponse(
+            {
+                "connected": True,
+                "instance": instance.url,
+                "account": label,
+            }
+        )
+
     def _sentry_redirect_uri(config: SentryOAuthConfig) -> str:
         """The one string registered on the Sentry integration.
 
@@ -1404,6 +1561,16 @@ def connector_routes(
         zoom_agent = zoom_available and bool(
             os.environ.get("HOJA_CONNECTOR_SIGNING_KEY", "").strip()
         )
+        # Grafana has no app credential: connecting needs only the sealing key that protects the
+        # stored token, so the flag is true on any deployment that can seal secrets at all.
+        try:
+            GrafanaConfig.from_env()
+            grafana_available = True
+        except (GrafanaConfigError, SecretBoxError):
+            grafana_available = False
+        grafana_agent = grafana_available and bool(
+            os.environ.get("HOJA_CONNECTOR_SIGNING_KEY", "").strip()
+        )
         return JSONResponse(
             {
                 "googleWorkspace": google_available,
@@ -1418,6 +1585,8 @@ def connector_routes(
                 "sentryAgent": sentry_agent,
                 "zoom": zoom_available,
                 "zoomAgent": zoom_agent,
+                "grafana": grafana_available,
+                "grafanaAgent": grafana_agent,
             },
             headers={"cache-control": "no-store"},
         )
@@ -1536,6 +1705,11 @@ def connector_routes(
                     return _error(str(exc), 503, exc.hint)
                 except ZoomAPIError as exc:
                     return _error(f"Zoom did not confirm revocation: {exc}", 502)
+        elif row["provider"] == GRAFANA_PROVIDER:
+            # A Viewer token cannot revoke the service-account token it is using: that needs
+            # Admin on the Grafana side. Discarding the sealed copy here is all Hoja can do, so the
+            # user is told, in the same response, to delete the token in Grafana.
+            provider_revoked = False
         # Notion exposes no revocation endpoint: the credential can only be discarded here, and the
         # user must remove Hoja from the workspace's connections in Notion to invalidate it there.
 
@@ -1562,6 +1736,9 @@ def connector_routes(
                     "Sentry is still finishing the uninstall; it clears itself in about ten "
                     "minutes. The connection is already unused here."
                     if row["provider"] == SENTRY_PROVIDER
+                    else "Delete the service-account token in Grafana (Administration > Users and "
+                    "access > Service accounts) to invalidate it there."
+                    if row["provider"] == GRAFANA_PROVIDER
                     else "Remove Hoja in Notion Settings > Connections to invalidate the token there."
                 ),
             }
@@ -1643,6 +1820,9 @@ def connector_routes(
         Route("/api/connectors/zoom/start", zoom_start, methods=["GET"]),
         # Zoom's allow list carries one callback per tenant, so the tenant redeems its own code.
         Route(ZOOM_REDIRECT_PATH, zoom_callback, methods=["GET"]),
+        # Grafana has no OAuth callback: the customer pastes an instance URL and a token.
+        Route("/api/connectors/grafana/validate", grafana_validate, methods=["POST"]),
+        Route("/api/connectors/grafana/connect", grafana_connect, methods=["POST"]),
         Route("/api/connectors/accounts", accounts_list, methods=["GET"]),
         Route("/api/connectors/accounts/{account_id}/revoke", account_revoke, methods=["POST"]),
         Route("/api/connectors/actions", actions_list, methods=["GET"]),
