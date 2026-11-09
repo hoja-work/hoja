@@ -114,6 +114,12 @@ hoja issue create --team ENG --title "Fix login flow" \
 # Update fields
 hoja issue update ENG-35 --title "Better title" --priority 1
 
+# Attribution: nest an existing issue under a parent, move it, or detach it
+hoja issue create --team ENG --title "Wire the retry loop" --parent ENG-35
+hoja issue update ENG-36 --parent ENG-42      # re-parent (identifier or UUID)
+hoja issue update ENG-36 --no-parent          # detach; --parent "" does the same
+hoja issue list --parent ENG-42               # what is nested under ENG-42
+
 # State transition (run `team states ENG` first to see valid names)
 hoja issue state ENG-35 "In Review"
 

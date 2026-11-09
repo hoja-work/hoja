@@ -1924,21 +1924,25 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
           </div>
 
           <div className="sec">Parent</div>
-          {detail.parent ? (
-            <div className="lin-prop">
-              <span className="v">
+          <div className="lin-prop">
+            <span className="v" style={{position: 'relative'}} ref={parentRef}>
+              {detail.parent ? (
                 <button type="button" className="plain" onClick={() => onOpenIssue({...(detail.parent as LinIssue), id: detail.parent!.id})}>
                   <span className="trunc"><b>{detail.parent.identifier}</b> {detail.parent.title}</span>
                 </button>
+              ) : (
+                <span className="lin-note">No parent</span>
+              )}
+              {/* Same picker both ways, so moving an issue between parents is one step. */}
+              <button type="button" className="lin-addrow" onClick={() => setParentSearch(v => !v)}>
+                {detail.parent ? 'Change parent…' : 'Set parent…'}
+              </button>
+              {detail.parent && (
                 <IconBtn label="Remove parent" title="Remove parent" onClick={() => void change({parentId: null})}><X size={13} /></IconBtn>
-              </span>
-            </div>
-          ) : (
-            <span style={{position: 'relative'}} ref={parentRef}>
-              <button type="button" className="lin-addrow" onClick={() => setParentSearch(v => !v)}>Set parent…</button>
+              )}
               {parentSearch && (
                 <div className="lin-popover" style={{left: 0, top: 'calc(100% + 4px)', width: 300, padding: 8}}>
-                  <input placeholder="Search issues…" value={parentQuery} onChange={e => setParentQuery(e.target.value)}
+                  <input placeholder="Search issues…" aria-label="Search for a parent issue" value={parentQuery} onChange={e => setParentQuery(e.target.value)}
                     style={{width: '100%', border: '1px solid var(--line)', borderRadius: 6, padding: '7px 10px', fontSize: 13, marginBottom: 6}} />
                   {parentResults.map(r => (
                     <button key={r.id} type="button" className="lin-dd-opt"
@@ -1949,7 +1953,7 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
                 </div>
               )}
             </span>
-          )}
+          </div>
 
           <div className="sec">Subscribers</div>
           <div className="lin-sublist">

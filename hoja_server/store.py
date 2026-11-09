@@ -2528,6 +2528,12 @@ def _apply_issue_filter(conn, stmt, org_id, viewer_id, flt: dict | None):
         stmt = stmt.where(issue.c.cycle_id.in_(cycle_ids or ["__none__"]))
     if "parent" in flt:
         cmp = flt["parent"] or {}
+        # `isNull` is a Hoja extension: GraphQL cannot express `eq: null`, and
+        # clients strip nulls from variables, so orphans need a boolean.
+        if cmp.get("isNull") is True:
+            stmt = stmt.where(issue.c.parent_id.is_(None))
+        elif cmp.get("isNull") is False:
+            stmt = stmt.where(issue.c.parent_id.is_not(None))
         if "id" in cmp:
             c = _apply_str_cmp(issue.c.parent_id, cmp["id"])
             if c is not None:

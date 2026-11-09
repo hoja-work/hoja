@@ -58,10 +58,10 @@ hoja team get <KEY>              # e.g. ENG
 hoja team states <KEY>           # workflow states for a team
 hoja team members <KEY>
 
-hoja issue list [filters...]
+hoja issue list [filters...]     # incl. --parent <ID> for sub-issues, --no-parent for orphans
 hoja issue get <ID>              # e.g. ENG-35
 hoja issue create --team <KEY> --title "..." [--description ...] [--priority N] [--assignee NAME] [--label "a,b"]
-hoja issue update <ID> [--title ...] [--description ...] [--priority N]
+hoja issue update <ID> [--title ...] [--description ...] [--priority N] [--parent <ID>|--no-parent]
 hoja issue state <ID> "<STATE_NAME>"     # e.g. "In Progress"
 hoja issue assign <ID> <USER_NAME>
 hoja issue prio <ID> <N>                  # 0=none 1=urgent 2=high 3=med 4=low
