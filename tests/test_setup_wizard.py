@@ -131,6 +131,8 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
             "notionAgent": False,
             "slack": False,
             "slackAgent": False,
+            "calendly": False,
+            "calendlyAgent": False,
         }
 
         client.post("/onboarding/bootstrap", json=BOOTSTRAP)
@@ -138,6 +140,12 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
         for name in ("HOJA_NOTION_CLIENT_ID", "HOJA_NOTION_CLIENT_SECRET", "HOJA_NOTION_REDIRECT_URI"):
             monkeypatch.delenv(name, raising=False)
         for name in ("HOJA_SLACK_CLIENT_ID", "HOJA_SLACK_CLIENT_SECRET", "HOJA_SLACK_REDIRECT_URI"):
+            monkeypatch.delenv(name, raising=False)
+        for name in (
+            "HOJA_CALENDLY_CLIENT_ID",
+            "HOJA_CALENDLY_CLIENT_SECRET",
+            "HOJA_CALENDLY_REDIRECT_URI",
+        ):
             monkeypatch.delenv(name, raising=False)
         off = client.get("/api/connectors/config")
         assert off.status_code == 200
@@ -148,6 +156,8 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
             "notionAgent": False,
             "slack": False,
             "slackAgent": False,
+            "calendly": False,
+            "calendlyAgent": False,
         }
         assert off.headers["cache-control"] == "no-store"
 
@@ -164,6 +174,8 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
             "notionAgent": False,
             "slack": False,
             "slackAgent": False,
+            "calendly": False,
+            "calendlyAgent": False,
         }
         assert "GOCSPX" not in on.text
         assert "cid.apps" not in on.text
