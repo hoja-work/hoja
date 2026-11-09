@@ -34,6 +34,7 @@ from hoja_server.connectors_api import (
     CALENDLY_PROVIDER,
     NOTION_PROVIDER,
     PROVIDER,
+    SENTRY_PROVIDER,
     SLACK_PROVIDER,
 )
 from hoja_server.db import connector_account
@@ -199,6 +200,51 @@ def make_calendly_grant_resolver(
     return resolve_grants
 
 
+def make_sentry_grant_resolver(
+    engine: Engine, *, http: httpx.AsyncClient
+) -> Callable[[Principal, str], Awaitable[list[Any]]]:
+    """Resolve Sentry grants through the eight-hour token store.
+
+    Sentry's token lives eight hours and is refreshed with a JWT assertion signed by the client
+    secret, so the grant cannot be a captured string like Slack's: each account gets a live token
+    source that refreshes under a per-account lock. A deployment without Sentry credentials still
+    starts; it simply reports no Sentry accounts instead of failing the whole service.
+    """
+    from sentry import ConnectorConfigError as SentryConfigError
+    from sentry import SentryOAuthConfig
+    from sentry.tools import AccountGrant as SentryGrant
+
+    from hoja_server.sentry_tokens import SentryTokenStore
+
+    try:
+        config = SentryOAuthConfig.from_env()
+    except SentryConfigError:
+        log.info("Sentry is not configured on this deployment; its tools resolve no accounts")
+
+        async def unavailable(_principal: Principal, _account: str) -> list[Any]:
+            return []
+
+        return unavailable
+
+    store = SentryTokenStore(engine, http, config)
+
+    async def resolve_grants(principal: Principal, account: str) -> list[Any]:
+        grants: list[Any] = []
+        for row in _active_rows(engine, principal, account, SENTRY_PROVIDER):
+            if not row["external_id"] or not row["encrypted_refresh_token"]:
+                continue
+            grants.append(
+                SentryGrant(
+                    account_id=row["id"],
+                    external_account=row["external_account"],
+                    tokens=store.source(row["id"]),
+                )
+            )
+        return grants
+
+    return resolve_grants
+
+
 def build_connector_mcp_app(
     engine: Engine,
     *,
@@ -256,6 +302,14 @@ def build_connector_mcp_app(
         server,
         signing_key=key,
         resolve_grants=make_calendly_grant_resolver(engine, http=client),
+        http=client,
+    )
+    from sentry.mcp_server import register_tools as register_sentry_tools
+
+    register_sentry_tools(
+        server,
+        signing_key=key,
+        resolve_grants=make_sentry_grant_resolver(engine, http=client),
         http=client,
     )
     return server.streamable_http_app(**options)

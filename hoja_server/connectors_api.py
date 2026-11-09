@@ -7,6 +7,7 @@ Pending OAuth state (user, org, scope, PKCE verifier, expiry) is carried in an A
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import time
@@ -45,6 +46,15 @@ from notion.errors import ConnectorAPIError as NotionAPIError
 from notion.errors import ConnectorAuthError as NotionAuthError
 from notion.oauth import authorization_url as notion_authorization_url
 from notion.oauth import exchange_code as notion_exchange_code
+from sentry import ConnectorConfigError as SentryConfigError
+from sentry import SentryOAuthConfig
+from sentry.client import SentryClient
+from sentry.errors import ConnectorAPIError as SentryAPIError
+from sentry.errors import ConnectorAuthError as SentryAuthError
+from sentry.oauth import READ_SCOPES as SENTRY_READ_SCOPES
+from sentry.oauth import exchange_installation_code as sentry_exchange_code
+from sentry.oauth import installation_url as sentry_installation_url
+from sentry.oauth import uninstall as sentry_uninstall
 from slack import ConnectorConfigError as SlackConfigError
 from slack import SlackOAuthConfig
 from slack.client import revoke as slack_revoke
@@ -69,12 +79,19 @@ PROVIDER = "google_workspace"
 NOTION_PROVIDER = "notion"
 SLACK_PROVIDER = "slack"
 CALENDLY_PROVIDER = "calendly"
+SENTRY_PROVIDER = "sentry"
 STATE_TTL_SECONDS = 600
 # Calendly accepts exactly ONE redirect URI per app, so a multi-tenant deployment cannot register
 # a callback per tenant. It registers this path on a dedicated broker host instead; the broker
 # forwards to the tenant, which redeems the code in the session that started the flow.
 CALENDLY_REDIRECT_PATH = "/api/connectors/calendly/callback"
 CALENDLY_FINISH_PATH = "/api/connectors/calendly/finish"
+# Sentry's public-integration form also accepts exactly one Redirect URL, so the same broker
+# split applies. The difference is the callback payload: Sentry adds `installationId` and
+# `orgSlug`, and the code is redeemed per installation rather than at /oauth/token/.
+SENTRY_REDIRECT_PATH = "/api/connectors/sentry/callback"
+SENTRY_FINISH_PATH = "/api/connectors/sentry/finish"
+SENTRY_WEBHOOK_PATH = "/api/connectors/sentry/webhook"
 BROKER_URL_ENV = "HOJA_CONNECTOR_BROKER_URL"
 GMAIL_PROFILE_URL = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
 GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
@@ -145,7 +162,13 @@ def connector_binding_for(engine: Engine, org: str, uid: str):
                 and_(
                     connector_account.c.organization_id == org,
                     connector_account.c.provider.in_(
-                        (PROVIDER, NOTION_PROVIDER, SLACK_PROVIDER, CALENDLY_PROVIDER)
+                        (
+                            PROVIDER,
+                            NOTION_PROVIDER,
+                            SLACK_PROVIDER,
+                            CALENDLY_PROVIDER,
+                            SENTRY_PROVIDER,
+                        )
                     ),
                     connector_account.c.status == "active",
                     or_(
@@ -873,6 +896,268 @@ def connector_routes(
         back = f"{tenant}/?connector=calendly-connected" if tenant else "/?connector=calendly-connected"
         return RedirectResponse(back, status_code=302)
 
+    def _sentry_redirect_uri(config: SentryOAuthConfig) -> str:
+        """The one string registered on the Sentry integration.
+
+        `_calendly_broker_origin` is the deployment-wide answer to "is there a control-plane
+        return host", and it is the same host for every provider that only accepts one redirect;
+        the path differs. Reusing the helper keeps one definition of the broker.
+        """
+        broker = _calendly_broker_origin()
+        return f"{broker}{SENTRY_REDIRECT_PATH}" if broker else config.redirect_uri
+
+    async def sentry_start(request: Request):
+        """Begin the Sentry install under the tenant's session.
+
+        There is no PKCE leg to prepare: Sentry's public-integration flow hands the code back to
+        the registered Redirect URL and the exchange carries the client secret. What still has to
+        be bound is *who* and *where*: the sealed state names the user, the workspace and the
+        tenant to return to, and Sentry echoes it through the install untouched.
+        """
+        uid, org, failure = await _require_user(request)
+        if failure:
+            return failure
+        if request.query_params.get("scope", "user") != "user":
+            # A Sentry installation is one organization's grant, created by the session that
+            # installed it. Calling it a workspace-wide grant here would let any member read that
+            # organization's issues with the installer's authority, so it is refused.
+            return _error("Sentry connections are personal to the user who installs them.", 400)
+        tenant: str | None = None
+        if _calendly_broker_origin():
+            tenant = _calendly_tenant_origin(str(request.base_url))
+            if tenant is None:
+                return _error(
+                    "This address is not a workspace on this deployment, so a Sentry connection "
+                    "cannot return to it.",
+                    400,
+                    hint="Open your workspace URL and connect Sentry from there.",
+                )
+        try:
+            config = SentryOAuthConfig.from_env()
+            state = encrypt_secret(
+                json.dumps(
+                    {
+                        "uid": uid,
+                        "org": org,
+                        "provider": SENTRY_PROVIDER,
+                        "tenant": tenant,
+                        "exp": int(time.time()) + STATE_TTL_SECONDS,
+                        "nonce": uuid.uuid4().hex,
+                    }
+                )
+            )
+        except (SentryConfigError, SecretBoxError) as exc:
+            return _error(str(exc), 503, getattr(exc, "hint", None))
+        return RedirectResponse(sentry_installation_url(config, state=state), status_code=302)
+
+    async def sentry_callback(request: Request):
+        """The registered Redirect URL: the broker when one is configured, terminal otherwise."""
+        if _calendly_broker_origin():
+            return await _sentry_forward(request)
+        return await _sentry_complete(request)
+
+    async def _sentry_forward(request: Request):
+        """Verify the sealed state and hand the install to the tenant. Stores nothing."""
+        if request.query_params.get("error"):
+            return _error("Sentry did not install the integration.", 400)
+        code = request.query_params.get("code", "")
+        installation_id = request.query_params.get("installationId", "")
+        org_slug = request.query_params.get("orgSlug", "")
+        sealed = request.query_params.get("state", "")
+        if not code or not installation_id or not sealed:
+            return _error("code, installationId and state are required", 400)
+        try:
+            pending = json.loads(decrypt_secret(sealed))
+        except (SecretBoxError, ValueError):
+            return _error("Invalid or expired connection request.", 400)
+        if pending.get("exp", 0) < time.time():
+            return _error("Connection request expired. Start again.", 400)
+        if pending.get("provider") != SENTRY_PROVIDER:
+            return _error("Invalid connection request.", 400)
+        tenant = _calendly_tenant_origin(pending.get("tenant"))
+        if tenant is None:
+            return _error("Connection request names no workspace on this deployment.", 403)
+        query = urlencode(
+            {
+                "code": code,
+                "installationId": installation_id,
+                "orgSlug": org_slug,
+                "state": sealed,
+            }
+        )
+        return RedirectResponse(f"{tenant}{SENTRY_FINISH_PATH}?{query}", status_code=302)
+
+    async def sentry_finish(request: Request):
+        return await _sentry_complete(request)
+
+    async def _sentry_complete(request: Request):
+        """Redeem the installation code on the tenant, in the session that started the flow."""
+        uid, org, failure = await _require_user(request)
+        if failure:
+            return failure
+        if request.query_params.get("error"):
+            return _error("Sentry did not install the integration.", 400)
+        code = request.query_params.get("code", "")
+        installation_id = request.query_params.get("installationId", "")
+        org_slug = request.query_params.get("orgSlug", "")
+        sealed = request.query_params.get("state", "")
+        if not code or not installation_id or not sealed:
+            return _error("code, installationId and state are required", 400)
+        try:
+            pending = json.loads(decrypt_secret(sealed))
+            config = SentryOAuthConfig.from_env()
+        except (SecretBoxError, ValueError, SentryConfigError) as exc:
+            return _error("Invalid or expired connection request.", 400, getattr(exc, "hint", None))
+        if pending.get("exp", 0) < time.time():
+            return _error("Connection request expired. Start again.", 400)
+        if pending.get("provider") != SENTRY_PROVIDER:
+            return _error("Invalid connection request.", 400)
+        if pending.get("uid") != uid or pending.get("org") != org:
+            return _error("Connection request belongs to a different session.", 403)
+        tenant = pending.get("tenant")
+        if tenant is not None:
+            here = _calendly_tenant_origin(str(request.base_url))
+            if here is None or tenant != here:
+                return _error("Connection request belongs to a different workspace.", 403)
+        if not _consume_state(engine, str(pending.get("nonce", "")), int(pending["exp"])):
+            return _error("Connection request was already used. Start again.", 400)
+
+        async with httpx.AsyncClient(timeout=15) as http:
+            try:
+                tokens = await sentry_exchange_code(
+                    http, config, code=code, installation_id=installation_id
+                )
+
+                class _StaticToken:
+                    """The token just minted, plus the org slug the callback claimed.
+
+                    `get_organization` then reads the org from Sentry itself: the token is scoped to
+                    exactly one organization, so its own answer is the authoritative one and the
+                    callback's `orgSlug` is only a claim to check it against.
+                    """
+
+                    def organization(self) -> str:
+                        return org_slug
+
+                    async def access_token(self) -> str:
+                        return tokens.access_token
+
+                    async def invalidate(self) -> None:
+                        return None
+
+                connected = await SentryClient(http, _StaticToken()).get_organization()
+            except SentryAuthError as exc:
+                return _error(str(exc), 400, exc.hint)
+            except (SentryAPIError, httpx.HTTPError) as exc:
+                return _error(f"Could not reach Sentry: {exc}", 502)
+
+        if not connected.slug:
+            return _error("Sentry did not identify the connected organization.", 502)
+        if org_slug and connected.slug != org_slug:
+            # The token is bound to one org; if the callback named another, refuse rather than
+            # store a label that disagrees with the credential.
+            return _error("Sentry returned a different organization than the install named.", 400)
+        label = connected.slug
+        expires_at = int(tokens.expires_at)
+        row = {
+            "id": uuid.uuid4().hex,
+            "organization_id": org,
+            "owner_user_id": uid,
+            "provider": SENTRY_PROVIDER,
+            "external_account": label,
+            "external_id": str(tokens.installation_id),
+            # Record what Sentry granted, so a later code path cannot claim more than the install
+            # page showed.
+            "scopes": " ".join(tokens.scopes) if tokens.scopes else " ".join(SENTRY_READ_SCOPES),
+            "encrypted_refresh_token": encrypt_secret(tokens.refresh_token),
+            "encrypted_access_token": encrypt_secret(tokens.access_token),
+            "access_token_expires_at": str(expires_at),
+            "status": "active",
+            "created_at": _now(),
+            "updated_at": _now(),
+        }
+        # Reinstalling the same Sentry organization replaces its grant rather than adding a row:
+        # one installation is one grant, and two rows would mean two different timer chains.
+        with engine.begin() as conn:
+            existing = conn.execute(
+                select(connector_account.c.id).where(
+                    and_(
+                        connector_account.c.organization_id == org,
+                        connector_account.c.provider == SENTRY_PROVIDER,
+                        connector_account.c.external_account == label,
+                        connector_account.c.owner_user_id == uid,
+                        connector_account.c.status == "active",
+                    )
+                )
+            ).first()
+            if existing is None:
+                conn.execute(connector_account.insert().values(**row))
+            else:
+                conn.execute(
+                    update(connector_account)
+                    .where(connector_account.c.id == existing[0])
+                    .values(
+                        external_id=row["external_id"],
+                        scopes=row["scopes"],
+                        encrypted_refresh_token=row["encrypted_refresh_token"],
+                        encrypted_access_token=row["encrypted_access_token"],
+                        access_token_expires_at=row["access_token_expires_at"],
+                        updated_at=row["updated_at"],
+                    )
+                )
+        back = f"{tenant}/?connector=sentry-connected" if tenant else "/?connector=sentry-connected"
+        return RedirectResponse(back, status_code=302)
+
+    async def sentry_webhook(request: Request):
+        """Sentry's lifecycle webhook: `installation.created` and `installation.deleted`.
+
+        The subscribe-only events are empty on this integration, but lifecycle events are delivered
+        regardless. Without this route a user who removes Hoja in Sentry leaves a row that still
+        looks connected, and the next tool call fails with a 403 instead of asking them to
+        reconnect. The body is authenticated with `sentry-hook-signature`:
+        `hex(HMAC-SHA256(client_secret, raw_body))`.
+        """
+        try:
+            config = SentryOAuthConfig.from_env()
+        except SentryConfigError as exc:
+            return _error(str(exc), 503, exc.hint)
+        raw = await request.body()
+        given = (request.headers.get("sentry-hook-signature") or "").strip()
+        expected = hmac.new(
+            config.client_secret.encode("utf-8"), raw, hashlib.sha256
+        ).hexdigest()
+        if not given or not hmac.compare_digest(given, expected):
+            return _error("Invalid webhook signature.", 401)
+        try:
+            payload = json.loads(raw or b"{}")
+        except ValueError:
+            return _error("Webhook body is not JSON.", 400)
+        action = str(payload.get("action") or "")
+        installation = payload.get("installation") if isinstance(payload, dict) else None
+        installation = installation if isinstance(installation, dict) else {}
+        installation_id = str(installation.get("uuid") or "")
+        if action == "deleted" and installation_id:
+            with engine.begin() as conn:
+                conn.execute(
+                    update(connector_account)
+                    .where(
+                        and_(
+                            connector_account.c.provider == SENTRY_PROVIDER,
+                            connector_account.c.external_id == installation_id,
+                            connector_account.c.status == "active",
+                        )
+                    )
+                    .values(
+                        status="revoked",
+                        revoked_at=_now(),
+                        updated_at=_now(),
+                        encrypted_refresh_token="",
+                        encrypted_access_token="",
+                        access_token_expires_at="",
+                    )
+                )
+        return JSONResponse({"ok": True})
+
     async def connector_config(request: Request):
         """Which connectors this deployment can actually run.
 
@@ -917,6 +1202,14 @@ def connector_routes(
         calendly_agent = calendly_available and bool(
             os.environ.get("HOJA_CONNECTOR_SIGNING_KEY", "").strip()
         )
+        try:
+            SentryOAuthConfig.from_env()
+            sentry_available = True
+        except (SentryConfigError, SecretBoxError):
+            sentry_available = False
+        sentry_agent = sentry_available and bool(
+            os.environ.get("HOJA_CONNECTOR_SIGNING_KEY", "").strip()
+        )
         return JSONResponse(
             {
                 "googleWorkspace": google_available,
@@ -927,6 +1220,8 @@ def connector_routes(
                 "slackAgent": slack_agent,
                 "calendly": calendly_available,
                 "calendlyAgent": calendly_agent,
+                "sentry": sentry_available,
+                "sentryAgent": sentry_agent,
             },
             headers={"cache-control": "no-store"},
         )
@@ -1014,6 +1309,24 @@ def connector_routes(
                     return _error(str(exc), 503, exc.hint)
                 except CalendlyAPIError as exc:
                     return _error(f"Calendly did not confirm revocation: {exc}", 502)
+        elif row["provider"] == SENTRY_PROVIDER:
+            # A Sentry public integration has no revocation endpoint for the grant itself: removing
+            # the installation is what revokes it. False means Sentry still has it in
+            # `pending_deletion` after an uninstall performed inside Sentry; the local grant is
+            # discarded either way and the remote one is already unusable.
+            installation_id = str(row["external_id"] or "")
+            if not installation_id:
+                provider_revoked = False
+            else:
+                async with httpx.AsyncClient(timeout=15) as http:
+                    try:
+                        provider_revoked = await sentry_uninstall(
+                            http, SentryOAuthConfig.from_env(), installation_id=installation_id
+                        )
+                    except SentryConfigError as exc:
+                        return _error(str(exc), 503, exc.hint)
+                    except SentryAPIError as exc:
+                        return _error(f"Sentry did not confirm revocation: {exc}", 502)
         # Notion exposes no revocation endpoint: the credential can only be discarded here, and the
         # user must remove Hoja from the workspace's connections in Notion to invalidate it there.
 
@@ -1036,7 +1349,12 @@ def connector_routes(
                 "providerRevoked": provider_revoked,
                 "hint": None
                 if provider_revoked
-                else "Remove Hoja in Notion Settings > Connections to invalidate the token there.",
+                else (
+                    "Sentry is still finishing the uninstall; it clears itself in about ten "
+                    "minutes. The connection is already unused here."
+                    if row["provider"] == SENTRY_PROVIDER
+                    else "Remove Hoja in Notion Settings > Connections to invalidate the token there."
+                ),
             }
         )
 
@@ -1107,6 +1425,12 @@ def connector_routes(
         # The registered callback (broker in a multi-tenant deployment) and the tenant's redeem.
         Route(CALENDLY_REDIRECT_PATH, calendly_callback, methods=["GET"]),
         Route("/api/connectors/calendly/finish", calendly_finish, methods=["GET"]),
+        Route("/api/connectors/sentry/start", sentry_start, methods=["GET"]),
+        # The registered Redirect URL (broker in a multi-tenant deployment) and the tenant redeem.
+        Route(SENTRY_REDIRECT_PATH, sentry_callback, methods=["GET"]),
+        Route(SENTRY_FINISH_PATH, sentry_finish, methods=["GET"]),
+        # Lifecycle events only (installation.created/deleted); no event subscriptions exist.
+        Route(SENTRY_WEBHOOK_PATH, sentry_webhook, methods=["POST"]),
         Route("/api/connectors/accounts", accounts_list, methods=["GET"]),
         Route("/api/connectors/accounts/{account_id}/revoke", account_revoke, methods=["POST"]),
         Route("/api/connectors/actions", actions_list, methods=["GET"]),
