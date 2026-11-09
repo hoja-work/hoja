@@ -13,7 +13,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any
-from urllib.parse import quote, urlparse
+from urllib.parse import urlencode, urlsplit
 
 import httpx
 from calendly import CalendlyOAuthConfig
@@ -61,7 +61,8 @@ from starlette.responses import JSONResponse, RedirectResponse
 from starlette.routing import Route
 
 from hoja_server.connector_actions import Executor, approve_action, reject_action
-from hoja_server.db import connector_account, connector_action, oauth_state_nonce
+from hoja_server.db import connector_account, connector_action, oauth_state_nonce, organization
+from hoja_server.identity_transfer import tenant_target
 from hoja_server.secrets_box import SecretBoxError, decrypt_secret, encrypt_secret
 
 PROVIDER = "google_workspace"
@@ -69,12 +70,12 @@ NOTION_PROVIDER = "notion"
 SLACK_PROVIDER = "slack"
 CALENDLY_PROVIDER = "calendly"
 STATE_TTL_SECONDS = 600
-# Binds a Calendly callback to the browser that started it. Calendly allows exactly one redirect
-# URI per app, so tenants other than the registered host are sent through a handoff on that host
-# where their session cookie does not exist; this cookie replaces the session check that Slack's
-# same-host callback relies on. See calendly_handoff.
-CALENDLY_LINK_COOKIE = "hoja_calendly_link"
-CALENDLY_LINK_PATH = "/api/connectors/calendly"
+# Calendly accepts exactly ONE redirect URI per app, so a multi-tenant deployment cannot register
+# a callback per tenant. It registers this path on a dedicated broker host instead; the broker
+# forwards to the tenant, which redeems the code in the session that started the flow.
+CALENDLY_REDIRECT_PATH = "/api/connectors/calendly/callback"
+CALENDLY_FINISH_PATH = "/api/connectors/calendly/finish"
+BROKER_URL_ENV = "HOJA_CONNECTOR_BROKER_URL"
 GMAIL_PROFILE_URL = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
 GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 
@@ -637,35 +638,52 @@ def connector_routes(
                 )
         return RedirectResponse("/?connector=slack-connected", status_code=302)
 
-    def _calendly_callback_host(config: CalendlyOAuthConfig) -> str:
-        return urlparse(config.redirect_uri).netloc
+    def _calendly_broker_origin() -> str:
+        """The shared return address, or "" when this deployment has no broker.
 
-    def _safe_return_origin(value: str, config: CalendlyOAuthConfig) -> str:
-        """Where to send the browser after the callback finishes.
-
-        The value comes from the tenant's own request, but its host is attacker-controlled (a Host
-        header), so it is accepted only when it shares the registered callback's registrable
-        domain. Anything else falls back to the callback host rather than becoming an open redirect.
+        A multi-tenant deployment registers ONE Calendly callback on a host that is not any
+        tenant (`api.hoja.work`), because Calendly accepts exactly one redirect URI per app. A
+        self-hosted install registers its own callback and gets no broker. The broker only
+        forwards, so it holds no credential and stores nothing.
         """
-        callback_host = _calendly_callback_host(config).lower()
-        fallback = f"https://{callback_host}"
-        parsed = urlparse(value if "://" in value else f"https://{value}")
-        host = parsed.netloc.lower()
-        if not host:
-            return fallback
-        parent = ".".join(callback_host.split(".")[-2:])
-        if host == callback_host or (parent and host.endswith("." + parent)):
-            scheme = parsed.scheme if parsed.scheme in {"http", "https"} else "https"
-            return f"{scheme}://{host}"
-        return fallback
+        return (os.environ.get(BROKER_URL_ENV) or "").strip().rstrip("/")
+
+    def _calendly_redirect_uri(config: CalendlyOAuthConfig) -> str:
+        """The one string Calendly compares at both the authorize and token endpoints."""
+        broker = _calendly_broker_origin()
+        return f"{broker}{CALENDLY_REDIRECT_PATH}" if broker else config.redirect_uri
+
+    def _tenant_registered(host: str) -> bool:
+        slug = host.split(".", 1)[0]
+        with engine.connect() as conn:
+            found = conn.execute(
+                select(organization.c.id).where(organization.c.url_key == slug)
+            ).first()
+        return found is not None
+
+    def _calendly_tenant_origin(value: str | None) -> str | None:
+        """A tenant's https origin, or None.
+
+        `identity_transfer.tenant_target` is this deployment's existing answer to "is this one of
+        our tenant hosts": https, under our apex, never a reserved control-plane name. On top of
+        it the slug must exist in the tenant registry, so a well-formed but unregistered
+        `ghost.hoja.work` cannot be used to bounce a grant somewhere it does not belong.
+        """
+        target = tenant_target(value)
+        if target is None:
+            return None
+        parts = urlsplit(target)
+        host = (parts.hostname or "").lower()
+        if not _tenant_registered(host):
+            return None
+        return f"{parts.scheme}://{parts.netloc}"
 
     async def calendly_start(request: Request):
-        """Begin the Calendly flow.
+        """Begin the Calendly flow under the tenant's session.
 
-        Calendly accepts exactly one redirect URI per app (measured live: the console has a single
-        input, and comma-separated values are rejected), so the callback cannot return to the
-        tenant's own host for every tenant. The state is therefore minted here under the tenant's
-        session and handed to the registered callback host, which is where the browser will land.
+        With a broker configured the tenant's own host is never registered with Calendly, so the
+        host to return to is carried in the state instead: the broker forwards to it and the
+        tenant redeems the code there, in the same session that started the flow.
         """
         uid, org, failure = await _require_user(request)
         if failure:
@@ -674,6 +692,16 @@ def connector_routes(
             # A Calendly token is one person's calendar. Calling it an organization grant would
             # hand that person's meetings to every member, so it is refused rather than downgraded.
             return _error("Calendly connections are personal to the connecting user.", 400)
+        tenant: str | None = None
+        if _calendly_broker_origin():
+            tenant = _calendly_tenant_origin(str(request.base_url))
+            if tenant is None:
+                return _error(
+                    "This address is not a workspace on this deployment, so a Calendly "
+                    "connection cannot return to it.",
+                    400,
+                    hint="Open your workspace URL and connect Calendly from there.",
+                )
         try:
             config = CalendlyOAuthConfig.from_env()
             verifier, _challenge = calendly_pkce_pair()
@@ -684,7 +712,7 @@ def connector_routes(
                         "org": org,
                         "provider": CALENDLY_PROVIDER,
                         "verifier": verifier,
-                        "return": _safe_return_origin(str(request.base_url), config),
+                        "tenant": tenant,
                         "exp": int(time.time()) + STATE_TTL_SECONDS,
                         "nonce": uuid.uuid4().hex,
                     }
@@ -692,52 +720,59 @@ def connector_routes(
             )
         except (CalendlyConfigError, SecretBoxError) as exc:
             return _error(str(exc), 503, getattr(exc, "hint", None))
-        handoff = (
-            f"https://{_calendly_callback_host(config)}"
-            f"{CALENDLY_LINK_PATH}/handoff?state={quote(state)}"
+        return RedirectResponse(
+            calendly_authorization_url(
+                config,
+                state=state,
+                code_challenge=calendly_s256(verifier),
+                redirect_uri=_calendly_redirect_uri(config),
+            ),
+            status_code=302,
         )
-        return RedirectResponse(handoff, status_code=302)
 
-    async def calendly_handoff(request: Request):
-        """Set the browser-binding cookie on the callback host, then send the user to Calendly.
+    async def calendly_callback(request: Request):
+        """The registered redirect URI: the broker when one is configured, terminal otherwise."""
+        if _calendly_broker_origin():
+            return await _calendly_forward(request)
+        return await _calendly_complete(request)
 
-        This route deliberately requires no session: it runs on the registered callback host,
-        where a tenant other than that host has no session cookie. The sealed state is the
-        authority to proceed. The cookie written here is what keeps the callback from being
-        completed in a browser that did not start the flow — without it, an attacker could mint a
-        state for their own workspace and trick a victim into binding their calendar to it
-        (account-linking CSRF), which is exactly what the session check prevents for Slack.
+    async def _calendly_forward(request: Request):
+        """Verify the sealed state and hand the code to the tenant. Stores nothing.
+
+        The broker never sees a client secret and never calls Calendly: the code is redeemed by
+        the tenant that started the flow, with the same redirect URI, so a compromised broker
+        could redirect a grant but not mint one.
         """
+        if request.query_params.get("error"):
+            return _error("Calendly did not grant access.", 400)
+        code = request.query_params.get("code", "")
         sealed = request.query_params.get("state", "")
-        if not sealed:
-            return _error("state is required", 400)
+        if not code or not sealed:
+            return _error("code and state are required", 400)
         try:
             pending = json.loads(decrypt_secret(sealed))
-            config = CalendlyOAuthConfig.from_env()
-        except (SecretBoxError, ValueError, CalendlyConfigError) as exc:
-            return _error("Invalid or expired connection request.", 400, getattr(exc, "hint", None))
+        except (SecretBoxError, ValueError):
+            return _error("Invalid or expired connection request.", 400)
         if pending.get("exp", 0) < time.time():
             return _error("Connection request expired. Start again.", 400)
         if pending.get("provider") != CALENDLY_PROVIDER:
             return _error("Invalid connection request.", 400)
-        url = calendly_authorization_url(
-            config,
-            state=sealed,
-            code_challenge=calendly_s256(str(pending.get("verifier", ""))),
-        )
-        response = RedirectResponse(url, status_code=302)
-        response.set_cookie(
-            CALENDLY_LINK_COOKIE,
-            str(pending.get("nonce", "")),
-            max_age=STATE_TTL_SECONDS,
-            path=CALENDLY_LINK_PATH,
-            httponly=True,
-            secure=True,
-            samesite="lax",
-        )
-        return response
+        tenant = _calendly_tenant_origin(pending.get("tenant"))
+        if tenant is None:
+            # Not a workspace of ours, a reserved control-plane name, or not registered at all:
+            # never bounce a code to an address the state merely claims.
+            return _error("Connection request names no workspace on this deployment.", 403)
+        query = urlencode({"code": code, "state": sealed})
+        return RedirectResponse(f"{tenant}{CALENDLY_FINISH_PATH}?{query}", status_code=302)
 
-    async def calendly_callback(request: Request):
+    async def calendly_finish(request: Request):
+        return await _calendly_complete(request)
+
+    async def _calendly_complete(request: Request):
+        """Redeem the code on the tenant, in the session that started the flow."""
+        uid, org, failure = await _require_user(request)
+        if failure:
+            return failure
         if request.query_params.get("error"):
             return _error("Calendly did not grant access.", 400)
         code = request.query_params.get("code", "")
@@ -753,22 +788,26 @@ def connector_routes(
             return _error("Connection request expired. Start again.", 400)
         if pending.get("provider") != CALENDLY_PROVIDER:
             return _error("Invalid connection request.", 400)
-        bound = request.cookies.get(CALENDLY_LINK_COOKIE, "")
-        if not bound or bound != str(pending.get("nonce", "")):
-            return _error(
-                "This connection was started in a different browser.",
-                403,
-                hint="Start the Calendly connection again from Settings > Connections.",
-            )
+        if pending.get("uid") != uid or pending.get("org") != org:
+            # The state is bound to the person and workspace that started it. This is what
+            # replaces a cookie: the broker cannot complete a flow on someone else's behalf.
+            return _error("Connection request belongs to a different session.", 403)
+        tenant = pending.get("tenant")
+        if tenant is not None:
+            here = _calendly_tenant_origin(str(request.base_url))
+            if here is None or tenant != here:
+                return _error("Connection request belongs to a different workspace.", 403)
         if not _consume_state(engine, str(pending.get("nonce", "")), int(pending["exp"])):
             return _error("Connection request was already used. Start again.", 400)
 
-        uid = str(pending.get("uid") or "")
-        org = str(pending.get("org") or "")
         async with httpx.AsyncClient(timeout=15) as http:
             try:
                 tokens = await calendly_exchange_code(
-                    http, config, code=code, code_verifier=str(pending.get("verifier", ""))
+                    http,
+                    config,
+                    code=code,
+                    code_verifier=str(pending.get("verifier", "")),
+                    redirect_uri=_calendly_redirect_uri(config),
                 )
 
                 class _StaticToken:
@@ -831,13 +870,8 @@ def connector_routes(
                         updated_at=row["updated_at"],
                     )
                 )
-        response = RedirectResponse(
-            f"{pending.get('return') or 'https://' + _calendly_callback_host(config)}"
-            "/?connector=calendly-connected",
-            status_code=302,
-        )
-        response.delete_cookie(CALENDLY_LINK_COOKIE, path=CALENDLY_LINK_PATH)
-        return response
+        back = f"{tenant}/?connector=calendly-connected" if tenant else "/?connector=calendly-connected"
+        return RedirectResponse(back, status_code=302)
 
     async def connector_config(request: Request):
         """Which connectors this deployment can actually run.
@@ -1070,9 +1104,9 @@ def connector_routes(
         Route("/api/connectors/slack/start", slack_start, methods=["GET"]),
         Route("/api/connectors/slack/callback", slack_callback, methods=["GET"]),
         Route("/api/connectors/calendly/start", calendly_start, methods=["GET"]),
-        # The two routes below run on the registered callback host, not on the tenant's own host.
-        Route("/api/connectors/calendly/handoff", calendly_handoff, methods=["GET"]),
-        Route("/api/connectors/calendly/callback", calendly_callback, methods=["GET"]),
+        # The registered callback (broker in a multi-tenant deployment) and the tenant's redeem.
+        Route(CALENDLY_REDIRECT_PATH, calendly_callback, methods=["GET"]),
+        Route("/api/connectors/calendly/finish", calendly_finish, methods=["GET"]),
         Route("/api/connectors/accounts", accounts_list, methods=["GET"]),
         Route("/api/connectors/accounts/{account_id}/revoke", account_revoke, methods=["POST"]),
         Route("/api/connectors/actions", actions_list, methods=["GET"]),
