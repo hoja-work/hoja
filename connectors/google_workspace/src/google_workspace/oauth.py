@@ -25,6 +25,29 @@ READ_SCOPES: dict[str, str] = {
     "docs": "https://www.googleapis.com/auth/documents.readonly",
 }
 
+# Google Meet is a capability of the same Google grant, not a second account. One OAuth client
+# serves both APIs, and Google's incremental authorization extends an existing grant instead of
+# replacing it (`include_granted_scopes=true` below). So Meet is requested as a named add-on: the
+# authorization request carries *only* these scopes, and Google returns a token covering the union
+# of what the user already granted and what is asked for here.
+MEET_SCOPE = "https://www.googleapis.com/auth/meetings.space.readonly"
+
+# Scope upgrades Settings > Connections can offer on an existing Google account, by add-on name.
+ADDON_SCOPES: dict[str, tuple[str, ...]] = {
+    "meet": (MEET_SCOPE,),
+}
+
+# Every scope this connector can ever hold on one Google account, keyed by the capability it
+# grants. Used to report what a stored grant actually covers; a user may untick individual
+# scopes on the consent screen, so the answer is per capability, not "all or nothing".
+CAPABILITY_SCOPES: dict[str, str] = {
+    "gmail": READ_SCOPES["gmail"],
+    "drive": READ_SCOPES["drive"],
+    "calendar": READ_SCOPES["calendar"],
+    "docs": READ_SCOPES["docs"],
+    "meet": MEET_SCOPE,
+}
+
 # Write scopes are requested only for accounts that opt into writes. Each one widens consent.
 WRITE_SCOPES: dict[str, str] = {
     "gmail_send": "https://www.googleapis.com/auth/gmail.send",
@@ -32,6 +55,30 @@ WRITE_SCOPES: dict[str, str] = {
     "calendar_events": "https://www.googleapis.com/auth/calendar.events",
     "docs": "https://www.googleapis.com/auth/documents",
 }
+
+
+def merge_scopes(*groups: str | Sequence[str]) -> list[str]:
+    """Order-preserving union of scope lists (each entry is a space-separated string or a list).
+
+    A Google token obtained with `include_granted_scopes=true` covers the union of the scopes
+    already granted and the ones just requested, so the grant recorded for an account must be a
+    union too. Replacing it would claim, after a Meet upgrade, that the account no longer covers
+    Workspace - and the reverse after a plain Workspace reconnect.
+    """
+    seen: list[str] = []
+    for group in groups:
+        items = group.split() if isinstance(group, str) else list(group)
+        for item in items:
+            scope = item.strip()
+            if scope and scope not in seen:
+                seen.append(scope)
+    return seen
+
+
+def capabilities_for(scopes: Sequence[str] | str) -> dict[str, bool]:
+    """Which capabilities a stored grant covers, per API."""
+    granted = set(scopes.split() if isinstance(scopes, str) else scopes)
+    return {name: scope in granted for name, scope in CAPABILITY_SCOPES.items()}
 
 
 class TokenSet(BaseModel):
