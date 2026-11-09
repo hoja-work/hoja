@@ -156,6 +156,73 @@ def _cmd_mail(args):
     raise SystemExit(0 if result["failed"] == 0 else 1)
 
 
+def _cmd_reseal_secrets(args):
+    """Rewrite credentials sealed with the master key under their organization's key."""
+    from sqlalchemy import select, update
+
+    from hoja_server import secrets_box, tenant_context
+    from hoja_server.db import connector_account, extension, model_provider, webhook
+
+    engine = make_engine(_database_target(args))
+    columns = ((connector_account, "encrypted_refresh_token"), (extension, "secret_sealed"),
+               (model_provider, "encrypted_api_key"), (webhook, "secret_sealed"))
+    total = 0
+    with tenant_context.system(), engine.begin() as conn:
+        for table, name in columns:
+            column = table.c[name]
+            rows = conn.execute(select(table.c.id, table.c.organization_id, column)).all()
+            for row_id, org_id, token in rows:
+                if not secrets_box.is_legacy(token):
+                    continue
+                plain = secrets_box.decrypt_secret(token, org_id)
+                conn.execute(update(table).where(table.c.id == row_id)
+                             .values({name: secrets_box.encrypt_secret(plain, org_id)}))
+                total += 1
+    print(f"resealed={total}")
+
+
+def _cmd_merge_tenant(args):
+    """Copy one dedicated tenant database into the shared database (dry run unless --apply)."""
+    import os
+
+    from hoja_server.tenant_merge import MergeError, merge
+
+    source_secret = os.environ.get(args.source_secret_env, "")
+    if not source_secret:
+        raise SystemExit(f"set {args.source_secret_env} to the tenant's HOJA_SECRET_KEY")
+    source_url = args.source_url or os.environ.get("HOJA_MERGE_SOURCE_URL")
+    target_url = args.target_url or os.environ.get("HOJA_MERGE_TARGET_URL")
+    if not source_url or not target_url:
+        raise SystemExit("pass --source-url and --target-url, or set HOJA_MERGE_SOURCE_URL and HOJA_MERGE_TARGET_URL")
+    try:
+        report = merge(make_engine(source_url), make_engine(target_url), source_secret=source_secret,
+                       vanity_host=args.vanity_host, apply=args.apply, replace_stale=args.replace_stale,
+                       carry_over=args.carry_over)
+    except MergeError as exc:
+        raise SystemExit(f"merge refused: {exc}") from exc
+    print("\n".join(report.lines()))
+
+
+def _cmd_create_workspace(args):
+    """Create a workspace in the shared database; an included model provider may arrive as JSON on stdin."""
+    import json
+
+    from hoja_server.workspace_provision import ProvisionError, provision
+
+    provider = None
+    if args.provider_stdin:
+        provider = json.loads(sys.stdin.read())
+    engine = make_engine(_database_target(args))
+    try:
+        result = provision(engine, slug=args.slug, owner_email=args.owner_email, name=args.name, provider=provider)
+    except ProvisionError as exc:
+        print(json.dumps({"error": exc.reason}))
+        raise SystemExit(2) from exc
+    finally:
+        engine.dispose()
+    print(json.dumps(result, sort_keys=True))
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="hoja-serve", description="hoja local backend")
     p.add_argument("--version", action="version", version=f"hoja-serve {__version__}")
@@ -219,6 +286,37 @@ def main(argv=None):
     md.add_argument("--db", default=None)
     md.add_argument("--limit", type=int, default=25)
     md.set_defaults(func=_cmd_mail)
+
+    rs = sub.add_parser("reseal-secrets",
+                        help="re-encrypt stored credentials under per-organization keys")
+    rs.add_argument("--tenant", default="default")
+    rs.add_argument("--database-url", default=None)
+    rs.add_argument("--db", default=None)
+    rs.set_defaults(func=_cmd_reseal_secrets)
+
+    mt = sub.add_parser("merge-tenant", help="copy a dedicated tenant database into the shared database")
+    mt.add_argument("--source-url", default=None, help="tenant database, superuser (or HOJA_MERGE_SOURCE_URL)")
+    mt.add_argument("--target-url", default=None, help="shared database, superuser (or HOJA_MERGE_TARGET_URL)")
+    mt.add_argument("--source-secret-env", default="HOJA_SOURCE_SECRET_KEY",
+                    help="environment variable holding the tenant's HOJA_SECRET_KEY")
+    mt.add_argument("--vanity-host", default=None, help="keep serving the workspace on this host")
+    mt.add_argument("--replace-stale", action="store_true",
+                    help="replace an older copy of the same organization in the shared database")
+    mt.add_argument("--carry-over", action="store_true",
+                    help="replace an older copy but keep its rows the tenant lacks (issues renumbered)")
+    mt.add_argument("--apply", action="store_true", help="commit; without it the merge is verified and rolled back")
+    mt.set_defaults(func=_cmd_merge_tenant)
+
+    cw = sub.add_parser("create-workspace", help="create a workspace in the shared database")
+    cw.add_argument("--slug", required=True)
+    cw.add_argument("--owner-email", required=True)
+    cw.add_argument("--name", default=None)
+    cw.add_argument("--provider-stdin", action="store_true",
+                    help="read the included model provider, with its key, as JSON from stdin")
+    cw.add_argument("--tenant", default="default")
+    cw.add_argument("--database-url", default=None)
+    cw.add_argument("--db", default=None)
+    cw.set_defaults(func=_cmd_create_workspace)
 
     args = p.parse_args(argv)
     args.func(args)

@@ -94,10 +94,13 @@ def _secret() -> str:
 class HojaOAuthProvider(OAuthAuthorizationServerProvider):
     """SDK OAuth provider. Raw bearer values are never persisted."""
 
-    def __init__(self, engine, store, trusted_proxy: bool = False, public_host: str | None = None):
+    def __init__(self, engine, store, trusted_proxy: bool = False, public_host: str | None = None,
+                 required_org: str | None = None):
         self.engine = engine
         self.store = store
         self.trusted_proxy = trusted_proxy
+        # On a workspace's own host only that workspace's credentials authenticate.
+        self.required_org = required_org
         # The same host the metadata and token audience use; None falls back to the env.
         self.public_host = public_host
         from hoja_server.writer import Writer
@@ -367,6 +370,8 @@ class HojaOAuthProvider(OAuthAuthorizationServerProvider):
             )
         if not row or row["expires_at"] <= _iso(_now()):
             return await self._load_api_key(token)
+        if self.required_org and row["organization_id"] != self.required_org:
+            return None
         tenant_context.bind(row["organization_id"])
         subject = json.dumps({"user_id": row["user_id"], "org_id": row["organization_id"]})
         return AccessToken(
@@ -388,7 +393,7 @@ class HojaOAuthProvider(OAuthAuthorizationServerProvider):
         """
         with tenant_context.system():
             key = self.store.resolve_token(token)
-        if not key:
+        if not key or (self.required_org and key["organization_id"] != self.required_org):
             return None
         tenant_context.bind(key["organization_id"])
         scopes = [READ_SCOPE] if key.get("access") == "read" else list(ALL_SCOPES)

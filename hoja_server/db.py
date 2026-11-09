@@ -34,7 +34,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 46
+CURRENT_SCHEMA_REVISION = 47
 
 
 def now_iso() -> str:
@@ -66,6 +66,7 @@ organization = Table(
     Column("id", String, primary_key=True),
     Column("name", String, nullable=False),
     Column("url_key", String, nullable=False, unique=True),
+    Column("vanity_host", String, unique=True),
     Column("created_at", String),
     Column("updated_at", String),
 )
@@ -1091,6 +1092,9 @@ def make_engine(target: str | Path) -> Engine:
         kwargs["pool_size"] = _pool_setting("HOJA_DB_POOL_SIZE", 5, minimum=1)
         kwargs["max_overflow"] = _pool_setting("HOJA_DB_MAX_OVERFLOW", 5, minimum=0)
         kwargs["pool_timeout"] = _pool_setting("HOJA_DB_POOL_TIMEOUT", 30, minimum=1)
+        if os.environ.get("HOJA_DB_POOLER", "").strip().lower() == "transaction":
+            # Behind a transaction pooler a server-side prepared statement may land on another backend.
+            kwargs["connect_args"] = {"prepare_threshold": None}
     eng = create_engine(url, **kwargs)
     if backend == "postgresql":
         from hoja_server.tenant_context import install
@@ -1771,6 +1775,14 @@ def _apply_extensions(conn):
         table.create(conn, checkfirst=True)
 
 
+def _apply_organization_vanity_host(conn):
+    """Enterprise workspaces answer on their own host in the shared tier (tenant_hosts.py)."""
+    if "vanity_host" in {column["name"] for column in inspect(conn).get_columns("organization")}:
+        return
+    conn.exec_driver_sql("ALTER TABLE organization ADD COLUMN vanity_host VARCHAR")
+    conn.exec_driver_sql("CREATE UNIQUE INDEX uq_organization_vanity_host ON organization (vanity_host)")
+
+
 def _apply_issue_decisions(conn):
     """Decisions (docs/decisions.md): the row, the issue's maintained flag, and its capture.
 
@@ -1913,6 +1925,7 @@ _MIGRATIONS = {
     # Renumbered 44 -> 46 on merge: main already shipped revisions 44 (attachment
     # content_type) and 45 (model_provider.context_window), so decisions takes 46.
     46: _apply_issue_decisions,
+    47: _apply_organization_vanity_host,
 }
 
 

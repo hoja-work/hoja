@@ -423,3 +423,50 @@ def resolve_verified_email(
         "identity_id": identity_id,
         "linked": True,
     }
+
+
+def resolve_member(conn, *, email: str, subject: str, organization_id: str,
+                   now: datetime | None = None) -> dict:
+    """Resolve a verified address within one organization of a shared database.
+
+    The shared tier's counterpart of ``resolve_verified_email``: it never creates
+    a workspace, never consults the per-instance owner or link settings, and
+    admits only an existing active member of ``organization_id``.
+    """
+    address = addresses.canonical(email)
+    if "@" not in address:
+        return {"action": ACTION_DENIED, "reason": "invalid_email"}
+    if not subject:
+        return {"action": ACTION_DENIED, "reason": "missing_subject"}
+    stamp = (now or datetime.now(timezone.utc)).isoformat()
+    profile = conn.execute(
+        select(user.c.id).where(
+            user.c.organization_id == organization_id, user.c.email == address, user.c.active.is_(True)
+        ).limit(1)
+    ).first()
+    if profile is None:
+        return {"action": ACTION_DENIED, "reason": "not_invited"}
+    identity = conn.execute(select(global_identity.c.id).where(global_identity.c.email == address)).first()
+    identity_id = identity[0] if identity else new_id()
+    if identity is None:
+        conn.execute(global_identity.insert().values(id=identity_id, email=address, created_at=stamp))
+    membership = conn.execute(
+        select(organization_membership.c.profile_user_id, organization_membership.c.active).where(
+            organization_membership.c.identity_id == identity_id,
+            organization_membership.c.organization_id == organization_id,
+        )
+    ).first()
+    if membership is None:
+        claimed = conn.execute(select(organization_membership.c.id).where(
+            organization_membership.c.profile_user_id == profile[0])).first()
+        if claimed is not None:
+            return {"action": ACTION_DENIED, "reason": "profile_linked_elsewhere"}
+        conn.execute(organization_membership.insert().values(
+            id=new_id(), identity_id=identity_id, organization_id=organization_id,
+            profile_user_id=profile[0], active=True, created_at=stamp))
+        return {"action": ACTION_LOGIN, "user_id": profile[0], "organization_id": organization_id,
+                "identity_id": identity_id, "linked": True}
+    if not membership[1]:
+        return {"action": ACTION_DENIED, "reason": "membership_inactive"}
+    return {"action": ACTION_LOGIN, "user_id": membership[0], "organization_id": organization_id,
+            "identity_id": identity_id}

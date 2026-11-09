@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import gzip
 import ipaddress
 import json
@@ -44,7 +45,7 @@ from starlette.routing import Route, WebSocketRoute
 from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocket
 
-from hoja_server import cors
+from hoja_server import cors, org_limits, tenant_hosts
 from hoja_server.cloudflare_realtime import CloudflareRealtime
 from hoja_server.connectors_api import connector_binding_for, connector_routes
 from hoja_server.db import (
@@ -442,6 +443,7 @@ def create_app(
     sfu = CloudflareRealtime.from_env() if meeting_sfu == "env" else meeting_sfu
     issue_snapshots = sync.SingleFlightCache(8)
     body_snapshots = sync.SingleFlightCache(32)
+    org_slots = org_limits.OrgConcurrency()
     meta_cache = sync.SingleFlightCache(512)
     issue_lineage: dict = {}  # (org, cutoff, visibility) -> (seq, rows) of the newest snapshot
     sync_auth_cache: dict = {}
@@ -549,6 +551,10 @@ def create_app(
         with tenant_context.system():
             result = _resolve_auth(request)
         if result[0]:
+            pinned = tenant_hosts.required_org(request.scope)
+            if pinned and result[1] != pinned:
+                return None, None, None, False
+            org_slots.enter(request.scope, result[1])
             tenant_context.bind(result[1])
         return result
 
@@ -598,12 +604,13 @@ def create_app(
     def _auth_sync(request: Request):
         """_auth for the read-only /sync endpoints, cached briefly per credential."""
         key = (request.headers.get("authorization") or "", request.cookies.get("hoja_session") or "",
-               request.client.host if request.client else "")
+               request.client.host if request.client else "", request.headers.get("host", "").lower())
         now = time.monotonic()
         hit = sync_auth_cache.get(key)
         if hit is not None and now - hit[0] < _SYNC_AUTH_TTL:
             request.state.api_key_access = hit[2]
             # a cache hit skips _auth, so it must scope the request itself
+            org_slots.enter(request.scope, hit[1][1])
             tenant_context.bind(hit[1][1])
             return hit[1]
         result = _auth(request)
@@ -753,6 +760,7 @@ def create_app(
         except ValueError as exc:
             raise ValueError("HOJA_TRUSTED_PROXY_CIDRS must be comma-separated IP networks.") from exc
     trust_proxy = bool(proxy_networks) and _valid_public_host(public_host)
+    host_map = tenant_hosts.TenantHosts(engine, public_host if trust_proxy else "")
 
     def _request_from_trusted_proxy(request: Request) -> bool:
         if not trust_proxy:
@@ -765,6 +773,38 @@ def create_app(
         return bool(address and any(address in network for network in proxy_networks))
     mcp_provider = HojaOAuthProvider(engine, store, trusted_proxy=trust_proxy, public_host=public_host)
     mcp_server = build_server(mcp_provider, public_host=public_host)
+    mcp_pinned: dict = {}
+
+    async def _serve_pinned_mcp(ready: asyncio.Event) -> None:
+        """Run one MCP app per pinned workspace host, in this task so their lifespans open and close together."""
+        async with contextlib.AsyncExitStack() as stack:
+            while True:
+                try:
+                    hosts = await run_in_threadpool(host_map.hosts)
+                    for host, org in hosts.items():
+                        if (host, org) in mcp_pinned:
+                            continue
+                        pinned_app = build_server(
+                            HojaOAuthProvider(engine, store, trusted_proxy=trust_proxy, public_host=host,
+                                              required_org=org),
+                            public_host=host,
+                        ).streamable_http_app(
+                            streamable_http_path="/", stateless_http=True,
+                            transport_security=TransportSecuritySettings(
+                                enable_dns_rebinding_protection=True, allowed_hosts=[host, host + ":*"]),
+                        )
+                        await stack.enter_async_context(pinned_app.router.lifespan_context(pinned_app))
+                        mcp_pinned[(host, org)] = pinned_app
+                except Exception:
+                    logging.getLogger("hoja_server").warning("pinned MCP hosts refresh failed", exc_info=True)
+                ready.set()
+                await asyncio.sleep(host_map.ttl)
+
+    def _origin_host(request: Request) -> str:
+        """The public host OAuth metadata names: a pinned workspace host, else the canonical one."""
+        if tenant_hosts.required_org(request.scope):
+            return tenant_hosts.bare(request.headers.get("host"))
+        return public_host
     # SDK auth and protected-resource routes are root-relative to its Starlette
     # app; Mount strips /mcp while preserving it in root_path for metadata URLs.
     from mcp.server.transport_security import TransportSecuritySettings
@@ -783,7 +823,9 @@ def create_app(
         trusted_peer = _request_from_trusted_proxy(request)
         incoming_host = request.headers.get("host", "").lower()
         canonical_host = public_host.strip().lower()
-        host_ok = incoming_host == canonical_host or incoming_host.startswith(canonical_host + ":")
+        pinned_org = tenant_hosts.required_org(scope)
+        host_ok = (incoming_host == canonical_host or incoming_host.startswith(canonical_host + ":")
+                   or bool(pinned_org))
         if trust_proxy and (not trusted_peer or not host_ok):
             auth_context = None
             if not host_ok:
@@ -814,6 +856,15 @@ def create_app(
         elif root_path.endswith("/.well-known/oauth-protected-resource/mcp"):
             scope["path"] = "/.well-known/oauth-protected-resource/mcp"
             scope["root_path"] = ""
+        if pinned_org:
+            pinned_app = mcp_pinned.get((tenant_hosts.bare(incoming_host), pinned_org))
+            if pinned_app is None:
+                response = JSONResponse({"error": "MCP is starting for this workspace."}, status_code=503,
+                                        headers={"Retry-After": "5"})
+                await response(scope, receive, send)
+                return
+            await pinned_app(scope, receive, send)
+            return
         await mcp_asgi(scope, receive, send)
 
     async def authorization_metadata_endpoint(request: Request):
@@ -821,7 +872,7 @@ def create_app(
             return JSONResponse({"error": "OAuth is not configured."}, status_code=404)
         if not _request_from_trusted_proxy(request):
             return JSONResponse({"error": "OAuth is available only behind the configured trusted proxy."}, status_code=404)
-        origin = f"https://{public_host}" if trust_proxy else "https://mcp.invalid"
+        origin = f"https://{_origin_host(request)}" if trust_proxy else "https://mcp.invalid"
         issuer = origin + "/mcp"
         return JSONResponse({"issuer": issuer, "authorization_endpoint": issuer + "/authorize", "token_endpoint": issuer + "/token", "registration_endpoint": issuer + "/register", "revocation_endpoint": issuer + "/revoke", "scopes_supported": ["hoja:read", "hoja:write"], "response_types_supported": ["code"], "grant_types_supported": ["authorization_code", "refresh_token"], "code_challenge_methods_supported": ["S256"]})
 
@@ -830,7 +881,7 @@ def create_app(
             return JSONResponse({"error": "OAuth is not configured."}, status_code=404)
         if not _request_from_trusted_proxy(request):
             return JSONResponse({"error": "OAuth is available only behind the configured trusted proxy."}, status_code=404)
-        issuer = (f"https://{public_host}" if trust_proxy else "https://mcp.invalid") + "/mcp"
+        issuer = (f"https://{_origin_host(request)}" if trust_proxy else "https://mcp.invalid") + "/mcp"
         return JSONResponse({"resource": issuer, "authorization_servers": [issuer], "scopes_supported": ["hoja:read"]})
 
     from starlette.routing import Mount
@@ -2228,7 +2279,10 @@ def create_app(
     async def google_sign_in_finish(request: Request):
         """Redeem a handoff token on this tenant origin and sign the person in."""
         host = _signup_host(request).split(":")[0].lower()
+        pinned_org = tenant_hosts.required_org(request.scope)
         transfer_key = signup_config.identity_transfer_key
+        if pinned_org and signup_config.identity_transfer_master:
+            transfer_key = identity_transfer.tenant_key(signup_config.identity_transfer_master, host)
         if not transfer_key:
             return JSONResponse(
                 {"error": "Sign-in is not configured on this workspace.",
@@ -2250,15 +2304,19 @@ def create_app(
                 host=host,
             )
         try:
-            with engine.begin() as conn:
-                resolved = google_login.resolve_verified_email(
-                    conn,
-                    email=claims["email"],
-                    subject=claims["sub"],
-                    name=claims.get("name"),
-                    picture=claims.get("picture"),
-                    workspace_slug=host.split(".")[0],
-                )
+            with tenant_context.system(), engine.begin() as conn:
+                if pinned_org:
+                    resolved = google_login.resolve_member(
+                        conn, email=claims["email"], subject=claims["sub"], organization_id=pinned_org)
+                else:
+                    resolved = google_login.resolve_verified_email(
+                        conn,
+                        email=claims["email"],
+                        subject=claims["sub"],
+                        name=claims.get("name"),
+                        picture=claims.get("picture"),
+                        workspace_slug=host.split(".")[0],
+                    )
         except Exception:
             _security_log.exception("sign-in resolve failed host=%s", host)
             return JSONResponse(
@@ -2617,6 +2675,9 @@ def create_app(
                     {"status": "unavailable", "reason": "schema_outdated"},
                     status_code=503,
                 )
+            failure = tenant_context.probe(engine)
+            if failure:
+                return JSONResponse({"status": "unavailable", "reason": failure}, status_code=503)
         except Exception:
             return JSONResponse({"status": "unavailable"}, status_code=503)
         return JSONResponse({"status": "ready"})
@@ -2682,6 +2743,12 @@ def create_app(
             ),
         )
         mcp_asgi = runtime_app
+        mcp_pinned.clear()
+        pinned_mcp = None
+        if host_map.canonical:
+            pinned_ready = asyncio.Event()
+            pinned_mcp = asyncio.create_task(tenant_context.as_system(_serve_pinned_mcp(pinned_ready)))
+            await asyncio.wait_for(pinned_ready.wait(), timeout=30)
         from concurrent.futures import ThreadPoolExecutor
         asyncio.get_running_loop().set_default_executor(
             ThreadPoolExecutor(max_workers=32, thread_name_prefix="hoja"))
@@ -2727,6 +2794,10 @@ def create_app(
             maintenance.cancel()
         if webhook_worker is not None:
             webhook_worker.cancel()
+        if pinned_mcp is not None:
+            pinned_mcp.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await pinned_mcp
 
     async def _malformed_json_handler(request: Request, exc: Exception):
         return JSONResponse({"error": "Malformed JSON body."}, status_code=400)
@@ -2802,7 +2873,9 @@ def create_app(
     app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
     # Outermost: enumerated pre-tenant paths run in system context; every other
     # request has no tenant until _auth binds one (fail closed under RLS).
+    app.add_middleware(org_limits.OrgConcurrencyMiddleware, limiter=org_slots)
     app.add_middleware(tenant_context.TenantContextMiddleware)
+    app.add_middleware(tenant_hosts.TenantHostMiddleware, hosts=host_map)
     # Outermost of all when configured: preflight OPTIONS and error responses
     # must carry CORS headers even when no tenant has been bound yet.
     cors.install_cors(app)
