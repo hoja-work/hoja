@@ -133,6 +133,8 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
             "slackAgent": False,
             "calendly": False,
             "calendlyAgent": False,
+            "sentry": False,
+            "sentryAgent": False,
         }
 
         client.post("/onboarding/bootstrap", json=BOOTSTRAP)
@@ -145,6 +147,9 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
             "HOJA_CALENDLY_CLIENT_ID",
             "HOJA_CALENDLY_CLIENT_SECRET",
             "HOJA_CALENDLY_REDIRECT_URI",
+            "HOJA_SENTRY_CLIENT_ID",
+            "HOJA_SENTRY_CLIENT_SECRET",
+            "HOJA_SENTRY_REDIRECT_URI",
         ):
             monkeypatch.delenv(name, raising=False)
         off = client.get("/api/connectors/config")
@@ -158,6 +163,8 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
             "slackAgent": False,
             "calendly": False,
             "calendlyAgent": False,
+            "sentry": False,
+            "sentryAgent": False,
         }
         assert off.headers["cache-control"] == "no-store"
 
@@ -176,6 +183,8 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
             "slackAgent": False,
             "calendly": False,
             "calendlyAgent": False,
+            "sentry": False,
+            "sentryAgent": False,
         }
         assert "GOCSPX" not in on.text
         assert "cid.apps" not in on.text
