@@ -30,7 +30,12 @@ from google_workspace.tools import AccountGrant
 from sqlalchemy import and_, or_, select
 from sqlalchemy.engine import Engine
 
-from hoja_server.connectors_api import NOTION_PROVIDER, PROVIDER, SLACK_PROVIDER
+from hoja_server.connectors_api import (
+    CALENDLY_PROVIDER,
+    NOTION_PROVIDER,
+    PROVIDER,
+    SLACK_PROVIDER,
+)
 from hoja_server.db import connector_account
 from hoja_server.secrets_box import SecretBoxError, decrypt_secret
 
@@ -149,6 +154,51 @@ def make_slack_grant_resolver(
     return _long_lived_grants(engine, SLACK_PROVIDER, SlackGrant)
 
 
+def make_calendly_grant_resolver(
+    engine: Engine, *, http: httpx.AsyncClient
+) -> Callable[[Principal, str], Awaitable[list[Any]]]:
+    """Resolve Calendly grants through the rotating-token store.
+
+    Calendly's access token expires in two hours and its refresh token is single-use, so the
+    grant cannot be a captured string like Slack's: each account gets a live token source that
+    refreshes under a per-account lock. A deployment without Calendly credentials still starts;
+    it simply reports no Calendly accounts instead of failing the whole service.
+    """
+    from calendly import CalendlyOAuthConfig
+    from calendly import ConnectorConfigError as CalendlyConfigError
+    from calendly.tools import AccountGrant as CalendlyGrant
+
+    from hoja_server.calendly_tokens import CalendlyTokenStore
+
+    try:
+        config = CalendlyOAuthConfig.from_env()
+    except CalendlyConfigError:
+        log.info("Calendly is not configured on this deployment; its tools resolve no accounts")
+
+        async def unavailable(_principal: Principal, _account: str) -> list[Any]:
+            return []
+
+        return unavailable
+
+    store = CalendlyTokenStore(engine, http, config)
+
+    async def resolve_grants(principal: Principal, account: str) -> list[Any]:
+        grants: list[Any] = []
+        for row in _active_rows(engine, principal, account, CALENDLY_PROVIDER):
+            if not row["encrypted_refresh_token"]:
+                continue
+            grants.append(
+                CalendlyGrant(
+                    account_id=row["id"],
+                    external_account=row["external_account"],
+                    tokens=store.source(row["id"]),
+                )
+            )
+        return grants
+
+    return resolve_grants
+
+
 def build_connector_mcp_app(
     engine: Engine,
     *,
@@ -198,6 +248,14 @@ def build_connector_mcp_app(
         server,
         signing_key=key,
         resolve_grants=make_slack_grant_resolver(engine, http=client),
+        http=client,
+    )
+    from calendly.mcp_server import register_tools as register_calendly_tools
+
+    register_calendly_tools(
+        server,
+        signing_key=key,
+        resolve_grants=make_calendly_grant_resolver(engine, http=client),
         http=client,
     )
     return server.streamable_http_app(**options)

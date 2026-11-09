@@ -376,6 +376,23 @@ wheels = [
 ]
 
 [[package]]
+name = "calendly-connector"
+version = "0.1.0"
+source = { editable = "connectors/calendly" }
+dependencies = [
+    { name = "google-workspace-connector" },
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "google-workspace-connector" },
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "pydantic", specifier = ">=2.10" },
+]
+
+[[package]]
 name = "certifi"
 version = "2026.10.23"
 source = { registry = "https://pypi.org/simple" }
@@ -1158,6 +1175,7 @@ dependencies = [
 
 [package.optional-dependencies]
 agent = [
+    { name = "calendly-connector" },
     { name = "google-workspace-connector" },
     { name = "notion-connector" },
     { name = "pydantic-ai-slim", extra = ["dbos", "mcp", "openai"] },
@@ -1193,6 +1211,7 @@ requires-dist = [
     { name = "aiosqlite", marker = "extra == 'server'", specifier = ">=0.20" },
     { name = "ariadne", marker = "extra == 'server'", specifier = ">=1.1" },
     { name = "asyncpg", marker = "extra == 'saas'", specifier = ">=0.29" },
+    { name = "calendly-connector", marker = "extra == 'agent'", editable = "connectors/calendly" },
     { name = "cryptography", specifier = ">=42,<60" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.115" },
     { name = "google-workspace-connector", marker = "extra == 'agent'", editable = "connectors/google_workspace" },

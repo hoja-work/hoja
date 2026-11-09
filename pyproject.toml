@@ -78,6 +78,7 @@ agent = [
     "google-workspace-connector",
     "notion-connector",
     "slack-connector",
+    "calendly-connector",
 ]
 
 [tool.uv.sources]
@@ -88,6 +89,7 @@ agent = [
 google-workspace-connector = { path = "connectors/google_workspace", editable = true }
 notion-connector = { path = "connectors/notion", editable = true }
 slack-connector = { path = "connectors/slack", editable = true }
+calendly-connector = { path = "connectors/calendly", editable = true }
 
 [project.scripts]
 hoja = "hoja.cli:app"
@@ -111,6 +113,7 @@ artifacts = ["VERSION"]
 "connectors/google_workspace/src/google_workspace" = "google_workspace"
 "connectors/notion/src/notion" = "notion"
 "connectors/slack/src/slack" = "slack"
+"connectors/calendly/src/calendly" = "calendly"
 
 [tool.ruff]
 target-version = "py310"

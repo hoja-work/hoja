@@ -154,6 +154,7 @@ ensure_backend_dependencies() {
       .venv/bin/python -m pip install \
         -e './connectors/google_workspace' -e './connectors/notion' \
         -e './connectors/slack' \
+        -e './connectors/calendly' \
         -e '.[server,agent]'
     )
   fi
