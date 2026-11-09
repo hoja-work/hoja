@@ -37,7 +37,9 @@ def _query(scopes: list[str]) -> dict[str, list[str]]:
 
 
 def test_the_meet_addon_holds_exactly_one_scope() -> None:
-    assert ADDON_SCOPES == {"meet": (MEET_SCOPE,)}
+    # Exact set is asserted per add-on, not over the whole registry: Chat is a second add-on and
+    # must not change what Meet asks for.
+    assert ADDON_SCOPES["meet"] == (MEET_SCOPE,)
     assert MEET_SCOPE == "https://www.googleapis.com/auth/meetings.space.readonly"
 
 
@@ -101,6 +103,7 @@ def test_capabilities_are_reported_per_api_so_an_unticked_scope_is_visible() -> 
         "calendar": False,
         "docs": False,
         "meet": True,
+        "chat": False,
     }
     assert capabilities_for("") == dict.fromkeys(CAPABILITY_SCOPES, False)
     assert capabilities_for(" ".join(READ_SCOPES.values()))["meet"] is False

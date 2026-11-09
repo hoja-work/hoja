@@ -43,6 +43,7 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
   const [refresh, setRefresh] = useState(0);
   const googleAccounts = accounts.filter((a) => a.provider === 'google_workspace');
   const meetAccounts = googleAccounts.filter((a) => a.capabilities?.meet);
+  const chatAccounts = googleAccounts.filter((a) => a.capabilities?.chat);
   const notionAccounts = accounts.filter((a) => a.provider === 'notion');
   const slackAccounts = accounts.filter((a) => a.provider === 'slack');
 
@@ -96,7 +97,7 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
         {/* The product name is the heading, not an uppercase kicker: app/docs/UI-RULES.md forbids
             letter-spaced capitals, which `.settings-section-kicker` applies. */}
         <h2>Google Workspace</h2>
-        <p className="settings-section-intro">Read-only access for Gmail, Drive, Calendar, Docs and Meet. Writes always require approval.</p>
+        <p className="settings-section-intro">Read-only access for Gmail, Drive, Calendar, Docs, Meet and Chat. Writes always require approval.</p>
         {message && <p role="alert">{message}</p>}
         <div className="setting-row">
           <div>
@@ -130,13 +131,29 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
             <small>Connect Google first</small>
           )}
         </div>
+        <div className="setting-row">
+          <div>
+            <b>Google Chat</b>
+            <p>Read the spaces you belong to, their messages and their members. Chat rides on the same Google permission as the account above, so Disconnecting it also removes Chat access.</p>
+            {chatAccounts.length > 0 && (
+              <small>Added to {chatAccounts.map((a) => a.externalAccount).join(', ')}</small>
+            )}
+          </div>
+          {chatAccounts.length > 0 ? (
+            <small>Chat access granted</small>
+          ) : googleAccounts.length > 0 ? (
+            <a className="primary" href="/api/connectors/google/start?addon=chat">Add Chat access</a>
+          ) : (
+            <small>Connect Google first</small>
+          )}
+        </div>
         <ul aria-label="Connected Google accounts" className="connector-account-list">
           {loading && <li role="status">Checking connected accounts…</li>}
           {!loading && googleAccounts.length === 0 && <li className="connector-empty">No Google accounts connected.</li>}
           {googleAccounts.map((a) => (
             <li key={a.id}>
               <span className="connector-account-icon" aria-hidden="true">{a.externalAccount.slice(0, 1).toUpperCase()}</span>
-              <span className="connector-account-copy"><b>{a.externalAccount}</b><small>{a.scope === 'org' ? 'Organization account' : 'Personal account'} · {a.status}{a.capabilities?.meet ? ' · Meet access' : ''}</small></span>
+              <span className="connector-account-copy"><b>{a.externalAccount}</b><small>{a.scope === 'org' ? 'Organization account' : 'Personal account'} · {a.status}{a.capabilities?.meet ? ' · Meet access' : ''}{a.capabilities?.chat ? ' · Chat access' : ''}</small></span>
               <button className="outline danger" onClick={() => revoke(a.id)}>Disconnect</button>
             </li>
           ))}

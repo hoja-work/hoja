@@ -32,20 +32,44 @@ READ_SCOPES: dict[str, str] = {
 # of what the user already granted and what is asked for here.
 MEET_SCOPE = "https://www.googleapis.com/auth/meetings.space.readonly"
 
+# Google Chat is the second capability of that same grant, and it needs three scopes because the
+# Chat API authorizes each resource family separately: a token that can list spaces cannot read
+# messages. Each one sits on its own method reference page (cited in the connector README), and
+# none of them permits a write.
+CHAT_SPACES_SCOPE = "https://www.googleapis.com/auth/chat.spaces.readonly"
+CHAT_MESSAGES_SCOPE = "https://www.googleapis.com/auth/chat.messages.readonly"
+CHAT_MEMBERSHIPS_SCOPE = "https://www.googleapis.com/auth/chat.memberships.readonly"
+CHAT_SCOPES: tuple[str, ...] = (
+    CHAT_SPACES_SCOPE,
+    CHAT_MESSAGES_SCOPE,
+    CHAT_MEMBERSHIPS_SCOPE,
+)
+
 # Scope upgrades Settings > Connections can offer on an existing Google account, by add-on name.
 ADDON_SCOPES: dict[str, tuple[str, ...]] = {
     "meet": (MEET_SCOPE,),
+    "chat": CHAT_SCOPES,
+}
+
+# What the user reads on the button and in an error message. Kept beside the scopes so a new add-on
+# cannot be added to the registry without naming itself in the UI.
+ADDON_LABELS: dict[str, str] = {
+    "meet": "Google Meet",
+    "chat": "Google Chat",
 }
 
 # Every scope this connector can ever hold on one Google account, keyed by the capability it
 # grants. Used to report what a stored grant actually covers; a user may untick individual
 # scopes on the consent screen, so the answer is per capability, not "all or nothing".
-CAPABILITY_SCOPES: dict[str, str] = {
-    "gmail": READ_SCOPES["gmail"],
-    "drive": READ_SCOPES["drive"],
-    "calendar": READ_SCOPES["calendar"],
-    "docs": READ_SCOPES["docs"],
-    "meet": MEET_SCOPE,
+# Values are the full set a capability needs: Chat is available only when all three of its scopes
+# are present, because two of them cannot serve the third API's calls.
+CAPABILITY_SCOPES: dict[str, tuple[str, ...]] = {
+    "gmail": (READ_SCOPES["gmail"],),
+    "drive": (READ_SCOPES["drive"],),
+    "calendar": (READ_SCOPES["calendar"],),
+    "docs": (READ_SCOPES["docs"],),
+    "meet": (MEET_SCOPE,),
+    "chat": CHAT_SCOPES,
 }
 
 # Write scopes are requested only for accounts that opt into writes. Each one widens consent.
@@ -76,9 +100,16 @@ def merge_scopes(*groups: str | Sequence[str]) -> list[str]:
 
 
 def capabilities_for(scopes: Sequence[str] | str) -> dict[str, bool]:
-    """Which capabilities a stored grant covers, per API."""
+    """Which capabilities a stored grant covers, per API.
+
+    A capability is available only if every scope it needs is present: reporting Chat as ready
+    when the user unticked one of its three permissions would show a connector that answers 403.
+    """
     granted = set(scopes.split() if isinstance(scopes, str) else scopes)
-    return {name: scope in granted for name, scope in CAPABILITY_SCOPES.items()}
+    return {
+        name: all(scope in granted for scope in required)
+        for name, required in CAPABILITY_SCOPES.items()
+    }
 
 
 class TokenSet(BaseModel):

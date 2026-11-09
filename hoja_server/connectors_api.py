@@ -17,6 +17,7 @@ from typing import Any
 import httpx
 from google_workspace import ConnectorAuthError, ConnectorConfigError, GoogleOAuthConfig
 from google_workspace.oauth import (
+    ADDON_LABELS,
     ADDON_SCOPES,
     READ_SCOPES,
     authorization_url,
@@ -58,15 +59,22 @@ STATE_TTL_SECONDS = 600
 GMAIL_PROFILE_URL = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
 GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 
+
 def _consume_state(engine: Engine, nonce: str, expires_at: int) -> bool:
     """Mark an OAuth state nonce as used. False if it was already used (by any worker)."""
     if not nonce:
         return False
     try:
         with engine.begin() as conn:
-            conn.execute(oauth_state_nonce.delete().where(oauth_state_nonce.c.expires_at < time.time()))
-            conn.execute(oauth_state_nonce.insert().values(
-                nonce_hash=hashlib.sha256(nonce.encode()).hexdigest(), expires_at=float(expires_at)))
+            conn.execute(
+                oauth_state_nonce.delete().where(oauth_state_nonce.c.expires_at < time.time())
+            )
+            conn.execute(
+                oauth_state_nonce.insert().values(
+                    nonce_hash=hashlib.sha256(nonce.encode()).hexdigest(),
+                    expires_at=float(expires_at),
+                )
+            )
     except IntegrityError:
         return False
     return True
@@ -112,19 +120,19 @@ def connector_binding_for(engine: Engine, org: str, uid: str):
         return None
     with engine.connect() as conn:
         active = conn.execute(
-            select(connector_account.c.id).where(
+            select(connector_account.c.id)
+            .where(
                 and_(
                     connector_account.c.organization_id == org,
-                    connector_account.c.provider.in_(
-                        (PROVIDER, NOTION_PROVIDER, SLACK_PROVIDER)
-                    ),
+                    connector_account.c.provider.in_((PROVIDER, NOTION_PROVIDER, SLACK_PROVIDER)),
                     connector_account.c.status == "active",
                     or_(
                         connector_account.c.owner_user_id == uid,
                         connector_account.c.owner_user_id.is_(None),
                     ),
                 )
-            ).limit(1)
+            )
+            .limit(1)
         ).first()
     if active is None:
         return None
@@ -146,14 +154,18 @@ def make_write_executor(engine: Engine, http: httpx.AsyncClient, config: GoogleO
         from google_workspace.writes import run_write
 
         with engine.connect() as conn:
-            row = conn.execute(
-                select(connector_account).where(
-                    and_(
-                        connector_account.c.id == account_id,
-                        connector_account.c.status == "active",
+            row = (
+                conn.execute(
+                    select(connector_account).where(
+                        and_(
+                            connector_account.c.id == account_id,
+                            connector_account.c.status == "active",
+                        )
                     )
                 )
-            ).mappings().one_or_none()
+                .mappings()
+                .one_or_none()
+            )
         if row is None or row["owner_user_id"] != requester:
             raise ConnectorAuthError("The account for this action is no longer available.")
         refresh = decrypt_secret(row["encrypted_refresh_token"])
@@ -172,7 +184,9 @@ def make_write_executor(engine: Engine, http: httpx.AsyncClient, config: GoogleO
     return execute
 
 
-def connector_routes(engine: Engine, store, auth, execute_write: Executor | None = None) -> list[Route]:
+def connector_routes(
+    engine: Engine, store, auth, execute_write: Executor | None = None
+) -> list[Route]:
     """Build connector routes. `auth(request)` returns (user_id, org_id, identity_id, is_browser)."""
 
     async def _require_user(request: Request):
@@ -188,10 +202,10 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
     async def google_start(request: Request):
         """Begin the Google OAuth flow.
 
-        With `?addon=meet` this is an *upgrade* of the Google grant the user already has, not a
-        second account: the request carries only the add-on's scopes, and `include_granted_scopes`
-        makes Google extend the existing grant. That is what keeps one Google account to one row,
-        one token and one Disconnect.
+        With `?addon=meet` or `?addon=chat` this is an *upgrade* of the Google grant the user
+        already has, not a second account: the request carries only the add-on's scopes, and
+        `include_granted_scopes` makes Google extend the existing grant. That is what keeps one
+        Google account to one row, one token and one Disconnect.
         """
         uid, org, failure = await _require_user(request)
         if failure:
@@ -204,6 +218,7 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
         addon = request.query_params.get("addon", "").strip()
         if addon and addon not in ADDON_SCOPES:
             return _error("Unknown Google scope upgrade.", 400)
+        addon_label = ADDON_LABELS[addon] if addon else ""
         if addon:
             # An upgrade extends a grant that exists. Asking for Meet alone on a fresh account
             # would produce a Google account whose grant covers Meet and nothing else, which is a
@@ -225,9 +240,12 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
                 ).first()
             if existing is None:
                 return _error(
-                    "Connect your Google account before adding Google Meet access.",
+                    f"Connect your Google account before adding {addon_label} access.",
                     409,
-                    hint="Use Connect Google first; the Meet permission is added to that grant.",
+                    hint=(
+                        f"Use Connect Google first; the {addon_label} permission is added to that "
+                        "grant."
+                    ),
                 )
         try:
             config = GoogleOAuthConfig.from_env()
@@ -305,6 +323,7 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
             return _error("Could not read the connected Google account.", 502)
 
         addon = str(pending.get("addon") or "")
+        addon_label = ADDON_LABELS[addon] if addon else ""
         requested = list(ADDON_SCOPES[addon]) if addon else list(READ_SCOPES.values())
         granted = tokens.scope.split() if tokens.scope else []
         if addon:
@@ -322,7 +341,8 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
                 )
             if any(scope not in granted for scope in ADDON_SCOPES[addon]):
                 return _error(
-                    "Google Meet access was not granted. Tick the Meet permission and try again.",
+                    f"{addon_label} access was not granted. Tick the {addon_label} permission and "
+                    "try again.",
                     400,
                 )
 
@@ -352,10 +372,12 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
                 # they started from. That account has no grant to extend, so this would create a
                 # row holding Meet and nothing else - the state `start` refuses up front.
                 return _error(
-                    f"Meet access was added to {email}, which is not a connected account here."
-                    " Connect that Google account first, then add Meet access.",
+                    f"{addon_label} access was added to {email}, which is not a connected account "
+                    "here. Connect that Google account first, then add this access.",
                     409,
-                    hint="Use Connect Google for that account, then add Meet access to it.",
+                    hint=(
+                        f"Use Connect Google for that account, then add {addon_label} access to it."
+                    ),
                 )
             # `include_granted_scopes=true` makes Google report the *whole* grant in `scope`, so
             # that list is authoritative whenever it is present. Unioning with the stored row
@@ -386,7 +408,8 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
                         updated_at=row["updated_at"],
                     )
                 )
-        marker = "meet-connected" if addon else "google-connected"
+        # `?connector=<addon>-connected` is what Settings reads to say which grant was just widened.
+        marker = f"{addon}-connected" if addon else "google-connected"
         return RedirectResponse(f"/?connector={marker}", status_code=302)
 
     async def notion_start(request: Request):
@@ -646,18 +669,24 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
         if failure:
             return failure
         with engine.connect() as conn:
-            rows = conn.execute(
-                select(connector_account).where(
-                    and_(
-                        connector_account.c.organization_id == org,
-                        connector_account.c.status == "active",
-                        or_(
-                            connector_account.c.owner_user_id == uid,
-                            connector_account.c.owner_user_id.is_(None),
-                        ),
+            rows = (
+                conn.execute(
+                    select(connector_account)
+                    .where(
+                        and_(
+                            connector_account.c.organization_id == org,
+                            connector_account.c.status == "active",
+                            or_(
+                                connector_account.c.owner_user_id == uid,
+                                connector_account.c.owner_user_id.is_(None),
+                            ),
+                        )
                     )
-                ).order_by(connector_account.c.created_at)
-            ).mappings().all()
+                    .order_by(connector_account.c.created_at)
+                )
+                .mappings()
+                .all()
+            )
         return JSONResponse({"accounts": [_serialize(row) for row in rows]})
 
     async def account_revoke(request: Request):
@@ -666,15 +695,19 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
             return failure
         account_id = request.path_params["account_id"]
         with engine.connect() as conn:
-            row = conn.execute(
-                select(connector_account).where(
-                    and_(
-                        connector_account.c.id == account_id,
-                        connector_account.c.organization_id == org,
-                        connector_account.c.status == "active",
+            row = (
+                conn.execute(
+                    select(connector_account).where(
+                        and_(
+                            connector_account.c.id == account_id,
+                            connector_account.c.organization_id == org,
+                            connector_account.c.status == "active",
+                        )
                     )
                 )
-            ).mappings().one_or_none()
+                .mappings()
+                .one_or_none()
+            )
         if row is None:
             return _error("Connected account not found.", 404)
         is_owner = row["owner_user_id"] == uid
@@ -709,7 +742,12 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
             conn.execute(
                 update(connector_account)
                 .where(connector_account.c.id == account_id)
-                .values(status="revoked", revoked_at=_now(), updated_at=_now(), encrypted_refresh_token="")
+                .values(
+                    status="revoked",
+                    revoked_at=_now(),
+                    updated_at=_now(),
+                    encrypted_refresh_token="",
+                )
             )
         return JSONResponse(
             {
@@ -726,17 +764,21 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
         if failure:
             return failure
         with engine.connect() as conn:
-            rows = conn.execute(
-                select(connector_action)
-                .where(
-                    and_(
-                        connector_action.c.organization_id == org,
-                        connector_action.c.requested_by_user_id == uid,
-                        connector_action.c.status == "pending",
+            rows = (
+                conn.execute(
+                    select(connector_action)
+                    .where(
+                        and_(
+                            connector_action.c.organization_id == org,
+                            connector_action.c.requested_by_user_id == uid,
+                            connector_action.c.status == "pending",
+                        )
                     )
+                    .order_by(connector_action.c.created_at)
                 )
-                .order_by(connector_action.c.created_at)
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
         return JSONResponse(
             {
                 "actions": [

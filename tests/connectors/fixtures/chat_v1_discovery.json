@@ -1,0 +1,607 @@
+{
+  "documentCanonicalSha256": "da3e2f7c1a2107cec05998cf9881b0ebb2150efa421a8f87b861b17955ad2856",
+  "methods": {
+    "spaces.list": {
+      "flatPath": "v1/spaces",
+      "httpMethod": "GET",
+      "pathParams": [],
+      "queryParams": [
+        {
+          "name": "filter",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "pageSize",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "pageToken",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "response": "ListSpacesResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chat.bot",
+        "https://www.googleapis.com/auth/chat.spaces",
+        "https://www.googleapis.com/auth/chat.spaces.readonly"
+      ]
+    },
+    "spaces.members.list": {
+      "flatPath": "v1/spaces/{spacesId}/members",
+      "httpMethod": "GET",
+      "pathParams": [
+        {
+          "name": "parent",
+          "required": true
+        }
+      ],
+      "queryParams": [
+        {
+          "name": "filter",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "pageSize",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "pageToken",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "showGroups",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "showInvited",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "useAdminAccess",
+          "required": false,
+          "type": "boolean"
+        }
+      ],
+      "response": "ListMembershipsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chat.admin.memberships",
+        "https://www.googleapis.com/auth/chat.admin.memberships.readonly",
+        "https://www.googleapis.com/auth/chat.app.memberships",
+        "https://www.googleapis.com/auth/chat.bot",
+        "https://www.googleapis.com/auth/chat.import",
+        "https://www.googleapis.com/auth/chat.memberships",
+        "https://www.googleapis.com/auth/chat.memberships.readonly"
+      ]
+    },
+    "spaces.messages.get": {
+      "flatPath": "v1/spaces/{spacesId}/messages/{messagesId}",
+      "httpMethod": "GET",
+      "pathParams": [
+        {
+          "name": "name",
+          "required": true
+        }
+      ],
+      "queryParams": [
+        {
+          "name": "markupSyntax",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "response": "Message",
+      "scopes": [
+        "https://www.googleapis.com/auth/chat.app.messages.readonly",
+        "https://www.googleapis.com/auth/chat.bot",
+        "https://www.googleapis.com/auth/chat.messages",
+        "https://www.googleapis.com/auth/chat.messages.readonly"
+      ]
+    },
+    "spaces.messages.list": {
+      "flatPath": "v1/spaces/{spacesId}/messages",
+      "httpMethod": "GET",
+      "pathParams": [
+        {
+          "name": "parent",
+          "required": true
+        }
+      ],
+      "queryParams": [
+        {
+          "name": "filter",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "markupSyntax",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "orderBy",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "pageSize",
+          "required": false,
+          "type": "integer"
+        },
+        {
+          "name": "pageToken",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "showDeleted",
+          "required": false,
+          "type": "boolean"
+        }
+      ],
+      "response": "ListMessagesResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chat.app.messages.readonly",
+        "https://www.googleapis.com/auth/chat.import",
+        "https://www.googleapis.com/auth/chat.messages",
+        "https://www.googleapis.com/auth/chat.messages.readonly"
+      ]
+    }
+  },
+  "pageSizeNotes": {
+    "spaces.list": "Optional. The maximum number of spaces to return. The service might return fewer than this value. If unspecified, at most 100 spaces are returned. The maximum value is 1000. If you use a value more than 1000, it's automatically changed to 1000. Negative values return an `INVALID_ARGUMENT` error.",
+    "spaces.members.list": "Optional. The maximum number of memberships to return. The service might return fewer than this value. If unspecified, at most 100 memberships are returned. The maximum value is 1000. If you use a value more than 1000, it's automatically changed to 1000. Negative values return an `INVALID_ARGUMENT` error.",
+    "spaces.messages.list": "Optional. The maximum number of messages returned. The service might return fewer messages than this value. If unspecified, at most 25 are returned. The maximum value is 1000. If you use a value more than 1000, it's automatically changed to 1000. Negative values return an `INVALID_ARGUMENT` error."
+  },
+  "retrieved": "2026-11-09T17:26:52Z",
+  "revision": "20261107",
+  "schemas": {
+    "Group": {
+      "description": "A Google Group in Google Chat.",
+      "properties": {
+        "name": {
+          "description": "Resource name for a Google Group. Represents a [group](https://cloud.google.com/identity/docs/reference/rest/v1/groups) in Cloud Identity Groups API. Format: groups/{group}",
+          "type": "string"
+        }
+      }
+    },
+    "ListMembershipsResponse": {
+      "description": "Response to list memberships of the space.",
+      "properties": {
+        "memberships": {
+          "description": "Unordered list. List of memberships in the requested (or first) page.",
+          "items": {
+            "$ref": "Membership"
+          },
+          "type": "array"
+        },
+        "nextPageToken": {
+          "description": "A token that you can send as `pageToken` to retrieve the next page of results. If empty, there are no subsequent pages.",
+          "type": "string"
+        }
+      }
+    },
+    "ListMessagesResponse": {
+      "description": "Response message for listing messages.",
+      "properties": {
+        "messages": {
+          "description": "List of messages.",
+          "items": {
+            "$ref": "Message"
+          },
+          "type": "array"
+        },
+        "nextPageToken": {
+          "description": "You can send a token as `pageToken` to retrieve the next page of results. If empty, there are no subsequent pages.",
+          "type": "string"
+        }
+      }
+    },
+    "ListSpacesResponse": {
+      "description": "The response for a list spaces request.",
+      "properties": {
+        "nextPageToken": {
+          "description": "You can send a token as `pageToken` to retrieve the next page of results. If empty, there are no subsequent pages.",
+          "type": "string"
+        },
+        "spaces": {
+          "description": "List of spaces in the requested (or first) page. Note: The `permissionSettings` field is not returned in the Space object for list requests.",
+          "items": {
+            "$ref": "Space"
+          },
+          "type": "array"
+        }
+      }
+    },
+    "Membership": {
+      "description": "Represents a membership relation in Google Chat, such as whether a user or Chat app is invited to, part of, or absent from a space.",
+      "properties": {
+        "affiliation": {
+          "description": "Output only. A user's relationship to the Workspace organization that owns the space. In spaces owned by consumer accounts, the affiliation of all members is `EXTERNAL`.",
+          "enum": [
+            "AFFILIATION_UNSPECIFIED",
+            "INTERNAL",
+            "EXTERNAL",
+            "MANAGED_EXTERNAL"
+          ],
+          "type": "string"
+        },
+        "createTime": {
+          "description": "Optional. Immutable. The creation time of the membership, such as when a member joined or was invited to join a space. This field is output only, except when used to import historical memberships in import mode spaces.",
+          "type": "string"
+        },
+        "deleteTime": {
+          "description": "Optional. Immutable. The deletion time of the membership, such as when a member left or was removed from a space. This field is output only, except when used to import historical memberships in import mode spaces.",
+          "type": "string"
+        },
+        "groupMember": {
+          "$ref": "Group",
+          "description": "Optional. The Google Group the membership corresponds to. Reading or mutating memberships for Google Groups requires [user authentication](https://developers.google.com/workspace/chat/authenticate-authorize-chat-user)."
+        },
+        "member": {
+          "$ref": "User",
+          "description": "Optional. The Google Chat user or app the membership corresponds to. If your Chat app [authenticates as a user](https://developers.google.com/workspace/chat/authenticate-authorize-chat-user), the output only populates the [user](https://developers.google.com/workspace/chat/api/reference/rest/v1/User) `name` and `type` fields for both internal and external users, unless they are members of the space or have a prior affinity, like a direct message (DM) conversation, with the calling user."
+        },
+        "name": {
+          "description": "Identifier. Resource name of the membership, assigned by the server. Format: `spaces/{space}/members/{member}`",
+          "type": "string"
+        },
+        "role": {
+          "description": "Optional. User's role within a Chat space, which determines their permitted actions in the space. This field can only be used as input in `UpdateMembership`.",
+          "enum": [
+            "MEMBERSHIP_ROLE_UNSPECIFIED",
+            "ROLE_MEMBER",
+            "ROLE_MANAGER",
+            "ROLE_ASSISTANT_MANAGER"
+          ],
+          "type": "string"
+        },
+        "state": {
+          "description": "Output only. State of the membership.",
+          "enum": [
+            "MEMBERSHIP_STATE_UNSPECIFIED",
+            "JOINED",
+            "INVITED",
+            "NOT_A_MEMBER"
+          ],
+          "type": "string"
+        }
+      }
+    },
+    "MembershipCount": {
+      "description": "Represents the count of memberships of a space, grouped into categories.",
+      "properties": {
+        "joinedDirectHumanUserCount": {
+          "description": "Output only. Count of human users that have directly joined the space, not counting users joined by having membership in a joined group.",
+          "type": "integer"
+        },
+        "joinedGroupCount": {
+          "description": "Output only. Count of all groups that have directly joined the space.",
+          "type": "integer"
+        }
+      }
+    },
+    "Message": {
+      "description": "A message in a Google Chat space.",
+      "properties": {
+        "accessoryWidgets": {
+          "description": "Optional. One or more interactive widgets that appear at the bottom of a message. You can add accessory widgets to messages that contain text, cards, or both text and cards. Not supported for messages that contain dialogs. For details, see [Add interactive widgets at the bottom of a message](https://developers.google.com/workspace/chat/create-messages#add-accessory-widgets). Creating a message with accessory widgets requires [app authentication] (https://developers.google.com/workspace/chat/authenticate-authorize-chat-app).",
+          "items": {
+            "$ref": "AccessoryWidget"
+          },
+          "type": "array"
+        },
+        "actionResponse": {
+          "$ref": "ActionResponse",
+          "description": "Input only. Parameters that a Chat app can use to configure how its response is posted."
+        },
+        "annotations": {
+          "description": "Output only. Annotations can be associated with the plain-text body of the message or with chips that link to Google Workspace resources like Google Docs or Sheets with `start_index` and `length` of 0.",
+          "items": {
+            "$ref": "Annotation"
+          },
+          "type": "array"
+        },
+        "argumentText": {
+          "description": "Output only. Plain-text body of the message with all Chat app mentions stripped out.",
+          "type": "string"
+        },
+        "attachedGifs": {
+          "description": "Output only. GIF images that are attached to the message.",
+          "items": {
+            "$ref": "AttachedGif"
+          },
+          "type": "array"
+        },
+        "attachment": {
+          "description": "Optional. User-uploaded attachment.",
+          "items": {
+            "$ref": "Attachment"
+          },
+          "type": "array"
+        },
+        "cards": {
+          "description": "Deprecated: Use `cards_v2` instead. Rich, formatted, and interactive cards that you can use to display UI elements such as: formatted texts, buttons, and clickable images. Cards are normally displayed below the plain-text body of the message. `cards` and `cards_v2` can have a maximum size of 32 KB.",
+          "items": {
+            "$ref": "Card"
+          },
+          "type": "array"
+        },
+        "cardsV2": {
+          "description": "Optional. An array of [cards](https://developers.google.com/workspace/chat/api/reference/rest/v1/cards). Chat apps can create cards with [app authentication](https://developers.google.com/workspace/chat/authenticate-authorize-chat-app). As part of the [Developer Preview Program](https://developers.google.com/workspace/preview), if your Chat app [authenticates as a user](https://developers.google.com/workspace/chat/authenticate-authorize-chat-user), it can create card messages. If your Chat app is not part of Developer Preview Program, it can't create cards with user authentication. To learn how to create a message that contains cards, see [Send a message](https://developers.google.com/workspace/chat/create-messages). [Card builder](https://addons.gsuite.google.com/uikit/builder)",
+          "items": {
+            "$ref": "CardWithId"
+          },
+          "type": "array"
+        },
+        "clientAssignedMessageId": {
+          "description": "Optional. A custom ID for the message. You can use field to identify a message, or to get, delete, or update a message. To set a custom ID, specify the [`messageId`](https://developers.google.com/workspace/chat/api/reference/rest/v1/spaces.messages/create#body.QUERY_PARAMETERS.message_id) field when you create the message. For details, see [Name a message](https://developers.google.com/workspace/chat/create-messages#name_a_created_message).",
+          "type": "string"
+        },
+        "createTime": {
+          "description": "Optional. Immutable. For spaces created in Chat, the time at which the message was created. This field is output only, except when used in import mode spaces. For import mode spaces, set this field to the historical timestamp at which the message was created in the source in order to preserve the original creation time.",
+          "type": "string"
+        },
+        "deleteTime": {
+          "description": "Output only. The time at which the message was deleted in Google Chat. If the message is never deleted, this field is empty.",
+          "type": "string"
+        },
+        "deletionMetadata": {
+          "$ref": "DeletionMetadata",
+          "description": "Output only. Information about a deleted message. A message is deleted when `delete_time` is set."
+        },
+        "elements": {
+          "$ref": "Elements",
+          "description": "Optional. Additional message components, including inline `citations` (where each citation is associated with a specific portion of the message text) and `cited_sources` (which are general references used to generate the response and are not directly linked to specific segments of the text). On input, provide `elements` when creating or updating a message. On output, both `citations` and `cited_sources` are populated when reading a message that contains them. Callers can read structured citation metadata from `elements`, while `formatted_text` also includes inline citation tags or source links depending on `markup_syntax`. These differ from `annotations`, which are output-only and offer supplementary information tied to message fragments or the entire message text."
+        },
+        "emojiReactionSummaries": {
+          "description": "Output only. The list of emoji reaction summaries on the message.",
+          "items": {
+            "$ref": "EmojiReactionSummary"
+          },
+          "type": "array"
+        },
+        "fallbackText": {
+          "description": "Optional. A plain-text description of the message's cards, used when the actual cards can't be displayed\u2014for example, mobile notifications.",
+          "type": "string"
+        },
+        "formattedText": {
+          "description": "Output only. Contains the message `text` with markups added to communicate formatting. This field might not capture all formatting visible in the UI, but includes the following: * [Markup syntax](https://developers.google.com/workspace/chat/format-messages) for bold, italic, strikethrough, monospace, monospace block, bulleted list, and block quote. * [User mentions](https://developers.google.com/workspace/chat/format-messages#messages-@mention) using the format ``. * Custom hyperlinks using the format `<{url}|{rendered_text}>` where the first string is the URL and the second is the rendered text\u2014for example, ``. * Custom emoji using the format `:{emoji_name}:`\u2014for example, `:smile:`. This doesn't apply to Unicode emoji, such as `U+1F600` for a grinning face emoji. * Bullet list items using asterisks (`*`)\u2014for example, `* item`. For more information, see [View text formatting sent in a message](https://developers.google.com/workspace/chat/format-messages#view_text_formatting_sent_in_a_message)",
+          "type": "string"
+        },
+        "lastUpdateTime": {
+          "description": "Output only. The time at which the message was last edited by a user. If the message has never been edited, this field is empty.",
+          "type": "string"
+        },
+        "markupSyntax": {
+          "description": "Optional. Specifies how the server interprets the message `text` field content when creating a message or updating the `text` field of a message. When calling `UpdateMessage`, set `markup_syntax` and `text` on the `Message` resource and include `text` (not `markup_syntax`) in `update_mask`.",
+          "enum": [
+            "MARKUP_SYNTAX_UNSPECIFIED",
+            "MARKUP_SYNTAX_CHAT",
+            "MARKUP_SYNTAX_MARKDOWN"
+          ],
+          "type": "string"
+        },
+        "matchedUrl": {
+          "$ref": "MatchedUrl",
+          "description": "Output only. A URL in the Chat message `text` field that matches a link preview pattern. For more information, see [Preview links](https://developers.google.com/workspace/chat/preview-links)."
+        },
+        "name": {
+          "description": "Identifier. Resource name of the message. Format: `spaces/{space}/messages/{message}` Where `{space}` is the ID of the space where the message is posted and `{message}` is a system-assigned ID for the message. For example, `spaces/AAAAAAAAAAA/messages/BBBBBBBBBBB.BBBBBBBBBBB`. If you set a custom ID when you create a message, you can use this ID to specify the message in a request by replacing `{message}` with the value from the `clientAssignedMessageId` field. For example, `spaces/AAAAAAAAAAA/messages/client-custom-name`. For details, see [Name a message](https://developers.google.com/workspace/chat/create-messages#name_a_created_message).",
+          "type": "string"
+        },
+        "privateMessageViewer": {
+          "$ref": "User",
+          "description": "Optional. Immutable. Input for creating a message, otherwise output only. The user that can view the message. When set, the message is private and only visible to the specified user and the Chat app. To include this field in your request, you must call the Chat API using [app authentication](https://developers.google.com/workspace/chat/authenticate-authorize-chat-app) and omit the following: * [Attachments](https://developers.google.com/workspace/chat/api/reference/rest/v1/spaces.messages.attachments) For details, see [Send a message privately](https://developers.google.com/workspace/chat/create-messages#private)."
+        },
+        "quotedMessageMetadata": {
+          "$ref": "QuotedMessageMetadata",
+          "description": "Optional. Information about a message that another message quotes. When you create a message, you can quote messages within the same thread, or quote a root message to create a new root message. However, you can't quote a message reply from a different thread. When you update a message, you can't add or replace the `quotedMessageMetadata` field, but you can remove it. For example usage, see [Quote another message](https://developers.google.com/workspace/chat/create-messages#quote-a-message)."
+        },
+        "sender": {
+          "$ref": "User",
+          "description": "Output only. The user who created the message. If your Chat app [authenticates as a user](https://developers.google.com/workspace/chat/authenticate-authorize-chat-user), the output only populates the [user](https://developers.google.com/workspace/chat/api/reference/rest/v1/User) `name` and `type` fields for both internal and external users, unless they are members of the space or have a prior affinity, like a direct message (DM) conversation, with the calling user."
+        },
+        "silent": {
+          "description": "Output only. Whether this is a silent message. Silent messages are messages where Chat suppresses push notifications for recipients.",
+          "type": "boolean"
+        },
+        "slashCommand": {
+          "$ref": "SlashCommand",
+          "description": "Output only. Slash command information, if applicable."
+        },
+        "space": {
+          "$ref": "Space",
+          "description": "Output only. If your Chat app [authenticates as a user](https://developers.google.com/workspace/chat/authenticate-authorize-chat-user), the output only populates the [space](https://developers.google.com/workspace/chat/api/reference/rest/v1/spaces) `name`."
+        },
+        "text": {
+          "description": "Optional. Plain-text body of the message. The first link to an image, video, or web page generates a [preview chip](https://developers.google.com/workspace/chat/preview-links). You can also [@mention a Google Chat user](https://developers.google.com/workspace/chat/format-messages#messages-@mention), or everyone in the space. To learn about creating text messages, see [Send a message](https://developers.google.com/workspace/chat/create-messages).",
+          "type": "string"
+        },
+        "thread": {
+          "$ref": "Thread",
+          "description": "The thread the message belongs to. For example usage, see [Start or reply to a message thread](https://developers.google.com/workspace/chat/create-messages#create-message-thread)."
+        },
+        "threadReply": {
+          "description": "Output only. When `true`, the message is a response in a reply thread. When `false`, the message is visible in the space's top-level conversation as either the first message of a thread or a message with no threaded replies. If the space doesn't support reply in threads, this field is always `false`.",
+          "type": "boolean"
+        }
+      }
+    },
+    "Space": {
+      "description": "A space in Google Chat. Spaces are conversations between two or more users or 1:1 messages between a user and a Chat app.",
+      "properties": {
+        "accessSettings": {
+          "$ref": "AccessSettings",
+          "description": "Optional. Specifies the [access setting](https://support.google.com/chat/answer/11971020) of the space. Only populated when the `space_type` is `SPACE`."
+        },
+        "adminInstalled": {
+          "description": "Output only. For direct message (DM) spaces with a Chat app, whether the space was created by a Google Workspace administrator. Administrators can install and set up a direct message with a Chat app on behalf of users in their organization. To support admin install, your Chat app must feature direct messaging.",
+          "type": "boolean"
+        },
+        "createTime": {
+          "description": "Optional. Immutable. For spaces created in Chat, the time the space was created. This field is output only, except when used in import mode spaces. For import mode spaces, set this field to the historical timestamp at which the space was created in the source in order to preserve the original creation time. Only populated in the output when `spaceType` is `GROUP_CHAT` or `SPACE`.",
+          "type": "string"
+        },
+        "customer": {
+          "description": "Optional. Immutable. The customer id of the domain of the space. Required only when creating a space with [app authentication](https://developers.google.com/workspace/chat/authenticate-authorize-chat-app) and `SpaceType` is `SPACE`, otherwise should not be set. In the format `customers/{customer}`, where `customer` is the `id` from the [Admin SDK customer resource](https://developers.google.com/admin-sdk/directory/reference/rest/v1/customers). Private apps can also use the `customers/my_customer` alias to create the space in the same Google Workspace organization as the app. This field isn't populated for direct messages (DMs) or when the space is created by non-Google Workspace users.",
+          "type": "string"
+        },
+        "displayName": {
+          "description": "Optional. The space's display name. Required when [creating a space](https://developers.google.com/workspace/chat/api/reference/rest/v1/spaces/create) with a `spaceType` of `SPACE`. If you receive the error message `ALREADY_EXISTS` when creating a space or updating the `displayName`, try a different `displayName`. An existing space within the Google Workspace organization might already use this display name. For direct messages, this field might be empty. Supports up to 128 characters.",
+          "type": "string"
+        },
+        "externalUserAllowed": {
+          "description": "Optional. Immutable. Whether this space permits any Google Chat user as a member. Input when creating a space in a Google Workspace organization. Omit this field when creating spaces in the following conditions: * The authenticated user uses a consumer account (unmanaged user account). By default, a space created by a consumer account permits any Google Chat user. For existing spaces, this field is output only.",
+          "type": "boolean"
+        },
+        "importMode": {
+          "description": "Optional. Whether this space is created in `Import Mode` as part of a data migration into Google Workspace. While spaces are being imported, they aren't visible to users until the import is complete. Creating a space in `Import Mode`requires [user authentication](https://developers.google.com/workspace/chat/authenticate-authorize-chat-user).",
+          "type": "boolean"
+        },
+        "importModeExpireTime": {
+          "description": "Output only. The time when the space will be automatically deleted by the system if it remains in import mode. Each space created in import mode must exit this mode before this expire time using `spaces.completeImport`. This field is only populated for spaces that were created with import mode.",
+          "type": "string"
+        },
+        "lastActiveTime": {
+          "description": "Output only. Timestamp of the last message in the space.",
+          "type": "string"
+        },
+        "membershipCount": {
+          "$ref": "MembershipCount",
+          "description": "Output only. The count of joined memberships grouped by member type. Populated when the `space_type` is `SPACE`, `DIRECT_MESSAGE` or `GROUP_CHAT`."
+        },
+        "name": {
+          "description": "Identifier. Resource name of the space. Format: `spaces/{space}` Where `{space}` represents the system-assigned ID for the space. You can obtain the space ID by calling the [`spaces.list()`](https://developers.google.com/workspace/chat/api/reference/rest/v1/spaces/list) method or from the space URL. For example, if the space URL is `https://mail.google.com/mail/u/0/#chat/space/AAAAAAAAA`, the space ID is `AAAAAAAAA`.",
+          "type": "string"
+        },
+        "permissionSettings": {
+          "$ref": "PermissionSettings",
+          "description": "Optional. Space permission settings for existing spaces. Input for updating exact space permission settings, where existing permission settings are replaced. Output lists current permission settings. Reading and updating permission settings supports: - [App authentication](https://developers.google.com/workspace/chat/authenticate-authorize-chat-app) with [administrator approval](https://support.google.com/a?p=chat-app-auth) with the `chat.app.spaces` scope. Only populated and settable when the Chat app created the space. - [User authentication](https://developers.google.com/workspace/chat/authenticate-authorize-chat-user)"
+        },
+        "predefinedPermissionSettings": {
+          "description": "Optional. Input only. Predefined space permission settings, input only when creating a space. If the field is not set, a collaboration space is created. After you create the space, settings are populated in the `PermissionSettings` field. Setting predefined permission settings supports: - [App authentication](https://developers.google.com/workspace/chat/authenticate-authorize-chat-app) with [administrator approval](https://support.google.com/a?p=chat-app-auth) with the `chat.app.spaces` or `chat.app.spaces.create` scopes. - [User authentication](https://developers.google.com/workspace/chat/authenticate-authorize-chat-user)",
+          "enum": [
+            "PREDEFINED_PERMISSION_SETTINGS_UNSPECIFIED",
+            "COLLABORATION_SPACE",
+            "ANNOUNCEMENT_SPACE"
+          ],
+          "type": "string"
+        },
+        "singleUserBotDm": {
+          "description": "Optional. Whether the space is a DM between a Chat app and a single human.",
+          "type": "boolean"
+        },
+        "spaceDetails": {
+          "$ref": "SpaceDetails",
+          "description": "Optional. Details about the space including description and rules."
+        },
+        "spaceHistoryState": {
+          "description": "Optional. The message history state for messages and threads in this space.",
+          "enum": [
+            "HISTORY_STATE_UNSPECIFIED",
+            "HISTORY_OFF",
+            "HISTORY_ON"
+          ],
+          "type": "string"
+        },
+        "spaceThreadingState": {
+          "description": "Output only. The threading state in the Chat space.",
+          "enum": [
+            "SPACE_THREADING_STATE_UNSPECIFIED",
+            "THREADED_MESSAGES",
+            "GROUPED_MESSAGES",
+            "UNTHREADED_MESSAGES"
+          ],
+          "type": "string"
+        },
+        "spaceType": {
+          "description": "Optional. The type of space. Required when creating a space or updating the space type of a space. Output only for other usage.",
+          "enum": [
+            "SPACE_TYPE_UNSPECIFIED",
+            "SPACE",
+            "GROUP_CHAT",
+            "DIRECT_MESSAGE"
+          ],
+          "type": "string"
+        },
+        "spaceUri": {
+          "description": "Output only. The URI for a user to access the space.",
+          "type": "string"
+        },
+        "threaded": {
+          "description": "Output only. Deprecated: Use `spaceThreadingState` instead. Whether messages are threaded in this space.",
+          "type": "boolean"
+        },
+        "type": {
+          "description": "Output only. Deprecated: Use `space_type` instead. The type of a space.",
+          "enum": [
+            "TYPE_UNSPECIFIED",
+            "ROOM",
+            "DM"
+          ],
+          "type": "string"
+        }
+      }
+    },
+    "Thread": {
+      "description": "A thread in a Google Chat space. For example usage, see [Start or reply to a message thread](https://developers.google.com/workspace/chat/create-messages#create-message-thread). If you specify a thread when creating a message, you can set the [`messageReplyOption`](https://developers.google.com/workspace/chat/api/reference/rest/v1/spaces.messages/create#messagereplyoption) field to determine what happens if no matching thread is found.",
+      "properties": {
+        "name": {
+          "description": "Identifier. Resource name of the thread. Example: `spaces/{space}/threads/{thread}`",
+          "type": "string"
+        },
+        "threadKey": {
+          "description": "Optional. Input for creating or updating a thread. Otherwise, output only. ID for the thread. Supports up to 4000 characters. This ID is unique to the Chat app that sets it. For example, if multiple Chat apps create a message using the same thread key, the messages are posted in different threads. To reply in a thread created by a person or another Chat app, specify the thread `name` field instead.",
+          "type": "string"
+        }
+      }
+    },
+    "User": {
+      "description": "If your Chat app [authenticates as a user](https://developers.google.com/workspace/chat/authenticate-authorize-chat-user), the output for a `User` resource (such as in the Messages and Memberships APIs) only populates the `name` and `type` fields for both internal and external users, unless they are members of the space or have prior affinity with the calling user.",
+      "properties": {
+        "avatarUrl": {
+          "description": "Output only. The user's avatar image URL. When calling the Messages and Memberships APIs with [user authentication](https://developers.google.com/workspace/chat/authenticate-authorize-chat-user), this field is populated for both internal and external users for the `sender` of a message, users within `annotations` (such as user mentions), and within `Membership` resources, provided the user is a member of the space or has prior affinity with the calling user.",
+          "type": "string"
+        },
+        "displayName": {
+          "description": "Output only. The user's display name. Populated for both app authentication and user authentication. This field is always populated for requests made with [app authentication](https://developers.google.com/workspace/chat/authenticate-authorize-chat-app). When calling the Messages and Memberships APIs with [user authentication](https://developers.google.com/workspace/chat/authenticate-authorize-chat-user), this field is populated for both internal and external users for the `sender` of a message, users within `annotations` (such as user mentions), and within `Membership` resources, provided the user is a member of the space or has prior affinity with the calling user.",
+          "type": "string"
+        },
+        "domainId": {
+          "description": "Unique identifier of the user's Google Workspace domain.",
+          "type": "string"
+        },
+        "email": {
+          "description": "Output only. The user's email address. When calling the Messages and Memberships APIs with [user authentication](https://developers.google.com/workspace/chat/authenticate-authorize-chat-user), this field is populated for both internal and external users for the `sender` of a message, users within `annotations` (such as user mentions), and within `Membership` resources, provided the user is a member of the space or has prior affinity with the calling user.",
+          "type": "string"
+        },
+        "isAnonymous": {
+          "description": "Output only. When `true`, the user is deleted or their profile is not visible, such as when a user is mentioned in a space without being a member and without prior affinity with the calling user.",
+          "type": "boolean"
+        },
+        "name": {
+          "description": "Resource name for a Google Chat user. Format: `users/{user}`. `users/app` can be used as an alias for the calling app bot user. For human users, `{user}` is the same user identifier as: - the `id` for the [Person](https://developers.google.com/people/api/rest/v1/people) in the People API. For example, `users/123456789` in Chat API represents the same person as the `123456789` Person profile ID in People API. - the `id` for a [user](https://developers.google.com/admin-sdk/directory/reference/rest/v1/users) in the Admin SDK Directory API. - the user's email address can be used as an alias for `{user}` in API requests. For example, if the People API Person profile ID for `user@example.com` is `123456789`, you can use `users/user@example.com` as an alias to reference `users/123456789`. Only the canonical resource name (for example `users/123456789`) will be returned from the API.",
+          "type": "string"
+        },
+        "type": {
+          "description": "User type.",
+          "enum": [
+            "TYPE_UNSPECIFIED",
+            "HUMAN",
+            "BOT"
+          ],
+          "type": "string"
+        }
+      }
+    }
+  },
+  "source": "https://chat.googleapis.com/$discovery/rest?version=v1"
+}
