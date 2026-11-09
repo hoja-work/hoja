@@ -45,11 +45,13 @@ import asyncio
 import itertools
 import json
 import logging
+import os
 import time
 from collections import deque
 from contextlib import suppress
 from dataclasses import dataclass, field
 
+from sqlalchemy.engine import make_url
 from starlette.websockets import WebSocketDisconnect
 from hoja_server import tenant_context
 
@@ -367,6 +369,10 @@ class RealtimeHub:
         await self.ingest(rows)
 
     def _pg_dsn(self) -> str:
+        direct = os.environ.get("HOJA_LISTEN_DATABASE_URL", "").strip()
+        if direct:
+            # LISTEN needs a session; a transaction pooler would drop it between statements.
+            return make_url(direct).set(drivername="postgresql").render_as_string(hide_password=False)
         url = self.store.engine.url.set(drivername="postgresql")
         return url.render_as_string(hide_password=False)
 

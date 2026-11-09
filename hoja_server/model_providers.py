@@ -228,7 +228,7 @@ def m_model_provider_create(_, info, name, provider, modelId, apiKey, baseUrl=No
     now = now_iso()
     values = {
         "id": new_id(), "organization_id": org, "name": name, "provider": provider,
-        "model_id": modelId, "base_url": baseUrl, "encrypted_api_key": encrypt_secret(apiKey),
+        "model_id": modelId, "base_url": baseUrl, "encrypted_api_key": encrypt_secret(apiKey, org),
         "enabled": True, "created_at": now, "updated_at": now,
     }
     with store.engine.begin() as conn:
@@ -251,7 +251,7 @@ def m_model_provider_update(_, info, id, name=None, modelId=None, baseUrl=None, 
     if baseUrl is not None:
         changes["base_url"] = validate_model_base_url(baseUrl)
     if apiKey is not None:
-        changes["encrypted_api_key"] = encrypt_secret(apiKey)
+        changes["encrypted_api_key"] = encrypt_secret(apiKey, org)
     if enabled is not None:
         changes["enabled"] = enabled
     with store.engine.begin() as conn:

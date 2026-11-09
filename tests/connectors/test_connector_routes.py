@@ -118,7 +118,8 @@ def test_callback_rejects_expired_state(tmp_path) -> None:
                 "exp": int(time.time()) - 1,
                 "nonce": "n",
             }
-        )
+        ),
+        admin["org_id"],
     )
     with TestClient(app) as client:
         res = client.get(
@@ -175,7 +176,7 @@ def test_callback_stores_encrypted_account_and_hides_token(tmp_path) -> None:
     with engine.connect() as conn:
         raw = conn.execute(connector_account.select()).mappings().one()
     assert "REFRESH-SECRET" not in raw["encrypted_refresh_token"]
-    assert decrypt_secret(raw["encrypted_refresh_token"]) == "1//REFRESH-SECRET"
+    assert decrypt_secret(raw["encrypted_refresh_token"], raw["organization_id"]) == "1//REFRESH-SECRET"
 
 
 @respx.mock
@@ -208,7 +209,7 @@ def test_member_cannot_revoke_another_members_account(tmp_path) -> None:
                 provider="google_workspace",
                 external_account="owner@conn.test",
                 scopes="s",
-                encrypted_refresh_token=encrypt_secret("1//R"),
+                encrypted_refresh_token=encrypt_secret("1//R", admin["org_id"]),
                 status="active",
                 created_at="t",
                 updated_at="t",
@@ -236,7 +237,7 @@ def test_owner_revoke_calls_google_and_clears_token(tmp_path) -> None:
                 provider="google_workspace",
                 external_account="owner@conn.test",
                 scopes="s",
-                encrypted_refresh_token=encrypt_secret("1//R-REVOKE"),
+                encrypted_refresh_token=encrypt_secret("1//R-REVOKE", admin["org_id"]),
                 status="active",
                 created_at="t",
                 updated_at="t",
@@ -268,7 +269,7 @@ def test_revoke_keeps_account_active_when_google_fails(tmp_path) -> None:
                 provider="google_workspace",
                 external_account="owner@conn.test",
                 scopes="s",
-                encrypted_refresh_token=encrypt_secret("1//R"),
+                encrypted_refresh_token=encrypt_secret("1//R", admin["org_id"]),
                 status="active",
                 created_at="t",
                 updated_at="t",

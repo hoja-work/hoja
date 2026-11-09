@@ -297,7 +297,7 @@ def install(engine: Engine, org_id: str, installer_id: str, raw_manifest: Any) -
     """Install in one transaction. Returns the extension plus the one-time credentials."""
     manifest = parse_manifest(raw_manifest)  # network (DNS) happens here, before any write
     secret = "hoja_ext_" + secrets.token_hex(24)
-    sealed = secrets_box.encrypt_secret(secret)
+    sealed = secrets_box.encrypt_secret(secret, org_id)
     raw_token = gen_token()
     ts = now_iso()
     ext_id, bot_id, key_id = new_id(), new_id(), new_id()
@@ -526,7 +526,7 @@ _EXT_COLUMNS = (extension.c.name, extension.c.url, extension.c.secret_sealed,
 def _call(row: dict, path: str, payload: dict, event: str, timeout: float) -> tuple[int, Any]:
     url = row["url"] + path
     webhooks.check_target(url)
-    body, headers = webhooks.build_request(secrets_box.decrypt_secret(row["secret_sealed"]), payload,
+    body, headers = webhooks.build_request(secrets_box.decrypt_secret(row["secret_sealed"], row["organization_id"]), payload,
                                            new_id(), event)
     status, raw = webhooks.post_capped(url, body, headers, timeout=timeout)
     try:

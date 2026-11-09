@@ -27,7 +27,7 @@ ENABLED = bool(os.environ.get("HOJA_TEST_RLS")) and bool(os.environ.get("HOJA_TE
 # Hosted global tables (Hoja-Cloud rls/global-tables.txt): not tenant data.
 GLOBALS = ("global_identity", "identity_credential", "oauth_client", "oauth_state_nonce", "rate_limit_event",
            "schema_revision", "signup_flow", "signup_identity", "signup_eligibility", "signup_invite",
-           "signup_session", "turnstile_use", "alembic_version")
+           "signup_session", "tenant_membership_hint", "turnstile_use", "alembic_version")
 
 _CUR = "current_setting('hoja.org_id', true)"
 _SYS = "current_setting('hoja.system', true) = 'on' OR "

@@ -184,7 +184,7 @@ def test_invitation_flow_is_reconcilable_by_email(app):
         user_id = first["data"]["memberInvite"]["user"]["id"]
 
         duplicate = client.post("/graphql", json={"query": invite, "variables": {"i": {"name": "Sam", "email": "sam@example.com", "teamIds": [team_id]}}}).json()
-        assert duplicate["data"]["memberInvite"]["success"] is False
+        assert duplicate["errors"][0]["extensions"]["reason"] == "already_member"
 
         members = client.post("/graphql", json={"query": "{ organizationMembers(first:100){nodes{id email}} }"}).json()
         emails = [row["email"] for row in members["data"]["organizationMembers"]["nodes"]]

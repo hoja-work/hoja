@@ -127,7 +127,7 @@ def make_write_executor(engine: Engine, http: httpx.AsyncClient, config: GoogleO
             ).mappings().one_or_none()
         if row is None or row["owner_user_id"] != requester:
             raise ConnectorAuthError("The account for this action is no longer available.")
-        refresh = decrypt_secret(row["encrypted_refresh_token"])
+        refresh = decrypt_secret(row["encrypted_refresh_token"], row["organization_id"])
 
         async def access_token() -> str:
             tokens = await refresh_access_token(http, config, refresh_token=refresh)
@@ -178,7 +178,8 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
                         "exp": int(time.time()) + STATE_TTL_SECONDS,
                         "nonce": uuid.uuid4().hex,
                     }
-                )
+                ),
+                org,
             )
         except (ConnectorConfigError, SecretBoxError) as exc:
             return _error(str(exc), 503, getattr(exc, "hint", None))
@@ -201,7 +202,7 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
         if not code or not sealed:
             return _error("code and state are required", 400)
         try:
-            pending = json.loads(decrypt_secret(sealed))
+            pending = json.loads(decrypt_secret(sealed, org))
             config = GoogleOAuthConfig.from_env()
         except (SecretBoxError, ValueError, ConnectorConfigError) as exc:
             return _error("Invalid or expired connection request.", 400, getattr(exc, "hint", None))
@@ -244,7 +245,7 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
             "provider": PROVIDER,
             "external_account": email,
             "scopes": tokens.scope or " ".join(READ_SCOPES.values()),
-            "encrypted_refresh_token": encrypt_secret(tokens.refresh_token),
+            "encrypted_refresh_token": encrypt_secret(tokens.refresh_token, org),
             "status": "active",
             "created_at": _now(),
             "updated_at": _now(),
@@ -315,7 +316,7 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
             return _error("Connected account not found.", 404)
 
         try:
-            refresh = decrypt_secret(row["encrypted_refresh_token"])
+            refresh = decrypt_secret(row["encrypted_refresh_token"], row["organization_id"])
         except SecretBoxError:
             return _error("Stored credential is unreadable; contact an administrator.", 500)
         async with httpx.AsyncClient(timeout=15) as http:

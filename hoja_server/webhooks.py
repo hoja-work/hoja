@@ -211,7 +211,7 @@ def create_webhook(engine: Engine, org_id: str, creator_id: str, inp: dict[str, 
     url = (inp.get("url") or "").strip()
     check_target(url)
     secret = inp.get("secret") or "hoja_wh_" + secrets.token_hex(24)
-    sealed = secrets_box.encrypt_secret(secret)
+    sealed = secrets_box.encrypt_secret(secret, org_id)
     with engine.begin() as conn:
         wid = insert_webhook(conn, org_id, creator_id, dict(inp, url=url), sealed_secret=sealed)
     return get_webhook(engine, org_id, wid)
@@ -227,7 +227,7 @@ def update_webhook(engine: Engine, org_id: str, wid: str, inp: dict[str, Any]) -
     if "label" in inp:
         values["label"] = inp["label"]
     if inp.get("secret"):
-        values["secret_sealed"] = secrets_box.encrypt_secret(inp["secret"])
+        values["secret_sealed"] = secrets_box.encrypt_secret(inp["secret"], org_id)
     with engine.begin() as conn:
         row = conn.execute(select(webhook).where(and_(
             webhook.c.id == wid, webhook.c.organization_id == org_id,
@@ -270,7 +270,7 @@ def _ser(conn: Connection, row: dict) -> dict:
     )).order_by(webhook_delivery.c.updated_at.desc()).limit(50)).mappings().all()
     return {
         "id": row["id"], "url": row["url"], "label": row["label"], "enabled": row["enabled"],
-        "secret": secrets_box.decrypt_secret(row["secret_sealed"]),
+        "secret": secrets_box.decrypt_secret(row["secret_sealed"], row["organization_id"]),
         "resourceTypes": json.loads(row["resource_types"]),
         "allPublicTeams": row["all_public_teams"],
         "teamIds": [row["team_id"]] if row["team_id"] else None,
@@ -380,11 +380,11 @@ def _actor(conn: Connection, org_id: str, issue_id: str, changed_at: str | None)
 def dispatch_once(engine: Engine) -> int:
     """Turn committed change events into queued deliveries. Returns deliveries queued."""
     queued = 0
-    with tenant_context.system():
-        with engine.connect() as conn:
-            orgs = list(conn.execute(select(webhook.c.organization_id).where(and_(
-                webhook.c.enabled.is_(True), webhook.c.archived_at.is_(None))).distinct()).scalars())
-        for org_id in orgs:
+    with tenant_context.system(), engine.connect() as conn:
+        orgs = list(conn.execute(select(webhook.c.organization_id).where(and_(
+            webhook.c.enabled.is_(True), webhook.c.archived_at.is_(None))).distinct()).scalars())
+    for org_id in orgs:
+        with tenant_context.scoped(org_id):
             queued += _dispatch_org(engine, org_id)
     return queued
 
@@ -551,7 +551,9 @@ def deliver_due(engine: Engine, post: Poster | None = None, now: datetime | None
     post = post or _http_post
     delivered = 0
     with tenant_context.system():
-        for row in _claim(engine, now or datetime.now(timezone.utc)):
+        rows = _claim(engine, now or datetime.now(timezone.utc))
+    for row in rows:
+        with tenant_context.scoped(row["organization_id"]):
             delivered += _send_one(engine, row, post)
     return delivered
 
@@ -565,7 +567,7 @@ def _send_one(engine: Engine, row: dict, post: Poster) -> int:
         return 0
     try:
         check_target(hook["url"])
-        body, headers = build_request(secrets_box.decrypt_secret(hook["secret_sealed"]),
+        body, headers = build_request(secrets_box.decrypt_secret(hook["secret_sealed"], hook["organization_id"]),
                                       json.loads(row["payload"]), row["id"], row["event"])
         status_code = post(hook["url"], body, headers)
         if 200 <= status_code < 300:

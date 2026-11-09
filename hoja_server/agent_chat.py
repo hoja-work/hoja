@@ -205,7 +205,7 @@ async def stream_reply(store, org_id: str, uid: str, messages: list[dict], schem
         yield _chunk(completion_id, {"role": "assistant", "content": "No model is configured. Ask a workspace admin to add one."}, "stop")
         yield "data: [DONE]\n\n"
         return
-    provider = OpenAIProvider(base_url=row["base_url"], api_key=decrypt_secret(row["encrypted_api_key"]))
+    provider = OpenAIProvider(base_url=row["base_url"], api_key=decrypt_secret(row["encrypted_api_key"], row["organization_id"]))
     yield _chunk(completion_id, {"role": "assistant"})
     try:
         base_url = await asyncio.to_thread(validate_model_base_url, row["base_url"])
@@ -219,7 +219,7 @@ async def stream_reply(store, org_id: str, uid: str, messages: list[dict], schem
     provider = OpenAIProvider(
         openai_client=openai.AsyncOpenAI(
             base_url=base_url,
-            api_key=decrypt_secret(row["encrypted_api_key"]),
+            api_key=decrypt_secret(row["encrypted_api_key"], row["organization_id"]),
             http_client=http_client,
         )
     )

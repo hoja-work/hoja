@@ -87,6 +87,54 @@ def system() -> Iterator[None]:
         _system.reset(token)
 
 
+@contextmanager
+def scoped(org: str | None) -> Iterator[None]:
+    """Run as exactly ``org``, with no system context, whatever the caller's context is."""
+    org_token, sys_token = _org.set(org or None), _system.set(False)
+    try:
+        yield
+    finally:
+        _system.reset(sys_token)
+        _org.reset(org_token)
+
+
+def probe(engine: Engine) -> str | None:
+    """Prove tenant isolation is working; return the failure reason, or None.
+
+    A tenant-bound read must see its own organization. Under row-level security
+    it must see no other organization, and a read with no context must see
+    nothing. With HOJA_REQUIRE_RLS set, row-level security must be enabled.
+    """
+    import os
+
+    from sqlalchemy import func, select, text
+
+    from hoja_server.db import organization
+
+    count = select(func.count()).select_from(organization)
+    with system(), engine.connect() as conn:
+        org_id = conn.execute(select(organization.c.id).order_by(organization.c.id).limit(1)).scalar()
+    rls = False
+    if engine.dialect.name == "postgresql":
+        with system(), engine.connect() as conn:
+            rls = bool(conn.execute(text(
+                "SELECT relrowsecurity FROM pg_class WHERE oid = 'organization'::regclass")).scalar())
+    if os.environ.get("HOJA_REQUIRE_RLS") and not rls:
+        return "rls_disabled"
+    if org_id is None:
+        return None
+    with scoped(org_id), engine.connect() as conn:
+        if conn.execute(count.where(organization.c.id == org_id)).scalar_one() != 1:
+            return "tenant_read_failed"
+        if rls and conn.execute(count.where(organization.c.id != org_id)).scalar_one() != 0:
+            return "tenant_isolation_failed"
+    if rls:
+        with scoped(None), engine.connect() as conn:
+            if conn.execute(count).scalar_one() != 0:
+                return "fail_open"
+    return None
+
+
 async def as_system(awaitable: Awaitable[T]) -> T:
     """Await ``awaitable`` in system context; for tasks that serve every tenant."""
     _system.set(True)  # this coroutine runs in its own task's context copy

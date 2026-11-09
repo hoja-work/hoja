@@ -108,7 +108,7 @@ async def _resolve_model(ctx, model_id: str) -> Model | None:
     base_url = await asyncio.to_thread(validate_model_base_url, row["base_url"]) or None
     client = openai.AsyncOpenAI(
         base_url=base_url,
-        api_key=decrypt_secret(row["encrypted_api_key"]),
+        api_key=decrypt_secret(row["encrypted_api_key"], row["organization_id"]),
         http_client=openai.DefaultAsyncHttpxClient(follow_redirects=False),
     )
     return OpenAIChatModel(row["model_id"], provider=OpenAIProvider(openai_client=client))
