@@ -157,13 +157,13 @@ def redeem(
     signing_input = f"{prefix}.{body}".encode("ascii")
     try:
         given = _b64d(signature)
-    except Exception as exc:  # noqa: BLE001 - any decode failure is a refusal
+    except Exception as exc:
         raise TransferError("malformed", "Signature is not valid base64url.") from exc
     if not hmac.compare_digest(given, _signature(signing_key, signing_input)):
         raise TransferError("bad_signature", "Signature does not match.")
     try:
         claims = json.loads(_b64d(body))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise TransferError("malformed", "Payload is not valid JSON.") from exc
     if not isinstance(claims, dict):
         raise TransferError("malformed", "Payload is not an object.")
@@ -184,7 +184,7 @@ def tenant_target(
     value: str | None,
     *,
     apex: str = "hoja.work",
-    reserved: tuple[str, ...] = ("app", "www"),
+    reserved: tuple[str, ...] | None = None,
 ) -> str | None:
     """Normalise a return target on a *tenant* origin of ours, or return None.
 
@@ -195,6 +195,13 @@ def tenant_target(
     """
     from urllib.parse import urlsplit
 
+    if reserved is None:
+        # One list, not two: a name the signup gate and the provisioner refuse can never be a
+        # tenant, so it must never be a return target either. "api" (the connector broker) is in
+        # that list; keeping a second copy here is how "admin" silently stayed a valid host.
+        from hoja_server.signup_policy import RESERVED_SLUGS
+
+        reserved = tuple(sorted(RESERVED_SLUGS))
     candidate = (value or "").strip()
     parts = urlsplit(candidate)
     host = (parts.hostname or "").lower()

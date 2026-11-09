@@ -157,6 +157,15 @@ async def test_exchange_sends_basic_auth_verifier_and_redirect() -> None:
 
 
 @respx.mock
+async def test_exchange_sends_the_overridden_redirect_uri() -> None:
+    broker = "https://api.hoja.work/api/connectors/calendly/callback"
+    route = respx.post(TOKEN_URL).mock(return_value=httpx.Response(200, json=_token_body()))
+    async with httpx.AsyncClient() as http:
+        await exchange_code(http, _config(), code="c", code_verifier="v", redirect_uri=broker)
+    assert parse_qs(route.calls.last.request.content.decode())["redirect_uri"] == [broker]
+
+
+@respx.mock
 async def test_exchange_refuses_a_response_without_a_refresh_token() -> None:
     """Rotation is on: a grant with no refresh token dies in two hours with no way to renew it."""
     respx.post(TOKEN_URL).mock(
@@ -276,3 +285,14 @@ async def test_revoke_with_a_bad_client_raises_a_config_error() -> None:
     async with httpx.AsyncClient() as http:
         with pytest.raises(ConnectorConfigError):
             await revoke_token(http, _config(), token="refresh-1")
+
+
+def test_an_explicit_redirect_overrides_the_configured_one_on_both_legs() -> None:
+    """A multi-tenant deployment registers one broker callback, not one per tenant. Calendly
+    compares the redirect byte for byte at the token endpoint, so both legs must carry it."""
+    broker = "https://api.hoja.work/api/connectors/calendly/callback"
+    _verifier, challenge = pkce_pair()
+    url = authorization_url(
+        _config(), state="s", code_challenge=challenge, redirect_uri=broker
+    )
+    assert parse_qs(urlparse(url).query)["redirect_uri"] == [broker]

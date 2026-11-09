@@ -46,31 +46,57 @@ used so a future change on the redirecting host cannot break the flow.
 ## The redirect URI, honestly
 
 Calendly allows **one** redirect URI per app. A multi-tenant deployment therefore cannot register
-`https://<tenant>/api/connectors/calendly/callback` for every tenant. The connector is built for
-that reality:
+`https://<tenant>/api/connectors/calendly/callback` for every tenant, and it does not create one
+app per tenant either (four client ids, four secrets to rotate, a console step per signup).
 
-1. The user clicks Connect on their tenant. `GET /api/connectors/calendly/start` mints a sealed,
-   single-use state carrying the user, the organization, the PKCE verifier and the tenant origin
-   to return to.
-2. The browser is sent to the **registered** host,
-   `GET /api/connectors/calendly/handoff`, which sets a short-lived HttpOnly cookie bound to the
-   state nonce and redirects to Calendly. This route needs no session, because a tenant other
-   than the registered host has no cookie there.
-3. Calendly returns to the registered callback. The callback requires the cookie to match the
-   state nonce, then exchanges the code, stores the grant for the organization in the state, and
-   returns the browser to the tenant it came from.
+It registers a single **broker** callback on a host that is not any tenant:
 
-Step 2 is what replaces the session check that a same-host callback (Slack, Google) relies on.
-Without it, an attacker could mint a state for their own workspace and trick a victim into
-binding their calendar to it. With it, the callback only completes in the browser that started
-the flow.
+```
+https://api.hoja.work/api/connectors/calendly/callback
+```
 
-Alternatives, and why they are not the default: one Calendly app per tenant (four client ids and
-secrets to rotate, and a manual console step per tenant), or a parent-domain session cookie
-(changing authentication for every feature to serve one connector).
+The flow, end to end:
 
-Open items a deployment must decide: a Production Calendly app before real customer data (the
-provisioned one is Sandbox), and how the single callback host is chosen.
+1. `GET /api/connectors/calendly/start` runs on the tenant under its session and mints a sealed,
+   single-use state carrying the user, the organization, the tenant origin, the PKCE verifier and
+   an expiry. Calendly is given `redirect_uri=https://api.hoja.work/…/callback`.
+2. Calendly returns the browser to the broker. The broker verifies the seal and expiry, checks
+   that the tenant origin is really one of our workspaces (`*.hoja.work`, not a reserved
+   control-plane name, present in the tenant registry), and redirects to
+   `https://<tenant>/api/connectors/calendly/finish?code=…&state=…`.
+   **It never stores a token and never calls Calendly**, so a compromised broker can misdirect a
+   grant but cannot mint one.
+3. `/finish` runs on the tenant under the same session. It re-verifies the state (single-use,
+   bound to that user and workspace, host must match), exchanges the code with the **same**
+   `redirect_uri` — Calendly compares it byte for byte — and stores the sealed grant.
+
+No open redirect: a state naming `evil.com`, the apex, `api`, `app`, `www`, `admin` or an
+unregistered `ghost.hoja.work` is refused with 403 and no `Location` header. The broker host is
+configurable with `HOJA_CONNECTOR_BROKER_URL` (default `https://api.hoja.work`).
+
+### Self-hosted (OSS) installs
+
+A single-tenant install needs no broker: with `HOJA_CONNECTOR_BROKER_URL` unset, the registered
+callback is the install's own host (`HOJA_CALENDLY_REDIRECT_URI`) and `/callback` completes the
+exchange directly. That is the OSS default and the documented behaviour.
+
+## What infrastructure must do for the broker (not done by this change)
+
+`api.hoja.work` resolves today (Cloudflare) and 302s to `https://hoja.work/`; nothing serves the
+broker route yet. For `/api/connectors/calendly/callback` on that host to reach Hoja:
+
+1. **Proxy target.** Point `api.hoja.work` at the Hoja server that serves the tenants (the same
+   app that exposes the connector routes). No new service, database or secret: the broker is a
+   route, not a deployment. Its only inputs are the sealed state and the query string.
+2. **Cloudflare.** Remove the redirect to `hoja.work` for `/api/connectors/calendly/*` and proxy
+   those paths to the origin (or use a proxied DNS record for the whole host). Keep the redirect
+   for every other path so the host does not become a second front door.
+3. **Caddy / ingress.** Add `api.hoja.work` to the site block with the same TLS and upstream as
+   the tenants, and remove any host allow-list that rejects it. The MCP binding and the tenant
+   routes are unaffected.
+4. **Do not** route the broker to a tenant vhost: the state is what names the tenant.
+
+None of this is verified here; it is infrastructure work and is listed as unverified in the PR.
 
 ## Scopes
 

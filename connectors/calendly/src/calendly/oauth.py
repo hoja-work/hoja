@@ -83,12 +83,23 @@ def s256(verifier: str) -> str:
 
 
 def authorization_url(
-    config: CalendlyOAuthConfig, *, state: str, code_challenge: str, scope: str | None = None
+    config: CalendlyOAuthConfig,
+    *,
+    state: str,
+    code_challenge: str,
+    scope: str | None = None,
+    redirect_uri: str | None = None,
 ) -> str:
+    """The authorize URL.
+
+    `redirect_uri` overrides the configured one because a multi-tenant deployment registers a
+    single shared broker callback rather than one per tenant. Calendly compares this value byte
+    for byte at the token endpoint too, so both legs must pass the same string.
+    """
     params = {
         "client_id": config.client_id,
         "response_type": "code",
-        "redirect_uri": config.redirect_uri,
+        "redirect_uri": redirect_uri or config.redirect_uri,
         "scope": scope or " ".join(READ_SCOPES),
         "state": state,
         "code_challenge": code_challenge,
@@ -103,6 +114,7 @@ async def exchange_code(
     *,
     code: str,
     code_verifier: str,
+    redirect_uri: str | None = None,
 ) -> CalendlyToken:
     """Exchange the authorization code. The client secret goes in HTTP Basic (the app is a
     confidential Web client) and the redirect URI repeats the authorize value exactly."""
@@ -112,7 +124,7 @@ async def exchange_code(
         {
             "grant_type": "authorization_code",
             "code": code,
-            "redirect_uri": config.redirect_uri,
+            "redirect_uri": redirect_uri or config.redirect_uri,
             "code_verifier": code_verifier,
         },
         what="token request",
