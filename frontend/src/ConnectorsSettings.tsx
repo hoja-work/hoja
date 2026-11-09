@@ -19,6 +19,12 @@ type PendingAction = {
   createdAt: string;
 };
 
+type ConnectorConfig = {
+  github?: boolean;
+  /** The app's public install page. Present only on a deployment with a configured GitHub App. */
+  githubInstallUrl?: string | null;
+};
+
 function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('hoja_token');
   return token && token !== 'session' ? { authorization: `Bearer ${token}` } : {};
@@ -38,6 +44,7 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
   const [accounts, setAccounts] = useState<ConnectorAccount[]>([]);
   const [actions, setActions] = useState<PendingAction[]>([]);
+  const [config, setConfig] = useState<ConnectorConfig>({});
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const [refresh, setRefresh] = useState(0);
@@ -49,17 +56,21 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
   const calendlyAccounts = accounts.filter((a) => a.provider === 'calendly');
   const sentryAccounts = accounts.filter((a) => a.provider === 'sentry');
   const zoomAccounts = accounts.filter((a) => a.provider === 'zoom');
+  const githubAccounts = accounts.filter((a) => a.provider === 'github');
+  const githubInstallUrl = typeof config.githubInstallUrl === 'string' ? config.githubInstallUrl : null;
 
   useEffect(() => {
     let live = true;
     Promise.all([
       api<{ accounts: ConnectorAccount[] }>('/api/connectors/accounts'),
       api<{ actions: PendingAction[] }>('/api/connectors/actions'),
+      api<ConnectorConfig>('/api/connectors/config'),
     ])
-      .then(([a, p]) => {
+      .then(([a, p, c]) => {
         if (!live) return;
         setAccounts(a.accounts);
         setActions(p.actions);
+        setConfig(c);
       })
       .catch((e) => live && setMessage((e as Error).message))
       .finally(() => live && setLoading(false));
@@ -202,6 +213,42 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
           {loading && <li role="status">Checking connected accounts…</li>}
           {!loading && zoomAccounts.length === 0 && <li className="connector-empty">No Zoom account connected.</li>}
           {zoomAccounts.map((a) => (
+            <li key={a.id}>
+              <span className="connector-account-icon" aria-hidden="true">{a.externalAccount.slice(0, 1).toUpperCase()}</span>
+              <span className="connector-account-copy"><b>{a.externalAccount}</b><small>Personal account · {a.status}</small></span>
+              <button className="outline danger" onClick={() => revoke(a.id)}>Disconnect</button>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="settings-group connector-settings">
+        {/* Product name as the heading: UI-RULES forbids the uppercase kicker. */}
+        <h2>GitHub</h2>
+        <p className="settings-section-intro">Read-only access to your repositories, files, issues and pull requests. Nothing is created, commented, merged or pushed.</p>
+        <div className="setting-row">
+          <div>
+            <b>Your repositories</b>
+            <p>Hoja reads with your own GitHub permissions and the app’s read-only permissions. A GitHub connection is personal to you and is never shared with the workspace.</p>
+          </div>
+          <a className="primary" href="/api/connectors/github/start">Connect GitHub</a>
+        </div>
+        {githubInstallUrl && (
+          <div className="setting-row">
+            <div>
+              <b>Private repositories</b>
+              <p>GitHub only lets the app read what it is installed on, and only what you can already see. Install it on the account that owns the private repositories you want Hoja to read. Public repositories need no installation.</p>
+            </div>
+            <a href={githubInstallUrl}>Install on GitHub</a>
+          </div>
+        )}
+        {config.github === false && (
+          <p className="settings-section-intro">This deployment has no GitHub App configured.</p>
+        )}
+        <ul aria-label="Connected GitHub accounts" className="connector-account-list">
+          {loading && <li role="status">Checking connected accounts…</li>}
+          {!loading && githubAccounts.length === 0 && <li className="connector-empty">No GitHub account connected.</li>}
+          {githubAccounts.map((a) => (
             <li key={a.id}>
               <span className="connector-account-icon" aria-hidden="true">{a.externalAccount.slice(0, 1).toUpperCase()}</span>
               <span className="connector-account-copy"><b>{a.externalAccount}</b><small>Personal account · {a.status}</small></span>

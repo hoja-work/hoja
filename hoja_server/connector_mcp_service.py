@@ -32,6 +32,7 @@ from sqlalchemy.engine import Engine
 
 from hoja_server.connectors_api import (
     CALENDLY_PROVIDER,
+    GITHUB_PROVIDER,
     NOTION_PROVIDER,
     PROVIDER,
     SENTRY_PROVIDER,
@@ -291,6 +292,51 @@ def make_zoom_grant_resolver(
     return resolve_grants
 
 
+def make_github_grant_resolver(
+    engine: Engine, *, http: httpx.AsyncClient
+) -> Callable[[Principal, str], Awaitable[list[Any]]]:
+    """Resolve GitHub grants through the eight-hour token store.
+
+    A GitHub App user token expires (8 h measured) and its refresh token rotates, so the grant
+    cannot be a captured string like Slack's: each account gets a live token source that refreshes
+    under a per-account lock. A deployment without GitHub credentials still starts; it simply
+    reports no GitHub accounts instead of failing the whole service.
+    """
+    from github import ConnectorConfigError as GitHubConfigError
+    from github import GitHubAppConfig
+    from github.tools import AccountGrant as GitHubGrant
+
+    from hoja_server.github_tokens import GitHubTokenStore
+
+    try:
+        config = GitHubAppConfig.from_env()
+    except GitHubConfigError:
+        log.info("GitHub is not configured on this deployment; its tools resolve no accounts")
+
+        async def unavailable(_principal: Principal, _account: str) -> list[Any]:
+            return []
+
+        return unavailable
+
+    store = GitHubTokenStore(engine, http, config)
+
+    async def resolve_grants(principal: Principal, account: str) -> list[Any]:
+        grants: list[Any] = []
+        for row in _active_rows(engine, principal, account, GITHUB_PROVIDER):
+            if not row["encrypted_refresh_token"]:
+                continue
+            grants.append(
+                GitHubGrant(
+                    account_id=row["id"],
+                    external_account=row["external_account"],
+                    tokens=store.source(row["id"]),
+                )
+            )
+        return grants
+
+    return resolve_grants
+
+
 def build_connector_mcp_app(
     engine: Engine,
     *,
@@ -364,6 +410,14 @@ def build_connector_mcp_app(
         server,
         signing_key=key,
         resolve_grants=make_zoom_grant_resolver(engine, http=client),
+        http=client,
+    )
+    from github.mcp_server import register_tools as register_github_tools
+
+    register_github_tools(
+        server,
+        signing_key=key,
+        resolve_grants=make_github_grant_resolver(engine, http=client),
         http=client,
     )
     return server.streamable_http_app(**options)

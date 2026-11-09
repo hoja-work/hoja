@@ -137,6 +137,9 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
             "sentryAgent": False,
             "zoom": False,
             "zoomAgent": False,
+            "github": False,
+            "githubAgent": False,
+            "githubInstallUrl": None,
         }
 
         client.post("/onboarding/bootstrap", json=BOOTSTRAP)
@@ -169,6 +172,9 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
             "sentryAgent": False,
             "zoom": False,
             "zoomAgent": False,
+            "github": False,
+            "githubAgent": False,
+            "githubInstallUrl": None,
         }
         assert off.headers["cache-control"] == "no-store"
 
@@ -191,6 +197,9 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
             "sentryAgent": False,
             "zoom": False,
             "zoomAgent": False,
+            "github": False,
+            "githubAgent": False,
+            "githubInstallUrl": None,
         }
         assert "GOCSPX" not in on.text
         assert "cid.apps" not in on.text

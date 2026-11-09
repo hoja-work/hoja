@@ -81,6 +81,7 @@ agent = [
     "calendly-connector",
     "sentry-connector",
     "zoom-connector",
+    "github-connector",
 ]
 
 [tool.uv.sources]
@@ -90,6 +91,7 @@ slack-connector = { path = "connectors/slack", editable = true }
 calendly-connector = { path = "connectors/calendly", editable = true }
 sentry-connector = { path = "connectors/sentry", editable = true }
 zoom-connector = { path = "connectors/zoom", editable = true }
+github-connector = { path = "connectors/github", editable = true }
 
 [project.scripts]
 hoja = "hoja.cli:app"
@@ -116,6 +118,7 @@ artifacts = ["VERSION"]
 "connectors/calendly/src/calendly" = "calendly"
 "connectors/sentry/src/sentry" = "sentry"
 "connectors/zoom/src/zoom" = "zoom"
+"connectors/github/src/github" = "github"
 
 [tool.ruff]
 target-version = "py310"
