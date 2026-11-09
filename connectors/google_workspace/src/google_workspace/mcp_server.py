@@ -16,7 +16,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from google_workspace import tools
-from google_workspace.errors import ConnectorAuthError
+from google_workspace.errors import ConnectorAuthError, ConnectorError
 from google_workspace.principal import Principal, verify_principal
 from google_workspace.tools import AccountGrant
 
@@ -62,13 +62,23 @@ def build_server(
             raise ToolError(f"Several accounts are connected; pass account. Options: {options}.")
         return grants[0]
 
+    async def _run(step: Awaitable[Any]) -> Any:
+        """Run one connector call, turning typed connector errors into a tool error the agent can
+        relay. Without this the MCP layer reports only "Error executing tool <name>", so a user
+        whose account needs reconnecting is never told that."""
+        try:
+            return await step
+        except ConnectorError as exc:
+            message = f"{exc} {exc.hint}" if exc.hint else str(exc)
+            raise ToolError(message.strip()) from exc
+
     @server.tool(description="Search Gmail messages with Gmail query syntax.")
     async def gmail_search(
         ctx: Context, query: str, max_results: int = 10, account: str | None = None
     ) -> list[dict[str, Any]]:
         principal = await _principal(ctx)
         grant = await _grant(principal, account)
-        results = await tools.gmail_search(http, grant, query, max_results)
+        results = await _run(tools.gmail_search(http, grant, query, max_results))
         return [m.model_dump() for m in results]
 
     @server.tool(description="Search Google Drive files with Drive query syntax.")
@@ -77,7 +87,7 @@ def build_server(
     ) -> list[dict[str, Any]]:
         principal = await _principal(ctx)
         grant = await _grant(principal, account)
-        results = await tools.drive_search(http, grant, query, max_results)
+        results = await _run(tools.drive_search(http, grant, query, max_results))
         return [f.model_dump() for f in results]
 
     @server.tool(description="List calendar events between two ISO-8601 datetimes.")
@@ -86,7 +96,7 @@ def build_server(
     ) -> list[dict[str, Any]]:
         principal = await _principal(ctx)
         grant = await _grant(principal, account)
-        results = await tools.calendar_events(http, grant, start, end)
+        results = await _run(tools.calendar_events(http, grant, start, end))
         return [e.model_dump() for e in results]
 
     @server.tool(description="Read the text of a Google Doc by document id.")
@@ -95,6 +105,6 @@ def build_server(
     ) -> dict[str, Any]:
         principal = await _principal(ctx)
         grant = await _grant(principal, account)
-        return (await tools.docs_get(http, grant, document_id)).model_dump()
+        return (await _run(tools.docs_get(http, grant, document_id))).model_dump()
 
     return server

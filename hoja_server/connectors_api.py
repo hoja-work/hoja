@@ -249,8 +249,38 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
             "created_at": _now(),
             "updated_at": _now(),
         }
+        # Reconnecting an account replaces its grant instead of adding a second one: two active
+        # rows for one Google account would let a revoke free only one of them and leave the other
+        # silently usable.
+        owner_filter = (
+            connector_account.c.owner_user_id.is_(None)
+            if row["owner_user_id"] is None
+            else connector_account.c.owner_user_id == row["owner_user_id"]
+        )
         with engine.begin() as conn:
-            conn.execute(connector_account.insert().values(**row))
+            existing = conn.execute(
+                select(connector_account.c.id).where(
+                    and_(
+                        connector_account.c.organization_id == org,
+                        connector_account.c.provider == PROVIDER,
+                        connector_account.c.external_account == email,
+                        connector_account.c.status == "active",
+                        owner_filter,
+                    )
+                )
+            ).first()
+            if existing is None:
+                conn.execute(connector_account.insert().values(**row))
+            else:
+                conn.execute(
+                    update(connector_account)
+                    .where(connector_account.c.id == existing[0])
+                    .values(
+                        scopes=row["scopes"],
+                        encrypted_refresh_token=row["encrypted_refresh_token"],
+                        updated_at=row["updated_at"],
+                    )
+                )
         return RedirectResponse("/?connector=google-connected", status_code=302)
 
     async def connector_config(request: Request):
@@ -267,8 +297,14 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
             google_available = True
         except (ConnectorConfigError, SecretBoxError):
             google_available = False
+        # Connecting needs only the OAuth client; handing the account to an agent also needs a
+        # signing key, because that is what authenticates the principal on HOJA_CONNECTOR_MCP_URL.
+        # One flag for both reported a deployment as ready while every turn silently got no toolset.
+        agent_available = google_available and bool(
+            os.environ.get("HOJA_CONNECTOR_SIGNING_KEY", "").strip()
+        )
         return JSONResponse(
-            {"googleWorkspace": google_available},
+            {"googleWorkspace": google_available, "googleWorkspaceAgent": agent_available},
             headers={"cache-control": "no-store"},
         )
 

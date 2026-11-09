@@ -290,3 +290,84 @@ def test_unauthenticated_request_is_rejected(tmp_path) -> None:
     with TestClient(app) as client:
         res = client.get("/api/connectors/accounts")
     assert res.status_code == 401
+
+
+def test_config_separates_connect_readiness_from_agent_readiness(tmp_path, monkeypatch) -> None:
+    """Connecting needs the OAuth client; the agent needs a signing key as well. Reporting one flag
+    for both let a deployment look connected while every agent turn silently got no toolset."""
+    _, app, _admin = _setup(tmp_path)
+    monkeypatch.delenv("HOJA_CONNECTOR_SIGNING_KEY", raising=False)
+    with TestClient(app) as client:
+        without_key = client.get("/api/connectors/config").json()
+        monkeypatch.setenv("HOJA_CONNECTOR_SIGNING_KEY", "sign-key")
+        with_key = client.get("/api/connectors/config").json()
+    assert without_key == {"googleWorkspace": True, "googleWorkspaceAgent": False}
+    assert with_key == {"googleWorkspace": True, "googleWorkspaceAgent": True}
+
+
+@respx.mock
+def test_callback_state_is_single_use(tmp_path) -> None:
+    """A replayed callback URL must not mint a second grant for the same consent."""
+    engine, app, admin = _setup(tmp_path)
+    respx.post(TOKEN_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={"access_token": "a", "refresh_token": "1//R1", "expires_in": 3599, "scope": "s"},
+        )
+    )
+    respx.get(PROFILE_URL).mock(
+        return_value=httpx.Response(200, json={"emailAddress": "ana@example.test"})
+    )
+    with TestClient(app) as client:
+        state = _state_from(_start(client, admin["token"]))
+        url = f"/api/connectors/google/callback?code=c&state={quote(state, safe='')}"
+        first = client.get(url, headers={"Authorization": f"Bearer {admin['token']}"},
+                           follow_redirects=False)
+        second = client.get(url, headers={"Authorization": f"Bearer {admin['token']}"},
+                            follow_redirects=False)
+    assert first.status_code == 302
+    assert second.status_code == 400
+    assert "already used" in second.json()["error"]
+    with engine.connect() as conn:
+        assert len(conn.execute(connector_account.select()).all()) == 1
+
+
+@respx.mock
+def test_reconnecting_the_same_account_updates_one_row(tmp_path) -> None:
+    """Connecting the same Google account twice must not leave two active grants, or a revoke of
+    one of them would leave the other silently usable."""
+    engine, app, admin = _setup(tmp_path)
+    respx.post(TOKEN_URL).mock(
+        side_effect=[
+            httpx.Response(
+                200,
+                json={"access_token": "a1", "refresh_token": "1//FIRST", "expires_in": 3599,
+                      "scope": "s"},
+            ),
+            httpx.Response(
+                200,
+                json={"access_token": "a2", "refresh_token": "1//SECOND", "expires_in": 3599,
+                      "scope": "s"},
+            ),
+        ]
+    )
+    respx.get(PROFILE_URL).mock(
+        return_value=httpx.Response(200, json={"emailAddress": "ana@example.test"})
+    )
+    with TestClient(app) as client:
+        for _ in range(2):
+            state = _state_from(_start(client, admin["token"]))
+            res = client.get(
+                f"/api/connectors/google/callback?code=c&state={quote(state, safe='')}",
+                headers={"Authorization": f"Bearer {admin['token']}"},
+                follow_redirects=False,
+            )
+            assert res.status_code == 302
+        listing = client.get(
+            "/api/connectors/accounts", headers={"Authorization": f"Bearer {admin['token']}"}
+        ).json()
+    assert [a["externalAccount"] for a in listing["accounts"]] == ["ana@example.test"]
+    with engine.connect() as conn:
+        rows = conn.execute(connector_account.select()).mappings().all()
+    assert len(rows) == 1
+    assert decrypt_secret(rows[0]["encrypted_refresh_token"]) == "1//SECOND"
