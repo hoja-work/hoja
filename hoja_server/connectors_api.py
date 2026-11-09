@@ -1,4 +1,4 @@
-"""Google Workspace connector routes: connect, callback, list, and revoke connected accounts.
+"""Connector routes: connect, callback, list, and revoke connected accounts.
 
 Pending OAuth state (user, org, scope, PKCE verifier, expiry) is carried in an AES-GCM sealed
 `state` value, so the callback cannot be forged; a hashed nonce in `oauth_state_nonce` makes each state single-use.
@@ -23,6 +23,12 @@ from google_workspace.oauth import (
     pkce_pair,
 )
 from google_workspace.principal import sign_principal
+from notion import ConnectorConfigError as NotionConfigError
+from notion import NotionOAuthConfig
+from notion.errors import ConnectorAPIError as NotionAPIError
+from notion.errors import ConnectorAuthError as NotionAuthError
+from notion.oauth import authorization_url as notion_authorization_url
+from notion.oauth import exchange_code as notion_exchange_code
 from sqlalchemy import and_, or_, select, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
@@ -35,6 +41,7 @@ from hoja_server.db import connector_account, connector_action, oauth_state_nonc
 from hoja_server.secrets_box import SecretBoxError, decrypt_secret, encrypt_secret
 
 PROVIDER = "google_workspace"
+NOTION_PROVIDER = "notion"
 STATE_TTL_SECONDS = 600
 GMAIL_PROFILE_URL = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
 GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
@@ -78,7 +85,11 @@ def _serialize(row) -> dict:
 
 
 def connector_binding_for(engine: Engine, org: str, uid: str):
-    """Return the MCP binding for this user when they have an active Google account, else None."""
+    """Return the MCP binding for this user when they have an active connector account.
+
+    The connector MCP service registers the Google and Notion tools on one server, so one binding
+    covers either provider (or both).
+    """
     url = os.environ.get("HOJA_CONNECTOR_MCP_URL", "").strip()
     key = os.environ.get("HOJA_CONNECTOR_SIGNING_KEY", "").strip()
     if not url or not key:
@@ -88,7 +99,7 @@ def connector_binding_for(engine: Engine, org: str, uid: str):
             select(connector_account.c.id).where(
                 and_(
                     connector_account.c.organization_id == org,
-                    connector_account.c.provider == PROVIDER,
+                    connector_account.c.provider.in_((PROVIDER, NOTION_PROVIDER)),
                     connector_account.c.status == "active",
                     or_(
                         connector_account.c.owner_user_id == uid,
@@ -283,8 +294,110 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
                 )
         return RedirectResponse("/?connector=google-connected", status_code=302)
 
+    async def notion_start(request: Request):
+        """Begin the Notion OAuth flow. Notion grants are always user-scoped (`owner=user`).
+
+        There is no PKCE and no `scope` parameter: least privilege lives on the integration
+        object, and the consent screen shows "read content" only.
+        """
+        uid, org, failure = await _require_user(request)
+        if failure:
+            return failure
+        if request.query_params.get("scope", "user") != "user":
+            return _error("Notion connections are personal to the installing user.", 400)
+        try:
+            config = NotionOAuthConfig.from_env()
+            state = encrypt_secret(
+                json.dumps(
+                    {
+                        "uid": uid,
+                        "org": org,
+                        "exp": int(time.time()) + STATE_TTL_SECONDS,
+                        "nonce": uuid.uuid4().hex,
+                    }
+                )
+            )
+        except (NotionConfigError, SecretBoxError) as exc:
+            return _error(str(exc), 503, getattr(exc, "hint", None))
+        return RedirectResponse(notion_authorization_url(config, state=state), status_code=302)
+
+    async def notion_callback(request: Request):
+        uid, org, failure = await _require_user(request)
+        if failure:
+            return failure
+        if request.query_params.get("error"):
+            return _error("Notion did not grant access.", 400)
+        code = request.query_params.get("code", "")
+        sealed = request.query_params.get("state", "")
+        if not code or not sealed:
+            return _error("code and state are required", 400)
+        try:
+            pending = json.loads(decrypt_secret(sealed))
+            config = NotionOAuthConfig.from_env()
+        except (SecretBoxError, ValueError, NotionConfigError) as exc:
+            return _error("Invalid or expired connection request.", 400, getattr(exc, "hint", None))
+        if pending.get("exp", 0) < time.time():
+            return _error("Connection request expired. Start again.", 400)
+        if pending.get("uid") != uid or pending.get("org") != org:
+            return _error("Connection request belongs to a different session.", 403)
+        if not _consume_state(engine, str(pending.get("nonce", "")), int(pending["exp"])):
+            return _error("Connection request was already used. Start again.", 400)
+
+        async with httpx.AsyncClient(timeout=15) as http:
+            try:
+                token = await notion_exchange_code(http, config, code=code)
+            except NotionAuthError as exc:
+                return _error(str(exc), 400, exc.hint)
+            except (NotionAPIError, httpx.HTTPError) as exc:
+                # Provider failure, not the user's fault. The message carries no credential.
+                return _error(f"Could not reach Notion: {exc}", 502)
+
+        workspace = (token.workspace_name or "").strip() or token.workspace_id
+        if not workspace:
+            return _error("Notion did not identify the connected workspace.", 502)
+        row = {
+            "id": uuid.uuid4().hex,
+            "organization_id": org,
+            "owner_user_id": uid,
+            "provider": NOTION_PROVIDER,
+            "external_account": workspace,
+            # Notion has no OAuth scope parameter. This records the integration capability the
+            # consent screen showed, so a future write path cannot claim more than was granted.
+            "scopes": "read_content",
+            "encrypted_refresh_token": encrypt_secret(token.access_token),
+            "status": "active",
+            "created_at": _now(),
+            "updated_at": _now(),
+        }
+        # Reconnecting the same workspace replaces its grant rather than adding a second row.
+        with engine.begin() as conn:
+            existing = conn.execute(
+                select(connector_account.c.id).where(
+                    and_(
+                        connector_account.c.organization_id == org,
+                        connector_account.c.provider == NOTION_PROVIDER,
+                        connector_account.c.external_account == workspace,
+                        connector_account.c.owner_user_id == uid,
+                        connector_account.c.status == "active",
+                    )
+                )
+            ).first()
+            if existing is None:
+                conn.execute(connector_account.insert().values(**row))
+            else:
+                conn.execute(
+                    update(connector_account)
+                    .where(connector_account.c.id == existing[0])
+                    .values(
+                        scopes=row["scopes"],
+                        encrypted_refresh_token=row["encrypted_refresh_token"],
+                        updated_at=row["updated_at"],
+                    )
+                )
+        return RedirectResponse("/?connector=notion-connected", status_code=302)
+
     async def connector_config(request: Request):
-        """Which connectors this *deployment* can actually run.
+        """Which connectors this deployment can actually run.
 
         The setup wizard must not offer a connection that could never complete,
         and it must not make the deployment's secrets public to answer that.
@@ -303,8 +416,21 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
         agent_available = google_available and bool(
             os.environ.get("HOJA_CONNECTOR_SIGNING_KEY", "").strip()
         )
+        try:
+            NotionOAuthConfig.from_env()
+            notion_available = True
+        except (NotionConfigError, SecretBoxError):
+            notion_available = False
+        notion_agent = notion_available and bool(
+            os.environ.get("HOJA_CONNECTOR_SIGNING_KEY", "").strip()
+        )
         return JSONResponse(
-            {"googleWorkspace": google_available, "googleWorkspaceAgent": agent_available},
+            {
+                "googleWorkspace": google_available,
+                "googleWorkspaceAgent": agent_available,
+                "notion": notion_available,
+                "notionAgent": notion_agent,
+            },
             headers={"cache-control": "no-store"},
         )
 
@@ -317,7 +443,6 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
                 select(connector_account).where(
                     and_(
                         connector_account.c.organization_id == org,
-                        connector_account.c.provider == PROVIDER,
                         connector_account.c.status == "active",
                         or_(
                             connector_account.c.owner_user_id == uid,
@@ -354,11 +479,16 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
             refresh = decrypt_secret(row["encrypted_refresh_token"])
         except SecretBoxError:
             return _error("Stored credential is unreadable; contact an administrator.", 500)
-        async with httpx.AsyncClient(timeout=15) as http:
-            response = await http.post(GOOGLE_REVOKE_URL, data={"token": refresh})
-        # Google answers 200 on success and 400 if the token is already invalid; both end the grant.
-        if response.status_code not in (200, 400):
-            return _error("Google did not confirm revocation. Try again.", 502)
+        provider_revoked = False
+        if row["provider"] == PROVIDER:
+            async with httpx.AsyncClient(timeout=15) as http:
+                response = await http.post(GOOGLE_REVOKE_URL, data={"token": refresh})
+            # Google answers 200 on success and 400 if the token is already invalid; both end the grant.
+            if response.status_code not in (200, 400):
+                return _error("Google did not confirm revocation. Try again.", 502)
+            provider_revoked = True
+        # Notion exposes no revocation endpoint: the credential can only be discarded here, and the
+        # user must remove Hoja from the workspace's connections in Notion to invalidate it there.
 
         with engine.begin() as conn:
             conn.execute(
@@ -366,7 +496,15 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
                 .where(connector_account.c.id == account_id)
                 .values(status="revoked", revoked_at=_now(), updated_at=_now(), encrypted_refresh_token="")
             )
-        return JSONResponse({"revoked": True})
+        return JSONResponse(
+            {
+                "revoked": True,
+                "providerRevoked": provider_revoked,
+                "hint": None
+                if provider_revoked
+                else "Remove Hoja in Notion Settings > Connections to invalidate the token there.",
+            }
+        )
 
     async def actions_list(request: Request):
         uid, org, failure = await _require_user(request)
@@ -423,6 +561,8 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
         Route("/api/connectors/config", connector_config, methods=["GET"]),
         Route("/api/connectors/google/start", google_start, methods=["GET"]),
         Route("/api/connectors/google/callback", google_callback, methods=["GET"]),
+        Route("/api/connectors/notion/start", notion_start, methods=["GET"]),
+        Route("/api/connectors/notion/callback", notion_callback, methods=["GET"]),
         Route("/api/connectors/accounts", accounts_list, methods=["GET"]),
         Route("/api/connectors/accounts/{account_id}/revoke", account_revoke, methods=["POST"]),
         Route("/api/connectors/actions", actions_list, methods=["GET"]),

@@ -4,7 +4,7 @@ Subcommands:
   serve   Start the GraphQL backend.
   seed    Create an organization, user, team, states, and token.
   token   Mint a token for an existing organization user.
-  connector-mcp  Serve the Google Workspace MCP tools on HOJA_CONNECTOR_MCP_URL.
+  connector-mcp  Serve the connector MCP tools (Google Workspace and Notion) on HOJA_CONNECTOR_MCP_URL.
 """
 from __future__ import annotations
 
@@ -142,6 +142,21 @@ def _cmd_token(args):
     print(tok)
 
 
+def _cmd_mail(args):
+    """Drain the mail outbox once. Safe to run on a schedule, safe to re-run."""
+    from hoja_server import mail_config, mail_outbox
+
+    config = mail_config.current()
+    if not config.configured:
+        print("Email is not configured (HOJA_MAIL_TRANSPORT=disabled); nothing sent.",
+              file=sys.stderr)
+        raise SystemExit(2)
+    engine = make_engine(_database_target(args))
+    result = mail_outbox.deliver_pending(engine, config, limit=args.limit)
+    print(f"claimed={result['claimed']} sent={result['sent']} failed={result['failed']}")
+    raise SystemExit(0 if result["failed"] == 0 else 1)
+
+
 def _cmd_connector_mcp(args):
     """Serve the connector MCP tools. The Hoja server signs a principal per turn and hands the
     agent this address as HOJA_CONNECTOR_MCP_URL; nothing else authenticates the caller."""
@@ -217,9 +232,16 @@ def main(argv=None):
     t.add_argument("--label", default="cli")
     t.set_defaults(func=_cmd_token)
 
+    md = sub.add_parser("mail", help="deliver queued application email once")
+    md.add_argument("--tenant", default="default")
+    md.add_argument("--database-url", default=None)
+    md.add_argument("--db", default=None)
+    md.add_argument("--limit", type=int, default=25)
+    md.set_defaults(func=_cmd_mail)
+
     cm = sub.add_parser(
         "connector-mcp",
-        help="serve the Google Workspace MCP tools that HOJA_CONNECTOR_MCP_URL points at",
+        help="serve the connector MCP tools that HOJA_CONNECTOR_MCP_URL points at",
     )
     cm.add_argument("--tenant", default="default")
     cm.add_argument("--database-url", default=None, help="explicit SQLAlchemy database URL")

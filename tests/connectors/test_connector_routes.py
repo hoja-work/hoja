@@ -301,8 +301,13 @@ def test_config_separates_connect_readiness_from_agent_readiness(tmp_path, monke
         without_key = client.get("/api/connectors/config").json()
         monkeypatch.setenv("HOJA_CONNECTOR_SIGNING_KEY", "sign-key")
         with_key = client.get("/api/connectors/config").json()
-    assert without_key == {"googleWorkspace": True, "googleWorkspaceAgent": False}
-    assert with_key == {"googleWorkspace": True, "googleWorkspaceAgent": True}
+    assert without_key["googleWorkspace"] is True
+    assert without_key["googleWorkspaceAgent"] is False
+    # Notion is configured separately; this deployment has no Notion client.
+    assert without_key["notion"] is False
+    assert without_key["notionAgent"] is False
+    assert with_key["googleWorkspace"] is True
+    assert with_key["googleWorkspaceAgent"] is True
 
 
 @respx.mock

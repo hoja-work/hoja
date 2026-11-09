@@ -124,13 +124,25 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
         # Public capability flags: available before a session, and still no secret.
         anonymous = client.get("/api/connectors/config")
         assert anonymous.status_code == 200
-        assert anonymous.json() == {"googleWorkspace": False, "googleWorkspaceAgent": False}
+        assert anonymous.json() == {
+            "googleWorkspace": False,
+            "googleWorkspaceAgent": False,
+            "notion": False,
+            "notionAgent": False,
+        }
 
         client.post("/onboarding/bootstrap", json=BOOTSTRAP)
         _clear_google_env(monkeypatch)
+        for name in ("HOJA_NOTION_CLIENT_ID", "HOJA_NOTION_CLIENT_SECRET", "HOJA_NOTION_REDIRECT_URI"):
+            monkeypatch.delenv(name, raising=False)
         off = client.get("/api/connectors/config")
         assert off.status_code == 200
-        assert off.json() == {"googleWorkspace": False, "googleWorkspaceAgent": False}
+        assert off.json() == {
+            "googleWorkspace": False,
+            "googleWorkspaceAgent": False,
+            "notion": False,
+            "notionAgent": False,
+        }
         assert off.headers["cache-control"] == "no-store"
 
         for name, value in GOOGLE_ENV.items():
@@ -139,7 +151,12 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
         assert on.status_code == 200
         # The wizard only needs `googleWorkspace`; `googleWorkspaceAgent` stays false here
         # because this deployment has no signing key yet (covered by the route tests).
-        assert on.json() == {"googleWorkspace": True, "googleWorkspaceAgent": False}
+        assert on.json() == {
+            "googleWorkspace": True,
+            "googleWorkspaceAgent": False,
+            "notion": False,
+            "notionAgent": False,
+        }
         assert "GOCSPX" not in on.text
         assert "cid.apps" not in on.text
     finally:

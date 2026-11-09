@@ -36,16 +36,21 @@ DURABLE_DOCS = {
     "docs/cycle-metrics.md",
     "docs/dependency-security.md",
     "docs/email-adapter.md",
+    "docs/email-delivery.md",
     "docs/hoja-mcp.md",
     "docs/extensions.md",
     "docs/webhooks.md",
     "docs/meetings.md",
+    "docs/decisions.md",
+    "docs/views.md",
+    "docs/notifications/android-and-ux.md",
 }
 
 # No directory gets a blanket Markdown exemption. New component docs and
 # functional skill content must be registered explicitly in the same review.
 COMPONENT_READMES = {
     "connectors/google_workspace/README.md",
+    "connectors/notion/README.md",
     "hoja_server/README.md",
     "vendor/README.md",
 }

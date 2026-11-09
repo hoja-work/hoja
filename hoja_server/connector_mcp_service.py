@@ -4,12 +4,14 @@
 Until something serves that URL the toolset can never be called, so the connector is only
 half-integrated. This module is that something.
 
-Identity comes only from the signed principal header (`google_workspace.mcp_server` verifies
-it); no tool accepts a user id, so one user's Gmail cannot be read by another. Grants are
-resolved from `connector_account` for the principal's own organization, and each access token
-is refreshed from the stored refresh token at call time, so an expired access token is never a
-hard failure. The connector package stays free of Hoja's database; this adapter is the only
-place the two meet.
+Identity comes only from the signed principal header (each connector's `mcp_server` verifies it);
+no tool accepts a user id, so one user's Gmail or Notion workspace cannot be read by another.
+Grants are resolved from `connector_account` for the principal's own organization. Google access
+tokens are refreshed from the stored refresh token at call time; Notion tokens are long-lived.
+The connector packages stay free of Hoja's database; this adapter is the only place they meet.
+
+One server serves both providers (`google_workspace.mcp_server.build_server` plus
+`notion.mcp_server.register_tools`), because the agent runtime holds one toolset URL per turn.
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ from google_workspace.tools import AccountGrant
 from sqlalchemy import and_, or_, select
 from sqlalchemy.engine import Engine
 
-from hoja_server.connectors_api import PROVIDER
+from hoja_server.connectors_api import NOTION_PROVIDER, PROVIDER
 from hoja_server.db import connector_account
 from hoja_server.secrets_box import SecretBoxError, decrypt_secret
 
@@ -36,7 +38,7 @@ log = logging.getLogger("hoja_server.connector_mcp_service")
 DEFAULT_PATH = "/mcp"
 
 
-def _active_rows(engine: Engine, principal: Principal, account: str):
+def _active_rows(engine: Engine, principal: Principal, account: str, provider: str):
     """Active accounts this principal may use, narrowed to `account` (email or id) when given."""
     with engine.connect() as conn:
         rows = conn.execute(
@@ -44,7 +46,7 @@ def _active_rows(engine: Engine, principal: Principal, account: str):
             .where(
                 and_(
                     connector_account.c.organization_id == principal.org_id,
-                    connector_account.c.provider == PROVIDER,
+                    connector_account.c.provider == provider,
                     connector_account.c.status == "active",
                     or_(
                         connector_account.c.owner_user_id == principal.user_id,
@@ -81,7 +83,7 @@ def make_grant_resolver(
 
     async def resolve_grants(principal: Principal, account: str) -> list[AccountGrant]:
         grants: list[AccountGrant] = []
-        for row in _active_rows(engine, principal, account):
+        for row in _active_rows(engine, principal, account, PROVIDER):
             try:
                 refresh_token = decrypt_secret(row["encrypted_refresh_token"])
             except (SecretBoxError, ValueError):
@@ -94,6 +96,38 @@ def make_grant_resolver(
                     account_id=row["id"],
                     external_account=row["external_account"],
                     access_token=_token_for(http, config, refresh_token),
+                )
+            )
+        return grants
+
+    return resolve_grants
+
+
+def make_notion_grant_resolver(
+    engine: Engine, *, http: httpx.AsyncClient
+) -> Callable[[Principal, str], Awaitable[list[Any]]]:
+    """Resolve Notion grants. Notion tokens are long-lived and stored sealed; no refresh flow."""
+    from notion.tools import AccountGrant as NotionGrant
+
+    async def resolve_grants(principal: Principal, account: str) -> list[Any]:
+        grants: list[Any] = []
+        for row in _active_rows(engine, principal, account, NOTION_PROVIDER):
+            try:
+                token = decrypt_secret(row["encrypted_refresh_token"])
+            except (SecretBoxError, ValueError):
+                log.warning("notion account %s has an unreadable token; skipping", row["id"])
+                continue
+            if not token:
+                continue
+
+            async def access_token(value: str = token) -> str:
+                return value
+
+            grants.append(
+                NotionGrant(
+                    account_id=row["id"],
+                    external_account=row["external_account"],
+                    access_token=access_token,
                 )
             )
         return grants
@@ -134,6 +168,14 @@ def build_connector_mcp_app(
         resolve_grants=make_grant_resolver(
             engine, http=client, config=config or GoogleOAuthConfig.from_env()
         ),
+        http=client,
+    )
+    from notion.mcp_server import register_tools as register_notion_tools
+
+    register_notion_tools(
+        server,
+        signing_key=key,
+        resolve_grants=make_notion_grant_resolver(engine, http=client),
         http=client,
     )
     return server.streamable_http_app(**options)
