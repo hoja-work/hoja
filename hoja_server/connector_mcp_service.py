@@ -1,0 +1,139 @@
+"""The process that answers on `HOJA_CONNECTOR_MCP_URL`.
+
+`connector_binding_for` hands the agent two things: this URL and a server-signed principal.
+Until something serves that URL the toolset can never be called, so the connector is only
+half-integrated. This module is that something.
+
+Identity comes only from the signed principal header (`google_workspace.mcp_server` verifies
+it); no tool accepts a user id, so one user's Gmail cannot be read by another. Grants are
+resolved from `connector_account` for the principal's own organization, and each access token
+is refreshed from the stored refresh token at call time, so an expired access token is never a
+hard failure. The connector package stays free of Hoja's database; this adapter is the only
+place the two meet.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+import httpx
+from google_workspace.config import GoogleOAuthConfig
+from google_workspace.errors import ConnectorConfigError
+from google_workspace.principal import SECRET_ENV, Principal
+from google_workspace.tools import AccountGrant
+from sqlalchemy import and_, or_, select
+from sqlalchemy.engine import Engine
+
+from hoja_server.connectors_api import PROVIDER
+from hoja_server.db import connector_account
+from hoja_server.secrets_box import SecretBoxError, decrypt_secret
+
+log = logging.getLogger("hoja_server.connector_mcp_service")
+
+DEFAULT_PATH = "/mcp"
+
+
+def _active_rows(engine: Engine, principal: Principal, account: str):
+    """Active accounts this principal may use, narrowed to `account` (email or id) when given."""
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(connector_account)
+            .where(
+                and_(
+                    connector_account.c.organization_id == principal.org_id,
+                    connector_account.c.provider == PROVIDER,
+                    connector_account.c.status == "active",
+                    or_(
+                        connector_account.c.owner_user_id == principal.user_id,
+                        connector_account.c.owner_user_id.is_(None),
+                    ),
+                )
+            )
+            .order_by(connector_account.c.created_at)
+        ).mappings().all()
+    wanted = (account or "").strip()
+    if not wanted:
+        return rows
+    lowered = wanted.lower()
+    return [row for row in rows if row["external_account"].lower() == lowered or row["id"] == wanted]
+
+
+def _token_for(
+    http: httpx.AsyncClient, config: GoogleOAuthConfig, refresh_token: str
+) -> Callable[[], Awaitable[str]]:
+    async def access_token() -> str:
+        from google_workspace.oauth import refresh_access_token
+
+        tokens = await refresh_access_token(http, config, refresh_token=refresh_token)
+        return tokens.access_token
+
+    return access_token
+
+
+def make_grant_resolver(
+    engine: Engine, *, http: httpx.AsyncClient, config: GoogleOAuthConfig
+) -> Callable[[Principal, str], Awaitable[list[AccountGrant]]]:
+    """Resolve the grants a principal may use. A row that cannot be decrypted is skipped, not fatal:
+    one corrupt credential must not hide a user's other accounts."""
+
+    async def resolve_grants(principal: Principal, account: str) -> list[AccountGrant]:
+        grants: list[AccountGrant] = []
+        for row in _active_rows(engine, principal, account):
+            try:
+                refresh_token = decrypt_secret(row["encrypted_refresh_token"])
+            except (SecretBoxError, ValueError):
+                log.warning("connector account %s has an unreadable token; skipping", row["id"])
+                continue
+            if not refresh_token:
+                continue
+            grants.append(
+                AccountGrant(
+                    account_id=row["id"],
+                    external_account=row["external_account"],
+                    access_token=_token_for(http, config, refresh_token),
+                )
+            )
+        return grants
+
+    return resolve_grants
+
+
+def build_connector_mcp_app(
+    engine: Engine,
+    *,
+    http: httpx.AsyncClient | None = None,
+    config: GoogleOAuthConfig | None = None,
+    signing_key: str | None = None,
+    public_host: str | None = None,
+    path: str = DEFAULT_PATH,
+) -> Any:
+    """Build the ASGI app. Fails closed: without a signing key no principal can be verified, so the
+    service refuses to start rather than serving tools nobody can authenticate to."""
+    from google_workspace.mcp_server import build_server
+
+    key = (signing_key if signing_key is not None else os.environ.get(SECRET_ENV, "")).strip()
+    if not key:
+        raise ConnectorConfigError(
+            f"{SECRET_ENV} must be set to serve the connector.",
+            hint="Use the same value on this service and on the Hoja server that signs principals.",
+        )
+    client = http or httpx.AsyncClient(timeout=20)
+    options: dict[str, Any] = {"streamable_http_path": path, "stateless_http": True}
+    if public_host:
+        from mcp.server.transport_security import TransportSecuritySettings
+
+        options["transport_security"] = TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=[public_host.strip(), public_host.strip() + ":*"],
+        )
+    server = build_server(
+        signing_key=key,
+        resolve_grants=make_grant_resolver(
+            engine, http=client, config=config or GoogleOAuthConfig.from_env()
+        ),
+        http=client,
+    )
+    return server.streamable_http_app(**options)

@@ -124,20 +124,22 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
         # Public capability flags: available before a session, and still no secret.
         anonymous = client.get("/api/connectors/config")
         assert anonymous.status_code == 200
-        assert anonymous.json() == {"googleWorkspace": False}
+        assert anonymous.json() == {"googleWorkspace": False, "googleWorkspaceAgent": False}
 
         client.post("/onboarding/bootstrap", json=BOOTSTRAP)
         _clear_google_env(monkeypatch)
         off = client.get("/api/connectors/config")
         assert off.status_code == 200
-        assert off.json() == {"googleWorkspace": False}
+        assert off.json() == {"googleWorkspace": False, "googleWorkspaceAgent": False}
         assert off.headers["cache-control"] == "no-store"
 
         for name, value in GOOGLE_ENV.items():
             monkeypatch.setenv(name, value)
         on = client.get("/api/connectors/config")
         assert on.status_code == 200
-        assert on.json() == {"googleWorkspace": True}
+        # The wizard only needs `googleWorkspace`; `googleWorkspaceAgent` stays false here
+        # because this deployment has no signing key yet (covered by the route tests).
+        assert on.json() == {"googleWorkspace": True, "googleWorkspaceAgent": False}
         assert "GOCSPX" not in on.text
         assert "cid.apps" not in on.text
     finally:
