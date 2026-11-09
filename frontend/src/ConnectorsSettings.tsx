@@ -39,6 +39,7 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
   const [refresh, setRefresh] = useState(0);
   const googleAccounts = accounts.filter((a) => a.provider === 'google_workspace');
   const notionAccounts = accounts.filter((a) => a.provider === 'notion');
+  const slackAccounts = accounts.filter((a) => a.provider === 'slack');
 
   useEffect(() => {
     let live = true;
@@ -135,6 +136,32 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
           {loading && <li role="status">Checking connected workspaces…</li>}
           {!loading && notionAccounts.length === 0 && <li className="connector-empty">No Notion workspace connected.</li>}
           {notionAccounts.map((a) => (
+            <li key={a.id}>
+              <span className="connector-account-icon" aria-hidden="true">{a.externalAccount.slice(0, 1).toUpperCase()}</span>
+              <span className="connector-account-copy"><b>{a.externalAccount}</b><small>Personal workspace · {a.status}</small></span>
+              <button className="outline danger" onClick={() => revoke(a.id)}>Disconnect</button>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="settings-group connector-settings">
+        {/* No `.settings-section-kicker` here: app/docs/UI-RULES.md forbids uppercase label
+            text, and that class sets `text-transform: uppercase`. The product name is the
+            group heading instead. */}
+        <h2>Slack</h2>
+        <p className="settings-section-intro">Read-only access to channels, channel history, search and the people directory. Nothing is posted or edited.</p>
+        <div className="setting-row">
+          <div>
+            <b>Your workspace</b>
+            <p>Hoja reads with your own Slack permissions. Private channels work only where you are a member.</p>
+          </div>
+          <a className="primary" href="/api/connectors/slack/start">Connect Slack</a>
+        </div>
+        <ul aria-label="Connected Slack workspaces" className="connector-account-list">
+          {loading && <li role="status">Checking connected workspaces…</li>}
+          {!loading && slackAccounts.length === 0 && <li className="connector-empty">No Slack workspace connected.</li>}
+          {slackAccounts.map((a) => (
             <li key={a.id}>
               <span className="connector-account-icon" aria-hidden="true">{a.externalAccount.slice(0, 1).toUpperCase()}</span>
               <span className="connector-account-copy"><b>{a.externalAccount}</b><small>Personal workspace · {a.status}</small></span>

@@ -4,7 +4,7 @@ Subcommands:
   serve   Start the GraphQL backend.
   seed    Create an organization, user, team, states, and token.
   token   Mint a token for an existing organization user.
-  connector-mcp  Serve the connector MCP tools (Google Workspace and Notion) on HOJA_CONNECTOR_MCP_URL.
+  connector-mcp  Serve the connector MCP tools (Google Workspace, Notion and Slack) on HOJA_CONNECTOR_MCP_URL.
 """
 from __future__ import annotations
 

@@ -77,11 +77,13 @@ agent = [
     "pydantic-ai-slim[dbos,openai,mcp]>=2.54,<3.0",
     "google-workspace-connector",
     "notion-connector",
+    "slack-connector",
 ]
 
 [tool.uv.sources]
 google-workspace-connector = { path = "connectors/google_workspace", editable = true }
 notion-connector = { path = "connectors/notion", editable = true }
+slack-connector = { path = "connectors/slack", editable = true }
 
 [project.scripts]
 hoja = "hoja.cli:app"
@@ -104,6 +106,7 @@ artifacts = ["VERSION"]
 "hoja_server/schema.graphql" = "hoja_server/schema.graphql"
 "connectors/google_workspace/src/google_workspace" = "google_workspace"
 "connectors/notion/src/notion" = "notion"
+"connectors/slack/src/slack" = "slack"
 
 [tool.ruff]
 target-version = "py310"

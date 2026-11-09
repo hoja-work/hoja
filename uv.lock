@@ -1161,6 +1161,7 @@ agent = [
     { name = "google-workspace-connector" },
     { name = "notion-connector" },
     { name = "pydantic-ai-slim", extra = ["dbos", "mcp", "openai"] },
+    { name = "slack-connector" },
 ]
 dev = [
     { name = "mypy" },
@@ -1210,6 +1211,7 @@ requires-dist = [
     { name = "respx", marker = "extra == 'dev'", specifier = ">=0.21" },
     { name = "rich", specifier = ">=15.0.0,<16.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.7" },
+    { name = "slack-connector", marker = "extra == 'agent'", editable = "connectors/slack" },
     { name = "sqlalchemy", marker = "extra == 'server'", specifier = ">=2.0" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
     { name = "tomli-w", specifier = ">=1.0" },
@@ -3001,6 +3003,23 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81", size = 34031, upload-time = "2024-12-04T17:35:28.174Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
+]
+
+[[package]]
+name = "slack-connector"
+version = "0.1.0"
+source = { editable = "connectors/slack" }
+dependencies = [
+    { name = "google-workspace-connector" },
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "google-workspace-connector" },
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "pydantic", specifier = ">=2.10" },
 ]
 
 [[package]]

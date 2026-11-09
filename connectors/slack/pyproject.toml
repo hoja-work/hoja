@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "slack-connector"
+version = "0.1.0"
+description = "Read-only Slack connector for Hoja agents"
+requires-python = ">=3.10"
+dependencies = [
+    "httpx>=0.28",
+    "pydantic>=2.10",
+    "google-workspace-connector",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/slack"]

@@ -7,11 +7,12 @@ half-integrated. This module is that something.
 Identity comes only from the signed principal header (each connector's `mcp_server` verifies it);
 no tool accepts a user id, so one user's Gmail or Notion workspace cannot be read by another.
 Grants are resolved from `connector_account` for the principal's own organization. Google access
-tokens are refreshed from the stored refresh token at call time; Notion tokens are long-lived.
+tokens are refreshed from the stored refresh token at call time; Notion and Slack tokens are long-lived.
 The connector packages stay free of Hoja's database; this adapter is the only place they meet.
 
-One server serves both providers (`google_workspace.mcp_server.build_server` plus
-`notion.mcp_server.register_tools`), because the agent runtime holds one toolset URL per turn.
+One server serves every provider (`google_workspace.mcp_server.build_server` plus
+`notion.mcp_server.register_tools` and `slack.mcp_server.register_tools`), because the agent
+runtime holds one toolset URL per turn.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ from google_workspace.tools import AccountGrant
 from sqlalchemy import and_, or_, select
 from sqlalchemy.engine import Engine
 
-from hoja_server.connectors_api import NOTION_PROVIDER, PROVIDER
+from hoja_server.connectors_api import NOTION_PROVIDER, PROVIDER, SLACK_PROVIDER
 from hoja_server.db import connector_account
 from hoja_server.secrets_box import SecretBoxError, decrypt_secret
 
@@ -103,19 +104,19 @@ def make_grant_resolver(
     return resolve_grants
 
 
-def make_notion_grant_resolver(
-    engine: Engine, *, http: httpx.AsyncClient
+def _long_lived_grants(
+    engine: Engine, provider: str, make_grant: Callable[..., Any]
 ) -> Callable[[Principal, str], Awaitable[list[Any]]]:
-    """Resolve Notion grants. Notion tokens are long-lived and stored sealed; no refresh flow."""
-    from notion.tools import AccountGrant as NotionGrant
+    """Grants for providers whose stored credential is the token itself (no refresh flow).
+    Notion and Slack both work this way; Google does not and keeps `make_grant_resolver`."""
 
     async def resolve_grants(principal: Principal, account: str) -> list[Any]:
         grants: list[Any] = []
-        for row in _active_rows(engine, principal, account, NOTION_PROVIDER):
+        for row in _active_rows(engine, principal, account, provider):
             try:
                 token = decrypt_secret(row["encrypted_refresh_token"])
             except (SecretBoxError, ValueError):
-                log.warning("notion account %s has an unreadable token; skipping", row["id"])
+                log.warning("%s account %s has an unreadable token; skipping", provider, row["id"])
                 continue
             if not token:
                 continue
@@ -123,16 +124,29 @@ def make_notion_grant_resolver(
             async def access_token(value: str = token) -> str:
                 return value
 
-            grants.append(
-                NotionGrant(
-                    account_id=row["id"],
-                    external_account=row["external_account"],
-                    access_token=access_token,
-                )
-            )
+            grants.append(make_grant(row["id"], row["external_account"], access_token))
         return grants
 
     return resolve_grants
+
+
+def make_notion_grant_resolver(
+    engine: Engine, *, http: httpx.AsyncClient
+) -> Callable[[Principal, str], Awaitable[list[Any]]]:
+    """Resolve Notion grants. Notion tokens are long-lived and stored sealed; no refresh flow."""
+    from notion.tools import AccountGrant as NotionGrant
+
+    return _long_lived_grants(engine, NOTION_PROVIDER, NotionGrant)
+
+
+def make_slack_grant_resolver(
+    engine: Engine, *, http: httpx.AsyncClient
+) -> Callable[[Principal, str], Awaitable[list[Any]]]:
+    """Resolve Slack grants. The `xoxp-` user token is long-lived (rotation is off), stored
+    sealed, and a revoked token surfaces as a tool error asking the user to reconnect."""
+    from slack.tools import AccountGrant as SlackGrant
+
+    return _long_lived_grants(engine, SLACK_PROVIDER, SlackGrant)
 
 
 def build_connector_mcp_app(
@@ -176,6 +190,14 @@ def build_connector_mcp_app(
         server,
         signing_key=key,
         resolve_grants=make_notion_grant_resolver(engine, http=client),
+        http=client,
+    )
+    from slack.mcp_server import register_tools as register_slack_tools
+
+    register_slack_tools(
+        server,
+        signing_key=key,
+        resolve_grants=make_slack_grant_resolver(engine, http=client),
         http=client,
     )
     return server.streamable_http_app(**options)

@@ -51,6 +51,7 @@ DURABLE_DOCS = {
 COMPONENT_READMES = {
     "connectors/google_workspace/README.md",
     "connectors/notion/README.md",
+    "connectors/slack/README.md",
     "hoja_server/README.md",
     "vendor/README.md",
 }
