@@ -80,6 +80,7 @@ agent = [
     "slack-connector",
     "calendly-connector",
     "sentry-connector",
+    "zoom-connector",
 ]
 
 [tool.uv.sources]
@@ -88,6 +89,7 @@ notion-connector = { path = "connectors/notion", editable = true }
 slack-connector = { path = "connectors/slack", editable = true }
 calendly-connector = { path = "connectors/calendly", editable = true }
 sentry-connector = { path = "connectors/sentry", editable = true }
+zoom-connector = { path = "connectors/zoom", editable = true }
 
 [project.scripts]
 hoja = "hoja.cli:app"
@@ -113,6 +115,7 @@ artifacts = ["VERSION"]
 "connectors/slack/src/slack" = "slack"
 "connectors/calendly/src/calendly" = "calendly"
 "connectors/sentry/src/sentry" = "sentry"
+"connectors/zoom/src/zoom" = "zoom"
 
 [tool.ruff]
 target-version = "py310"

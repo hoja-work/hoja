@@ -36,6 +36,7 @@ from hoja_server.connectors_api import (
     PROVIDER,
     SENTRY_PROVIDER,
     SLACK_PROVIDER,
+    ZOOM_PROVIDER,
 )
 from hoja_server.db import connector_account
 from hoja_server.secrets_box import SecretBoxError, decrypt_secret
@@ -245,6 +246,51 @@ def make_sentry_grant_resolver(
     return resolve_grants
 
 
+def make_zoom_grant_resolver(
+    engine: Engine, *, http: httpx.AsyncClient
+) -> Callable[[Principal, str], Awaitable[list[Any]]]:
+    """Resolve Zoom grants through the one-hour token store.
+
+    Zoom's access token lives 3600 s and its refresh token is single-use, so the grant cannot be a
+    captured string like Slack's: each account gets a live token source that refreshes under a
+    per-account lock. A deployment without Zoom credentials still starts; it simply reports no
+    Zoom accounts instead of failing the whole service.
+    """
+    from zoom import ConnectorConfigError as ZoomConfigError
+    from zoom import ZoomOAuthConfig
+    from zoom.tools import AccountGrant as ZoomGrant
+
+    from hoja_server.zoom_tokens import ZoomTokenStore
+
+    try:
+        config = ZoomOAuthConfig.from_env()
+    except ZoomConfigError:
+        log.info("Zoom is not configured on this deployment; its tools resolve no accounts")
+
+        async def unavailable(_principal: Principal, _account: str) -> list[Any]:
+            return []
+
+        return unavailable
+
+    store = ZoomTokenStore(engine, http, config)
+
+    async def resolve_grants(principal: Principal, account: str) -> list[Any]:
+        grants: list[Any] = []
+        for row in _active_rows(engine, principal, account, ZOOM_PROVIDER):
+            if not row["encrypted_refresh_token"]:
+                continue
+            grants.append(
+                ZoomGrant(
+                    account_id=row["id"],
+                    external_account=row["external_account"],
+                    tokens=store.source(row["id"]),
+                )
+            )
+        return grants
+
+    return resolve_grants
+
+
 def build_connector_mcp_app(
     engine: Engine,
     *,
@@ -310,6 +356,14 @@ def build_connector_mcp_app(
         server,
         signing_key=key,
         resolve_grants=make_sentry_grant_resolver(engine, http=client),
+        http=client,
+    )
+    from zoom.mcp_server import register_tools as register_zoom_tools
+
+    register_zoom_tools(
+        server,
+        signing_key=key,
+        resolve_grants=make_zoom_grant_resolver(engine, http=client),
         http=client,
     )
     return server.streamable_http_app(**options)

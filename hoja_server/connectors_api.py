@@ -69,6 +69,15 @@ from sqlalchemy.exc import IntegrityError
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse
 from starlette.routing import Route
+from zoom import ConnectorConfigError as ZoomConfigError
+from zoom import ZoomOAuthConfig
+from zoom.client import ZoomClient
+from zoom.errors import ConnectorAPIError as ZoomAPIError
+from zoom.errors import ConnectorAuthError as ZoomAuthError
+from zoom.oauth import READ_SCOPES as ZOOM_READ_SCOPES
+from zoom.oauth import authorization_url as zoom_authorization_url
+from zoom.oauth import exchange_code as zoom_exchange_code
+from zoom.oauth import revoke_token as zoom_revoke_token
 
 from hoja_server.connector_actions import Executor, approve_action, reject_action
 from hoja_server.db import connector_account, connector_action, oauth_state_nonce, organization
@@ -80,6 +89,7 @@ NOTION_PROVIDER = "notion"
 SLACK_PROVIDER = "slack"
 CALENDLY_PROVIDER = "calendly"
 SENTRY_PROVIDER = "sentry"
+ZOOM_PROVIDER = "zoom"
 STATE_TTL_SECONDS = 600
 # Calendly accepts exactly ONE redirect URI per app, so a multi-tenant deployment cannot register
 # a callback per tenant. It registers this path on a dedicated broker host instead; the broker
@@ -92,6 +102,10 @@ CALENDLY_FINISH_PATH = "/api/connectors/calendly/finish"
 SENTRY_REDIRECT_PATH = "/api/connectors/sentry/callback"
 SENTRY_FINISH_PATH = "/api/connectors/sentry/finish"
 SENTRY_WEBHOOK_PATH = "/api/connectors/sentry/webhook"
+# Zoom's General App accepts an **allow list** of redirect URIs, so no broker is needed: every
+# tenant returns to its own registered callback. The path is fixed and the origin is checked
+# against the configured list before the browser is ever sent to Zoom.
+ZOOM_REDIRECT_PATH = "/api/connectors/zoom/callback"
 BROKER_URL_ENV = "HOJA_CONNECTOR_BROKER_URL"
 GMAIL_PROFILE_URL = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
 GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
@@ -168,6 +182,7 @@ def connector_binding_for(engine: Engine, org: str, uid: str):
                             SLACK_PROVIDER,
                             CALENDLY_PROVIDER,
                             SENTRY_PROVIDER,
+                            ZOOM_PROVIDER,
                         )
                     ),
                     connector_account.c.status == "active",
@@ -896,6 +911,177 @@ def connector_routes(
         back = f"{tenant}/?connector=calendly-connected" if tenant else "/?connector=calendly-connected"
         return RedirectResponse(back, status_code=302)
 
+    def _zoom_origin(request: Request) -> str | None:
+        """This request's own https origin, or None.
+
+        Zoom's app holds an allow list of full callback URLs, so the origin is the only part the
+        deployment has to derive; the path is fixed. Deriving it from the request (rather than
+        trusting a query parameter) is what keeps a tenant from being handed a callback that
+        belongs to somebody else.
+        """
+        parts = urlsplit(str(request.base_url))
+        if parts.scheme != "https" or not parts.netloc:
+            return None
+        return f"{parts.scheme}://{parts.netloc}"
+
+    async def zoom_start(request: Request):
+        """Begin the Zoom flow on the tenant that owns the registered callback.
+
+        A Zoom token is one person's meeting history, so the connection is personal and an
+        organization-wide grant is refused rather than silently downgraded.
+        """
+        uid, org, failure = await _require_user(request)
+        if failure:
+            return failure
+        if request.query_params.get("scope", "user") != "user":
+            return _error("Zoom connections are personal to the connecting user.", 400)
+        origin = _zoom_origin(request)
+        try:
+            config = ZoomOAuthConfig.from_env()
+        except (ZoomConfigError, SecretBoxError) as exc:
+            return _error(str(exc), 503, getattr(exc, "hint", None))
+        # Refuse before Zoom: an unregistered redirect is rejected by Zoom with a consent-screen
+        # error the user cannot act on, which looks like an outage rather than a configuration gap.
+        redirect_uri = config.redirect_uri_for(origin) if origin else None
+        if redirect_uri is None:
+            return _error(
+                "This address is not a registered Zoom callback on this deployment.",
+                400,
+                hint=(
+                    "Open your workspace URL and connect Zoom from there, or register "
+                    f"{origin or 'this host'}{ZOOM_REDIRECT_PATH} in the Zoom app's allow list."
+                ),
+            )
+        try:
+            state = encrypt_secret(
+                json.dumps(
+                    {
+                        "uid": uid,
+                        "org": org,
+                        "provider": ZOOM_PROVIDER,
+                        "origin": origin,
+                        "exp": int(time.time()) + STATE_TTL_SECONDS,
+                        "nonce": uuid.uuid4().hex,
+                    }
+                )
+            )
+        except SecretBoxError as exc:
+            return _error(str(exc), 503, getattr(exc, "hint", None))
+        return RedirectResponse(
+            zoom_authorization_url(config, state=state, redirect_uri=redirect_uri),
+            status_code=302,
+        )
+
+    async def zoom_callback(request: Request):
+        """The registered redirect URI: redeem the code in the session that started the flow."""
+        uid, org, failure = await _require_user(request)
+        if failure:
+            return failure
+        if request.query_params.get("error"):
+            return _error("Zoom did not grant access.", 400)
+        code = request.query_params.get("code", "")
+        sealed = request.query_params.get("state", "")
+        if not code or not sealed:
+            return _error("code and state are required", 400)
+        try:
+            pending = json.loads(decrypt_secret(sealed))
+            config = ZoomOAuthConfig.from_env()
+        except (SecretBoxError, ValueError, ZoomConfigError) as exc:
+            return _error("Invalid or expired connection request.", 400, getattr(exc, "hint", None))
+        if pending.get("exp", 0) < time.time():
+            return _error("Connection request expired. Start again.", 400)
+        if pending.get("provider") != ZOOM_PROVIDER:
+            return _error("Invalid connection request.", 400)
+        if pending.get("uid") != uid or pending.get("org") != org:
+            # The state is bound to the person and workspace that started it. This is what
+            # replaces a cookie: a callback cannot complete a flow on someone else's behalf.
+            return _error("Connection request belongs to a different session.", 403)
+        origin = _zoom_origin(request)
+        if origin is None or pending.get("origin") != origin:
+            return _error("Connection request belongs to a different workspace.", 403)
+        redirect_uri = config.redirect_uri_for(origin)
+        if redirect_uri is None:
+            return _error(
+                "This address is not a registered Zoom callback on this deployment.", 403
+            )
+        if not _consume_state(engine, str(pending.get("nonce", "")), int(pending["exp"])):
+            return _error("Connection request was already used. Start again.", 400)
+
+        async with httpx.AsyncClient(timeout=15) as http:
+            try:
+                tokens = await zoom_exchange_code(
+                    http, config, code=code, redirect_uri=redirect_uri
+                )
+
+                class _StaticToken:
+                    async def access_token(self) -> str:
+                        return tokens.access_token
+
+                    async def invalidate(self) -> None:
+                        return None
+
+                    def api_base(self) -> str:
+                        return config.api_base
+
+                user = await ZoomClient(http, _StaticToken()).get_current_user()
+            except ZoomAuthError as exc:
+                return _error(str(exc), 400, exc.hint)
+            except (ZoomAPIError, httpx.HTTPError) as exc:
+                return _error(f"Could not reach Zoom: {exc}", 502)
+
+        label = user.email or user.id
+        if not label:
+            return _error("Zoom did not identify the connected account.", 502)
+        expires_at = int(time.time()) + tokens.expires_in
+        row = {
+            "id": uuid.uuid4().hex,
+            "organization_id": org,
+            "owner_user_id": uid,
+            "provider": ZOOM_PROVIDER,
+            "external_account": label,
+            # Record what Zoom granted, so a later code path cannot claim more than the consent
+            # screen showed.
+            "scopes": " ".join(tokens.scopes) if tokens.scopes else " ".join(ZOOM_READ_SCOPES),
+            "encrypted_refresh_token": encrypt_secret(tokens.refresh_token),
+            "encrypted_access_token": encrypt_secret(tokens.access_token),
+            "access_token_expires_at": str(expires_at),
+            # Zoom's own user id for the grant. Nothing addresses it, but it is what an operator
+            # or a support request needs to identify the account inside Zoom.
+            "external_id": user.id or None,
+            "status": "active",
+            "created_at": _now(),
+            "updated_at": _now(),
+        }
+        # Reconnecting the same Zoom account replaces its grant rather than adding a second row.
+        with engine.begin() as conn:
+            existing = conn.execute(
+                select(connector_account.c.id).where(
+                    and_(
+                        connector_account.c.organization_id == org,
+                        connector_account.c.provider == ZOOM_PROVIDER,
+                        connector_account.c.external_account == label,
+                        connector_account.c.owner_user_id == uid,
+                        connector_account.c.status == "active",
+                    )
+                )
+            ).first()
+            if existing is None:
+                conn.execute(connector_account.insert().values(**row))
+            else:
+                conn.execute(
+                    update(connector_account)
+                    .where(connector_account.c.id == existing[0])
+                    .values(
+                        scopes=row["scopes"],
+                        encrypted_refresh_token=row["encrypted_refresh_token"],
+                        encrypted_access_token=row["encrypted_access_token"],
+                        access_token_expires_at=row["access_token_expires_at"],
+                        external_id=row["external_id"],
+                        updated_at=row["updated_at"],
+                    )
+                )
+        return RedirectResponse("/?connector=zoom-connected", status_code=302)
+
     def _sentry_redirect_uri(config: SentryOAuthConfig) -> str:
         """The one string registered on the Sentry integration.
 
@@ -1210,6 +1396,14 @@ def connector_routes(
         sentry_agent = sentry_available and bool(
             os.environ.get("HOJA_CONNECTOR_SIGNING_KEY", "").strip()
         )
+        try:
+            ZoomOAuthConfig.from_env()
+            zoom_available = True
+        except (ZoomConfigError, SecretBoxError):
+            zoom_available = False
+        zoom_agent = zoom_available and bool(
+            os.environ.get("HOJA_CONNECTOR_SIGNING_KEY", "").strip()
+        )
         return JSONResponse(
             {
                 "googleWorkspace": google_available,
@@ -1222,6 +1416,8 @@ def connector_routes(
                 "calendlyAgent": calendly_agent,
                 "sentry": sentry_available,
                 "sentryAgent": sentry_agent,
+                "zoom": zoom_available,
+                "zoomAgent": zoom_agent,
             },
             headers={"cache-control": "no-store"},
         )
@@ -1327,6 +1523,19 @@ def connector_routes(
                         return _error(str(exc), 503, exc.hint)
                     except SentryAPIError as exc:
                         return _error(f"Sentry did not confirm revocation: {exc}", 502)
+        elif row["provider"] == ZOOM_PROVIDER:
+            # Revoking the refresh token ends the whole grant: Zoom invalidates the access and the
+            # refresh token together, which is what the user asked for. Revoking only the access
+            # token would leave the grant renewable.
+            async with httpx.AsyncClient(timeout=15) as http:
+                try:
+                    provider_revoked = await zoom_revoke_token(
+                        http, ZoomOAuthConfig.from_env(), token=refresh
+                    )
+                except ZoomConfigError as exc:
+                    return _error(str(exc), 503, exc.hint)
+                except ZoomAPIError as exc:
+                    return _error(f"Zoom did not confirm revocation: {exc}", 502)
         # Notion exposes no revocation endpoint: the credential can only be discarded here, and the
         # user must remove Hoja from the workspace's connections in Notion to invalidate it there.
 
@@ -1431,6 +1640,9 @@ def connector_routes(
         Route(SENTRY_FINISH_PATH, sentry_finish, methods=["GET"]),
         # Lifecycle events only (installation.created/deleted); no event subscriptions exist.
         Route(SENTRY_WEBHOOK_PATH, sentry_webhook, methods=["POST"]),
+        Route("/api/connectors/zoom/start", zoom_start, methods=["GET"]),
+        # Zoom's allow list carries one callback per tenant, so the tenant redeems its own code.
+        Route(ZOOM_REDIRECT_PATH, zoom_callback, methods=["GET"]),
         Route("/api/connectors/accounts", accounts_list, methods=["GET"]),
         Route("/api/connectors/accounts/{account_id}/revoke", account_revoke, methods=["POST"]),
         Route("/api/connectors/actions", actions_list, methods=["GET"]),

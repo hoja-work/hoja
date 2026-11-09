@@ -54,6 +54,7 @@ COMPONENT_READMES = {
     "connectors/slack/README.md",
     "connectors/calendly/README.md",
     "connectors/sentry/README.md",
+    "connectors/zoom/README.md",
     "hoja_server/README.md",
     "vendor/README.md",
 }

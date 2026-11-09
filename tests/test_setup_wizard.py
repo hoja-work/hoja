@@ -135,6 +135,8 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
             "calendlyAgent": False,
             "sentry": False,
             "sentryAgent": False,
+            "zoom": False,
+            "zoomAgent": False,
         }
 
         client.post("/onboarding/bootstrap", json=BOOTSTRAP)
@@ -165,6 +167,8 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
             "calendlyAgent": False,
             "sentry": False,
             "sentryAgent": False,
+            "zoom": False,
+            "zoomAgent": False,
         }
         assert off.headers["cache-control"] == "no-store"
 
@@ -185,6 +189,8 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
             "calendlyAgent": False,
             "sentry": False,
             "sentryAgent": False,
+            "zoom": False,
+            "zoomAgent": False,
         }
         assert "GOCSPX" not in on.text
         assert "cid.apps" not in on.text
