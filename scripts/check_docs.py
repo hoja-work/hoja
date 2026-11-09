@@ -50,6 +50,7 @@ DURABLE_DOCS = {
 # functional skill content must be registered explicitly in the same review.
 COMPONENT_READMES = {
     "connectors/google_workspace/README.md",
+    "connectors/notion/README.md",
     "hoja_server/README.md",
     "vendor/README.md",
 }

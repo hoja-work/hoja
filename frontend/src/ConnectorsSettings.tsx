@@ -37,6 +37,8 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const [refresh, setRefresh] = useState(0);
+  const googleAccounts = accounts.filter((a) => a.provider === 'google_workspace');
+  const notionAccounts = accounts.filter((a) => a.provider === 'notion');
 
   useEffect(() => {
     let live = true;
@@ -81,7 +83,7 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
       <header className="settings-page-heading">
         <span className="eyebrow">Personal</span>
         <h1>Connections</h1>
-        <p>Connect Google Workspace so the assistant can read your Gmail, Drive, Calendar, and Docs.</p>
+        <p>Connect a workspace so the assistant can read the content you share with it.</p>
       </header>
 
       <div className="settings-group connector-settings">
@@ -107,11 +109,35 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
         )}
         <ul aria-label="Connected accounts" className="connector-account-list">
           {loading && <li role="status">Checking connected accounts…</li>}
-          {!loading && accounts.length === 0 && <li className="connector-empty">No Google accounts connected.</li>}
-          {accounts.map((a) => (
+          {!loading && googleAccounts.length === 0 && <li className="connector-empty">No Google accounts connected.</li>}
+          {googleAccounts.map((a) => (
             <li key={a.id}>
               <span className="connector-account-icon" aria-hidden="true">{a.externalAccount.slice(0, 1).toUpperCase()}</span>
               <span className="connector-account-copy"><b>{a.externalAccount}</b><small>{a.scope === 'org' ? 'Organization account' : 'Personal account'} · {a.status}</small></span>
+              <button className="outline danger" onClick={() => revoke(a.id)}>Disconnect</button>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="settings-group connector-settings">
+        <span className="settings-section-kicker">Notion</span>
+        <h2>Connected workspaces</h2>
+        <p className="settings-section-intro">Read-only access to the pages and databases you select in Notion. Nothing is created or edited.</p>
+        <div className="setting-row">
+          <div>
+            <b>Your workspace</b>
+            <p>Choose the pages to share on Notion’s consent screen. Reconnect if you shared nothing or want to add pages.</p>
+          </div>
+          <a className="primary" href="/api/connectors/notion/start">Connect Notion</a>
+        </div>
+        <ul aria-label="Connected Notion workspaces" className="connector-account-list">
+          {loading && <li role="status">Checking connected workspaces…</li>}
+          {!loading && notionAccounts.length === 0 && <li className="connector-empty">No Notion workspace connected.</li>}
+          {notionAccounts.map((a) => (
+            <li key={a.id}>
+              <span className="connector-account-icon" aria-hidden="true">{a.externalAccount.slice(0, 1).toUpperCase()}</span>
+              <span className="connector-account-copy"><b>{a.externalAccount}</b><small>Personal workspace · {a.status}</small></span>
               <button className="outline danger" onClick={() => revoke(a.id)}>Disconnect</button>
             </li>
           ))}

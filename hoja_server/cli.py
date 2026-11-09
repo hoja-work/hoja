@@ -4,7 +4,7 @@ Subcommands:
   serve   Start the GraphQL backend.
   seed    Create an organization, user, team, states, and token.
   token   Mint a token for an existing organization user.
-  connector-mcp  Serve the Google Workspace MCP tools on HOJA_CONNECTOR_MCP_URL.
+  connector-mcp  Serve the connector MCP tools (Google Workspace and Notion) on HOJA_CONNECTOR_MCP_URL.
 """
 from __future__ import annotations
 
@@ -241,7 +241,7 @@ def main(argv=None):
 
     cm = sub.add_parser(
         "connector-mcp",
-        help="serve the Google Workspace MCP tools that HOJA_CONNECTOR_MCP_URL points at",
+        help="serve the connector MCP tools that HOJA_CONNECTOR_MCP_URL points at",
     )
     cm.add_argument("--tenant", default="default")
     cm.add_argument("--database-url", default=None, help="explicit SQLAlchemy database URL")
