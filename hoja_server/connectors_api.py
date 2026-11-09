@@ -10,6 +10,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -28,6 +29,14 @@ from calendly.oauth import exchange_code as calendly_exchange_code
 from calendly.oauth import pkce_pair as calendly_pkce_pair
 from calendly.oauth import revoke_token as calendly_revoke_token
 from calendly.oauth import s256 as calendly_s256
+from github import ConnectorConfigError as GitHubConfigError
+from github import GitHubAppConfig
+from github.client import GitHubClient
+from github.errors import ConnectorAPIError as GitHubAPIError
+from github.errors import ConnectorAuthError as GitHubAuthError
+from github.oauth import authorization_url as github_authorization_url
+from github.oauth import exchange_code as github_exchange_code
+from github.oauth import revoke_grant as github_revoke_grant
 from google_workspace import ConnectorAuthError, ConnectorConfigError, GoogleOAuthConfig
 from google_workspace.oauth import (
     ADDON_LABELS,
@@ -40,6 +49,12 @@ from google_workspace.oauth import (
     pkce_pair,
 )
 from google_workspace.principal import sign_principal
+from grafana import ConnectorConfigError as GrafanaConfigError
+from grafana import GrafanaConfig, UnsafeInstanceError
+from grafana.client import GrafanaClient
+from grafana.errors import ConnectorAPIError as GrafanaAPIError
+from grafana.errors import ConnectorAuthError as GrafanaAuthError
+from grafana.ssrf import validate_instance_url
 from notion import ConnectorConfigError as NotionConfigError
 from notion import NotionOAuthConfig
 from notion.errors import ConnectorAPIError as NotionAPIError
@@ -90,6 +105,12 @@ SLACK_PROVIDER = "slack"
 CALENDLY_PROVIDER = "calendly"
 SENTRY_PROVIDER = "sentry"
 ZOOM_PROVIDER = "zoom"
+GITHUB_PROVIDER = "github"
+GRAFANA_PROVIDER = "grafana"
+# A Grafana service-account token is `glsa_` + 41 URL-safe characters. Accept a slightly wider
+# charset and length so a self-managed instance with a legacy token still works, but never allow
+# whitespace or control characters into an Authorization header.
+GRAFANA_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_\-.]{16,512}$")
 STATE_TTL_SECONDS = 600
 # Calendly accepts exactly ONE redirect URI per app, so a multi-tenant deployment cannot register
 # a callback per tenant. It registers this path on a dedicated broker host instead; the broker
@@ -106,6 +127,10 @@ SENTRY_WEBHOOK_PATH = "/api/connectors/sentry/webhook"
 # tenant returns to its own registered callback. The path is fixed and the origin is checked
 # against the configured list before the browser is ever sent to Zoom.
 ZOOM_REDIRECT_PATH = "/api/connectors/zoom/callback"
+# A GitHub App also holds an allow list of up to ten callback URLs, so GitHub needs no broker
+# either: every tenant returns to its own registered callback and the origin is checked against the
+# configured list before the browser is sent to GitHub.
+GITHUB_REDIRECT_PATH = "/api/connectors/github/callback"
 BROKER_URL_ENV = "HOJA_CONNECTOR_BROKER_URL"
 GMAIL_PROFILE_URL = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
 GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
@@ -152,6 +177,9 @@ def _serialize(row) -> dict:
         # on the consent screen, so the Settings page needs the per-API answer rather than "the
         # account exists". Non-Google providers report nothing here.
         "capabilities": capabilities_for(row["scopes"]) if row["provider"] == PROVIDER else {},
+        # The customer-supplied origin for instance-addressed connectors (Grafana). It is not a
+        # secret: the UI needs it to show which instance an account belongs to.
+        "externalUrl": row["external_url"],
         "scope": "org" if row["owner_user_id"] is None else "user",
         "ownerUserId": row["owner_user_id"],
         "status": row["status"],
@@ -183,6 +211,7 @@ def connector_binding_for(engine: Engine, org: str, uid: str):
                             CALENDLY_PROVIDER,
                             SENTRY_PROVIDER,
                             ZOOM_PROVIDER,
+                            GRAFANA_PROVIDER,
                         )
                     ),
                     connector_account.c.status == "active",
@@ -1082,6 +1111,319 @@ def connector_routes(
                 )
         return RedirectResponse("/?connector=zoom-connected", status_code=302)
 
+    class _GrafanaStaticToken:
+        """The stored token as a source the package can ask for, never a string it can persist."""
+
+        def __init__(self, token: str) -> None:
+            self._token = token
+
+        async def access_token(self) -> str:
+            return self._token
+
+        async def invalidate(self) -> None:
+            return None
+
+    async def _grafana_probe(url: str, token: str):
+        """Validate a customer URL and token with one live read. Returns (user, instance)."""
+        instance = validate_instance_url(url)
+        async with httpx.AsyncClient(timeout=15) as http:
+            user = await GrafanaClient(http, _GrafanaStaticToken(token), instance.url).get_current_user()
+        return user, instance
+
+    async def grafana_validate(request: Request):
+        """Check a URL and token without storing either. The UI uses this before Connect."""
+        _uid, _org, failure = await _require_user(request)
+        if failure:
+            return failure
+        try:
+            body = await request.json()
+        except ValueError:
+            return _error("A JSON body with url and token is required.", 400)
+        url = str(body.get("url") or "").strip()
+        token = str(body.get("token") or "").strip()
+        if not GRAFANA_TOKEN_PATTERN.match(token):
+            return _error(
+                "That does not look like a Grafana service-account token.",
+                400,
+                hint="Create a token under Administration > Users and access > Service accounts.",
+            )
+        try:
+            GrafanaConfig.from_env()
+        except GrafanaConfigError as exc:
+            return _error(str(exc), 503, exc.hint)
+        try:
+            user, instance = await _grafana_probe(url, token)
+        except UnsafeInstanceError as exc:
+            return _error(str(exc), 400, exc.hint)
+        except GrafanaAuthError as exc:
+            return _error(str(exc), 400, exc.hint)
+        except GrafanaAPIError as exc:
+            return _error(str(exc), 502, exc.hint)
+        return JSONResponse(
+            {
+                "valid": True,
+                "instance": instance.url,
+                "account": user.label,
+                "isGrafanaAdmin": user.isGrafanaAdmin,
+            }
+        )
+
+    async def grafana_connect(request: Request):
+        """Store a customer instance URL and sealed service-account token.
+
+        There is no OAuth flow to start: the customer pastes the two values. The live read is what
+        proves both are usable before a row exists, and reconnecting the same instance replaces its
+        grant rather than adding a second row.
+        """
+        uid, org, failure = await _require_user(request)
+        if failure:
+            return failure
+        try:
+            body = await request.json()
+        except ValueError:
+            return _error("A JSON body with url and token is required.", 400)
+        url = str(body.get("url") or "").strip()
+        token = str(body.get("token") or "").strip()
+        if not GRAFANA_TOKEN_PATTERN.match(token):
+            return _error(
+                "That does not look like a Grafana service-account token.",
+                400,
+                hint="Create a token under Administration > Users and access > Service accounts.",
+            )
+        try:
+            GrafanaConfig.from_env()
+        except GrafanaConfigError as exc:
+            return _error(str(exc), 503, exc.hint)
+        try:
+            user, instance = await _grafana_probe(url, token)
+        except UnsafeInstanceError as exc:
+            return _error(str(exc), 400, exc.hint)
+        except GrafanaAuthError as exc:
+            return _error(str(exc), 400, exc.hint)
+        except GrafanaAPIError as exc:
+            return _error(str(exc), 502, exc.hint)
+
+        label = user.label
+        row = {
+            "id": uuid.uuid4().hex,
+            "organization_id": org,
+            "owner_user_id": uid,
+            "provider": GRAFANA_PROVIDER,
+            "external_account": label,
+            # No OAuth scopes exist; the role the customer granted is the only meaningful scope.
+            "scopes": "viewer",
+            "encrypted_refresh_token": encrypt_secret(token),
+            "external_id": user.uid,
+            "external_url": instance.url,
+            "status": "active",
+            "created_at": _now(),
+            "updated_at": _now(),
+        }
+        with engine.begin() as conn:
+            existing = conn.execute(
+                select(connector_account.c.id).where(
+                    and_(
+                        connector_account.c.organization_id == org,
+                        connector_account.c.provider == GRAFANA_PROVIDER,
+                        connector_account.c.external_url == instance.url,
+                        connector_account.c.owner_user_id == uid,
+                        connector_account.c.status == "active",
+                    )
+                )
+            ).first()
+            if existing is None:
+                conn.execute(connector_account.insert().values(**row))
+            else:
+                conn.execute(
+                    update(connector_account)
+                    .where(connector_account.c.id == existing[0])
+                    .values(
+                        external_account=row["external_account"],
+                        encrypted_refresh_token=row["encrypted_refresh_token"],
+                        external_id=row["external_id"],
+                        updated_at=row["updated_at"],
+                    )
+                )
+        return JSONResponse(
+            {
+                "connected": True,
+                "instance": instance.url,
+                "account": label,
+            }
+        )
+
+    def _github_origin(request: Request) -> str | None:
+        """This request's own https origin, or None.
+
+        GitHub matches the redirect URI by string against the app's registered list, so the origin
+        is the only part the deployment has to derive; the path is fixed. Deriving it from the
+        request (rather than trusting a query parameter) is what keeps a tenant from being handed a
+        callback that belongs to somebody else.
+        """
+        parts = urlsplit(str(request.base_url))
+        if parts.scheme != "https" or not parts.netloc:
+            return None
+        return f"{parts.scheme}://{parts.netloc}"
+
+    async def github_start(request: Request):
+        """Begin the GitHub App user-to-server flow on the tenant that owns the callback.
+
+        A GitHub token is one person's repository access, so the connection is personal and an
+        organization-wide grant is refused rather than silently downgraded.
+        """
+        uid, org, failure = await _require_user(request)
+        if failure:
+            return failure
+        if request.query_params.get("scope", "user") != "user":
+            return _error("GitHub connections are personal to the connecting user.", 400)
+        origin = _github_origin(request)
+        try:
+            config = GitHubAppConfig.from_env()
+        except (GitHubConfigError, SecretBoxError) as exc:
+            return _error(str(exc), 503, getattr(exc, "hint", None))
+        # Refuse before GitHub: an unregistered redirect is answered with redirect_uri_mismatch on
+        # a page the user cannot act on, which reads as an outage rather than a configuration gap.
+        redirect_uri = config.redirect_uri_for(origin) if origin else None
+        if redirect_uri is None:
+            return _error(
+                "This address is not a registered GitHub callback on this deployment.",
+                400,
+                hint=(
+                    "Open your workspace URL and connect GitHub from there, or register "
+                    f"{origin or 'this host'}{GITHUB_REDIRECT_PATH} in the app's callback URLs."
+                ),
+            )
+        try:
+            state = encrypt_secret(
+                json.dumps(
+                    {
+                        "uid": uid,
+                        "org": org,
+                        "provider": GITHUB_PROVIDER,
+                        "origin": origin,
+                        "exp": int(time.time()) + STATE_TTL_SECONDS,
+                        "nonce": uuid.uuid4().hex,
+                    }
+                )
+            )
+        except SecretBoxError as exc:
+            return _error(str(exc), 503, getattr(exc, "hint", None))
+        return RedirectResponse(
+            github_authorization_url(config, state=state, redirect_uri=redirect_uri),
+            status_code=302,
+        )
+
+    async def github_callback(request: Request):
+        """The registered callback: redeem the code in the session that started the flow."""
+        uid, org, failure = await _require_user(request)
+        if failure:
+            return failure
+        if request.query_params.get("error"):
+            # GitHub reports a declined consent as error=access_denied on the callback.
+            return _error("GitHub did not grant access.", 400)
+        code = request.query_params.get("code", "")
+        sealed = request.query_params.get("state", "")
+        if not code or not sealed:
+            return _error("code and state are required", 400)
+        try:
+            pending = json.loads(decrypt_secret(sealed))
+            config = GitHubAppConfig.from_env()
+        except (SecretBoxError, ValueError, GitHubConfigError) as exc:
+            return _error("Invalid or expired connection request.", 400, getattr(exc, "hint", None))
+        if pending.get("exp", 0) < time.time():
+            return _error("Connection request expired. Start again.", 400)
+        if pending.get("provider") != GITHUB_PROVIDER:
+            return _error("Invalid connection request.", 400)
+        if pending.get("uid") != uid or pending.get("org") != org:
+            # The state is bound to the person and workspace that started it. This is what
+            # replaces a cookie: a callback cannot complete a flow on someone else's behalf.
+            return _error("Connection request belongs to a different session.", 403)
+        origin = _github_origin(request)
+        if origin is None or pending.get("origin") != origin:
+            return _error("Connection request belongs to a different workspace.", 403)
+        redirect_uri = config.redirect_uri_for(origin)
+        if redirect_uri is None:
+            return _error(
+                "This address is not a registered GitHub callback on this deployment.", 403
+            )
+        if not _consume_state(engine, str(pending.get("nonce", "")), int(pending["exp"])):
+            return _error("Connection request was already used. Start again.", 400)
+
+        async with httpx.AsyncClient(timeout=15) as http:
+            try:
+                tokens = await github_exchange_code(
+                    http, config, code=code, redirect_uri=redirect_uri
+                )
+
+                class _StaticToken:
+                    async def access_token(self) -> str:
+                        return tokens.access_token
+
+                    async def invalidate(self) -> None:
+                        return None
+
+                    def api_base(self) -> str:
+                        return config.api_base
+
+                user = await GitHubClient(http, _StaticToken()).get_current_user()
+            except (GitHubAuthError, GitHubAPIError, httpx.HTTPError) as exc:
+                hint = getattr(exc, "hint", None)
+                status = 400 if isinstance(exc, GitHubAuthError) else 502
+                return _error(str(exc), status, hint)
+
+        label = user.login
+        if not label:
+            return _error("GitHub did not identify the connected account.", 502)
+        expires_at = int(time.time()) + tokens.expires_in
+        row = {
+            "id": uuid.uuid4().hex,
+            "organization_id": org,
+            "owner_user_id": uid,
+            "provider": GITHUB_PROVIDER,
+            "external_account": label,
+            # A GitHub App's permissions live on the registration, not in a scope string; keep the
+            # column empty rather than inventing one, and store the app's read set nowhere the UI
+            # could mistake for a per-grant scope.
+            "scopes": "",
+            "encrypted_refresh_token": encrypt_secret(tokens.refresh_token),
+            "encrypted_access_token": encrypt_secret(tokens.access_token),
+            "access_token_expires_at": str(expires_at),
+            # GitHub's own numeric user id. Nothing addresses it, but it is what an operator or a
+            # support request needs to identify the account inside GitHub.
+            "external_id": str(user.id or "") or None,
+            "status": "active",
+            "created_at": _now(),
+            "updated_at": _now(),
+        }
+        # Reconnecting the same GitHub account replaces its grant rather than adding a second row.
+        with engine.begin() as conn:
+            existing = conn.execute(
+                select(connector_account.c.id).where(
+                    and_(
+                        connector_account.c.organization_id == org,
+                        connector_account.c.provider == GITHUB_PROVIDER,
+                        connector_account.c.external_account == label,
+                        connector_account.c.owner_user_id == uid,
+                        connector_account.c.status == "active",
+                    )
+                )
+            ).first()
+            if existing is None:
+                conn.execute(connector_account.insert().values(**row))
+            else:
+                conn.execute(
+                    update(connector_account)
+                    .where(connector_account.c.id == existing[0])
+                    .values(
+                        encrypted_refresh_token=row["encrypted_refresh_token"],
+                        encrypted_access_token=row["encrypted_access_token"],
+                        access_token_expires_at=row["access_token_expires_at"],
+                        external_id=row["external_id"],
+                        updated_at=row["updated_at"],
+                    )
+                )
+        return RedirectResponse("/?connector=github-connected", status_code=302)
+
     def _sentry_redirect_uri(config: SentryOAuthConfig) -> str:
         """The one string registered on the Sentry integration.
 
@@ -1404,6 +1746,25 @@ def connector_routes(
         zoom_agent = zoom_available and bool(
             os.environ.get("HOJA_CONNECTOR_SIGNING_KEY", "").strip()
         )
+        try:
+            github_config = GitHubAppConfig.from_env()
+            github_available = True
+        except (GitHubConfigError, SecretBoxError):
+            github_config = None
+            github_available = False
+        github_agent = github_available and bool(
+            os.environ.get("HOJA_CONNECTOR_SIGNING_KEY", "").strip()
+        )
+        # Grafana has no app credential: connecting needs only the sealing key that protects the
+        # stored token, so the flag is true on any deployment that can seal secrets at all.
+        try:
+            GrafanaConfig.from_env()
+            grafana_available = True
+        except (GrafanaConfigError, SecretBoxError):
+            grafana_available = False
+        grafana_agent = grafana_available and bool(
+            os.environ.get("HOJA_CONNECTOR_SIGNING_KEY", "").strip()
+        )
         return JSONResponse(
             {
                 "googleWorkspace": google_available,
@@ -1418,6 +1779,14 @@ def connector_routes(
                 "sentryAgent": sentry_agent,
                 "zoom": zoom_available,
                 "zoomAgent": zoom_agent,
+                "github": github_available,
+                "githubAgent": github_agent,
+                # The app's public install page is not a secret and is what makes a *private*
+                # repository readable: the user token is the intersection of user and app access,
+                # so an app that is not installed on the repository's account cannot read it.
+                "githubInstallUrl": github_config.install_url() if github_config else None,
+                "grafana": grafana_available,
+                "grafanaAgent": grafana_agent,
             },
             headers={"cache-control": "no-store"},
         )
@@ -1536,6 +1905,30 @@ def connector_routes(
                     return _error(str(exc), 503, exc.hint)
                 except ZoomAPIError as exc:
                     return _error(f"Zoom did not confirm revocation: {exc}", 502)
+        elif row["provider"] == GITHUB_PROVIDER:
+            # GitHub's revocation endpoint is an *application* endpoint: it takes the access token
+            # and ends that token's whole refresh chain, which is what the user asked for.
+            try:
+                access = decrypt_secret(row["encrypted_access_token"] or "")
+            except SecretBoxError:
+                return _error("Stored credential is unreadable; contact an administrator.", 500)
+            if not access:
+                provider_revoked = True  # nothing usable is stored; the local row is the only grant
+            else:
+                async with httpx.AsyncClient(timeout=15) as http:
+                    try:
+                        provider_revoked = await github_revoke_grant(
+                            http, GitHubAppConfig.from_env(), access_token=access
+                        )
+                    except GitHubConfigError as exc:
+                        return _error(str(exc), 503, exc.hint)
+                    except GitHubAPIError as exc:
+                        return _error(f"GitHub did not confirm revocation: {exc}", 502)
+        elif row["provider"] == GRAFANA_PROVIDER:
+            # A Viewer token cannot revoke the service-account token it is using: that needs
+            # Admin on the Grafana side. Discarding the sealed copy here is all Hoja can do, so the
+            # user is told, in the same response, to delete the token in Grafana.
+            provider_revoked = False
         # Notion exposes no revocation endpoint: the credential can only be discarded here, and the
         # user must remove Hoja from the workspace's connections in Notion to invalidate it there.
 
@@ -1562,6 +1955,9 @@ def connector_routes(
                     "Sentry is still finishing the uninstall; it clears itself in about ten "
                     "minutes. The connection is already unused here."
                     if row["provider"] == SENTRY_PROVIDER
+                    else "Delete the service-account token in Grafana (Administration > Users and "
+                    "access > Service accounts) to invalidate it there."
+                    if row["provider"] == GRAFANA_PROVIDER
                     else "Remove Hoja in Notion Settings > Connections to invalidate the token there."
                 ),
             }
@@ -1643,6 +2039,12 @@ def connector_routes(
         Route("/api/connectors/zoom/start", zoom_start, methods=["GET"]),
         # Zoom's allow list carries one callback per tenant, so the tenant redeems its own code.
         Route(ZOOM_REDIRECT_PATH, zoom_callback, methods=["GET"]),
+        Route("/api/connectors/github/start", github_start, methods=["GET"]),
+        # GitHub's callback allow list also carries one URL per tenant.
+        Route(GITHUB_REDIRECT_PATH, github_callback, methods=["GET"]),
+        # Grafana has no OAuth callback: the customer pastes an instance URL and a token.
+        Route("/api/connectors/grafana/validate", grafana_validate, methods=["POST"]),
+        Route("/api/connectors/grafana/connect", grafana_connect, methods=["POST"]),
         Route("/api/connectors/accounts", accounts_list, methods=["GET"]),
         Route("/api/connectors/accounts/{account_id}/revoke", account_revoke, methods=["POST"]),
         Route("/api/connectors/actions", actions_list, methods=["GET"]),

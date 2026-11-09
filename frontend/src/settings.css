@@ -261,6 +261,8 @@
 .connector-action-list > li { padding: 14px; border: 1px solid var(--settings-line); border-radius: 10px; }
 .connector-action-list pre { max-width: 100%; margin: 10px 0; padding: 12px; overflow: auto; border-radius: 8px; background: var(--settings-subtle); color: var(--settings-muted); font-size: 11px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .connector-action-buttons { display: flex; gap: 8px; }
+.connector-field { display: grid; gap: 4px; margin-top: 10px; color: var(--settings-muted); font-size: 12px; }
+.connector-field input { width: 100%; padding: 7px 9px; border: 1px solid var(--settings-line); border-radius: 7px; background: var(--settings-panel, var(--panel)); color: var(--text); font-size: 13px; }
 .connector-empty { justify-content: center; color: var(--settings-muted); font-size: 12px; }
 
 @media (min-width: 701px) {

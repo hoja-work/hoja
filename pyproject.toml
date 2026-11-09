@@ -81,6 +81,8 @@ agent = [
     "calendly-connector",
     "sentry-connector",
     "zoom-connector",
+    "grafana-connector",
+    "github-connector",
 ]
 
 [tool.uv.sources]
@@ -90,6 +92,8 @@ slack-connector = { path = "connectors/slack", editable = true }
 calendly-connector = { path = "connectors/calendly", editable = true }
 sentry-connector = { path = "connectors/sentry", editable = true }
 zoom-connector = { path = "connectors/zoom", editable = true }
+grafana-connector = { path = "connectors/grafana", editable = true }
+github-connector = { path = "connectors/github", editable = true }
 
 [project.scripts]
 hoja = "hoja.cli:app"
@@ -116,6 +120,8 @@ artifacts = ["VERSION"]
 "connectors/calendly/src/calendly" = "calendly"
 "connectors/sentry/src/sentry" = "sentry"
 "connectors/zoom/src/zoom" = "zoom"
+"connectors/grafana/src/grafana" = "grafana"
+"connectors/github/src/github" = "github"
 
 [tool.ruff]
 target-version = "py310"
@@ -124,6 +130,11 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
 ignore = ["E501"]  # line length handled by formatter
+
+[tool.ruff.lint.per-file-ignores]
+# Provider-shaped models mirror Grafana's JSON field names on purpose: renaming `isGrafanaAdmin`
+# or `folderUid` would lose the one-to-one mapping this client is built on.
+"connectors/grafana/src/grafana/client.py" = ["N815"]
 
 [tool.mypy]
 python_version = "3.10"
