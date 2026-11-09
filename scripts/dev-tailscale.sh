@@ -156,6 +156,7 @@ ensure_backend_dependencies() {
         -e './connectors/slack' \
         -e './connectors/calendly' \
         -e './connectors/sentry' \
+        -e './connectors/zoom' \
         -e '.[server,agent]'
     )
   fi

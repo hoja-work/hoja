@@ -48,6 +48,7 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
   const slackAccounts = accounts.filter((a) => a.provider === 'slack');
   const calendlyAccounts = accounts.filter((a) => a.provider === 'calendly');
   const sentryAccounts = accounts.filter((a) => a.provider === 'sentry');
+  const zoomAccounts = accounts.filter((a) => a.provider === 'zoom');
 
   useEffect(() => {
     let live = true;
@@ -180,6 +181,30 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
             <li key={a.id}>
               <span className="connector-account-icon" aria-hidden="true">{a.externalAccount.slice(0, 1).toUpperCase()}</span>
               <span className="connector-account-copy"><b>{a.externalAccount}</b><small>Sentry organization · {a.status}</small></span>
+              <button className="outline danger" onClick={() => revoke(a.id)}>Disconnect</button>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="settings-group connector-settings">
+        {/* Product name as the heading: UI-RULES forbids the uppercase kicker. */}
+        <h2>Zoom</h2>
+        <p className="settings-section-intro">Read-only access to your meetings, cloud recordings and meeting transcripts. Nothing is scheduled, edited or shared.</p>
+        <div className="setting-row">
+          <div>
+            <b>Your meetings</b>
+            <p>Hoja reads with your own Zoom permissions. A Zoom connection is personal to you and is never shared with the workspace.</p>
+          </div>
+          <a className="primary" href="/api/connectors/zoom/start">Connect Zoom</a>
+        </div>
+        <ul aria-label="Connected Zoom accounts" className="connector-account-list">
+          {loading && <li role="status">Checking connected accounts…</li>}
+          {!loading && zoomAccounts.length === 0 && <li className="connector-empty">No Zoom account connected.</li>}
+          {zoomAccounts.map((a) => (
+            <li key={a.id}>
+              <span className="connector-account-icon" aria-hidden="true">{a.externalAccount.slice(0, 1).toUpperCase()}</span>
+              <span className="connector-account-copy"><b>{a.externalAccount}</b><small>Personal account · {a.status}</small></span>
               <button className="outline danger" onClick={() => revoke(a.id)}>Disconnect</button>
             </li>
           ))}
