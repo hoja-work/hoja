@@ -155,6 +155,7 @@ ensure_backend_dependencies() {
         -e './connectors/google_workspace' -e './connectors/notion' \
         -e './connectors/slack' \
         -e './connectors/calendly' \
+        -e './connectors/sentry' \
         -e '.[server,agent]'
     )
   fi

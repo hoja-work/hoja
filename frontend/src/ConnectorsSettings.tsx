@@ -47,6 +47,7 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
   const notionAccounts = accounts.filter((a) => a.provider === 'notion');
   const slackAccounts = accounts.filter((a) => a.provider === 'slack');
   const calendlyAccounts = accounts.filter((a) => a.provider === 'calendly');
+  const sentryAccounts = accounts.filter((a) => a.provider === 'sentry');
 
   useEffect(() => {
     let live = true;
@@ -155,6 +156,30 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
             <li key={a.id}>
               <span className="connector-account-icon" aria-hidden="true">{a.externalAccount.slice(0, 1).toUpperCase()}</span>
               <span className="connector-account-copy"><b>{a.externalAccount}</b><small>{a.scope === 'org' ? 'Organization account' : 'Personal account'} · {a.status}{a.capabilities?.meet ? ' · Meet access' : ''}{a.capabilities?.chat ? ' · Chat access' : ''}</small></span>
+              <button className="outline danger" onClick={() => revoke(a.id)}>Disconnect</button>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="settings-group connector-settings">
+        {/* Product name as the heading: UI-RULES forbids the uppercase kicker. */}
+        <h2>Sentry</h2>
+        <p className="settings-section-intro">Read-only access to the projects, issues and latest event of one Sentry organization. Nothing is resolved, assigned or deleted.</p>
+        <div className="setting-row">
+          <div>
+            <b>Your organization</b>
+            <p>You choose the Sentry organization on Sentry’s install page. The connection is personal to you and reads only that organization.</p>
+          </div>
+          <a className="primary" href="/api/connectors/sentry/start">Connect Sentry</a>
+        </div>
+        <ul aria-label="Connected Sentry organizations" className="connector-account-list">
+          {loading && <li role="status">Checking connected organizations…</li>}
+          {!loading && sentryAccounts.length === 0 && <li className="connector-empty">No Sentry organization connected.</li>}
+          {sentryAccounts.map((a) => (
+            <li key={a.id}>
+              <span className="connector-account-icon" aria-hidden="true">{a.externalAccount.slice(0, 1).toUpperCase()}</span>
+              <span className="connector-account-copy"><b>{a.externalAccount}</b><small>Sentry organization · {a.status}</small></span>
               <button className="outline danger" onClick={() => revoke(a.id)}>Disconnect</button>
             </li>
           ))}

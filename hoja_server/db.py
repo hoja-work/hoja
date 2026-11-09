@@ -34,7 +34,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 47
+CURRENT_SCHEMA_REVISION = 48
 
 
 def now_iso() -> str:
@@ -390,6 +390,10 @@ connector_account = Table(
     # providers whose token is long-lived leave these empty.
     Column("encrypted_access_token", Text),
     Column("access_token_expires_at", String),
+    # The provider's own id for the installation when the grant is per-installation rather than
+    # per-account. Sentry needs it on every exchange and refresh; providers without one leave it
+    # NULL, and `external_account` keeps carrying the human-readable label.
+    Column("external_id", String),
     Column("status", String, nullable=False),
     Column("created_at", String, nullable=False),
     Column("updated_at", String, nullable=False),
@@ -1839,6 +1843,19 @@ def _apply_connector_access_token(conn) -> None:
             conn.exec_driver_sql(f"ALTER TABLE connector_account ADD COLUMN {name} VARCHAR")
 
 
+def _apply_connector_external_id(conn) -> None:
+    """Store the provider-side installation id for per-installation grants.
+
+    Sentry's token exchange and refresh both address
+    `/api/0/sentry-app-installations/{id}/authorizations/`, so the id has to survive a restart.
+    Keeping it in `external_account` would replace the organization label the UI shows. Existing
+    rows (Google, Notion, Slack, Calendly) keep NULL.
+    """
+    existing = {column["name"] for column in inspect(conn).get_columns("connector_account")}
+    if "external_id" not in existing:
+        conn.exec_driver_sql("ALTER TABLE connector_account ADD COLUMN external_id VARCHAR")
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -1933,6 +1950,7 @@ _MIGRATIONS = {
     46: _apply_issue_decisions,
     # 47: a provider whose access token expires (Calendly) stores both halves of the grant.
     47: _apply_connector_access_token,
+    48: _apply_connector_external_id,
 }
 
 
