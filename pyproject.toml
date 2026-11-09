@@ -81,6 +81,10 @@ agent = [
 ]
 
 [tool.uv.sources]
+# uv resolves these editable path packages; pip does not read this table, so
+# every pip-based install must also pass each connector path explicitly
+# (.github/workflows/mobile.yml, infra/Dockerfile.hoja, scripts/dev-tailscale.sh,
+# mobile/README.md, mobile/scripts/verify-backend.sh).
 google-workspace-connector = { path = "connectors/google_workspace", editable = true }
 notion-connector = { path = "connectors/notion", editable = true }
 slack-connector = { path = "connectors/slack", editable = true }
