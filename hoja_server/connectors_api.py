@@ -17,9 +17,12 @@ from typing import Any
 import httpx
 from google_workspace import ConnectorAuthError, ConnectorConfigError, GoogleOAuthConfig
 from google_workspace.oauth import (
+    ADDON_SCOPES,
     READ_SCOPES,
     authorization_url,
+    capabilities_for,
     exchange_code,
+    merge_scopes,
     pkce_pair,
 )
 from google_workspace.principal import sign_principal
@@ -86,6 +89,10 @@ def _serialize(row) -> dict:
         "provider": row["provider"],
         "externalAccount": row["external_account"],
         "scopes": row["scopes"].split(),
+        # A Google grant covers one capability per scope, and a user may untick individual scopes
+        # on the consent screen, so the Settings page needs the per-API answer rather than "the
+        # account exists". Non-Google providers report nothing here.
+        "capabilities": capabilities_for(row["scopes"]) if row["provider"] == PROVIDER else {},
         "scope": "org" if row["owner_user_id"] is None else "user",
         "ownerUserId": row["owner_user_id"],
         "status": row["status"],
@@ -179,6 +186,13 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
         return bool(actor and actor.get("admin"))
 
     async def google_start(request: Request):
+        """Begin the Google OAuth flow.
+
+        With `?addon=meet` this is an *upgrade* of the Google grant the user already has, not a
+        second account: the request carries only the add-on's scopes, and `include_granted_scopes`
+        makes Google extend the existing grant. That is what keeps one Google account to one row,
+        one token and one Disconnect.
+        """
         uid, org, failure = await _require_user(request)
         if failure:
             return failure
@@ -187,6 +201,34 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
             return _error("scope must be 'user' or 'org'", 400)
         if scope == "org" and not _is_admin(org, uid):
             return _error("Only workspace admins can connect organization accounts.", 403)
+        addon = request.query_params.get("addon", "").strip()
+        if addon and addon not in ADDON_SCOPES:
+            return _error("Unknown Google scope upgrade.", 400)
+        if addon:
+            # An upgrade extends a grant that exists. Asking for Meet alone on a fresh account
+            # would produce a Google account whose grant covers Meet and nothing else, which is a
+            # worse outcome than telling the user to connect first.
+            with engine.connect() as conn:
+                existing = conn.execute(
+                    select(connector_account.c.id)
+                    .where(
+                        and_(
+                            connector_account.c.organization_id == org,
+                            connector_account.c.provider == PROVIDER,
+                            connector_account.c.status == "active",
+                            connector_account.c.owner_user_id.is_(None)
+                            if scope == "org"
+                            else connector_account.c.owner_user_id == uid,
+                        )
+                    )
+                    .limit(1)
+                ).first()
+            if existing is None:
+                return _error(
+                    "Connect your Google account before adding Google Meet access.",
+                    409,
+                    hint="Use Connect Google first; the Meet permission is added to that grant.",
+                )
         try:
             config = GoogleOAuthConfig.from_env()
             verifier, challenge = pkce_pair()
@@ -196,6 +238,7 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
                         "uid": uid,
                         "org": org,
                         "scope": scope,
+                        "addon": addon,
                         "verifier": verifier,
                         "exp": int(time.time()) + STATE_TTL_SECONDS,
                         "nonce": uuid.uuid4().hex,
@@ -206,7 +249,9 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
             return _error(str(exc), 503, getattr(exc, "hint", None))
         url = authorization_url(
             config,
-            scopes=list(READ_SCOPES.values()),
+            # Least privilege at request time: an upgrade asks for the add-on's scopes only, so the
+            # consent screen shows one new permission instead of re-asking for everything.
+            scopes=list(ADDON_SCOPES[addon]) if addon else list(READ_SCOPES.values()),
             state=state,
             code_challenge=challenge,
         )
@@ -259,29 +304,39 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
         if not isinstance(email, str) or not email:
             return _error("Could not read the connected Google account.", 502)
 
-        row = {
-            "id": uuid.uuid4().hex,
-            "organization_id": org,
-            "owner_user_id": None if pending["scope"] == "org" else uid,
-            "provider": PROVIDER,
-            "external_account": email,
-            "scopes": tokens.scope or " ".join(READ_SCOPES.values()),
-            "encrypted_refresh_token": encrypt_secret(tokens.refresh_token),
-            "status": "active",
-            "created_at": _now(),
-            "updated_at": _now(),
-        }
-        # Reconnecting an account replaces its grant instead of adding a second one: two active
-        # rows for one Google account would let a revoke free only one of them and leave the other
-        # silently usable.
+        addon = str(pending.get("addon") or "")
+        requested = list(ADDON_SCOPES[addon]) if addon else list(READ_SCOPES.values())
+        granted = tokens.scope.split() if tokens.scope else []
+        if addon:
+            # Google lets a user untick any permission. Recording Meet as available when the
+            # consent screen returned without it would show a capability the token cannot use and
+            # turn every Meet call into a 403, so the upgrade fails here instead.
+            if not granted:
+                return _error(
+                    "Google did not report which permissions it granted.",
+                    502,
+                    hint=(
+                        "Try again. If it repeats, remove Hoja from your Google account "
+                        "permissions and connect once more."
+                    ),
+                )
+            if any(scope not in granted for scope in ADDON_SCOPES[addon]):
+                return _error(
+                    "Google Meet access was not granted. Tick the Meet permission and try again.",
+                    400,
+                )
+
+        # One row per (owner, Google account), whichever scope set was last consented. A second row
+        # for a Meet upgrade would hold the same Google grant under a second id, so Disconnect would
+        # free only one of them and leave the other silently usable.
         owner_filter = (
             connector_account.c.owner_user_id.is_(None)
-            if row["owner_user_id"] is None
-            else connector_account.c.owner_user_id == row["owner_user_id"]
+            if pending["scope"] == "org"
+            else connector_account.c.owner_user_id == uid
         )
         with engine.begin() as conn:
             existing = conn.execute(
-                select(connector_account.c.id).where(
+                select(connector_account.c.id, connector_account.c.scopes).where(
                     and_(
                         connector_account.c.organization_id == org,
                         connector_account.c.provider == PROVIDER,
@@ -291,6 +346,34 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
                     )
                 )
             ).first()
+            prior_scopes = existing[1] if existing is not None else ""
+            if addon and existing is None:
+                # The consent chooser lets the user pick a different Google account than the one
+                # they started from. That account has no grant to extend, so this would create a
+                # row holding Meet and nothing else - the state `start` refuses up front.
+                return _error(
+                    f"Meet access was added to {email}, which is not a connected account here."
+                    " Connect that Google account first, then add Meet access.",
+                    409,
+                    hint="Use Connect Google for that account, then add Meet access to it.",
+                )
+            # `include_granted_scopes=true` makes Google report the *whole* grant in `scope`, so
+            # that list is authoritative whenever it is present. Unioning with the stored row
+            # unconditionally would keep claiming a permission the user just removed on the
+            # consent screen; the union is only the fallback for a response that omits `scope`.
+            scopes = merge_scopes(granted) if granted else merge_scopes(requested, prior_scopes)
+            row = {
+                "id": uuid.uuid4().hex,
+                "organization_id": org,
+                "owner_user_id": None if pending["scope"] == "org" else uid,
+                "provider": PROVIDER,
+                "external_account": email,
+                "scopes": " ".join(scopes),
+                "encrypted_refresh_token": encrypt_secret(tokens.refresh_token),
+                "status": "active",
+                "created_at": _now(),
+                "updated_at": _now(),
+            }
             if existing is None:
                 conn.execute(connector_account.insert().values(**row))
             else:
@@ -303,7 +386,8 @@ def connector_routes(engine: Engine, store, auth, execute_write: Executor | None
                         updated_at=row["updated_at"],
                     )
                 )
-        return RedirectResponse("/?connector=google-connected", status_code=302)
+        marker = "meet-connected" if addon else "google-connected"
+        return RedirectResponse(f"/?connector={marker}", status_code=302)
 
     async def notion_start(request: Request):
         """Begin the Notion OAuth flow. Notion grants are always user-scoped (`owner=user`).

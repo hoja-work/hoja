@@ -6,6 +6,10 @@ type ConnectorAccount = {
   externalAccount: string;
   scope: 'user' | 'org';
   status: string;
+  scopes: string[];
+  /** Per-API answer for a Google grant: a user may untick individual permissions on the consent
+   *  screen, so "the account exists" is not the same as "Meet is available". */
+  capabilities?: Record<string, boolean>;
 };
 
 type PendingAction = {
@@ -38,6 +42,7 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
   const [loading, setLoading] = useState(true);
   const [refresh, setRefresh] = useState(0);
   const googleAccounts = accounts.filter((a) => a.provider === 'google_workspace');
+  const meetAccounts = googleAccounts.filter((a) => a.capabilities?.meet);
   const notionAccounts = accounts.filter((a) => a.provider === 'notion');
   const slackAccounts = accounts.filter((a) => a.provider === 'slack');
 
@@ -88,9 +93,10 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
       </header>
 
       <div className="settings-group connector-settings">
-        <span className="settings-section-kicker">Google Workspace</span>
-        <h2>Connected accounts</h2>
-        <p className="settings-section-intro">Read-only access for Gmail, Drive, Calendar, and Docs. Writes always require approval.</p>
+        {/* The product name is the heading, not an uppercase kicker: app/docs/UI-RULES.md forbids
+            letter-spaced capitals, which `.settings-section-kicker` applies. */}
+        <h2>Google Workspace</h2>
+        <p className="settings-section-intro">Read-only access for Gmail, Drive, Calendar, Docs and Meet. Writes always require approval.</p>
         {message && <p role="alert">{message}</p>}
         <div className="setting-row">
           <div>
@@ -108,13 +114,29 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
             <a href="/api/connectors/google/start?scope=org">Connect organization account</a>
           </div>
         )}
-        <ul aria-label="Connected accounts" className="connector-account-list">
+        <div className="setting-row">
+          <div>
+            <b>Google Meet</b>
+            <p>Read past meetings, participants, recordings and transcripts. Meet rides on the same Google permission as the account above, so Disconnecting it also removes Meet access.</p>
+            {meetAccounts.length > 0 && (
+              <small>Added to {meetAccounts.map((a) => a.externalAccount).join(', ')}</small>
+            )}
+          </div>
+          {meetAccounts.length > 0 ? (
+            <small>Meet access granted</small>
+          ) : googleAccounts.length > 0 ? (
+            <a className="primary" href="/api/connectors/google/start?addon=meet">Add Meet access</a>
+          ) : (
+            <small>Connect Google first</small>
+          )}
+        </div>
+        <ul aria-label="Connected Google accounts" className="connector-account-list">
           {loading && <li role="status">Checking connected accounts…</li>}
           {!loading && googleAccounts.length === 0 && <li className="connector-empty">No Google accounts connected.</li>}
           {googleAccounts.map((a) => (
             <li key={a.id}>
               <span className="connector-account-icon" aria-hidden="true">{a.externalAccount.slice(0, 1).toUpperCase()}</span>
-              <span className="connector-account-copy"><b>{a.externalAccount}</b><small>{a.scope === 'org' ? 'Organization account' : 'Personal account'} · {a.status}</small></span>
+              <span className="connector-account-copy"><b>{a.externalAccount}</b><small>{a.scope === 'org' ? 'Organization account' : 'Personal account'} · {a.status}{a.capabilities?.meet ? ' · Meet access' : ''}</small></span>
               <button className="outline danger" onClick={() => revoke(a.id)}>Disconnect</button>
             </li>
           ))}

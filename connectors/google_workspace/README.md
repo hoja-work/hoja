@@ -70,13 +70,104 @@ Google allows roughly 100 redirect URIs per client, which caps one client at abo
 
 ## Scopes
 
-Only read scopes are requested: `gmail.readonly`, `drive.readonly`, `calendar.readonly`, and
-`documents.readonly`. `WRITE_SCOPES` exists in `oauth.py` but `start` never requests it; adding a
-scope to the consent screen widens consent for every user, so it is a deliberate change, not a
-deploy step.
+Only read scopes are requested: `gmail.readonly`, `drive.readonly`, `calendar.readonly`,
+`documents.readonly`, and — when the account adds Meet — `meetings.space.readonly`.
+`WRITE_SCOPES` exists in `oauth.py` but `start` never requests it; adding a scope to the consent
+screen widens consent for every user, so it is a deliberate change, not a deploy step.
 
 Google does **not** reject an unlisted scope at the authorization endpoint, so least privilege
-rests on `start` sending only `READ_SCOPES`, not on the consent-screen registry.
+rests on `start` sending only the scopes for the flow it is starting, not on the consent-screen
+registry.
+
+## Google Meet
+
+Meet is not a second connector and not a second account. It is a **scope add-on on the Google
+grant that already exists**: the same OAuth client, the same redirect URI, the same
+`connector_account` row, the same Disconnect.
+
+That shape is what Google's own flow supports. An OAuth client is a project credential, not an
+API credential — the authority is the scope requested plus the APIs enabled in the project — and
+`include_granted_scopes=true` makes a later authorization request *extend* the existing grant
+instead of replacing it. `authorization_url` has always sent that flag; Meet is the first add-on
+to rely on it.
+
+### Deployer setup (two steps, no new secret)
+
+1. Enable **Google Meet API** (`meet.googleapis.com`) in the Google Cloud project that owns the
+   OAuth client. A deployment that skips this gets `403 SERVICE_DISABLED` on the first Meet call,
+   which the connector reports as a deployment error rather than asking the user to reconnect.
+2. Add `https://www.googleapis.com/auth/meetings.space.readonly` to the consent screen for that
+   project. Google accepts an unlisted scope, but listing it is what makes the consent screen
+   honest about what it is asking for.
+
+No environment variable changes. `HOJA_GOOGLE_CLIENT_ID`, `HOJA_GOOGLE_CLIENT_SECRET` and
+`HOJA_GOOGLE_REDIRECT_URI` are the same three values, and the connector MCP service needs no
+restart beyond the one it already needs for a new build.
+
+### How an upgrade is requested
+
+`GET /api/connectors/google/start?addon=meet` starts an upgrade instead of a fresh connect:
+
+- it refuses with `409` when the caller has no active Google account, because a Meet-only grant
+  would leave that account unable to use Workspace;
+- its authorization request carries **only** `meetings.space.readonly`, so the consent screen
+  shows one new permission instead of re-asking for Gmail and Drive;
+- the callback records the scope set Google reports, which with `include_granted_scopes=true` is
+  the whole grant. The previous row is updated, never duplicated, so one Google account is one
+  grant and one Disconnect;
+- if the user unticks the Meet permission, the callback fails with `400` and the stored grant is
+  left untouched — a capability is never recorded that the token cannot use.
+
+`GET /api/connectors/accounts` reports `capabilities` per Google account
+(`gmail`/`drive`/`calendar`/`docs`/`meet`), derived from the recorded grant, so Settings shows
+what the token actually covers rather than "connected".
+
+### Revocation
+
+Disconnect calls `https://oauth2.googleapis.com/revoke` with the stored refresh token, which ends
+the **whole** Google grant — Workspace and Meet together — and the response reports
+`providerRevoked: true` only when Google confirmed. There is no way to revoke only the Meet scope
+at this level: Google revokes a grant, not a scope. Settings says so on the Meet row.
+
+### API contract
+
+All calls use `https://meet.googleapis.com/v2` with the stored grant's access token and need only
+`meetings.space.readonly`.
+
+| Tool | Meet method | Notes |
+|------|-------------|-------|
+| `meet_list_conference_records` | `GET conferenceRecords` | `filter` (EBNF over `space.meeting_code`, `space.name`, `start_time`, `end_time`), `pageSize` ≤ 100 |
+| `meet_list_participants` | `GET {record}/participants` | `pageSize` ≤ 250; `signedin`, `anonymous` and `phone` shapes are kept apart |
+| `meet_list_recordings` | `GET {record}/recordings` | metadata plus the Drive file id and playback link |
+| `meet_list_transcripts` | `GET {record}/transcripts` | metadata plus the Docs mirror link |
+| `meet_read_transcript` | `GET {transcript}/entries` | speaker reference, text and time range |
+
+Every tool is a read. There is no Meet method in this package that creates a space, ends a
+conference, or changes a member.
+
+Pagination is bounded twice — a caller result cap and a 10-page cap — and a repeated
+`nextPageToken` stops the walk, so one tool call cannot become an unbounded read.
+
+### Limits that shape the product
+
+- **Artifact bytes are not available.** A recording is an MP4 in the organizer's Drive
+  (`driveDestination.exportUri`) and a transcript is mirrored to Google Docs
+  (`docsDestination.exportUri`). Transcript *text* comes from `transcripts.entries`, so no Drive
+  or Docs scope is needed for what this connector returns. Downloading a recording file would
+  need a Drive content scope, which this connector does not request.
+- **Visibility is the account's visibility.** `conferenceRecords.list` returns the conferences
+  that account organized or took part in; it is not an organization-wide audit.
+- **A conference record expires.** Google deletes records after their `expireTime`, so this is a
+  recent-history view, not an archive.
+- **`meet_list_conference_records` is unfiltered by default**, which returns page after page of
+  whatever Google considers the account's records. Pass a `filter` time range for a specific
+  window; the result cap and page cap are what keep an unfiltered call bounded.
+
+### Schema
+
+No migration. Meet reuses the Workspace `connector_account` row: `scopes` records the whole grant
+Google reported, `encrypted_refresh_token` the sealed refresh token. `capabilities` is derived at
+read time, not stored, so it cannot drift from the token.
 
 ## Schema
 
@@ -91,4 +182,5 @@ callback routes, accounts list and revoke, the approval queue for writes, the co
 service, agent toolset wiring, and the Settings page.
 
 Not implemented: the write tools themselves are behind the queue and disabled unless
-`WRITE_SCOPES` are granted; there is no per-account MCP tool for Google Chat, Meet, or Tasks.
+`WRITE_SCOPES` are granted; there is no per-account MCP tool for Google Chat or Tasks; and no Meet
+tool creates a space, ends a conference, or downloads a recording's bytes.
