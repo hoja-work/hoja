@@ -232,3 +232,83 @@ def test_the_source_reports_the_configured_api_base(tmp_path) -> None:
     )
     store = ZoomTokenStore(engine, httpx.AsyncClient(), config)
     assert store.source(ACCOUNT_ID).api_base() == "https://eu01api.zoom.us/v2"
+
+
+@respx.mock
+async def test_a_rejected_access_token_is_never_replayed(tmp_path) -> None:
+    """Zoom answered 401 for a token its recorded expiry still calls valid.
+
+    The client calls `invalidate()` and retries once. If the store only drops the cache, that retry
+    re-reads the row and sends the same rejected token a second time; the rotation never happens.
+    """
+    engine = _engine(tmp_path)
+    _insert(engine, access="access-1", expires_at=int(time.time()) + 3000)
+    route = respx.post(TOKEN_URL).mock(return_value=_token_response("access-2", "refresh-2"))
+    async with httpx.AsyncClient() as http:
+        store = ZoomTokenStore(engine, http, _config())
+        source = store.source(ACCOUNT_ID)
+        assert await source.access_token() == "access-1"
+        await source.invalidate()  # what zoom.client does after a 401
+        assert await source.access_token() == "access-2"
+    # Exactly one rotation, and the rejected value never leaves the store again.
+    assert route.call_count == 1
+    assert decrypt_secret(_stored(engine)["encrypted_access_token"]) == "access-2"
+
+
+@respx.mock
+async def test_a_refused_refresh_marks_the_account_for_reconnect(tmp_path) -> None:
+    """After a 401 the rotation is the only way forward. If Zoom refuses it, the account is dead
+    until a new consent: report that, and do not spend another refresh attempt on a grant Zoom has
+    already rejected."""
+    engine = _engine(tmp_path)
+    _insert(engine, access="access-1", expires_at=int(time.time()) + 3000)
+    route = respx.post(TOKEN_URL).mock(
+        return_value=httpx.Response(
+            400, json={"error": "invalid_grant", "reason": "Invalid refresh token"}
+        )
+    )
+    async with httpx.AsyncClient() as http:
+        store = ZoomTokenStore(engine, http, _config())
+        source = store.source(ACCOUNT_ID)
+        assert await source.access_token() == "access-1"
+        await source.invalidate()
+        with pytest.raises(ConnectorAuthError) as excinfo:
+            await source.access_token()
+        assert "reconnect zoom" in (excinfo.value.hint or "").lower()
+        # Marked: the same answer, without a second POST or the rejected token.
+        with pytest.raises(ConnectorAuthError):
+            await source.access_token()
+    assert route.call_count == 1
+    assert decrypt_secret(_stored(engine)["encrypted_access_token"]) == "access-1"
+
+
+@respx.mock
+async def test_a_reconnect_clears_the_mark_and_the_new_grant_is_used(tmp_path) -> None:
+    """The mark must not outlive the grant that replaced it, or a reconnected account stays dead
+    in that process until it restarts."""
+    engine = _engine(tmp_path)
+    _insert(engine, access="access-1", expires_at=int(time.time()) + 3000)
+    respx.post(TOKEN_URL).mock(
+        return_value=httpx.Response(
+            400, json={"error": "invalid_grant", "reason": "Invalid refresh token"}
+        )
+    )
+    async with httpx.AsyncClient() as http:
+        store = ZoomTokenStore(engine, http, _config())
+        source = store.source(ACCOUNT_ID)
+        await source.invalidate()
+        with pytest.raises(ConnectorAuthError):
+            await source.access_token()
+        # The consent screen completed: the callback stores a fresh pair and seeds the store.
+        with engine.begin() as conn:
+            conn.execute(
+                update(connector_account)
+                .where(connector_account.c.id == ACCOUNT_ID)
+                .values(
+                    encrypted_refresh_token=encrypt_secret("refresh-new"),
+                    encrypted_access_token=encrypt_secret("access-new"),
+                    access_token_expires_at=str(int(time.time()) + 3000),
+                )
+            )
+        store.seed(ACCOUNT_ID, _stored(engine))
+        assert await source.access_token() == "access-new"
