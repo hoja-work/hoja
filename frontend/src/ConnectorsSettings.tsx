@@ -404,7 +404,7 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
             <b>Your repositories</b>
             <p>Hoja reads with your own GitHub permissions and the app’s read-only permissions. A GitHub connection is personal to you and is never shared with the workspace.</p>
           </div>
-          <a className="primary" href="/api/connectors/github/start">Connect GitHub</a>
+          {connect('github', '/api/connectors/github/start', 'Connect GitHub')}
         </div>
         {githubInstallUrl && (
           <div className="setting-row">

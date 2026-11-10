@@ -1,7 +1,7 @@
 import React, {memo, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState} from 'react';
 import {confirmDialog, promptDialog} from '../dialogs';
 import {Bell, Check, ChevronDown, ChevronRight, Copy, ExternalLink, FileText, Link2, ListFilter, Plus, Search, Settings2, SlidersHorizontal, Trash2, X, Zap} from 'lucide-react';
-import {gql, relTime, stateKey} from '../main';
+import {attachGithubReferences, gql, relTime, stateKey} from '../main';
 import type {Cycle, Issue, IssueActivityEvent, IssueLabel, IssueState, Project, Team, Viewer} from '../main';
 import {Markdown} from '../markdown';
 import {addLocalIssue, getSync, guessNextIdentifier, isLocalIssueId, localIssueId, onEntityChange, useEntityVersion, useIssueSelect, useIssues, useSyncMeta, useSyncStatus} from '../sync';
@@ -1700,7 +1700,7 @@ export function GraphIssueDetail({workspaceName, viewer, issue, issueList, onOpe
                 <button type="button" className="lin-btn primary" onClick={() => {
                   const text = (desc ?? '').trim() || null;
                   setDescEdit(false);
-                  void change({description: text}).then(ok => { if (!ok) { setDesc(text || ''); setDescEdit(true); } });
+                  void change({description: text}).then(ok => { if (!ok) { setDesc(text || ''); setDescEdit(true); return; } void attachGithubReferences(detail.id, text); });
                 }}>Save</button>
                 <button type="button" className="lin-btn" onClick={() => { setDescEdit(false); setDesc(detail.description || ''); }}>Cancel</button>
               </div>

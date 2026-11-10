@@ -182,3 +182,63 @@ def identifiers_in_pull_request(
                     closing=True,
                 )
     return list(collected.values())
+
+# ---------------------------------------------------------------------------
+# Author-written references
+# ---------------------------------------------------------------------------
+# Detection above answers "did the GitHub side name a Hoja task?". This answers the
+# other direction: a person pasting a GitHub link into a task, which the webhook can
+# never see. Kinds match the ones the issue panel already renders (issue/pr/commit)
+# plus release, which the webhook path does not produce.
+
+KIND_ISSUE = "issue"
+KIND_PR = "pr"
+KIND_COMMIT = "commit"
+KIND_RELEASE = "release"
+
+_GITHUB_URL = re.compile(
+    r"^https?://(?:www\.)?github\.com/"
+    r"(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+)"
+    r"(?:"
+    r"/(?P<object>issues|pull)/(?P<number>[0-9]+)"
+    r"|/commit/(?P<sha>[0-9a-fA-F]{7,40})"
+    r"|/releases/tag/(?P<tag>[^/?#\s]+)"
+    r")/*$"
+)
+
+
+@dataclass(frozen=True)
+class GitHubReference:
+    """A GitHub object named by a URL, in the shape the link table stores."""
+
+    kind: str
+    external_id: str
+    url: str
+    title: str
+
+
+def parse_github_url(url: str | None) -> GitHubReference | None:
+    """Classify a GitHub URL into a link row, or None when it is not one we can store.
+
+    Deliberately strict: only issue, pull request, commit and release URLs are links we
+    can keep meaningful. A repository or file URL has no stable object identity, so it is
+    rejected rather than stored with a made-up key.
+    """
+    if not url or not isinstance(url, str):
+        return None
+    match = _GITHUB_URL.match(url.strip())
+    if match is None:
+        return None
+    owner, repo = match.group("owner"), match.group("repo")
+    slug = f"{owner}/{repo}"
+    number, sha, tag = match.group("number"), match.group("sha"), match.group("tag")
+    if number is not None:
+        kind = KIND_PR if match.group("object") == "pull" else KIND_ISSUE
+        label = "#" + number
+        return GitHubReference(kind=kind, external_id=f"{slug}{label}", url=url, title=f"{slug} {label}")
+    if sha is not None:
+        short = sha[:7]
+        return GitHubReference(kind=KIND_COMMIT, external_id=f"{slug}@{sha}", url=url, title=f"{slug}@{short}")
+    if tag is not None:
+        return GitHubReference(kind=KIND_RELEASE, external_id=f"{slug}@{tag}", url=url, title=f"{slug} release {tag}")
+    return None

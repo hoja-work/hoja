@@ -13,7 +13,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 from graphql import GraphQLError
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.engine import Engine
 
 from hoja_server import addresses
@@ -2163,6 +2163,46 @@ class Store:
             if limit:
                 stmt = stmt.limit(limit)
             return [self.ser_github_link(r) for r in _conn_rows(conn, stmt)]
+
+    def github_link_add(self, org_id: str, issue_id: str, *, kind: str,
+                        external_id: str, url: str, title: str) -> dict | None:
+        """Record a GitHub reference a person wrote into a task.
+
+        Shares the (organization_id, kind, external_id) natural key with the webhook
+        path, so typing the same reference twice updates one row instead of
+        duplicating it. Returns None when the issue is not in this organization,
+        which is also what the RLS policy would enforce at the row level.
+        """
+        from hoja_server.db import now_iso
+
+        with self.engine.begin() as conn:
+            owns = conn.execute(
+                select(issue.c.id).where(and_(
+                    issue.c.organization_id == org_id,
+                    issue.c.id == issue_id)).limit(1)
+            ).first()
+            if not owns:
+                return None
+            existing = conn.execute(
+                select(github_link.c.id).where(and_(
+                    github_link.c.organization_id == org_id,
+                    github_link.c.kind == kind,
+                    github_link.c.external_id == external_id)).limit(1)
+            ).first()
+            stamp = now_iso()
+            if existing:
+                link_id = existing[0]
+                conn.execute(update(github_link).where(github_link.c.id == link_id).values(
+                    issue_id=issue_id, url=url, title=title, updated_at=stamp))
+            else:
+                link_id = f"ghl_{secrets.token_hex(12)}"
+                conn.execute(github_link.insert().values(
+                    id=link_id, organization_id=org_id, issue_id=issue_id, kind=kind,
+                    external_id=external_id, url=url, title=title, state=None,
+                    author=None, sha=None, environment=None,
+                    created_at=stamp, updated_at=stamp))
+            rows = _conn_rows(conn, select(github_link).where(github_link.c.id == link_id))
+            return self.ser_github_link(rows[0]) if rows else None
 
     def upload_visible(self, org_id: str, viewer_id: str, file_id: str) -> bool:
         """May this viewer fetch an uploaded file?

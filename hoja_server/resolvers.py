@@ -23,6 +23,7 @@ from ariadne import (
 from hoja_server import mail_events
 
 logger = logging.getLogger(__name__)
+from hoja_server.github_linking import parse_github_url
 from hoja_server import store as store_module
 from hoja_server import extensions
 from hoja_server.deployment import single_org_mode
@@ -251,6 +252,23 @@ def m_notification_mark_read(_, info, id):
 def m_notification_archive(_, info, id):
     store, _w, org, uid = _ctx(info)
     return store.inbox_mark(org, uid, id, "archived_at")
+
+
+@mutation.field("githubLinkAdd")
+def m_github_link_add(_, info, issueId, url):
+    """Attach a GitHub issue, PR, commit or release URL to a task as a reference."""
+    store, _w, org, _uid = _ctx(info)
+    reference = parse_github_url(url)
+    if reference is None:
+        raise GraphQLError(
+            "Not a GitHub issue, pull request, commit or release URL.",
+            extensions={"code": "BAD_USER_INPUT", "field": "url"})
+    link = store.github_link_add(
+        org, issueId, kind=reference.kind, external_id=reference.external_id,
+        url=reference.url, title=reference.title)
+    if link is None:
+        raise GraphQLError("Issue not found.", extensions={"code": "NOT_FOUND", "field": "issueId"})
+    return link
 
 
 @mutation.field("notificationMarkAllRead")

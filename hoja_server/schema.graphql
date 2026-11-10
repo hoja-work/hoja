@@ -144,6 +144,7 @@ type Mutation {
   notificationMarkRead(id: String!): Boolean!
   notificationArchive(id: String!): Boolean!
   notificationMarkAllRead: Boolean!
+  githubLinkAdd(issueId: String!, url: String!): GithubLink!
   issueDelete(id: String!): DeletePayload @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   issueArchive(id: String!): DeletePayload @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   issueSubscribe(id: String!): Boolean! @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
