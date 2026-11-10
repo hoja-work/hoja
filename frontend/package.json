@@ -49,7 +49,7 @@
     "eslint-plugin-jsx-a11y": "^6.10.2",
     "eslint-plugin-react-hooks": "^7.1.1",
     "react-grab": "0.2.0",
-    "stylelint": "17.16.0",
+    "stylelint": "18.0.0",
     "typescript-eslint": "8.72.1"
   },
   "overrides": {
