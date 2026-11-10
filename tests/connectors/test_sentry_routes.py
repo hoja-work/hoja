@@ -7,6 +7,7 @@ import hmac
 import json
 import time
 import uuid
+from datetime import datetime, timezone
 from urllib.parse import parse_qs, quote, urlparse
 
 import httpx
@@ -101,25 +102,28 @@ def _seal(pending: dict) -> str:
     return wrap_state(encrypt_secret(json.dumps(body), str(body["org"])), body.get("tenant"))
 
 
-def _expires_at(hours: int = 8) -> str:
-    """An absolute instant ``hours`` from now, formatted the way Sentry sends it.
+GRANT_LIFETIME_SECONDS = 8 * 60 * 60
 
-    Computed per call rather than written as a literal: a fixed timestamp in this fixture is a
-    time bomb, and the day it passes the failure looks exactly like a broken exchange (the grant
-    reads as already expired) instead of like a stale test.
-    """
-    from datetime import datetime, timedelta, timezone
 
-    return (datetime.now(timezone.utc) + timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+def _grant_window(lifetime: int = GRANT_LIFETIME_SECONDS) -> tuple[int, int]:
+    """(dateCreated, expiresAt) as epochs, for a grant the provider has just minted."""
+    created = int(time.time())
+    return created, created + lifetime
+
+
+def _iso(epoch: int) -> str:
+    return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
 
 def _token_response(**overrides) -> httpx.Response:
+    created, expires = _grant_window()
     body = {
         "id": "38",
         "token": "access-sentry-fixture",
         "refreshToken": "refresh-sentry-fixture",
         "scopes": ["event:read", "org:read", "project:read"],
-        "dateCreated": _expires_at(-8),
-        "expiresAt": _expires_at(),
+        "dateCreated": _iso(created),
+        "expiresAt": _iso(expires),
         "state": None,
         "application": None,
     }
@@ -281,10 +285,11 @@ def test_finish_refuses_a_state_issued_to_someone_else(tmp_path, broker) -> None
 
 def test_full_broker_flow_stores_a_sealed_installation_grant(tmp_path, broker) -> None:
     engine, app, admin = _setup(tmp_path)
+    _, expires_at = _grant_window()
     with _client(app, TENANT) as tenant:
         state = _state_from(_start(tenant, admin["token"]))
         with respx.mock:
-            exchange = respx.post(AUTHZ).mock(return_value=_token_response())
+            exchange = respx.post(AUTHZ).mock(return_value=_token_response(expiresAt=_iso(expires_at)))
             respx.get(ORGS).mock(return_value=_organization("hoja"))
             res = tenant.get(
                 f"{FINISH}?code=c1&installationId={INSTALLATION}&orgSlug=hoja"
@@ -306,7 +311,8 @@ def test_full_broker_flow_stores_a_sealed_installation_grant(tmp_path, broker) -
     assert set(row["scopes"].split()) == {"event:read", "org:read", "project:read"}
     assert decrypt_secret(row["encrypted_refresh_token"], row["organization_id"]) == "refresh-sentry-fixture"
     assert decrypt_secret(row["encrypted_access_token"], row["organization_id"]) == "access-sentry-fixture"
-    assert int(row["access_token_expires_at"]) > int(time.time())
+    # The exact instant the provider named, not merely "some time after now".
+    assert int(row["access_token_expires_at"]) == expires_at
 
 
 def test_an_organization_that_disagrees_with_the_callback_is_refused(tmp_path, broker) -> None:
