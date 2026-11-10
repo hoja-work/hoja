@@ -48,6 +48,10 @@ def _env(monkeypatch):
     monkeypatch.setenv("HOJA_CONNECTOR_BROKER_HOST", "api.hoja.work")
     monkeypatch.setenv("HOJA_CONNECTOR_MCP_URL", "http://connector-mcp:8099/mcp")
     monkeypatch.setenv("HOJA_CONNECTOR_SIGNING_KEY", KEY)
+    # No background webhook worker: it runs in the system tenant context and its shutdown join is
+    # the one thing that can outlive a TestClient lifespan under RLS (tests/test_tenant_hosts.py
+    # disables it for the same reason). Nothing here exercises webhook delivery.
+    monkeypatch.setenv("HOJA_WEBHOOK_WORKER", "0")
     monkeypatch.setenv("HOJA_GOOGLE_CLIENT_ID", "client-123.apps.googleusercontent.com")
     monkeypatch.setenv("HOJA_GOOGLE_CLIENT_SECRET", "GOCSPX-shared-tenancy-test")
     monkeypatch.setenv("HOJA_GOOGLE_REDIRECT_URI", "https://unused.example.test/callback")
