@@ -43,14 +43,25 @@ def _client(handler) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
 
+def _expires_at(hours: int = 8) -> str:
+    """An absolute instant ``hours`` from now, formatted the way Sentry sends it.
+
+    Computed per call rather than written as a literal: a fixed timestamp in this fixture is a
+    time bomb, and the day it passes the failure looks exactly like a broken exchange (the grant
+    reads as already expired) instead of like a stale test.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    return (datetime.now(timezone.utc) + timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
 def _token_body(**overrides) -> dict:
     body = {
         "id": "38",
         "token": "access-sentry-fixture",
         "refreshToken": "refresh-sentry-fixture",
         "scopes": ["event:read", "org:read", "project:read"],
-        "dateCreated": "2026-11-09T19:52:40.889879Z",
-        "expiresAt": "2026-11-10T03:52:40.889879Z",
+        "dateCreated": _expires_at(-8),
+        "expiresAt": _expires_at(),
         "state": None,
         "application": None,
     }
@@ -172,8 +183,9 @@ async def test_exchange_reads_the_camel_case_expiry_as_an_instant() -> None:
         token = await exchange_installation_code(
             http, _config(), code="c1", installation_id=INSTALLATION
         )
-    # 2026-11-10T03:52:40Z, not a duration.
-    assert token.expires_at == 1794282760 or token.expires_at > int(time.time())
+    # An absolute instant, not a duration: the body says when the grant expires, and reading it
+    # as a lifetime would put the expiry hours into the past.
+    assert token.expires_at > int(time.time())
     assert 0 < token.expires_in <= 8 * 60 * 60
 
 

@@ -101,14 +101,25 @@ def _seal(pending: dict) -> str:
     return wrap_state(encrypt_secret(json.dumps(body), str(body["org"])), body.get("tenant"))
 
 
+def _expires_at(hours: int = 8) -> str:
+    """An absolute instant ``hours`` from now, formatted the way Sentry sends it.
+
+    Computed per call rather than written as a literal: a fixed timestamp in this fixture is a
+    time bomb, and the day it passes the failure looks exactly like a broken exchange (the grant
+    reads as already expired) instead of like a stale test.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    return (datetime.now(timezone.utc) + timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
 def _token_response(**overrides) -> httpx.Response:
     body = {
         "id": "38",
         "token": "access-sentry-fixture",
         "refreshToken": "refresh-sentry-fixture",
         "scopes": ["event:read", "org:read", "project:read"],
-        "dateCreated": "2026-11-09T19:52:40.889879Z",
-        "expiresAt": "2026-11-10T03:52:40.889879Z",
+        "dateCreated": _expires_at(-8),
+        "expiresAt": _expires_at(),
         "state": None,
         "application": None,
     }
