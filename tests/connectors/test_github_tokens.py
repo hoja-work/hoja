@@ -23,6 +23,7 @@ from hoja_server.github_tokens import GitHubTokenStore
 from hoja_server.secrets_box import decrypt_secret, encrypt_secret
 
 TOKEN_URL = "https://github.com/login/oauth/access_token"
+ORG_ID = "org-1"
 ACCOUNT_ID = "acct-github-1"
 CALLBACK = "https://hoja.example.test/api/connectors/github/callback"
 
@@ -98,9 +99,9 @@ async def test_an_expired_access_token_is_refreshed_once_and_both_secrets_are_pe
 
     async with httpx.AsyncClient() as http:
         store = GitHubTokenStore(engine, http, _config())
-        token = await store.access_token(ACCOUNT_ID)
+        token = await store.access_token(ACCOUNT_ID, ORG_ID)
         # A second call inside the eight-hour window must reuse the cache, not rotate again.
-        again = await store.access_token(ACCOUNT_ID)
+        again = await store.access_token(ACCOUNT_ID, ORG_ID)
 
     assert token == "access-2"
     assert again == "access-2"
@@ -118,7 +119,7 @@ async def test_a_fresh_access_token_is_used_without_a_refresh(tmp_path):
     route = respx.post(TOKEN_URL).mock(return_value=_response("unused", "unused"))
     async with httpx.AsyncClient() as http:
         store = GitHubTokenStore(engine, http, _config())
-        assert await store.access_token(ACCOUNT_ID) == "access-fresh"
+        assert await store.access_token(ACCOUNT_ID, ORG_ID) == "access-fresh"
     assert route.call_count == 0
 
 
@@ -130,7 +131,7 @@ async def test_two_concurrent_callers_spend_the_refresh_token_once(tmp_path):
     async with httpx.AsyncClient() as http:
         store = GitHubTokenStore(engine, http, _config())
         a, b = await asyncio.gather(
-            store.access_token(ACCOUNT_ID), store.access_token(ACCOUNT_ID)
+            store.access_token(ACCOUNT_ID, ORG_ID), store.access_token(ACCOUNT_ID, ORG_ID)
         )
     assert a == b == "access-2"
     assert route.call_count == 1
@@ -168,7 +169,7 @@ async def test_a_rejection_after_another_worker_rotated_adopts_the_stored_pair(t
     respx.post(TOKEN_URL).mock(side_effect=_rotate_elsewhere)
     async with httpx.AsyncClient() as http:
         store = GitHubTokenStore(engine, http, _config())
-        token = await store.access_token(ACCOUNT_ID)
+        token = await store.access_token(ACCOUNT_ID, ORG_ID)
 
     assert calls == ["refresh-1", "refresh-2"]
     assert token == "access-3"
@@ -185,7 +186,7 @@ async def test_a_rejected_refresh_with_an_unchanged_row_means_reconnect(tmp_path
     async with httpx.AsyncClient() as http:
         store = GitHubTokenStore(engine, http, _config())
         with pytest.raises(ConnectorAuthError) as caught:
-            await store.access_token(ACCOUNT_ID)
+            await store.access_token(ACCOUNT_ID, ORG_ID)
     assert "six-month" in str(caught.value)
     assert caught.value.hint and "Settings > Connections" in caught.value.hint
 
@@ -198,7 +199,7 @@ async def test_an_account_with_no_stored_grant_is_not_refreshed(tmp_path):
     async with httpx.AsyncClient() as http:
         store = GitHubTokenStore(engine, http, _config())
         with pytest.raises(ConnectorAuthError):
-            await store.access_token(ACCOUNT_ID)
+            await store.access_token(ACCOUNT_ID, ORG_ID)
     assert route.call_count == 0
 
 
@@ -207,7 +208,7 @@ async def test_a_missing_account_row_is_reported_as_disconnected(tmp_path):
     async with httpx.AsyncClient() as http:
         store = GitHubTokenStore(engine, http, _config())
         with pytest.raises(ConnectorAuthError):
-            await store.access_token("acct-that-does-not-exist")
+            await store.access_token("acct-that-does-not-exist", ORG_ID)
 
 
 @respx.mock
@@ -217,7 +218,7 @@ async def test_invalidate_forces_the_next_call_to_refresh(tmp_path):
     route = respx.post(TOKEN_URL).mock(return_value=_response("access-2", "refresh-2"))
     async with httpx.AsyncClient() as http:
         store = GitHubTokenStore(engine, http, _config())
-        source = store.source(ACCOUNT_ID)
+        source = store.source(ACCOUNT_ID, ORG_ID)
         assert await source.access_token() == "access-1"
         await source.invalidate()
         assert await source.access_token() == "access-2"
@@ -232,5 +233,5 @@ async def test_seed_populates_the_cache_from_a_fresh_callback(tmp_path):
     async with httpx.AsyncClient() as http:
         store = GitHubTokenStore(engine, http, _config())
         store.seed(ACCOUNT_ID, _row(engine))
-        assert await store.access_token(ACCOUNT_ID) == "access-callback"
+        assert await store.access_token(ACCOUNT_ID, ORG_ID) == "access-callback"
     assert route.call_count == 0

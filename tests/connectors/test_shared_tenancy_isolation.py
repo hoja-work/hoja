@@ -508,3 +508,21 @@ def test_the_mcp_resolver_reads_github_and_grafana_only_for_their_own_organizati
     theirs = verify_github(sign_github(bravo["user_id"], bravo["org_id"], "read", key=KEY), key=KEY)
     assert [row["id"] for row in _active_rows(engine, mine, "", "github")] == ["acct-alpha-gh"]
     assert [row["id"] for row in _active_rows(engine, theirs, "", "github")] == ["acct-bravo-gh"]
+
+
+@pytest.mark.skipif(not rls_mode.ENABLED, reason="row-level security is not enabled for this run")
+def test_the_github_token_store_reads_its_row_only_under_the_owning_organization(tmp_path) -> None:
+    """The store's own queries are tenant-bound, not just the resolver's.
+
+    Found in production: `_active_rows` binds the tenant for its one query, then the token store
+    opened its own unbound connection, RLS hid the row, and a healthy grant answered "the GitHub
+    account is no longer connected" to every tool call.
+    """
+    from hoja_server.github_tokens import GitHubTokenStore
+
+    engine, _client, alpha, bravo = _setup(tmp_path)
+    _add_account(engine, alpha["org_id"], alpha["user_id"], account_id="acct-github-store",
+                 provider="github", token="ghr_store")
+    store = GitHubTokenStore(engine=engine, http=None, config=None)
+    assert store._row("acct-github-store", alpha["org_id"]) is not None
+    assert store._row("acct-github-store", bravo["org_id"]) is None

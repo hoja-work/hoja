@@ -386,7 +386,7 @@ def make_github_grant_resolver(
                 GitHubGrant(
                     account_id=row["id"],
                     external_account=row["external_account"],
-                    tokens=store.source(row["id"]),
+                    tokens=store.source(row["id"], row["organization_id"]),
                 )
             )
         return grants

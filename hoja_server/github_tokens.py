@@ -23,6 +23,7 @@ sealed with `secrets_box`.
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
 import logging
 import time
 from dataclasses import dataclass
@@ -35,6 +36,7 @@ from github.oauth import GitHubToken, refresh_access_token
 from sqlalchemy import select, update
 from sqlalchemy.engine import Engine
 
+from hoja_server import tenant_context
 from hoja_server.db import connector_account
 from hoja_server.secrets_box import SecretBoxError, decrypt_secret, encrypt_secret
 
@@ -56,6 +58,19 @@ def _now() -> float:
     return time.time()
 
 
+@contextmanager
+def _scoped(engine: Engine, org_id: str, *, write: bool = False):
+    """A connection bound to ``org_id`` so row-level security admits the owner's row.
+
+    The connector service connects as the app role, exactly like the web app, so every access to a
+    connector account has to name the tenant it is acting for. Without it the row is invisible and
+    a healthy grant reads as "no longer connected".
+    """
+    with tenant_context.scoped(org_id):
+        with (engine.begin() if write else engine.connect()) as conn:
+            yield conn
+
+
 class GitHubTokenStore:
     """One instance per process. Holds the per-account refresh lock and the access cache."""
 
@@ -70,8 +85,14 @@ class GitHubTokenStore:
         # passed: a token can be revoked or the app suspended long before then.
         self._forced: set[str] = set()
 
-    def source(self, account_id: str) -> AccountTokenSource:
-        return AccountTokenSource(self, account_id)
+    def source(self, account_id: str, org_id: str) -> AccountTokenSource:
+        """A token source bound to the organization that owns the account.
+
+        The organization travels with the source because every query in here runs on the app
+        role: under row-level security an unbound transaction sees no row at all, and a refresh
+        would answer "the account is no longer connected" for a grant that is perfectly healthy.
+        """
+        return AccountTokenSource(self, account_id, org_id)
 
     def api_base(self) -> str:
         return str(getattr(self._config, "api_base", "") or "https://api.github.com")
@@ -91,7 +112,7 @@ class GitHubTokenStore:
         self._cache.pop(account_id, None)
         self._forced.add(account_id)
 
-    async def access_token(self, account_id: str) -> str:
+    async def access_token(self, account_id: str, org_id: str) -> str:
         cached = self._cache.get(account_id)
         if cached is not None and cached.expires_at - _EXPIRY_SKEW_SECONDS > _now():
             return cached.access_token
@@ -102,10 +123,10 @@ class GitHubTokenStore:
                 return cached.access_token
             forced = account_id in self._forced
             self._forced.discard(account_id)
-            return await self._refresh(account_id, force=forced)
+            return await self._refresh(account_id, org_id, force=forced)
 
-    async def _refresh(self, account_id: str, *, force: bool = False) -> str:
-        row = self._row(account_id)
+    async def _refresh(self, account_id: str, org_id: str, *, force: bool = False) -> str:
+        row = self._row(account_id, org_id)
         if row is None:
             raise ConnectorAuthError(
                 "The GitHub account is no longer connected.",
@@ -130,7 +151,7 @@ class GitHubTokenStore:
                 self._http, self._config, refresh_token=used_refresh
             )
         except ConnectorAuthError as exc:
-            adopted = await self._adopt_concurrent_rotation(account_id, used_refresh)
+            adopted = await self._adopt_concurrent_rotation(account_id, org_id, used_refresh)
             if adopted is not None:
                 return adopted
             raise ConnectorAuthError(
@@ -138,11 +159,13 @@ class GitHubTokenStore:
                 "already used, or reached its six-month limit).",
                 hint="Reconnect GitHub in Settings > Connections.",
             ) from exc
-        return self._persist(account_id, token)
+        return self._persist(account_id, token, org_id)
 
-    async def _adopt_concurrent_rotation(self, account_id: str, used_refresh: str) -> str | None:
+    async def _adopt_concurrent_rotation(
+        self, account_id: str, org_id: str, used_refresh: str
+    ) -> str | None:
         """Another worker may have rotated first. If the stored token changed, use theirs."""
-        row = self._row(account_id)
+        row = self._row(account_id, org_id)
         if row is None:
             return None
         current = self._decrypt(row["encrypted_refresh_token"], row["organization_id"])
@@ -156,21 +179,13 @@ class GitHubTokenStore:
             token = await refresh_access_token(self._http, self._config, refresh_token=current)
         except (ConnectorAuthError, ConnectorAPIError, ConnectorConfigError):
             return None
-        return self._persist(account_id, token)
+        return self._persist(account_id, token, org_id)
 
-    def _persist(self, account_id: str, token: GitHubToken) -> str:
+    def _persist(self, account_id: str, token: GitHubToken, org: str) -> str:
         expires_at = _now() + token.expires_in
         # Sealing is bound to the organization that owns the account (ADR-003): the key is derived
-        # per organization and the id is the AEAD's associated data, so the organization has to come
-        # from the row rather than from a member of this object, which outlives any one tenant.
-        row = self._row(account_id)
-        if row is None:
-            raise ConnectorAuthError(
-                "The GitHub account is no longer connected.",
-                hint="Connect GitHub again in Settings > Connections.",
-            )
-        org = row["organization_id"]
-        with self._engine.begin() as conn:
+        # per organization and the id is the AEAD's associated data.
+        with _scoped(self._engine, org, write=True) as conn:
             conn.execute(
                 update(connector_account)
                 .where(connector_account.c.id == account_id)
@@ -204,8 +219,8 @@ class GitHubTokenStore:
             expires_at = _UNKNOWN_EXPIRY
         return _Cached(access_token=access, expires_at=expires_at)
 
-    def _row(self, account_id: str) -> Any:
-        with self._engine.connect() as conn:
+    def _row(self, account_id: str, org_id: str) -> Any:
+        with _scoped(self._engine, org_id) as conn:
             return (
                 conn.execute(
                     select(connector_account).where(connector_account.c.id == account_id)
@@ -227,12 +242,13 @@ class GitHubTokenStore:
 class AccountTokenSource:
     """The narrow `github.client.TokenSource` the connector package sees."""
 
-    def __init__(self, store: GitHubTokenStore, account_id: str) -> None:
+    def __init__(self, store: GitHubTokenStore, account_id: str, org_id: str) -> None:
         self._store = store
         self._account_id = account_id
+        self._org_id = org_id
 
     async def access_token(self) -> str:
-        return await self._store.access_token(self._account_id)
+        return await self._store.access_token(self._account_id, self._org_id)
 
     async def invalidate(self) -> None:
         # Drop the cache and force the next access_token() call to refresh instead of replaying a
