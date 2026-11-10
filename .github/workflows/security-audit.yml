@@ -32,7 +32,12 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: npm ci
+      # Named on purpose: npm ci resolves peers, so a peer conflict fails here
+      # with ERESOLVE and has nothing to do with an advisory. Leaving this step
+      # unnamed made that failure read as "npm audit (frontend)" in the checks
+      # list, which is how two dependency PRs sat red for a week unclassified.
+      - name: Install from the lockfile (npm ci)
+        run: npm ci
       - name: Fail on high or critical advisories
         run: npm audit --audit-level=high
 
