@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import json
 import time
+from datetime import datetime, timezone
 
 import httpx
 import pytest
@@ -43,14 +44,34 @@ def _client(handler) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
 
+# The provider mints an installation grant as `dateCreated` plus an `expiresAt` *instant* eight
+# hours later; the live 201 body recorded while provisioning the connector reads
+# 2026-11-09T19:52:40.889879Z -> 2026-11-10T03:52:40.889879Z. Derives both from one reading of the
+# clock so the fixture keeps that shape without becoming a time bomb: a literal date here goes red
+# on every branch the moment it passes, and the failure then looks like a broken exchange rather
+# than a stale fixture.
+GRANT_LIFETIME_SECONDS = 8 * 60 * 60
+
+
+def _grant_window(lifetime: int = GRANT_LIFETIME_SECONDS) -> tuple[int, int]:
+    """(dateCreated, expiresAt) as epochs, for a grant the provider has just minted."""
+    created = int(time.time())
+    return created, created + lifetime
+
+
+def _iso(epoch: int) -> str:
+    return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
 def _token_body(**overrides) -> dict:
+    created, expires = _grant_window()
     body = {
         "id": "38",
         "token": "access-sentry-fixture",
         "refreshToken": "refresh-sentry-fixture",
         "scopes": ["event:read", "org:read", "project:read"],
-        "dateCreated": "2026-11-09T19:52:40.889879Z",
-        "expiresAt": "2026-11-10T03:52:40.889879Z",
+        "dateCreated": _iso(created),
+        "expiresAt": _iso(expires),
         "state": None,
         "application": None,
     }
@@ -165,16 +186,44 @@ async def test_exchange_posts_the_documented_installation_payload() -> None:
 
 
 async def test_exchange_reads_the_camel_case_expiry_as_an_instant() -> None:
+    _, eight_hours_out = _grant_window()
+    body = _token_body(expiresAt=_iso(eight_hours_out))
+
     def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(201, json=_token_body())
+        return httpx.Response(201, json=body)
 
     async with _client(handler) as http:
         token = await exchange_installation_code(
             http, _config(), code="c1", installation_id=INSTALLATION
         )
-    # 2026-11-10T03:52:40Z, not a duration.
-    assert token.expires_at == 1794282760 or token.expires_at > int(time.time())
-    assert 0 < token.expires_in <= 8 * 60 * 60
+    # The absolute instant the body named, not "eight hours from now".
+    assert token.expires_at == eight_hours_out
+    assert GRANT_LIFETIME_SECONDS - 60 <= token.expires_in <= GRANT_LIFETIME_SECONDS
+
+    # A shorter-lived grant must be read as itself, not replaced by the eight-hour default.
+    _, forty_minutes_out = _grant_window(40 * 60)
+    short_body = _token_body(expiresAt=_iso(forty_minutes_out))
+
+    def short_handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(201, json=short_body)
+
+    async with _client(short_handler) as http:
+        short = await exchange_installation_code(
+            http, _config(), code="c1", installation_id=INSTALLATION
+        )
+    assert short.expires_at == forty_minutes_out
+    assert 0 < short.expires_in <= 40 * 60
+
+
+def test_the_token_fixture_keeps_its_expiry_relative_to_now(monkeypatch) -> None:
+    """The time-bomb guard: a calendar literal here ignores the clock and rots the day it passes."""
+    for frozen in (0, 4_102_444_800):  # 1970-01-01 and 2100-01-01
+        monkeypatch.setattr(time, "time", lambda frozen=frozen: float(frozen))
+        body = _token_body()
+        minted = datetime.fromisoformat(body["expiresAt"].replace("Z", "+00:00"))
+        assert minted.timestamp() == frozen + GRANT_LIFETIME_SECONDS
+        created = datetime.fromisoformat(body["dateCreated"].replace("Z", "+00:00"))
+        assert created.timestamp() == frozen
 
 
 async def test_exchange_records_the_granted_scopes() -> None:
