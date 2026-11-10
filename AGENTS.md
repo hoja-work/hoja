@@ -1,18 +1,18 @@
 # AGENTS.md — Hoja contributor operations
 
 Hoja is a standalone, generic, self-hosted, offline-first, agent-native
-work-management product with a Linear-compatible GraphQL interface. Keep product
+work-management product with a wire-compatible GraphQL interface. Keep product
 defaults independent of any organization, repository owner, or deployment.
 
 ## Non-negotiables
 
 - Use `hoja`, `hoja-mcp`, `hoja-serve`, `HOJA_*`, and Hoja config/data paths for
   new work. Keep `HOJA_TOKEN` and `HOJA_API_URL` canonical; honor the deprecated
-  `LINEAR_TOKEN` and `LINEAR_API_URL` aliases and the Linear GraphQL wire names.
+  `LINEAR_TOKEN` and `LINEAR_API_URL` aliases and the upstream GraphQL wire names.
 - Preserve existing user changes. Inspect `git status --short` before editing and
   use a separate worktree when the checkout already contains unrelated work.
 - Never commit credentials, `.env` files, logs, private keys, or
-  `schema/linear-schema.json`. Install `scripts/pre-commit.sh` before committing;
+  `schema/graph-schema.json`. Install `scripts/pre-commit.sh` before committing;
   it also runs the anti-slop policy against the complete staged index.
 - Do not add runtime dependencies without justification and security review.
 - Do not weaken authorization, tenant isolation, TLS verification, or error

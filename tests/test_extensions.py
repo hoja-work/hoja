@@ -148,7 +148,7 @@ def test_install_uninstall_is_exactly_reverted_and_reinstallable(world):
     before = counts(engine)
     first = install(client, token, manifest(url))
     ext = first["extension"]
-    assert first["apiKey"].startswith("lin_api_") and first["signingSecret"].startswith("hoja_ext_")
+    assert first["apiKey"].startswith("hoja_") and first["signingSecret"].startswith("hoja_ext_")
     assert ext["access"] == "read_write" and ext["botUser"]["name"] == "Worktree provisioner"
     after = counts(engine)
     assert after["extension_effect"] == 5  # bot, key, webhook, hook, action
@@ -258,8 +258,8 @@ def test_update_reconciles_by_key_and_rolls_back_on_error(world):
 def _secret_ok(secret, headers, body):
     expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
     sdk = os.environ.get("HOJA_LINEAR_SDK_DIR")
-    if sdk:  # independent check: Linear's official verifier must accept the request
-        script = Path(__file__).with_name("linear_sdk_verify.mjs")
+    if sdk:  # independent check: the upstream contract's official verifier must accept the request
+        script = Path(__file__).with_name("graph_sdk_verify.mjs")
         out = subprocess.run(["node", str(script), sdk, secret, headers["linear-signature"]],
                              input=body, capture_output=True, timeout=30)
         assert out.returncode == 0, out.stderr.decode()

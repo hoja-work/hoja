@@ -1,6 +1,6 @@
 # Self-hosted backend deployment
 
-`hoja_server` is Hoja's generic Linear-compatible GraphQL backend. It is
+`hoja_server` is Hoja's generic wire-compatible GraphQL backend. It is
 offline-first with an isolated SQLite file for local work and supports shared
 PostgreSQL for multiple organizations. Organization names, URL keys, users,
 teams, application URLs, and database targets are always deployment inputs;

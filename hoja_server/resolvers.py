@@ -729,6 +729,18 @@ def i_attachments(obj, info, first=50):
                  lambda: _conn(store.issue_attachments_for(org, obj["id"], limit=first)))
 
 
+@Issue.field("githubLinks")
+def i_github_links(obj, info):
+    """The GitHub objects linked to this issue, newest first.
+
+    Not paginated: the panel shows the handful of PRs, commits and deploys that name
+    the issue, and a cap keeps a pathological history from bloating one page.
+    """
+    store, _w, org, _uid = _ctx(info)
+    return _memo(info, "issue_github_links", (org, obj["id"]),
+                 lambda: store.issue_github_links_for(org, obj["id"], limit=50))
+
+
 @query.field("myIssueActivity")
 def r_my_issue_activity(_, info, first=50, after=None):
     store, _w, org, uid = _ctx(info)
@@ -1331,8 +1343,15 @@ def build_schema():
     from hoja_server.agent_conversations import SDL as CONVERSATION_SDL, query as conversation_query
     from hoja_server import webhooks_api
     from hoja_server import extensions_api
+    from hoja_server.task_aliases import bind_task_surface
+    tasks_sdl = (Path(__file__).parent / "schema_tasks.graphql").read_text()
+    task_bindables, problems = bind_task_surface(query, mutation, Issue, MyIssueActivity)
+    if problems:
+        # A partial alias surface is worse than none: fail the whole schema instead.
+        raise RuntimeError("HOJA-288 task alias wiring incomplete: " + "; ".join(problems))
     return make_executable_schema(
-        [sdl, PROVIDER_SDL, CONVERSATION_SDL, webhooks_api.SDL, extensions_api.SDL], query, mutation,
+        [sdl, PROVIDER_SDL, CONVERSATION_SDL, webhooks_api.SDL, extensions_api.SDL, tasks_sdl],
+        query, mutation, *task_bindables,
         model_providers.query, model_providers.mutation,
         webhooks_api.query, webhooks_api.mutation, webhooks_api.webhook_type,
         extensions_api.query, extensions_api.mutation, extensions_api.extension_type,

@@ -1,4 +1,4 @@
-"""Outgoing webhooks with Linear's wire contract.
+"""Outgoing webhooks with the upstream contract's wire contract.
 
 Pipeline (every step is restart-safe):
 
@@ -69,7 +69,7 @@ SEND_BATCH = 20
 ALLOW_PRIVATE_ENV = "HOJA_WEBHOOK_ALLOW_PRIVATE_NETWORKS"
 _MAX_ERROR = 500
 
-# Issue fields compared to build updatedFrom (Linear names).
+# Issue fields compared to build updatedFrom (the upstream API names).
 _TRACKED = (
     "title", "description", "priority", "estimate", "stateId", "assigneeId", "projectId",
     "cycleId", "parentId", "teamId", "dueDate", "labelIds", "archivedAt", "completedAt",

@@ -9,7 +9,7 @@
 
 export const KNOWN_WORKSPACE_PAGES = [
   'my-issues', 'inbox', 'pulse', 'agent', 'initiatives', 'projects', 'views', 'board',
-  'cycles', 'members', 'team', 'settings', 'issue', 'project', 'cycle', 'favorite-views',
+  'cycles', 'members', 'team', 'settings', 'issue', 'task', 'project', 'cycle', 'favorite-views',
   'more', 'meetings',
 ];
 
@@ -28,7 +28,7 @@ export function routeView(path: string): string {
   if (p.includes('/settings')) return 'Settings';
 
   if (p.startsWith('/workspace/meetings')) return 'Meetings';
-  if (p.includes('/issue/')) return 'Issue detail';
+  if (p.includes('/issue/') || p.includes('/task/')) return 'Issue detail';
   if (p.includes('/project/') && p.includes('/view/')) return 'Project view';
   if (p.includes('/project/')) return 'Project detail';
   if (p.endsWith('/home')) return 'Team Home';
@@ -52,4 +52,20 @@ export function routeView(path: string): string {
   }
   const name = parts.pop();
   return name ? name.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'My issues';
+}
+
+
+// HOJA-288: task detail pages moved from /workspace/issue/<IDENT>/<slug> to
+// /workspace/task/<IDENT>/<slug>. The old segment has to keep resolving forever,
+// because those links are already sitting in people's email and bookmarks. This is
+// applied at the routing boundary so no other code has to know the old name.
+export const LEGACY_DETAIL_SEGMENT = '/workspace/issue/';
+export const DETAIL_SEGMENT = '/workspace/task/';
+
+export function redirectLegacyTaskPath(path: string): string {
+  const lower = path.toLowerCase();
+  const at = lower.indexOf(LEGACY_DETAIL_SEGMENT);
+  if (at === -1) return path;
+  // Rewrite only the first occurrence and keep identifier, slug, query and hash.
+  return path.slice(0, at) + DETAIL_SEGMENT + path.slice(at + LEGACY_DETAIL_SEGMENT.length);
 }

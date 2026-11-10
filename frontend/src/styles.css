@@ -570,10 +570,42 @@ html{font-size:calc(16px * var(--font-scale,1))}
 @media(max-width:560px){.issues-board{height:max(360px,calc(100dvh - 260px))}}
 .nav-group-toggle{display:flex;align-items:center;justify-content:space-between;width:100%;height:28px;margin:0 4px 2px;padding:0 5px;border-radius:6px;background:transparent;color:var(--muted);font-size:13px;font-weight:400;text-align:left}.nav-group-toggle:hover,.nav-group-toggle:focus-visible{background:var(--subtle);color:var(--text)}.nav-group-toggle svg{flex:none;transition:transform .15s}.nav-group-toggle svg.collapsed{transform:rotate(-90deg)}
 
-/* Desktop sidebar collapse: shrinks the rail to a 44px strip holding only the toggle. */
+/* Desktop sidebar collapse: a 44px rail that still navigates. The rail keeps every
+   top-level destination as its icon (labels move to title/aria-label in main.tsx),
+   keeps the workspace switcher, create-issue and log out, and draws a divider where
+   a group header was. Team rows keep their icon, which navigates to the team home;
+   the team sub-links stay expanded-only by decision, since 44px cannot hold them and
+   a flyout would be a second navigation surface. */
 .sidebar-toggle{flex:none}
 @media(max-width:700px){.sidebar-toggle{display:none}}
-@media(min-width:701px){.app.sidebar-collapsed{grid-template-columns:44px minmax(0,1fr)}.app.sidebar-collapsed .sidebar{width:44px;padding:12px 8px;overflow:hidden}.app.sidebar-collapsed .sidebar-top{justify-content:center;margin-bottom:0}.app.sidebar-collapsed .sidebar-top>:not(.sidebar-toggle),.app.sidebar-collapsed .sidebar nav,.app.sidebar-collapsed .sidebar-bottom{display:none}}
+@media(min-width:701px){
+  .app.sidebar-collapsed{grid-template-columns:44px minmax(0,1fr)}
+  .app.sidebar-collapsed .sidebar{width:44px;padding:12px 8px;overflow:hidden}
+  .app.sidebar-collapsed .sidebar-top{flex-direction:column;justify-content:flex-start;gap:6px;margin-bottom:8px}
+  .app.sidebar-collapsed .sidebar-top .workspace-picker{flex:none;width:100%}
+  .app.sidebar-collapsed .workspace-trigger{justify-content:center;height:28px;padding:0}
+  .app.sidebar-collapsed .workspace-trigger-mark{width:24px;height:24px;font-size:11px}
+  .app.sidebar-collapsed .workspace-trigger-copy,
+  .app.sidebar-collapsed .workspace-trigger>svg,
+  .app.sidebar-collapsed .nav-item>span,
+  .app.sidebar-collapsed .nav-item .meeting-badge,
+  .app.sidebar-collapsed .nav-group-toggle,
+  .app.sidebar-collapsed .team-row .team-name>span,
+  .app.sidebar-collapsed .team-collapse,
+  .app.sidebar-collapsed .team-nav-links,
+  .app.sidebar-collapsed .sidebar-bottom>span{display:none}
+  .app.sidebar-collapsed .sidebar nav{display:block}
+  .app.sidebar-collapsed .sidebar .nav-group{margin:0 0 6px}
+  .app.sidebar-collapsed .sidebar .nav-group+.nav-group{padding-top:6px;border-top:1px solid #dcdcdc}
+  .app.sidebar-collapsed .sidebar .nav-item{width:28px;height:28px;min-height:28px;margin:0 auto;padding:0;justify-content:center;gap:0}
+  .app.sidebar-collapsed .sidebar .nav-item.active{background:#e1e1e1;color:#202023}
+  .app.sidebar-collapsed .sidebar .team-row{justify-content:center}
+  .app.sidebar-collapsed .sidebar .team-row .team-name{width:28px;padding:0;justify-content:center;gap:0;margin:0 auto}
+  .app.sidebar-collapsed .sidebar .nav-group-your-teams .team-block{margin-bottom:2px}
+  .app.sidebar-collapsed .sidebar .sidebar-bottom{display:flex;justify-content:center;align-items:center;margin:12px 0 0;padding:8px 0 0}
+  .app.sidebar-collapsed .sidebar .logout-button{width:28px;height:28px;padding:0;display:grid;place-items:center}
+  .app.sidebar-collapsed .sidebar .sidebar-icon{flex:none}
+}
 
 .board-team-filter{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.board-team-filter button{height:28px;padding:0 10px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--muted);font-size:12px}.board-team-filter button.selected{background:var(--subtle);color:var(--text);font-weight:550}
 

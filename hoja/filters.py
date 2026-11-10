@@ -1,11 +1,11 @@
-"""Filter DSL → Linear's IssueFilter input.
+"""Filter DSL → the upstream contract's IssueFilter input.
 
-Maps friendly CLI flags (--team ENG, --state "In Progress") onto Linear's
+Maps friendly CLI flags (--team ENG, --state "In Progress") onto the upstream contract's
 GraphQL filter input shape.
 
 References:
 - https://linear.app/developers/filtering
-- IssueFilter type in schema/linear-schema.json
+- IssueFilter type in schema/graph-schema.json
 """
 
 from __future__ import annotations
@@ -70,7 +70,7 @@ def build_issue_filter(
 
     if cycle:
         if cycle.lower() == "current":
-            # Linear supports cycle: { isActive: { eq: true } } — but only via Team scope
+            # the upstream API supports cycle: { isActive: { eq: true } } — but only via Team scope
             # For simplicity expose via cycle filter using number from the resolved cycle id
             f["cycle"] = {"isActive": {"eq": True}}
         elif cycle.lower() == "next":
@@ -87,7 +87,7 @@ def build_issue_filter(
         f["priority"] = {"eq": priority}
 
     if contains:
-        # Linear's free-text on issue is title/description — use `or`
+        # the upstream contract's free-text on issue is title/description — use `or`
         f["or"] = [
             {"title": {"containsIgnoreCase": contains}},
             {"description": {"containsIgnoreCase": contains}},
@@ -107,7 +107,7 @@ def build_issue_filter(
 
 
 def _looks_like_uuid(value: str) -> bool:
-    """Cheap UUID detector — Linear IDs are 36-char UUIDs with hyphens."""
+    """Cheap UUID detector — the upstream API IDs are 36-char UUIDs with hyphens."""
     return len(value) == 36 and value.count("-") == 4
 
 
@@ -134,7 +134,7 @@ def _str_or_list_negate(field: str, value: str | list[str]) -> dict[str, Any]:
 
 
 def _user_subfilter(value: str, viewer_id: str | None) -> dict[str, Any]:
-    """Resolve 'me', a UUID, or an email to a Linear user filter."""
+    """Resolve 'me', a UUID, or an email to a the upstream API user filter."""
     v = value.strip()
     if v.lower() == "me":
         if not viewer_id:

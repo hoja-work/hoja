@@ -138,7 +138,7 @@ def change_priority(
 
 @issue_app.command("url")
 def issue_url(id: str = typer.Argument(...)) -> None:
-    """Print the Linear URL for an issue."""
+    """Print the upstream API URL for an issue."""
     asyncio.run(_run_url(id))
 
 
@@ -205,14 +205,14 @@ async def _resolve_team_id(client, key: str) -> str:
 async def _resolve_project_id(client, value: str) -> str:
     """Resolve a project identifier (UUID, slugId, or name) to a full UUID.
 
-    Linear's ``projectId`` field in mutations requires the full 36-char UUID.
+    the upstream contract's ``projectId`` field in mutations requires the full 36-char UUID.
     Users often copy the shorter ``slugId`` (e.g. ``24a5eb4e800e``) from the
-    Linear UI, which the API rejects with "Argument Validation Error".
+    the upstream API UI, which the API rejects with "Argument Validation Error".
     This helper resolves slugIds and names to the canonical UUID.
     """
     if len(value) == 36 and value.count("-") == 4:
         return value
-    # Try slugId first (most common case when copy-pasting from Linear UI)
+    # Try slugId first (most common case when copy-pasting from the upstream API UI)
     projects = await client.execute_list(
         Project, queries.PROJECTS_LIST,
         {"filter": {"slugId": {"eq": value}}, "first": 1},
@@ -239,7 +239,7 @@ async def _resolve_user_id(client, user: str) -> str:
         return (await get_viewer(client)).id
     if len(user) == 36 and user.count("-") == 4:
         return user
-    # Otherwise fall through to email — Linear's IssueUpdateInput requires user UUID
+    # Otherwise fall through to email — the upstream contract's IssueUpdateInput requires user UUID
     raise UsageError(
         f"Cannot resolve user {user!r} to a UUID without an extra lookup. "
         "Pass a UUID or 'me' for this operation."

@@ -13,9 +13,9 @@ type ActivityEvent = {id: string; eventType: string; createdAt: string; changes?
   actor?: {id: string; name?: string} | null; issue: Pick<Issue, 'id' | 'identifier' | 'title'>};
 type Paged<T> = {rows: T[]; hasData: boolean; more: boolean; loadingMore: boolean; error: string; loadMore: () => void; retry: () => void};
 type Entry = {kind: 'update'; at: string; id: string; update: PulsePost} | {kind: 'event'; at: string; id: string; event: ActivityEvent};
-export type ActivityFilter = 'All' | 'Updates' | 'Status changes' | 'Comments' | 'New issues';
-const FILTERS: ActivityFilter[] = ['All', 'Updates', 'Status changes', 'Comments', 'New issues'];
-const EVENT_TYPES: Record<ActivityFilter, string[] | null> = {All: null, Updates: null, 'Status changes': ['issueUpdated'], Comments: ['commentCreated', 'commentUpdated'], 'New issues': ['issueCreated']};
+export type ActivityFilter = 'All' | 'Updates' | 'Status changes' | 'Comments' | 'New tasks';
+const FILTERS: ActivityFilter[] = ['All', 'Updates', 'Status changes', 'Comments', 'New tasks'];
+const EVENT_TYPES: Record<ActivityFilter, string[] | null> = {All: null, Updates: null, 'Status changes': ['issueUpdated'], Comments: ['commentCreated', 'commentUpdated'], 'New tasks': ['issueCreated']};
 const HEALTH = ['on track', 'at risk', 'off track'] as const;
 const PRIORITY = ['No priority', 'Urgent', 'High', 'Medium', 'Low'];
 const STALE_DAYS = 7;

@@ -548,7 +548,7 @@ export function SetupWizard({adapter, mode, initial, onFinish}: Props) {
                 <label htmlFor="setup-team-name">Team name<input id="setup-team-name" required value={draft.teamName} onChange={(event) => persist({teamName: event.target.value})} placeholder="Engineering" {...fieldProps('teamName')}/></label>
                 {fieldError?.field === 'teamName' && <p className="setup-field-error" id="setup-teamName-error" role="alert">{fieldError.message}</p>}
                 <label htmlFor="setup-team-key">Team key<input id="setup-team-key" required maxLength={8} value={draft.teamKey} onChange={(event) => persist({teamKey: normaliseTeamKey(event.target.value)})} placeholder="ENG" {...fieldProps('teamKey')}/></label>
-                <p className="setup-hint">Issues get identifiers like <code>{preview.issueExample}</code>. A team is required because issues and projects belong to one.</p>
+                <p className="setup-hint">Tasks get identifiers like <code>{preview.issueExample}</code>. A team is required because tasks and projects belong to one.</p>
                 {fieldError?.field === 'teamKey' && <p className="setup-field-error" id="setup-teamKey-error" role="alert">{fieldError.message}</p>}
                 {flowMode === 'first-run' && !boot.workspaceId && (
                   <p className="setup-hint">Creating the workspace also creates your admin account, this team, its default workflow states and your browser session — in one step. It cannot be half-created.</p>
@@ -704,7 +704,7 @@ function introFor(step: StepId, input: {mode: FlowMode; boot: Boot; draft: Setup
   switch (step) {
     case 'account': return 'You’ll be the workspace admin. This account signs you in and owns the workspace.';
     case 'workspace': return 'The name is for people; the address is what they type.';
-    case 'team': return 'Teams own issues and give them their identifier prefix.';
+    case 'team': return 'Teams own tasks and give them their identifier prefix.';
     case 'project': return 'Optional. Projects group issues across teams.';
     case 'invitations': return 'Optional. Add one person at a time; skip and do it later from Members.';
     case 'integrations': return 'Optional, and only shown because this deployment is configured for it.';

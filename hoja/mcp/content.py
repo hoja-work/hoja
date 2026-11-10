@@ -31,7 +31,7 @@ class Topic(str, Enum):
 # ---------------------------------------------------------------------------
 DEFAULT_REMINDER = (
     "Run hoja commands via the Bash tool. Do NOT write Python wrappers "
-    "around the Linear GraphQL API — Hoja already handles auth, retries, "
+    "around the upstream API GraphQL API — Hoja already handles auth, retries, "
     "pagination, validation, and error mapping. Resources on this MCP server "
     "give you read-only context for free; perform every mutation via "
     "`hoja <command>` in a shell."

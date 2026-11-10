@@ -139,7 +139,7 @@ def _to_plain(payload: Any) -> str:
 # ---------------------------------------------------------------------------
 
 def _to_yaml(payload: Any) -> str:
-    """Minimal YAML emitter. Good enough for inspecting Linear objects."""
+    """Minimal YAML emitter. Good enough for inspecting the upstream API objects."""
     obj = _jsonify(payload)
     return _yaml_dump(obj, 0).rstrip()
 

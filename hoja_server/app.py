@@ -1,6 +1,6 @@
 """FastAPI + Ariadne ASGI app with token auth middleware.
 
-- POST /graphql : the Linear-compatible endpoint the CLI talks to.
+- POST /graphql : the wire-compatible endpoint the CLI talks to.
 - Auth: raw token in Authorization header (with or without 'Bearer').
   Unknown/revoked token → HTTP 401 + {errors:[{message}]}.
 - Never emits 429. GraphQL errors → HTTP 200 + {errors:[...], data:null}.
@@ -266,6 +266,32 @@ def _password_matches(stored: str, candidate: str) -> bool:
     return Store._verify_password(candidate, stored)
 
 
+def _forwarded_client_ip(forwarded: str | None, peer: str,
+                         networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network]) -> str:
+    """The address the nearest proxy saw — never one the client typed.
+
+    nginx's ``$proxy_add_x_forwarded_for`` *appends*, and Cloudflare appends the
+    address it saw, so the leftmost entry of ``X-Forwarded-For`` is exactly what
+    the caller put there. Walking from the right (the nearest hop, appended last)
+    and stopping at the first address that is not one of our own proxies yields
+    the first address a client could not have written.
+
+    ``networks`` must list every hop between the edge and this process, including
+    the Cloudflare ranges when the edge is Cloudflare; a hop left out of the list
+    becomes "the client", which is wrong but still not spoofable.
+    """
+    hops = [hop.strip() for hop in (forwarded or "").split(",") if hop.strip()]
+    for hop in reversed(hops):
+        try:
+            address = ipaddress.ip_address(hop)
+        except ValueError:
+            # An unparsable chain proves nothing; bucket by the peer we can see.
+            return peer
+        if not any(address in network for network in networks):
+            return str(address)
+    return hops[0] if hops else peer
+
+
 class _FailureLimiter:
     """Sliding window of failed sign-ins per client IP and email, persisted in rate_limit_event.
 
@@ -453,19 +479,20 @@ def create_app(
             return False
 
     def _client_ip(request: Request) -> str:
+        """Who to charge the attempt to.
+
+        Forwarded headers are honoured only when the peer is one of our proxies,
+        and then interpreted right-to-left so a client cannot pick its own bucket
+        by typing a header. ``cf-connecting-ip`` is deliberately not read: it is
+        just another header a client may send, and Cloudflare already appends the
+        address it saw to ``x-forwarded-for`` (which the walk below finds).
+        """
         peer = request.client.host if request.client else "unknown"
-        if _request_from_trusted_proxy(request):
-            # Behind Cloudflare the connecting client's real address is carried
-            # in CF-Connecting-IP (set by the edge, overriding any client-supplied
-            # value). X-Forwarded-For's FIRST entry is the original client; the
-            # last entry is only the most recent proxy hop (a shared address).
-            client_ip = request.headers.get("cf-connecting-ip", "").strip()
-            if client_ip:
-                return client_ip
-            forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-            if forwarded:
-                return forwarded
-        return peer
+        if not _request_from_trusted_proxy(request):
+            return peer
+        return _forwarded_client_ip(
+            request.headers.get("x-forwarded-for"), peer, proxy_networks,
+        )
 
     def _limit_keys(request: Request, email: str) -> list[str]:
         keys = [f"ip:{_client_ip(request)}"]
@@ -1592,6 +1619,9 @@ def create_app(
             nonce=nonce,
             code_challenge=challenge,
             hosted_domain=signup_config.google_hd,
+            # Without this Google reuses the browser's single signed-in account,
+            # so two people on one machine cannot hand over.
+            prompt="select_account",
         )
         response = RedirectResponse(location, status_code=302)
         response.set_cookie(

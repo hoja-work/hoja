@@ -704,12 +704,12 @@ class Writer:
     # -------------------------------------------------------------- issues
     @staticmethod
     def _automation_flag(team_row: dict, key: str) -> bool:
-        """Team auto-add toggles default to on (Linear's defaults); NULL reads as on."""
+        """Team auto-add toggles default to on (the upstream contract's defaults); NULL reads as on."""
         value = team_row.get(key, True)
         return True if value is None else bool(value)
 
     def _auto_add_cycle_id(self, conn, org_id: str, team_row: dict, state_id: str | None) -> str | None:
-        """Linear-style "auto-add active issues to current cycle".
+        """carry-over-style "auto-add active issues to current cycle".
 
         Returns the team's active cycle id when an issue with no cycle
         qualifies (started-type with auto_add_started, completed-type with
@@ -832,7 +832,7 @@ class Writer:
                 values["state_id"] = inp["stateId"]
                 if inp["stateId"] != issue_row.get("state_id"):
                     values["state_changed_at"] = ts
-                    # Linear-style auto-add: a transition into Started/Completed
+                    # carry-over-style auto-add: a transition into Started/Completed
                     # pulls a cycle-less issue into the active cycle, unless the
                     # caller explicitly set (or cleared) the cycle.
                     if "cycleId" not in inp and not issue_row.get("cycle_id"):

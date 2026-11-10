@@ -2,7 +2,7 @@ import React, {useEffect, useRef, useState} from 'react';
 import type {IssueLabel} from '../main';
 import {statusAgeLabel, type StatusAgeIssue} from './statusAge';
 
-/* Shared Linear-style primitives for the 1:1 Issues/Cycles rebuild. */
+/* Shared carry-over-style primitives for the 1:1 Issues/Cycles rebuild. */
 
 export function cx(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(' ');
@@ -35,7 +35,7 @@ export function Avatar({name, size = 20, title}: {name?: string | null; size?: n
   );
 }
 
-/** Linear-style priority icon. 0 none, 1 urgent, 2 high, 3 medium, 4 low. */
+/** carry-over-style priority icon. 0 none, 1 urgent, 2 high, 3 medium, 4 low. */
 export function PriorityIcon({priority, size = 14}: {priority?: number | null; size?: number}) {
   const p = priority || 0;
   if (p === 1) {
@@ -57,8 +57,8 @@ export function PriorityIcon({priority, size = 14}: {priority?: number | null; s
   );
 }
 
-/** Linear-style workflow state icon (14px). */
-export function LinearStatusIcon({state, size = 14}: {state?: {name?: string; type?: string; color?: string} | null; size?: number}) {
+/** carry-over-style workflow state icon (14px). */
+export function GraphStatusIcon({state, size = 14}: {state?: {name?: string; type?: string; color?: string} | null; size?: number}) {
   const t = (state?.type || '').toLowerCase();
   const n = (state?.name || '').toLowerCase();
   const c = state?.color || '#8a94a6';
@@ -74,7 +74,7 @@ export function LinearStatusIcon({state, size = 14}: {state?: {name?: string; ty
 }
 
 /** A status symbol that explains how long the issue has held that status on hover or
- *  keyboard focus. Rows use this instead of a bare LinearStatusIcon so every list
+ *  keyboard focus. Rows use this instead of a bare GraphStatusIcon so every list
  *  (Team issues, team views, cycle issues) answers the question with the same
  *  stateChangedAt-based math as the My issues picker. */
 export function StatusAgeIcon({issue, size = 14}: {issue: StatusAgeIssue; size?: number}) {
@@ -82,7 +82,7 @@ export function StatusAgeIcon({issue, size = 14}: {issue: StatusAgeIssue; size?:
   return (
     <span className="lin-status-age" tabIndex={0} role="img"
       aria-label={`Status: ${issue.state?.name || 'No status'}. ${label}`}>
-      <LinearStatusIcon state={issue.state} size={size} />
+      <GraphStatusIcon state={issue.state} size={size} />
       <span className="lin-status-age-tip" role="tooltip">{label}</span>
     </span>
   );
@@ -137,7 +137,7 @@ export function SubIssuePill({done, total}: {done: number; total: number}) {
   const frac = done / total;
   const r = 5, circ = 2 * Math.PI * r;
   return (
-    <span className="lin-subissue-pill" title={`${done} of ${total} sub-issues complete`}>
+    <span className="lin-subissue-pill" title={`${done} of ${total} sub-tasks complete`}>
       <svg width="13" height="13" viewBox="0 0 14 14" aria-hidden="true">
         <circle cx="7" cy="7" r={r} fill="none" stroke="#d4d4d8" strokeWidth="1.6" />
         <circle cx="7" cy="7" r={r} fill="none" stroke="#5e6ad2" strokeWidth="1.6"
@@ -228,7 +228,7 @@ export type MenuItem = {
   danger?: boolean; disabled?: boolean; divider?: never; onSelect?: () => void;
 } | {key: string; divider: true; label?: never};
 
-/** Linear-style dropdown menu. */
+/** carry-over-style dropdown menu. */
 export function LinMenu({items, onClose, className}: {items: MenuItem[]; onClose: () => void; className?: string}) {
   const ref = useDismiss(onClose);
   return (
@@ -300,7 +300,7 @@ export function FavStar({kind, id, label}: {kind: 'issues' | 'cycles'; id: strin
   );
 }
 
-/** Icon button matching Linear's toolbar buttons. */
+/** Icon button matching the upstream contract's toolbar buttons. */
 export function IconBtn({label, title, onClick, active, children, disabled}: {
   label: string; title?: string; onClick?: (e: React.MouseEvent) => void; active?: boolean;
   children: React.ReactNode; disabled?: boolean;

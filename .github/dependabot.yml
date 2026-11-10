@@ -8,6 +8,28 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # eslint 10 is blocked upstream, not by us. eslint-plugin-jsx-a11y 6.10.2
+      # (the newest release) declares
+      #   peerDependencies: { eslint: "^3 || ^4 || ^5 || ^6 || ^7 || ^8 || ^9" }
+      # so the resolver refuses the install and the security-audit job fails in
+      # `npm ci` before it ever reaches an advisory check:
+      #   npm error code ERESOLVE
+      #   npm error peer eslint@"^3 || ^4 || ^5 || ^6 || ^7 || ^8 || ^9"
+      #     from eslint-plugin-jsx-a11y@6.10.2
+      # @typescript-eslint 8.72.1 already allows eslint ^10, so jsx-a11y is the
+      # only blocker. Drop this entry when jsx-a11y publishes a range that
+      # includes eslint 10.
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
+      # zustand 5 is blocked upstream as well: @openuidev/react-headless 0.18.5
+      # (newest) still declares peerDependencies: { zustand: "^4.5.5" }, so
+      #   npm error code ERESOLVE
+      #   npm error Could not resolve dependency:
+      #   npm error peer zustand@"^4.5.5" from @openuidev/react-headless@0.18.1
+      # Drop this entry when react-headless accepts zustand 5.
+      - dependency-name: "zustand"
+        update-types: ["version-update:semver-major"]
     groups:
       frontend-minor:
         patterns: ["*"]

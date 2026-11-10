@@ -1,4 +1,4 @@
-"""Team model (Linear's Team entity)."""
+"""Team model (the upstream contract's Team entity)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from hoja.models.base import Timestamped
 
 
 class Team(Timestamped):
-    """A Linear team.
+    """A the upstream API team.
 
     GraphQL: type Team implements Node
     Notes:

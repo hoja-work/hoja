@@ -1,6 +1,6 @@
-"""Issue model — the most important Linear entity.
+"""Issue model — the most important the upstream API entity.
 
-A Linear issue is a unit of work. It belongs to a team, has a workflow state,
+A the upstream API issue is a unit of work. It belongs to a team, has a workflow state,
 optionally an assignee, project, cycle, labels, and comments.
 """
 
@@ -36,14 +36,14 @@ class Comment(Timestamped):
 
 
 def _flatten_connection(v: Any) -> Any:
-    """Unwrap Linear's Connection {nodes: [...]} into a flat list."""
+    """Unwrap the upstream contract's Connection {nodes: [...]} into a flat list."""
     if isinstance(v, dict) and "nodes" in v:
         return v["nodes"]
     return v
 
 
 class Issue(Timestamped):
-    """A Linear issue.
+    """A the upstream API issue.
 
     GraphQL: type Issue implements Node
     """

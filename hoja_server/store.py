@@ -1,4 +1,4 @@
-"""Store — org-scoped data access + serialization to Linear camelCase shapes.
+"""Store — org-scoped data access + serialization to the upstream API camelCase shapes.
 
 Every method takes an org_id and NEVER returns rows from other orgs → tenant
 isolation by construction. Serializers emit exactly the camelCase field names
@@ -19,6 +19,7 @@ from sqlalchemy.engine import Engine
 from hoja_server.db import (
     api_key,
     attachment,
+    github_link,
     change_event,
     browser_session,
     comment,
@@ -204,7 +205,7 @@ def _scope_projects(conn, stmt, org_id, viewer_id):
 
     A project with no team links keeps the historical behaviour and stays org-wide:
     it has no team to be private about. A project linked only to teams the viewer
-    cannot see disappears, mirroring Linear's rule that a project becomes private
+    cannot see disappears, mirroring the upstream contract's rule that a project becomes private
     once its last public team is removed.
     """
     if viewer_id is None:
@@ -860,6 +861,18 @@ class Store:
             "id": row["id"], "url": row.get("url"), "title": row.get("title"),
             "subtitle": row.get("subtitle"), "createdAt": row.get("created_at"),
             "_issue_id": row.get("issue_id"),
+        }
+
+    def ser_github_link(self, row: dict | None) -> dict | None:
+        if not row:
+            return None
+        return {
+            "id": row["id"], "kind": row.get("kind"),
+            "externalId": row.get("external_id"), "url": row.get("url"),
+            "title": row.get("title"), "state": row.get("state"),
+            "author": row.get("author"), "sha": row.get("sha"),
+            "environment": row.get("environment"),
+            "createdAt": row.get("created_at"), "updatedAt": row.get("updated_at"),
         }
 
     def ser_issue(self, row: dict | None) -> dict | None:
@@ -1838,6 +1851,21 @@ class Store:
             if limit:
                 stmt = stmt.limit(limit)
             return [self.ser_attachment(r) for r in _conn_rows(conn, stmt)]
+
+    def issue_github_links_for(self, org_id: str, issue_id: str,
+                               limit: int | None = None) -> list[dict]:
+        """The GitHub objects linked to one issue, newest first.
+
+        Ordered newest-first because the panel shows the most recent activity; the
+        (organization_id, kind, external_id) unique key already prevents duplicates.
+        """
+        with self.engine.connect() as conn:
+            stmt = select(github_link).where(and_(
+                github_link.c.organization_id == org_id,
+                github_link.c.issue_id == issue_id)).order_by(github_link.c.created_at.desc())
+            if limit:
+                stmt = stmt.limit(limit)
+            return [self.ser_github_link(r) for r in _conn_rows(conn, stmt)]
 
     def upload_visible(self, org_id: str, viewer_id: str, file_id: str) -> bool:
         """May this viewer fetch an uploaded file?
