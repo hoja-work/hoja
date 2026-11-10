@@ -14,9 +14,9 @@ from hoja.models.base import Timestamped
 
 
 class WorkflowStateType(str, Enum):
-    """Linear's documented workflow state categories.
+    """the upstream contract's documented workflow state categories.
 
-    Linear can return additional, undocumented state types (e.g. ``"duplicate"``)
+    the upstream API can return additional, undocumented state types (e.g. ``"duplicate"``)
     for teams that enable extra workflow behaviors. Those values must NOT crash
     the CLI — see ``WorkflowState.type`` for how unknown types are preserved.
     """
@@ -53,7 +53,7 @@ class WorkflowState(Timestamped):
     color: str | None = None
     description: str | None = None
     position: float | None = None
-    # Smart union: Linear may emit state types outside the documented enum
+    # Smart union: the upstream API may emit state types outside the documented enum
     # (e.g. "duplicate"). Keep those as a plain string instead of raising a
     # pydantic ValidationError that would break `team states` / `issue state`.
     type: WorkflowStateType | str

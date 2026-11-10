@@ -16,7 +16,7 @@ Composability" (arXiv:2608.25512), the model behind Cordis / DeepSeek Harness:
   ``hooks`` are synchronous interceptors on issue writes, chained in order: each
   sees the previous one's patch and may patch allowlisted fields or veto.
 
-No extension code ever runs inside Hoja. Hoja makes Linear-signed HTTPS calls to
+No extension code ever runs inside Hoja. Hoja makes signed HTTPS calls to
 the extension and the extension calls back with its own bot credential.
 """
 from __future__ import annotations

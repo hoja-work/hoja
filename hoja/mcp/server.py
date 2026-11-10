@@ -5,7 +5,7 @@ Uses the official `mcp` Python SDK with FastMCP convenience layer.
 
 Exposes:
   - 1 tool      : hoja_guide(topic) — teaches the agent how to use hoja
-  - 7 resources : read-only Linear context
+  - 7 resources : read-only the upstream API context
   - 6 prompts   : workflow templates
 
 By design the server does NOT expose mutation tools. Mutations happen via the
@@ -65,9 +65,9 @@ def _build_server():
     mcp = MCPServer(
         name="hoja",
         instructions=(
-            "Use this server to learn how to drive Linear from a shell using "
+            "Use this server to learn how to drive the upstream API from a shell using "
             "the `hoja` CLI. Call `hoja_guide(topic)` BEFORE attempting "
-            "any Linear-related task. Read resources for read-only context. "
+            "any graph-related task. Read resources for read-only context. "
             "Read prompts for multi-step workflow templates. Perform all "
             "mutations via `hoja <command>` invoked through the Bash tool."
         ),
@@ -80,9 +80,9 @@ def _build_server():
     def hoja_guide(topic: Topic = Topic.OVERVIEW) -> HojaGuide:
         """Return a guide on how to use the `hoja` CLI for a given topic.
 
-        ALWAYS call this BEFORE any Linear-related task. Then execute hoja
+        ALWAYS call this BEFORE any graph-related task. Then execute hoja
         commands via the Bash tool. Do NOT write Python wrappers around the
-        Linear GraphQL API — hoja is the supported interface.
+        the upstream API GraphQL API — hoja is the supported interface.
 
         Available topics:
           - overview         — when to reach for hoja; behavioral rules
@@ -95,16 +95,16 @@ def _build_server():
         return load_topic(topic)
 
     # ------------------------------------------------------------------
-    # Resources — read-only Linear context
+    # Resources — read-only the upstream API context
     # ------------------------------------------------------------------
-    @mcp.resource("hoja://me", name="viewer", description="Currently-authenticated Linear user.")
+    @mcp.resource("hoja://me", name="viewer", description="Currently-authenticated the upstream API user.")
     async def res_me() -> str:
         return await _resources.viewer()
 
     @mcp.resource(
         "hoja://issue/{id}",
         name="issue",
-        description="Full Linear issue by identifier (e.g. ENG-35), including comments, labels, subscribers.",
+        description="Full the upstream API issue by identifier (e.g. ENG-35), including comments, labels, subscribers.",
     )
     async def res_issue(id: str) -> str:
         return await _resources.issue(id)
@@ -120,7 +120,7 @@ def _build_server():
     @mcp.resource(
         "hoja://project/{id_or_slug}",
         name="project",
-        description="Linear project by id or slug, including lead, creator, members.",
+        description="the upstream API project by id or slug, including lead, creator, members.",
     )
     async def res_project(id_or_slug: str) -> str:
         return await _resources.project(id_or_slug)

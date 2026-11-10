@@ -1,4 +1,4 @@
-"""Cycle model (Linear's sprint/iteration entity)."""
+"""Cycle model (the upstream contract's sprint/iteration entity)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from hoja.models.base import Timestamped
 
 
 class Cycle(Timestamped):
-    """A Linear cycle (sprint)."""
+    """A the upstream API cycle (sprint)."""
 
     id: str
     name: str | None = None

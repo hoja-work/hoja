@@ -1,6 +1,6 @@
-# hoja_server — self-hosted Linear-compatible backend
+# hoja_server — self-hosted wire-compatible backend
 
-A self-hosted GraphQL server and web UI that speaks the exact subset of the Linear API the
+A self-hosted GraphQL server and web UI that speaks the exact subset of the upstream wire API the
 `hoja` CLI uses. Run `hoja` **fully offline** against a single-file SQLite
 database or host many organizations in PostgreSQL, with **no rate limits**.
 
@@ -10,7 +10,7 @@ database or host many organizations in PostgreSQL, with **no rate limits**.
 ## Web UI
 
 The server now serves a first-party workspace UI at `/`. It authenticates with
-the same locally-issued API token as the CLI and never contacts Linear Cloud.
+the same locally-issued API token as the CLI and never contacts the upstream API Cloud.
 For a team deployment, use the included Docker Compose setup:
 
 ```bash
@@ -119,7 +119,7 @@ organization seeding, explicit token selection, and operational checks.
 
 ```
 hoja_server/
-├── schema.graphql   SDL — exact Linear camelCase field names
+├── schema.graphql   SDL — exact the upstream API camelCase field names
 ├── db.py            SQLAlchemy Core tables, engine, migrate, seed
 ├── store.py         org-scoped reads + serializers + filter compilers
 ├── writer.py        mutations (identifier counter, derived fields)

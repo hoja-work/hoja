@@ -1,6 +1,6 @@
 # hoja — `issue list` Filter DSL
 
-Filters are applied server-side via Linear's `IssueFilter` GraphQL input. **Always prefer filters over post-hoc `jq` filtering** — server-side filters return less data, are faster, and are paginated correctly.
+Filters are applied server-side via the upstream contract's `IssueFilter` GraphQL input. **Always prefer filters over post-hoc `jq` filtering** — server-side filters return less data, are faster, and are paginated correctly.
 
 ## All filter flags (combine freely)
 

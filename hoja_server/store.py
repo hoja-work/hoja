@@ -1,4 +1,4 @@
-"""Store — org-scoped data access + serialization to Linear camelCase shapes.
+"""Store — org-scoped data access + serialization to the upstream API camelCase shapes.
 
 Every method takes an org_id and NEVER returns rows from other orgs → tenant
 isolation by construction. Serializers emit exactly the camelCase field names
@@ -204,7 +204,7 @@ def _scope_projects(conn, stmt, org_id, viewer_id):
 
     A project with no team links keeps the historical behaviour and stays org-wide:
     it has no team to be private about. A project linked only to teams the viewer
-    cannot see disappears, mirroring Linear's rule that a project becomes private
+    cannot see disappears, mirroring the upstream contract's rule that a project becomes private
     once its last public team is removed.
     """
     if viewer_id is None:

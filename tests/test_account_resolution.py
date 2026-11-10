@@ -2,7 +2,7 @@
 
 These tests are token-free and offline — they exercise the pure resolution
 logic in hoja.config plus the WorkflowState smart-union introduced to
-tolerate undocumented Linear workflow state types (e.g. "duplicate").
+tolerate undocumented the upstream API workflow state types (e.g. "duplicate").
 """
 
 from __future__ import annotations
@@ -117,7 +117,7 @@ def test_token_config_last(monkeypatch):
 
 # -------- env-var aliases: HOJA_* canonical, LINEAR_* deprecated --------------
 #
-# The Linear-compatible wire surface keeps accepting the old names, but the
+# The wire-compatible wire surface keeps accepting the old names, but the
 # HOJA_* variable must win whenever both are present.
 
 

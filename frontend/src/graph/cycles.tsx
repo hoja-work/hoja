@@ -4,12 +4,12 @@ import {gql, stateKey} from '../main';
 import type {Cycle, Issue, IssueLabel, IssueState, Project, Team, Viewer} from '../main';
 import {getSync, useEntityVersion, useIssues, useSyncMeta, useSyncStatus} from '../sync';
 import {applyLinFilters, defaultDisplay, emptyFilters, groupLinIssues, orderLinIssues, DisplayPanel as _DP, FilterMenu, IssueRow, LinDisplay, LinFilters, LinIssue, linIssueFields} from './issues';
-import {Avatar, CycleGlyph, FavStar, IconBtn, LabelChip, LinMenu, LinearStatusIcon, PriorityIcon, Ring, Tip, cx, fmtDate, fmtRange, useDismiss, useFavorite} from './shared';
+import {Avatar, CycleGlyph, FavStar, IconBtn, LabelChip, LinMenu, GraphStatusIcon, PriorityIcon, Ring, Tip, cx, fmtDate, fmtRange, useDismiss, useFavorite} from './shared';
 import {asPct, cycleStats, deliveryRate, dropoutRate, remainingSteps, scopeCompletion} from './cycleMetrics';
 import type {CycleStats} from './cycleMetrics';
 import {cycleKeyTarget} from './cycleSelection';
 
-/* Linear 1:1 Cycles views. */
+/* the upstream API 1:1 Cycles views. */
 
 export type CycleState = 'planned' | 'upcoming' | 'current' | 'completed';
 
@@ -485,7 +485,7 @@ function CyclePreview({id, cycle, state, issues, onOpen}: {
           <header><h3>Work snapshot</h3><span>{issues.length} {issues.length === 1 ? 'issue' : 'issues'}</span></header>
           {shown.length ? <ul>
             {shown.map(issue => <li key={issue.id}>
-              <LinearStatusIcon state={issue.state} size={14} />
+              <GraphStatusIcon state={issue.state} size={14} />
               <span className="lin-cycle-issue-id">{issue.identifier}</span>
               <span className="lin-cycle-issue-title" title={issue.title}>{issue.title}</span>
               <Avatar name={issue.assignee?.name} size={20} />
@@ -502,7 +502,7 @@ function CyclePreview({id, cycle, state, issues, onOpen}: {
 
 const EMPTY_CYCLES: Cycle[] = [];
 
-export function LinearTeamCycles({team, teams, onCycle, onSettings, onNavigate, workspaceName, viewer}: {
+export function GraphTeamCycles({team, teams, onCycle, onSettings, onNavigate, workspaceName, viewer}: {
   team?: Team; teams: Team[]; onCycle: (c: Cycle) => void; onSettings: () => void;
   revision?: number; onNavigate: (view: string, path?: string) => void; workspaceName: string; viewer: Viewer;
 }) {
@@ -560,7 +560,7 @@ export function LinearTeamCycles({team, teams, onCycle, onSettings, onNavigate, 
 
 /* ---------------- workspace cycles (route fix) ---------------- */
 
-export function LinearWorkspaceCycles({teams, onCycle, onSettings, onNavigate, workspaceName, viewer}: {
+export function GraphWorkspaceCycles({teams, onCycle, onSettings, onNavigate, workspaceName, viewer}: {
   teams: Team[]; onCycle: (c: Cycle) => void; onSettings: (team: Team) => void;
   revision?: number; onNavigate: (view: string, path?: string) => void; workspaceName: string; viewer: Viewer;
 }) {
@@ -725,7 +725,7 @@ const CycleIssueGroups = React.memo(function CycleIssueGroups({groups, collapsed
               onClick={() => setCollapsed(c => c.includes(g.key) ? c.filter(x => x !== g.key) : [...c, g.key])}>
               <ChevronDown size={14} style={{transform: collapsed.includes(g.key) ? 'rotate(-90deg)' : undefined}} />
             </button>
-            {g.state && <LinearStatusIcon state={g.state} size={13} />}
+            {g.state && <GraphStatusIcon state={g.state} size={13} />}
             <b>{g.name}</b><span className="count">{g.items.length}</span>
             <span className="grow" />
             <Tip label="Creating issues from a cycle group is not available yet. Use Create new issue.">
@@ -746,7 +746,7 @@ const CycleIssueGroups = React.memo(function CycleIssueGroups({groups, collapsed
   );
 });
 
-export function LinearCycleDetail({cycle: initial, team, teams, viewer, orgId, workspaceName, projects, labels, cycles, onBack, onSelect, onNavigate}: {
+export function GraphCycleDetail({cycle: initial, team, teams, viewer, orgId, workspaceName, projects, labels, cycles, onBack, onSelect, onNavigate}: {
   cycle: Cycle; team?: Team; teams: Team[]; viewer: Viewer; orgId: string; workspaceName: string;
   projects: Project[]; labels: IssueLabel[]; cycles: Cycle[];
   revision?: number; onBack: () => void; onSelect: (issue: LinIssue) => void;
@@ -1007,7 +1007,7 @@ function pickTeamCycle(cycles: Cycle[], teamId: string, activeId: string | undef
   return mine[at + 1] || null;
 }
 
-export function LinearTeamCycle({team, teams, viewer, orgId, workspaceName, projects, labels, cycles, upcoming, onBack, onSelect, onNavigate}: {
+export function GraphTeamCycle({team, teams, viewer, orgId, workspaceName, projects, labels, cycles, upcoming, onBack, onSelect, onNavigate}: {
   team?: Team; teams: Team[]; viewer: Viewer; orgId: string; workspaceName: string;
   projects: Project[]; labels: IssueLabel[]; cycles: Cycle[];
   revision?: number; upcoming: boolean; onBack: () => void; onSelect: (issue: LinIssue) => void;
@@ -1038,7 +1038,7 @@ export function LinearTeamCycle({team, teams, viewer, orgId, workspaceName, proj
       </section>
     );
   }
-  return <LinearCycleDetail cycle={cycle} team={team} teams={teams} viewer={viewer} orgId={orgId}
+  return <GraphCycleDetail cycle={cycle} team={team} teams={teams} viewer={viewer} orgId={orgId}
     workspaceName={workspaceName} projects={projects} labels={labels} cycles={cycles}
     onBack={onBack} onSelect={onSelect} onNavigate={onNavigate} />;
 }
@@ -1050,7 +1050,7 @@ type AutoFlags = {started: boolean; completed: boolean; backlog: boolean};
 /* Last known settings per team: a revisit renders at once and revalidates in the background. */
 const settingsCache = new Map<string, {cadence?: Cadence; auto?: AutoFlags}>();
 
-export function LinearTeamCycleSettings({team, onBack, admin}: {
+export function GraphTeamCycleSettings({team, onBack, admin}: {
   team?: Team; onBack: () => void; admin?: boolean;
 }) {
   const cached = team ? settingsCache.get(team.id) : undefined;

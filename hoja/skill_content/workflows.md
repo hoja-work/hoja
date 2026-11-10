@@ -127,7 +127,7 @@ hoja issue list --label "$LABEL" -n 10
 ```bash
 ISSUE=$(hoja -o json issue create --team ENG --title "Add retry to API client" --priority 3 | jq -r '.identifier')
 echo "Created $ISSUE"
-echo "Linear: $(hoja issue url $ISSUE)"
+echo "the upstream API: $(hoja issue url $ISSUE)"
 # Now reference $ISSUE in your PR title or commit message:
 # hoja convention: include the identifier in the branch name (e.g. ENG-35-add-retry)
 ```
@@ -144,7 +144,7 @@ hoja -o md issue list --assignee me --state "Done" --updated-after $(date -d "7 
 
 ## 10. Comment from CI output
 
-In a CI script, post failure details to the related Linear issue:
+In a CI script, post failure details to the related the upstream API issue:
 
 ```bash
 ISSUE_ID=$(git log -1 --pretty=%B | grep -oE 'ENG-[0-9]+' | head -1)

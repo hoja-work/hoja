@@ -5,7 +5,7 @@
 // the UI used to show (completed/scope) next to what it shows now, and fails if
 // the buckets do not add up to the scope the server returned.
 import assert from 'node:assert/strict';
-import {asPct, cycleStats, deliveryRate, dropoutRate, scopeCompletion} from '../frontend/src/linear/cycleMetrics.ts';
+import {asPct, cycleStats, deliveryRate, dropoutRate, scopeCompletion} from '../frontend/src/graph/cycleMetrics.ts';
 
 const url = process.env.HOJA_API_URL || process.env.LINEAR_API_URL;
 const token = process.env.HOJA_TOKEN || process.env.LINEAR_TOKEN;

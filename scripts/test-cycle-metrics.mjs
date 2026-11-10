@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import {
   asPct, cycleStats, deliveryRate, dropoutRate, remainingSteps, scopeCompletion,
-} from '../frontend/src/linear/cycleMetrics.ts';
+} from '../frontend/src/graph/cycleMetrics.ts';
 
 const issue = (type, extra = {}) => ({state: {type}, estimate: null, ...extra});
 const many = (type, n, extra = {}) => Array.from({length: n}, () => issue(type, extra));

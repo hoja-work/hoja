@@ -1,6 +1,6 @@
 """FastAPI + Ariadne ASGI app with token auth middleware.
 
-- POST /graphql : the Linear-compatible endpoint the CLI talks to.
+- POST /graphql : the wire-compatible endpoint the CLI talks to.
 - Auth: raw token in Authorization header (with or without 'Bearer').
   Unknown/revoked token → HTTP 401 + {errors:[{message}]}.
 - Never emits 429. GraphQL errors → HTTP 200 + {errors:[...], data:null}.

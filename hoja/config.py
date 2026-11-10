@@ -72,7 +72,7 @@ class AccountConfig(BaseModel):
     org_name: str | None = None
     # GraphQL endpoint override. Point this at a local hoja-serve backend
     # (e.g. "http://127.0.0.1:8787/graphql") to run fully offline. When unset,
-    # hoja talks to the configured Linear-compatible API. $HOJA_API_URL
+    # hoja talks to the configured wire-compatible API. $HOJA_API_URL
     # (or its deprecated alias $LINEAR_API_URL) overrides this too.
     base_url: str | None = None
     # Team keys this account owns (e.g. ["SWA", "ENG"]). Used for intelligent

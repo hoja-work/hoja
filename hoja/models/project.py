@@ -1,6 +1,6 @@
 """Project model.
 
-A Linear project groups related issues across one or more teams toward a goal
+A the upstream API project groups related issues across one or more teams toward a goal
 (e.g. "Q2 Roadmap", "Auth Refactor"). Has lead, members, target date, and progress.
 """
 
@@ -16,7 +16,7 @@ from hoja.models.user import User
 
 
 class ProjectState(str, Enum):
-    """Linear project lifecycle states."""
+    """the upstream API project lifecycle states."""
 
     BACKLOG = "backlog"
     PLANNED = "planned"
@@ -27,7 +27,7 @@ class ProjectState(str, Enum):
 
 
 class Project(Timestamped):
-    """A Linear project."""
+    """A the upstream API project."""
 
     id: str
     name: str
