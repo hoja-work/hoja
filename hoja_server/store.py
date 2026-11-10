@@ -2297,6 +2297,16 @@ class Store:
             return self.ser_state(_one(conn, select(workflow_state).where(and_(
                 workflow_state.c.organization_id == org_id, workflow_state.c.id == sid))))
 
+    def states_by_ids(self, org_id: str, state_ids: list[str]) -> dict[str, dict]:
+        """Load workflow states for an issue page in one organization-scoped query."""
+        ids = list(dict.fromkeys(sid for sid in state_ids if sid))
+        if not ids:
+            return {}
+        with self.engine.connect() as conn:
+            rows = _conn_rows(conn, select(workflow_state).where(and_(
+                workflow_state.c.organization_id == org_id, workflow_state.c.id.in_(ids))))
+            return {row["id"]: self.ser_state(row) for row in rows}
+
     def raw_team(self, org_id: str, tid: str, viewer_id: str | None = None) -> dict | None:
         with self.engine.connect() as conn:
             stmt = select(team).where(and_(team.c.organization_id == org_id, team.c.id == tid))
@@ -2321,7 +2331,8 @@ class Store:
                 stmt = stmt.limit(limit)
             return [self.ser_issue(r) for r in _conn_rows(conn, stmt)]
 
-    def search_issues(self, org_id: str, term: str, viewer_id: str | None = None) -> list[dict]:
+    def search_issues(self, org_id: str, term: str, viewer_id: str | None = None,
+                      limit: int | None = None) -> list[dict]:
         needle = _like_contains(_check_search_term(term))
         with self.engine.connect() as conn:
             stmt = select(issue).where(and_(
@@ -2331,6 +2342,8 @@ class Store:
                     issue.c.identifier.ilike(needle, escape="\\"))))
             stmt = _scope_teams(conn, stmt, org_id, viewer_id, issue.c.team_id)
             stmt = stmt.order_by(issue.c.updated_at.desc())
+            if limit is not None:
+                stmt = stmt.limit(limit)
             return [self.ser_issue(r) for r in _conn_rows(conn, stmt)]
 
 

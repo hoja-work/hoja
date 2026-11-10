@@ -125,6 +125,7 @@ def _user_row(info, user_id):
 def _prime_issue_nodes(info, nodes) -> None:
     """Per-row lookups of an issue page (labels, subscribers, people) become one query each."""
     ids = [n["id"] for n in nodes if n]
+    _prime(info, "state", [n.get("_state_id") for n in nodes if n])
     _prime(info, "issue_labels", ids)
     _prime(info, "issue_subscribers", ids)
     _prime(info, "user_row", [n.get(k) for n in nodes if n for k in ("_assignee_id", "_creator_id")])
@@ -525,9 +526,12 @@ def r_labels(_, info, filter=None, first=100, after=None):
 def r_search(_, info, term, first=20):
     store, _w, org, uid = _ctx(info)
     first = _page_size(first, 20)
-    nodes = store.search_issues(org, term, viewer_id=uid)[:first]
+    rows = store.search_issues(org, term, viewer_id=uid, limit=first + 1)
+    nodes = rows[:first]
     _prime_issue_nodes(info, nodes)
-    return _conn(nodes)
+    result = _conn(nodes)
+    result["pageInfo"]["hasNextPage"] = len(rows) > first
+    return result
 
 
 @query.field("rateLimitStatus")
@@ -610,8 +614,13 @@ def reference_team(obj, info):
 @Issue.field("state")
 def i_state(obj, info):
     store, _w, org, _uid = _ctx(info)
-    return _memo(info, "state", (org, obj["_state_id"]),
-                 lambda: store.state_by_id(org, obj["_state_id"])) if obj.get("_state_id") else None
+    state_id = obj.get("_state_id")
+    if not state_id:
+        return None
+    return _memo(info, "state", (org, state_id),
+                 lambda: _batched(info, "state", state_id,
+                                  lambda ids: store.states_by_ids(org, ids),
+                                  lambda: store.state_by_id(org, state_id)))
 
 
 @Issue.field("assignee")
