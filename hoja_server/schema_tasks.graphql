@@ -32,6 +32,7 @@ type Task {
   subscribers(first: Int = 50): UserConnection
   comments(first: Int = 50): CommentConnection
   attachments(first: Int = 50): AttachmentConnection
+  githubLinks: [GithubLink!]
   activity(first: Int = 50, after: String): TaskActivityConnection
 }
 
