@@ -4,6 +4,7 @@ Subcommands:
   serve   Start the GraphQL backend.
   seed    Create an organization, user, team, states, and token.
   token   Mint a token for an existing organization user.
+  connector-mcp  Serve the connector MCP tools (Google Workspace, Notion and Slack) on HOJA_CONNECTOR_MCP_URL.
 """
 from __future__ import annotations
 
@@ -223,6 +224,24 @@ def _cmd_create_workspace(args):
     print(json.dumps(result, sort_keys=True))
 
 
+def _cmd_connector_mcp(args):
+    """Serve the connector MCP tools. The Hoja server signs a principal per turn and hands the
+    agent this address as HOJA_CONNECTOR_MCP_URL; nothing else authenticates the caller."""
+    import uvicorn
+
+    from hoja_server.connector_mcp_service import build_connector_mcp_app
+
+    target = _database_target(args)
+    try:
+        app = build_connector_mcp_app(make_engine(target), public_host=args.public_host)
+    except Exception as exc:  # ConnectorConfigError today; any startup failure must be loud
+        print(f"connector-mcp cannot start: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+    print(f"  db  : {display_database_target(target)}")
+    print(f"  url : http://{args.host}:{args.port}/mcp")
+    uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="hoja-serve", description="hoja local backend")
     p.add_argument("--version", action="version", version=f"hoja-serve {__version__}")
@@ -317,6 +336,24 @@ def main(argv=None):
     cw.add_argument("--database-url", default=None)
     cw.add_argument("--db", default=None)
     cw.set_defaults(func=_cmd_create_workspace)
+
+
+    cm = sub.add_parser(
+        "connector-mcp",
+        help="serve the connector MCP tools that HOJA_CONNECTOR_MCP_URL points at",
+    )
+    cm.add_argument("--tenant", default="default")
+    cm.add_argument("--database-url", default=None, help="explicit SQLAlchemy database URL")
+    cm.add_argument("--db", default=None)
+    cm.add_argument("--host", default="127.0.0.1")
+    cm.add_argument("--port", type=int, default=8090)
+    cm.add_argument("--log-level", default="warning")
+    cm.add_argument(
+        "--public-host",
+        default=None,
+        help="host name the proxy serves (enables DNS-rebinding protection for it)",
+    )
+    cm.set_defaults(func=_cmd_connector_mcp)
 
     args = p.parse_args(argv)
     args.func(args)

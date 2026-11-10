@@ -760,7 +760,13 @@ def create_app(
         except ValueError as exc:
             raise ValueError("HOJA_TRUSTED_PROXY_CIDRS must be comma-separated IP networks.") from exc
     trust_proxy = bool(proxy_networks) and _valid_public_host(public_host)
-    host_map = tenant_hosts.TenantHosts(engine, public_host if trust_proxy else "")
+    # api.hoja.work is the connector broker in a shared-tenancy deployment: a real
+    # host this app serves, and not a workspace of anybody. Without it the apex rule
+    # would redirect the one callback Calendly and Sentry can register.
+    broker_host = os.environ.get("HOJA_CONNECTOR_BROKER_HOST", "").strip()
+    host_map = tenant_hosts.TenantHosts(
+        engine, public_host if trust_proxy else "", broker=broker_host
+    )
 
     def _request_from_trusted_proxy(request: Request) -> bool:
         if not trust_proxy:

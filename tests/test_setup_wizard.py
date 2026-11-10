@@ -47,7 +47,7 @@ BOOTSTRAP = {
 GOOGLE_ENV = {
     "HOJA_GOOGLE_CLIENT_ID": "cid.apps.googleusercontent.com",
     "HOJA_GOOGLE_CLIENT_SECRET": "GOCSPX-never-return-this",
-    "HOJA_GOOGLE_REDIRECT_URI": "http://localhost/api/connectors/google/callback",
+    "HOJA_GOOGLE_REDIRECT_URI": "https://localhost/api/connectors/google/callback",
     # Encrypts the OAuth state; any non-empty deployment key is accepted.
     "HOJA_SECRET_KEY": "test-only-master-key",
 }
@@ -128,20 +128,89 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
         # Public capability flags: available before a session, and still no secret.
         anonymous = client.get("/api/connectors/config")
         assert anonymous.status_code == 200
-        assert anonymous.json() == {"googleWorkspace": False}
+        flags = {key: value for key, value in anonymous.json().items()
+                 if key.endswith("Agent") or key in (
+                     "googleWorkspace", "notion", "slack", "calendly", "sentry", "zoom")}
+        assert flags == {
+            "googleWorkspace": False,
+            "googleWorkspaceAgent": False,
+            "notion": False,
+            "notionAgent": False,
+            "slack": False,
+            "slackAgent": False,
+            "calendly": False,
+            "calendlyAgent": False,
+            "sentry": False,
+            "sentryAgent": False,
+            "zoom": False,
+            "zoomAgent": False,
+        }
 
         client.post("/onboarding/bootstrap", json=BOOTSTRAP)
         _clear_google_env(monkeypatch)
+        for name in ("HOJA_NOTION_CLIENT_ID", "HOJA_NOTION_CLIENT_SECRET", "HOJA_NOTION_REDIRECT_URI"):
+            monkeypatch.delenv(name, raising=False)
+        for name in ("HOJA_SLACK_CLIENT_ID", "HOJA_SLACK_CLIENT_SECRET", "HOJA_SLACK_REDIRECT_URI"):
+            monkeypatch.delenv(name, raising=False)
+        for name in (
+            "HOJA_CALENDLY_CLIENT_ID",
+            "HOJA_CALENDLY_CLIENT_SECRET",
+            "HOJA_CALENDLY_REDIRECT_URI",
+            "HOJA_SENTRY_CLIENT_ID",
+            "HOJA_SENTRY_CLIENT_SECRET",
+            "HOJA_SENTRY_REDIRECT_URI",
+        ):
+            monkeypatch.delenv(name, raising=False)
         off = client.get("/api/connectors/config")
         assert off.status_code == 200
-        assert off.json() == {"googleWorkspace": False}
+        body = off.json()
+        assert {key: body[key] for key in (
+            "googleWorkspace", "googleWorkspaceAgent", "notion", "notionAgent",
+            "slack", "slackAgent", "calendly", "calendlyAgent", "sentry", "sentryAgent",
+            "zoom", "zoomAgent")} == {
+            "googleWorkspace": False,
+            "googleWorkspaceAgent": False,
+            "notion": False,
+            "notionAgent": False,
+            "slack": False,
+            "slackAgent": False,
+            "calendly": False,
+            "calendlyAgent": False,
+            "sentry": False,
+            "sentryAgent": False,
+            "zoom": False,
+            "zoomAgent": False,
+        }
+        # Under shared tenancy "configured" is not "reachable from this host": the per-host
+        # answer is what Settings renders, and here nothing is registered for `testserver`.
+        assert body["availableOnThisHost"]["google_workspace"] is False
+        assert body["unavailableReason"]["google_workspace"]
         assert off.headers["cache-control"] == "no-store"
 
         for name, value in GOOGLE_ENV.items():
             monkeypatch.setenv(name, value)
         on = client.get("/api/connectors/config")
         assert on.status_code == 200
-        assert on.json() == {"googleWorkspace": True}
+        # The wizard only needs `googleWorkspace`; `googleWorkspaceAgent` stays false here because
+        # this deployment has no signing key yet, and is covered by the connector route tests.
+        on_body = on.json()
+        assert {key: on_body[key] for key in (
+            "googleWorkspace", "googleWorkspaceAgent", "notion", "notionAgent",
+            "slack", "slackAgent", "calendly", "calendlyAgent", "sentry", "sentryAgent",
+            "zoom", "zoomAgent")} == {
+            "googleWorkspace": True,
+            "googleWorkspaceAgent": False,
+            "notion": False,
+            "notionAgent": False,
+            "slack": False,
+            "slackAgent": False,
+            "calendly": False,
+            "calendlyAgent": False,
+            "sentry": False,
+            "sentryAgent": False,
+            "zoom": False,
+            "zoomAgent": False,
+        }
         assert "GOCSPX" not in on.text
         assert "cid.apps" not in on.text
     finally:

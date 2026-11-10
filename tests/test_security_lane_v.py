@@ -236,7 +236,7 @@ def test_state_replay_rejected_across_app_instances(tmp_path, google_env) -> Non
     from starlette.testclient import TestClient
 
     from hoja_server.app import create_app
-    from hoja_server.db import oauth_state_nonce
+    from hoja_server.db import connector_oauth_state
 
     respx.post("https://oauth2.googleapis.com/token").mock(return_value=httpx.Response(
         200, json={"access_token": "ya29", "refresh_token": "1//R", "expires_in": 3599, "scope": "gmail.readonly"}))
@@ -253,5 +253,6 @@ def test_state_replay_rejected_across_app_instances(tmp_path, google_env) -> Non
                                   follow_redirects=False)
     assert replay.status_code == 400
     with engine.connect() as conn:
-        stored = conn.execute(oauth_state_nonce.select()).all()
+        stored = conn.execute(connector_oauth_state.select()).all()
     assert len(stored) == 1 and len(stored[0].nonce_hash) == 64
+    assert stored[0].organization_id == admin["org_id"]

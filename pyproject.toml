@@ -76,10 +76,24 @@ saas = [
 agent = [
     "pydantic-ai-slim[dbos,openai,mcp]>=2.54,<3.0",
     "google-workspace-connector",
+    "notion-connector",
+    "slack-connector",
+    "calendly-connector",
+    "sentry-connector",
+    "zoom-connector",
 ]
 
 [tool.uv.sources]
+# uv resolves these editable path packages; pip does not read this table, so
+# every pip-based install must also pass each connector path explicitly
+# (.github/workflows/mobile.yml, infra/Dockerfile.hoja, scripts/dev-tailscale.sh,
+# mobile/README.md, mobile/scripts/verify-backend.sh).
 google-workspace-connector = { path = "connectors/google_workspace", editable = true }
+notion-connector = { path = "connectors/notion", editable = true }
+slack-connector = { path = "connectors/slack", editable = true }
+calendly-connector = { path = "connectors/calendly", editable = true }
+sentry-connector = { path = "connectors/sentry", editable = true }
+zoom-connector = { path = "connectors/zoom", editable = true }
 
 [project.scripts]
 hoja = "hoja.cli:app"
@@ -101,6 +115,11 @@ artifacts = ["VERSION"]
 "VERSION" = "VERSION"
 "hoja_server/schema.graphql" = "hoja_server/schema.graphql"
 "connectors/google_workspace/src/google_workspace" = "google_workspace"
+"connectors/notion/src/notion" = "notion"
+"connectors/slack/src/slack" = "slack"
+"connectors/calendly/src/calendly" = "calendly"
+"connectors/sentry/src/sentry" = "sentry"
+"connectors/zoom/src/zoom" = "zoom"
 
 [tool.ruff]
 target-version = "py310"

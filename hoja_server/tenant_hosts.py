@@ -28,9 +28,15 @@ def bare(host: str | None) -> str:
 
 
 class TenantHosts:
-    def __init__(self, engine: Engine, canonical: str, ttl: float = 30.0) -> None:
+    def __init__(self, engine: Engine, canonical: str, ttl: float = 30.0,
+                 broker: str = "") -> None:
         self.engine = engine
         self.canonical = bare(canonical)
+        # The connector broker (api.hoja.work) is a control-plane name that is NOT a
+        # tenant: it serves the shared Calendly/Sentry callbacks for every workspace.
+        # Without this it matches the apex and is redirected to the canonical host,
+        # which would break the one callback those providers can register.
+        self.broker = bare(broker)
         parts = self.canonical.split(".")
         self.apex = ".".join(parts[1:]) if len(parts) > 2 else ""
         self.ttl = ttl
@@ -53,6 +59,10 @@ class TenantHosts:
 
     def decide(self, host: str | None) -> tuple[str, str | None]:
         name = bare(host)
+        if self.broker and name == self.broker:
+            # Recognised and served, but it belongs to no single organization: the
+            # organization comes from the authenticated session or the sealed state.
+            return OPEN, None
         if not self.canonical or not name or name == self.canonical:
             return OPEN, None
         org = self.hosts().get(name)

@@ -34,7 +34,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 47
+CURRENT_SCHEMA_REVISION = 50
 
 
 def now_iso() -> str:
@@ -386,6 +386,15 @@ connector_account = Table(
     Column("external_account", String, nullable=False),
     Column("scopes", Text, nullable=False),
     Column("encrypted_refresh_token", Text, nullable=False),
+    # Calendly (and any provider with short-lived access tokens) stores both halves of the grant.
+    # The access token is cached with its expiry so a call does not rotate the refresh chain;
+    # providers whose token is long-lived leave these empty.
+    Column("encrypted_access_token", Text),
+    Column("access_token_expires_at", String),
+    # The provider's own id for the installation when the grant is per-installation rather than
+    # per-account. Sentry needs it on every exchange and refresh; providers without one leave it
+    # NULL, and `external_account` keeps carrying the human-readable label.
+    Column("external_id", String),
     Column("status", String, nullable=False),
     Column("created_at", String, nullable=False),
     Column("updated_at", String, nullable=False),
@@ -405,6 +414,22 @@ connector_action = Table(
     Column("result_summary", Text),
     Column("created_at", String, nullable=False),
     Column("resolved_at", String),
+)
+
+# OAuth replay protection for connector flows, scoped to an organization.
+#
+# The platform table `oauth_state_nonce` is deliberately global (an MCP OAuth
+# code is consumed before a tenant is known). A connector flow is different: it
+# always starts inside one workspace, so its nonce belongs to that workspace and
+# stays under row-level security. That makes "org A consumed org B's state" a
+# database-level impossibility rather than an application promise, and it keeps
+# connector data out of the global allowlist.
+connector_oauth_state = Table(
+    "connector_oauth_state",
+    metadata,
+    Column("nonce_hash", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), primary_key=True, index=True),
+    Column("expires_at", Float, nullable=False, index=True),
 )
 
 model_provider = Table(
@@ -1833,6 +1858,42 @@ def _apply_attachment_content_type(conn) -> None:
         conn.exec_driver_sql("ALTER TABLE attachment ADD COLUMN content_type VARCHAR")
 
 
+def _apply_connector_access_token(conn) -> None:
+    """Store the access half of a grant whose token expires.
+
+    Google refreshes on every call from the refresh token alone. Calendly rotates its refresh
+    token, so refreshing per call would burn the chain; the access token and its expiry are kept
+    so a call can reuse a still-valid token. Existing rows keep NULL in both columns.
+    """
+    existing = {column["name"] for column in inspect(conn).get_columns("connector_account")}
+    for name in ("encrypted_access_token", "access_token_expires_at"):
+        if name not in existing:
+            conn.exec_driver_sql(f"ALTER TABLE connector_account ADD COLUMN {name} VARCHAR")
+
+
+def _apply_connector_oauth_state(conn) -> None:
+    """Create the organization-scoped OAuth nonce ledger for connector flows.
+
+    Existing deployments have no connector state to migrate: a state value lives
+    for ten minutes and only inside a browser redirect, so any in-flight flow is
+    already expired by the time this revision runs.
+    """
+    connector_oauth_state.create(conn, checkfirst=True)
+
+
+def _apply_connector_external_id(conn) -> None:
+    """Store the provider-side installation id for per-installation grants.
+
+    Sentry's token exchange and refresh both address
+    `/api/0/sentry-app-installations/{id}/authorizations/`, so the id has to survive a restart.
+    Keeping it in `external_account` would replace the organization label the UI shows. Existing
+    rows (Google, Notion, Slack, Calendly) keep NULL.
+    """
+    existing = {column["name"] for column in inspect(conn).get_columns("connector_account")}
+    if "external_id" not in existing:
+        conn.exec_driver_sql("ALTER TABLE connector_account ADD COLUMN external_id VARCHAR")
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -1926,6 +1987,14 @@ _MIGRATIONS = {
     # content_type) and 45 (model_provider.context_window), so decisions takes 46.
     46: _apply_issue_decisions,
     47: _apply_organization_vanity_host,
+    # Connector migrations renumbered 47/48 -> 48/49 on the merge: main already shipped 47
+    # (organization.vanity_host) for the shared tier, so the connector ledger continues after it.
+    # 48: a provider whose access token expires (Calendly) stores both halves of the grant.
+    48: _apply_connector_access_token,
+    49: _apply_connector_external_id,
+    # 50: connector OAuth nonces carry the organization, so they are policed by RLS like the
+    # rest of the connector tables instead of living in the global allowlist.
+    50: _apply_connector_oauth_state,
 }
 
 
