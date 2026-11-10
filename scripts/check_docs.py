@@ -37,6 +37,7 @@ DURABLE_DOCS = {
     "docs/dependency-security.md",
     "docs/email-adapter.md",
     "docs/email-delivery.md",
+    "docs/github-linking.md",
     "docs/hoja-mcp.md",
     "docs/extensions.md",
     "docs/webhooks.md",
