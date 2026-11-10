@@ -34,7 +34,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 49
+CURRENT_SCHEMA_REVISION = 51
 
 
 def now_iso() -> str:
@@ -484,6 +484,44 @@ oauth_state_nonce = Table(
     metadata,
     Column("nonce_hash", String, primary_key=True),
     Column("expires_at", Float, nullable=False, index=True),
+)
+
+# One GitHub object linked to one issue. Detection happens outside the database
+# (hoja_server.github_linking); this table records the result. The unique key is
+# the idempotency guarantee: a re-delivered webhook upserts the same row instead
+# of duplicating the link.
+github_link = Table(
+    "github_link",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("issue_id", String, ForeignKey("issue.id"), nullable=False, index=True),
+    # pr / commit / issue / deploy / check
+    Column("kind", String, nullable=False),
+    # GitHub's own id for the object, as a string so it survives the 64-bit range.
+    Column("external_id", String, nullable=False),
+    Column("url", String, nullable=False),
+    Column("title", String, nullable=False),
+    Column("state", String),
+    Column("author", String),
+    Column("sha", String),
+    Column("environment", String),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String),
+    UniqueConstraint(
+        "organization_id", "kind", "external_id", name="uq_github_link_external"
+    ),
+)
+
+# Delivery-id ledger for the GitHub webhook. Not tenant data: a delivery id is GitHub's, and
+# the row exists only to prove we already acted on it. The primary key *is* the dedupe: the
+# receiver inserts and converts a conflict into "already handled" instead of doing work twice.
+github_delivery = Table(
+    "github_delivery",
+    metadata,
+    Column("delivery_id", String, primary_key=True),
+    Column("event", String, nullable=False),
+    Column("received_at", String, nullable=False),
 )
 
 user = Table(
@@ -1971,6 +2009,11 @@ _MIGRATIONS = {
     48: _apply_connector_external_id,
     # 49: an instance-addressed connector (Grafana) stores its origin on the account row.
     49: _apply_connector_external_url,
+    # 50: one GitHub object linked to one issue, unique per (org, kind, external id) so a
+    # re-delivered webhook upserts rather than duplicates.
+    50: lambda conn: github_link.create(conn, checkfirst=True),
+    # 51: the delivery-id ledger that makes a re-sent webhook a no-op.
+    51: lambda conn: github_delivery.create(conn, checkfirst=True),
 }
 
 

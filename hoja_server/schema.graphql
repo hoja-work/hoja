@@ -344,6 +344,7 @@ type Issue {
   subscribers(first: Int = 50): UserConnection
   comments(first: Int = 50): CommentConnection
   attachments(first: Int = 50): AttachmentConnection
+  githubLinks: [GithubLink!]
   activity(first: Int = 50, after: String): IssueActivityConnection
 }
 
@@ -380,6 +381,20 @@ type Attachment {
   subtitle: String
   issue: Issue
   createdAt: DateTime
+}
+
+type GithubLink {
+  id: ID!
+  kind: String!
+  externalId: String!
+  url: String!
+  title: String!
+  state: String
+  author: String
+  sha: String
+  environment: String
+  createdAt: DateTime
+  updatedAt: DateTime
 }
 
 type RateLimitPayload {

@@ -729,6 +729,18 @@ def i_attachments(obj, info, first=50):
                  lambda: _conn(store.issue_attachments_for(org, obj["id"], limit=first)))
 
 
+@Issue.field("githubLinks")
+def i_github_links(obj, info):
+    """The GitHub objects linked to this issue, newest first.
+
+    Not paginated: the panel shows the handful of PRs, commits and deploys that name
+    the issue, and a cap keeps a pathological history from bloating one page.
+    """
+    store, _w, org, _uid = _ctx(info)
+    return _memo(info, "issue_github_links", (org, obj["id"]),
+                 lambda: store.issue_github_links_for(org, obj["id"], limit=50))
+
+
 @query.field("myIssueActivity")
 def r_my_issue_activity(_, info, first=50, after=None):
     store, _w, org, uid = _ctx(info)
