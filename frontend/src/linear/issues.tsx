@@ -296,7 +296,7 @@ export function DisplayPanel({display, setDisplay, onClose, anchorClass}: {
         <div className="dp-row"><label><input type="checkbox" className="lin-check" checked={display.hideCompleted}
           onChange={e => set({hideCompleted: e.target.checked})} /> Hide completed issues</label></div>
         <div className="dp-row"><label><input type="checkbox" className="lin-check" checked={display.showSubIssues}
-          onChange={e => set({showSubIssues: e.target.checked})} /> Show sub-issues</label></div>
+          onChange={e => set({showSubIssues: e.target.checked})} /> Show sub-tasks</label></div>
         <div className="dp-row"><label><input type="checkbox" className="lin-check" checked={display.showEmptyColumns}
           onChange={e => set({showEmptyColumns: e.target.checked})} /> Show empty columns</label></div>
       </div>
@@ -478,7 +478,7 @@ function BoardColumnCards({items, team, onOpen, onDragStart, onUpdate}: {
     } : undefined}>
       {(more > 0 ? items.slice(0, limit) : items).map(i => <BoardCard key={i.id} issue={i} team={team} onOpen={onOpen} onDragStart={onDragStart} onUpdate={onUpdate} />)}
       {more > 0 && <button type="button" className="lin-btn" onClick={() => setLimit(l => l + BOARD_STEP)}>Show {Math.min(more, BOARD_STEP)} more of {more}</button>}
-      {!items.length && <div className="lin-bempty">No issues</div>}
+      {!items.length && <div className="lin-bempty">No tasks</div>}
     </div>
   );
 }
@@ -797,7 +797,7 @@ export function LinearTeamIssues({team, teams, orgId, workspaceName, projects, l
         <nav className="lin-crumb" aria-label="Breadcrumb">
           <button type="button" className="crumb-link" onClick={() => onNavigate('Team Home', `/workspace/team/${team.key.toLowerCase()}/home`)}>{workspaceName}</button>
           <span className="sep">›</span>
-          <span className="current">Issues</span>
+          <span className="current">Tasks</span>
         </nav>
         <div className="lin-head-actions">
           <FavStar kind="issues" id={`team-issues-${team.id}`} label={`${team.name} issues`} />
@@ -818,7 +818,7 @@ export function LinearTeamIssues({team, teams, orgId, workspaceName, projects, l
         <div className="lin-tabs" role="tablist" aria-label="Issue scope">
           {(['active', 'backlog', 'all'] as const).map(t => (
             <button key={t} type="button" role="tab" aria-selected={tab === t} className="lin-tab"
-              onClick={() => setTab(t)}>{t === 'all' ? 'All issues' : t[0].toUpperCase() + t.slice(1)}</button>
+              onClick={() => setTab(t)}>{t === 'all' ? 'All tasks' : t[0].toUpperCase() + t.slice(1)}</button>
           ))}
         </div>
         <div className="lin-viewchips">
@@ -832,8 +832,8 @@ export function LinearTeamIssues({team, teams, orgId, workspaceName, projects, l
       </div>
 
       <div className="lin-toolbar">
-        <label className="lin-search"><Search size={14} /><input placeholder="Search issues…" value={filters.q}
-          onChange={e => setFilters({...filters, q: e.target.value})} aria-label="Search issues" /></label>
+        <label className="lin-search"><Search size={14} /><input placeholder="Search tasks…" value={filters.q}
+          onChange={e => setFilters({...filters, q: e.target.value})} aria-label="Search tasks" /></label>
         <span className="spacer" />
         <span style={{position: 'relative'}}>
           <IconBtn label="Add filter" title="Add filter" active={filterOpen} onClick={() => { setFilterOpen(v => !v); setDisplayOpen(false); }}>
@@ -892,8 +892,8 @@ export function LinearTeamIssues({team, teams, orgId, workspaceName, projects, l
                       {g.state && <LinearStatusIcon state={g.state} size={13} />}
                       <b>{g.name}</b><span className="count">{g.items.length}</span>
                       <span className="grow" />
-                      <Tip label={`Create issue in ${g.name}`}>
-                        <button type="button" className="add" aria-label={`Create issue in ${g.name}`} onClick={() => onNew(g.state?.id)}><Plus size={14} /></button>
+                      <Tip label={`Create task in ${g.name}`}>
+                        <button type="button" className="add" aria-label={`Create task in ${g.name}`} onClick={() => onNew(g.state?.id)}><Plus size={14} /></button>
                       </Tip>
                     </header>
                   )}
@@ -912,7 +912,7 @@ export function LinearTeamIssues({team, teams, orgId, workspaceName, projects, l
               {!scoped.length && (
                 <div className="lin-empty">
                   <ListFilter size={30} strokeWidth={1.4} />
-                  <h2>No issues match</h2>
+                  <h2>No tasks match</h2>
                   <p>Try clearing filters or create a new issue.</p>
                   <button type="button" className="lin-btn primary" onClick={() => onNew()}><Plus size={14} /> New issue</button>
                 </div>
@@ -922,7 +922,7 @@ export function LinearTeamIssues({team, teams, orgId, workspaceName, projects, l
                   {older.hasMore && (
                     <button type="button" className="lin-btn" onClick={() => void loadOlder()} disabled={older.loading}
                       title={`Closed issues last updated before ${closedCutoff} are loaded on demand`}>
-                      {older.loading ? 'Loading…' : `Load older closed issues (${rows.length} shown)`}
+                      {older.loading ? 'Loading…' : `Load older closed tasks (${rows.length} shown)`}
                     </button>
                   )}
                   {older.error && <span className="lin-error" role="alert">{older.error} <button type="button" className="lin-btn" onClick={() => void loadOlder()}>Retry</button></span>}
@@ -986,7 +986,7 @@ const detailFields = `{ id identifier title description createdAt updatedAt dueD
 
 /* Detail cache. The sync store already holds every synced issue's properties; this keeps
  * what the snapshot does not carry (description, comments, activity, attachments,
- * sub-issues) in memory, so a revisit or an open after a hover prefetch renders at once.
+ * sub-tasks) in memory, so a revisit or an open after a hover prefetch renders at once.
  * Entries are marked stale by realtime events and revalidated when next shown. */
 export type IssueDetailEntry = {detail: LinIssue; subs: LinIssue[]};
 const DETAIL_CACHE_MAX = 60;
@@ -1006,7 +1006,7 @@ function updateCachedDetail(id: string, fn: (entry: IssueDetailEntry) => IssueDe
   if (cur) rememberDetail(fn(cur));
 }
 const subsQuery = `issues(first:100,filter:$filter){nodes ${linIssueFields}}`;
-/** Fetch (deduplicated) and cache an issue's full detail. Pass the issue's id as knownId when you have it: one request instead of two. */
+/** Fetch (deduplicated) and cache an issue's full detail. Pass the task's id as knownId when you have it: one request instead of two. */
 export function fetchIssueDetail(idOrIdentifier: string, knownId?: string): Promise<IssueDetailEntry> {
   const running = (knownId && detailInflight.get(knownId)) || detailInflight.get(idOrIdentifier);
   if (running) return running;
@@ -1022,11 +1022,11 @@ export function fetchIssueDetail(idOrIdentifier: string, knownId?: string): Prom
     } else {
       const d = await gql(`query IssueDetail($id:String!){issue(id:$id)${detailFields}}`, {id: idOrIdentifier});
       detail = d.issue;
-      if (!detail) throw new Error('Issue not found');
+      if (!detail) throw new Error('Task not found');
       const s = await gql(`query IssueSubs($filter:IssueFilter){${subsQuery}}`, {filter: {parent: {id: {eq: detail.id}}}});
       subs = s.issues.nodes;
     }
-    if (!detail) throw new Error('Issue not found');
+    if (!detail) throw new Error('Task not found');
     const entry = {detail, subs};
     rememberDetail(entry);
     return entry;
@@ -1110,7 +1110,7 @@ function mergeIssueView(base: LinIssue, live: Issue | undefined, users: Map<stri
 function describeEvent(e: {eventType: string; actor?: {name?: string}; changes?: Record<string, unknown>}, states: IssueState[]): string {
   const actor = e.actor?.name || 'Someone';
   const ch = (e.changes || {}) as Record<string, {from?: string | null; to?: string | null}>;
-  if (e.eventType === 'issueCreated' || e.eventType === 'created') return `${actor} created the issue`;
+  if (e.eventType === 'issueCreated' || e.eventType === 'created') return `${actor} created the task`;
   const sname = (id?: string | null) => (id && states.find(s => s.id === id)?.name) || 'Unknown';
   if (ch.stateId) return `${actor} moved from ${sname(ch.stateId.from)} to ${sname(ch.stateId.to)}`;
   if (ch.assigneeId) return `${actor} assigned the issue`;
@@ -1188,7 +1188,7 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
     let live = true;
     setLoadError('');
     const detailTimeout = cached ? undefined : setTimeout(() => {
-      if (live) setLoadError('Loading the issue timed out. Check your connection and retry.');
+      if (live) setLoadError('Loading the task timed out. Check your connection and retry.');
     }, 20000);
     fetchIssueDetail(issueIdent || issueId, issueId)
       .then(() => { if (live) { setLoadError(''); force(); } })
@@ -1226,8 +1226,8 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
   }, [parentQuery, parentSearch, detail?.id]);
 
   if (!detail) {
-    if (loading || (!error && !loadError)) return <section className="lin-page"><p className="lin-loading" role="status">Loading issue…</p></section>;
-    return <section className="lin-page"><div className="lin-scroll"><p className="lin-error" role="alert">{error || loadError || 'Issue not found'}</p>
+    if (loading || (!error && !loadError)) return <section className="lin-page"><p className="lin-loading" role="status">Loading task…</p></section>;
+    return <section className="lin-page"><div className="lin-scroll"><p className="lin-error" role="alert">{error || loadError || 'Task not found'}</p>
       <div style={{display: 'flex', gap: 8, margin: '0 24px'}}>
         {onRetry && <button type="button" className="lin-btn primary" onClick={onRetry}>Retry</button>}
         <button type="button" className="lin-btn" onClick={onBack}>← {backLabel}</button>
@@ -1405,7 +1405,7 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
       const d = await gql(`mutation($input:IssueCreateInput!){issueCreate(input:$input){success issue ${linIssueFields}}}`,
         {input: {title: t, teamId: detail.team.id, parentId: detail.id}});
       const created = d.issueCreate?.issue as LinIssue | undefined;
-      if (!d.issueCreate?.success || !created) throw new Error('Sub-issue was rejected');
+      if (!d.issueCreate?.success || !created) throw new Error('Sub-task was rejected');
       resolve(created as Issue);
       updateCachedDetail(detail.id, en => (en.subs.some(s => s.id === created.id) ? en : {...en, subs: [...en.subs, created]}));
       force();
@@ -1496,25 +1496,25 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
         <div className="lin-head-actions">
           <FavStar kind="issues" id={detail.id} label={detail.identifier} />
           <span style={{position: 'relative'}} ref={moreRef}>
-            <IconBtn label="Issue options" title="Issue options" onClick={() => setMoreOpen(v => !v)}><span style={{fontWeight: 700}}>···</span></IconBtn>
+            <IconBtn label="Task options" title="Task options" onClick={() => setMoreOpen(v => !v)}><span style={{fontWeight: 700}}>···</span></IconBtn>
             {moreOpen && <LinMenu onClose={() => setMoreOpen(false)} className="lin-dd-panel lin-dd-right" items={[
               {key: 'copy', label: 'Copy as prompt', icon: <Copy size={14} />, onSelect: () => void copyText(asPrompt)},
               {key: 'branch', label: 'Copy branch name', icon: <Copy size={14} />, onSelect: () => void copyText(branchName)},
               ...actionMenuItems,
               {key: 'div', divider: true},
-              {key: 'archive', label: 'Archive issue', onSelect: async () => { if (await confirmDialog(`Archive ${detail.identifier}?`)) archive(); }},
+              {key: 'archive', label: 'Archive task', onSelect: async () => { if (await confirmDialog(`Archive ${detail.identifier}?`)) archive(); }},
               {key: 'delete', label: 'Delete issue', danger: true, onSelect: async () => { if (await confirmDialog(`Permanently delete ${detail.identifier}? This cannot be undone.`)) remove(); }},
             ]} />}
           </span>
           {idx >= 0 && <>
             <span className="lin-nav-count">{idx + 1} / {issueList.length}</span>
             <span style={{display: 'contents'}} {...(prev ? issueIntentProps(prev) : {})}>
-              <IconBtn label="Previous issue" title="Previous issue" disabled={!prev} onClick={() => prev && onOpenIssue(prev)}>
+              <IconBtn label="Previous task" title="Previous task" disabled={!prev} onClick={() => prev && onOpenIssue(prev)}>
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M8 13V3M4 7l4-4 4 4" strokeLinecap="round" strokeLinejoin="round" /></svg>
               </IconBtn>
             </span>
             <span style={{display: 'contents'}} {...(next ? issueIntentProps(next) : {})}>
-              <IconBtn label="Next issue" title="Next issue" disabled={!next} onClick={() => next && onOpenIssue(next)}>
+              <IconBtn label="Next task" title="Next task" disabled={!next} onClick={() => next && onOpenIssue(next)}>
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M8 3v10M4 9l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" /></svg>
               </IconBtn>
             </span>
@@ -1523,14 +1523,14 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
       </header>
       <div className="lin-toolbar" style={{justifyContent: 'flex-end'}}>
         <IconBtn label="Copy link" title="Copy link" onClick={() => void copyText(window.location.href)}><Link2 size={15} /></IconBtn>
-        <IconBtn label="Create copy of issue" title="Create copy of issue"
+        <IconBtn label="Create copy of task" title="Create copy of task"
           onClick={() => void copyIssue()}>
           <Copy size={15} />
         </IconBtn>
         <Tip label="Hoja has no public share links — copies the private URL">
-          <span><IconBtn label="Share issue externally" title="Share issue externally" onClick={() => void copyText(window.location.href)}><ExternalLink size={15} /></IconBtn></span>
+          <span><IconBtn label="Share task externally" title="Share task externally" onClick={() => void copyText(window.location.href)}><ExternalLink size={15} /></IconBtn></span>
         </Tip>
-        <IconBtn label="Archive issue" title="Archive issue"
+        <IconBtn label="Archive task" title="Archive task"
           onClick={async () => { if (await confirmDialog(`Archive ${detail.identifier}?`)) archive(); }}>
           <Trash2 size={15} />
         </IconBtn>
@@ -1575,14 +1575,14 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
             </div>
           )}
 
-          <section className="lin-subsec" aria-label="Sub-issues">
+          <section className="lin-subsec" aria-label="Sub-tasks">
             <header>
               <ChevronDown size={14} color="var(--muted)" />
-              <span>Sub-Issues</span>
+              <span>Sub-tasks</span>
               <SubIssuePill done={subsDone} total={subsView.length} />
               <span className="grow" />
-              <IconBtn label="Sub-issue display settings" title="Sub-issue display options are not available yet" disabled><SlidersHorizontal size={14} /></IconBtn>
-              <IconBtn label="Add sub-issue" title="Add sub-issue" onClick={() => setAddingSub(v => !v)}><Plus size={14} /></IconBtn>
+              <IconBtn label="Sub-task display settings" title="Sub-task display options are not available yet" disabled><SlidersHorizontal size={14} /></IconBtn>
+              <IconBtn label="Add sub-task" title="Add sub-task" onClick={() => setAddingSub(v => !v)}><Plus size={14} /></IconBtn>
             </header>
             {addingSub && (
               <div style={{display: 'flex', gap: 8, margin: '4px 0 8px'}}>
@@ -1605,7 +1605,7 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
                 </IconBtn>
               </div>
             ))}
-            {!subsView.length && !addingSub && <p className="lin-note">{detailReady ? 'No sub-issues yet.' : 'Loading sub-issues…'}</p>}
+            {!subsView.length && !addingSub && <p className="lin-note">{detailReady ? 'No sub-tasks yet.' : 'Loading sub-tasks…'}</p>}
           </section>
 
           <section className="lin-subsec" aria-label="Attachments">
@@ -1800,7 +1800,7 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
               <button type="button" className="lin-addrow" onClick={() => setParentSearch(v => !v)}>Set parent…</button>
               {parentSearch && (
                 <div className="lin-popover" style={{left: 0, top: 'calc(100% + 4px)', width: 300, padding: 8}}>
-                  <input placeholder="Search issues…" value={parentQuery} onChange={e => setParentQuery(e.target.value)}
+                  <input placeholder="Search tasks…" value={parentQuery} onChange={e => setParentQuery(e.target.value)}
                     style={{width: '100%', border: '1px solid var(--line)', borderRadius: 6, padding: '7px 10px', fontSize: 13, marginBottom: 6}} />
                   {parentResults.map(r => (
                     <button key={r.id} type="button" className="lin-dd-opt"
