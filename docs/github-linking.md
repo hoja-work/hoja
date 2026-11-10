@@ -4,8 +4,13 @@ A Hoja issue should show the GitHub work that belongs to it: the branches, pull 
 commits, deployments and checks that name its identifier. This document records the design and,
 plainly, how much of it exists today.
 
-**Implemented in this change:** identifier detection (`hoja_server/github_linking.py`) with its
-test suite. Everything else below is the agreed design, not shipped behaviour.
+**Implemented:** identifier detection (`hoja_server/github_linking.py`), the `github_link` and
+`github_delivery` tables, the signed webhook receiver for `pull_request` and `push`, the
+`Issue.githubLinks` GraphQL field, and the GitHub section on the issue page.
+
+**Follow-up work, specified here but not built:** the backfill/poll for repositories without a
+webhook, and the authenticated "deployed to prod at <sha>" endpoint. The `deploy` and `check`
+link kinds are recorded in the data model and rendered by the panel, but nothing writes them yet.
 
 ## Why identifiers and not a mapping table
 
@@ -133,10 +138,16 @@ the owner must:
 ## Migration numbering
 
 The schema is versioned by an integer `CURRENT_SCHEMA_REVISION` applied from the ordered
-`_MIGRATIONS` map, not by SQL files. At the time of writing `origin/main` is at **49**, so the
-link table takes **50**. HOJA-280 reserves **51 and up** in Cloud; the Cloud port therefore
-takes **52** rather than the next integer, to avoid claiming a number another change is already
-using.
+`_MIGRATIONS` map, not by SQL files. OSS `origin/main` is at **49**, so the link table is
+revision **50** and the delivery ledger **51**. Cloud `origin/main` is at **50**, so the same
+pair is **51** and **52**.
+
+Revision numbers must form a contiguous prefix: `migrate()` indexes `_MIGRATIONS[revision]` for
+every number up to `CURRENT_SCHEMA_REVISION`, so the pair cannot start at 52 without inventing a
+gap, and a placeholder revision is unsafe because a database that recorded it would later skip
+another change's real migration. HOJA-280 reserves **51 and up** in Cloud; if that lands first
+these two renumber to **53** and **54** at merge, which is the practice this file's history
+already records.
 
 ## Consequences
 
