@@ -1,0 +1,100 @@
+name: Tests
+
+# The public OSS repository ships 1158 tests and, until this workflow, ran
+# none of them: Documentation exercised `tests/test_check_docs.py` only, and
+# Dependency audit ran npm/pip advisories. Every behavioural claim in this
+# repository was therefore green by absence. Keep this job un-filtered so a
+# pull request cannot become "green" by touching a path the matrix ignores.
+#
+# `pytest` proves the SQLite path. It cannot prove the Postgres path: every test
+# gated on HOJA_TEST_POSTGRES_URL reports as *skipped* there, and pytest exits 0
+# for a run made entirely of skips. The row-level-security tests in
+# tests/test_tenant_context.py and the legacy-column upgrade probe in
+# tests/test_server_postgres.py are in that set, so `pytest-postgres` runs them
+# against a real server and fails if any of them skipped instead of ran.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    # A stable name for branch protection; do not rename without updating it.
+    name: pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: '3.10'
+
+      # --all-extras because the suite covers the server, MCP and SaaS extras;
+      # without them the collection import fails rather than skipping.
+      - name: Install
+        run: uv sync --frozen --all-extras
+
+      - name: Test suite
+        # faulthandler_timeout mirrors the Cloud runner so a hang dumps stacks
+        # instead of consuming the whole job timeout.
+        run: uv run --frozen --all-extras pytest -q -o faulthandler_timeout=240
+
+  pytest-postgres:
+    # Only the three database-gated modules; the SQLite job above owns the rest.
+    name: pytest-postgres
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: hoja
+          POSTGRES_PASSWORD: hoja
+          POSTGRES_DB: hoja_test
+        ports:
+          - 5432:5432
+        # Without a health check the first connection races the server's startup
+        # and the run fails for a reason that has nothing to do with the code.
+        options: >-
+          --health-cmd "pg_isready -U hoja -d hoja_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # A TCP URL, not a socket: test_postgres_upgrade_from_legacy_private_column
+      # derives a sibling database name by splitting this string on the last "/".
+      HOJA_TEST_POSTGRES_URL: postgresql+psycopg://hoja:hoja@localhost:5432/hoja_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: '3.10'
+
+      - name: Install
+        run: uv sync --frozen --all-extras
+
+      - name: Database-backed tests
+        run: >-
+          uv run --frozen --all-extras pytest -q -rs
+          --junit-xml=pg-results.xml
+          -o faulthandler_timeout=240
+          tests/test_server_postgres.py
+          tests/test_tenant_context.py
+          tests/agent/test_dbos_crash_recovery.py
+
+      # Runs even when the step above failed, so a broken database path reports
+      # both the failing assertions and whether the cases ran at all.
+      - name: Assert the database tests executed
+        if: always()
+        run: python scripts/assert_pg_gate_ran.py pg-results.xml
