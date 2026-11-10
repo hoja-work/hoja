@@ -1,0 +1,43 @@
+name: Tests
+
+# The public OSS repository ships 607 tests and, until this workflow, ran
+# none of them: Documentation exercised `tests/test_check_docs.py` only, and
+# Dependency audit ran npm/pip advisories. Every behavioural claim in this
+# repository was therefore green by absence. Keep this job un-filtered so a
+# pull request cannot become "green" by touching a path the matrix ignores.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    # A stable name for branch protection; do not rename without updating it.
+    name: pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: '3.10'
+
+      # --all-extras because the suite covers the server, MCP and SaaS extras;
+      # without them the collection import fails rather than skipping.
+      - name: Install
+        run: uv sync --frozen --all-extras
+
+      - name: Test suite
+        # faulthandler_timeout mirrors the Cloud runner so a hang dumps stacks
+        # instead of consuming the whole job timeout.
+        run: uv run --frozen --all-extras pytest -q -o faulthandler_timeout=240
