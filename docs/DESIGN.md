@@ -224,7 +224,7 @@ Location precedence:
 [auth]
 token_env = "HOJA_TOKEN"  # Read from env, never store plaintext
 # Or for users who want it stored:
-# token = "lin_api_..."
+# token = "hoja_..."
 
 [defaults]
 team = "ENG"                # Default team key
@@ -342,7 +342,7 @@ Error format (JSON mode):
 
 ## Security
 
-- **Token never logged.** Redacted in `--verbose` mode (shown as `lin_api_…XXXX`).
+- **Token never logged.** Redacted in `--verbose` mode (shown as `hoja_…XXXX`).
 - **Token never stored in plaintext by default.** Read from env or via `--token`.
 - **HTTPS only.** No fallback to HTTP.
 - **TLS verification mandatory.** No `--insecure` flag.

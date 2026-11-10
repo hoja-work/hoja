@@ -148,7 +148,7 @@ def test_install_uninstall_is_exactly_reverted_and_reinstallable(world):
     before = counts(engine)
     first = install(client, token, manifest(url))
     ext = first["extension"]
-    assert first["apiKey"].startswith("lin_api_") and first["signingSecret"].startswith("hoja_ext_")
+    assert first["apiKey"].startswith("hoja_") and first["signingSecret"].startswith("hoja_ext_")
     assert ext["access"] == "read_write" and ext["botUser"]["name"] == "Worktree provisioner"
     after = counts(engine)
     assert after["extension_effect"] == 5  # bot, key, webhook, hook, action

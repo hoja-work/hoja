@@ -999,7 +999,7 @@ def test_personal_api_key_lifecycle_is_scoped_and_secret_is_one_time(tmp_path) -
     created = store.create_api_key(seeded["org_id"], seeded["user_id"], "Laptop", "read_write")
     assert created is not None
     metadata_row, secret = created
-    assert secret.startswith("lin_api_")
+    assert secret.startswith("hoja_")
     assert "token_hash" not in metadata_row
     assert store.list_api_keys(seeded["org_id"], seeded["user_id"])[-1]["label"] == "Laptop"
     assert store.resolve_token(secret)["id"] == metadata_row["id"]
@@ -1659,7 +1659,7 @@ def test_workspace_members_and_admin_update_are_org_scoped(tmp_path) -> None:
     invited_user = invited["data"]["memberInvite"]
     assert invited_user["success"] is True
     assert invited_user["user"]["email"] == f"new-{suffix}@example.test"
-    assert invited_user["apiKey"].startswith("lin_api_")
+    assert invited_user["apiKey"].startswith("hoja_")
     duplicate = gql(one["token"], "mutation($input:MemberInviteInput!){memberInvite(input:$input){success}}",
                     {"input": {"name": "Duplicate", "email": f"new-{suffix}@example.test"}})
     assert duplicate["data"]["memberInvite"]["success"] is False
@@ -1693,7 +1693,7 @@ def test_first_run_onboarding_bootstraps_admin_session_and_disables_setup(tmp_pa
     })
     assert response.status_code == 200
     assert response.json()["status"] == "created"
-    assert response.json()["apiKey"].startswith("lin_api_")
+    assert response.json()["apiKey"].startswith("hoja_")
     assert response.cookies.get("hoja_session")
     assert client.get("/onboarding/status").json() == {"initialized": True, "singleOrg": False}
     assert client.get("/auth/me").status_code == 200
@@ -1929,7 +1929,7 @@ def test_bootstrap_returns_team_id_for_onboarding_invite(tmp_path) -> None:
         assert response.status_code == 200, response.text
         body = response.json()
         assert body["teamId"]
-        assert body["apiKey"].startswith("lin_api_")
+        assert body["apiKey"].startswith("hoja_")
 
 
 def test_realtime_socket_replays_changes_after_cursor_and_rejects_bad_auth(tmp_path) -> None:
