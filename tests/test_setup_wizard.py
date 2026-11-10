@@ -77,7 +77,10 @@ def test_status_and_bootstrap_are_a_single_irreversible_step(app):
         body = created.json()
         assert body["status"] == "created"
         assert body["workspace"]["urlKey"] == "acme-studio"
-        assert body["apiKey"].startswith("lin_")
+        # HOJA-207: minted keys name Hoja. Legacy `lin_api_` keys still verify
+        # (see tests/test_credential_prefix.py); the wizard must not emit one.
+        assert body["apiKey"].startswith("hoja_"), body["apiKey"]
+        assert not body["apiKey"].startswith("lin_api_")
         assert body["teamId"]
 
         with engine.connect() as conn:
