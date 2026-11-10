@@ -96,6 +96,7 @@ from zoom.oauth import revoke_token as zoom_revoke_token
 
 from hoja_server.connector_actions import Executor, approve_action, reject_action
 from hoja_server.db import connector_account, connector_action, oauth_state_nonce, organization
+from hoja_server.github_webhook import github_webhook_routes
 from hoja_server.identity_transfer import tenant_target
 from hoja_server.secrets_box import SecretBoxError, decrypt_secret, encrypt_secret
 
@@ -2050,4 +2051,6 @@ def connector_routes(
         Route("/api/connectors/actions", actions_list, methods=["GET"]),
         Route("/api/connectors/actions/{action_id}/approve", action_approve, methods=["POST"]),
         Route("/api/connectors/actions/{action_id}/reject", action_reject, methods=["POST"]),
+        # Incoming GitHub App deliveries (linking), not part of the OAuth connect flow.
+        *github_webhook_routes(engine),
     ]

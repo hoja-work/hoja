@@ -34,7 +34,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 50
+CURRENT_SCHEMA_REVISION = 51
 
 
 def now_iso() -> str:
@@ -508,6 +508,17 @@ github_link = Table(
     UniqueConstraint(
         "organization_id", "kind", "external_id", name="uq_github_link_external"
     ),
+)
+
+# Delivery-id ledger for the GitHub webhook. Not tenant data: a delivery id is GitHub's, and
+# the row exists only to prove we already acted on it. The primary key *is* the dedupe: the
+# receiver inserts and converts a conflict into "already handled" instead of doing work twice.
+github_delivery = Table(
+    "github_delivery",
+    metadata,
+    Column("delivery_id", String, primary_key=True),
+    Column("event", String, nullable=False),
+    Column("received_at", String, nullable=False),
 )
 
 user = Table(
@@ -1998,6 +2009,8 @@ _MIGRATIONS = {
     # 50: one GitHub object linked to one issue, unique per (org, kind, external id) so a
     # re-delivered webhook upserts rather than duplicates.
     50: lambda conn: github_link.create(conn, checkfirst=True),
+    # 51: the delivery-id ledger that makes a re-sent webhook a no-op.
+    51: lambda conn: github_delivery.create(conn, checkfirst=True),
 }
 
 
