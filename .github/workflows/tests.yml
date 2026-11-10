@@ -33,7 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: astral-sh/setup-uv@v7
         with:
@@ -75,7 +75,7 @@ jobs:
       # derives a sibling database name by splitting this string on the last "/".
       HOJA_TEST_POSTGRES_URL: postgresql+psycopg://hoja:hoja@localhost:5432/hoja_test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: astral-sh/setup-uv@v7
         with:

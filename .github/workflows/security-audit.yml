@@ -26,7 +26,7 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
@@ -45,7 +45,7 @@ jobs:
     name: pip-audit (locked dependencies)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
       - name: Export the lock (no local project, no extras omitted)
         run: uv export --frozen --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/requirements-audit.txt"
