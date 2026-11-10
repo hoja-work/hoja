@@ -178,6 +178,28 @@ def test_start_refuses_a_host_that_is_not_in_the_zoom_allow_list(tmp_path) -> No
     assert res.headers["location"].startswith("https://zoom.us/")
 
 
+def test_start_derives_the_origin_from_the_host_not_the_transport_scheme(
+    tmp_path, monkeypatch
+) -> None:
+    """Behind the reverse proxy the request can still look like plain http.
+
+    uvicorn only rewrites ``request.base_url``'s scheme when it trusts the forwarding headers, so
+    an http-scheme request is what the app sees in production. The origin must come from the
+    validated workspace host instead: reading the scheme refused Zoom on every host of a
+    deployment that serves https only.
+    """
+    monkeypatch.setenv("HOJA_TRUSTED_PUBLIC_HOST", "app.hoja.work")
+    monkeypatch.setenv("HOJA_TENANT_BASE_DOMAIN", "hoja.work")
+    monkeypatch.delenv("HOJA_CONNECTOR_REDIRECT_HOSTS", raising=False)
+    host = f"{SLUG}.hoja.work"
+    _, app, admin = _setup(tmp_path)
+    with _client(app, base=f"http://{host}") as client:
+        res = _start(client, admin["token"])
+    assert res.status_code == 302, res.text
+    query = parse_qs(urlparse(res.headers["location"]).query)
+    assert query["redirect_uri"] == [f"https://{host}/api/connectors/zoom/callback"]
+
+
 def test_an_unconfigured_deployment_reports_503(tmp_path, monkeypatch) -> None:
     _, app, admin = _setup(tmp_path)
     monkeypatch.delenv("HOJA_ZOOM_CLIENT_SECRET", raising=False)

@@ -300,6 +300,30 @@ def test_full_broker_flow_stores_a_sealed_grant(tmp_path, broker) -> None:
     assert decrypt_secret(row["encrypted_access_token"], row["organization_id"]) == "access-calendly-fixture"
 
 
+def test_finish_accepts_its_own_workspace_when_the_transport_says_http(
+    tmp_path, broker
+) -> None:
+    """The state pins a workspace origin; the transport's scheme must not make it look foreign.
+
+    uvicorn leaves ``request.base_url`` at http unless it trusts the proxy's forwarding headers, so
+    reading the scheme there turned the workspace's own callback into a cross-workspace refusal.
+    """
+    _, app, admin = _setup(tmp_path)
+    http_tenant = TENANT.replace("https://", "http://")
+    with _client(app, http_tenant) as tenant:
+        state = _state_from(_start(tenant, admin["token"]))
+        with respx.mock:
+            respx.post(TOKEN_URL).mock(return_value=_token_response())
+            respx.get(USERS_ME).mock(return_value=_users_me())
+            res = tenant.get(
+                f"/api/connectors/calendly/finish?code=c1&state={quote(state)}",
+                headers={"Authorization": f"Bearer {admin['token']}"},
+                follow_redirects=False,
+            )
+    assert res.status_code == 302, res.text
+    assert res.headers["location"] == f"{TENANT}/?connector=calendly-connected"
+
+
 def test_a_replayed_state_is_refused(tmp_path, broker) -> None:
     engine, app, admin = _setup(tmp_path)
     with _client(app, TENANT) as tenant:

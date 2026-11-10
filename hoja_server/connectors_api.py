@@ -23,7 +23,7 @@ import uuid
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import urlencode
 
 import httpx
 from calendly import CalendlyOAuthConfig
@@ -905,7 +905,10 @@ def connector_routes(
             return _error("Connection request belongs to a different session.", 403)
         tenant = pending.get("tenant")
         if tenant is not None:
-            here = _calendly_tenant_origin(str(request.base_url))
+            # The state pinned `https://<workspace host>` at start; comparing that against
+            # `request.base_url` made the workspace's own callback look foreign, because behind the
+            # proxy that field is still http unless uvicorn trusts the forwarding headers.
+            here = connector_hosts.workspace_origin(engine, request)
             if here is None or tenant != here:
                 return _error("Connection request belongs to a different workspace.", 403)
         if not _consume_state(engine, org, str(pending.get("nonce", "")), int(pending["exp"])):
@@ -985,17 +988,22 @@ def connector_routes(
         return RedirectResponse(back, status_code=302)
 
     def _zoom_origin(request: Request) -> str | None:
-        """This request's own https origin, or None.
+        """The https origin this request's registered callback lives on, or None.
 
-        Zoom's app holds an allow list of full callback URLs, so the origin is the only part the
-        deployment has to derive; the path is fixed. Deriving it from the request (rather than
-        trusting a query parameter) is what keeps a tenant from being handed a callback that
-        belongs to somebody else.
+        Zoom's app holds an allow list of full callback URLs, so the origin is the only part that
+        varies per workspace; the path is fixed. It is read off the callback this deployment
+        derived for the request rather than off ``request.base_url``: behind the reverse proxy
+        uvicorn only rewrites that field's scheme when it trusts the forwarding headers, so an
+        untrusted ``X-Forwarded-Proto`` left every origin looking like ``http://`` and refused Zoom
+        on a deployment that serves https only. Taking it from the derived callback also means a
+        one-host install pins the URI it actually registered, not the address the request arrived
+        on, and that start and callback always agree.
         """
-        parts = urlsplit(str(request.base_url))
-        if parts.scheme != "https" or not parts.netloc:
+        callback = _redirect_for(ZOOM_PROVIDER, request)
+        path = connector_hosts.CALLBACK_PATHS[ZOOM_PROVIDER]
+        if not callback or not callback.endswith(path):
             return None
-        return f"{parts.scheme}://{parts.netloc}"
+        return callback[: -len(path)]
 
     async def zoom_start(request: Request):
         """Begin the Zoom flow on the tenant that owns the registered callback.
@@ -1286,7 +1294,7 @@ def connector_routes(
             return _error("Connection request belongs to a different session.", 403)
         tenant = pending.get("tenant")
         if tenant is not None:
-            here = _calendly_tenant_origin(str(request.base_url))
+            here = connector_hosts.workspace_origin(engine, request)
             if here is None or tenant != here:
                 return _error("Connection request belongs to a different workspace.", 403)
         if not _consume_state(engine, org, str(pending.get("nonce", "")), int(pending["exp"])):
