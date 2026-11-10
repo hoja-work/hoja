@@ -1186,3 +1186,16 @@ def test_signup_reason_codes_are_unique_and_stable():
         "slug_taken",
     ):
         assert expected in values
+
+
+# --------------------------------------------------------------------------- #
+# HOJA-206: the chooser
+# --------------------------------------------------------------------------- #
+
+
+def test_the_authorize_url_asks_google_for_the_account_chooser(harness):
+    """Without prompt=select_account Google reuses the one signed-in account."""
+    start = harness.start_flow()
+    assert start.status_code == 302, start.text
+    query = parse_qs(urlsplit(start.headers["location"]).query)
+    assert query.get("prompt") == ["select_account"], start.headers["location"]
