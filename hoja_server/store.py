@@ -2332,6 +2332,7 @@ class Store:
             return [self.ser_issue(r) for r in _conn_rows(conn, stmt)]
 
     def search_issues(self, org_id: str, term: str, viewer_id: str | None = None,
+                      after: tuple[str, str] | None = None,
                       limit: int | None = None) -> list[dict]:
         needle = _like_contains(_check_search_term(term))
         with self.engine.connect() as conn:
@@ -2341,7 +2342,14 @@ class Store:
                     issue.c.description.ilike(needle, escape="\\"),
                     issue.c.identifier.ilike(needle, escape="\\"))))
             stmt = _scope_teams(conn, stmt, org_id, viewer_id, issue.c.team_id)
-            stmt = stmt.order_by(issue.c.updated_at.desc())
+            # The id tiebreak makes the order total: a page boundary keys on
+            # (updated_at, id), so rows sharing a timestamp must be ordered by
+            # the same column the cursor filters on or a page can drop them.
+            stmt = stmt.order_by(issue.c.updated_at.desc(), issue.c.id.desc())
+            if after:
+                stmt = stmt.where(issue.c.updated_at <= after[0]).where(or_(
+                    issue.c.updated_at < after[0],
+                    and_(issue.c.updated_at == after[0], issue.c.id < after[1])))
             if limit is not None:
                 stmt = stmt.limit(limit)
             return [self.ser_issue(r) for r in _conn_rows(conn, stmt)]

@@ -111,7 +111,7 @@ type Query {
   cycle(id: String!): Cycle
   teamCycleCadence(teamId: String!): TeamCycleCadence!
   issueLabels(filter: IssueLabelFilter, first: Int = 100, after: String): IssueLabelConnection @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
-  searchIssues(term: String!, first: Int = 20): IssueConnection @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
+  searchIssues(term: String!, first: Int = 20, after: String): IssueConnection @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   rateLimitStatus: RateLimitPayload
 }
 

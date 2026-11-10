@@ -523,14 +523,22 @@ def r_labels(_, info, filter=None, first=100, after=None):
 
 
 @query.field("searchIssues")
-def r_search(_, info, term, first=20):
+def r_search(_, info, term, first=20, after=None):
     store, _w, org, uid = _ctx(info)
     first = _page_size(first, 20)
-    rows = store.search_issues(org, term, viewer_id=uid, limit=first + 1)
+    cursor = _decode_issue_cursor(after)
+    rows = store.search_issues(org, term, viewer_id=uid, after=cursor, limit=first + 1)
     nodes = rows[:first]
     _prime_issue_nodes(info, nodes)
     result = _conn(nodes)
-    result["pageInfo"]["hasNextPage"] = len(rows) > first
+    # hasNextPage is only honest if the cursor it ships can be passed back as
+    # `after`; agent_chat.py tells the reader to do exactly that.
+    result["pageInfo"].update({
+        "hasNextPage": len(rows) > first,
+        "hasPreviousPage": after is not None,
+        "startCursor": _issue_cursor(nodes[0], "updatedAt") if nodes else None,
+        "endCursor": _issue_cursor(nodes[-1], "updatedAt") if nodes else None,
+    })
     return result
 
 
