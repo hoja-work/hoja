@@ -1387,6 +1387,10 @@ def test_login_rate_limit_attributes_per_client_behind_trusted_proxy(tmp_path) -
     one. While they agreed, this test stayed green with the cf-connecting-ip
     shortcut reintroduced — it could not tell the two header sources apart, so it
     defended its docstring by accident rather than by assertion.
+
+    The prefix case at the end covers the other half of the claim: a caller may
+    also write its own ``x-forwarded-for`` prefix, so the bucket has to come from
+    the nearest hop the caller could not have written, not from the leftmost one.
     """
     from starlette.testclient import TestClient
 
@@ -1424,6 +1428,26 @@ def test_login_rate_limit_attributes_per_client_behind_trusted_proxy(tmp_path) -
         other = client.post("/auth/login", headers=headers(victim_real, "192.0.2.8"),
                             json={"email": "proxy-ip@example.test", "password": "also-wrong"})
         assert other.status_code == 401, "victim client IP must not share the attacker's bucket"
+        # The same attacker now writes its own *prefix* on x-forwarded-for. The
+        # proxy appends the address it saw, so the prefix is the caller's text
+        # and must not become the bucket: the walk is right-to-left and stops at
+        # the first hop that is not one of our proxies. A left-to-right walk
+        # would hand the caller a fresh bucket per attempt and never reach the
+        # budget, which the assertions below detect.
+        prefix_real = "198.51.100.9"
+        for i in range(10):
+            r = client.post("/auth/login",
+                            headers={"x-forwarded-for": f"203.0.113.{i}, {prefix_real}, 172.18.0.2",
+                                     "cf-connecting-ip": "203.0.113.200"},
+                            json={"email": f"prefix-{i}@nowhere.test", "password": f"bad-{i}"})
+            assert r.status_code == 401, (i, r.status_code)
+        blocked_prefix = client.post(
+            "/auth/login",
+            headers={"x-forwarded-for": f"203.0.113.250, {prefix_real}, 172.18.0.2",
+                     "cf-connecting-ip": "203.0.113.200"},
+            json={"email": "prefix-fresh@nowhere.test", "password": "bad-more"})
+        assert blocked_prefix.status_code == 429, (
+            "a client-written x-forwarded-for prefix must not pick the bucket")
         # Forwarded headers from an UNTRUSTED peer must not influence the key.
         with TestClient(app, client=("198.51.100.99", 5000)) as direct:
             r = direct.post("/auth/login", headers={"cf-connecting-ip": "1.2.3.4",
