@@ -7,6 +7,7 @@ import hmac
 import json
 import time
 import uuid
+from datetime import datetime, timezone
 from urllib.parse import parse_qs, quote, urlparse
 
 import httpx
@@ -98,14 +99,28 @@ def _seal(pending: dict) -> str:
     return encrypt_secret(json.dumps(body))
 
 
+GRANT_LIFETIME_SECONDS = 8 * 60 * 60
+
+
+def _grant_window(lifetime: int = GRANT_LIFETIME_SECONDS) -> tuple[int, int]:
+    """(dateCreated, expiresAt) as epochs, for a grant the provider has just minted."""
+    created = int(time.time())
+    return created, created + lifetime
+
+
+def _iso(epoch: int) -> str:
+    return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
 def _token_response(**overrides) -> httpx.Response:
+    created, expires = _grant_window()
     body = {
         "id": "38",
         "token": "access-sentry-fixture",
         "refreshToken": "refresh-sentry-fixture",
         "scopes": ["event:read", "org:read", "project:read"],
-        "dateCreated": "2026-11-09T19:52:40.889879Z",
-        "expiresAt": "2026-11-10T03:52:40.889879Z",
+        "dateCreated": _iso(created),
+        "expiresAt": _iso(expires),
         "state": None,
         "application": None,
     }
@@ -263,10 +278,11 @@ def test_finish_refuses_a_state_issued_to_someone_else(tmp_path, broker) -> None
 
 def test_full_broker_flow_stores_a_sealed_installation_grant(tmp_path, broker) -> None:
     engine, app, admin = _setup(tmp_path)
+    _, expires_at = _grant_window()
     with _client(app, TENANT) as tenant:
         state = _state_from(_start(tenant, admin["token"]))
         with respx.mock:
-            exchange = respx.post(AUTHZ).mock(return_value=_token_response())
+            exchange = respx.post(AUTHZ).mock(return_value=_token_response(expiresAt=_iso(expires_at)))
             respx.get(ORGS).mock(return_value=_organization("hoja"))
             res = tenant.get(
                 f"{FINISH}?code=c1&installationId={INSTALLATION}&orgSlug=hoja"
@@ -288,7 +304,8 @@ def test_full_broker_flow_stores_a_sealed_installation_grant(tmp_path, broker) -
     assert set(row["scopes"].split()) == {"event:read", "org:read", "project:read"}
     assert decrypt_secret(row["encrypted_refresh_token"]) == "refresh-sentry-fixture"
     assert decrypt_secret(row["encrypted_access_token"]) == "access-sentry-fixture"
-    assert int(row["access_token_expires_at"]) > int(time.time())
+    # The exact instant the provider named, not merely "some time after now".
+    assert int(row["access_token_expires_at"]) == expires_at
 
 
 def test_an_organization_that_disagrees_with_the_callback_is_refused(tmp_path, broker) -> None:
