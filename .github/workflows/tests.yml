@@ -27,6 +27,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  frontend-vocabulary:
+    # HOJA-288 moved the product vocabulary from "issue" to "task". The GraphQL
+    # and MCP aliases are covered by pytest; user-visible copy lives in JSX text
+    # and accessible attributes, which no Python test reads. This job runs the
+    # same gate locally via `npm run lint:vocab`.
+    name: frontend-vocabulary
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: User-facing vocabulary
+        run: node frontend/scripts/check-task-vocabulary.mjs
+
   pytest:
     # A stable name for branch protection; do not rename without updating it.
     name: pytest

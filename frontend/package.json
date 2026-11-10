@@ -13,6 +13,7 @@
     "test:pages": "node ../scripts/test-page-invariants.cjs",
     "test:mobile": "node ../scripts/mobile-audit.cjs --scale --gate",
     "lint:ui": "eslint src",
+    "lint:vocab": "node scripts/check-task-vocabulary.mjs",
     "test:modal": "node ../scripts/test-issue-modal-polish.cjs",
     "test:my-issues": "node ../scripts/test-my-issues-completed.cjs",
 "test:issue-parity": "node ../scripts/test-issue-surface-parity.cjs",

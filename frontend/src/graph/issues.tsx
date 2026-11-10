@@ -275,7 +275,7 @@ export function DisplayPanel({display, setDisplay, onClose, anchorClass}: {
       </div>
       <div className="dp-sec">
         <div className="dp-title">Grouping</div>
-        <select aria-label="Group issues by" value={display.grouping}
+        <select aria-label="Group tasks by" value={display.grouping}
           onChange={e => set({grouping: e.target.value as LinDisplay['grouping']})}>
           <option value="none">No grouping</option>
           <option value="status">Status</option>
@@ -288,7 +288,7 @@ export function DisplayPanel({display, setDisplay, onClose, anchorClass}: {
       <div className="dp-sec">
         <div className="dp-title">Ordering</div>
         <div className="dp-row">
-          <select aria-label="Order issues by" value={display.ordering}
+          <select aria-label="Order tasks by" value={display.ordering}
             onChange={e => set({ordering: e.target.value as LinDisplay['ordering']})}>
             <option value="updated">Updated</option>
             <option value="created">Created</option>
@@ -300,7 +300,7 @@ export function DisplayPanel({display, setDisplay, onClose, anchorClass}: {
           </div>
         </div>
         <div className="dp-row"><label><input type="checkbox" className="lin-check" checked={display.hideCompleted}
-          onChange={e => set({hideCompleted: e.target.checked})} /> Hide completed issues</label></div>
+          onChange={e => set({hideCompleted: e.target.checked})} /> Hide completed tasks</label></div>
         <div className="dp-row"><label><input type="checkbox" className="lin-check" checked={display.showSubIssues}
           onChange={e => set({showSubIssues: e.target.checked})} /> Show sub-tasks</label></div>
         <div className="dp-row"><label><input type="checkbox" className="lin-check" checked={display.showEmptyColumns}
@@ -605,7 +605,7 @@ function BulkBar({selected, byId, team, cycles, labels, onClear, onDone}: {
               ))}
               <div className="lin-menu-divider" />
               <button type="button" className="lin-menu-item" onClick={() => void remove('archive')}>Archive</button>
-              <button type="button" className="lin-menu-item danger" onClick={async () => { if (await confirmDialog(`Delete ${selected.length} issues? This cannot be undone.`)) void remove('delete'); }}>Delete</button>
+              <button type="button" className="lin-menu-item danger" onClick={async () => { if (await confirmDialog(`Delete ${selected.length} tasks? This cannot be undone.`)) void remove('delete'); }}>Delete</button>
             </> : <>
               <button type="button" className="lin-menu-item" onClick={() => setAction('menu')}>‹ Back</button>
               <div className="lin-menu-divider" />
@@ -798,7 +798,7 @@ export function GraphTeamIssues({team, teams, orgId, workspaceName, projects, la
   let y = LIST_PAD_TOP;
 
   return (
-    <section className="lin-page" aria-label={`${team.name} issues`}>
+    <section className="lin-page" aria-label={`${team.name} tasks`}>
       <header className="lin-head">
         <nav className="lin-crumb" aria-label="Breadcrumb">
           <button type="button" className="crumb-link" onClick={() => onNavigate('Team Home', `/workspace/team/${team.key.toLowerCase()}/home`)}>{workspaceName}</button>
@@ -806,7 +806,7 @@ export function GraphTeamIssues({team, teams, orgId, workspaceName, projects, la
           <span className="current">Tasks</span>
         </nav>
         <div className="lin-head-actions">
-          <FavStar kind="issues" id={`team-issues-${team.id}`} label={`${team.name} issues`} />
+          <FavStar kind="issues" id={`team-issues-${team.id}`} label={`${team.name} tasks`} />
           <span style={{position: 'relative'}}>
             <IconBtn label="Team notifications" title="Notification settings" onClick={() => setNotifOpen(v => !v)}><Bell size={15} /></IconBtn>
             {notifOpen && (
@@ -821,7 +821,7 @@ export function GraphTeamIssues({team, teams, orgId, workspaceName, projects, la
       </header>
 
       <div className="lin-viewbar">
-        <div className="lin-tabs" role="tablist" aria-label="Issue scope">
+        <div className="lin-tabs" role="tablist" aria-label="Task scope">
           {(['active', 'backlog', 'all'] as const).map(t => (
             <button key={t} type="button" role="tab" aria-selected={tab === t} className="lin-tab"
               onClick={() => setTab(t)}>{t === 'all' ? 'All tasks' : t[0].toUpperCase() + t.slice(1)}</button>
@@ -873,7 +873,7 @@ export function GraphTeamIssues({team, teams, orgId, workspaceName, projects, la
       )}
 
       <div className="lin-scroll" ref={scrollRef}>
-        {loading && <p className="lin-loading" role="status">Loading issues…</p>}
+        {loading && <p className="lin-loading" role="status">Loading tasks…</p>}
         {!loading && (layout === 'Board'
           ? <GraphBoard issues={scoped} states={team.states.nodes} team={team} onOpen={openIssue}
               onMoved={movedStable} onUpdate={updateStable}
@@ -919,15 +919,15 @@ export function GraphTeamIssues({team, teams, orgId, workspaceName, projects, la
                 <div className="lin-empty">
                   <ListFilter size={30} strokeWidth={1.4} />
                   <h2>No tasks match</h2>
-                  <p>Try clearing filters or create a new issue.</p>
-                  <button type="button" className="lin-btn primary" onClick={() => onNew()}><Plus size={14} /> New issue</button>
+                  <p>Try clearing filters or create a new task.</p>
+                  <button type="button" className="lin-btn primary" onClick={() => onNew()}><Plus size={14} /> New task</button>
                 </div>
               )}
               {showOlder && (
                 <div className="lin-loadmore">
                   {older.hasMore && (
                     <button type="button" className="lin-btn" onClick={() => void loadOlder()} disabled={older.loading}
-                      title={`Closed issues last updated before ${closedCutoff} are loaded on demand`}>
+                      title={`Closed tasks last updated before ${closedCutoff} are loaded on demand`}>
                       {older.loading ? 'Loading…' : `Load older closed tasks (${rows.length} shown)`}
                     </button>
                   )}
@@ -1510,7 +1510,7 @@ export function GraphIssueDetail({workspaceName, viewer, issue, issueList, onOpe
               ...actionMenuItems,
               {key: 'div', divider: true},
               {key: 'archive', label: 'Archive task', onSelect: async () => { if (await confirmDialog(`Archive ${detail.identifier}?`)) archive(); }},
-              {key: 'delete', label: 'Delete issue', danger: true, onSelect: async () => { if (await confirmDialog(`Permanently delete ${detail.identifier}? This cannot be undone.`)) remove(); }},
+              {key: 'delete', label: 'Delete task', danger: true, onSelect: async () => { if (await confirmDialog(`Permanently delete ${detail.identifier}? This cannot be undone.`)) remove(); }},
             ]} />}
           </span>
           {idx >= 0 && <>
@@ -1593,7 +1593,7 @@ export function GraphIssueDetail({workspaceName, viewer, issue, issueList, onOpe
             </header>
             {addingSub && (
               <div style={{display: 'flex', gap: 8, margin: '4px 0 8px'}}>
-                <input placeholder="Sub-issue title…" value={newSubTitle}
+                <input placeholder="Sub-task title…" value={newSubTitle}
                   onChange={e => setNewSubTitle(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') void createSub(); }}
                   style={{flex: 1, border: '1px solid var(--line)', borderRadius: 7, padding: '8px 10px', fontSize: 13}} />
@@ -1607,7 +1607,7 @@ export function GraphIssueDetail({workspaceName, viewer, issue, issueList, onOpe
                 <button type="button" className="t" disabled={isLocalIssueId(s.id)} onClick={() => onOpenIssue(s)} title={s.title}>{s.title}</button>
                 {s.labels?.nodes.map(l => <LabelChip key={l.id} label={l} />)}
                 {s.assignee && <Avatar name={s.assignee.name} size={18} />}
-                <IconBtn label={`Open sub-issue ${s.identifier}`} title="Open sub-issue" disabled={isLocalIssueId(s.id)} onClick={() => onOpenIssue(s)}>
+                <IconBtn label={`Open sub-task ${s.identifier}`} title="Open sub-task" disabled={isLocalIssueId(s.id)} onClick={() => onOpenIssue(s)}>
                   <ExternalLink size={13} />
                 </IconBtn>
               </div>
@@ -1865,7 +1865,7 @@ export function GraphIssueDetail({workspaceName, viewer, issue, issueList, onOpe
           <div className="lin-ts">Updated {detail.updatedAt ? new Date(detail.updatedAt).toLocaleString() : '—'}</div>
 
           <div className="sec">Related</div>
-          <Tip label="Issue relations are not available in Hoja yet">
+          <Tip label="Task relations are not available in Hoja yet">
             <button type="button" className="lin-addrow" disabled style={{opacity: .5, cursor: 'not-allowed'}}>Add relationship…</button>
           </Tip>
         </aside>
