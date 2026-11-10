@@ -85,13 +85,12 @@ def test_duplicate_external_object_is_rejected(tmp_path) -> None:
         conn.execute(github_link.insert().values(**_row(organization_id=org_id, issue_id=issue_id)))
 
     # The same GitHub object re-delivered must not become a second row.
-    with pytest.raises(IntegrityError):
-        with engine.begin() as conn:
-            conn.execute(
-                github_link.insert().values(
-                    **_row(id="gl_2", organization_id=org_id, issue_id=issue_id)
-                )
+    with pytest.raises(IntegrityError), engine.begin() as conn:
+        conn.execute(
+            github_link.insert().values(
+                **_row(id="gl_2", organization_id=org_id, issue_id=issue_id)
             )
+        )
 
 
 def test_the_same_external_id_may_exist_for_another_kind_or_org(tmp_path) -> None:
