@@ -23,9 +23,9 @@ sealed with `secrets_box`.
 from __future__ import annotations
 
 import asyncio
-from contextlib import contextmanager
 import logging
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -66,9 +66,8 @@ def _scoped(engine: Engine, org_id: str, *, write: bool = False):
     connector account has to name the tenant it is acting for. Without it the row is invisible and
     a healthy grant reads as "no longer connected".
     """
-    with tenant_context.scoped(org_id):
-        with (engine.begin() if write else engine.connect()) as conn:
-            yield conn
+    with tenant_context.scoped(org_id), (engine.begin() if write else engine.connect()) as conn:
+        yield conn
 
 
 class GitHubTokenStore:
