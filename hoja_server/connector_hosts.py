@@ -52,10 +52,11 @@ CALLBACK_PATHS = {
     "notion": "/api/connectors/notion/callback",
     "slack": "/api/connectors/slack/callback",
     "zoom": "/api/connectors/zoom/callback",
+    "github": "/api/connectors/github/callback",
     "calendly": "/api/connectors/calendly/callback",
     "sentry": "/api/connectors/sentry/callback",
 }
-PER_TENANT = frozenset({"google_workspace", "notion", "slack", "zoom"})
+PER_TENANT = frozenset({"google_workspace", "notion", "slack", "zoom", "github"})
 BROKER = frozenset({"calendly", "sentry"})
 FINISH_PATHS = {
     "calendly": "/api/connectors/calendly/finish",
@@ -166,6 +167,7 @@ SINGLE_HOST_REDIRECT_ENV = {
     "notion": "HOJA_NOTION_REDIRECT_URI",
     "slack": "HOJA_SLACK_REDIRECT_URI",
     "zoom": "HOJA_ZOOM_REDIRECT_URI",
+    "github": "HOJA_GITHUB_REDIRECT_URI",
     "calendly": "HOJA_CALENDLY_REDIRECT_URI",
     "sentry": "HOJA_SENTRY_REDIRECT_URI",
 }

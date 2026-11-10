@@ -58,6 +58,13 @@ def _env(monkeypatch):
     monkeypatch.setenv("HOJA_CALENDLY_CLIENT_ID", "v_calendly_client_id_000000")
     monkeypatch.setenv("HOJA_CALENDLY_CLIENT_SECRET", "calendly-secret-test-value")
     monkeypatch.setenv("HOJA_CALENDLY_REDIRECT_URI", "https://unused.example.test/callback")
+    monkeypatch.setenv("HOJA_GITHUB_CLIENT_ID", "Iv23li4RW9Mh8RHVfCGi")
+    monkeypatch.setenv("HOJA_GITHUB_CLIENT_SECRET", "github-secret-test-value")
+    monkeypatch.setenv("HOJA_GITHUB_REDIRECT_URI",
+                       "https://unused.example.test/api/connectors/github/callback")
+    monkeypatch.setenv("HOJA_GITHUB_REDIRECT_URIS",
+                       f"https://{HOST_A}/api/connectors/github/callback "
+                       f"https://{HOST_B}/api/connectors/github/callback")
     monkeypatch.delenv("HOJA_TENANT_BASE_DOMAIN", raising=False)
 
 
@@ -81,16 +88,18 @@ def _app(kwargs):
 
 
 def _add_account(engine, org: str, owner: str | None, *, account_id: str,
-                 token: str = "1//BRAVO-REFRESH") -> None:
+                 token: str = "1//BRAVO-REFRESH", provider: str = PROVIDER,
+                 external_url: str | None = None) -> None:
     with engine.begin() as conn:
         conn.execute(connector_account.insert().values(
             id=account_id,
             organization_id=org,
             owner_user_id=owner,
-            provider=PROVIDER,
+            provider=provider,
             external_account="shared@bravo.test",
-            scopes="https://www.googleapis.com/auth/gmail.readonly",
+            scopes="https://www.googleapis.com/auth/gmail.readonly" if provider == PROVIDER else "",
             encrypted_refresh_token=encrypt_secret(token, org),
+            external_url=external_url,
             status="active",
             created_at="2026-11-09T00:00:00+00:00",
             updated_at="2026-11-09T00:00:00+00:00",
@@ -346,3 +355,156 @@ def _setup_with_kwargs(tmp_path):
     bravo = seed_tenant(engine, org_name="Bravo", org_url_key="bravo", user_email="o@bravo.test",
                         token="bravo-tok", demo_issues=False)
     return engine, kwargs, alpha, bravo
+
+
+# --- Grafana and GitHub on the same shared tier -----------------------------------------
+#
+# These two arrived after the cutover, so they are the ones that could quietly skip a layer:
+# Grafana stores a customer instance origin beside its token, and GitHub keeps a rotating
+# refresh chain that is rewritten on every use. Both are asserted at the layer they changed.
+
+
+def test_another_workspace_cannot_list_or_revoke_grafana_or_github_accounts(tmp_path) -> None:
+    engine, client, alpha, bravo = _setup(tmp_path)
+    _add_account(enter := engine, bravo["org_id"], bravo["user_id"], account_id="acct-grafana",
+                 provider="grafana", token="glsa_bravo_token_value",
+                 external_url="https://bravo.grafana.net")
+    _add_account(enter, bravo["org_id"], bravo["user_id"], account_id="acct-github",
+                 provider="github", token="ghr_bravo_refresh")
+
+    with client:
+        listing = client.get("/api/connectors/accounts",
+                             headers={"Authorization": f"Bearer {alpha['token']}"})
+        assert listing.status_code == 200
+        assert listing.json()["accounts"] == []
+        for account_id in ("acct-grafana", "acct-github"):
+            revoke = client.post(f"/api/connectors/accounts/{account_id}/revoke",
+                                 headers={"Authorization": f"Bearer {alpha['token']}"})
+            assert revoke.status_code == 404
+
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(connector_account.c.id, connector_account.c.status,
+                   connector_account.c.encrypted_refresh_token)
+        ).mappings().all()
+    assert {row["id"]: row["status"] for row in rows} == {
+        "acct-grafana": "active", "acct-github": "active"}
+    # The instance origin is metadata, not a credential, but it still must not travel: it names a
+    # customer's private Grafana stack.
+    assert all(row["encrypted_refresh_token"] for row in rows)
+
+
+def test_a_grafana_token_sealed_for_one_organization_does_not_open_in_another(tmp_path) -> None:
+    engine, _client, alpha, bravo = _setup(tmp_path)
+    _add_account(engine, bravo["org_id"], bravo["user_id"], account_id="acct-grafana",
+                 provider="grafana", token="glsa_bravo_token_value",
+                 external_url="https://bravo.grafana.net")
+    with engine.connect() as conn:
+        ciphertext = conn.execute(
+            select(connector_account.c.encrypted_refresh_token)
+            .where(connector_account.c.id == "acct-grafana")
+        ).scalar_one()
+    assert decrypt_secret(ciphertext, bravo["org_id"]) == "glsa_bravo_token_value"
+    with pytest.raises(SecretBoxError):
+        decrypt_secret(ciphertext, alpha["org_id"])
+
+
+def test_the_github_token_store_opens_a_grant_only_under_its_own_organization(tmp_path) -> None:
+    """The rotating refresh chain is rewritten by the store, so the store is where the key binds.
+
+    A row whose ciphertext is sealed for a different organization must yield no cached access
+    token: the refresh path then treats the grant as unreadable and answers "reconnect" rather
+    than presenting another workspace's credential.
+    """
+    from hoja_server.github_tokens import GitHubTokenStore
+
+    _engine, _client, alpha, bravo = _setup(tmp_path)
+    store = GitHubTokenStore(engine=_engine, http=None, config=None)
+    expires = str(int(time.time()) + 3600)
+    mine = {
+        "organization_id": alpha["org_id"],
+        "encrypted_access_token": encrypt_secret("ghu_mine", alpha["org_id"]),
+        "access_token_expires_at": expires,
+    }
+    theirs = {
+        "organization_id": alpha["org_id"],
+        "encrypted_access_token": encrypt_secret("ghu_theirs", bravo["org_id"]),
+        "access_token_expires_at": expires,
+    }
+    assert store._read_access(mine).access_token == "ghu_mine"
+    assert store._read_access(theirs) is None
+
+
+def test_the_github_redirect_is_derived_from_the_workspace_host(tmp_path) -> None:
+    engine, client, alpha, bravo = _setup(tmp_path)
+    with engine.begin() as conn:
+        from hoja_server.db import organization
+
+        conn.execute(update(organization).where(organization.c.id == alpha["org_id"])
+                     .values(vanity_host=HOST_A))
+        conn.execute(update(organization).where(organization.c.id == bravo["org_id"])
+                     .values(vanity_host=HOST_B))
+    with client:
+        on_alpha = client.get("/api/connectors/github/start?scope=user",
+                              headers={"Host": HOST_A,
+                                       "Authorization": f"Bearer {alpha['token']}"},
+                              follow_redirects=False)
+        conn_alpha = client.get("/api/connectors/config", headers={"Host": HOST_A}).json()
+    assert on_alpha.status_code == 302
+    query = parse_qs(urlparse(on_alpha.headers["location"]).query)
+    assert query["redirect_uri"] == [f"https://{HOST_A}/api/connectors/github/callback"]
+    assert conn_alpha["availableOnThisHost"]["github"] is True
+
+
+def test_grafana_stays_available_on_a_host_with_no_registered_callback(tmp_path) -> None:
+    """Grafana is instance-addressed: nothing exists at the provider to be unregistered.
+
+    GitHub on the same host must report unavailable with a reason, because the App holds an
+    explicit list of callback URLs and an unregistered one fails at GitHub.
+    """
+    engine, client, _alpha, bravo = _setup(tmp_path)
+    with engine.begin() as conn:
+        from hoja_server.db import organization
+
+        conn.execute(update(organization).where(organization.c.id == bravo["org_id"])
+                     .values(vanity_host="charlie.hoja.work"))
+    with client:
+        config = client.get("/api/connectors/config",
+                            headers={"Host": "charlie.hoja.work"}).json()
+    assert config["availableOnThisHost"]["github"] is False
+    assert "not available on this workspace host" in config["unavailableReason"]["github"]
+    assert config["availableOnThisHost"]["grafana"] is True
+    assert config["unavailableReason"]["grafana"] is None
+
+
+def test_a_github_state_minted_for_one_workspace_does_not_complete_in_another(tmp_path) -> None:
+    _engine, _client, alpha, bravo = _setup(tmp_path)
+    payload = {
+        "uid": alpha["user_id"],
+        "org": alpha["org_id"],
+        "provider": "github",
+        "origin": f"https://{HOST_A}",
+        "exp": int(time.time()) + 600,
+        "nonce": "gh-n1",
+    }
+    state = encrypt_secret(json.dumps(payload), alpha["org_id"])
+    with pytest.raises(SecretBoxError):
+        decrypt_secret(state, bravo["org_id"])
+
+
+def test_the_mcp_resolver_reads_github_and_grafana_only_for_their_own_organization(tmp_path) -> None:
+    from github.principal import sign_principal as sign_github
+    from github.principal import verify_principal as verify_github
+
+    from hoja_server.connector_mcp_service import _active_rows
+
+    engine, _client, alpha, bravo = _setup(tmp_path)
+    _add_account(engine, alpha["org_id"], alpha["user_id"], account_id="acct-alpha-gh",
+                 provider="github", token="ghr_alpha")
+    _add_account(engine, bravo["org_id"], bravo["user_id"], account_id="acct-bravo-gh",
+                 provider="github", token="ghr_bravo")
+
+    mine = verify_github(sign_github(alpha["user_id"], alpha["org_id"], "read", key=KEY), key=KEY)
+    theirs = verify_github(sign_github(bravo["user_id"], bravo["org_id"], "read", key=KEY), key=KEY)
+    assert [row["id"] for row in _active_rows(engine, mine, "", "github")] == ["acct-alpha-gh"]
+    assert [row["id"] for row in _active_rows(engine, theirs, "", "github")] == ["acct-bravo-gh"]

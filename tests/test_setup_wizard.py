@@ -130,7 +130,8 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
         assert anonymous.status_code == 200
         flags = {key: value for key, value in anonymous.json().items()
                  if key.endswith("Agent") or key in (
-                     "googleWorkspace", "notion", "slack", "calendly", "sentry", "zoom")}
+                     "googleWorkspace", "notion", "slack", "calendly", "sentry", "zoom",
+                     "github", "grafana", "githubInstallUrl")}
         assert flags == {
             "googleWorkspace": False,
             "googleWorkspaceAgent": False,
@@ -144,6 +145,11 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
             "sentryAgent": False,
             "zoom": False,
             "zoomAgent": False,
+            "grafana": False,
+            "grafanaAgent": False,
+            "github": False,
+            "githubAgent": False,
+            "githubInstallUrl": None,
         }
 
         client.post("/onboarding/bootstrap", json=BOOTSTRAP)
@@ -167,7 +173,9 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
         assert {key: body[key] for key in (
             "googleWorkspace", "googleWorkspaceAgent", "notion", "notionAgent",
             "slack", "slackAgent", "calendly", "calendlyAgent", "sentry", "sentryAgent",
-            "zoom", "zoomAgent")} == {
+            "zoom", "zoomAgent",
+            "github", "githubAgent", "githubInstallUrl",
+            "grafana", "grafanaAgent")} == {
             "googleWorkspace": False,
             "googleWorkspaceAgent": False,
             "notion": False,
@@ -180,6 +188,11 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
             "sentryAgent": False,
             "zoom": False,
             "zoomAgent": False,
+            "grafana": False,
+            "grafanaAgent": False,
+            "github": False,
+            "githubAgent": False,
+            "githubInstallUrl": None,
         }
         # Under shared tenancy "configured" is not "reachable from this host": the per-host
         # answer is what Settings renders, and here nothing is registered for `testserver`.
@@ -197,7 +210,9 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
         assert {key: on_body[key] for key in (
             "googleWorkspace", "googleWorkspaceAgent", "notion", "notionAgent",
             "slack", "slackAgent", "calendly", "calendlyAgent", "sentry", "sentryAgent",
-            "zoom", "zoomAgent")} == {
+            "zoom", "zoomAgent",
+            "github", "githubAgent", "githubInstallUrl",
+            "grafana", "grafanaAgent")} == {
             "googleWorkspace": True,
             "googleWorkspaceAgent": False,
             "notion": False,
@@ -210,6 +225,12 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
             "sentryAgent": False,
             "zoom": False,
             "zoomAgent": False,
+            # Grafana needs no app credential, only the sealing key this fixture sets.
+            "grafana": True,
+            "grafanaAgent": False,
+            "github": False,
+            "githubAgent": False,
+            "githubInstallUrl": None,
         }
         assert "GOCSPX" not in on.text
         assert "cid.apps" not in on.text

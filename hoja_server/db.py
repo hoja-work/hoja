@@ -34,7 +34,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 50
+CURRENT_SCHEMA_REVISION = 51
 
 
 def now_iso() -> str:
@@ -395,6 +395,10 @@ connector_account = Table(
     # per-account. Sentry needs it on every exchange and refresh; providers without one leave it
     # NULL, and `external_account` keeps carrying the human-readable label.
     Column("external_id", String),
+    # The customer-supplied origin for connectors that address an instance rather than a hosted
+    # account (Grafana). It is not a secret, but it is per-account state, so it lives on the row
+    # rather than in deployment configuration.
+    Column("external_url", String),
     Column("status", String, nullable=False),
     Column("created_at", String, nullable=False),
     Column("updated_at", String, nullable=False),
@@ -1881,6 +1885,17 @@ def _apply_connector_oauth_state(conn) -> None:
     connector_oauth_state.create(conn, checkfirst=True)
 
 
+def _apply_connector_external_url(conn) -> None:
+    """Store the customer-supplied instance origin for instance-addressed connectors.
+
+    Grafana's token is only meaningful together with its instance URL, and the URL is per
+    connection. Existing rows keep NULL.
+    """
+    existing = {column["name"] for column in inspect(conn).get_columns("connector_account")}
+    if "external_url" not in existing:
+        conn.exec_driver_sql("ALTER TABLE connector_account ADD COLUMN external_url VARCHAR")
+
+
 def _apply_connector_external_id(conn) -> None:
     """Store the provider-side installation id for per-installation grants.
 
@@ -1995,6 +2010,11 @@ _MIGRATIONS = {
     # 50: connector OAuth nonces carry the organization, so they are policed by RLS like the
     # rest of the connector tables instead of living in the global allowlist.
     50: _apply_connector_oauth_state,
+    # 51: an instance-addressed connector (Grafana) stores its origin on the account row. The
+    # branch that carried this revision numbered it 49 from a tree without the vanity-host and
+    # OAuth-state revisions, so it takes the next free number here rather than renumbering a
+    # revision main already shipped.
+    51: _apply_connector_external_url,
 }
 
 

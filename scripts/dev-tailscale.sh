@@ -157,6 +157,8 @@ ensure_backend_dependencies() {
         -e './connectors/calendly' \
         -e './connectors/sentry' \
         -e './connectors/zoom' \
+        -e './connectors/grafana' \
+        -e './connectors/github' \
         -e '.[server,agent]'
     )
   fi

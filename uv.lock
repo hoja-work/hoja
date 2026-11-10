@@ -1014,6 +1014,23 @@ wheels = [
 ]
 
 [[package]]
+name = "github-connector"
+version = "0.1.0"
+source = { editable = "connectors/github" }
+dependencies = [
+    { name = "google-workspace-connector" },
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "google-workspace-connector" },
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "pydantic", specifier = ">=2.10" },
+]
+
+[[package]]
 name = "google-workspace-connector"
 version = "0.1.0"
 source = { editable = "connectors/google_workspace" }
@@ -1024,6 +1041,23 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "pydantic", specifier = ">=2.10" },
+]
+
+[[package]]
+name = "grafana-connector"
+version = "0.1.0"
+source = { editable = "connectors/grafana" }
+dependencies = [
+    { name = "google-workspace-connector" },
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "google-workspace-connector" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "pydantic", specifier = ">=2.10" },
 ]
@@ -1176,7 +1210,9 @@ dependencies = [
 [package.optional-dependencies]
 agent = [
     { name = "calendly-connector" },
+    { name = "github-connector" },
     { name = "google-workspace-connector" },
+    { name = "grafana-connector" },
     { name = "notion-connector" },
     { name = "pydantic-ai-slim", extra = ["dbos", "mcp", "openai"] },
     { name = "sentry-connector" },
@@ -1216,7 +1252,9 @@ requires-dist = [
     { name = "calendly-connector", marker = "extra == 'agent'", editable = "connectors/calendly" },
     { name = "cryptography", specifier = ">=42,<60" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.115" },
+    { name = "github-connector", marker = "extra == 'agent'", editable = "connectors/github" },
     { name = "google-workspace-connector", marker = "extra == 'agent'", editable = "connectors/google_workspace" },
+    { name = "grafana-connector", marker = "extra == 'agent'", editable = "connectors/grafana" },
     { name = "graphql-core", marker = "extra == 'server'", specifier = ">=3.3,<4" },
     { name = "httpx", specifier = ">=0.27,<1.0" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2.2.0,<3.0.0" },
