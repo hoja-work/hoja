@@ -31,7 +31,7 @@ pip install 'hoja-cli[server]'  # includes the SQLite and psycopg 3 PostgreSQL d
 ```bash
 # 1. Seed a tenant DB (org, admin user, team ENG, workflow states, token)
 hoja-serve seed --tenant default
-#   -> prints:  TOKEN : lin_api_XXXXXXXX...
+#   -> prints:  TOKEN : hoja_XXXXXXXX...
 
 # 2. Start the server
 hoja-serve serve --tenant default --port 8787
@@ -41,7 +41,7 @@ hoja-serve serve --tenant default --port 8787
 cat >> ~/.config/hoja/config.toml <<'TOML'
 [accounts.local]
 base_url = "http://127.0.0.1:8787/graphql"
-token = "lin_api_XXXXXXXX..."      # the token printed by `seed`
+token = "hoja_XXXXXXXX..."      # the token printed by `seed`
 TOML
 
 # 4. Use hoja normally

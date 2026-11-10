@@ -50,7 +50,10 @@ def token_hash(token: str) -> str:
 
 
 def gen_token() -> str:
-    return "lin_api_" + secrets.token_urlsafe(30)
+    # Presentation only: lookups hash the whole token, so a prefixed key from
+    # before this rename keeps authenticating. The 40-character body is fixed
+    # by token_urlsafe(30); do not shorten it.
+    return "hoja_" + secrets.token_urlsafe(30)
 
 
 def gen_session_token() -> str:

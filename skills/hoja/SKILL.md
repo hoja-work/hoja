@@ -130,8 +130,8 @@ hoja -o ids issue list --label "old" -n 100 \
 #### Multi-account: let hoja pick the right workspace
 ```bash
 # One-time: declare which teams each account owns
-hoja auth add acme --token lin_api_xxx --teams "ENG,OPS"
-hoja auth add side --token lin_api_yyy --teams "SIDE"
+hoja auth add acme --token hoja_xxx --teams "ENG,OPS"
+hoja auth add side --token hoja_yyy --teams "SIDE"
 
 # Now just use team keys / identifiers — the owning account is auto-selected:
 hoja issue list --team ENG     # → acme account
@@ -231,8 +231,8 @@ is selected automatically. You do NOT need to export a token per workspace.
 ### Set up accounts (one time)
 
 ```bash
-hoja auth add work     --token lin_api_xxx --teams "SWA,ENG" --default
-hoja auth add personal --token lin_api_yyy --teams "PER"
+hoja auth add work     --token hoja_xxx --teams "SWA,ENG" --default
+hoja auth add personal --token hoja_yyy --teams "PER"
 hoja auth accounts          # see them, with [default]/[current]/teams markers
 ```
 
@@ -256,18 +256,18 @@ hoja auth accounts          # see them, with [default]/[current]/teams markers
 3. `token` stored in the account's config block (discouraged: plaintext)
 
 Verify what resolved with `hoja auth status` / `hoja auth accounts`.
-Tokens look like `lin_api_<long-random-string>` — mint one from your
+Tokens look like `hoja_<long-random-string>` — mint one from your
 workspace's members/API-key screen, or with `hoja-serve token`.
 
 ### Config schema (canonical — do NOT downgrade to `[auth]`)
 
 ```toml
 [accounts.work]
-token_env = "HOJA_TOKEN"     # or: token = "lin_api_..."
+token_env = "HOJA_TOKEN"     # or: token = "hoja_..."
 teams = ["SWA", "ENG"]       # enables team-key auto-selection
 
 [accounts.personal]
-token = "lin_api_..."
+token = "hoja_..."
 teams = ["PER"]
 
 [defaults]
@@ -341,7 +341,7 @@ single command against a specific account without changing the default:
 ```bash
 hoja --account personal issue list --team PER
 # or pin a one-off token (not stored):
-hoja --token "lin_api_..." issue list --team SWA
+hoja --token "hoja_..." issue list --team SWA
 ```
 
 If a command targets a team an account owns (`--teams`), the right account is
