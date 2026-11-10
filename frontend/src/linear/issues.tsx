@@ -12,6 +12,11 @@ import {runExtensionAction, useIssueExtensionActions, type ExtensionAction} from
 /* Linear 1:1 Issues list + board + detail. */
 
 export type LinAttachment = {id: string; title?: string; subtitle?: string; url: string; createdAt?: string};
+export type LinGithubLink = {
+  id: string; kind: string; externalId: string; url: string; title: string;
+  state?: string | null; author?: string | null; sha?: string | null;
+  environment?: string | null; createdAt?: string;
+};
 export type LinIssue = Omit<Issue, 'subscribers'> & {
   estimate?: number | null;
   branchName?: string | null;
@@ -19,6 +24,7 @@ export type LinIssue = Omit<Issue, 'subscribers'> & {
   parent?: {id: string; identifier: string; title: string} | null;
   subscribers?: {nodes: {id: string; name?: string; avatarUrl?: string}[]};
   attachments?: {nodes: LinAttachment[]};
+  githubLinks?: LinGithubLink[];
   activity?: {nodes: IssueActivityEvent[]};
 };
 
@@ -981,6 +987,7 @@ const detailFields = `{ id identifier title description createdAt updatedAt dueD
   cycle{id name number} parent{id identifier title}
   labels{nodes{id name color}} subscribers{nodes{id name}}
   attachments{nodes{id url title subtitle createdAt}}
+  githubLinks{id kind externalId url title state author sha environment createdAt}
   activity(first:50){nodes{id eventType createdAt actor{name} changes}}
   comments{nodes${commentFields}} }`;
 
@@ -1652,6 +1659,40 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
             </div>
             {!(detail.attachments?.nodes || []).length && <p className="lin-note">{detailReady ? 'No attachments yet.' : 'Loading attachments…'}</p>}
           </section>
+
+          {(() => {
+            // Compact and absent by default: only rendered when something is actually linked,
+            // so an issue with no GitHub work stays visually unchanged.
+            const ghl = detail.githubLinks || [];
+            if (!ghl.length) return null;
+            return (
+              <section className="lin-subsec" aria-label="GitHub">
+                <header>
+                  <ChevronDown size={14} color="var(--muted)" />
+                  <span>GitHub</span>
+                  <span className="count" style={{color: 'var(--muted)', fontWeight: 500, fontSize: 12}}>{ghl.length}</span>
+                </header>
+                <div className="lin-attach-list">
+                  {ghl.map(l => {
+                    const kindLabel = l.kind === 'pr' ? 'PR' : l.kind === 'commit' ? 'Commit'
+                      : l.kind === 'deploy' ? 'Deploy' : l.kind;
+                    const detailText = l.kind === 'pr' ? l.state
+                      : l.kind === 'commit' ? (l.sha ? l.sha.slice(0, 7) : '')
+                      : l.kind === 'deploy' ? l.environment : '';
+                    return (
+                      <div key={l.id} className="lin-attach">
+                        <Link2 size={16} color="var(--muted)" />
+                        <small style={{textTransform: 'uppercase', letterSpacing: '.04em'}}>{kindLabel}</small>
+                        <a href={l.url} target="_blank" rel="noopener noreferrer">{l.title || l.externalId}</a>
+                        {detailText && <small>{detailText}</small>}
+                        <small style={{marginLeft: 'auto'}}>{relTime(l.createdAt)}</small>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })()}
 
           <section className="lin-activity" aria-label="Activity">
             <header>
