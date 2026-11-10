@@ -89,7 +89,7 @@ async def test_a_valid_stored_access_token_is_reused_without_refreshing(tmp_path
     route = respx.post(TOKEN_URL).mock(return_value=_token_response("new", "new-refresh"))
     async with httpx.AsyncClient() as http:
         store = CalendlyTokenStore(engine, http, _config())
-        assert await store.access_token(ACCOUNT_ID) == "access-1"
+        assert await store.access_token(ACCOUNT_ID, "org-1") == "access-1"
     assert route.calls == []  # refreshing here would spend a rotation for nothing
 
 
@@ -105,7 +105,7 @@ async def test_two_concurrent_calls_spend_exactly_one_rotation(tmp_path) -> None
     async with httpx.AsyncClient() as http:
         store = CalendlyTokenStore(engine, http, _config())
         first, second = await asyncio.gather(
-            store.access_token(ACCOUNT_ID), store.access_token(ACCOUNT_ID)
+            store.access_token(ACCOUNT_ID, "org-1"), store.access_token(ACCOUNT_ID, "org-1")
         )
     assert first == second == "access-2"
     assert len(route.calls) == 1
@@ -142,7 +142,7 @@ async def test_a_rotation_by_another_worker_is_adopted_not_declared_dead(tmp_pat
     respx.post(TOKEN_URL).mock(side_effect=_rotate_first)
     async with httpx.AsyncClient() as http:
         store = CalendlyTokenStore(engine, http, _config())
-        assert await store.access_token(ACCOUNT_ID) == "access-3"
+        assert await store.access_token(ACCOUNT_ID, "org-1") == "access-3"
     assert decrypt_secret(_stored(engine)["encrypted_refresh_token"], _stored(engine)["organization_id"]) == "refresh-3"
 
 
@@ -156,7 +156,7 @@ async def test_a_really_revoked_grant_raises_and_keeps_the_row_untouched(tmp_pat
     async with httpx.AsyncClient() as http:
         store = CalendlyTokenStore(engine, http, _config())
         with pytest.raises(ConnectorAuthError) as excinfo:
-            await store.access_token(ACCOUNT_ID)
+            await store.access_token(ACCOUNT_ID, "org-1")
     assert "reconnect" in (excinfo.value.hint or "").lower()
     # The stored token is left as-is: a transient provider fault must not erase the grant.
     assert decrypt_secret(_stored(engine)["encrypted_refresh_token"], _stored(engine)["organization_id"]) == "refresh-1"
@@ -169,7 +169,7 @@ async def test_tokens_are_sealed_at_rest(tmp_path) -> None:
     respx.post(TOKEN_URL).mock(return_value=_token_response("access-2", "refresh-2"))
     async with httpx.AsyncClient() as http:
         store = CalendlyTokenStore(engine, http, _config())
-        await store.access_token(ACCOUNT_ID)
+        await store.access_token(ACCOUNT_ID, "org-1")
     row = _stored(engine)
     assert "refresh-2" not in row["encrypted_refresh_token"]
     assert "access-2" not in row["encrypted_access_token"]

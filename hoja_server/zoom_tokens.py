@@ -19,6 +19,14 @@ A fourth, Zoom-specific point: the token response carries `api_url`, the cluster
 belongs to. This store reports the deployment's configured base, so a region-pinned account is
 reached through `HOJA_ZOOM_API_BASE` rather than a guess.
 
+A fifth, learned from the GitHub store: **a 401 is not an expiry**. Zoom can reject an access
+token that the clock still calls valid (revoked consent, a rotated session, a suspended app), so
+dropping the cache alone makes the next call re-read the same rejected value from the row and hand
+it back — the retry the client just made is spent on the token that failed. `invalidate()` therefore
+records the account as forced, and the next call rotates instead of replaying. If that rotation is
+refused, the account is marked as needing a reconnect, so the failure is reported once per grant
+instead of hammering a single-use rotation chain.
+
 The plaintext credential never leaves this module except as a bearer token header. Every write is
 sealed with `secrets_box`.
 """
@@ -28,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -38,6 +47,7 @@ from zoom import ConnectorAPIError, ConnectorConfigError
 from zoom.errors import ConnectorAuthError
 from zoom.oauth import ZoomToken, refresh_access_token
 
+from hoja_server import tenant_context
 from hoja_server.db import connector_account
 from hoja_server.secrets_box import SecretBoxError, decrypt_secret, encrypt_secret
 
@@ -60,6 +70,18 @@ def _now() -> float:
     return time.time()
 
 
+@contextmanager
+def _scoped(engine: Engine, org_id: str, *, write: bool = False):
+    """A connection bound to ``org_id`` so row-level security admits the owner's row.
+
+    The connector service connects as the app role, exactly like the web app, so every access to a
+    connector account has to name the tenant it is acting for. Without it the row is invisible and
+    a healthy grant reads as "no longer connected".
+    """
+    with tenant_context.scoped(org_id), (engine.begin() if write else engine.connect()) as conn:
+        yield conn
+
+
 class ZoomTokenStore:
     """One instance per process. Holds the per-account refresh lock and the access cache."""
 
@@ -69,9 +91,23 @@ class ZoomTokenStore:
         self._config = config
         self._locks: dict[str, asyncio.Lock] = {}
         self._cache: dict[str, _Cached] = {}
+        # Accounts whose last access token was rejected by Zoom (401). The next call must rotate
+        # instead of reusing the stored access token, even though its recorded expiry has not
+        # passed: a token can be revoked long before then.
+        self._forced: set[str] = set()
+        # Accounts whose refresh was refused. The grant is dead until the user consents again, so
+        # every later call reports the reconnect error without another POST against a single-use
+        # rotation chain. Cleared by `seed()` and by any successful rotation.
+        self._reconnect: set[str] = set()
 
-    def source(self, account_id: str) -> AccountTokenSource:
-        return AccountTokenSource(self, account_id)
+    def source(self, account_id: str, org_id: str) -> AccountTokenSource:
+        """A token source bound to the organization that owns the account.
+
+        The organization travels with the source because every query in here runs on the app
+        role: under row-level security an unbound transaction sees no row at all, and a refresh
+        would answer "the account is no longer connected" for a grant that is perfectly healthy.
+        """
+        return AccountTokenSource(self, account_id, org_id)
 
     def api_base(self) -> str:
         return str(getattr(self._config, "api_base", "") or "https://api.zoom.us/v2")
@@ -86,7 +122,16 @@ class ZoomTokenStore:
     def forget(self, account_id: str) -> None:
         self._cache.pop(account_id, None)
 
-    async def access_token(self, account_id: str) -> str:
+    def invalidate(self, account_id: str) -> None:
+        """Drop the cache *and* refuse the stored access token on the next call."""
+        self._cache.pop(account_id, None)
+        self._forced.add(account_id)
+
+    async def access_token(self, account_id: str, org_id: str) -> str:
+        if account_id in self._reconnect:
+            # Reported every time: the only action that helps is a new consent, and asking Zoom
+            # again with a grant it already refused spends the rotation chain for nothing.
+            raise _reconnect_error()
         cached = self._cache.get(account_id)
         if cached is not None and cached.expires_at - _EXPIRY_SKEW_SECONDS > _now():
             return cached.access_token
@@ -95,45 +140,54 @@ class ZoomTokenStore:
             cached = self._cache.get(account_id)
             if cached is not None and cached.expires_at - _EXPIRY_SKEW_SECONDS > _now():
                 return cached.access_token
-            return await self._refresh(account_id)
+            forced = account_id in self._forced
+            self._forced.discard(account_id)
+            return await self._refresh(account_id, org_id, force=forced)
 
-    async def _refresh(self, account_id: str) -> str:
-        row = self._row(account_id)
+    async def _refresh(self, account_id: str, org_id: str, *, force: bool = False) -> str:
+        row = self._row(account_id, org_id)
         if row is None:
             raise ConnectorAuthError(
                 "The Zoom account is no longer connected.",
                 hint="Connect Zoom again in Settings > Connections.",
             )
         # Another worker (or the connect callback) may have already stored a valid access token.
-        # Reusing it before refreshing is what keeps a rotating refresh chain from being spent.
-        stored = self._read_access(row)
-        if stored is not None and stored.expires_at - _EXPIRY_SKEW_SECONDS > _now():
-            self._cache[account_id] = stored
-            return stored.access_token
+        # Reusing it before refreshing is what keeps a rotating refresh chain from being spent —
+        # except after a 401, where the stored token is exactly what must not be replayed.
+        if not force:
+            stored = self._read_access(row)
+            if stored is not None and stored.expires_at - _EXPIRY_SKEW_SECONDS > _now():
+                self._cache[account_id] = stored
+                return stored.access_token
         used_refresh = self._decrypt(row["encrypted_refresh_token"], row["organization_id"])
         if not used_refresh:
-            raise ConnectorAuthError(
-                "The Zoom account has no stored grant.",
-                hint="Reconnect Zoom in Settings > Connections.",
-            )
+            raise self._mark_reconnect(account_id, "The Zoom account has no stored grant.")
         try:
             token = await refresh_access_token(
                 self._http, self._config, refresh_token=used_refresh
             )
         except ConnectorAuthError as exc:
-            adopted = await self._adopt_concurrent_rotation(account_id, used_refresh)
+            adopted = await self._adopt_concurrent_rotation(account_id, org_id, used_refresh)
             if adopted is not None:
                 return adopted
-            raise ConnectorAuthError(
+            raise self._mark_reconnect(
+                account_id,
                 "Zoom no longer accepts this account's grant "
                 "(the refresh token was revoked, already used, or has expired).",
-                hint="Reconnect Zoom in Settings > Connections.",
             ) from exc
         return self._persist(account_id, token, row["organization_id"])
 
-    async def _adopt_concurrent_rotation(self, account_id: str, used_refresh: str) -> str | None:
+    def _mark_reconnect(self, account_id: str, message: str) -> ConnectorAuthError:
+        """Record that this account needs a reconnect, and build the error the caller reports."""
+        self._reconnect.add(account_id)
+        self._cache.pop(account_id, None)
+        return _reconnect_error(message)
+
+    async def _adopt_concurrent_rotation(
+        self, account_id: str, org_id: str, used_refresh: str
+    ) -> str | None:
         """Another worker may have rotated first. If the stored token changed, use theirs."""
-        row = self._row(account_id)
+        row = self._row(account_id, org_id)
         if row is None:
             return None
         current = self._decrypt(row["encrypted_refresh_token"], row["organization_id"])
@@ -151,7 +205,7 @@ class ZoomTokenStore:
 
     def _persist(self, account_id: str, token: ZoomToken, org: str) -> str:
         expires_at = _now() + token.expires_in
-        with self._engine.begin() as conn:
+        with _scoped(self._engine, org, write=True) as conn:
             conn.execute(
                 update(connector_account)
                 .where(connector_account.c.id == account_id)
@@ -163,10 +217,14 @@ class ZoomTokenStore:
                 )
             )
         self._cache[account_id] = _Cached(access_token=token.access_token, expires_at=expires_at)
+        self._reconnect.discard(account_id)
         return token.access_token
 
     def seed(self, account_id: str, row: Any) -> None:
         """Populate the cache from a freshly stored grant (right after the callback)."""
+        # A fresh consent is the fix for a dead grant, so the marks that refuse the old one go.
+        self._reconnect.discard(account_id)
+        self._forced.discard(account_id)
         cached = self._read_access(row)
         if cached is not None:
             self._cache[account_id] = cached
@@ -185,8 +243,8 @@ class ZoomTokenStore:
             expires_at = _UNKNOWN_EXPIRY
         return _Cached(access_token=access, expires_at=expires_at)
 
-    def _row(self, account_id: str) -> Any:
-        with self._engine.connect() as conn:
+    def _row(self, account_id: str, org_id: str) -> Any:
+        with _scoped(self._engine, org_id) as conn:
             return (
                 conn.execute(
                     select(connector_account).where(connector_account.c.id == account_id)
@@ -207,17 +265,18 @@ class ZoomTokenStore:
 class AccountTokenSource:
     """The narrow `zoom.client.TokenSource` the connector package sees."""
 
-    def __init__(self, store: ZoomTokenStore, account_id: str) -> None:
+    def __init__(self, store: ZoomTokenStore, account_id: str, org_id: str) -> None:
         self._store = store
         self._account_id = account_id
+        self._org_id = org_id
 
     async def access_token(self) -> str:
-        return await self._store.access_token(self._account_id)
+        return await self._store.access_token(self._account_id, self._org_id)
 
     async def invalidate(self) -> None:
-        # Drop the cache so the next access_token() call refreshes instead of replaying a token
-        # the provider just rejected.
-        self._store.forget(self._account_id)
+        # Drop the cache *and* force the next access_token() call to refresh: dropping the cache
+        # alone would re-read the row and replay the token Zoom just rejected.
+        self._store.invalidate(self._account_id)
 
     def api_base(self) -> str:
         return self._store.api_base()
@@ -227,6 +286,12 @@ def _iso() -> str:
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _reconnect_error(
+    message: str = "Zoom rejected the stored credential.",
+) -> ConnectorAuthError:
+    return ConnectorAuthError(message, hint="Reconnect Zoom in Settings > Connections.")
 
 
 __all__ = ["AccountTokenSource", "ZoomTokenStore"]

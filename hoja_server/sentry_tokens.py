@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -38,6 +39,7 @@ from sentry.oauth import (
 from sqlalchemy import select, update
 from sqlalchemy.engine import Engine
 
+from hoja_server import tenant_context
 from hoja_server.db import connector_account
 from hoja_server.secrets_box import SecretBoxError, decrypt_secret, encrypt_secret
 
@@ -59,6 +61,18 @@ def _now() -> float:
     return time.time()
 
 
+@contextmanager
+def _scoped(engine: Engine, org_id: str, *, write: bool = False):
+    """A connection bound to ``org_id`` so row-level security admits the owner's row.
+
+    The connector service connects as the app role, exactly like the web app, so every access to a
+    connector account has to name the tenant it is acting for. Without it the row is invisible and
+    a healthy grant reads as "no longer connected".
+    """
+    with tenant_context.scoped(org_id), (engine.begin() if write else engine.connect()) as conn:
+        yield conn
+
+
 def _iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -73,8 +87,9 @@ class SentryTokenStore:
         self._locks: dict[str, asyncio.Lock] = {}
         self._cache: dict[str, _Cached] = {}
 
-    def source(self, account_id: str) -> AccountTokenSource:
-        return AccountTokenSource(self, account_id)
+    def source(self, account_id: str, org_id: str) -> AccountTokenSource:
+        """A token source bound to the organization that owns the account."""
+        return AccountTokenSource(self, account_id, org_id)
 
     def _lock_for(self, account_id: str) -> asyncio.Lock:
         lock = self._locks.get(account_id)
@@ -86,7 +101,7 @@ class SentryTokenStore:
     def forget(self, account_id: str) -> None:
         self._cache.pop(account_id, None)
 
-    async def access_token(self, account_id: str) -> str:
+    async def access_token(self, account_id: str, org_id: str) -> str:
         cached = self._cache.get(account_id)
         if cached is not None and cached.expires_at - _EXPIRY_SKEW_SECONDS > _now():
             return cached.access_token
@@ -95,10 +110,10 @@ class SentryTokenStore:
             cached = self._cache.get(account_id)
             if cached is not None and cached.expires_at - _EXPIRY_SKEW_SECONDS > _now():
                 return cached.access_token
-            return await self._refresh(account_id)
+            return await self._refresh(account_id, org_id)
 
-    async def _refresh(self, account_id: str) -> str:
-        row = self._row(account_id)
+    async def _refresh(self, account_id: str, org_id: str) -> str:
+        row = self._row(account_id, org_id)
         if row is None:
             raise ConnectorAuthError(
                 "The Sentry connection is no longer available.",
@@ -124,7 +139,9 @@ class SentryTokenStore:
             # The client pair itself is refused: a deployer fault, never a reconnect prompt.
             raise
         except (ConnectorAuthError, ConnectorAPIError) as exc:
-            adopted = await self._adopt_concurrent_rotation(account_id, used_refresh, installation_id)
+            adopted = await self._adopt_concurrent_rotation(
+                account_id, org_id, used_refresh, installation_id
+            )
             if adopted is not None:
                 return adopted
             if used_refresh:
@@ -150,10 +167,10 @@ class SentryTokenStore:
         return self._persist(account_id, token, row["organization_id"])
 
     async def _adopt_concurrent_rotation(
-        self, account_id: str, used_refresh: str, installation_id: str
+        self, account_id: str, org_id: str, used_refresh: str, installation_id: str
     ) -> str | None:
         """Another worker may have refreshed first. If the stored credential changed, use theirs."""
-        row = self._row(account_id)
+        row = self._row(account_id, org_id)
         if row is None:
             return None
         cached = self._read_access(row)
@@ -176,7 +193,7 @@ class SentryTokenStore:
 
     def _persist(self, account_id: str, token: SentryToken, org: str) -> str:
         expires_at = float(token.expires_at)
-        with self._engine.begin() as conn:
+        with _scoped(self._engine, org, write=True) as conn:
             conn.execute(
                 update(connector_account)
                 .where(connector_account.c.id == account_id)
@@ -210,8 +227,8 @@ class SentryTokenStore:
             expires_at = _UNKNOWN_EXPIRY
         return _Cached(access_token=access, expires_at=expires_at)
 
-    def _row(self, account_id: str) -> Any:
-        with self._engine.connect() as conn:
+    def _row(self, account_id: str, org_id: str) -> Any:
+        with _scoped(self._engine, org_id) as conn:
             return (
                 conn.execute(
                     select(connector_account).where(connector_account.c.id == account_id)
@@ -232,12 +249,13 @@ class SentryTokenStore:
 class AccountTokenSource:
     """The narrow `sentry.client.TokenSource` the connector package sees."""
 
-    def __init__(self, store: SentryTokenStore, account_id: str) -> None:
+    def __init__(self, store: SentryTokenStore, account_id: str, org_id: str) -> None:
         self._store = store
         self._account_id = account_id
+        self._org_id = org_id
 
     async def access_token(self) -> str:
-        return await self._store.access_token(self._account_id)
+        return await self._store.access_token(self._account_id, self._org_id)
 
     async def invalidate(self) -> None:
         # Drop the cache so the next access_token() call refreshes instead of replaying a token
@@ -245,7 +263,7 @@ class AccountTokenSource:
         self._store.forget(self._account_id)
 
     def organization(self) -> str:
-        row = self._store._row(self._account_id)
+        row = self._store._row(self._account_id, self._org_id)
         return str(row["external_account"] or "") if row is not None else ""
 
 

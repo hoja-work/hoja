@@ -202,7 +202,7 @@ def make_calendly_grant_resolver(
                 CalendlyGrant(
                     account_id=row["id"],
                     external_account=row["external_account"],
-                    tokens=store.source(row["id"]),
+                    tokens=store.source(row["id"], row["organization_id"]),
                 )
             )
         return grants
@@ -247,7 +247,7 @@ def make_sentry_grant_resolver(
                 SentryGrant(
                     account_id=row["id"],
                     external_account=row["external_account"],
-                    tokens=store.source(row["id"]),
+                    tokens=store.source(row["id"], row["organization_id"]),
                 )
             )
         return grants
@@ -292,7 +292,7 @@ def make_zoom_grant_resolver(
                 ZoomGrant(
                     account_id=row["id"],
                     external_account=row["external_account"],
-                    tokens=store.source(row["id"]),
+                    tokens=store.source(row["id"], row["organization_id"]),
                 )
             )
         return grants

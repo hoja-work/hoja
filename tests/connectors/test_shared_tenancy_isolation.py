@@ -520,9 +520,18 @@ def test_the_github_token_store_reads_its_row_only_under_the_owning_organization
     """
     from hoja_server.github_tokens import GitHubTokenStore
 
-    engine, _client, alpha, bravo = _setup(tmp_path)
+    engine, kwargs, alpha, bravo = _setup_with_kwargs(tmp_path)
     _add_account(engine, alpha["org_id"], alpha["user_id"], account_id="acct-github-store",
                  provider="github", token="ghr_store")
-    store = GitHubTokenStore(engine=engine, http=None, config=None)
+    # The store must be probed on the restricted engine: the owner engine bypasses the
+    # policies (they are ENABLE, not FORCE), so an unbound `_row` would still see the row
+    # there and this test would pass without proving anything.
+    if kwargs.get("database_url"):
+        from hoja_server.db import make_engine
+
+        app_engine = make_engine(kwargs["database_url"])
+    else:
+        app_engine = engine
+    store = GitHubTokenStore(engine=app_engine, http=None, config=None)
     assert store._row("acct-github-store", alpha["org_id"]) is not None
     assert store._row("acct-github-store", bravo["org_id"]) is None

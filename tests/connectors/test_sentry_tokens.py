@@ -97,7 +97,7 @@ async def test_a_valid_stored_access_token_is_reused_without_refreshing(tmp_path
     route = respx.post(AUTHZ).mock(return_value=_token_response("new", "new-refresh"))
     async with httpx.AsyncClient() as http:
         store = SentryTokenStore(engine, http, _config())
-        assert await store.access_token(ACCOUNT_ID) == "access-1"
+        assert await store.access_token(ACCOUNT_ID, "org-1") == "access-1"
     assert route.calls == []
 
 
@@ -108,7 +108,7 @@ async def test_a_token_inside_the_expiry_skew_is_refreshed(tmp_path) -> None:
     route = respx.post(AUTHZ).mock(return_value=_token_response("access-2", "refresh-2"))
     async with httpx.AsyncClient() as http:
         store = SentryTokenStore(engine, http, _config())
-        assert await store.access_token(ACCOUNT_ID) == "access-2"
+        assert await store.access_token(ACCOUNT_ID, "org-1") == "access-2"
     assert len(route.calls) == 1
 
 
@@ -120,7 +120,7 @@ async def test_two_concurrent_calls_spend_exactly_one_refresh(tmp_path) -> None:
     async with httpx.AsyncClient() as http:
         store = SentryTokenStore(engine, http, _config())
         first, second = await asyncio.gather(
-            store.access_token(ACCOUNT_ID), store.access_token(ACCOUNT_ID)
+            store.access_token(ACCOUNT_ID, "org-1"), store.access_token(ACCOUNT_ID, "org-1")
         )
     assert first == second == "access-2"
     assert len(route.calls) == 1
@@ -159,7 +159,7 @@ async def test_a_refresh_by_another_worker_is_adopted_not_declared_dead(tmp_path
     respx.post(AUTHZ).mock(side_effect=_rotate_first)
     async with httpx.AsyncClient() as http:
         store = SentryTokenStore(engine, http, _config())
-        assert await store.access_token(ACCOUNT_ID) == "access-3"
+        assert await store.access_token(ACCOUNT_ID, "org-1") == "access-3"
     assert decrypt_secret(_stored(engine)["encrypted_refresh_token"], _stored(engine)["organization_id"]) == "refresh-3"
 
 
@@ -179,7 +179,7 @@ async def test_the_refresh_token_grant_is_the_fallback_after_a_refused_assertion
     respx.post(AUTHZ).mock(side_effect=_handler)
     async with httpx.AsyncClient() as http:
         store = SentryTokenStore(engine, http, _config())
-        assert await store.access_token(ACCOUNT_ID) == "access-2"
+        assert await store.access_token(ACCOUNT_ID, "org-1") == "access-2"
     assert seen == ["assertion", "refresh_token"]
 
 
@@ -199,7 +199,7 @@ async def test_a_refused_client_pair_never_falls_back_and_never_asks_for_a_recon
     async with httpx.AsyncClient() as http:
         store = SentryTokenStore(engine, http, _config())
         with pytest.raises(ConnectorConfigError):
-            await store.access_token(ACCOUNT_ID)
+            await store.access_token(ACCOUNT_ID, "org-1")
     # One attempt: a wrong secret is not fixed by spending the fallback too.
     assert len(calls) == 1
 
@@ -212,7 +212,7 @@ async def test_a_really_removed_installation_raises_and_keeps_the_row(tmp_path) 
     async with httpx.AsyncClient() as http:
         store = SentryTokenStore(engine, http, _config())
         with pytest.raises(ConnectorAuthError) as excinfo:
-            await store.access_token(ACCOUNT_ID)
+            await store.access_token(ACCOUNT_ID, "org-1")
     assert "connect sentry again" in (excinfo.value.hint or "").lower()
     assert decrypt_secret(_stored(engine)["encrypted_refresh_token"], _stored(engine)["organization_id"]) == "refresh-1"
 
@@ -224,7 +224,7 @@ async def test_tokens_are_sealed_at_rest(tmp_path) -> None:
     respx.post(AUTHZ).mock(return_value=_token_response("access-2", "refresh-2"))
     async with httpx.AsyncClient() as http:
         store = SentryTokenStore(engine, http, _config())
-        await store.access_token(ACCOUNT_ID)
+        await store.access_token(ACCOUNT_ID, "org-1")
     row = _stored(engine)
     assert "refresh-2" not in row["encrypted_refresh_token"]
     assert "access-2" not in row["encrypted_access_token"]
@@ -235,7 +235,7 @@ async def test_the_source_exposes_the_bound_organization(tmp_path) -> None:
     _insert(engine)
     async with httpx.AsyncClient() as http:
         store = SentryTokenStore(engine, http, _config())
-        assert store.source(ACCOUNT_ID).organization() == "hoja"
+        assert store.source(ACCOUNT_ID, "org-1").organization() == "hoja"
 
 
 async def test_a_row_without_an_installation_id_asks_for_a_reconnect(tmp_path) -> None:
@@ -250,7 +250,7 @@ async def test_a_row_without_an_installation_id_asks_for_a_reconnect(tmp_path) -
     async with httpx.AsyncClient() as http:
         store = SentryTokenStore(engine, http, _config())
         with pytest.raises(ConnectorAuthError):
-            await store.access_token(ACCOUNT_ID)
+            await store.access_token(ACCOUNT_ID, "org-1")
 
 
 # --- grant resolution ----------------------------------------------------------------------
