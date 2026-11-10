@@ -46,17 +46,21 @@ def _client(tmp_path, *, proxy: str | None = CF_EDGE, peer: str = "127.0.0.1", n
     return TestClient(app, base_url="http://hoja.example", client=(peer, 50000))
 
 
-def _fail_login(client: TestClient, forwarded: str, email: str | None = None) -> int:
+def _fail_login(client: TestClient, forwarded: str, email: str | None = None,
+                cf: str | None = None) -> int:
     """One failed sign-in.
 
     The limiter keys on ip *and* email, so every attempt here uses a fresh
     address: otherwise the shared email key would reach the budget on its own and
     the test could pass without the IP being bucketed correctly at all.
     """
+    headers = {"x-forwarded-for": forwarded}
+    if cf is not None:
+        headers["cf-connecting-ip"] = cf
     response = client.post(
         "/auth/login",
         json={"email": email or f"user{next(_EMAILS)}@example.test", "password": "wrong-password"},
-        headers={"x-forwarded-for": forwarded},
+        headers=headers,
     )
     return response.status_code
 
@@ -109,11 +113,34 @@ def test_an_untrusted_peer_cannot_use_the_forwarded_header(tmp_path) -> None:
 
 def test_the_forwarded_walk_ignores_an_unparsable_chain() -> None:
     """A junk hop must not become the bucket either; fall back to the peer."""
-    from hoja_server.app import _forwarded_client_ip
-
     import ipaddress
+
+    from hoja_server.app import _forwarded_client_ip
 
     networks = [ipaddress.ip_network("10.1.2.3/32")]
     assert _forwarded_client_ip("not-an-ip, also-junk", PROXY, networks) == PROXY
     assert _forwarded_client_ip(None, PROXY, networks) == PROXY
     assert _forwarded_client_ip("203.0.113.9, 10.1.2.3", PROXY, networks) == REAL_CLIENT
+
+
+def test_a_spoofed_cf_connecting_ip_does_not_reset_the_budget(tmp_path) -> None:
+    """``cf-connecting-ip`` is client-settable, so it must not pick the bucket.
+
+    The fix stopped reading this header on purpose. Without this case, restoring
+    that shortcut keeps every other test in this file green: they only ever send
+    ``x-forwarded-for``. Rotation here is what a caller would do to escape the
+    budget, so the assertion is the same 429 the honest chain produces.
+    """
+    client = _client(tmp_path, proxy=CF_EDGE, peer=CF_EDGE, name="cf-spoof.db")
+    for n in range(LOGIN_LIMIT):
+        assert _fail_login(client, f"10.0.0.{n}, {REAL_CLIENT}", cf=f"192.0.2.{n}") == 401
+    # A fresh spoofed edge address, the same real client: still the same budget.
+    assert _fail_login(client, f"10.0.0.250, {REAL_CLIENT}", cf="192.0.2.250") == 429
+
+
+def test_cf_connecting_ip_alone_cannot_choose_the_bucket(tmp_path) -> None:
+    """With no forwarded chain the bucket is the proxy peer, not the header."""
+    client = _client(tmp_path, proxy=CF_EDGE, peer=CF_EDGE, name="cf-only.db")
+    for n in range(LOGIN_LIMIT):
+        assert _fail_login(client, "", cf=f"192.0.2.{n}") == 401
+    assert _fail_login(client, "", cf="192.0.2.250") == 429
