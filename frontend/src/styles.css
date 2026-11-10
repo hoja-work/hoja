@@ -1290,3 +1290,17 @@ html.hoja-modal-open{overflow:hidden;scrollbar-gutter:stable}
 .workspace-drawer-scrim{display:none}
 @media(max-width:700px){.workspace-drawer-scrim{position:fixed;z-index:34;inset:60px 0 0;display:block;visibility:hidden;background:#14141466;opacity:0;transition:opacity .18s ease,visibility .18s ease}.workspace-drawer-scrim.visible{visibility:visible;opacity:1}}
 @media (prefers-reduced-motion: reduce){.workspace-drawer-scrim{transition:none !important}}
+
+/* Connectors board: each provider is a tile (glyph, heading, live state) instead of one long
+   list of settings rows. Cards align at the top so a tile with accounts does not stretch its
+   neighbours. */
+.connector-board{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px;align-items:start}
+.connector-board .connector-card{margin:0}
+.connector-card-head{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.connector-card-title{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;min-width:0}
+.connector-card-title h2{margin:0}
+.connector-glyph{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:9px;background:var(--surface-2,var(--bg-2,#f1f2f4));color:var(--muted);flex:none}
+.connector-badge{font-size:12px;font-weight:600;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.connector-badge[data-state="connected"]{color:var(--ok,#157347);border-color:currentColor}
+.connector-badge[data-state="unavailable"]{color:var(--danger,#b42318);border-color:currentColor}
+@media (max-width:640px){.connector-board{grid-template-columns:1fr}}

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Activity, CalendarDays, ChartNoAxesColumn, Code2, FileText, Hash, Mail, Video } from 'lucide-react';
 
 type ConnectorAccount = {
   id: string;
@@ -48,6 +49,24 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return body as T;
 }
 
+/** One glyph per connector, chosen by capability rather than brand art: the icon set ships no
+ *  third-party logos, and vendoring brand marks would add trademark obligations for no
+ *  functional gain. Each glyph is decorative; the tile's heading carries the accessible name. */
+/** The connector ids this surface knows how to draw. Narrower than `string` on purpose: a
+ *  typo in a provider id must fail the typecheck instead of silently rendering nothing. */
+export type ProviderId = 'google_workspace' | 'github' | 'notion' | 'slack' | 'calendly' | 'sentry' | 'zoom' | 'grafana';
+
+const PROVIDER_GLYPH: Record<ProviderId, React.ComponentType<{ size?: number }>> = {
+  google_workspace: Mail,
+  github: Code2,
+  notion: FileText,
+  slack: Hash,
+  calendly: CalendarDays,
+  sentry: Activity,
+  zoom: Video,
+  grafana: ChartNoAxesColumn,
+};
+
 export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
   const [accounts, setAccounts] = useState<ConnectorAccount[]>([]);
   const [actions, setActions] = useState<PendingAction[]>([]);
@@ -93,6 +112,15 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
 
   /** The provider's availability on *this* workspace host, or undefined when unreported. */
   const available = (provider: string) => config.availableOnThisHost?.[provider];
+
+  /** The tile's state, derived from loaded accounts and this host's reported reachability.
+   *  `loading` wins so a tile never claims "not connected" before the first answer arrives. */
+  const badge = (provider: ProviderId, count: number, unavailable = false) => {
+    if (loading) return <span className="connector-badge" data-state="loading">Checking…</span>;
+    if (unavailable || available(provider) === false) return <span className="connector-badge" data-state="unavailable">Unavailable</span>;
+    if (count > 0) return <span className="connector-badge" data-state="connected">Connected{count > 1 ? ` · ${count}` : ''}</span>;
+    return <span className="connector-badge" data-state="idle">Not connected</span>;
+  };
 
   /** Either the Connect link, or the reason this host cannot use the provider. */
   const connect = (provider: string, href: string, label: string, primary = true) => {
@@ -157,10 +185,14 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
         <p>Connect a workspace so the assistant can read the content you share with it.</p>
       </header>
 
-      <div className="settings-group connector-settings">
+      <div className="connector-board" role="list">
+      <div className="settings-group connector-settings connector-card" role="listitem" aria-labelledby="connector-google_workspace">
         {/* The product name is the heading, not an uppercase kicker: app/docs/UI-RULES.md forbids
             letter-spaced capitals, which `.settings-section-kicker` applies. */}
-        <h2>Google Workspace</h2>
+        <header className="connector-card-head">
+          <span className="connector-glyph" aria-hidden="true">{React.createElement(PROVIDER_GLYPH['google_workspace'], { size: 20 })}</span>
+          <div className="connector-card-title"><h2 id="connector-google_workspace">Google Workspace</h2>{badge('google_workspace', googleAccounts.length)}</div>
+        </header>
         <p className="settings-section-intro">Read-only access for Gmail, Drive, Calendar, Docs, Meet and Chat. Writes always require approval.</p>
         {message && <p role="alert">{message}</p>}
         <div className="setting-row">
@@ -224,9 +256,12 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
         </ul>
       </div>
 
-      <div className="settings-group connector-settings">
+      <div className="settings-group connector-settings connector-card" role="listitem" aria-labelledby="connector-sentry">
         {/* Product name as the heading: UI-RULES forbids the uppercase kicker. */}
-        <h2>Sentry</h2>
+        <header className="connector-card-head">
+          <span className="connector-glyph" aria-hidden="true">{React.createElement(PROVIDER_GLYPH['sentry'], { size: 20 })}</span>
+          <div className="connector-card-title"><h2 id="connector-sentry">Sentry</h2>{badge('sentry', sentryAccounts.length)}</div>
+        </header>
         <p className="settings-section-intro">Read-only access to the projects, issues and latest event of one Sentry organization. Nothing is resolved, assigned or deleted.</p>
         <div className="setting-row">
           <div>
@@ -248,9 +283,12 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
         </ul>
       </div>
 
-      <div className="settings-group connector-settings">
+      <div className="settings-group connector-settings connector-card" role="listitem" aria-labelledby="connector-zoom">
         {/* Product name as the heading: UI-RULES forbids the uppercase kicker. */}
-        <h2>Zoom</h2>
+        <header className="connector-card-head">
+          <span className="connector-glyph" aria-hidden="true">{React.createElement(PROVIDER_GLYPH['zoom'], { size: 20 })}</span>
+          <div className="connector-card-title"><h2 id="connector-zoom">Zoom</h2>{badge('zoom', zoomAccounts.length)}</div>
+        </header>
         <p className="settings-section-intro">Read-only access to your meetings, cloud recordings and meeting transcripts. Nothing is scheduled, edited or shared.</p>
         <div className="setting-row">
           <div>
@@ -272,9 +310,11 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
         </ul>
       </div>
 
-      <div className="settings-group connector-settings">
-        <span className="settings-section-kicker">Notion</span>
-        <h2>Connected workspaces</h2>
+      <div className="settings-group connector-settings connector-card" role="listitem" aria-labelledby="connector-notion">
+        <header className="connector-card-head">
+          <span className="connector-glyph" aria-hidden="true">{React.createElement(PROVIDER_GLYPH['notion'], { size: 20 })}</span>
+          <div className="connector-card-title"><h2 id="connector-notion">Notion</h2>{badge('notion', notionAccounts.length)}</div>
+        </header>
         <p className="settings-section-intro">Read-only access to the pages and databases you select in Notion. Nothing is created or edited.</p>
         <div className="setting-row">
           <div>
@@ -296,11 +336,14 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
         </ul>
       </div>
 
-      <div className="settings-group connector-settings">
+      <div className="settings-group connector-settings connector-card" role="listitem" aria-labelledby="connector-slack">
         {/* No `.settings-section-kicker` here: app/docs/UI-RULES.md forbids uppercase label
             text, and that class sets `text-transform: uppercase`. The product name is the
             group heading instead. */}
-        <h2>Slack</h2>
+        <header className="connector-card-head">
+          <span className="connector-glyph" aria-hidden="true">{React.createElement(PROVIDER_GLYPH['slack'], { size: 20 })}</span>
+          <div className="connector-card-title"><h2 id="connector-slack">Slack</h2>{badge('slack', slackAccounts.length)}</div>
+        </header>
         <p className="settings-section-intro">Read-only access to channels, channel history, search and the people directory. Nothing is posted or edited.</p>
         <div className="setting-row">
           <div>
@@ -322,9 +365,12 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
         </ul>
       </div>
 
-      <div className="settings-group connector-settings">
+      <div className="settings-group connector-settings connector-card" role="listitem" aria-labelledby="connector-calendly">
         {/* Product name as the heading: UI-RULES forbids the uppercase kicker. */}
-        <h2>Calendly</h2>
+        <header className="connector-card-head">
+          <span className="connector-glyph" aria-hidden="true">{React.createElement(PROVIDER_GLYPH['calendly'], { size: 20 })}</span>
+          <div className="connector-card-title"><h2 id="connector-calendly">Calendly</h2>{badge('calendly', calendlyAccounts.length)}</div>
+        </header>
         <p className="settings-section-intro">Read-only access to your scheduling pages, booked meetings and their invitees. Nothing is booked, moved or cancelled.</p>
         <div className="setting-row">
           <div>
@@ -346,9 +392,12 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
         </ul>
       </div>
 
-      <div className="settings-group connector-settings">
+      <div className="settings-group connector-settings connector-card" role="listitem" aria-labelledby="connector-github">
         {/* Product name as the heading: UI-RULES forbids the uppercase kicker. */}
-        <h2>GitHub</h2>
+        <header className="connector-card-head">
+          <span className="connector-glyph" aria-hidden="true">{React.createElement(PROVIDER_GLYPH['github'], { size: 20 })}</span>
+          <div className="connector-card-title"><h2 id="connector-github">GitHub</h2>{badge('github', githubAccounts.length, config.github === false)}</div>
+        </header>
         <p className="settings-section-intro">Read-only access to your repositories, files, issues and pull requests. Nothing is created, commented, merged or pushed.</p>
         <div className="setting-row">
           <div>
@@ -382,9 +431,12 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
         </ul>
       </div>
 
-      <div className="settings-group connector-settings">
+      <div className="settings-group connector-settings connector-card" role="listitem" aria-labelledby="connector-grafana">
         {/* Product name as the heading: UI-RULES forbids the uppercase kicker. */}
-        <h2>Grafana</h2>
+        <header className="connector-card-head">
+          <span className="connector-glyph" aria-hidden="true">{React.createElement(PROVIDER_GLYPH['grafana'], { size: 20 })}</span>
+          <div className="connector-card-title"><h2 id="connector-grafana">Grafana</h2>{badge('grafana', grafanaAccounts.length)}</div>
+        </header>
         <p className="settings-section-intro">Read-only access to dashboards, data sources, alert rules and annotations of one Grafana instance. Queries are bounded and nothing is created, edited or deleted.</p>
         <form
           className="setting-row"
@@ -446,6 +498,8 @@ export function ConnectorsSettings({ isAdmin }: { isAdmin: boolean }) {
             </li>
           ))}
         </ul>
+      </div>
+
       </div>
 
       <div className="settings-group connector-settings">
