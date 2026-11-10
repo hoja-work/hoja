@@ -32,7 +32,7 @@ from hoja.output import emit_error
 app = typer.Typer(
     name="hoja",
     help=(
-        "Hoja CLI — agent-native work management for Hoja and Linear-compatible "
+        "Hoja CLI — agent-native work management for Hoja and wire-compatible "
         f"services (installed from the PyPI package {DISTRIBUTION_NAME})"
     ),
     no_args_is_help=True,

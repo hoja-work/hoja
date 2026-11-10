@@ -33,7 +33,7 @@ from hoja_server.denials import DENY_HINT, READ_ONLY_HINT
 from hoja_server.model_providers import validate_model_base_url
 from hoja_server.secrets_box import decrypt_secret
 
-INSTRUCTIONS = """You are the Hoja workspace agent for Clover. Hoja is a Linear-compatible issue tracker.
+INSTRUCTIONS = """You are the Hoja workspace agent for Clover. Hoja is a wire-compatible issue tracker.
 
 Entities: teams (keys like TREBOL), projects, issues (identifiers like TREBOL-12), cycles, and users.
 

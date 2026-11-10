@@ -1,6 +1,6 @@
 # hoja — Design Document
 
-> Linear CLI built in Python with Pydantic v2 + httpx + Typer
+> the upstream API CLI built in Python with Pydantic v2 + httpx + Typer
 > Designed for: humans, agents, CI/CD, and shell pipelines
 
 ---
@@ -13,7 +13,7 @@
 4. **Idempotent where possible.** Re-running a command shouldn't break state.
 5. **Fast.** Async by default. Concurrent fetches where safe.
 6. **Discoverable.** `hoja --help`, `hoja issue --help`, `hoja issue create --help` should be sufficient.
-7. **Honest errors.** Linear API errors surfaced verbatim with context. No silent failures.
+7. **Honest errors.** the upstream API errors surfaced verbatim with context. No silent failures.
 
 ---
 
@@ -48,7 +48,7 @@ v1 covers the 8 highest-value domains. v2+ expands.
 | Low  | integration | 4 | 59 | v3 |
 | Low  | webhook | 1 | 4 | v3 |
 | Low  | roadmap | 3 | 8 | v3 |
-| Low  | agent (Linear's AI) | 5 | 9 | v3 |
+| Low  | agent (the upstream contract's AI) | 5 | 9 | v3 |
 
 ---
 
@@ -183,7 +183,7 @@ cascaded.
 
 ## Filter DSL (Issue list example)
 
-Linear's GraphQL has powerful filter inputs. We expose them ergonomically:
+the upstream contract's GraphQL has powerful filter inputs. We expose them ergonomically:
 
 ```bash
 # Simple flags
@@ -319,7 +319,7 @@ Exit codes:
   3   Auth error (missing/invalid token)
   4   Not found (entity doesn't exist)
   5   Validation error (Pydantic model failure)
-  6   API error (Linear returned error)
+  6   API error (the upstream API returned error)
   7   Network error (timeout, DNS, TLS)
   8   Rate limited
 ```
@@ -348,7 +348,7 @@ Error format (JSON mode):
 - **TLS verification mandatory.** No `--insecure` flag.
 - **Pinned dependencies.** `requirements.txt` includes hashes.
 - **No telemetry.** Zero outbound calls except to the configured GraphQL
-  endpoint (a `hoja-serve` instance, or any Linear-compatible endpoint the
+  endpoint (a `hoja-serve` instance, or any wire-compatible endpoint the
   account's `base_url` / `$HOJA_API_URL` points at).
 
 ---
@@ -374,7 +374,7 @@ hoja/
 │   ├── output.py           # Output formatters (human/json/md/yaml)
 │   ├── errors.py           # Error hierarchy + exit codes
 │   ├── auth.py             # Token resolution + viewer cache
-│   ├── filters.py          # Filter DSL → Linear IssueFilter input
+│   ├── filters.py          # Filter DSL → the upstream API IssueFilter input
 │   │
 │   ├── commands/           # One file per command group
 │   │   ├── __init__.py
@@ -401,7 +401,7 @@ hoja/
 │   │   ├── comment.py
 │   │   ├── workflow.py
 │   │   ├── label.py
-│   │   └── enums.py        # All Linear enums
+│   │   └── enums.py        # All the upstream API enums
 │   │
 │   └── graphql/            # Query/mutation string templates
 │       ├── __init__.py
@@ -410,7 +410,7 @@ hoja/
 │       └── mutations.py    # Mutation strings
 │
 ├── schema/
-│   ├── linear-schema.json  # Full introspection result (gitignored if too large)
+│   ├── graph-schema.json  # Full introspection result (gitignored if too large)
 │   └── schema-summary.json # Categorized
 │
 ├── tests/

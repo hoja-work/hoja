@@ -25,7 +25,7 @@ hoja -o json auth accounts      # structured for agent reasoning
 ```
 
 ### `hoja auth add`
-Add a named account. Optionally verifies the token against the Linear API to populate `org_name`. Use `--teams` to declare which team keys the account owns (enables automatic account selection) and `--default` to make it the global default.
+Add a named account. Optionally verifies the token against the upstream API to populate `org_name`. Use `--teams` to declare which team keys the account owns (enables automatic account selection) and `--default` to make it the global default.
 ```bash
 hoja auth add work --token $LINEAR_WORK_TOKEN --teams "ENG,OPS" --default
 hoja auth add personal --token $LINEAR_PERSONAL_TOKEN --token-env LINEAR_PERSONAL_TOKEN
@@ -68,7 +68,7 @@ hoja init --path /tmp/foo.toml   # custom location
 
 ## Teams
 
-A Linear team has a `key` (e.g. `ENG`, `ENG`) used as the prefix in issue IDs.
+A the upstream API team has a `key` (e.g. `ENG`, `ENG`) used as the prefix in issue IDs.
 
 ```bash
 hoja team list                          # all teams
@@ -137,7 +137,7 @@ hoja project list
 hoja project get <ID_OR_SLUG>
 ```
 
-`<ID_OR_SLUG>` is the project's UUID or its slug (the URL-safe short identifier visible in the Linear web UI).
+`<ID_OR_SLUG>` is the project's UUID or its slug (the URL-safe short identifier visible in the upstream API web UI).
 
 ## Cycles (sprints)
 

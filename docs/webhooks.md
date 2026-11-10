@@ -1,6 +1,6 @@
 # Webhooks
 
-Hoja sends outgoing webhooks using Linear's wire contract, so existing Linear
+Hoja sends outgoing webhooks using the upstream contract's wire contract, so existing the upstream API
 webhook consumers (including `LinearWebhookClient` from `@linear/sdk`) work with
 Hoja unchanged. Use them to run your own automation when work changes, for
 example to provision a worktree, ports, and a database branch when an issue is

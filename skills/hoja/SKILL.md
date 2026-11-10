@@ -1,7 +1,7 @@
 ---
 name: hoja
 version: 0.7.0
-description: Guide for using the `hoja` CLI with Hoja, Linear, or another Linear-compatible GraphQL service. Use for issue triage, creation, updates, search, comments, labels, cycles, projects, teams, and identifiers such as ENG-123. Reinforces a "use Bash + hoja, do not write Python wrappers" workflow.
+description: Guide for using the `hoja` CLI with Hoja, the upstream API, or another wire-compatible GraphQL service. Use for issue triage, creation, updates, search, comments, labels, cycles, projects, teams, and identifiers such as ENG-123. Reinforces a "use Bash + hoja, do not write Python wrappers" workflow.
 author: Hoja contributors
 requires:
   bins: ["hoja"]
@@ -11,13 +11,13 @@ tags: [linear, cli, issue-tracker, project-management]
 
 # Hoja work-management skill
 
-Help the user interact with Hoja, Linear, or another Linear-compatible
+Help the user interact with Hoja, the upstream API, or another wire-compatible
 GraphQL service from the command line using `hoja`. Hoja is generic,
 self-hosted, offline-first, agent-native work management with Pydantic v2
 validation, six output formats, and a filter DSL.
 
 Use the canonical `hoja`, `hoja-mcp`, and `hoja-serve` commands.
-Keep the Linear GraphQL names unchanged on the wire. `HOJA_TOKEN` and
+Keep the upstream API GraphQL names unchanged on the wire. `HOJA_TOKEN` and
 `HOJA_API_URL` are the canonical environment variables; the deprecated
 `LINEAR_TOKEN` and `LINEAR_API_URL` names are still read when the `HOJA_*`
 variable is unset.
@@ -43,7 +43,7 @@ Best practices and operational guidance for AI coding agents using `hoja`.
 - **Identifiers are case-sensitive** — `ENG-35`, never `eng-35`.
 - **Search before create** — `hoja issue search "<query>"` before
   `hoja issue create` to avoid duplicate issues.
-- **`hoja issue delete` does NOT exist** — the Linear-compatible API has no
+- **`hoja issue delete` does NOT exist** — the wire-compatible API has no
   issue hard delete. Use a state transition (`Canceled` or `Archived`).
 
 ### Design Principles

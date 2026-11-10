@@ -1,7 +1,7 @@
-"""Read-only Linear resources exposed via MCP.
+"""Read-only the upstream API resources exposed via MCP.
 
 Each resource handler:
-  1. Resolves auth (LinearClient via env / config).
+  1. Resolves auth (GraphClient via env / config).
   2. Issues a GraphQL query.
   3. Validates response into a Pydantic model.
   4. Returns JSON text (string).
@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from hoja.client import LinearClient
+from hoja.client import GraphClient
 from hoja.config import load_config, resolve_account, resolve_token
 from hoja.errors import AuthError, HojaError
 from hoja.graphql import queries
@@ -33,8 +33,8 @@ from hoja.models.workflow import WorkflowState
 # ---------------------------------------------------------------------------
 # Auth helper
 # ---------------------------------------------------------------------------
-def _client() -> LinearClient:
-    """Build a LinearClient using the same resolution rules as the CLI.
+def _client() -> GraphClient:
+    """Build a GraphClient using the same resolution rules as the CLI.
 
     Order: $HOJA_TOKEN env var (deprecated alias $LINEAR_TOKEN) > config.toml.
     The `--token` CLI flag is not applicable here (the MCP server has no CLI
@@ -51,7 +51,7 @@ def _client() -> LinearClient:
             "~/.config/hoja/config.toml. "
             f"Underlying error: {e}"
         ) from e
-    return LinearClient(token)
+    return GraphClient(token)
 
 
 def _to_json(model: Any) -> str:

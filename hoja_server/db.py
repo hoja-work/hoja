@@ -694,7 +694,7 @@ issue_activity = Table(
     Column("created_at", String, nullable=False, index=True),
 )
 
-# Outgoing webhooks (Linear-compatible). A webhook only receives change events
+# Outgoing webhooks (wire-compatible). A webhook only receives change events
 # committed after start_seq. The dispatcher turns change_event rows into frozen
 # delivery payloads; the sender posts them with retries.
 webhook = Table(
@@ -1574,9 +1574,9 @@ def rate_limit_record(engine: Engine, bucket: str, keys: list[str], window_secon
 
 
 def _apply_team_cycle_automations(conn) -> None:
-    """Add Linear-style auto-add-to-cycle toggles on the team table.
+    """Add carry-over-style auto-add-to-cycle toggles on the team table.
 
-    Defaults match Linear (both on). Structured so a future cooldown
+    Defaults match the upstream API (both on). Structured so a future cooldown
     attribution rule can read the same flags.
     """
     inspector = inspect(conn)

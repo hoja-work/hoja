@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {cycleKeyTarget} from '../frontend/src/linear/cycleSelection.ts';
+import {cycleKeyTarget} from '../frontend/src/graph/cycleSelection.ts';
 
 const ids = ['completed', 'current', 'upcoming'];
 const cases = [

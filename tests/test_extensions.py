@@ -258,8 +258,8 @@ def test_update_reconciles_by_key_and_rolls_back_on_error(world):
 def _secret_ok(secret, headers, body):
     expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
     sdk = os.environ.get("HOJA_LINEAR_SDK_DIR")
-    if sdk:  # independent check: Linear's official verifier must accept the request
-        script = Path(__file__).with_name("linear_sdk_verify.mjs")
+    if sdk:  # independent check: the upstream contract's official verifier must accept the request
+        script = Path(__file__).with_name("graph_sdk_verify.mjs")
         out = subprocess.run(["node", str(script), sdk, secret, headers["linear-signature"]],
                              input=body, capture_output=True, timeout=30)
         assert out.returncode == 0, out.stderr.decode()

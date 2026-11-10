@@ -6,10 +6,10 @@ import type {Cycle, Issue, IssueActivityEvent, IssueLabel, IssueState, Project, 
 import {Markdown} from '../markdown';
 import {addLocalIssue, getSync, guessNextIdentifier, isLocalIssueId, localIssueId, onEntityChange, useEntityVersion, useIssueSelect, useIssues, useSyncMeta, useSyncStatus} from '../sync';
 import {addLabelInput, bulkRemove, bulkUpdate, useHiddenIssueIds, useScrollWindow, useStableCallback, visibleRange} from './issueStore';
-import {Avatar, CycleChip, CycleGlyph, DueChip, FavStar, IconBtn, LabelChip, LinMenu, LinearStatusIcon, PriorityIcon, ProjectChip, Ring, StatusAgeIcon, SubIssuePill, Tip, cx, dueIsOverdue, fmtDate, fmtFullDate, formatDueDay, parseDueDay, useDismiss, useFavorite, type MenuItem} from './shared';
+import {Avatar, CycleChip, CycleGlyph, DueChip, FavStar, IconBtn, LabelChip, LinMenu, GraphStatusIcon, PriorityIcon, ProjectChip, Ring, StatusAgeIcon, SubIssuePill, Tip, cx, dueIsOverdue, fmtDate, fmtFullDate, formatDueDay, parseDueDay, useDismiss, useFavorite, type MenuItem} from './shared';
 import {runExtensionAction, useIssueExtensionActions, type ExtensionAction} from '../extensions';
 
-/* Linear 1:1 Issues list + board + detail. */
+/* the upstream API 1:1 Issues list + board + detail. */
 
 export type LinAttachment = {id: string; title?: string; subtitle?: string; url: string; createdAt?: string};
 export type LinIssue = Omit<Issue, 'subscribers'> & {
@@ -221,7 +221,7 @@ export function FilterMenu({filters, setFilters, team, teams, projects, labels, 
       {sub && <>
         <button type="button" className="fm-back" onClick={() => setSub(null)}>‹ {FILTER_DEFS.find(d => d.key === sub)?.label}</button>
         <div className="fm-sub">
-          {sub === 'status' && states.map(s => opt('status', stateKey(s), <span style={{display: 'inline-flex', alignItems: 'center', gap: 8}}><LinearStatusIcon state={s} />{s.name}</span>))}
+          {sub === 'status' && states.map(s => opt('status', stateKey(s), <span style={{display: 'inline-flex', alignItems: 'center', gap: 8}}><GraphStatusIcon state={s} />{s.name}</span>))}
           {sub === 'assignee' && <>{opt('assignee', 'unassigned', 'Unassigned')}{members.map(m => opt('assignee', m.id, <span style={{display: 'inline-flex', alignItems: 'center', gap: 8}}><Avatar name={m.name} size={18} />{m.name || m.email}</span>))}</>}
           {sub === 'creator' && members.map(m => opt('creators', m.id, <span style={{display: 'inline-flex', alignItems: 'center', gap: 8}}><Avatar name={m.name} size={18} />{m.name || m.email}</span>))}
           {sub === 'priority' && [['1', 'Urgent'], ['2', 'High'], ['3', 'Medium'], ['4', 'Low'], ['0', 'No priority']].map(([v, l]) => opt('priority', Number(v), <span style={{display: 'inline-flex', alignItems: 'center', gap: 8}}><PriorityIcon priority={Number(v)} />{l}</span>))}
@@ -398,11 +398,11 @@ const BoardCard = memo(function BoardCard({issue, team, onOpen, onDragStart, onU
         <span className="lin-card-ctl" onClick={stop} role="presentation">
           <button type="button" className="lin-card-btn" aria-haspopup="menu" aria-expanded={menu === 'status'}
             aria-label={`Status of ${issue.identifier}: ${issue.state?.name || 'No status'}`} onClick={toggle('status')}>
-            <LinearStatusIcon state={issue.state} size={13} />
+            <GraphStatusIcon state={issue.state} size={13} />
           </button>
           {menu === 'status' && (
             <LinMenu className={cx('lin-card-menu', up && 'up')} onClose={close} items={states.map(s => ({
-              key: s.id, label: s.name, icon: <LinearStatusIcon state={s} size={13} />,
+              key: s.id, label: s.name, icon: <GraphStatusIcon state={s} size={13} />,
               onSelect: () => void run({stateId: s.id}),
             }))} />
           )}
@@ -483,7 +483,7 @@ function BoardColumnCards({items, team, onOpen, onDragStart, onUpdate}: {
   );
 }
 
-function LinearBoard({issues, states, team, onOpen, onMoved, onUpdate, onNew, display, setDisplay}: {
+function GraphBoard({issues, states, team, onOpen, onMoved, onUpdate, onNew, display, setDisplay}: {
   issues: LinIssue[]; states: IssueState[]; team?: Team; onOpen: (i: LinIssue) => void;
   onMoved: (issueId: string, state: IssueState) => Promise<void>;
   onUpdate: (issueId: string, input: Record<string, unknown>) => Promise<void>;
@@ -519,7 +519,7 @@ function LinearBoard({issues, states, team, onOpen, onMoved, onUpdate, onNew, di
           onDrop={e => { e.preventDefault(); void onDropCol(state); }}
           style={dropCol === stateKey(state) ? {outline: '2px dashed var(--accent)', outlineOffset: -2} : undefined}>
           <header>
-            <LinearStatusIcon state={state} size={13} />
+            <GraphStatusIcon state={state} size={13} />
             <span>{state.name}</span><span className="count">{items.length}</span>
             <span className="sp" />
             <button type="button" aria-label={`Add issue to ${state.name}`} onClick={() => onNew(state.id)}><Plus size={14} /></button>
@@ -545,7 +545,7 @@ function LinearBoard({issues, states, team, onOpen, onMoved, onUpdate, onNew, di
               <button key={stateKey(state)} type="button" className="lin-hidden-col"
                 title={`Show ${state.name} column`}
                 onClick={() => setDisplay({...display, hiddenColumns: display.hiddenColumns.filter(k => k !== stateKey(state))})}>
-                <LinearStatusIcon state={state} size={13} />
+                <GraphStatusIcon state={state} size={13} />
                 <span className="grow">{state.name}</span>
                 <span className="show">Show</span>
               </button>
@@ -606,7 +606,7 @@ function BulkBar({selected, byId, team, cycles, labels, onClear, onDone}: {
               <div style={{maxHeight: 260, overflowY: 'auto'}}>
                 {action === 'status' && states.map(s => (
                   <button key={s.id} type="button" className="lin-menu-item" disabled={busy}
-                    onClick={() => void run(() => ({stateId: s.id}))}><LinearStatusIcon state={s} /><span className="lin-menu-label">{s.name}</span></button>))}
+                    onClick={() => void run(() => ({stateId: s.id}))}><GraphStatusIcon state={s} /><span className="lin-menu-label">{s.name}</span></button>))}
                 {action === 'priority' && [[1, 'Urgent'], [2, 'High'], [3, 'Medium'], [4, 'Low'], [0, 'No priority']].map(([v, l]) => (
                   <button key={v} type="button" className="lin-menu-item" disabled={busy}
                     onClick={() => void run(() => ({priority: v}))}><PriorityIcon priority={v as number} /><span className="lin-menu-label">{l}</span></button>))}
@@ -642,7 +642,7 @@ const LIST_PAD_TOP = 6, GROUP_GAP = 8, GROUP_HEAD = 36;
 type OlderPaging = {cursor: string | null; hasMore: boolean; loading: boolean; error: string; loaded: number};
 const olderInitial: OlderPaging = {cursor: null, hasMore: true, loading: false, error: '', loaded: 0};
 
-export function LinearTeamIssues({team, teams, orgId, workspaceName, projects, labels, cycles, onIssue, onMoved, onUpdate, onNew, layout, onLayoutChange, onNavigate}: {
+export function GraphTeamIssues({team, teams, orgId, workspaceName, projects, labels, cycles, onIssue, onMoved, onUpdate, onNew, layout, onLayoutChange, onNavigate}: {
   team?: Team; teams: Team[]; viewer: Viewer; orgId: string; workspaceName: string;
   projects: Project[]; labels: IssueLabel[]; cycles: Cycle[];
   onIssue: (issue: LinIssue) => void;
@@ -869,7 +869,7 @@ export function LinearTeamIssues({team, teams, orgId, workspaceName, projects, l
       <div className="lin-scroll" ref={scrollRef}>
         {loading && <p className="lin-loading" role="status">Loading issues…</p>}
         {!loading && (layout === 'Board'
-          ? <LinearBoard issues={scoped} states={team.states.nodes} team={team} onOpen={openIssue}
+          ? <GraphBoard issues={scoped} states={team.states.nodes} team={team} onOpen={openIssue}
               onMoved={movedStable} onUpdate={updateStable}
               onNew={onNew} display={effDisplay} setDisplay={setDisplayWithLayout} />
           : <div className="lin-list" ref={listRef}>
@@ -889,7 +889,7 @@ export function LinearTeamIssues({team, teams, orgId, workspaceName, projects, l
                         onClick={() => setCollapsed(c => c.includes(g.key) ? c.filter(x => x !== g.key) : [...c, g.key])}>
                         <ChevronDown size={14} style={{transform: isCollapsed ? 'rotate(-90deg)' : undefined}} />
                       </button>
-                      {g.state && <LinearStatusIcon state={g.state} size={13} />}
+                      {g.state && <GraphStatusIcon state={g.state} size={13} />}
                       <b>{g.name}</b><span className="count">{g.items.length}</span>
                       <span className="grow" />
                       <Tip label={`Create task in ${g.name}`}>
@@ -1121,7 +1121,7 @@ function describeEvent(e: {eventType: string; actor?: {name?: string}; changes?:
 
 type PendingComment = {id: string; body: string; createdAt: string; known: Set<string>};
 
-export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOpenIssue, loading, error, onArchive, onDelete, onDeleteComment, teams, projects, labels, cycles, onUpdate, onBack, backLabel, onRetry}: {
+export function GraphIssueDetail({workspaceName, viewer, issue, issueList, onOpenIssue, loading, error, onArchive, onDelete, onDeleteComment, teams, projects, labels, cycles, onUpdate, onBack, backLabel, onRetry}: {
   workspaceName?: string; viewer: Viewer; issue: LinIssue | null; issueList: LinIssue[];
   onOpenIssue: (issue: LinIssue) => void; loading: boolean; error: string;
   onArchive: () => Promise<void>; onDelete: () => Promise<void>; onDeleteComment: (id: string) => Promise<void>;
@@ -1596,7 +1596,7 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
             {subsView.map(s => (
               <div key={s.id} className={cx('lin-subrow', s.state?.type === 'completed' && 'done', isLocalIssueId(s.id) && 'pending')}
                 aria-busy={isLocalIssueId(s.id) || undefined} {...(isLocalIssueId(s.id) ? {} : issueIntentProps(s))}>
-                <LinearStatusIcon state={s.state} size={14} />
+                <GraphStatusIcon state={s.state} size={14} />
                 <button type="button" className="t" disabled={isLocalIssueId(s.id)} onClick={() => onOpenIssue(s)} title={s.title}>{s.title}</button>
                 {s.labels?.nodes.map(l => <LabelChip key={l.id} label={l} />)}
                 {s.assignee && <Avatar name={s.assignee.name} size={18} />}
@@ -1721,10 +1721,10 @@ export function LinearIssueDetail({workspaceName, viewer, issue, issueList, onOp
 
         <aside className="lin-props" aria-label="Properties">
           <h3>Properties</h3>
-          <PropDropdown label="Status" icon={<LinearStatusIcon state={detail.state} size={14} />}
+          <PropDropdown label="Status" icon={<GraphStatusIcon state={detail.state} size={14} />}
             value={<span style={{display: 'inline-flex', alignItems: 'center', gap: 7}}>{detail.state?.name || 'No status'}</span>}
             onPick={id => { if (id) void change({stateId: id}); }}
-            options={states.map(s => ({id: s.id, selected: s.id === detail.state?.id, label: <span style={{display: 'inline-flex', alignItems: 'center', gap: 8}}><LinearStatusIcon state={s} />{s.name}</span>}))} />
+            options={states.map(s => ({id: s.id, selected: s.id === detail.state?.id, label: <span style={{display: 'inline-flex', alignItems: 'center', gap: 8}}><GraphStatusIcon state={s} />{s.name}</span>}))} />
           <PropDropdown label="Priority" icon={<PriorityIcon priority={detail.priority} />}
             value={['No priority', 'Urgent', 'High', 'Medium', 'Low'][detail.priority || 0]}
             onPick={id => void change({priority: Number(id)})}
