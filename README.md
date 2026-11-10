@@ -14,7 +14,7 @@
 # Hoja
 
 **One self-hosted place where people and agents plan, assign and review work.**
-Hoja is a workspace for issues, projects, cycles and teams. Keep your editor,
+Hoja is a workspace for tasks, projects, cycles and teams. Keep your editor,
 terminal and harness; reach the same work through the browser app, the `hoja`
 CLI, a Linear-compatible GraphQL API and a read-only MCP server.
 
@@ -24,7 +24,7 @@ at $15 per organization each month. Neither path is priced per seat.
 ## Why teams use it
 
 - **One record for people and agents.** A person triages in the browser, an agent
-  updates the same issue from a shell, and everyone sees one current state.
+  updates the same task from a shell, and everyone sees one current state.
 - **Your harness stays yours.** Hoja is a shared work record, not an agent
   runtime. It does not run, host or watch your agents.
 - **Self-hosted and offline-first.** SQLite for a laptop or a single box,
@@ -38,7 +38,7 @@ at $15 per organization each month. Neither path is priced per seat.
 
 | Surface | What it gives you |
 | --- | --- |
-| **Workspace** | Inbox, My issues, Projects, Cycles, Teams and saved Views in the browser. Create, assign, discuss and review issues; group them into projects; use cycles as time-bounded reviews of what shipped, what is open and what was canceled. |
+| **Workspace** | Inbox, My tasks, Projects, Cycles, Teams and saved Views in the browser. Create, assign, discuss and review tasks; group them into projects; use cycles as time-bounded reviews of what shipped, what is open and what was canceled. |
 | **CLI** | `me`, `auth`, `init`, `team`, `issue`, `project`, `cycle`, `comment`, `label`, `memory`, `raw` and `update` — enough to drive real work from a terminal or a script. |
 | **API** | A GraphQL endpoint with Linear-compatible names. Point your own tools at `HOJA_API_URL` with a workspace token. |
 | **Agents** | An optional stdio MCP server with one guide tool, seven read-only resources and six workflow prompts. It has no mutation tools; changes go through the CLI or API. |

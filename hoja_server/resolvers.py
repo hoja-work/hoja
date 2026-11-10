@@ -1331,8 +1331,15 @@ def build_schema():
     from hoja_server.agent_conversations import SDL as CONVERSATION_SDL, query as conversation_query
     from hoja_server import webhooks_api
     from hoja_server import extensions_api
+    from hoja_server.task_aliases import bind_task_surface
+    tasks_sdl = (Path(__file__).parent / "schema_tasks.graphql").read_text()
+    task_bindables, problems = bind_task_surface(query, mutation, Issue, MyIssueActivity)
+    if problems:
+        # A partial alias surface is worse than none: fail the whole schema instead.
+        raise RuntimeError("HOJA-288 task alias wiring incomplete: " + "; ".join(problems))
     return make_executable_schema(
-        [sdl, PROVIDER_SDL, CONVERSATION_SDL, webhooks_api.SDL, extensions_api.SDL], query, mutation,
+        [sdl, PROVIDER_SDL, CONVERSATION_SDL, webhooks_api.SDL, extensions_api.SDL, tasks_sdl],
+        query, mutation, *task_bindables,
         model_providers.query, model_providers.mutation,
         webhooks_api.query, webhooks_api.mutation, webhooks_api.webhook_type,
         extensions_api.query, extensions_api.mutation, extensions_api.extension_type,

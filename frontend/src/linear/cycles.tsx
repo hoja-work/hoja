@@ -729,7 +729,7 @@ const CycleIssueGroups = React.memo(function CycleIssueGroups({groups, collapsed
             <b>{g.name}</b><span className="count">{g.items.length}</span>
             <span className="grow" />
             <Tip label="Creating issues from a cycle group is not available yet. Use Create new issue.">
-              <button type="button" className="add" aria-label={`Create issue in ${g.name}`} disabled style={{opacity: .5, cursor: 'not-allowed'}}><Plus size={14} /></button>
+              <button type="button" className="add" aria-label={`Create task in ${g.name}`} disabled style={{opacity: .5, cursor: 'not-allowed'}}><Plus size={14} /></button>
             </Tip>
           </header>
           {!collapsed.includes(g.key) && g.items.map(i => (
@@ -922,7 +922,7 @@ export function LinearCycleDetail({cycle: initial, team, teams, viewer, orgId, w
                 <CycleIssueGroups groups={groups} collapsed={collapsed} setCollapsed={setCollapsed} display={display}
                   childCounts={childCounts} onOpen={onSelect} onMove={moveToState} />
                 {!scoped.length && (
-                  <div className="lin-empty"><h2>No issues in this cycle</h2><p>Issues added to this cycle will appear here.</p></div>
+                  <div className="lin-empty"><h2>No tasks in this cycle</h2><p>Tasks added to this cycle will appear here.</p></div>
                 )}
               </div>
             )}
@@ -1175,12 +1175,12 @@ export function LinearTeamCycleSettings({team, onBack, admin}: {
         </div>
         <div className="card">
           <h2>Auto-complete</h2>
-          <p>Cycles complete automatically on their end date. Incomplete issues roll into the next cycle.</p>
+          <p>Cycles complete automatically on their end date. Incomplete tasks roll into the next cycle.</p>
           <p className="lin-note">Changing or disabling the schedule is not available in this release.</p>
         </div>
         <div className="card">
           <h2>Cycle automations</h2>
-          <p>Automatically add issues without a cycle into the current cycle. Issues already assigned to a cycle are never moved.</p>
+          <p>Automatically add tasks without a cycle into the current cycle. Tasks already assigned to a cycle are never moved.</p>
           {autoStarted === null || autoCompleted === null || autoBacklog === null
             ? <p className="lin-loading" role="status">Loading automations…</p>
             : <>
@@ -1188,19 +1188,19 @@ export function LinearTeamCycleSettings({team, onBack, admin}: {
                 <input type="checkbox" className="lin-check" checked={autoStarted}
                   disabled={!admin || autoBusy}
                   onChange={e => { void saveAuto(e.target.checked, autoCompleted, autoBacklog); }} />
-                <span>Auto-add <b>started</b> issues to the current cycle</span>
+                <span>Auto-add <b>started</b> tasks to the current cycle</span>
               </label>
               <label className="lin-auto-row">
                 <input type="checkbox" className="lin-check" checked={autoCompleted}
                   disabled={!admin || autoBusy}
                   onChange={e => { void saveAuto(autoStarted, e.target.checked, autoBacklog); }} />
-                <span>Auto-add <b>completed</b> issues to the current cycle</span>
+                <span>Auto-add <b>completed</b> tasks to the current cycle</span>
               </label>
               <label className="lin-auto-row">
                 <input type="checkbox" className="lin-check" checked={autoBacklog}
                   disabled={!admin || autoBusy}
                   onChange={e => { void saveAuto(autoStarted, autoCompleted, e.target.checked); }} />
-                <span>Auto-add <b>backlog</b> issues to the current cycle</span>
+                <span>Auto-add <b>backlog</b> tasks to the current cycle</span>
               </label>
               {!admin && <p className="lin-note" role="status">Only workspace admins can change cycle automations.</p>}
             </>}

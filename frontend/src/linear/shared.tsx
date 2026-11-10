@@ -137,7 +137,7 @@ export function SubIssuePill({done, total}: {done: number; total: number}) {
   const frac = done / total;
   const r = 5, circ = 2 * Math.PI * r;
   return (
-    <span className="lin-subissue-pill" title={`${done} of ${total} sub-issues complete`}>
+    <span className="lin-subissue-pill" title={`${done} of ${total} sub-tasks complete`}>
       <svg width="13" height="13" viewBox="0 0 14 14" aria-hidden="true">
         <circle cx="7" cy="7" r={r} fill="none" stroke="#d4d4d8" strokeWidth="1.6" />
         <circle cx="7" cy="7" r={r} fill="none" stroke="#5e6ad2" strokeWidth="1.6"

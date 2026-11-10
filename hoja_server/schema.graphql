@@ -86,7 +86,7 @@ type Query {
   myApiKeys: [ApiKey!]!
   myPreferences: UserPreferencesPayload!
   myNotificationPreferences: NotificationPreferencesPayload!
-  issueLabelSettings: [IssueLabel!]!
+  issueLabelSettings: [IssueLabel!]! @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   myWorkspaces: [WorkspaceMembership!]!
   organizationMembers(first: Int = 100): UserConnection
   archivedMembers: [User!]!
@@ -94,9 +94,9 @@ type Query {
   workspace: Organization
   teams(first: Int = 50, after: String, filter: TeamFilter): TeamConnection
   team(id: String!): Team
-  issues(filter: IssueFilter, first: Int = 50, after: String, orderBy: PaginationOrderBy): IssueConnection
-  issue(id: String!): Issue
-  myIssueActivity(first: Int = 50, after: String): MyIssueActivityConnection
+  issues(filter: IssueFilter, first: Int = 50, after: String, orderBy: PaginationOrderBy): IssueConnection @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
+  issue(id: String!): Issue @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
+  myIssueActivity(first: Int = 50, after: String): MyIssueActivityConnection @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   inboxNotifications(first: Int = 50, after: String, unreadOnly: Boolean = false, archived: Boolean = false): InboxNotificationConnection
   inboxUnreadCount: Int!
   projects(filter: ProjectFilter, first: Int = 50, after: String): ProjectConnection
@@ -108,8 +108,8 @@ type Query {
   cycles(filter: CycleFilter, first: Int = 100, after: String): CycleConnection
   cycle(id: String!): Cycle
   teamCycleCadence(teamId: String!): TeamCycleCadence!
-  issueLabels(filter: IssueLabelFilter, first: Int = 100, after: String): IssueLabelConnection
-  searchIssues(term: String!, first: Int = 20): IssueConnection
+  issueLabels(filter: IssueLabelFilter, first: Int = 100, after: String): IssueLabelConnection @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
+  searchIssues(term: String!, first: Int = 20): IssueConnection @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   rateLimitStatus: RateLimitPayload
 }
 
@@ -137,21 +137,21 @@ type Mutation {
   memberRoleUpdate(userId: String!, admin: Boolean!): UserPayload
   teamMemberAdd(teamId: String!, userId: String!, role: String = "member"): UserPayload
   teamMemberRemove(teamId: String!, userId: String!): UserPayload
-  issueCreate(input: IssueCreateInput!): IssuePayload
-  issueUpdate(id: String!, input: IssueUpdateInput!): IssuePayload
+  issueCreate(input: IssueCreateInput!): IssuePayload @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
+  issueUpdate(id: String!, input: IssueUpdateInput!): IssuePayload @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   notificationMarkRead(id: String!): Boolean!
   notificationArchive(id: String!): Boolean!
   notificationMarkAllRead: Boolean!
-  issueDelete(id: String!): DeletePayload
-  issueArchive(id: String!): DeletePayload
-  issueSubscribe(id: String!): Boolean!
-  issueUnsubscribe(id: String!): Boolean!
+  issueDelete(id: String!): DeletePayload @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
+  issueArchive(id: String!): DeletePayload @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
+  issueSubscribe(id: String!): Boolean! @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
+  issueUnsubscribe(id: String!): Boolean! @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   commentCreate(input: CommentCreateInput!): CommentPayload
   commentUpdate(id: String!, input: CommentUpdateInput!): CommentPayload
   commentDelete(id: String!): DeletePayload
-  issueLabelCreate(input: IssueLabelCreateInput!): IssueLabelPayload
-  issueLabelDelete(id: String!): DeletePayload
-  issueLabelUpdate(id: String!, input: IssueLabelUpdateInput!): IssueLabelPayload
+  issueLabelCreate(input: IssueLabelCreateInput!): IssueLabelPayload @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
+  issueLabelDelete(id: String!): DeletePayload @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
+  issueLabelUpdate(id: String!, input: IssueLabelUpdateInput!): IssueLabelPayload @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   projectCreate(input: ProjectCreateInput!): ProjectPayload
   projectUpdate(id: String!, input: ProjectUpdateInput!): ProjectPayload
   projectUpdateCreate(input: ProjectUpdateCreateInput!): ProjectUpdatePayload
