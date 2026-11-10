@@ -92,7 +92,10 @@ def test_tool_schemas_are_typed_and_annotated(hoja) -> None:
     mcp = hoja()
     tools = mcp.tools()
     assert "TEAMKEY-N" in mcp.instructions
-    assert "parent issue" in mcp.instructions and "parentId" in mcp.instructions
+    # HOJA-288: the agent-facing vocabulary is "task"; the issue* tools remain as
+    # aliases, and the instructions say so rather than leaving agents guessing.
+    assert "parent task" in mcp.instructions and "parentId" in mcp.instructions
+    assert "deprecated aliases" in mcp.instructions
     create = tools["hoja_issueCreate"]
     assert "multi-step work" in create["description"]
     assert "sub-issues" in create["description"]
