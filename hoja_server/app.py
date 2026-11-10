@@ -1592,6 +1592,9 @@ def create_app(
             nonce=nonce,
             code_challenge=challenge,
             hosted_domain=signup_config.google_hd,
+            # Without this Google reuses the browser's single signed-in account,
+            # so two people on one machine cannot hand over.
+            prompt="select_account",
         )
         response = RedirectResponse(location, status_code=302)
         response.set_cookie(
