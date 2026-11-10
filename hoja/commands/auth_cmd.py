@@ -10,7 +10,7 @@ import typer
 
 from hoja.auth import get_viewer
 from hoja.cli_state import build_client, get_state
-from hoja.client import LinearClient
+from hoja.client import GraphClient
 from hoja.config import (
     AccountConfig,
     load_config,
@@ -21,7 +21,7 @@ from hoja.errors import AuthError, UsageError
 from hoja.models.enums import OutputFormat
 from hoja.output import render
 
-me_app = typer.Typer(help="Show the currently-authenticated Linear user")
+me_app = typer.Typer(help="Show the currently-authenticated the upstream API user")
 auth_app = typer.Typer(help="Authentication operations")
 
 
@@ -167,7 +167,7 @@ async def _fetch_org_name(token: str) -> str | None:
     from hoja.graphql import queries
     from hoja.models.user import User
 
-    client = LinearClient(token=token, timeout=10.0)
+    client = GraphClient(token=token, timeout=10.0)
     async with client:
         viewer = await client.execute_as(User, queries.VIEWER, path=["viewer"], operation="Viewer")
         # viewer.organization may not exist on the User model; handle gracefully

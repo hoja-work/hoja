@@ -188,12 +188,12 @@ check('secrets placed on a draft object are never written', () => {
   const storage = memoryStorage();
   const draft = draftModule.freshDraft('first-run');
   draft.password = 'correct horse battery staple';
-  draft.apiKey = 'lin_api_secret';
+  draft.apiKey = 'hoja_secret';
   draft.code = 'invite-secret';
   draftModule.saveDraft(storage, {edition: 'oss'}, draft);
   const raw = Object.values(storage.dump()).join('');
   assert.ok(!raw.includes('correct horse'), 'password leaked into storage');
-  assert.ok(!raw.includes('lin_api_secret'), 'api key leaked into storage');
+  assert.ok(!raw.includes('hoja_secret'), 'api key leaked into storage');
   assert.ok(!raw.includes('invite-secret'), 'invite code leaked into storage');
   assert.ok(raw.includes('"version":1'));
 });

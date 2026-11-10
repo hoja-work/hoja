@@ -34,7 +34,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 51
+CURRENT_SCHEMA_REVISION = 53
 
 
 def now_iso() -> str:
@@ -50,7 +50,10 @@ def token_hash(token: str) -> str:
 
 
 def gen_token() -> str:
-    return "lin_api_" + secrets.token_urlsafe(30)
+    # Presentation only: lookups hash the whole token, so a prefixed key from
+    # before this rename keeps authenticating. The 40-character body is fixed
+    # by token_urlsafe(30); do not shorten it.
+    return "hoja_" + secrets.token_urlsafe(30)
 
 
 def gen_session_token() -> str:
@@ -500,6 +503,42 @@ oauth_state_nonce = Table(
     Column("expires_at", Float, nullable=False, index=True),
 )
 
+# One GitHub object linked to one issue. Detection happens outside the database
+# (hoja_server.github_linking); this table records the result. The unique key is
+# the idempotency guarantee: a re-delivered webhook upserts the same row instead
+# of duplicating the link. organization_id is what puts this table under the
+# shared-tenancy RLS policy.
+github_link = Table(
+    "github_link",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("issue_id", String, ForeignKey("issue.id"), nullable=False, index=True),
+    Column("kind", String, nullable=False),
+    Column("external_id", String, nullable=False),
+    Column("url", String, nullable=False),
+    Column("title", String, nullable=False),
+    Column("state", String),
+    Column("author", String),
+    Column("sha", String),
+    Column("environment", String),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String),
+    UniqueConstraint(
+        "organization_id", "kind", "external_id", name="uq_github_link_external"
+    ),
+)
+
+# Delivery-id ledger for the GitHub webhook. Global, not tenant data: the id is GitHub's and
+# the row only proves we already acted on it. Listed in tests/rls_mode.py GLOBALS.
+github_delivery = Table(
+    "github_delivery",
+    metadata,
+    Column("delivery_id", String, primary_key=True),
+    Column("event", String, nullable=False),
+    Column("received_at", String, nullable=False),
+)
+
 user = Table(
     "user",
     metadata,
@@ -708,7 +747,7 @@ issue_activity = Table(
     Column("created_at", String, nullable=False, index=True),
 )
 
-# Outgoing webhooks (Linear-compatible). A webhook only receives change events
+# Outgoing webhooks (wire-compatible). A webhook only receives change events
 # committed after start_seq. The dispatcher turns change_event rows into frozen
 # delivery payloads; the sender posts them with retries.
 webhook = Table(
@@ -1591,9 +1630,9 @@ def rate_limit_record(engine: Engine, bucket: str, keys: list[str], window_secon
 
 
 def _apply_team_cycle_automations(conn) -> None:
-    """Add Linear-style auto-add-to-cycle toggles on the team table.
+    """Add carry-over-style auto-add-to-cycle toggles on the team table.
 
-    Defaults match Linear (both on). Structured so a future cooldown
+    Defaults match the upstream API (both on). Structured so a future cooldown
     attribution rule can read the same flags.
     """
     inspector = inspect(conn)
@@ -2015,6 +2054,13 @@ _MIGRATIONS = {
     # OAuth-state revisions, so it takes the next free number here rather than renumbering a
     # revision main already shipped.
     51: _apply_connector_external_url,
+    # 52: one GitHub object linked to one issue, unique per (org, kind, external id) so a
+    # re-delivered webhook upserts rather than duplicates. Renumbered 51 -> 52 on the merge
+    # because main shipped 51 (_apply_connector_external_url) first; the ledger is a
+    # contiguous prefix, so the later branch takes the next free numbers.
+    52: lambda conn: github_link.create(conn, checkfirst=True),
+    # 53: the delivery-id ledger that makes a re-sent webhook a no-op.
+    53: lambda conn: github_delivery.create(conn, checkfirst=True),
 }
 
 

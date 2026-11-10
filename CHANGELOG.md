@@ -240,7 +240,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Matched the observed Linear sidebar new-issue button silhouette, dimensions,
+- Matched the observed the upstream API sidebar new-issue button silhouette, dimensions,
   light colors, hover, keyboard activation, and close-on-Escape behavior.
 - Replaced Hoja’s green brand palette with shared neutral light/dark tokens
   across navigation, My issues, forms, cards, and actions, preserving semantic
@@ -276,7 +276,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Aligned the My issues page shell with the observed Linear title, view tabs,
+- Aligned the My issues page shell with the observed the upstream API title, view tabs,
   compact list groups, and light list surface.
 - Added working status/priority filters, focus/status grouping, collapsible
   group counts, and date-grouped recent issue updates with clear disclosure
@@ -292,7 +292,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Matched the Hoja navigation rail's width, compact rows, workspace header,
-  section order, and light selection treatment to the observed Linear sidebar.
+  section order, and light selection treatment to the observed the upstream API sidebar.
 - Added sidebar-first Pulse, Initiatives, and favorite Views placeholders that
   explicitly state they are not yet available, without replacing working Hoja
   destinations.
@@ -310,7 +310,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Documented Hoja as a standalone self-hosted product rather than only a
-  CLI client for Linear Cloud.
+  CLI client for the upstream API Cloud.
 
 ## [0.7.0] — 2026-07-26
 
@@ -318,12 +318,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Renamed the product and canonical distribution to **Hoja**, a generic
   self-hosted, offline-first, agent-native work-management system with a
-  Linear-compatible GraphQL interface.
+  wire-compatible GraphQL interface.
 - Canonical executables are now `hoja`, `hoja-mcp`, and `hoja-serve`;
   Python packages, release artifacts, skill metadata, documentation, and
   configuration/data directories use `hoja`.
 - Canonical application variables now use the `HOJA_*` prefix. The existing
-  `LINEAR_TOKEN` and `LINEAR_API_URL` variables remain unchanged, as do Linear
+  `LINEAR_TOKEN` and `LINEAR_API_URL` variables remain unchanged, as do the upstream API
   API field names and GraphQL wire names.
 - Removed product ownership and deployment assumptions from the self-hosted
   backend. CloverOps is one tested external consumer of the compatible GraphQL
@@ -359,7 +359,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.6.0] — 2026-07-15
 
 ### Added
-- **`clinear-serve` — a local, self-hosted, Linear-API-compatible backend**
+- **`clinear-serve` — a local, self-hosted, wire-compatible backend**
   (new optional `clinear_server` package; install with `pip install 'clinear[server]'`).
   Speaks the GraphQL subset used by clinear and compatible consumers, so
   the CLI runs fully **offline** against a single-file SQLite database with **no
@@ -397,8 +397,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     database connectivity plus schema currency separately from `/health`.
 - **`base_url` account setting** (`accounts.<name>.base_url`) plus the
   `$LINEAR_API_URL` environment override, letting clinear point at a local
-  backend (or any Linear-compatible endpoint) with no other change. Defaults to
-  the real Linear API when unset.
+  backend (or any wire-compatible endpoint) with no other change. Defaults to
+  the real upstream API when unset.
 - `scripts/e2e-local-backend.sh` — a 17-check end-to-end suite that boots the
   local backend and drives the real clinear CLI against it (me, teams, states,
   issue create/get/state/assign/prio, comments, filters, search, labels, auth).
@@ -474,7 +474,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Multi-account credential support** — manage multiple Linear accounts and switch
+- **Multi-account credential support** — manage multiple the upstream API accounts and switch
   between them automatically per workspace or via explicit `--account` flag.
   - New config schema: `[accounts.<name>]` sections with `token`, `token_env`,
     and auto-populated `org_name`.
@@ -483,7 +483,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - New `clinear auth` subcommands:
     - `auth accounts` — list all accounts with default/workspace/current markers
     - `auth add <name> --token <token>` — add a named account (optionally
-      verifies token against Linear API to populate `org_name`)
+      verifies token against the upstream API to populate `org_name`)
     - `auth switch <name>` — set global default account
     - `auth remove <name>` — remove an account
     - `auth workspace` — show current git repo workspace and mapped account
@@ -517,8 +517,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `issue create --project` and `issue update --project` now accept project **slugId**
   (e.g. `24a5eb4e800e`) and project **name** in addition to the full UUID. Previously,
-  passing a slugId (the short identifier shown in the Linear UI) caused an
-  "Argument Validation Error" from the Linear API because the mutation's
+  passing a slugId (the short identifier shown in the upstream API UI) caused an
+  "Argument Validation Error" from the upstream API because the mutation's
   `projectId` field requires the full 36-char UUID. A new `_resolve_project_id`
   helper now resolves slugIds and names to canonical UUIDs before sending the
   mutation, matching the resolution pattern already used for teams, labels, and
@@ -532,7 +532,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Agent skill bundle** at `skills/clinear/` — a Swarm/Claude-style skill
   (SKILL.md frontmatter + `references/*.md`) that teaches AI agents both the
-  mechanics of the CLI and the *behavior* of working through Linear (when to
+  mechanics of the CLI and the *behavior* of working through the upstream API (when to
   search before create, when to use `--output json`, how to chain commands,
   safety rules, anti-patterns). Install with `bash skills/install.sh`.
 - **`clinear-mcp` MCP server** — optional Model Context Protocol server
@@ -619,4 +619,4 @@ Initial release.
   `config.toml`.
 - Typed exit codes (0–8) for scriptable error handling.
 - `--dry-run` for safe mutation previews.
-- 28/29 passing E2E tests against the live Linear API.
+- 28/29 passing E2E tests against the live the upstream API.

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 
-from hoja.client import LinearClient
+from hoja.client import GraphClient
 from hoja.graphql import queries
 from hoja.models.user import User
 
@@ -17,7 +17,7 @@ _viewer_cache: User | None = None
 _viewer_lock = asyncio.Lock()
 
 
-async def get_viewer(client: LinearClient, *, refresh: bool = False) -> User:
+async def get_viewer(client: GraphClient, *, refresh: bool = False) -> User:
     """Return the currently-authenticated user.
 
     Cached per-process so repeated --assignee me resolutions don't

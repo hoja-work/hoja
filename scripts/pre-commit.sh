@@ -2,7 +2,7 @@
 # Hoja pre-commit hook: hard-block secrets and forbidden file types.
 #
 # Refuses to commit if any staged file contains:
-#   - Linear API token         (lin_api_...)
+#   - Hoja API token           (hoja_..., and legacy lin_api_ keys)
 #   - PyPI API token           (pypi-...)
 #   - AWS access keys          (AKIA...)
 #   - GitHub PATs              (ghp_, ghs_, gho_, ghu_, ghr_)
@@ -55,7 +55,7 @@ done
 
 # Pattern => human description
 patterns=(
-    'lin_api_[A-Za-z0-9]{20,}'
+    '(hoja_|lin_api_)[A-Za-z0-9_-]{20,}'
     'pypi-[A-Za-z0-9_-]{16,}'
     'AKIA[0-9A-Z]{16}'
     'ghp_[A-Za-z0-9]{30,}'
@@ -67,7 +67,7 @@ patterns=(
     '"type":[[:space:]]*"service_account"'
     '-----BEGIN (RSA |OPENSSH |EC |PGP |DSA |ENCRYPTED )?PRIVATE KEY'
 )
-descriptions=('Linear API token' 'PyPI API token' 'AWS Access Key ID' 'GitHub personal access token' 'GitHub server-to-server token' 'GitHub OAuth token' 'GitHub user-to-server token' 'GitHub refresh token' 'Slack token' 'Google service account JSON' 'Private key block')
+descriptions=('Hoja API token (or legacy Linear-prefixed key)' 'PyPI API token' 'AWS Access Key ID' 'GitHub personal access token' 'GitHub server-to-server token' 'GitHub OAuth token' 'GitHub user-to-server token' 'GitHub refresh token' 'Slack token' 'Google service account JSON' 'Private key block')
 
 for f in "${staged[@]}"; do
     [ -f "$f" ] || continue

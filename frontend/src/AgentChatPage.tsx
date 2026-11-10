@@ -274,9 +274,9 @@ function ScrollFollower() {
 }
 
 const STARTERS = [
-  { displayText: 'Summarize my open issues', prompt: 'Summarize my open issues.' },
+  { displayText: 'Summarize my open issues', prompt: 'Summarize my open tasks.' },
   { displayText: 'What is in progress this cycle?', prompt: 'What is in progress in the active cycle?' },
-  { displayText: 'What is due this week?', prompt: 'What issues are due this week?' },
+  { displayText: 'What is due this week?', prompt: 'What tasks are due this week?' },
   { displayText: 'Find unassigned bugs', prompt: 'Find unassigned bugs and list them.' },
 ];
 

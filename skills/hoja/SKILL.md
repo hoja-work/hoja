@@ -1,7 +1,7 @@
 ---
 name: hoja
 version: 0.7.0
-description: Guide for using the `hoja` CLI with Hoja, Linear, or another Linear-compatible GraphQL service. Use for issue triage, creation, updates, search, comments, labels, cycles, projects, teams, and identifiers such as ENG-123. Reinforces a "use Bash + hoja, do not write Python wrappers" workflow.
+description: Guide for using the `hoja` CLI with Hoja, the upstream API, or another wire-compatible GraphQL service. Use for issue triage, creation, updates, search, comments, labels, cycles, projects, teams, and identifiers such as ENG-123. Reinforces a "use Bash + hoja, do not write Python wrappers" workflow.
 author: Hoja contributors
 requires:
   bins: ["hoja"]
@@ -11,13 +11,13 @@ tags: [linear, cli, issue-tracker, project-management]
 
 # Hoja work-management skill
 
-Help the user interact with Hoja, Linear, or another Linear-compatible
+Help the user interact with Hoja, the upstream API, or another wire-compatible
 GraphQL service from the command line using `hoja`. Hoja is generic,
 self-hosted, offline-first, agent-native work management with Pydantic v2
 validation, six output formats, and a filter DSL.
 
 Use the canonical `hoja`, `hoja-mcp`, and `hoja-serve` commands.
-Keep the Linear GraphQL names unchanged on the wire. `HOJA_TOKEN` and
+Keep the upstream API GraphQL names unchanged on the wire. `HOJA_TOKEN` and
 `HOJA_API_URL` are the canonical environment variables; the deprecated
 `LINEAR_TOKEN` and `LINEAR_API_URL` names are still read when the `HOJA_*`
 variable is unset.
@@ -43,7 +43,7 @@ Best practices and operational guidance for AI coding agents using `hoja`.
 - **Identifiers are case-sensitive** — `ENG-35`, never `eng-35`.
 - **Search before create** — `hoja issue search "<query>"` before
   `hoja issue create` to avoid duplicate issues.
-- **`hoja issue delete` does NOT exist** — the Linear-compatible API has no
+- **`hoja issue delete` does NOT exist** — the wire-compatible API has no
   issue hard delete. Use a state transition (`Canceled` or `Archived`).
 
 ### Design Principles
@@ -130,8 +130,8 @@ hoja -o ids issue list --label "old" -n 100 \
 #### Multi-account: let hoja pick the right workspace
 ```bash
 # One-time: declare which teams each account owns
-hoja auth add acme --token lin_api_xxx --teams "ENG,OPS"
-hoja auth add side --token lin_api_yyy --teams "SIDE"
+hoja auth add acme --token hoja_xxx --teams "ENG,OPS"
+hoja auth add side --token hoja_yyy --teams "SIDE"
 
 # Now just use team keys / identifiers — the owning account is auto-selected:
 hoja issue list --team ENG     # → acme account
@@ -231,8 +231,8 @@ is selected automatically. You do NOT need to export a token per workspace.
 ### Set up accounts (one time)
 
 ```bash
-hoja auth add work     --token lin_api_xxx --teams "SWA,ENG" --default
-hoja auth add personal --token lin_api_yyy --teams "PER"
+hoja auth add work     --token hoja_xxx --teams "SWA,ENG" --default
+hoja auth add personal --token hoja_yyy --teams "PER"
 hoja auth accounts          # see them, with [default]/[current]/teams markers
 ```
 
@@ -256,18 +256,18 @@ hoja auth accounts          # see them, with [default]/[current]/teams markers
 3. `token` stored in the account's config block (discouraged: plaintext)
 
 Verify what resolved with `hoja auth status` / `hoja auth accounts`.
-Tokens look like `lin_api_<long-random-string>` — mint one from your
+Tokens look like `hoja_<long-random-string>` — mint one from your
 workspace's members/API-key screen, or with `hoja-serve token`.
 
 ### Config schema (canonical — do NOT downgrade to `[auth]`)
 
 ```toml
 [accounts.work]
-token_env = "HOJA_TOKEN"     # or: token = "lin_api_..."
+token_env = "HOJA_TOKEN"     # or: token = "hoja_..."
 teams = ["SWA", "ENG"]       # enables team-key auto-selection
 
 [accounts.personal]
-token = "lin_api_..."
+token = "hoja_..."
 teams = ["PER"]
 
 [defaults]
@@ -341,7 +341,7 @@ single command against a specific account without changing the default:
 ```bash
 hoja --account personal issue list --team PER
 # or pin a one-off token (not stored):
-hoja --token "lin_api_..." issue list --team SWA
+hoja --token "hoja_..." issue list --team SWA
 ```
 
 If a command targets a team an account owns (`--teams`), the right account is

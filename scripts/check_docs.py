@@ -42,6 +42,7 @@ DURABLE_DOCS = {
     "docs/webhooks.md",
     "docs/meetings.md",
     "docs/decisions.md",
+    "docs/github-linking.md",
     "docs/views.md",
     "docs/notifications/android-and-ux.md",
 }

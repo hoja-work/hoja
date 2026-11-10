@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from hoja.client import LinearClient
+from hoja.client import GraphClient
 from hoja.config import Config
 from hoja.models.enums import OutputFormat
 
@@ -42,8 +42,8 @@ def set_state(state: CLIState) -> None:
     _state = state
 
 
-def build_client(state: CLIState | None = None) -> LinearClient:
-    """Construct a LinearClient configured from the current CLI state."""
+def build_client(state: CLIState | None = None) -> GraphClient:
+    """Construct a GraphClient configured from the current CLI state."""
     s = state or _state
     kwargs = dict(
         token=s.token,
@@ -52,4 +52,4 @@ def build_client(state: CLIState | None = None) -> LinearClient:
     )
     if s.base_url:
         kwargs["base_url"] = s.base_url
-    return LinearClient(**kwargs)
+    return GraphClient(**kwargs)

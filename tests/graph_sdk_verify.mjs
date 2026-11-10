@@ -1,5 +1,5 @@
-// Verify a Hoja webhook request with Linear's official SDK (independent check).
-// usage: node linear_sdk_verify.mjs <dir containing node_modules/@linear/sdk> <secret> <signature> < body
+// Verify a Hoja webhook request with the upstream contract's official SDK (independent check).
+// usage: node graph_sdk_verify.mjs <dir containing node_modules/@linear/sdk> <secret> <signature> < body
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 

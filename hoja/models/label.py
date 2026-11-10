@@ -8,7 +8,7 @@ from hoja.models.base import Timestamped
 
 
 class Label(Timestamped):
-    """A Linear issue label."""
+    """A the upstream API issue label."""
 
     id: str
     name: str

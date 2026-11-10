@@ -1,6 +1,6 @@
-"""Linear enums.
+"""the upstream API enums.
 
-Generated from introspection output (schema/linear-schema.json).
+Generated from introspection output (schema/graph-schema.json).
 Only the ones actually used in v1 are included.
 """
 
@@ -10,7 +10,7 @@ from enum import Enum, IntEnum
 
 
 class IssuePriority(IntEnum):
-    """Linear issue priority levels."""
+    """the upstream API issue priority levels."""
 
     NO_PRIORITY = 0
     URGENT = 1
@@ -38,7 +38,7 @@ class IssuePriority(IntEnum):
 
 
 class StateType(str, Enum):
-    """Linear workflow state categories.
+    """the upstream API workflow state categories.
 
     These are the broad "buckets" — actual states are user-defined per team.
     """

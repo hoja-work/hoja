@@ -31,7 +31,7 @@ CONFIG_TEMPLATE = """\
 # (LINEAR_TOKEN is still honoured as a deprecated fallback).
 token_env = "HOJA_TOKEN"
 # Uncomment to store the token here directly (not recommended):
-# token = "lin_api_..."
+# token = "hoja_..."
 # Team keys this account owns — enables automatic account selection when a
 # command targets one of these teams (e.g. `hoja issue get SWA-20`).
 # teams = ["SWA", "ENG"]
@@ -93,7 +93,7 @@ def init(
     typer.echo(f"Created {target}")
     typer.echo("")
     typer.echo("Next steps:")
-    typer.echo(f"  1. export HOJA_TOKEN=\"lin_api_...\"  # or edit {target}")
+    typer.echo(f"  1. export HOJA_TOKEN=\"hoja_...\"  # or edit {target}")
     typer.echo("  2. hoja me  # verify it works")
     typer.echo("")
     typer.echo("Multi-account setup:")

@@ -2,7 +2,7 @@
 //   node scripts/test-status-age.mjs
 // The expected strings are derived by hand from the format in the module.
 import assert from 'node:assert/strict';
-import {formatDuration, millisInStatus, statusAgeLabel, timeInStatus} from '../frontend/src/linear/statusAge.ts';
+import {formatDuration, millisInStatus, statusAgeLabel, timeInStatus} from '../frontend/src/graph/statusAge.ts';
 
 const T = Date.parse('2026-11-03T12:00:00.000Z');
 const iso = ms => new Date(T - ms).toISOString();

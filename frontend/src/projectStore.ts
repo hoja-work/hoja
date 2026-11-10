@@ -171,7 +171,7 @@ export function useProjectIssues(projectId: string, gql: Gql, fields: string, en
       const d = await gql(`query ProjectOlderIssues($after:String,$filter:IssueFilter){issues(first:50,after:$after,filter:$filter,orderBy:createdAt){nodes ${fields} pageInfo{hasNextPage endCursor}}}`,
         {after, filter: {project: {id: {eq: projectId}}, state: {type: {in: ['completed', 'canceled']}}, updatedAt: {lt: closedCutoff}}});
       const page = d.issues;
-      if (page.pageInfo?.hasNextPage && (!page.pageInfo.endCursor || page.pageInfo.endCursor === after || !page.nodes.length)) throw Error('Project issues pagination did not advance.');
+      if (page.pageInfo?.hasNextPage && (!page.pageInfo.endCursor || page.pageInfo.endCursor === after || !page.nodes.length)) throw Error('Project tasks pagination did not advance.');
       getSync()?.adopt(page.nodes);
       const prior = after ? olderPages.get(projectId)?.ids || [] : [];
       const next: OlderPages = {cutoff: closedCutoff, ids: [...prior, ...page.nodes.map((i: Issue) => i.id)], cursor: page.pageInfo?.endCursor || null, more: Boolean(page.pageInfo?.hasNextPage)};

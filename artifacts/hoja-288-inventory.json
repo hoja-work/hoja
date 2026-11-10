@@ -1,0 +1,325 @@
+{
+  "issue": "HOJA-288",
+  "sdl": "hoja_server/schema.graphql",
+  "sdl_lines": 480,
+  "api_symbols_total": 42,
+  "by_disposition": {
+    "rename": 0,
+    "alias": 42,
+    "leave": 0
+  },
+  "by_kind": {
+    "arg": 1,
+    "field": 22,
+    "input": 7,
+    "input_field": 2,
+    "type": 10
+  },
+  "symbols": [
+    {
+      "kind": "arg",
+      "name": "deleteIssues",
+      "owner": "Mutation.teamDelete",
+      "disposition": "alias",
+      "reason": "boolean flag: add deleteTasks, keep deleteIssues"
+    },
+    {
+      "kind": "field",
+      "name": "issue",
+      "owner": "Attachment",
+      "disposition": "alias",
+      "reason": "root/object field: add task* equivalent, deprecate issue*"
+    },
+    {
+      "kind": "field",
+      "name": "issue",
+      "owner": "InboxNotification",
+      "disposition": "alias",
+      "reason": "root/object field: add task* equivalent, deprecate issue*"
+    },
+    {
+      "kind": "field",
+      "name": "issueLabel",
+      "owner": "IssueLabelPayload",
+      "disposition": "alias",
+      "reason": "label subsystem: alias only, table issue_label stays"
+    },
+    {
+      "kind": "field",
+      "name": "issue",
+      "owner": "IssuePayload",
+      "disposition": "alias",
+      "reason": "root/object field: add task* equivalent, deprecate issue*"
+    },
+    {
+      "kind": "field",
+      "name": "issueArchive",
+      "owner": "Mutation",
+      "disposition": "alias",
+      "reason": "root/object field: add task* equivalent, deprecate issue*"
+    },
+    {
+      "kind": "field",
+      "name": "issueCreate",
+      "owner": "Mutation",
+      "disposition": "alias",
+      "reason": "root/object field: add task* equivalent, deprecate issue*"
+    },
+    {
+      "kind": "field",
+      "name": "issueDelete",
+      "owner": "Mutation",
+      "disposition": "alias",
+      "reason": "root/object field: add task* equivalent, deprecate issue*"
+    },
+    {
+      "kind": "field",
+      "name": "issueLabelCreate",
+      "owner": "Mutation",
+      "disposition": "alias",
+      "reason": "label subsystem: alias only, table issue_label stays"
+    },
+    {
+      "kind": "field",
+      "name": "issueLabelDelete",
+      "owner": "Mutation",
+      "disposition": "alias",
+      "reason": "label subsystem: alias only, table issue_label stays"
+    },
+    {
+      "kind": "field",
+      "name": "issueLabelUpdate",
+      "owner": "Mutation",
+      "disposition": "alias",
+      "reason": "label subsystem: alias only, table issue_label stays"
+    },
+    {
+      "kind": "field",
+      "name": "issueSubscribe",
+      "owner": "Mutation",
+      "disposition": "alias",
+      "reason": "root/object field: add task* equivalent, deprecate issue*"
+    },
+    {
+      "kind": "field",
+      "name": "issueUnsubscribe",
+      "owner": "Mutation",
+      "disposition": "alias",
+      "reason": "root/object field: add task* equivalent, deprecate issue*"
+    },
+    {
+      "kind": "field",
+      "name": "issueUpdate",
+      "owner": "Mutation",
+      "disposition": "alias",
+      "reason": "root/object field: add task* equivalent, deprecate issue*"
+    },
+    {
+      "kind": "field",
+      "name": "issue",
+      "owner": "MyIssueActivity",
+      "disposition": "alias",
+      "reason": "root/object field: add task* equivalent, deprecate issue*"
+    },
+    {
+      "kind": "field",
+      "name": "issueCreated",
+      "owner": "NotificationPreferencesPayload",
+      "disposition": "alias",
+      "reason": "root/object field: add task* equivalent, deprecate issue*"
+    },
+    {
+      "kind": "field",
+      "name": "issueUpdated",
+      "owner": "NotificationPreferencesPayload",
+      "disposition": "alias",
+      "reason": "root/object field: add task* equivalent, deprecate issue*"
+    },
+    {
+      "kind": "field",
+      "name": "issue",
+      "owner": "Query",
+      "disposition": "alias",
+      "reason": "root/object field: add task* equivalent, deprecate issue*"
+    },
+    {
+      "kind": "field",
+      "name": "issueLabelSettings",
+      "owner": "Query",
+      "disposition": "alias",
+      "reason": "label subsystem: alias only, table issue_label stays"
+    },
+    {
+      "kind": "field",
+      "name": "issueLabels",
+      "owner": "Query",
+      "disposition": "alias",
+      "reason": "label subsystem: alias only, table issue_label stays"
+    },
+    {
+      "kind": "field",
+      "name": "issues",
+      "owner": "Query",
+      "disposition": "alias",
+      "reason": "root/object field: add task* equivalent, deprecate issue*"
+    },
+    {
+      "kind": "field",
+      "name": "myIssueActivity",
+      "owner": "Query",
+      "disposition": "alias",
+      "reason": "stored history/event feed; alias to preserve past events"
+    },
+    {
+      "kind": "field",
+      "name": "searchIssues",
+      "owner": "Query",
+      "disposition": "alias",
+      "reason": "root/object field: add task* equivalent, deprecate issue*"
+    },
+    {
+      "kind": "input",
+      "name": "IssueCreateInput",
+      "owner": null,
+      "disposition": "alias",
+      "reason": "input type: alias, do not rename (wire contract)"
+    },
+    {
+      "kind": "input",
+      "name": "IssueFilter",
+      "owner": null,
+      "disposition": "alias",
+      "reason": "input type: alias, do not rename (wire contract)"
+    },
+    {
+      "kind": "input",
+      "name": "IssueLabelCreateInput",
+      "owner": null,
+      "disposition": "alias",
+      "reason": "label subsystem: alias only, table issue_label stays"
+    },
+    {
+      "kind": "input",
+      "name": "IssueLabelFilter",
+      "owner": null,
+      "disposition": "alias",
+      "reason": "label subsystem: alias only, table issue_label stays"
+    },
+    {
+      "kind": "input",
+      "name": "IssueLabelUpdateInput",
+      "owner": null,
+      "disposition": "alias",
+      "reason": "label subsystem: alias only, table issue_label stays"
+    },
+    {
+      "kind": "input",
+      "name": "IssueParentFilter",
+      "owner": null,
+      "disposition": "alias",
+      "reason": "input type: alias, do not rename (wire contract)"
+    },
+    {
+      "kind": "input",
+      "name": "IssueUpdateInput",
+      "owner": null,
+      "disposition": "alias",
+      "reason": "input type: alias, do not rename (wire contract)"
+    },
+    {
+      "kind": "input_field",
+      "name": "issueId",
+      "owner": "AttachmentCreateInput",
+      "disposition": "alias",
+      "reason": "input field: alias on the Task input"
+    },
+    {
+      "kind": "input_field",
+      "name": "issueId",
+      "owner": "CommentCreateInput",
+      "disposition": "alias",
+      "reason": "input field: alias on the Task input"
+    },
+    {
+      "kind": "type",
+      "name": "Issue",
+      "owner": null,
+      "disposition": "alias",
+      "reason": "type: add Task alias, deprecate Issue"
+    },
+    {
+      "kind": "type",
+      "name": "IssueActivity",
+      "owner": null,
+      "disposition": "alias",
+      "reason": "stored history/event feed; alias to preserve past events"
+    },
+    {
+      "kind": "type",
+      "name": "IssueActivityConnection",
+      "owner": null,
+      "disposition": "alias",
+      "reason": "stored history/event feed; alias to preserve past events"
+    },
+    {
+      "kind": "type",
+      "name": "IssueConnection",
+      "owner": null,
+      "disposition": "alias",
+      "reason": "pagination wrapper; alias so existing clients keep codegen output"
+    },
+    {
+      "kind": "type",
+      "name": "IssueLabel",
+      "owner": null,
+      "disposition": "alias",
+      "reason": "label subsystem: alias only, table issue_label stays"
+    },
+    {
+      "kind": "type",
+      "name": "IssueLabelConnection",
+      "owner": null,
+      "disposition": "alias",
+      "reason": "label subsystem: alias only, table issue_label stays"
+    },
+    {
+      "kind": "type",
+      "name": "IssueLabelPayload",
+      "owner": null,
+      "disposition": "alias",
+      "reason": "label subsystem: alias only, table issue_label stays"
+    },
+    {
+      "kind": "type",
+      "name": "IssuePayload",
+      "owner": null,
+      "disposition": "alias",
+      "reason": "mutation payload; alias"
+    },
+    {
+      "kind": "type",
+      "name": "MyIssueActivity",
+      "owner": null,
+      "disposition": "alias",
+      "reason": "stored history/event feed; alias to preserve past events"
+    },
+    {
+      "kind": "type",
+      "name": "MyIssueActivityConnection",
+      "owner": null,
+      "disposition": "alias",
+      "reason": "stored history/event feed; alias to preserve past events"
+    }
+  ],
+  "raw_issue_hits_by_area": {
+    "frontend/src": 3004,
+    "hoja": 589,
+    "hoja_server": 1136,
+    "tests": 1110,
+    "docs": 112,
+    "web": 76,
+    "connectors": 163,
+    "scripts": 617
+  },
+  "unclassified_needing_review": []
+}

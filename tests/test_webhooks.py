@@ -1,4 +1,4 @@
-"""Outgoing webhooks: Linear wire contract, lifecycle events, delivery guarantees."""
+"""Outgoing webhooks: the upstream API wire contract, lifecycle events, delivery guarantees."""
 
 from __future__ import annotations
 
@@ -282,8 +282,8 @@ def test_background_worker_delivers_to_a_real_http_receiver(tmp_path, monkeypatc
         actions.append((payload["action"], payload["data"]["state"]["type"], "stateId" in payload.get("updatedFrom", {})))
     assert actions == [("create", "unstarted", False), ("update", "completed", True)]
     sdk = os.environ.get("HOJA_LINEAR_SDK_DIR")
-    if sdk:  # independent check: Linear's own verifier must accept Hoja's requests
-        script = Path(__file__).with_name("linear_sdk_verify.mjs")
+    if sdk:  # independent check: the upstream contract's own verifier must accept Hoja's requests
+        script = Path(__file__).with_name("graph_sdk_verify.mjs")
         for headers, body in _Receiver.received:
             out = subprocess.run(["node", str(script), sdk, hook["secret"], headers["linear-signature"]],
                                  input=body, capture_output=True, timeout=30)

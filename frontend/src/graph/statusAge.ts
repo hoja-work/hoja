@@ -1,7 +1,7 @@
 /* Single source of truth for "how long has this issue held its current status?".
  *
  * Every surface that shows status age (the My issues StatusPicker popover and the
- * Linear-style list rows) must use this module. `stateChangedAt` is the server's
+ * carry-over-style list rows) must use this module. `stateChangedAt` is the server's
  * dedicated timestamp: the backend moves it only when the state actually changes
  * (hoja_server/writer.py), so editing a title or assignee does not reset it.
  *

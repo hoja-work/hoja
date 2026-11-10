@@ -1,4 +1,4 @@
-"""Async GraphQL client for Hoja's Linear-compatible GraphQL API.
+"""Async GraphQL client for Hoja's wire-compatible GraphQL API.
 
 Design goals:
 - Single httpx.AsyncClient with sensible defaults (HTTP/2, timeout, retries).
@@ -32,14 +32,14 @@ logger = logging.getLogger("hoja.client")
 # Endpoint used when no --api-url flag, $HOJA_API_URL (or deprecated
 # $LINEAR_API_URL), or accounts.<name>.base_url is configured. Point the client
 # at your own `hoja-serve` instance (e.g. http://127.0.0.1:8787/graphql) to stay
-# fully self-hosted; this fallback is the public Linear-compatible API.
+# fully self-hosted; this fallback is the public wire-compatible API.
 DEFAULT_API_URL = "https://api.linear.app/graphql"
 
 T = TypeVar("T", bound=BaseModel)
 
 
-class LinearClient:
-    """Async GraphQL client for a Linear-compatible GraphQL API."""
+class GraphClient:
+    """Async GraphQL client for a wire-compatible GraphQL API."""
 
     def __init__(
         self,
@@ -62,7 +62,7 @@ class LinearClient:
             },
         )
 
-    async def __aenter__(self) -> "LinearClient":
+    async def __aenter__(self) -> "GraphClient":
         return self
 
     async def __aexit__(self, *_: Any) -> None:
@@ -92,7 +92,7 @@ class LinearClient:
         """
         payload: dict[str, Any] = {"query": query}
         if variables:
-            # Drop None values — Linear's API rejects explicit nulls in many inputs
+            # Drop None values — the upstream contract's API rejects explicit nulls in many inputs
             payload["variables"] = _strip_none(variables)
         if operation:
             payload["operationName"] = operation
@@ -138,7 +138,7 @@ class LinearClient:
         try:
             body = resp.json()
         except json.JSONDecodeError as e:
-            raise APIError(f"Non-JSON response from Linear: {e}") from e
+            raise APIError(f"Non-JSON response from the upstream API: {e}") from e
 
         # GraphQL-level errors
         if errors := body.get("errors"):
@@ -147,7 +147,7 @@ class LinearClient:
 
         data = body.get("data")
         if data is None:
-            raise APIError("Linear returned empty data")
+            raise APIError("the upstream API returned empty data")
         return data
 
     # ------------------------------------------------------------------

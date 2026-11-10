@@ -61,13 +61,13 @@ SDL = gql(
       answer: String
     }
     extend type Query {
-      issueDecisions(issueId: String!, status: String, first: Int = 50): [IssueDecision!]!
-      issueDecision(id: String!): IssueDecision!
+      issueDecisions(issueId: String!, status: String, first: Int = 50): [IssueDecision!]! @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
+      issueDecision(id: String!): IssueDecision! @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
     }
     extend type Mutation {
-      issueDecisionCreate(input: IssueDecisionCreateInput!): IssueDecisionPayload!
-      issueDecisionAnswer(id: String!, input: IssueDecisionAnswerInput!): IssueDecisionAnswerPayload!
-      issueDecisionCancel(id: String!): IssueDecisionPayload!
+      issueDecisionCreate(input: IssueDecisionCreateInput!): IssueDecisionPayload! @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
+      issueDecisionAnswer(id: String!, input: IssueDecisionAnswerInput!): IssueDecisionAnswerPayload! @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
+      issueDecisionCancel(id: String!): IssueDecisionPayload! @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
     }
     """
 )

@@ -1,4 +1,4 @@
-"""Base Pydantic models shared across Linear entities."""
+"""Base Pydantic models shared across the upstream API entities."""
 
 from __future__ import annotations
 
@@ -11,10 +11,10 @@ T = TypeVar("T")
 
 
 class LinearModel(BaseModel):
-    """Base class for all Linear entities.
+    """Base class for all the upstream API entities.
 
     Configuration:
-    - extra="ignore": Linear adds new fields often; don't fail on unknown.
+    - extra="ignore": the upstream API adds new fields often; don't fail on unknown.
     - populate_by_name: Accept both alias and field name.
     - frozen=False: Allow mutation; mutations happen via API not local edits.
     """
@@ -40,7 +40,7 @@ class PageInfo(BaseModel):
 class Connection(BaseModel, Generic[T]):
     """Generic GraphQL connection wrapper.
 
-    Linear paginates all list queries using this Relay-style envelope:
+    the upstream API paginates all list queries using this Relay-style envelope:
       { nodes: [T], pageInfo: PageInfo }
     """
 

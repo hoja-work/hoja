@@ -18,4 +18,7 @@ RUN python -m pip install --no-cache-dir --upgrade pip \
 ENV HOJA_WEB_ROOT=/app/web
 USER hoja
 EXPOSE 8787
-CMD ["sh", "-c", "hoja-serve migrate && hoja-serve serve --host 0.0.0.0 --port 8787"]
+# exec, so hoja-serve *is* PID 1: the shell that runs migrate is replaced by
+# the server, and the runtime's SIGTERM reaches the process that handles it
+# (HOJA-234).
+CMD ["sh", "-c", "hoja-serve migrate && exec hoja-serve serve --host 0.0.0.0 --port 8787"]

@@ -54,14 +54,14 @@ READ_TOOLS: dict[str, str] = {
     "issues": (
         "List issues, newest first. Example filter: "
         '{"team": {"key": {"eq": "ENG"}}, "state": {"type": {"nin": ["completed", "canceled"]}}}. '
-        "State types: backlog, unstarted, started, completed, canceled."
+        "State types: backlog, unstarted, started, completed, canceled." + " Deprecated: prefer the task* equivalent; this name stays as a wire-compatible alias."
     ),
     "issue": (
         "One issue by identifier (ENG-12) or id, with state, assignee, labels, comments, "
-        "its parent and sub-issues in children."
+        "its parent and sub-issues in children." + " Deprecated: prefer the task* equivalent; this name stays as a wire-compatible alias."
     ),
-    "searchIssues": "Text search over issue titles, descriptions and identifiers.",
-    "myIssueActivity": "Recent activity on issues involving the signed-in user.",
+    "searchIssues": "Text search over issue titles, descriptions and identifiers." + " Deprecated: prefer the task* equivalent; this name stays as a wire-compatible alias.",
+    "myIssueActivity": "Recent activity on issues involving the signed-in user." + " Deprecated: prefer the task* equivalent; this name stays as a wire-compatible alias.",
     "inboxNotifications": "The signed-in user's inbox notifications.",
     "inboxUnreadCount": "Number of unread inbox notifications.",
     "projects": "List projects.",
@@ -77,9 +77,26 @@ READ_TOOLS: dict[str, str] = {
     "issueDecisions": (
         "Decisions (docs/decisions.md) on an issue, newest first. Poll this to read the "
         "human's answer: an answered row carries answer, chosenOption, answeredBy and answeredAt. "
-        "filter with status: \"open\" | \"answered\" | \"canceled\"."
+        "filter with status: \"open\" | \"answered\" | \"canceled\"." + " Deprecated: prefer the task* equivalent; this name stays as a wire-compatible alias."
     ),
-    "issueDecision": "One decision by id — the poll target for a single question.",
+    "issueDecision": "One decision by id — the poll target for a single question." + " Deprecated: prefer the task* equivalent; this name stays as a wire-compatible alias.",
+    "tasks": (
+        "List tasks, newest first. Example filter: "
+        '{"team": {"key": {"eq": "ENG"}}, "state": {"type": {"nin": ["completed", "canceled"]}}}. '
+        "State types: backlog, unstarted, started, completed, canceled."
+    ),
+    "task": (
+        "One task by identifier (ENG-12) or id, with state, assignee, labels, comments, "
+        "its parent and sub-tasks in children."
+    ),
+    "searchTasks": "Text search over task titles, descriptions and identifiers.",
+    "myTaskActivity": "Recent activity on tasks involving the signed-in user.",
+    "taskLabels": "Task labels (workspace-wide and per team).",
+    "taskDecisions": (
+        "Decisions (docs/decisions.md) on a task, newest first. Poll this to read the "
+        "human's answer: an answered row carries answer, chosenOption, answeredBy and answeredAt."
+    ),
+    "taskDecision": "One decision by id - the poll target for a single question.",
 }
 
 WRITE_TOOLS: dict[str, str] = {
@@ -100,12 +117,12 @@ WRITE_TOOLS: dict[str, str] = {
         "Send ONLY the fields to change; every field you send is written (labelIds replaces all labels). "
         "Returns the updated issue."
     ),
-    "issueArchive": "Archive an issue (reversible; prefer this over delete).",
-    "issueDelete": "Permanently delete an issue. Confirm with the user first.",
+    "issueArchive": "Archive an issue (reversible; prefer this over delete)." + " Deprecated: prefer the task* equivalent; this name stays as a wire-compatible alias.",
+    "issueDelete": "Permanently delete an issue. Confirm with the user first." + " Deprecated: prefer the task* equivalent; this name stays as a wire-compatible alias.",
     "commentCreate": "Add a comment to an issue.",
     "commentUpdate": "Edit a comment.",
     "commentDelete": "Delete a comment.",
-    "issueLabelCreate": "Create a label, optionally scoped to a team.",
+    "issueLabelCreate": "Create a label, optionally scoped to a team." + " Deprecated: prefer the task* equivalent; this name stays as a wire-compatible alias.",
     "issueLabelUpdate": "Rename or recolor a label.",
     "issueLabelDelete": "Delete a label.",
     "projectCreate": "Create a project, optionally linked to teams.",
@@ -139,10 +156,35 @@ WRITE_TOOLS: dict[str, str] = {
     "issueDecisionCancel": (
         "Withdraw an open decision you asked (the asker or an admin only); clears the issue's flag."
     ),
+
+    "taskCreate": (
+        "Create a task. For multi-step work, create or reuse one parent task, then create actionable "
+        "sub-tasks with parentId instead of separate root tasks; omit parentId for a standalone "
+        "task or the parent itself. Returns the created task including its identifier, parent and children."
+    ),
+    "taskUpdate": (
+        "Update a task: title, description, priority, state (by name), assignee "
+        "('me', email or name), project, cycle, labels, estimate, due date and parent. "
+        "parentId reparents a task within its team; null detaches it from its parent. "
+        "Send ONLY the fields to change; every field you send is written (labelIds replaces all labels). "
+        "Returns the updated task."
+    ),
+    "taskArchive": "Archive a task (reversible; prefer this over delete).",
+    "taskDelete": "Permanently delete a task. Confirm with the user first.",
+    "taskLabelCreate": "Create a task label, optionally scoped to a team.",
+    "taskLabelUpdate": "Rename or recolor a task label.",
+    "taskLabelDelete": "Delete a task label.",
+    "taskDecisionCreate": (
+        "Ask a human a decision on a task while you work (docs/decisions.md). Pass question, "
+        "optional options [{key,label,description}] and context. Returns the decision id to poll."
+    ),
+    "taskDecisionAnswer": "Answer a decision by id (or option key). Idempotent.",
+    "taskDecisionCancel": "Withdraw an open decision (asker or admin only)."
 }
 
 DESTRUCTIVE = {"issueDelete", "commentDelete", "issueLabelDelete", "teamMemberRemove",
-               "issueArchive", "projectArchive", "initiativeArchive", "teamArchive"}
+               "issueArchive", "projectArchive", "initiativeArchive", "teamArchive",
+               "taskDelete", "taskLabelDelete", "taskArchive"}
 IDEMPOTENT_PREFIXES = ("notificationMark", "notificationArchive")
 
 FIELD_HINTS = {
@@ -284,6 +326,12 @@ def _json_schema(t, defs: dict) -> dict:
 
 
 def _entity_of(op: str) -> str | None:
+    # task* is a presentation alias over the same rows, so it maps onto the existing
+    # entity keys; returning "task" would invalidate one row under two keys.
+    if op.startswith("taskLabel"):
+        return "issueLabel"
+    if op.startswith("task"):
+        return "issue"
     for prefix in ("issueLabel", "issue", "team", "project"):
         if op.startswith(prefix):
             return prefix
@@ -595,13 +643,15 @@ def _make_tool(schema: GraphQLSchema, spec: _Spec, principal: Callable[[bool], d
 
 
 INSTRUCTIONS = (
-    "Hoja is a Linear-compatible work tracker. Issues are referenced as TEAMKEY-N (e.g. ENG-12) and every "
-    "issue argument accepts that identifier. Start with hoja_viewer and hoja_teams to learn who you are and "
+    "Hoja is a work tracker that speaks the graph wire format agents and integrations already use. Tasks are "
+    "referenced as TEAMKEY-N (e.g. ENG-12) and every task argument accepts that identifier. The task* tools are "
+    "the current names; their issue* equivalents remain as deprecated aliases and behave identically. "
+    "Start with hoja_viewer and hoja_teams to learn who you are and "
     "which team keys exist; hoja_team(id: KEY) shows a team's workflow states and members. Reference fields "
     "accept friendly values: teamId takes a team key; assigneeId/leadId/userId take 'me', an email or an exact "
     "member name; stateId takes a state name like 'In Progress'; labelIds and projectId take names. For "
-    "multi-step work, create or reuse a parent issue and put actionable steps under it with parentId rather than "
-    "creating a stack of unrelated root issues; keep genuinely standalone issues flat. Results "
+    "multi-step work, create or reuse a parent task and put actionable steps under it with parentId rather than "
+    "creating a stack of unrelated root tasks; keep genuinely standalone tasks flat. Results "
     "contain the affected entity, so read them to confirm what changed. Errors name the argument that was "
     "wrong; fix it instead of guessing other parameters. Omit optional arguments you do not need: empty "
     "strings/lists and 0 for priority/estimate on updates are ignored (use priority \"none\" to clear it). "

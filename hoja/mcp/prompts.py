@@ -15,7 +15,7 @@ from __future__ import annotations
 
 REMINDER = (
     "REMINDER: run each command above via the Bash tool. Do not write Python "
-    "wrappers around Linear's GraphQL API — `hoja` is the supported "
+    "wrappers around the upstream contract's GraphQL API — `hoja` is the supported "
     "interface. Use `--output json` when piping or programmatically reading."
 )
 

@@ -46,7 +46,7 @@ class HojaError(Exception):
 
 
 class AuthError(HojaError):
-    """Missing or invalid Linear API token."""
+    """Missing or invalid the upstream API token."""
 
     exit_code = ExitCode.AUTH_ERROR
 

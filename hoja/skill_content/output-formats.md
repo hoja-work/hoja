@@ -26,7 +26,7 @@ The default. Uses Rich (https://github.com/Textualize/rich) for color, wrapping,
 The canonical machine-readable contract.
 
 - **Null fields are pruned recursively.** `{"avatar_url": null, "active": true}` becomes `{"active": true}`. This keeps payloads small and reduces context window noise for agents.
-- Fields use Linear's GraphQL camelCase (e.g. `displayName`, `priorityLabel`) — hoja models pass through alias names.
+- Fields use the upstream contract's GraphQL camelCase (e.g. `displayName`, `priorityLabel`) — hoja models pass through alias names.
 - Stable across minor versions; breaking schema changes require a major version bump.
 
 ```bash
@@ -61,7 +61,7 @@ hoja -o plain issue list --team ENG | column -t -s $'\t' | less
 
 ## `ids` — pipeline-friendly
 
-One Linear identifier per line. **The right tool for shell pipelines.**
+One the upstream API identifier per line. **The right tool for shell pipelines.**
 
 ```bash
 # Re-label every issue with the old label

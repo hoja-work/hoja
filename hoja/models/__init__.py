@@ -1,4 +1,4 @@
-"""Pydantic models for Linear entities."""
+"""Pydantic models for the upstream API entities."""
 
 from hoja.models.base import (
     Connection,

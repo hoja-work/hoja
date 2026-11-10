@@ -32,17 +32,20 @@ revoked-token rejection, and wrong-host rejection. Administrative mutations
 remain subject to Hoja resolver role checks; OAuth scopes never grant admin
 status.
 
-## Issue hierarchies
+## Task hierarchies
 
-For multi-step work, create or reuse one parent issue and create actionable sub-issues with
-`hoja_issueCreate(parentId: "ENG-12", ...)`. Keep genuinely standalone issues flat by
-omitting `parentId`. Both MCP and GraphQL accept an issue identifier (case-insensitive) or
-internal id, and the parent must be an unarchived issue in the same team. Use
-`hoja_issueUpdate` with a new `parentId` to reparent, or with `parentId: null` to detach;
+For multi-step work, create or reuse one parent task and create actionable sub-tasks with
+`hoja_taskCreate(parentId: "ENG-12", ...)`. Keep genuinely standalone tasks flat by
+omitting `parentId`. Both MCP and GraphQL accept a task identifier (case-insensitive) or
+internal id, and the parent must be an unarchived task in the same team. Use
+`hoja_taskUpdate` with a new `parentId` to reparent, or with `parentId: null` to detach;
 omitting the field leaves the hierarchy unchanged. Self-parenting and ancestor cycles are
 rejected; PostgreSQL reparenting is serialized per team to preserve that rule under concurrent
-updates. Issue results include `parent` and `children` (cursor-paginated in GraphQL), so agents
-can verify the resulting structure without manufacturing separate root issues.
+updates. Task results include `parent` and `children` (cursor-paginated in GraphQL), so agents
+can verify the resulting structure without manufacturing separate root tasks.
+
+The `hoja_issue*` tools remain available as deprecated aliases of their `hoja_task*`
+equivalents and behave identically.
 
 The feature remains experimental. Before production enablement, review the
 deployment's TLS-terminating proxy and forwarded-header stripping policy, test

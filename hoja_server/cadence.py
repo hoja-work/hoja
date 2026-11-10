@@ -90,7 +90,7 @@ def _rollover_cycle_issues(conn, org_id: str, team_id: str,
                            from_cycle_ids: list, to_cycle_id: str, timestamp: str) -> int:
     """Move unfinished issues from just-closed cycles into the new active cycle.
 
-    Mirrors Linear's "Issues rollover": open issues (unstarted/started states)
+    Mirrors the upstream contract's "Issues rollover": open issues (unstarted/started states)
     carry forward automatically; backlog, triage, completed, and canceled
     issues stay behind. There is no way to keep an unfinished issue in a
     closed cycle. Returns the number of issues moved.
@@ -214,7 +214,7 @@ def reconcile_team_cadence(conn, org_id: str, row, now: datetime) -> dict:
                 conn.execute(cycle.update().where(cycle.c.id == past["id"]).values(completed_at=past["ends_at"], updated_at=timestamp))
                 newly_completed.append(past["id"])
         if newly_completed:
-            # Linear-style rollover: unfinished issues follow the active pointer.
+            # carry-over-style rollover: unfinished issues follow the active pointer.
             _rollover_cycle_issues(conn, org_id, team_id, newly_completed, active["id"], timestamp)
     if row.get("active_cycle_id") != (active["id"] if active else None):
         conn.execute(team.update().where(and_(team.c.organization_id == org_id,

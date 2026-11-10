@@ -53,7 +53,7 @@ export function checkTeamName(value: string): string {
 export function checkTeamKey(value: string): string {
   const key = value.trim().toUpperCase();
   if (!key) return 'Choose a short key for the team.';
-  if (!TEAM_KEY.test(key)) return 'Use 1–8 letters or numbers; this becomes the issue prefix.';
+  if (!TEAM_KEY.test(key)) return 'Use 1–8 letters or numbers; this becomes the task prefix.';
   return '';
 }
 

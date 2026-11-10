@@ -1,0 +1,3582 @@
+{
+  "mutation": "Mutation",
+  "query": "Query",
+  "types": {
+    "AgentConversationSummary": {
+      "fields": {
+        "bytes": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Int!"
+        },
+        "createdAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime!"
+        },
+        "id": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "messageCount": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Int!"
+        },
+        "updatedAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "AgentConversations": {
+      "fields": {
+        "conversations": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[AgentConversationSummary!]!"
+        },
+        "count": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Int!"
+        },
+        "totalBytes": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Int!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "ApiKey": {
+      "fields": {
+        "access": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "createdAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "expiresAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "hint": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "id": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "ID!"
+        },
+        "label": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "lastUsedAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "revokedAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "ApiKeyPayload": {
+      "fields": {
+        "apiKey": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "ApiKey"
+        },
+        "secret": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "success": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "Attachment": {
+      "fields": {
+        "createdAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "id": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "ID!"
+        },
+        "issue": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Issue"
+        },
+        "subtitle": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "title": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "url": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "AttachmentConnection": {
+      "fields": {
+        "nodes": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[Attachment!]!"
+        },
+        "pageInfo": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "PageInfo!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "AttachmentCreateInput": {
+      "inputFields": {
+        "issueId": "String!",
+        "subtitle": "String",
+        "title": "String!",
+        "url": "String!"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "AttachmentPayload": {
+      "fields": {
+        "attachment": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Attachment"
+        },
+        "success": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "Boolean": {
+      "kind": "SCALAR"
+    },
+    "BooleanComparator": {
+      "inputFields": {
+        "eq": "Boolean",
+        "neq": "Boolean"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "Comment": {
+      "fields": {
+        "body": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "canDelete": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        },
+        "canEdit": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        },
+        "createdAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "editedAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "id": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "ID!"
+        },
+        "updatedAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "url": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "user": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "User"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "CommentConnection": {
+      "fields": {
+        "nodes": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[Comment!]!"
+        },
+        "pageInfo": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "PageInfo!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "CommentCreateInput": {
+      "inputFields": {
+        "body": "String!",
+        "issueId": "String!"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "CommentPayload": {
+      "fields": {
+        "comment": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Comment"
+        },
+        "success": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "CommentUpdateInput": {
+      "inputFields": {
+        "body": "String"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "Cycle": {
+      "fields": {
+        "completedAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "createdAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "description": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "endsAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "id": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "ID!"
+        },
+        "name": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "number": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Int"
+        },
+        "progress": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Float"
+        },
+        "startsAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "team": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Team"
+        },
+        "updatedAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "CycleConnection": {
+      "fields": {
+        "nodes": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[Cycle!]!"
+        },
+        "pageInfo": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "PageInfo!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "CycleFilter": {
+      "inputFields": {
+        "id": "IDComparator",
+        "isActive": "BooleanComparator",
+        "isNext": "BooleanComparator",
+        "name": "StringComparator",
+        "team": "TeamFilter"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "CyclePayload": {
+      "fields": {
+        "cycle": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Cycle"
+        },
+        "success": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "CycleUpdateInput": {
+      "inputFields": {
+        "description": "String",
+        "endsAt": "DateTime",
+        "name": "String",
+        "startsAt": "DateTime"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "DateComparator": {
+      "inputFields": {
+        "eq": "DateTime",
+        "gt": "DateTime",
+        "gte": "DateTime",
+        "lt": "DateTime",
+        "lte": "DateTime",
+        "neq": "DateTime"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "DateTime": {
+      "kind": "SCALAR"
+    },
+    "DeletePayload": {
+      "fields": {
+        "success": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "Extension": {
+      "fields": {
+        "access": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "actions": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[ExtensionAction!]!"
+        },
+        "botUser": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "User"
+        },
+        "createdAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime!"
+        },
+        "enabled": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        },
+        "failures": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[ExtensionFailure!]!"
+        },
+        "hooks": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[ExtensionHook!]!"
+        },
+        "id": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "ID!"
+        },
+        "key": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "manifest": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "JSON!"
+        },
+        "name": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "updatedAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime!"
+        },
+        "url": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "version": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "ExtensionAction": {
+      "fields": {
+        "entity": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "extensionId": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "ID!"
+        },
+        "extensionName": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "id": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "ID!"
+        },
+        "key": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "title": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "ExtensionActionRunPayload": {
+      "fields": {
+        "message": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "runId": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "ID!"
+        },
+        "status": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "success": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "ExtensionFailure": {
+      "fields": {
+        "at": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime!"
+        },
+        "httpStatus": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Float"
+        },
+        "key": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "kind": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "message": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "ExtensionHook": {
+      "fields": {
+        "failurePolicy": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "key": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "on": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "position": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Int!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "ExtensionInstallPayload": {
+      "fields": {
+        "apiKey": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "extension": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Extension"
+        },
+        "signingSecret": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "success": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "ExtensionPayload": {
+      "fields": {
+        "extension": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Extension"
+        },
+        "success": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "Float": {
+      "kind": "SCALAR"
+    },
+    "ID": {
+      "kind": "SCALAR"
+    },
+    "IDComparator": {
+      "inputFields": {
+        "eq": "ID",
+        "in": "[ID!]",
+        "neq": "ID"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "InboxNotification": {
+      "fields": {
+        "actor": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "User"
+        },
+        "archivedAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "createdAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime!"
+        },
+        "id": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "ID!"
+        },
+        "issue": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Issue!"
+        },
+        "kind": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "readAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "InboxNotificationConnection": {
+      "fields": {
+        "nodes": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[InboxNotification!]!"
+        },
+        "pageInfo": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "PageInfo!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "Initiative": {
+      "fields": {
+        "createdAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime!"
+        },
+        "creator": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "User"
+        },
+        "id": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "ID!"
+        },
+        "name": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "owner": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "User"
+        },
+        "priority": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Int!"
+        },
+        "projects": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "ProjectConnection!"
+        },
+        "status": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "summary": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "targetDate": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "TimelessDate"
+        },
+        "updatedAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "InitiativeConnection": {
+      "fields": {
+        "nodes": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[Initiative!]!"
+        },
+        "pageInfo": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "PageInfo!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "InitiativeCreateInput": {
+      "inputFields": {
+        "name": "String!",
+        "ownerId": "String",
+        "priority": "Int",
+        "projectIds": "[String!]",
+        "status": "String",
+        "summary": "String",
+        "targetDate": "TimelessDate"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "InitiativePayload": {
+      "fields": {
+        "initiative": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Initiative"
+        },
+        "success": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "InitiativeUpdateInput": {
+      "inputFields": {
+        "name": "String",
+        "ownerId": "String",
+        "priority": "Int",
+        "projectIds": "[String!]",
+        "status": "String",
+        "summary": "String",
+        "targetDate": "TimelessDate"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "Int": {
+      "kind": "SCALAR"
+    },
+    "Issue": {
+      "fields": {
+        "activity": {
+          "args": {
+            "after": "String",
+            "first": "Int"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "IssueActivityConnection"
+        },
+        "assignee": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "User"
+        },
+        "attachments": {
+          "args": {
+            "first": "Int"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "AttachmentConnection"
+        },
+        "branchName": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "canceledAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "children": {
+          "args": {
+            "after": "String",
+            "first": "Int"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "IssueConnection"
+        },
+        "comments": {
+          "args": {
+            "first": "Int"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "CommentConnection"
+        },
+        "completedAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "createdAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "creator": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "User"
+        },
+        "cycle": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Cycle"
+        },
+        "description": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "dueDate": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "estimate": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Float"
+        },
+        "id": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "ID!"
+        },
+        "identifier": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "labels": {
+          "args": {
+            "first": "Int"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "IssueLabelConnection"
+        },
+        "number": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Int"
+        },
+        "parent": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Issue"
+        },
+        "priority": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Int"
+        },
+        "priorityLabel": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "project": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Project"
+        },
+        "snoozedUntilAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "startedAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "state": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "WorkflowState"
+        },
+        "stateChangedAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "subscribers": {
+          "args": {
+            "first": "Int"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "UserConnection"
+        },
+        "team": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Team"
+        },
+        "title": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "updatedAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "url": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "IssueActivity": {
+      "fields": {
+        "actor": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "User"
+        },
+        "changes": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "JSON"
+        },
+        "createdAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime!"
+        },
+        "eventType": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "id": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "ID!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "IssueActivityConnection": {
+      "fields": {
+        "nodes": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[IssueActivity!]!"
+        },
+        "pageInfo": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "PageInfo!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "IssueConnection": {
+      "fields": {
+        "nodes": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[Issue!]!"
+        },
+        "pageInfo": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "PageInfo!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "IssueCreateInput": {
+      "inputFields": {
+        "assigneeId": "String",
+        "cycleId": "String",
+        "description": "String",
+        "dueDate": "DateTime",
+        "estimate": "Float",
+        "labelIds": "[String!]",
+        "parentId": "String",
+        "priority": "Int",
+        "projectId": "String",
+        "stateId": "String",
+        "teamId": "String!",
+        "title": "String!"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "IssueFilter": {
+      "inputFields": {
+        "and": "[IssueFilter!]",
+        "assignee": "UserFilter",
+        "createdAt": "DateComparator",
+        "creator": "UserFilter",
+        "cycle": "CycleFilter",
+        "description": "StringComparator",
+        "dueDate": "DateComparator",
+        "identifier": "StringComparator",
+        "labels": "LabelRelFilter",
+        "number": "NumberComparator",
+        "or": "[IssueFilter!]",
+        "parent": "IssueParentFilter",
+        "priority": "NumberComparator",
+        "project": "ProjectRelFilter",
+        "state": "WorkflowStateFilter",
+        "team": "TeamFilter",
+        "title": "StringComparator",
+        "updatedAt": "DateComparator"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "IssueLabel": {
+      "fields": {
+        "color": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "createdAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "description": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "id": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "ID!"
+        },
+        "name": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "updatedAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "IssueLabelConnection": {
+      "fields": {
+        "nodes": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[IssueLabel!]!"
+        },
+        "pageInfo": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "PageInfo!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "IssueLabelCreateInput": {
+      "inputFields": {
+        "color": "String",
+        "description": "String",
+        "name": "String!",
+        "teamId": "String"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "IssueLabelFilter": {
+      "inputFields": {
+        "name": "StringComparator",
+        "team": "TeamFilter"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "IssueLabelPayload": {
+      "fields": {
+        "issueLabel": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "IssueLabel"
+        },
+        "success": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "IssueLabelUpdateInput": {
+      "inputFields": {
+        "color": "String",
+        "description": "String",
+        "name": "String"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "IssueParentFilter": {
+      "inputFields": {
+        "id": "IDComparator"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "IssuePayload": {
+      "fields": {
+        "issue": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Issue"
+        },
+        "success": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "IssueUpdateInput": {
+      "inputFields": {
+        "assigneeId": "String",
+        "cycleId": "String",
+        "description": "String",
+        "dueDate": "DateTime",
+        "estimate": "Float",
+        "labelIds": "[String!]",
+        "parentId": "String",
+        "priority": "Int",
+        "projectId": "String",
+        "stateId": "String",
+        "title": "String"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "JSON": {
+      "kind": "SCALAR"
+    },
+    "LabelRelFilter": {
+      "inputFields": {
+        "name": "StringComparator"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "MemberInviteInput": {
+      "inputFields": {
+        "admin": "Boolean",
+        "email": "String!",
+        "name": "String!",
+        "teamIds": "[String!]"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "ModelProvider": {
+      "fields": {
+        "baseUrl": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "createdAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime!"
+        },
+        "enabled": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        },
+        "hasApiKey": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        },
+        "id": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "modelId": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "name": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "provider": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "updatedAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "Mutation": {
+      "fields": {
+        "apiKeyCreate": {
+          "args": {
+            "access": "String",
+            "expiresAt": "DateTime",
+            "label": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "ApiKeyPayload"
+        },
+        "apiKeyRevoke": {
+          "args": {
+            "id": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        },
+        "attachmentCreate": {
+          "args": {
+            "input": "AttachmentCreateInput!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "AttachmentPayload"
+        },
+        "commentCreate": {
+          "args": {
+            "input": "CommentCreateInput!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "CommentPayload"
+        },
+        "commentDelete": {
+          "args": {
+            "id": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "DeletePayload"
+        },
+        "commentUpdate": {
+          "args": {
+            "id": "String!",
+            "input": "CommentUpdateInput!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "CommentPayload"
+        },
+        "cycleUpdate": {
+          "args": {
+            "id": "String!",
+            "input": "CycleUpdateInput!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "CyclePayload"
+        },
+        "extensionActionRun": {
+          "args": {
+            "actionId": "String!",
+            "entityId": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "ExtensionActionRunPayload!"
+        },
+        "extensionInstall": {
+          "args": {
+            "manifest": "JSON!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "ExtensionInstallPayload!"
+        },
+        "extensionUninstall": {
+          "args": {
+            "id": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "DeletePayload!"
+        },
+        "extensionUpdate": {
+          "args": {
+            "id": "String!",
+            "manifest": "JSON!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "ExtensionPayload!"
+        },
+        "initiativeArchive": {
+          "args": {
+            "id": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "DeletePayload"
+        },
+        "initiativeCreate": {
+          "args": {
+            "input": "InitiativeCreateInput!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "InitiativePayload"
+        },
+        "initiativeUpdate": {
+          "args": {
+            "id": "String!",
+            "input": "InitiativeUpdateInput!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "InitiativePayload"
+        },
+        "issueArchive": {
+          "args": {
+            "id": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "DeletePayload"
+        },
+        "issueCreate": {
+          "args": {
+            "input": "IssueCreateInput!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "IssuePayload"
+        },
+        "issueDelete": {
+          "args": {
+            "id": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "DeletePayload"
+        },
+        "issueLabelCreate": {
+          "args": {
+            "input": "IssueLabelCreateInput!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "IssueLabelPayload"
+        },
+        "issueLabelDelete": {
+          "args": {
+            "id": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "DeletePayload"
+        },
+        "issueLabelUpdate": {
+          "args": {
+            "id": "String!",
+            "input": "IssueLabelUpdateInput!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "IssueLabelPayload"
+        },
+        "issueSubscribe": {
+          "args": {
+            "id": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        },
+        "issueUnsubscribe": {
+          "args": {
+            "id": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        },
+        "issueUpdate": {
+          "args": {
+            "id": "String!",
+            "input": "IssueUpdateInput!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "IssuePayload"
+        },
+        "memberArchive": {
+          "args": {
+            "userId": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "UserPayload"
+        },
+        "memberDeactivate": {
+          "args": {
+            "userId": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "UserPayload"
+        },
+        "memberInvite": {
+          "args": {
+            "input": "MemberInviteInput!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "UserPayload"
+        },
+        "memberReactivate": {
+          "args": {
+            "userId": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "UserPayload"
+        },
+        "memberRestore": {
+          "args": {
+            "userId": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "UserPayload"
+        },
+        "memberRoleUpdate": {
+          "args": {
+            "admin": "Boolean!",
+            "userId": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "UserPayload"
+        },
+        "membershipInvitationAccept": {
+          "args": {
+            "code": "String!",
+            "inviteePassword": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "OrganizationPayload"
+        },
+        "membershipInvitationCreate": {
+          "args": {
+            "userId": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "UserPayload"
+        },
+        "membershipInvitationRevoke": {
+          "args": {
+            "userId": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "DeletePayload"
+        },
+        "modelProviderCreate": {
+          "args": {
+            "apiKey": "String!",
+            "baseUrl": "String",
+            "modelId": "String!",
+            "name": "String!",
+            "provider": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "ModelProvider!"
+        },
+        "modelProviderDelete": {
+          "args": {
+            "id": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        },
+        "modelProviderUpdate": {
+          "args": {
+            "apiKey": "String",
+            "baseUrl": "String",
+            "enabled": "Boolean",
+            "id": "String!",
+            "modelId": "String",
+            "name": "String"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "ModelProvider!"
+        },
+        "notificationArchive": {
+          "args": {
+            "id": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        },
+        "notificationMarkAllRead": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        },
+        "notificationMarkRead": {
+          "args": {
+            "id": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        },
+        "notificationPreferenceSet": {
+          "args": {
+            "enabled": "Boolean!",
+            "kind": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "NotificationPreferencesPayload!"
+        },
+        "profileNameUpdate": {
+          "args": {
+            "name": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "UserPayload"
+        },
+        "projectArchive": {
+          "args": {
+            "id": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "DeletePayload"
+        },
+        "projectCreate": {
+          "args": {
+            "input": "ProjectCreateInput!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "ProjectPayload"
+        },
+        "projectUpdate": {
+          "args": {
+            "id": "String!",
+            "input": "ProjectUpdateInput!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "ProjectPayload"
+        },
+        "projectUpdateCreate": {
+          "args": {
+            "input": "ProjectUpdateCreateInput!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "ProjectUpdatePayload"
+        },
+        "teamArchive": {
+          "args": {
+            "id": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "DeletePayload"
+        },
+        "teamCreate": {
+          "args": {
+            "input": "TeamCreateInput!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "TeamPayload"
+        },
+        "teamCycleCadenceEnable": {
+          "args": {
+            "teamId": "String!",
+            "weekday": "Int!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "TeamCycleCadence!"
+        },
+        "teamDelete": {
+          "args": {
+            "deleteIssues": "Boolean",
+            "id": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "DeletePayload"
+        },
+        "teamMemberAdd": {
+          "args": {
+            "role": "String",
+            "teamId": "String!",
+            "userId": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "UserPayload"
+        },
+        "teamMemberRemove": {
+          "args": {
+            "teamId": "String!",
+            "userId": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "UserPayload"
+        },
+        "teamUpdate": {
+          "args": {
+            "id": "String!",
+            "input": "TeamUpdateInput!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "TeamPayload"
+        },
+        "userPreferenceSet": {
+          "args": {
+            "key": "String!",
+            "value": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "UserPreferencesPayload!"
+        },
+        "webhookCreate": {
+          "args": {
+            "input": "WebhookCreateInput!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "WebhookPayload!"
+        },
+        "webhookDelete": {
+          "args": {
+            "id": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "DeletePayload!"
+        },
+        "webhookUpdate": {
+          "args": {
+            "id": "String!",
+            "input": "WebhookUpdateInput!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "WebhookPayload!"
+        },
+        "workspaceCreate": {
+          "args": {
+            "input": "WorkspaceCreateInput!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "OrganizationPayload"
+        },
+        "workspaceSwitch": {
+          "args": {
+            "organizationId": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "OrganizationPayload"
+        },
+        "workspaceUpdate": {
+          "args": {
+            "input": "WorkspaceUpdateInput!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "OrganizationPayload"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "MyIssueActivity": {
+      "fields": {
+        "actor": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "User"
+        },
+        "changes": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "JSON"
+        },
+        "createdAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime!"
+        },
+        "eventType": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "id": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "ID!"
+        },
+        "issue": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Issue!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "MyIssueActivityConnection": {
+      "fields": {
+        "nodes": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[MyIssueActivity!]!"
+        },
+        "pageInfo": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "PageInfo!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "NotificationPreferencesPayload": {
+      "fields": {
+        "issueCreated": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        },
+        "issueUpdated": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        },
+        "success": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "NumberComparator": {
+      "inputFields": {
+        "eq": "Float",
+        "gt": "Float",
+        "gte": "Float",
+        "in": "[Float!]",
+        "lt": "Float",
+        "lte": "Float",
+        "neq": "Float"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "Organization": {
+      "fields": {
+        "id": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "ID!"
+        },
+        "name": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "urlKey": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "OrganizationPayload": {
+      "fields": {
+        "organization": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Organization"
+        },
+        "success": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "PageInfo": {
+      "fields": {
+        "endCursor": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "hasNextPage": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        },
+        "hasPreviousPage": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        },
+        "startCursor": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "PaginationOrderBy": {
+      "enumValues": [
+        "createdAt",
+        "updatedAt"
+      ],
+      "kind": "ENUM"
+    },
+    "PendingMembershipInvitation": {
+      "fields": {
+        "email": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "expiresAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "name": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "userId": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "ID!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "Project": {
+      "fields": {
+        "activity": {
+          "args": {
+            "after": "String",
+            "eventTypes": "[String!]",
+            "first": "Int"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "MyIssueActivityConnection"
+        },
+        "color": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "createdAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "creator": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "User"
+        },
+        "description": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "health": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "icon": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "id": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "ID!"
+        },
+        "lead": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "User"
+        },
+        "members": {
+          "args": {
+            "first": "Int"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "UserConnection"
+        },
+        "name": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "progress": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Float"
+        },
+        "slugId": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "startDate": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "TimelessDate"
+        },
+        "state": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "targetDate": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "TimelessDate"
+        },
+        "teams": {
+          "args": {
+            "first": "Int"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "TeamConnection"
+        },
+        "updatedAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "url": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "ProjectConnection": {
+      "fields": {
+        "nodes": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[Project!]!"
+        },
+        "pageInfo": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "PageInfo!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "ProjectCreateInput": {
+      "inputFields": {
+        "color": "String",
+        "description": "String",
+        "icon": "String",
+        "leadId": "String",
+        "name": "String!",
+        "startDate": "TimelessDate",
+        "state": "String",
+        "targetDate": "TimelessDate",
+        "teamIds": "[String!]"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "ProjectFilter": {
+      "inputFields": {
+        "id": "IDComparator",
+        "name": "StringComparator",
+        "slugId": "StringComparator",
+        "state": "StringComparator",
+        "team": "TeamFilter"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "ProjectPayload": {
+      "fields": {
+        "project": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Project"
+        },
+        "success": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "ProjectRelFilter": {
+      "inputFields": {
+        "id": "IDComparator",
+        "name": "StringComparator"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "ProjectUpdate": {
+      "fields": {
+        "actor": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "User"
+        },
+        "body": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "createdAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime!"
+        },
+        "health": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "id": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "ID!"
+        },
+        "progress": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Float"
+        },
+        "project": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Project!"
+        },
+        "status": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "ProjectUpdateConnection": {
+      "fields": {
+        "nodes": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[ProjectUpdate!]!"
+        },
+        "pageInfo": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "PageInfo!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "ProjectUpdateCreateInput": {
+      "inputFields": {
+        "body": "String!",
+        "projectId": "String!",
+        "status": "String"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "ProjectUpdateFilter": {
+      "inputFields": {
+        "project": "ProjectFilter"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "ProjectUpdateInput": {
+      "inputFields": {
+        "color": "String",
+        "description": "String",
+        "icon": "String",
+        "leadId": "String",
+        "name": "String",
+        "startDate": "TimelessDate",
+        "state": "String",
+        "targetDate": "TimelessDate",
+        "teamIds": "[String!]"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "ProjectUpdatePayload": {
+      "fields": {
+        "projectUpdate": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "ProjectUpdate"
+        },
+        "success": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "Query": {
+      "fields": {
+        "agentConversations": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "AgentConversations!"
+        },
+        "archivedMembers": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[User!]!"
+        },
+        "cycle": {
+          "args": {
+            "id": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "Cycle"
+        },
+        "cycles": {
+          "args": {
+            "after": "String",
+            "filter": "CycleFilter",
+            "first": "Int"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "CycleConnection"
+        },
+        "extension": {
+          "args": {
+            "id": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "Extension!"
+        },
+        "extensionActions": {
+          "args": {
+            "entity": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "[ExtensionAction!]!"
+        },
+        "extensions": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[Extension!]!"
+        },
+        "inboxNotifications": {
+          "args": {
+            "after": "String",
+            "archived": "Boolean",
+            "first": "Int",
+            "unreadOnly": "Boolean"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "InboxNotificationConnection"
+        },
+        "inboxUnreadCount": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Int!"
+        },
+        "initiative": {
+          "args": {
+            "id": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "Initiative"
+        },
+        "initiatives": {
+          "args": {
+            "after": "String",
+            "first": "Int",
+            "status": "String"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "InitiativeConnection"
+        },
+        "issue": {
+          "args": {
+            "id": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "Issue"
+        },
+        "issueLabelSettings": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[IssueLabel!]!"
+        },
+        "issueLabels": {
+          "args": {
+            "after": "String",
+            "filter": "IssueLabelFilter",
+            "first": "Int"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "IssueLabelConnection"
+        },
+        "issues": {
+          "args": {
+            "after": "String",
+            "filter": "IssueFilter",
+            "first": "Int",
+            "orderBy": "PaginationOrderBy"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "IssueConnection"
+        },
+        "modelProviders": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[ModelProvider!]!"
+        },
+        "myApiKeys": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[ApiKey!]!"
+        },
+        "myIssueActivity": {
+          "args": {
+            "after": "String",
+            "first": "Int"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "MyIssueActivityConnection"
+        },
+        "myNotificationPreferences": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "NotificationPreferencesPayload!"
+        },
+        "myPreferences": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "UserPreferencesPayload!"
+        },
+        "myWorkspaces": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[WorkspaceMembership!]!"
+        },
+        "organizationMembers": {
+          "args": {
+            "first": "Int"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "UserConnection"
+        },
+        "pendingMembershipInvitations": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[PendingMembershipInvitation!]!"
+        },
+        "project": {
+          "args": {
+            "id": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "Project"
+        },
+        "projectUpdates": {
+          "args": {
+            "after": "String",
+            "filter": "ProjectUpdateFilter",
+            "first": "Int"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "ProjectUpdateConnection"
+        },
+        "projects": {
+          "args": {
+            "after": "String",
+            "filter": "ProjectFilter",
+            "first": "Int"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "ProjectConnection"
+        },
+        "rateLimitStatus": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "RateLimitPayload"
+        },
+        "searchIssues": {
+          "args": {
+            "first": "Int",
+            "term": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "IssueConnection"
+        },
+        "team": {
+          "args": {
+            "id": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "Team"
+        },
+        "teamCycleCadence": {
+          "args": {
+            "teamId": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "TeamCycleCadence!"
+        },
+        "teams": {
+          "args": {
+            "after": "String",
+            "filter": "TeamFilter",
+            "first": "Int"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "TeamConnection"
+        },
+        "viewer": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "User"
+        },
+        "webhook": {
+          "args": {
+            "id": "String!"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "Webhook!"
+        },
+        "webhooks": {
+          "args": {
+            "after": "String",
+            "first": "Int"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "WebhookConnection!"
+        },
+        "workflowStates": {
+          "args": {
+            "after": "String",
+            "filter": "WorkflowStateFilter",
+            "first": "Int"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "WorkflowStateConnection"
+        },
+        "workspace": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Organization"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "RateLimitPayload": {
+      "fields": {
+        "identifier": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "kind": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "limit": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Int"
+        },
+        "remaining": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Int"
+        },
+        "requestsPerHour": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Int"
+        },
+        "resetsAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "String": {
+      "kind": "SCALAR"
+    },
+    "StringComparator": {
+      "inputFields": {
+        "contains": "String",
+        "containsIgnoreCase": "String",
+        "eq": "String",
+        "eqIgnoreCase": "String",
+        "in": "[String!]",
+        "neq": "String",
+        "nin": "[String!]"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "Team": {
+      "fields": {
+        "activeCycle": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Cycle"
+        },
+        "autoAddBacklog": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean"
+        },
+        "autoAddCompleted": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean"
+        },
+        "autoAddStarted": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean"
+        },
+        "children": {
+          "args": {
+            "first": "Int"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "TeamConnection"
+        },
+        "color": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "createdAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "cycles": {
+          "args": {
+            "first": "Int"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "CycleConnection"
+        },
+        "description": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "icon": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "id": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "ID!"
+        },
+        "key": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "members": {
+          "args": {
+            "first": "Int"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "UserConnection"
+        },
+        "name": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "parent": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Team"
+        },
+        "parentTeamId": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "ID"
+        },
+        "states": {
+          "args": {
+            "first": "Int"
+          },
+          "deprecated": false,
+          "reason": null,
+          "type": "WorkflowStateConnection"
+        },
+        "timezone": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "updatedAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "visibility": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "TeamConnection": {
+      "fields": {
+        "nodes": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[Team!]!"
+        },
+        "pageInfo": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "PageInfo!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "TeamCreateInput": {
+      "inputFields": {
+        "color": "String",
+        "description": "String",
+        "icon": "String",
+        "key": "String!",
+        "memberIds": "[String!]",
+        "name": "String!",
+        "parentTeamId": "String",
+        "timezone": "String",
+        "visibility": "String"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "TeamCycleCadence": {
+      "fields": {
+        "activeCycle": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Cycle"
+        },
+        "enabled": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        },
+        "policyVersion": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Int!"
+        },
+        "timezone": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "upcomingCycles": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[Cycle!]!"
+        },
+        "weekday": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Int"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "TeamFilter": {
+      "inputFields": {
+        "id": "IDComparator",
+        "key": "StringComparator",
+        "name": "StringComparator"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "TeamPayload": {
+      "fields": {
+        "success": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        },
+        "team": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Team"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "TeamUpdateInput": {
+      "inputFields": {
+        "autoAddBacklog": "Boolean",
+        "autoAddCompleted": "Boolean",
+        "autoAddStarted": "Boolean",
+        "description": "String",
+        "key": "String",
+        "name": "String",
+        "parentTeamId": "String",
+        "visibility": "String"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "TimelessDate": {
+      "kind": "SCALAR"
+    },
+    "User": {
+      "fields": {
+        "active": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean"
+        },
+        "admin": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean"
+        },
+        "avatarUrl": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "createdAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "displayName": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "email": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "id": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "ID!"
+        },
+        "isMe": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean"
+        },
+        "name": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "statusEmoji": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "statusLabel": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "timezone": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "updatedAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "url": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "UserConnection": {
+      "fields": {
+        "nodes": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[User!]!"
+        },
+        "pageInfo": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "PageInfo!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "UserFilter": {
+      "inputFields": {
+        "displayName": "StringComparator",
+        "email": "StringComparator",
+        "id": "IDComparator",
+        "name": "StringComparator"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "UserPayload": {
+      "fields": {
+        "apiKey": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "inviteCode": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "success": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        },
+        "user": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "User"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "UserPreferencesPayload": {
+      "fields": {
+        "fontSize": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "success": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        },
+        "theme": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "Webhook": {
+      "fields": {
+        "allPublicTeams": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        },
+        "archivedAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "createdAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime!"
+        },
+        "creator": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "User"
+        },
+        "enabled": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        },
+        "failures": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[WebhookFailureEvent!]!"
+        },
+        "id": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "ID!"
+        },
+        "label": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "resourceTypes": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[String!]!"
+        },
+        "secret": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "team": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Team"
+        },
+        "teamIds": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[String!]"
+        },
+        "updatedAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime!"
+        },
+        "url": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "WebhookConnection": {
+      "fields": {
+        "nodes": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[Webhook!]!"
+        },
+        "pageInfo": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "PageInfo!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "WebhookCreateInput": {
+      "inputFields": {
+        "allPublicTeams": "Boolean",
+        "enabled": "Boolean",
+        "id": "String",
+        "label": "String",
+        "resourceTypes": "[String!]!",
+        "secret": "String",
+        "teamId": "String",
+        "url": "String!"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "WebhookFailureEvent": {
+      "fields": {
+        "createdAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime!"
+        },
+        "executionId": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "httpStatus": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Float"
+        },
+        "id": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "ID!"
+        },
+        "responseOrError": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "url": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "WebhookPayload": {
+      "fields": {
+        "lastSyncId": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Float!"
+        },
+        "success": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Boolean!"
+        },
+        "webhook": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Webhook"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "WebhookUpdateInput": {
+      "inputFields": {
+        "enabled": "Boolean",
+        "label": "String",
+        "resourceTypes": "[String!]",
+        "secret": "String",
+        "url": "String"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "WorkflowState": {
+      "fields": {
+        "color": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "createdAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        },
+        "description": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String"
+        },
+        "id": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "ID!"
+        },
+        "name": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "position": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Float"
+        },
+        "team": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "Team"
+        },
+        "type": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "updatedAt": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "DateTime"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "WorkflowStateConnection": {
+      "fields": {
+        "nodes": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "[WorkflowState!]!"
+        },
+        "pageInfo": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "PageInfo!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "WorkflowStateFilter": {
+      "inputFields": {
+        "name": "StringComparator",
+        "team": "TeamFilter",
+        "type": "StringComparator"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "WorkspaceCreateInput": {
+      "inputFields": {
+        "name": "String!",
+        "urlKey": "String!"
+      },
+      "kind": "INPUT_OBJECT"
+    },
+    "WorkspaceMembership": {
+      "fields": {
+        "id": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "ID!"
+        },
+        "name": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "organizationId": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "ID!"
+        },
+        "role": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        },
+        "urlKey": {
+          "args": {},
+          "deprecated": false,
+          "reason": null,
+          "type": "String!"
+        }
+      },
+      "kind": "OBJECT"
+    },
+    "WorkspaceUpdateInput": {
+      "inputFields": {
+        "name": "String",
+        "urlKey": "String"
+      },
+      "kind": "INPUT_OBJECT"
+    }
+  }
+}

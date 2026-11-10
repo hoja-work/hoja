@@ -1,6 +1,6 @@
-"""GraphQL surface for outgoing webhooks, using Linear's wire names.
+"""GraphQL surface for outgoing webhooks, using the upstream contract's wire names.
 
-Only workspace admins can read or manage webhooks (Linear has the same rule):
+Only workspace admins can read or manage webhooks (the upstream API has the same rule):
 the signing secret is part of the Webhook type.
 """
 from __future__ import annotations

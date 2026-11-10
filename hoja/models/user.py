@@ -1,4 +1,4 @@
-"""User model (Linear's User entity)."""
+"""User model (the upstream contract's User entity)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from hoja.models.base import Timestamped
 
 
 class User(Timestamped):
-    """A Linear user (member of the workspace).
+    """A the upstream API user (member of the workspace).
 
     GraphQL: type User implements Node
     """

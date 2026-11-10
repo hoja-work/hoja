@@ -18,12 +18,12 @@ if [ -n "$(git status --porcelain)" ]; then
 fi
 
 echo "==> Auditing source for credentials"
-P1="lin"; P1="${P1}_api_[A-Za-z0-9]{20,}"
+P1="(hoja|lin_api)"; P1="${P1}_[A-Za-z0-9_-]{20,}"
 P2="pypi"; P2="${P2}-Ag[A-Za-z0-9_-]{20,}"
 LEAKS="$(grep -rIn --exclude-dir=.venv --exclude-dir=.git \
     --exclude-dir=schema --exclude-dir=dist --exclude=ship.sh \
     -E "${P1}|${P2}" . 2>/dev/null |
-    grep -vE 'lin_api_\.\.\.|lin_api_…|lin_api_\\.\.\.|lin_api_XXX' || true)"
+    grep -vE '(hoja|lin_api)_[.…]{2,}|(hoja|lin_api)_XXX[^ ]*' || true)"
 if [ -n "$LEAKS" ]; then
     printf 'ABORT: leaked credentials detected:\n%s\n' "$LEAKS" >&2
     exit 9

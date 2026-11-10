@@ -61,7 +61,7 @@ members. It can see public teams, plus private teams named in its `events`.
 
 ## Requests from Hoja
 
-Every request is a JSON `POST` signed like a Linear webhook: `Linear-Signature` is the hex
+Every request is a JSON `POST` signed like a the upstream API webhook: `Linear-Signature` is the hex
 HMAC-SHA256 of the raw body with the signing secret, and the body carries `webhookTimestamp`
 (Unix ms). Verify both (see [webhooks](webhooks.md#verify-requests)); `LinearWebhookClient`
 from `@linear/sdk` works unchanged.

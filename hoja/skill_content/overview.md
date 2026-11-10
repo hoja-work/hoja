@@ -1,16 +1,16 @@
 # hoja — Overview
 
-`hoja` is a type-safe command-line client for Linear (https://linear.app). Built on Pydantic v2 + httpx + Typer. Designed for humans, AI agents, CI pipelines, and shell scripts.
+`hoja` is a type-safe command-line client for the upstream API (https://linear.app). Built on Pydantic v2 + httpx + Typer. Designed for humans, AI agents, CI pipelines, and shell scripts.
 
 ## When to reach for hoja
 
-Use `hoja` via the **Bash tool** whenever a task touches Linear:
+Use `hoja` via the **Bash tool** whenever a task touches the upstream API:
 
-- Anything mentioning a Linear identifier like `ENG-35`, `ENG-123`, or `<TEAM>-<N>`.
+- Anything mentioning a the upstream API identifier like `ENG-35`, `ENG-123`, or `<TEAM>-<N>`.
 - "Create / open / file / log / track an issue."
 - "Assign / move / triage / comment on" an issue.
 - "What's in the current cycle / sprint?"
-- "Which Linear projects exist?"
+- "Which the upstream API projects exist?"
 - "Who is working on X?"
 - Any request for status, backlog, label, or workflow state operations.
 
@@ -25,16 +25,16 @@ Use `hoja` via the **Bash tool** whenever a task touches Linear:
 
 1. **Verify auth first in a fresh shell:** `hoja me`. If it fails, stop and surface the auth error to the user before any mutation.
 2. **Read the memory board before starting work.** Run `hoja memory remind` first to load forced rules and recent project context. If you learn something useful, add it with `hoja memory add --title "..." --body "..."`. Stale entries auto-heal after 30 days.
-3. **Discover accounts before assuming defaults.** When working across multiple Linear organizations, run `hoja -o json auth accounts` to see available accounts and their org names. Use `--account <name>` for one-off switches or `hoja auth workspace` to verify auto-detection.
+3. **Discover accounts before assuming defaults.** When working across multiple the upstream API organizations, run `hoja -o json auth accounts` to see available accounts and their org names. Use `--account <name>` for one-off switches or `hoja auth workspace` to verify auto-detection.
 3. **Search before create.** `hoja issue search "<query>"` prevents duplicate issues. Always run this when the user says "create an issue about X" unless they already gave you an explicit identifier.
 4. **Use `--output json` when piping or programmatically reading.** `--output human` is for terminal display only.
-5. **Linear identifiers are case-sensitive.** Use `ENG-35`, never `eng-35`.
+5. **the upstream API identifiers are case-sensitive.** Use `ENG-35`, never `eng-35`.
 6. **Use `--dry-run` on mutations** when the user's intent is ambiguous or destructive.
 7. **Prefer dedicated subcommands over `raw query`.** `raw query` is an escape hatch for unsupported GraphQL operations only.
 8. **Chain via the shell, not Python.** For multi-step workflows (create + assign + comment), call `hoja` three times — do not write Python wrappers around the GraphQL API.
 9. **Filter at the API, not in shell.** `hoja issue list --assignee me --state "In Progress"` is faster and cleaner than `hoja issue list | jq`.
 10. **Never log or echo the token.** The CLI masks it automatically; do not print `$HOJA_TOKEN` in your shell output.
-11. **`hoja issue delete` does NOT exist.** The Linear-compatible API has no issue hard delete. Use a state transition (e.g., `cancel` or `archive` workflow state) instead.
+11. **`hoja issue delete` does NOT exist.** The wire-compatible API has no issue hard delete. Use a state transition (e.g., `cancel` or `archive` workflow state) instead.
 
 ## Command tree (one-liner reference)
 
