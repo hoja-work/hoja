@@ -453,10 +453,14 @@ function KanbanCard({issue, teams, dragged, onDragStart, onDragEnd, onSelect, on
  {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- drag surface only; the keyboard path (alt+arrow) lives on the inner button */}
   <div className="kanban-card" draggable onDragStart={e=>{if((e.target as HTMLElement).closest('input,select,label,button')){e.preventDefault();return}onDragStart(e)}} onDragEnd={onDragEnd}>
    <button type="button" className="kanban-card-open" onClick={()=>onSelect(issue)} onKeyDown={e=>{if(e.altKey&&e.key==='ArrowRight'){e.preventDefault();onMoveNext()}}} aria-label={`Open ${issue.identifier}: ${issue.title}`}>
-    <small>{issue.identifier} · {issue.team?.name}{issue.decisionNeeded?<span className="my-issue-decision" role="img" aria-label="Needs a decision" title="Needs a decision">?</span>:null}</small>
+    <small>{issue.identifier}{issue.decisionNeeded?<span className="my-issue-decision" role="img" aria-label="Needs a decision" title="Needs a decision">?</span>:null}</small>
     <strong>{issue.title}</strong>
    </button>
    <div className="kanban-card-props" aria-busy={busy||undefined}>
+    {(issue as unknown as {project?:{name?:string}}).project?.name
+      ?<span className="kanban-chip kanban-chip-project">{(issue as unknown as {project?:{name?:string}}).project?.name}</span>:null}
+    {((issue as unknown as {labels?:{nodes?:{id:string;name:string;color?:string}[]}}).labels?.nodes||[]).slice(0,2)
+      .map(l=><span className="kanban-chip" key={l.id}><i style={{background:l.color||'#8a94a6'}}/>{l.name}</span>)}
     <StatusPicker compact issue={issue} teams={teams} disabled={busy}
      onChange={stateId=>{const st=teams.find(t=>t.id===issue.team?.id)?.states.nodes.find(x=>x.id===stateId);if(!st)throw Error('Status not found');return onUpdate(issue.id,{stateId:st.id})}}/>
     <label className={overdue?'kanban-prop kanban-prop-date overdue':'kanban-prop kanban-prop-date'} title={due?`Due ${due}`:'Set a due date'}>
@@ -465,7 +469,7 @@ function KanbanCard({issue, teams, dragged, onDragStart, onDragEnd, onSelect, on
       onChange={e=>void edit({dueDate:e.target.value||null})}/>
     </label>
     <label className="kanban-prop" title={`Priority: ${['No priority','Urgent','High','Medium','Low'][issue.priority||0]}`}>
-     <span className="priority" data-p={issue.priority} aria-hidden="true"/>
+     {issue.priority===1?<span className="kanban-prio-urgent" aria-hidden="true">!</span>:<svg className="kanban-prio" data-p={issue.priority} width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><rect className="l1" x="1" y="9" width="3" height="6" rx="1"/><rect className="l2" x="6" y="6" width="3" height="9" rx="1"/><rect className="l3" x="11" y="3" width="3" height="12" rx="1"/></svg>}
      <select value={issue.priority||0} disabled={busy} aria-label={`Priority of ${issue.identifier}`}
       onChange={e=>void edit({priority:Number(e.target.value)})}>
       {['No priority','Urgent','High','Medium','Low'].map((label,i)=><option key={label} value={i}>{label}</option>)}
@@ -480,7 +484,8 @@ function KanbanCard({issue, teams, dragged, onDragStart, onDragEnd, onSelect, on
      </select>
     </label>
    </div>
-   <span className="kanban-card-date">{issue.createdAt?new Date(issue.createdAt).toLocaleDateString(undefined,{month:'short',day:'numeric'}):''}</span>
+   {issue.assignee?.name?<span className="kanban-avatar" aria-hidden="true">{issue.assignee.name.slice(0,1).toUpperCase()}</span>:null}
+   <span className="kanban-card-date">{issue.createdAt?'Created '+new Date(issue.createdAt).toLocaleDateString(undefined,{month:'short',day:'numeric'}):''}</span>
   </div>
   <button className="kanban-move" aria-label={`Move ${issue.identifier} to next status`} title="Move to next status (Alt + Right Arrow)" onClick={onMoveNext} disabled={!canMoveNext}><span>Move</span><kbd aria-hidden="true">Alt + →</kbd></button>
  </div>

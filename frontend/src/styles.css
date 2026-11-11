@@ -1425,3 +1425,23 @@ html.hoja-modal-open{overflow:hidden;scrollbar-gutter:stable}
    to the reference's top-right gutter properly — a wrong-looking badge is worse than
    none, and no card shows one today anyway. */
 .kanban .kanban-card-wrap .kanban-card-props .kanban-prop-assignee{display:none}
+
+/* ---- Card content: chips the reference shows -------------------------------------- */
+.kanban .kanban-card-wrap .kanban-chip{height:24px;display:inline-flex;align-items:center;gap:5px;
+  padding:0 8px;border:1px solid #d9d9d9;border-radius:48px;background:#fff;
+  font-size:12px;font-weight:450;color:#5c5c5e;max-width:150px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.kanban .kanban-card-wrap .kanban-chip i{width:9px;height:9px;border-radius:50%;flex:none}
+.kanban .kanban-card-wrap .kanban-chip-project{color:#5c5c5e}
+.kanban .kanban-card-wrap .kanban-prio{width:12px;height:12px;flex:none}
+.kanban .kanban-card-wrap .kanban-prio rect{fill:#8a8f98;opacity:.28}
+.kanban .kanban-card-wrap .kanban-prio[data-p="2"] .l1,
+.kanban .kanban-card-wrap .kanban-prio[data-p="3"] .l1,
+.kanban .kanban-card-wrap .kanban-prio[data-p="4"] .l1{opacity:1}
+.kanban .kanban-card-wrap .kanban-prio[data-p="3"] .l2,
+.kanban .kanban-card-wrap .kanban-prio[data-p="4"] .l2{opacity:1}
+.kanban .kanban-card-wrap .kanban-prio[data-p="4"] .l3{opacity:1}
+.kanban .kanban-card-wrap .kanban-prio-urgent{width:14px;height:14px;border-radius:3px;flex:none;
+  background:#f2994a;color:#fff;font-size:10px;font-weight:700;line-height:14px;text-align:center}
+.kanban .kanban-card-wrap .kanban-avatar{position:absolute;right:12px;top:8px;width:18px;height:18px;
+  border-radius:50%;background:#e8e8ea;color:#5c5c5e;font-size:9px;font-weight:600;
+  display:flex;align-items:center;justify-content:center}
