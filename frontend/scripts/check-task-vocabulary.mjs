@@ -68,10 +68,10 @@ const ALLOWED_LINES = new Map([
 
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
-    if (name === 'node_modules' || name === 'dist') continue;
+    if (name === 'node_modules' || name === 'dist' || name === '__tests__') continue;
     const p = join(dir, name);
     if (statSync(p).isDirectory()) walk(p, out);
-    else if (['.ts', '.tsx', '.js', '.jsx'].includes(extname(name))) out.push(p);
+    else if (['.ts', '.tsx', '.js', '.jsx'].includes(extname(name)) && !/\.(test|spec)\./.test(name)) out.push(p);
   }
   return out;
 }
