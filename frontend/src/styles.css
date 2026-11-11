@@ -1463,3 +1463,15 @@ html.hoja-modal-open{overflow:hidden;scrollbar-gutter:stable}
 .reviews-skip{margin-left:auto;color:var(--muted);font-size:12px;text-decoration:none}
 .reviews-skip:hover{color:var(--text)}
 .rev-ic{display:inline-flex;color:var(--muted);margin-bottom:8px}
+/* Tree layout (IssueLayout='Tree'): hierarchy from issue.parent, same rows as the list. */
+.issues-tree{display:flex;flex-direction:column;padding:6px 0 28px}
+.issues-tree .tree-row{display:flex;align-items:center;gap:8px;min-height:34px;padding-right:10px;border-bottom:1px solid var(--line);cursor:pointer;position:relative;background:transparent;text-align:left;color:var(--text)}
+.issues-tree .tree-row:hover{background:var(--subtle)}
+.tree-toggle{display:grid;place-items:center;width:18px;height:18px;padding:0;border:0;border-radius:4px;background:transparent;color:var(--muted);flex:none}
+.tree-toggle:hover{background:var(--subtle);color:var(--text)}
+.tree-toggle svg{transition:transform .12s ease}
+.tree-toggle-spacer{width:18px;flex:none}
+.tree-title{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tree-rollup{margin-left:auto;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;border:1px solid var(--line);border-radius:10px;padding:0 6px;line-height:16px}
+.tree-parent-chip{font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:1px 5px;flex:none}
+.tree-empty{margin:16px 10px;color:var(--muted);font-size:13px}
