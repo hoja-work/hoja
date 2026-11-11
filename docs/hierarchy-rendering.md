@@ -12,7 +12,11 @@ Three surfaces render the `issue.parent` relation. They are deliberately differe
 
 ## List layout (the default)
 
-`IssueTree` renders the list. It groups the same `visible` issues the board receives.
+The grouped list is unchanged: the same `my-issue-group` sections, headers, counts and spacing.
+`IssueTree` replaces only the rows *inside* each section, so a task nests under its parent when
+both fall in the same group. A child whose parent sits in another group keeps its `↳IDENT` chip
+and does not drag the parent into that section (the parent backfill is gated behind
+`fetchMissing` and off for grouped lists). It groups the same `visible` issues the board receives.
 
 - Roots are issues whose parent is absent, filtered out, or outside the `issues(first:100)`
   snapshot. Missing parents are fetched by id (bounded to 40 per pass) and folded in, so a
