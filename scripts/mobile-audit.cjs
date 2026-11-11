@@ -141,7 +141,7 @@ async function seedScale() {
       ['Inbox', '/workspace/inbox/other'],
       ['Meetings', '/workspace/meetings'],
       ['Agent', '/workspace/agent'],
-      ['Initiatives', '/workspace/initiatives/active'],
+      ['Roadmap', '/workspace/initiatives/active'],
       ['Projects', '/workspace/projects'],
       ['Views', '/workspace/views/issues'],
       ['Favorite views', '/workspace/favorite-views'],

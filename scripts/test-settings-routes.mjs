@@ -19,6 +19,7 @@ const cases = [
   ['workspace members page still resolves', '/workspace/members', 'Members'],
   ['issue detail still resolves', '/workspace/hoja/issue/HOJA-18', 'Issue detail'],
   ['board still resolves', '/workspace/hoja/board', 'Board'],
+  ['roadmap tab still resolves (HOJA-322)', '/workspace/initiatives/active', 'Roadmap'],
   ['unknown workspace page is not found', '/workspace/nonsense', 'Not found'],
 ];
 
@@ -39,6 +40,16 @@ try {
   assert.notEqual(routeView('/workspace/team/hoja/cycles/settings'), 'Settings',
     'cycle settings must never route to the workspace Settings page');
   console.log('ok   cycle settings is not captured by workspace settings');
+} catch (e) { failed++; console.error(`FAIL ${e.message}`); }
+
+// HOJA-322 stated positively: the Initiatives tab is now the Roadmap, and the
+// legacy /initiatives URLs keep resolving to it (URLs stay backwards compatible).
+try {
+  assert.equal(routeView('/workspace/initiatives'), 'Roadmap',
+    'the initiatives URL must render the Roadmap view (HOJA-322)');
+  assert.notEqual(routeView('/workspace/initiatives'), 'Initiatives',
+    'the old Initiatives view name must not survive the HOJA-322 rename');
+  console.log('ok   initiatives URLs render the renamed Roadmap view');
 } catch (e) { failed++; console.error(`FAIL ${e.message}`); }
 
 console.log(`\n${cases.length + 1 - failed}/${cases.length + 1} route checks passed`);

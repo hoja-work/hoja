@@ -38,7 +38,7 @@ export function routeView(path: string): string {
   if (p.includes('/team/')) return 'Team Home';
   if (p.includes('/my-issues')) return 'My issues';
   if (p.includes('/inbox')) return 'Inbox';
-  if (p.includes('/initiatives')) return 'Initiatives';
+  if (p.includes('/initiatives')) return 'Roadmap'; // HOJA-322: Initiatives tab renamed; URLs stay stable.
   if (p.includes('/pulse')) return 'Pulse';
   if (p.includes('/views')) return 'Views';
   if (p.includes('/projects')) return 'Projects';
