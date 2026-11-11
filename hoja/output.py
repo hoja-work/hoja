@@ -14,7 +14,7 @@ from rich.console import Console
 from rich.table import Table
 
 from hoja.models.enums import OutputFormat
-from hoja.models.issue import Issue
+from hoja.models.task import Issue
 from hoja.models.project import Project
 from hoja.models.team import Team
 from hoja.models.user import User

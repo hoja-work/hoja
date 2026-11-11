@@ -1,5 +1,5 @@
 // Run from repo root. Dark-theme contrast of each My issues tab (Assigned, Created, Subscribed, Activity) when selected.
-// Usage: PROBE_TOKEN=... node scripts/ui-probes/my-issue-tabs.cjs
+// Usage: PROBE_TOKEN=... node scripts/ui-probes/my-task-tabs.cjs
 const { chromium } = require('../../local-e2e/node_modules/playwright');
 const url = process.env.PROBE_URL || 'http://127.0.0.1:8797';
 const token = process.env.PROBE_TOKEN;

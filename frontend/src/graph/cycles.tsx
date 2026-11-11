@@ -3,7 +3,7 @@ import {ArrowUpRight, Bell, CalendarDays, Check, ChevronDown, ChevronRight, Copy
 import {gql, stateKey} from '../main';
 import type {Cycle, Issue, IssueLabel, IssueState, Project, Team, Viewer} from '../main';
 import {getSync, useEntityVersion, useIssues, useSyncMeta, useSyncStatus} from '../sync';
-import {applyLinFilters, defaultDisplay, emptyFilters, groupLinIssues, orderLinIssues, DisplayPanel as _DP, FilterMenu, IssueRow, LinDisplay, LinFilters, LinIssue, linIssueFields} from './issues';
+import {applyLinFilters, defaultDisplay, emptyFilters, groupLinIssues, orderLinIssues, DisplayPanel as _DP, FilterMenu, IssueRow, LinDisplay, LinFilters, LinIssue, linIssueFields} from './tasks';
 import {Avatar, CycleGlyph, FavStar, IconBtn, LabelChip, LinMenu, GraphStatusIcon, PriorityIcon, Ring, Tip, cx, fmtDate, fmtRange, useDismiss, useFavorite} from './shared';
 import {asPct, cycleStats, deliveryRate, dropoutRate, remainingSteps, scopeCompletion} from './cycleMetrics';
 import type {CycleStats} from './cycleMetrics';
@@ -463,7 +463,7 @@ function CyclePreview({id, cycle, state, issues, onOpen}: {
         <div className="lin-cycle-preview-progress">
           <div className="lin-cycle-progress-ring"><Ring frac={(ofScope ?? 0) / 100} size={44} /></div>
           <div><strong>{ofScope === null ? 'No scope yet' : `${ofScope}% delivered`}</strong>
-            <span>{ofScope === null ? 'Issues added to this cycle will establish its scope.' : `${stats.completed} of ${stats.scope} issues completed`}</span></div>
+            <span>{ofScope === null ? 'Tasks added to this cycle will establish its scope.' : `${stats.completed} of ${stats.scope} tasks completed`}</span></div>
         </div>
         <dl className="lin-cycle-preview-stats">
           <div><dt>Scope</dt><dd>{stats.scope}</dd></div>
@@ -478,11 +478,11 @@ function CyclePreview({id, cycle, state, issues, onOpen}: {
             ? <BurndownChart cycle={cycle} stats={stats} issues={issues} height={168} />
             : <div className="lin-cycle-preview-empty">{issues.length
               ? `Burndown starts when the cycle begins on ${fmtDate(cycle.startsAt)}.`
-              : 'No issue activity to chart yet.'}</div>}
+              : 'No task activity to chart yet.'}</div>}
         </section>
 
         <section className="lin-cycle-preview-work" aria-label="Cycle work snapshot">
-          <header><h3>Work snapshot</h3><span>{issues.length} {issues.length === 1 ? 'issue' : 'issues'}</span></header>
+          <header><h3>Work snapshot</h3><span>{issues.length} {issues.length === 1 ? 'task' : 'tasks'}</span></header>
           {shown.length ? <ul>
             {shown.map(issue => <li key={issue.id}>
               <GraphStatusIcon state={issue.state} size={14} />
@@ -490,7 +490,7 @@ function CyclePreview({id, cycle, state, issues, onOpen}: {
               <span className="lin-cycle-issue-title" title={issue.title}>{issue.title}</span>
               <Avatar name={issue.assignee?.name} size={20} />
             </li>)}
-          </ul> : <div className="lin-cycle-preview-empty">This cycle is ready for its first issue.</div>}
+          </ul> : <div className="lin-cycle-preview-empty">This cycle is ready for its first task.</div>}
           {issues.length > shown.length && <p className="lin-cycle-preview-more">+ {issues.length - shown.length} more in the full cycle</p>}
         </section>
       </div>
@@ -688,7 +688,7 @@ function CycleOptionsMenu({cycle, issues, onError, onClose}: {
       {key: 'fav', label: fav ? 'Remove from favorites' : 'Favorite', shortcut: 'ALT F', icon: fav ? <Check size={14} /> : undefined, onSelect: toggleFav},
       {key: 'copy', label: 'Copy link', icon: <Link2 size={14} />, onSelect: () => { void navigator.clipboard?.writeText(window.location.href); }},
       {key: 'cal', label: 'Subscribe to cycle calendar', icon: <CalendarDays size={14} />, onSelect: () => download(`${cname.replace(/\s+/g, '-').toLowerCase()}.ics`, cycleICS(cycle), 'text/calendar')},
-      {key: 'csv', label: 'Export issues as CSV…', icon: <Download size={14} />, onSelect: () => download(`${cname.replace(/\s+/g, '-').toLowerCase()}-issues.csv`, issuesCSV(issues), 'text/csv')},
+      {key: 'csv', label: 'Export tasks as CSV…', icon: <Download size={14} />, onSelect: () => download(`${cname.replace(/\s+/g, '-').toLowerCase()}-tasks.csv`, issuesCSV(issues), 'text/csv')},
     ]} />
   );
 }
@@ -728,7 +728,7 @@ const CycleIssueGroups = React.memo(function CycleIssueGroups({groups, collapsed
             {g.state && <GraphStatusIcon state={g.state} size={13} />}
             <b>{g.name}</b><span className="count">{g.items.length}</span>
             <span className="grow" />
-            <Tip label="Creating issues from a cycle group is not available yet. Use Create new issue.">
+            <Tip label="Creating tasks from a cycle group is not available yet. Use Create new task.">
               <button type="button" className="add" aria-label={`Create task in ${g.name}`} disabled style={{opacity: .5, cursor: 'not-allowed'}}><Plus size={14} /></button>
             </Tip>
           </header>
@@ -896,7 +896,7 @@ export function GraphCycleDetail({cycle: initial, team, teams, viewer, orgId, wo
 
       <div className="lin-cdetail">
         <div className="lin-cdetail-main">
-          <div className="lin-cdetail-count">{issues.length} issues{dimFilter && <> · filtered <button type="button" className="lin-addrow" onClick={() => setDimFilter(null)}>Clear</button></>}</div>
+          <div className="lin-cdetail-count">{issues.length} tasks{dimFilter && <> · filtered <button type="button" className="lin-addrow" onClick={() => setDimFilter(null)}>Clear</button></>}</div>
           <div className="lin-toolbar">
             <span className="spacer" />
             <span style={{position: 'relative'}}>
@@ -914,7 +914,7 @@ export function GraphCycleDetail({cycle: initial, team, teams, viewer, orgId, wo
             </IconBtn>
           </div>
           <div className="lin-scroll">
-            {loading && <p className="lin-loading" role="status">Loading cycle issues…</p>}
+            {loading && <p className="lin-loading" role="status">Loading cycle tasks…</p>}
             {error && <p className="lin-error" role="alert">{error}</p>}
             {mutationError && <p className="lin-error" role="alert">{mutationError}</p>}
             {!loading && !error && (
