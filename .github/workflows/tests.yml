@@ -40,8 +40,13 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '22'
+      - name: Install frontend dependencies
+        # The gate parses TSX with the TypeScript compiler, so it needs node_modules.
+        run: npm ci --prefix frontend
       - name: User-facing vocabulary
         run: node frontend/scripts/check-task-vocabulary.mjs
+      - name: Vocabulary gate catches what it claims to catch
+        run: node frontend/scripts/test-task-vocabulary-gate.mjs
 
   pytest:
     # A stable name for branch protection; do not rename without updating it.

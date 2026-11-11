@@ -1,5 +1,5 @@
 // READ-ONLY audit helper for issue detail + create sheet dark contrast. Copy of dark-contrast.cjs logic with scenario steps.
-// Usage: PROBE_TOKEN=... node scripts/ui-probes/issue-detail-contrast-probe.cjs <scenario> [min=4.5]
+// Usage: PROBE_TOKEN=... node scripts/ui-probes/task-detail-contrast-probe.cjs <scenario> [min=4.5]
 // scenarios: issue | issue-status | create | create-team
 const { chromium } = require('../../local-e2e/node_modules/playwright');
 const url = process.env.PROBE_URL || 'http://127.0.0.1:8797';

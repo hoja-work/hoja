@@ -1,5 +1,5 @@
 // Read-only dark-theme contrast audit for My issues tabs, popovers, and team Issues/Board views.
-// Usage: PROBE_TOKEN=... node scripts/ui-probes/my-issues-contrast-probe.cjs <min>
+// Usage: PROBE_TOKEN=... node scripts/ui-probes/my-tasks-contrast-probe.cjs <min>
 const { chromium } = require('../../local-e2e/node_modules/playwright');
 const url = process.env.PROBE_URL || 'http://127.0.0.1:8797';
 const token = process.env.PROBE_TOKEN;

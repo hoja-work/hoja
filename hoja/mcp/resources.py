@@ -23,7 +23,7 @@ from hoja.config import load_config, resolve_account, resolve_token
 from hoja.errors import AuthError, HojaError
 from hoja.graphql import queries
 from hoja.models.cycle import Cycle
-from hoja.models.issue import Issue
+from hoja.models.task import Issue
 from hoja.models.project import Project
 from hoja.models.team import Team
 from hoja.models.user import User

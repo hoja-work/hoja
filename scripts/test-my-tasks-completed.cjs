@@ -1,5 +1,5 @@
 // My issues loading audit against a real seeded server. Run from the repo root after `cd frontend && npm run build`:
-//   node scripts/test-my-issues-completed.cjs   (WIDTH=390 HEIGHT=844 for a phone viewport)
+//   node scripts/test-my-tasks-completed.cjs   (WIDTH=390 HEIGHT=844 for a phone viewport)
 // Checks: the sync asks for a year of closed issues; Assigned shows done/cancelled work per the
 // "Completed issues" display option; "All" fetches older closed issues scoped to the viewer (never other
 // people's); Created picks up the viewer's older closed issues; there is no "Load more issues" button;

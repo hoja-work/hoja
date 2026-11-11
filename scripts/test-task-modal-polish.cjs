@@ -1,5 +1,5 @@
 // New-issue dialog polish audit. Run from the repo root after `cd frontend && npm run build`:
-//   node scripts/test-issue-modal-polish.cjs
+//   node scripts/test-task-modal-polish.cjs
 // It measures the things "polished" actually means, instead of eyeballing a screenshot:
 //   * motion budget: entrance/exit animate transform+opacity only, 0<d<=240ms, settled state clean
 //   * prefers-reduced-motion collapses the motion to ~0ms

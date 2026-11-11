@@ -1,4 +1,4 @@
-"""Create N issues on a running backend so list views overflow. Usage: PROBE_URL=... PROBE_TOKEN=... python scripts/ui-probes/seed-many-issues.py 60"""
+"""Create N issues on a running backend so list views overflow. Usage: PROBE_URL=... PROBE_TOKEN=... python scripts/ui-probes/seed-many-tasks.py 60"""
 import json, os, sys, urllib.request
 
 url = os.environ.get("PROBE_URL", "http://127.0.0.1:8797") + "/graphql"
