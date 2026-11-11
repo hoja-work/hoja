@@ -206,17 +206,17 @@ const age=(d?:string)=>{const t=d?new Date(d).getTime():Date.now();const m=Math.
 return <section className="reviews-page">
 <div className="reviews-col">
 <div className="reviews-col-head"><h1>Reviews</h1><span className="reviews-tools"><i>⇅</i><i>⚙</i></span></div>
-<div className="reviews-tabs"><span className="on">Created</span><span>To review</span></div>
+<div className="reviews-tabs"><span className="on">Created{links.length?<b>{links.length}</b>:null}</span><span>To review</span></div>
 <div className="reviews-scroll">
 {links.length===0?<p className="reviews-empty">No linked pull requests yet.</p>:order.filter(k=>buckets[k]).map(k=><section className="reviews-group" key={k}>
-<h3 className="reviews-group-head"><span className="reviews-caret">▾</span>{k}<b>{buckets[k].length}</b></h3>
+<h3 className="reviews-group-head">{k}<b>{buckets[k].length}</b><ChevronDown size={11} className="reviews-caret"/></h3>
 {buckets[k].map(l=>{const st=(l.state||'open').toLowerCase();return <a className="reviews-row" key={l.id} href={l.url||'#'} target="_blank" rel="noreferrer">
-<span className="reviews-glyph" data-state={st}><svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M4 4v5a2 2 0 0 0 2 2h4M4 4a1.4 1.4 0 1 0 0-.01M10 11a1.4 1.4 0 1 0 0-.01" fill="none" stroke="#fff" strokeWidth="1.3" strokeLinecap="round"/></svg></span>
+<span className="reviews-glyph" data-state={st}><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4v5a2 2 0 0 0 2 2h4M4 4a1.4 1.4 0 1 0 0-.01M10 11a1.4 1.4 0 1 0 0-.01" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg></span>
 <span className="reviews-title">{l.title||l.externalId}</span>
 <span className="reviews-mark" data-state={st}>{st==='closed'?'✕':''}</span>
 <span className="reviews-time">{age(l.createdAt)}</span></a>;})}
 </section>)}</div></div>
-<aside className="reviews-pane"><div className="reviews-illo"/><p>{links.length} reviews</p></aside>
+<aside className="reviews-pane"><svg className="reviews-illo" viewBox="0 0 143 152" fill="none" aria-hidden="true"><g stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"><g transform="translate(9 12)"><g transform="rotate(-9 71.5 70)"><rect x="29.5" y="45" width="84" height="50" rx="7"/></g></g><g transform="translate(4.5 6)"><g transform="rotate(-4.5 71.5 70)"><rect x="29.5" y="45" width="84" height="50" rx="7"/></g></g><rect x="29.5" y="45" width="84" height="50" rx="7"/><path d="M44 62h56M44 74h40" strokeLinecap="round"/></g></svg><p>{links.length} reviews</p></aside>
 </section>;}
 const dashboardContent = view === 'Board'
   ? <section className="board-page" aria-labelledby="board-title"><header className="board-page-head"><h1 id="board-title">Board</h1></header><div className="board-page-tabs" role="tablist">{(['Active','Backlog','All issues'] as BoardTab[]).map(tab=><button role="tab" aria-selected={boardTab===tab} className={boardTab===tab?'selected':''} key={tab} onClick={()=>setBoardTab(tab)}>{displayLabel(tab)}</button>)}{teams.length>1&&<div className="board-team-filter" role="group" aria-label="Filter board by team">{[{id:'',label:'All teams'},...teams.map(t=>({id:t.id,label:t.key}))].map(o=><button key={o.id||'all'} type="button" aria-pressed={boardTeam===o.id} className={boardTeam===o.id?'selected':''} onClick={()=>setBoardTeam(o.id)}>{o.label}</button>)}</div>}<button className="board-create" onClick={()=>openNewIssue()} aria-label="Create task"><Plus size={15}/></button></div><Kanban teams={teams} grouped={grouped} onSelect={openIssue} onNew={(stateId?:string)=>openNewIssue(stateId)} onMoved={moveIssueState} onUpdate={updateIssue}/></section>
