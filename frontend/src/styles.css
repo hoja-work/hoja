@@ -1414,3 +1414,8 @@ html.hoja-modal-open{overflow:hidden;scrollbar-gutter:stable}
 .kanban .kanban-card-wrap .kanban-card-props>*:first-child svg,
 .kanban .kanban-card-wrap .kanban-card-props>*:first-child svg *{
   color:#5c5c5e!important;opacity:1!important}
+
+/* The status control is pinned outside the props box (top:-45px), so the props row's
+   overflow:hidden clipped it: it measured 10x14 with the right stroke and painted
+   nothing. The row no longer clips; the glyph is visible where the reference puts it. */
+.kanban .kanban-card-wrap .kanban-card-props{overflow:visible}
