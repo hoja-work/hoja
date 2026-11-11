@@ -112,7 +112,10 @@ function isComparison(node) {
         k === ts.SyntaxKind.EqualsEqualsToken || k === ts.SyntaxKind.ExclamationEqualsToken) return true;
   }
   if (ts.isCaseClause(p) || ts.isSwitchStatement(p)) return true;
-  if (ts.isPropertyAssignment(p) || ts.isPropertyDeclaration(p) || ts.isEnumMember(p)) return true;
+  // A property VALUE is often copy ("displayText: 'Summarize my open issues'"), so it
+  // is judged by the enclosing prop name, not exempted here. Only a property that
+  // *is* a key (object keyed by the literal) is a key position.
+  if (ts.isPropertyDeclaration(p) || ts.isEnumMember(p)) return true;
   if (ts.isLiteralTypeNode(p) || ts.isUnionTypeNode(p.parent) || ts.isTypeAliasDeclaration(p.parent)) return true;
   if (ts.isImportDeclaration(p.parent) || ts.isExportDeclaration(p.parent)) return true;
   if (ts.isCallExpression(p) && p.expression) {
@@ -186,9 +189,11 @@ for (const file of walk(SRC)) {
       if (WORD.test(s) && KEY_LITERALS.has(s) && inKeyPosition(node)) { /* routing key: not copy */ }
       else if (WORD.test(s) && !looksStructural(s) && !isComparison(node)) {
         const prop = enclosingPropName(node);
-        // A key list iterated with displayLabel() is the one legitimate array form;
-        // the rendered DOM sweep, not this gate, proves the mapping is applied.
-        const inKeyList = ts.isArrayLiteralExpression(node.parent);
+        // A bare key list iterated with displayLabel() is the one legitimate array
+        // form; any other array element is copy, and so is any property value whose
+        // prop name is not structural. The rendered DOM sweep, not this gate, proves
+        // the display mapping is applied.
+        const inKeyList = ts.isArrayLiteralExpression(node.parent) && KEY_LITERALS.has(s);
         if (!inKeyList && (!prop || !STRUCTURAL_ATTR.test(prop))) {
           report(node, prop ? `expression (${prop})` : 'expression', s);
         }
