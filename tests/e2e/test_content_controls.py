@@ -39,7 +39,8 @@ def test_admin_sees_archive_and_delete_on_issue_and_can_archive_initiative(serve
         # must open that menu before asserting it, as a user would.
         page.get_by_role("button", name="Archive task").first.wait_for(timeout=15000)
         page.get_by_role("button", name="Task options").click()
-        page.get_by_role("button", name="Delete task").wait_for(timeout=15000)
+        # LinMenu rows are role="menuitem", not buttons (frontend/src/graph/shared.tsx:239).
+        page.get_by_role("menuitem", name="Delete task").wait_for(timeout=15000)
         page.goto(f"{server}/workspace/initiatives")
         page.get_by_role("button", name="Archive").first.wait_for(timeout=15000)
         browser.close()
