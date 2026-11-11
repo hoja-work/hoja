@@ -1474,3 +1474,15 @@ html.hoja-modal-open{overflow:hidden;scrollbar-gutter:stable}
 .tree-toggle svg{transition:transform .12s ease}
 .tree-parent-chip{font-size:10px;line-height:15px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 4px;margin-right:5px;vertical-align:1px}
 .tree-rollup{margin-left:7px;font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums;border:1px solid var(--line);border-radius:9px;padding:0 5px;line-height:15px}
+.reviews-list{margin:0 0 40px;max-width:820px}
+.reviews-list h2{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:13px;font-weight:600;color:var(--text)}
+.reviews-list h2 b{font-weight:450;color:var(--muted)}
+.reviews-row{display:grid;grid-template-columns:86px 1fr 64px 76px;align-items:center;gap:10px;
+  padding:9px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;
+  text-decoration:none;color:var(--text);font-size:13px;background:#fff}
+.reviews-row:hover{border-color:#c9c9cf}
+.reviews-pr{color:var(--muted);font-variant-numeric:tabular-nums;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.reviews-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.reviews-state{font-size:11px;font-weight:500;text-align:right;color:#5c5c5e;text-transform:capitalize}
+.reviews-state[data-state="merged"]{color:#5e6ad2}
+.reviews-issue{font-size:11px;color:var(--muted);text-align:right}
