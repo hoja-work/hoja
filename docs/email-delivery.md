@@ -174,7 +174,7 @@ Authentication-Results: mx.google.com;
   took it. Watch the outbox's `provider_message_id` and the provider's delivery
   log, not the API call.
 - **Invitation link leaked.** Codes are single-use and expire in 72 hours; the
-  row is deleted on re-issue, so an old link stops working the moment a new one
+  row is deleted on re-task, so an old link stops working the moment a new one
   is created. Codes are stored hashed.
 - **Domain reputation.** Transactional mail from the apex shares reputation with
   human mail. If volume grows, move application mail to a subdomain (for example

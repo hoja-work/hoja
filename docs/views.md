@@ -59,8 +59,8 @@ A view's kind is fixed at creation; `viewUpdate` cannot move filters between kin
 | `scope` | Requires | Meaning |
 | --- | --- | --- |
 | `workspace` | nothing | Spans every team the viewer can see, i.e. Linear's "all teams". |
-| `team` | `teamId` | Attached to one team's Issues/Projects page, like Linear's team views. |
-| `project` | `projectId` | Attached to one project, rendered as a tab next to its Issues tab. |
+| `team` | `teamId` | Attached to one team's Tasks and Projects pages, scoped to that team. |
+| `project` | `projectId` | Attached to one project, rendered as a tab next to its Tasks tab. |
 | `initiative` | `initiativeId` | Attached to one initiative. |
 
 Placing a view on a team, project, or initiative requires that the caller can see that
@@ -108,7 +108,7 @@ values in a list, and non-empty strings of at most 200 characters.
 Every other operator/property pair is rejected with `BAD_USER_INPUT` and `field` naming
 the path, for example `filters.and[0].state.before`.
 
-### Issue properties
+### Task properties
 
 | Property | Value | Operators |
 | --- | --- | --- |
@@ -117,7 +117,7 @@ the path, for example `filters.and[0].state.before`.
 | `assignee`, `creator` | user id, email, or display name | `is`, `isNot`, `isEitherOf`, `isNeitherOf` |
 | `project` | project id or name | `is`, `isNot`, `isEitherOf`, `isNeitherOf` |
 | `cycle` | cycle id or name | `is`, `isNot`, `isEitherOf`, `isNeitherOf` |
-| `parent` | issue id | `is`, `isNot` |
+| `parent` | task id | `is`, `isNot` |
 | `priority` | `0`–`4` | `is`, `isNot`, `isGreaterThan`, `isGreaterThanOrEqual`, `isLessThan`, `isLessThanOrEqual`, `isEitherOf`, `isNeitherOf` |
 | `number` | integer | `is`, `isNot`, `isGreaterThan`, `isGreaterThanOrEqual`, `isLessThan`, `isLessThanOrEqual`, `isEitherOf`, `isNeitherOf` |
 | `identifier`, `title`, `description` | text | `is`, `isNot`, `contains`, `containsIgnoreCase`, `equalsIgnoreCase` |
@@ -172,7 +172,7 @@ implemented — see below.
 | `boardColumnOrder` | list of group keys, at most 50 | `[]` |
 | `showEmptyGroups` | boolean | `true` |
 
-Visible properties: for issues `identifier`, `title`, `status`, `assignee`, `creator`,
+Visible properties: for tasks `identifier`, `title`, `status`, `assignee`, `creator`,
 `priority`, `labels`, `project`, `cycle`, `team`, `dueDate`, `estimate`, `createdAt`,
 `updatedAt`; for projects `name`, `status`, `lead`, `teams`, `startDate`, `targetDate`,
 `health`, `progress`; for initiatives `name`, `status`, `owner`, `targetDate`, `projects`.
@@ -221,7 +221,7 @@ enumerated system paths, so a request without tenant context reads no rows.
 | Linear capability | Linear field | Hoja |
 | --- | --- | --- |
 | View kinds | `CustomView.modelName` (`Issue`, `Project`, `Initiative`) | `View.kind` (`issue`, `project`, `initiative`) |
-| Issue filter | `CustomView.filterData` | `View.filters` for `kind: "issue"` |
+| Task filter | `CustomView.filterData` | `View.filters` for `kind: "issue"` |
 | Project filter | `CustomView.projectFilterData` | `View.filters` for `kind: "project"` |
 | Initiative filter | `CustomView.initiativeFilterData` | `View.filters` for `kind: "initiative"` |
 | Team scope | `CustomView.team` | `View.scope: "team"` + `View.team` |

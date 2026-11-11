@@ -2,7 +2,7 @@
 
 An extension is any HTTPS service that automates Hoja. One manifest installs everything it
 needs: a bot identity with a scoped API key, event subscriptions, hooks that can adjust or
-refuse issue changes before they are saved, and actions people and agents can run on issues.
+refuse task changes before they are saved, and actions people and agents can run on tasks.
 Hoja never runs extension code; it sends signed requests to the extension, and the extension
 calls back through the normal GraphQL API with its own key.
 
@@ -33,7 +33,7 @@ registrations by key so the result depends only on the final manifest.
 | `access` | `read` or `read_write` for the bot's API key. `read` keys cannot run mutations. |
 | `events` | Event subscriptions; each takes `teamId` (id or key) or `allPublicTeams: true`. Default path `/events`. |
 | `hooks` | `issue.beforeCreate` or `issue.beforeUpdate` interceptors, called in manifest order. |
-| `actions` | Commands shown in the issue menu and exposed as the MCP tool `hoja_extensionActionRun`. |
+| `actions` | Commands shown in the task menu and exposed as the MCP tool `hoja_extensionActionRun`. |
 
 Unknown fields, duplicate keys, and invalid paths are rejected with `BAD_USER_INPUT` and the
 manifest path in `extensions.field` (for example `hooks[0].path`).
@@ -87,7 +87,7 @@ Patches may set `title`, `description`, `priority`, `estimate`, `stateId`, `assi
 `labelIds`, `dueDate`, `projectId`, and `cycleId`. Values are checked exactly like client input
 (`priority` must be an integer, `labelIds` a list of strings, `title` a non-empty string); a patch
 with any invalid value is dropped as a whole and counts as a failure. Each applied patch is
-recorded in the issue history as an `extensionPatched` activity by the bot. Hooks never run for
+recorded in the task history as an `extensionPatched` activity by the bot. Hooks never run for
 changes made by the same extension's bot, nor for a create in a team the caller cannot see.
 
 All hooks on one write share a 3-second budget. A timeout, non-2xx reply, malformed reply, or
@@ -95,7 +95,7 @@ disallowed or invalid patch is a failure: `failurePolicy: "allow"` (default) let
 `"block"` refuses it. After 5 consecutive failures a hook is skipped for 60 seconds, with its
 failure policy applied. Failures are listed on the extension.
 
-**Actions** (`Linear-Event: IssueAction`) are run by any member who can see the issue:
+**Actions** (event type `IssueAction`) are run by any member who can see the task:
 
 ```json
 { "type": "Issue", "action": "provision", "runId": "…", "data": { "…issue…": "" }, "actor": { "…": "" } }
@@ -105,9 +105,9 @@ Reply within 8 seconds with any 2xx status and optionally `{"message": "…"}`; 
 to the person who ran it. Actions run once, with no automatic retry, and every run is audited.
 Start long work asynchronously and report back through the API (for example a comment).
 
-## Example: per-issue environments
+## Example: per-task environments
 
-A receiver that provisions a worktree, ports, and a database branch when an issue is created
+A receiver that provisions a worktree, ports, and a database branch when a task is created
 and tears them down when it is completed or canceled:
 
 ```python

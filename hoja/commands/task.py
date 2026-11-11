@@ -15,19 +15,19 @@ from hoja.cli_state import build_client, get_state
 from hoja.errors import APIError, NotFoundError, UsageError
 from hoja.filters import build_issue_filter
 from hoja.graphql import mutations, queries
-from hoja.models.issue import Issue
+from hoja.models.task import Issue
 from hoja.models.project import Project
 from hoja.models.team import Team
 from hoja.output import render
 
-issue_app = typer.Typer(help="Issues")
+task_app = typer.Typer(help="Tasks")
 
 
 # ---------------------------------------------------------------------------
 # list
 # ---------------------------------------------------------------------------
 
-@issue_app.command("list")
+@task_app.command("list")
 def list_issues(
     team: Optional[str] = typer.Option(None, "--team", "-t", help="Team key (e.g. ENG) or UUID"),
     state: Optional[str] = typer.Option(None, "--state", "-s", help="Workflow state name. Comma-sep for OR."),
@@ -65,7 +65,7 @@ def list_issues(
     ))
 
 
-@issue_app.command("get")
+@task_app.command("get")
 def get_issue(
     id: str = typer.Argument(..., help="Issue identifier (e.g. ENG-123) or UUID"),
 ) -> None:
@@ -73,7 +73,7 @@ def get_issue(
     asyncio.run(_run_get(id))
 
 
-@issue_app.command("create")
+@task_app.command("create")
 def create_issue(
     team: str = typer.Option(..., "--team", "-t", help="Team key or UUID"),
     title: str = typer.Option(..., "--title", help="Issue title"),
@@ -94,7 +94,7 @@ def create_issue(
     ))
 
 
-@issue_app.command("update")
+@task_app.command("update")
 def update_issue(
     id: str = typer.Argument(..., help="Issue identifier or UUID"),
     title: Optional[str] = typer.Option(None, "--title"),
@@ -126,7 +126,7 @@ def update_issue(
     ))
 
 
-@issue_app.command("state")
+@task_app.command("state")
 def change_state(
     id: str = typer.Argument(...),
     state: str = typer.Argument(..., help="State name (must match team's workflow)"),
@@ -135,7 +135,7 @@ def change_state(
     asyncio.run(_run_update(id=id, state=state))
 
 
-@issue_app.command("assign")
+@task_app.command("assign")
 def assign_issue(
     id: str = typer.Argument(...),
     user: str = typer.Argument(..., help="'me', email, or user UUID"),
@@ -144,7 +144,7 @@ def assign_issue(
     asyncio.run(_run_update(id=id, assignee=user))
 
 
-@issue_app.command("prio")
+@task_app.command("prio")
 def change_priority(
     id: str = typer.Argument(...),
     priority: int = typer.Argument(..., min=0, max=4),
@@ -153,13 +153,13 @@ def change_priority(
     asyncio.run(_run_update(id=id, priority=priority))
 
 
-@issue_app.command("url")
+@task_app.command("url")
 def issue_url(id: str = typer.Argument(...)) -> None:
     """Print the upstream API URL for an issue."""
     asyncio.run(_run_url(id))
 
 
-@issue_app.command("search")
+@task_app.command("search")
 def search_issues(
     query: str = typer.Argument(..., help="Free-text search query"),
     limit: int = typer.Option(20, "--limit", "-n"),

@@ -26,9 +26,9 @@ describe real deltas rather than a greenfield design:
 | --- | --- | --- |
 | Web Inbox | `/workspace/inbox` lists `inboxNotifications`, shows unread counts, marks one/all read, archives, paginates, and has empty and error states (`app/frontend/src/main.tsx`, `InboxPage`) | No workspace/project grouping, no swipe actions, no undo, no archived view |
 | Notification records | `inbox_notification` rows with `kind`, `issue_id`, `actor_id`, `read_at`, `archived_at` (`app/hoja_server/db.py`) | Only `issueCreated` and `issueUpdated` are written; no comment, mention, due-date, or meeting events |
-| Recipients | Assignee and creator of an issue, excluding the actor (`_notify_issue_recipients`, `app/hoja_server/writer.py`) | No follower/subscriber model in the notification path |
+| Recipients | Assignee and creator of a task, excluding the actor (`_notify_issue_recipients`, `app/hoja_server/writer.py`) | No follower/subscriber model in the notification path |
 | Preferences | `myNotificationPreferences` with two global booleans, `issueCreated` and `issueUpdated` (`app/hoja_server/resolvers.py`, `store.py`) | No per-workspace scope, no push/email columns, no quiet hours |
-| Mobile app | Expo app with a connection screen, issue list, issue detail, status sheet, and account screen (`mobile/app/`); the credential is a workspace-scoped API key and there is no workspace switcher (`mobile/docs/vertical-slice-contract.md`) | No Inbox, no preference UI, no notification client; cross-workspace grouping has nothing to group yet |
+| Mobile app | Expo app with a connection screen, task list, task detail, status sheet, and account screen (`mobile/app/`); the credential is a workspace-scoped API key and there is no workspace switcher (`mobile/docs/vertical-slice-contract.md`) | No Inbox, no preference UI, no notification client; cross-workspace grouping has nothing to group yet |
 | Push transport | Nothing installed: `mobile/package.json` has no `expo-notifications`, Firebase, or messaging dependency | FCM/APNs transport, token registry, and delivery worker are entirely new |
 
 Nothing in this document is an implementation commitment. It is the product
@@ -49,9 +49,9 @@ what the operating system controls.
 | Importance | Channel `IMPORTANCE_HIGH/DEFAULT/LOW/MIN/NONE` controls heads-up, sound, status bar | Interruption levels (`passive`, `active`, `timeSensitive`, `critical`) plus Focus and Scheduled Summary | Define one Hoja urgency scale, then map it down to each platform; do not promise identical interruption |
 | Display messages | FCM notification messages are displayed by the SDK when the app is backgrounded; data messages run app code | Every APNs payload is delivered to the app or its extensions; the system displays the alert from the `aps` dictionary | Do not use Android data-only messages for content that must survive a killed app |
 | Background power management | Doze and App Standby defer network, jobs, and normal-priority FCM messages; high priority is for user-visible, time-sensitive content | Background delivery is subject to APNs and system scheduling; silent pushes are throttled and not guaranteed | Server must reconcile through GraphQL; push is a hint, not the source of truth |
-| Collapsing | `collapse_key` applies to data messages; notification messages are always collapsible and ignore `collapse_key`. `tag` replaces an already-posted notification with the same tag | `apns-collapse-id` | Do not rely on `collapse_key` to group FCM-rendered notification messages; use a stable `tag` per issue and app-posted notifications where tray replacement matters |
+| Collapsing | `collapse_key` applies to data messages; notification messages are always collapsible and ignore `collapse_key`. `tag` replaces an already-posted notification with the same tag | `apns-collapse-id` | Do not rely on `collapse_key` to group FCM-rendered notification messages; use a stable `tag` per task and app-posted notifications where tray replacement matters |
 | Rich content | Provider-rendered messages support text, `image`, and `click_action` only; `BigTextStyle`, `BigPictureStyle`, action buttons, `RemoteInput`, and `InboxStyle` require the app to post the notification | Notification service/content extensions, `UNNotificationAction`, `UNTextInputNotificationAction`, `threadIdentifier` | Ship one information hierarchy; text is guaranteed, rich actions are best-effort and platform-specific |
-| Grouping | App-posted notifications use `setGroup` + `setGroupSummary`; Android 7.0+ nests groups; provider-rendered messages and four or more ungrouped notifications are auto-grouped with device-dependent behaviour | `threadIdentifier` groups notifications in Notification Center | Group by issue where the app draws the notification; never promise a custom group summary on the provider-rendered path |
+| Grouping | App-posted notifications use `setGroup` + `setGroupSummary`; Android 7.0+ nests groups; provider-rendered messages and four or more ungrouped notifications are auto-grouped with device-dependent behaviour | `threadIdentifier` groups notifications in Notification Center | Group by task where the app draws the notification; never promise a custom group summary on the provider-rendered path |
 | Token rotation | `onNewToken` fires on initial generation and when the app is restored, reinstalled, or its data is cleared | Device tokens also change and must be re-registered | The server must invalidate old tokens from provider feedback, never assume a token is permanent |
 
 Sources: FCM Android client and message documentation, Android notification
@@ -141,12 +141,12 @@ heads-up), `low` (no sound, no status bar), `silent` (in-app only).
 
 | Event key | Trigger | Recipients | In-app | Push default | Email default | Urgency / suggested TTL |
 | --- | --- | --- | --- | --- | --- | --- |
-| `issue.assigned` | Issue's assignee becomes me | New assignee | Yes | Yes, `assignments` channel | Opt-in | Urgent, 1 hour |
-| `issue.created_for_me` | Issue created with me as assignee | Assignee | Yes | Yes, `assignments` | Opt-in | Normal, 24 hours |
+| `issue.assigned` | Task's assignee becomes me | New assignee | Yes | Yes, `assignments` channel | Opt-in | Urgent, 1 hour |
+| `issue.created_for_me` | Task created with me as assignee | Assignee | Yes | Yes, `assignments` | Opt-in | Normal, 24 hours |
 | `comment.mention` | I am @mentioned in a comment or description | Mentioned member | Yes | Yes, `mentions` | Opt-in immediate | Urgent, 1 hour |
-| `comment.on_followed` | Comment on an issue I created, am assigned, or follow | Participants except actor | Yes | Yes, `updates` | Digest only | Normal, 24 hours |
-| `issue.status_changed` | Status changes on an issue I follow | Assignee, creator, followers | Yes | Yes, `updates` | Off | Normal, 24 hours |
-| `issue.priority_changed` | Priority becomes urgent or high on an issue I follow | Assignee, creator | Yes | Yes, `updates` | Off | Normal, 24 hours |
+| `comment.on_followed` | Comment on a task I created, am assigned, or follow | Participants except actor | Yes | Yes, `updates` | Digest only | Normal, 24 hours |
+| `issue.status_changed` | Status changes on a task I follow | Assignee, creator, followers | Yes | Yes, `updates` | Off | Normal, 24 hours |
+| `issue.priority_changed` | Priority becomes urgent or high on a task I follow | Assignee, creator | Yes | Yes, `updates` | Off | Normal, 24 hours |
 | `issue.due_soon` | Due date is within 24 hours or has passed | Assignee | Yes | Yes, `reminders` | Off | Normal, until due + 1 day |
 | `meeting.invite` | I am invited to a meeting | Invitee | Yes | Yes, `reminders` | Opt-in | Urgent, until meeting start |
 | `project.update` | A project I follow gets a status update | Project members | Yes | No; digest | Off | Low, daily digest |
@@ -171,11 +171,11 @@ queue a push:
 - Automatic cycle assignment and other housekeeping writes.
 - Bulk imports, backfills, migrations, and API retries.
 - Read receipts, "someone viewed this", presence, and typing indicators.
-- Repeated status changes on the same issue inside a ten-minute window; collapse
+- Repeated status changes on the same task inside a ten-minute window; collapse
   them into one notification.
 - Marketing, product announcements, and tips. Those belong in in-app messaging or
   email, never push.
-- Any event whose recipient cannot currently access the issue. Authorisation is
+- Any event whose recipient cannot currently access the task. Authorisation is
   evaluated before a push is queued, not after.
 - A separate push for every device. One logical notification may fan out to
   multiple tokens, but the user sees one event.
@@ -190,7 +190,7 @@ versioned contract.
 | --- | --- | --- | --- | --- |
 | `assignments` | Assignments | `IMPORTANCE_HIGH` | Candidate | `issue.assigned`, `issue.created_for_me` |
 | `mentions` | Mentions and replies | `IMPORTANCE_HIGH` | Candidate | `comment.mention` |
-| `updates` | Issue updates | `IMPORTANCE_DEFAULT` | No | Comments on followed issues, status and priority changes |
+| `updates` | Task updates | `IMPORTANCE_DEFAULT` | No | Comments on followed tasks, status and priority changes |
 | `reminders` | Reminders and meetings | `IMPORTANCE_DEFAULT` | No | Due-soon and meeting invitations; time-sensitive escalation needs a separate product decision |
 | `digests` | Digests | `IMPORTANCE_LOW` | No, no status bar | Project updates and cycle boundaries |
 | `security` | Account security | `IMPORTANCE_HIGH` | Candidate | New device or API key |
@@ -211,7 +211,7 @@ not a statement that the code exists.
 ### AND-01. Register this device for push
 
 **As a** signed-in member on Android, **I want** the app to register this device
-with Hoja after I sign in, **so that** issue notifications can reach me without
+with Hoja after I sign in, **so that** task notifications can reach me without
 keeping Hoja open.
 
 **Acceptance criteria**
@@ -224,7 +224,7 @@ keeping Hoja open.
 - The token is associated with the user and an installation identifier, not with
   a device serial or an advertising identifier, and is never written to logs or
   analytics.
-- A failed upload retries with backoff and never blocks the issues list; Settings
+- A failed upload retries with backoff and never blocks the tasks list; Settings
   exposes the last successful registration time and a manual retry.
 - Signing out removes the token association for this installation so a shared
   device stops receiving the previous member's notifications.
@@ -264,15 +264,15 @@ receiving work and old devices do not keep receiving it.
 ### AND-03. Use tokens for people and topics only for broadcasts
 
 **As a** workspace security owner, **I want** a documented targeting rule,
-**so that** issue content cannot leak through a public subscription mechanism.
+**so that** task content cannot leak through a public subscription mechanism.
 
 **Acceptance criteria**
 
 - Anything recipient-specific is sent to registration tokens, not to an FCM
-  topic. This includes issue titles, comments, and mentions.
+  topic. This includes task titles, comments, and mentions.
 - Topics are used only for non-sensitive, workspace-independent announcements
-  such as a release note, and never carry issue or member data.
-- The server resolves recipients from workspace membership and issue visibility
+  such as a release note, and never carry task or member data.
+- The server resolves recipients from workspace membership and task visibility
   before queueing a message; a token belonging to a removed member is not used.
 - Per-user and per-workspace preferences are evaluated at send time, not only at
   subscription time.
@@ -304,7 +304,7 @@ receiving work and old devices do not keep receiving it.
   payload is available when the user taps it.
 - Data-only messages are limited to background hints such as "Inbox changed";
   they are never the only carrier of content that must survive a killed app.
-- A tap opens the target issue and marks the record read only after the target
+- A tap opens the target task and marks the record read only after the target
   loads successfully.
 - `onMessageReceived` does no work beyond a few seconds; anything longer is
   scheduled with WorkManager.
@@ -366,7 +366,7 @@ choice.
 - When `shouldShowRequestPermissionRationale()` is true, an in-app rationale is
   shown before requesting again; after a permanent denial the app links to system
   settings instead of re-prompting.
-- Denial never blocks the issues list, the Inbox, or sign-in.
+- Denial never blocks the tasks list, the Inbox, or sign-in.
 
 **Priority:** P0
 
@@ -391,7 +391,7 @@ status churn while keeping work that needs me.
   `ACTION_CHANNEL_NOTIFICATION_SETTINGS`.
 - The event-to-channel mapping is fixed in one shared table used by the sender and
   the preference UI.
-- Channels are app-level, not per issue; per-workspace channels would require
+- Channels are app-level, not per task; per-workspace channels would require
   channel groups and are deferred until multi-workspace mobile support exists.
 - The UI explains the divergence: Android users can change these categories in
   system settings; Apple's equivalent control is app-level, as documented in the
@@ -412,7 +412,7 @@ status churn while keeping work that needs me.
 - The product never promises a heads-up: Do Not Disturb, screen state, user
   settings, and the system can suppress it.
 - `issue.assigned` and `comment.mention` default to urgent; comments on followed
-  issues, status changes, and priority changes default to normal; project and
+  tasks, status changes, and priority changes default to normal; project and
   cycle updates default to low; digests never sound.
 - High-priority FCM is never used for a message that does not produce a visible
   notification, because FCM may deprioritise that pattern.
@@ -425,12 +425,12 @@ status churn while keeping work that needs me.
 
 ### AND-09. Act on a notification without opening the app
 
-**As a** member, **I want** to mark an issue read, archive it, or reply to a
+**As a** member, **I want** to mark a task read, archive it, or reply to a
 comment from the notification, **so that** quick acknowledgements take seconds.
 
 **Acceptance criteria**
 
-- Every notification opens its issue on tap. Mark read, Archive, and inline reply
+- Every notification opens its task on tap. Mark read, Archive, and inline reply
   are available only on the app-posted path, because FCM-rendered notification
   messages cannot carry custom actions.
 - When the app posts the notification, it adds Open, Mark read, and Archive (and
@@ -464,13 +464,13 @@ reply happens in the app.
 
 ### AND-10. Provide enough rich content to decide
 
-**As a** member, **I want** the notification to show the issue, actor, and
+**As a** member, **I want** the notification to show the task, actor, and
 relevant context, **so that** I can judge whether to open it without unlocking my
 phone for a surprise.
 
 **Acceptance criteria**
 
-- Provider-rendered collapsed content shows the issue identifier, title, actor,
+- Provider-rendered collapsed content shows the task identifier, title, actor,
   and workspace or team in a predictable order, truncated rather than wrapped
   unpredictably.
 - Provider-rendered expanded content may use the payload `image` field for one
@@ -482,7 +482,7 @@ phone for a surprise.
   are never embedded. No background-rendered notification depends on app code
   running to fetch content.
 - Lock-screen visibility defaults to hidden content: the notification says
-  "New Hoja activity" (or the event-specific placeholder in AND-16) and no issue
+  "New Hoja activity" (or the event-specific placeholder in AND-16) and no task
   title, description, actor, or comment body. A member may opt into
   title-only or title-and-detail previews in AND-16.
 - No custom `RemoteViews` layout is used; Android 12+ restricts custom
@@ -494,27 +494,27 @@ phone for a surprise.
 
 ### AND-11. Group related notifications
 
-**As a** member with several updates on one issue or project, **I want** them
+**As a** member with several updates on one task or project, **I want** them
 grouped under a summary, **so that** my notification shade is not flooded.
 
 **Acceptance criteria**
 
-- Every FCM-rendered notification uses a stable `tag` derived from the issue ID
-  and kind, so a newer event on the same issue replaces the older tray entry
+- Every FCM-rendered notification uses a stable `tag` derived from the task ID
+  and kind, so a newer event on the same task replaces the older tray entry
   instead of stacking.
-- When the app posts notifications, notifications for the same issue share a
+- When the app posts notifications, notifications for the same task share a
   stable `setGroup` key and a summary with a stable ID uses `InboxStyle` to list
   the latest children.
 - Only one summary exists per group; adding a child updates the existing summary
   rather than posting a second one.
 - Group alert behaviour is explicit: the summary does not also sound when the
   children have already alerted.
-- Tapping a child opens that issue; tapping the summary opens the Inbox filtered
+- Tapping a child opens that task; tapping the summary opens the Inbox filtered
   to unread.
 - Reading or archiving an item in the Inbox cancels the corresponding tray
   notification where the platform allows it, so the two surfaces do not
   contradict each other.
-- The product does not claim a per-issue group summary for provider-rendered
+- The product does not claim a per-task group summary for provider-rendered
   background messages; the FCM payload cannot set a group key. In that path it
   relies on `tag` replacement and Android's automatic grouping, and documents
   that automatic behaviour varies by device.
@@ -533,12 +533,12 @@ grouped under a summary, **so that** my notification shade is not flooded.
 - The Inbox lists notifications newest first with cursor pagination, a stable
   cursor, and a load-more action; a cursor that does not advance is an error, not
   a silent loop.
-- Each row shows issue identifier and title, actor, event description, relative
+- Each row shows task identifier and title, actor, event description, relative
   time, workspace/team/project, and a read/unread marker.
 - The unread count comes from the server and is adjusted by local optimistic
   edits; it is not recomputed from only the loaded page.
 - The badge and the Inbox show the same number: unread notification records, not
-  open issues. If the badge is unavailable on a launcher, the in-app unread
+  open tasks. If the badge is unavailable on a launcher, the in-app unread
   indicator is still authoritative.
 - Mark read and archive apply optimistically, roll back on failure, and surface
   an action error.
@@ -547,7 +547,7 @@ grouped under a summary, **so that** my notification shade is not flooded.
   foreground.
 - Android and the web use the same GraphQL fields and event text so the same
   notification reads identically on both.
-- Every row has an accessible name that identifies the issue and the action.
+- Every row has an accessible name that identifies the task and the action.
 
 **Priority:** P0
 
@@ -660,7 +660,7 @@ deciding for me.
 - A "Content on lock screen" control offers Hide all, Title only, and Title and
   detail. It defaults to Hide all. Placeholders are exact, content-free strings:
   "New Hoja activity", "New assignment", "New mention", "New comment",
-  "Issue updated", "Reminder", "Account security". On Android this maps to
+  "Task updated", "Reminder", "Account security". On Android this maps to
   `VISIBILITY_PRIVATE` and the channel's lock-screen visibility, which the user
   can override; on Apple the system's own Show Previews setting wins, so the app
   must say that it cannot override it.
@@ -720,18 +720,18 @@ switch is lying.
 
 ### AND-19. Route a tap to the exact destination
 
-**As a** member, **I want** a notification tap to open the issue or comment it
+**As a** member, **I want** a notification tap to open the task or comment it
 refers to, **so that** I do not lose context or land in the wrong workspace.
 
 **Acceptance criteria**
 
-- Payload routing data includes workspace, issue, notification, and kind, and the
-  app validates that the signed-in credential can access the workspace and issue.
+- Payload routing data includes workspace, task, notification, and kind, and the
+  app validates that the signed-in credential can access the workspace and task.
 - Cold start, warm start, and resume from background all reach the same
   destination and preserve a sensible back stack to the Inbox.
 - A comment event scrolls to the comment when the client supports anchors; if it
-  does not, it opens the issue without pretending to highlight a comment.
-- A deleted, archived, or inaccessible issue opens an explanatory state with a
+  does not, it opens the task without pretending to highlight a comment.
+- A deleted, archived, or inaccessible task opens an explanatory state with a
   route back to the Inbox, never a blank screen or another workspace's data.
 - The notification is marked read only after the destination loads; a failed
   load leaves it unread.
@@ -750,13 +750,13 @@ firehose.
 
 - Every notification kind maps to a stable event key in the taxonomy; an unknown
   key is stored in-app but never pushed.
-- Recipient selection excludes the actor, enforces workspace and issue
+- Recipient selection excludes the actor, enforces workspace and task
   visibility, and respects the recipient's per-event, per-channel prefs.
 - The do-not-notify list is enforced in code paths that create notifications, not
   only in documentation: self-actions, description-only edits, label and estimate
   edits, bulk imports, read receipts, presence, marketing, and inaccessible
-  issues produce no push.
-- Repeated events on one issue are coalesced within a documented window; the
+  tasks produce no push.
+- Repeated events on one task are coalesced within a documented window; the
   default is ten minutes for status and priority changes.
 - A per-user rate limit and a daily digest ceiling are defined and observable, so
   a loop or a bulk operation cannot send hundreds of pushes.
@@ -826,20 +826,20 @@ the decisions:
    workspace override first, then the global default. A workspace with no
    override inherits the global value.
 2. **What does the badge count?** Unread notification records, identical to the
-   Inbox unread count. It does not count open issues and does not give comments a
+   Inbox unread count. It does not count open tasks and does not give comments a
    separate badge. The number must equal the list the member sees, including
    optimistic read state; cap the displayed badge at 99+ where the platform
    supports a text badge. Android launchers may not render badges at all, so the
    in-app unread indicator is the reliable affordance.
 3. **What are the hidden-content placeholders?** "New Hoja activity" (generic),
-   "New assignment", "New mention", "New comment", "Issue updated", "Reminder",
-   and "Account security". They contain no issue identifier, title, actor,
+   "New assignment", "New mention", "New comment", "Task updated", "Reminder",
+   and "Account security". They contain no task identifier, title, actor,
    project, or workspace name. The member opts into title-only or
    title-and-detail previews in AND-16; the default is hidden.
 4. **Does the app show its own in-app toast?** Yes, once. When the app is in the
    foreground, show one in-app banner for the event and do not also post a tray
    notification for the same record. If the member is already viewing the
-   affected issue, update the view and mark the record read instead of showing a
+   affected task, update the view and mark the record read instead of showing a
    banner. On Android this is decided in `onMessageReceived`; on Apple the
    foreground presentation options suppress the system banner.
 

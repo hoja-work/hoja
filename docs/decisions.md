@@ -1,22 +1,22 @@
 # Decisions (ask the user)
 
-A decision is a question an agent asks while it is working on an issue, with optional
+A decision is a question an agent asks while it is working on a task, with optional
 options, that a human answers in the product. Hoja keeps decisions on the server
-(`issue_decision`) attached to one issue, so the question survives the agent's process,
-the issue visibly reads "waiting on me", and the waiting agent can poll for the answer
+(`issue_decision`) attached to one task, so the question survives the agent's process,
+the task visibly reads "waiting on me", and the waiting agent can poll for the answer
 without a browser.
 
 The GraphQL surface lives in `hoja_server/decisions_api.py`; validation lives in
 `hoja_server/decisions.py`. Both follow the extension and views conventions
 ([extensions](extensions.md), [views](views.md)): a declarative payload validated field by
 field, one error type that names the offending field, and every write inside a single
-transaction that also maintains the issue's flag.
+transaction that also maintains the task's flag.
 
 ## Why not a comment
 
 A comment can hold the question but not the answer's shape. Nothing distinguishes an open
 question from a remark, nothing fails an agent's "did anyone answer?" poll, and a board
-cannot show which issues are blocked on a person. A decision is therefore a row with a
+cannot show which tasks are blocked on a person. A decision is therefore a row with a
 status, an optional option set, and an answer that is recorded once.
 
 ## GraphQL
@@ -33,7 +33,7 @@ mutation($id: String!) { issueDecisionCancel(id: $id) { success } }
 | Field | Meaning |
 | --- | --- |
 | `id` | Stable identifier; the agent polls by this. |
-| `issue` | The issue the question is about. |
+| `issue` | The task the question is about. |
 | `question` | The question text, 1–500 characters. |
 | `options` | `[{key, label, description}]`, 0–10 entries. Empty means free-form. |
 | `context` | Optional markdown detail, links, or reproduction steps. |
@@ -70,23 +70,23 @@ stateDiagram-v2
 A decision does not introduce a new workflow state. "In Review" is a team-defined
 `workflow_state` whose `type` is `started`; a decision is orthogonal to it, because a
 question can block any state and a review can proceed without one. The two compose through
-the issue flag:
+the task flag:
 
-| Issue state | Open decision | Board / list reads |
+| Task state | Open decision | Board / list reads |
 | --- | --- | --- |
 | In Review | none | normal |
 | In Review | one or more | `decisionNeeded: true`, flagged row/card, banner in the detail |
 | any other | one or more | same flag: the question blocks regardless of state |
 
 `Issue.decisionNeeded` is a maintained boolean column, not a per-row subquery, so a board
-of a thousand issues costs one row read per issue. Creating an open decision sets it;
+of a thousand tasks costs one row read per task. Creating an open decision sets it;
 answering or canceling the last open decision clears it. The flag travels through the
-existing realtime change feed (issue update events) and the local-first sync snapshot
+existing realtime change feed (task update events) and the local-first sync snapshot
 (`decisionNeeded` joined `ISSUE_COLUMNS`), so a client that is already open updates without
 a reload.
 
-Because the flag rides on the issue row, an issue in In Review that needs a decision is
-indistinguishable from any other issue to a filter or a saved view — filtering on
+Because the flag rides on the task row, a task in In Review that needs a decision is
+indistinguishable from any other task to a filter or a saved view — filtering on
 `state: In Review` and scanning the flag is enough, and no state machine changes are
 required for teams that never use decisions.
 
@@ -108,22 +108,22 @@ hoja decision wait <decision-id> --timeout 900   # prints the answer, exits 0 wh
 `hoja decision wait` polls the `issueDecision` query; an agent that prefers a single call
 can poll `issueDecisions(issueId, status: "open")` itself. The change feed is the push
 counterpart: `issue_decision` inserts and updates publish `issueDecision` events, and the
-issue row's flag change publishes an `issue` update, so a client subscribed to
+task row's flag change publishes an `issue` update, so a client subscribed to
 `onEntityChange(['issue', 'issueDecision'])` learns about both ends of the round trip.
 
 Answering is idempotent per decision (see the state machine), and every answer records
-`answeredBy` and `answeredAt`; the answer is also written into the issue's activity feed as
+`answeredBy` and `answeredAt`; the answer is also written into the task's activity feed as
 `decisionAnswered` so the history reads in one place.
 
 ## Authorization and tenancy
 
 * Every row carries `organization_id`; every read and write filters on it, and the
   PostgreSQL policies in `tests/rls_mode.py` classify the table by that column.
-* Creating and canceling require the member to see the issue's team (`_require_team_visible`);
+* Creating and canceling require the member to see the task's team (`_require_team_visible`);
   canceling additionally requires the asker or a workspace admin.
-* Answering requires the same team visibility: anyone who can read the issue may answer it,
+* Answering requires the same team visibility: anyone who can read the task may answer it,
   including a second agent acting for a human.
-* A decision the viewer may not read — another organization's row, or one on an issue in a
+* A decision the viewer may not read — another organization's row, or one on a task in a
   private team they are not on — is reported as `NOT_FOUND`, never as a permission error, so
   the id space does not leak.
 
@@ -137,4 +137,4 @@ Answering is idempotent per decision (see the state machine), and every answer r
 | Option description | 280 characters |
 | `context` | 10 000 characters |
 | `askedByAgent` | 200 characters |
-| Open decisions per issue | 20 (refused beyond, so an agent cannot flood a board) |
+| Open decisions per task | 20 (refused beyond, so an agent cannot flood a board) |

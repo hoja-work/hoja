@@ -18,7 +18,7 @@ from hoja.commands.comment import comment_app
 from hoja.commands.cycle import cycle_app
 from hoja.commands.decision import decision_app
 from hoja.commands.init import init_app
-from hoja.commands.issue import issue_app
+from hoja.commands.task import task_app
 from hoja.commands.label import label_app
 from hoja.commands.memory import memory_app
 from hoja.commands.project import project_app
@@ -123,7 +123,9 @@ app.add_typer(me_app, name="me")
 app.add_typer(auth_app, name="auth")
 app.add_typer(init_app, name="init")
 app.add_typer(team_app, name="team")
-app.add_typer(issue_app, name="issue")
+app.add_typer(task_app, name="task")
+# HOJA-288: the pre-rename spelling keeps working so existing scripts are not broken.
+app.add_typer(task_app, name="issue", hidden=True)
 app.add_typer(project_app, name="project")
 app.add_typer(cycle_app, name="cycle")
 app.add_typer(comment_app, name="comment")
