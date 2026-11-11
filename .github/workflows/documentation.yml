@@ -24,5 +24,9 @@ jobs:
       - name: Check documentation
         run: python3 scripts/check_docs.py
 
+      - name: Documentation vocabulary
+        # Prose says "task"; API names stay inside `code spans`.
+        run: python3 scripts/check_docs_vocabulary.py
+
       - name: Test documentation policy
         run: python3 -m unittest discover -s tests -p 'test_check_docs.py' -v
