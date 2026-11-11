@@ -457,10 +457,6 @@ function KanbanCard({issue, teams, dragged, onDragStart, onDragEnd, onSelect, on
     <strong>{issue.title}</strong>
    </button>
    <div className="kanban-card-props" aria-busy={busy||undefined}>
-    {(issue as unknown as {project?:{name?:string}}).project?.name
-      ?<span className="kanban-chip kanban-chip-project">{(issue as unknown as {project?:{name?:string}}).project?.name}</span>:null}
-    {((issue as unknown as {labels?:{nodes?:{id:string;name:string;color?:string}[]}}).labels?.nodes||[]).slice(0,2)
-      .map(l=><span className="kanban-chip" key={l.id}><i style={{background:l.color||'#8a94a6'}}/>{l.name}</span>)}
     <StatusPicker compact issue={issue} teams={teams} disabled={busy}
      onChange={stateId=>{const st=teams.find(t=>t.id===issue.team?.id)?.states.nodes.find(x=>x.id===stateId);if(!st)throw Error('Status not found');return onUpdate(issue.id,{stateId:st.id})}}/>
     <label className={overdue?'kanban-prop kanban-prop-date overdue':'kanban-prop kanban-prop-date'} title={due?`Due ${due}`:'Set a due date'}>
@@ -483,6 +479,10 @@ function KanbanCard({issue, teams, dragged, onDragStart, onDragEnd, onSelect, on
       {members.map(m=><option key={m.id} value={m.id}>{m.name||m.email||'Member'}</option>)}
      </select>
     </label>
+    {(issue as unknown as {project?:{name?:string}}).project?.name
+      ?<span className="kanban-chip kanban-chip-project">{(issue as unknown as {project?:{name?:string}}).project?.name}</span>:null}
+    {((issue as unknown as {labels?:{nodes?:{id:string;name:string;color?:string}[]}}).labels?.nodes||[]).slice(0,2)
+      .map(l=><span className="kanban-chip" key={l.id}><i style={{background:l.color||'#8a94a6'}}/>{l.name}</span>)}
    </div>
    {issue.assignee?.name?<span className="kanban-avatar" aria-hidden="true">{issue.assignee.name.slice(0,1).toUpperCase()}</span>:null}
    <span className="kanban-card-date">{issue.createdAt?'Created '+new Date(issue.createdAt).toLocaleDateString(undefined,{month:'short',day:'numeric'}):''}</span>
