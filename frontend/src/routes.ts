@@ -10,13 +10,15 @@
 export const KNOWN_WORKSPACE_PAGES = [
   'my-issues', 'inbox', 'pulse', 'agent', 'initiatives', 'projects', 'views', 'board',
   'cycles', 'members', 'team', 'settings', 'issue', 'task', 'project', 'cycle', 'favorite-views',
-  'more', 'meetings',
+  'more', 'meetings',, 'reviews',
 ];
 
 export function routeView(path: string): string {
   const p = path.toLowerCase();
 
-  // Team-scoped routes first: they can contain segments that look like other routes.
+  
+  if (p.includes('/reviews')) return 'Reviews';
+// Team-scoped routes first: they can contain segments that look like other routes.
   if (p.includes('/team/') && p.includes('/cycles/settings')) return 'Team cycle settings';
   if (p.includes('/team/') && p.includes('/cycle/')) return 'Team cycle';
   if (p.includes('/team/') && p.endsWith('/active')) return 'Team issues';
