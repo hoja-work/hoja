@@ -68,10 +68,29 @@ jobs:
       - name: Test suite
         # faulthandler_timeout mirrors the Cloud runner so a hang dumps stacks
         # instead of consuming the whole job timeout.
-        run: uv run --frozen --all-extras pytest -q -o faulthandler_timeout=240
+        run: >-
+          uv run --frozen --all-extras pytest -q
+          --junit-xml=results.xml
+          -o faulthandler_timeout=240
+
+      # pytest exits 0 when every test skips, so the exit code above cannot
+      # distinguish "1150 tests passed" from "1150 tests were skipped". This step
+      # makes the difference observable. --allow-skips because the
+      # Postgres-gated cases legitimately skip here; the floor is what carries
+      # the guarantee, and pytest-postgres owns the skip rule for its own
+      # modules. The floor is pinned to a measured baseline in
+      # scripts/ci_suite_baseline.json, and tests/test_ci_suite_floor.py fails if
+      # the two ever disagree.
+      - name: Assert the suite actually executed
+        if: always()
+        run: python scripts/assert_pg_gate_ran.py results.xml --allow-skips --minimum 1150
 
   pytest-postgres:
-    # Only the three database-gated modules; the SQLite job above owns the rest.
+    # Only the database-gated modules; the SQLite job above owns the rest. This
+    # list is not a judgement call: tests/test_ci_pg_gate_coverage.py derives it
+    # from the modules that read HOJA_TEST_POSTGRES_URL and fails if one is
+    # missing, because a module that quietly takes the SQLite branch looks
+    # exactly like a passing one.
     name: pytest-postgres
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -113,6 +132,8 @@ jobs:
           tests/test_server_postgres.py
           tests/test_tenant_context.py
           tests/agent/test_dbos_crash_recovery.py
+          tests/test_meetings.py
+          tests/test_server_backend.py::test_cloverops_graphql_operation_contract
 
       # Runs even when the step above failed, so a broken database path reports
       # both the failing assertions and whether the cases ran at all.

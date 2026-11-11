@@ -1,0 +1,12 @@
+{
+  "commit": "eb3341f",
+  "measured_on": "2026-11-11",
+  "host_note": "measured on the workstation, not a runner; the runner is ~10% slower but runs the same set",
+  "command": "uv run --frozen --all-extras pytest -q --junit-xml=results.xml -o faulthandler_timeout=240",
+  "python": "3.10",
+  "collected": 1239,
+  "skipped": 17,
+  "executed": 1222,
+  "churn_allowance": 72,
+  "floor": 1150
+}
