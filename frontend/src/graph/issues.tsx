@@ -433,9 +433,11 @@ export const IssueRow = memo(function IssueRow({issue, display, selected, onSele
             onChange={e => onSelect(issue.id, e.target.checked)} onClick={e => e.stopPropagation()} />
         </span>
       )}
+      {/* Linear leads every row with the status indicator, so the eye can scan state
+          down the left edge; priority and identifier follow. */}
+      {p.status && <StatusAgeIcon issue={issue} />}
       {p.priority && <PriorityIcon priority={issue.priority} />}
       {p.id && <span className="ident">{issue.identifier}</span>}
-      {p.status && <StatusAgeIcon issue={issue} />}
       <button type="button" className="title" onClick={() => onOpen(issue)} title={issue.title}>{issue.title}</button>
       {issue.decisionNeeded && <DecisionFlag />}
       {childCount > 0 && <SubIssuePill done={0} total={childCount} />}
@@ -492,6 +494,22 @@ const BoardCard = memo(function BoardCard({issue, team, onOpen, onDragStart, onU
       onClick={() => onOpen(issue)}>
       <span className="top">
         <span className="ident">{issue.identifier}</span>
+                <span style={{flex: 1}} />
+        <span className="lin-card-ctl" onClick={stop} role="presentation">
+          <button type="button" className="lin-card-btn" aria-haspopup="menu" aria-expanded={menu === 'assignee'}
+            aria-label={`Assignee of ${issue.identifier}: ${issue.assignee?.name || 'Unassigned'}`} onClick={toggle('assignee')}>
+            <Avatar name={issue.assignee?.name} size={18} />
+          </button>
+          {menu === 'assignee' && (
+            <LinMenu className={cx('lin-card-menu', up && 'up')} onClose={close} items={[
+              {key: 'none', label: 'Unassigned', onSelect: () => void run({assigneeId: null})},
+              ...members.map(m => ({key: m.id, label: m.name || m.email || 'Member', icon: <Avatar name={m.name} size={16} />, onSelect: () => void run({assigneeId: m.id})})),
+            ]} />
+          )}
+        </span>
+              </span>
+      {issue.decisionNeeded && <DecisionFlag />}
+      <div className="ttl-row">
         <span className="lin-card-ctl" onClick={stop} role="presentation">
           <button type="button" className="lin-card-btn" aria-haspopup="menu" aria-expanded={menu === 'status'}
             aria-label={`Status of ${issue.identifier}: ${issue.state?.name || 'No status'}`} onClick={toggle('status')}>
@@ -504,9 +522,11 @@ const BoardCard = memo(function BoardCard({issue, team, onOpen, onDragStart, onU
             }))} />
           )}
         </span>
-        <span style={{flex: 1}} />
+        <button type="button" className="ttl lin-card-open" onClick={e => { e.stopPropagation(); onOpen(issue); }} aria-label={`Open ${issue.identifier}: ${issue.title}`}>{issue.title}</button>
+      </div>
+      <span className="chips">
         <span className="lin-card-ctl" onClick={stop} role="presentation">
-          <button type="button" className="lin-card-btn" aria-haspopup="menu" aria-expanded={menu === 'priority'}
+          <button type="button" className="lin-card-btn lin-priority-chip" aria-haspopup="menu" aria-expanded={menu === 'priority'}
             aria-label={`Priority of ${issue.identifier}: ${BOARD_PRIORITIES[issue.priority || 0]}`} onClick={toggle('priority')}>
             <PriorityIcon priority={issue.priority} size={13} />
           </button>
@@ -517,10 +537,6 @@ const BoardCard = memo(function BoardCard({issue, team, onOpen, onDragStart, onU
             }))} />
           )}
         </span>
-      </span>
-      {issue.decisionNeeded && <DecisionFlag />}
-      <button type="button" className="ttl lin-card-open" onClick={e => { e.stopPropagation(); onOpen(issue); }} aria-label={`Open ${issue.identifier}: ${issue.title}`}>{issue.title}</button>
-      <span className="chips">
         {issue.labels?.nodes.map(l => <LabelChip key={l.id} label={l} />)}
         {issue.project && <ProjectChip name={issue.project.name} />}
         <span className="lin-card-ctl" onClick={stop} role="presentation" ref={dueRef}>
@@ -539,20 +555,7 @@ const BoardCard = memo(function BoardCard({issue, team, onOpen, onDragStart, onU
         </span>
       </span>
       <span className="row">
-        <span className="lin-card-ctl" onClick={stop} role="presentation">
-          <button type="button" className="lin-card-btn" aria-haspopup="menu" aria-expanded={menu === 'assignee'}
-            aria-label={`Assignee of ${issue.identifier}: ${issue.assignee?.name || 'Unassigned'}`} onClick={toggle('assignee')}>
-            <Avatar name={issue.assignee?.name} size={18} />
-          </button>
-          {menu === 'assignee' && (
-            <LinMenu className={cx('lin-card-menu', up && 'up')} onClose={close} items={[
-              {key: 'none', label: 'Unassigned', onSelect: () => void run({assigneeId: null})},
-              ...members.map(m => ({key: m.id, label: m.name || m.email || 'Member', icon: <Avatar name={m.name} size={16} />, onSelect: () => void run({assigneeId: m.id})})),
-            ]} />
-          )}
-        </span>
-        <span className="assignee-name">{issue.assignee?.name || 'Unassigned'}</span>
-        <span>{fmtDate(issue.createdAt)}</span>
+                <span>{fmtDate(issue.createdAt)}</span>
       </span>
       {error && <span className="lin-bcard-error" role="alert">{error}</span>}
     </div>
