@@ -3,7 +3,7 @@ import {ArrowUpRight, Bell, CalendarDays, Check, ChevronDown, ChevronRight, Copy
 import {gql, stateKey} from '../main';
 import type {Cycle, Issue, IssueLabel, IssueState, Project, Team, Viewer} from '../main';
 import {getSync, useEntityVersion, useIssues, useSyncMeta, useSyncStatus} from '../sync';
-import {applyLinFilters, defaultDisplay, emptyFilters, groupLinIssues, orderLinIssues, DisplayPanel as _DP, FilterMenu, IssueRow, LinDisplay, LinFilters, LinIssue, linIssueFields} from './issues';
+import {applyLinFilters, defaultDisplay, emptyFilters, groupLinIssues, orderLinIssues, DisplayPanel as _DP, FilterMenu, IssueRow, LinDisplay, LinFilters, LinIssue, linIssueFields} from './tasks';
 import {Avatar, CycleGlyph, FavStar, IconBtn, LabelChip, LinMenu, GraphStatusIcon, PriorityIcon, Ring, Tip, cx, fmtDate, fmtRange, useDismiss, useFavorite} from './shared';
 import {asPct, cycleStats, deliveryRate, dropoutRate, remainingSteps, scopeCompletion} from './cycleMetrics';
 import type {CycleStats} from './cycleMetrics';
@@ -463,7 +463,7 @@ function CyclePreview({id, cycle, state, issues, onOpen}: {
         <div className="lin-cycle-preview-progress">
           <div className="lin-cycle-progress-ring"><Ring frac={(ofScope ?? 0) / 100} size={44} /></div>
           <div><strong>{ofScope === null ? 'No scope yet' : `${ofScope}% delivered`}</strong>
-            <span>{ofScope === null ? 'Tasks added to this cycle will establish its scope.' : `${stats.completed} of ${stats.scope} issues completed`}</span></div>
+            <span>{ofScope === null ? 'Tasks added to this cycle will establish its scope.' : `${stats.completed} of ${stats.scope} tasks completed`}</span></div>
         </div>
         <dl className="lin-cycle-preview-stats">
           <div><dt>Scope</dt><dd>{stats.scope}</dd></div>
@@ -688,7 +688,7 @@ function CycleOptionsMenu({cycle, issues, onError, onClose}: {
       {key: 'fav', label: fav ? 'Remove from favorites' : 'Favorite', shortcut: 'ALT F', icon: fav ? <Check size={14} /> : undefined, onSelect: toggleFav},
       {key: 'copy', label: 'Copy link', icon: <Link2 size={14} />, onSelect: () => { void navigator.clipboard?.writeText(window.location.href); }},
       {key: 'cal', label: 'Subscribe to cycle calendar', icon: <CalendarDays size={14} />, onSelect: () => download(`${cname.replace(/\s+/g, '-').toLowerCase()}.ics`, cycleICS(cycle), 'text/calendar')},
-      {key: 'csv', label: 'Export tasks as CSV…', icon: <Download size={14} />, onSelect: () => download(`${cname.replace(/\s+/g, '-').toLowerCase()}-issues.csv`, issuesCSV(issues), 'text/csv')},
+      {key: 'csv', label: 'Export tasks as CSV…', icon: <Download size={14} />, onSelect: () => download(`${cname.replace(/\s+/g, '-').toLowerCase()}-tasks.csv`, issuesCSV(issues), 'text/csv')},
     ]} />
   );
 }
@@ -896,7 +896,7 @@ export function GraphCycleDetail({cycle: initial, team, teams, viewer, orgId, wo
 
       <div className="lin-cdetail">
         <div className="lin-cdetail-main">
-          <div className="lin-cdetail-count">{issues.length} issues{dimFilter && <> · filtered <button type="button" className="lin-addrow" onClick={() => setDimFilter(null)}>Clear</button></>}</div>
+          <div className="lin-cdetail-count">{issues.length} tasks{dimFilter && <> · filtered <button type="button" className="lin-addrow" onClick={() => setDimFilter(null)}>Clear</button></>}</div>
           <div className="lin-toolbar">
             <span className="spacer" />
             <span style={{position: 'relative'}}>

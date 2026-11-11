@@ -5,7 +5,7 @@ import {gql, relTime, stateKey} from '../main';
 import type {Cycle, Issue, IssueActivityEvent, IssueLabel, IssueState, Project, Team, Viewer} from '../main';
 import {Markdown} from '../markdown';
 import {addLocalIssue, getSync, guessNextIdentifier, isLocalIssueId, localIssueId, onEntityChange, useEntityVersion, useIssueSelect, useIssues, useSyncMeta, useSyncStatus} from '../sync';
-import {addLabelInput, bulkRemove, bulkUpdate, useHiddenIssueIds, useScrollWindow, useStableCallback, visibleRange} from './issueStore';
+import {addLabelInput, bulkRemove, bulkUpdate, useHiddenIssueIds, useScrollWindow, useStableCallback, visibleRange} from './taskStore';
 import {Avatar, CycleChip, CycleGlyph, DueChip, FavStar, IconBtn, LabelChip, LinMenu, GraphStatusIcon, PriorityIcon, ProjectChip, Ring, StatusAgeIcon, SubIssuePill, Tip, cx, dueIsOverdue, fmtDate, fmtFullDate, formatDueDay, parseDueDay, useDismiss, useFavorite, type MenuItem} from './shared';
 import {runExtensionAction, useIssueExtensionActions, type ExtensionAction} from '../extensions';
 
@@ -528,7 +528,7 @@ function GraphBoard({issues, states, team, onOpen, onMoved, onUpdate, onNew, dis
             <GraphStatusIcon state={state} size={13} />
             <span>{state.name}</span><span className="count">{items.length}</span>
             <span className="sp" />
-            <button type="button" aria-label={`Add issue to ${state.name}`} onClick={() => onNew(state.id)}><Plus size={14} /></button>
+            <button type="button" aria-label={`Add task to ${state.name}`} onClick={() => onNew(state.id)}><Plus size={14} /></button>
             <span style={{position: 'relative'}}>
               <button type="button" aria-label={`${state.name} column options`} onClick={() => setColMenu(m => m === stateKey(state) ? null : stateKey(state))}>···</button>
               {colMenu === stateKey(state) && (
@@ -718,7 +718,7 @@ export function GraphTeamIssues({team, teams, orgId, workspaceName, projects, la
       if (gen !== olderGen.current) return;
       const page = d.issues;
       if (page.pageInfo?.hasNextPage && (!page.pageInfo.endCursor || page.pageInfo.endCursor === after || !page.nodes.length))
-        throw new Error('Issue pagination did not advance.');
+        throw new Error('Task pagination did not advance.');
       // Adopted issues join the store, so they render through useIssues() and stay live.
       getSync()?.adopt(page.nodes);
       setOlder(o => ({cursor: page.pageInfo?.endCursor || null, hasMore: Boolean(page.pageInfo?.hasNextPage), loading: false, error: '', loaded: o.loaded + page.nodes.length}));
@@ -1120,10 +1120,10 @@ function describeEvent(e: {eventType: string; actor?: {name?: string}; changes?:
   if (e.eventType === 'issueCreated' || e.eventType === 'created') return `${actor} created the task`;
   const sname = (id?: string | null) => (id && states.find(s => s.id === id)?.name) || 'Unknown';
   if (ch.stateId) return `${actor} moved from ${sname(ch.stateId.from)} to ${sname(ch.stateId.to)}`;
-  if (ch.assigneeId) return `${actor} assigned the issue`;
+  if (ch.assigneeId) return `${actor} assigned the task`;
   if (ch.cycleId) return `${actor} changed the cycle`;
   if (ch.priority) return `${actor} changed the priority`;
-  return `${actor} updated the issue`;
+  return `${actor} updated the task`;
 }
 
 type PendingComment = {id: string; body: string; createdAt: string; known: Set<string>};
