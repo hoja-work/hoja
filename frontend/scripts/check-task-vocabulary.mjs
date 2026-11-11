@@ -167,8 +167,8 @@ for (const file of walk(SRC)) {
       const init = node.initializer;
       const literal = init && (ts.isStringLiteral(init) ? init
         : ts.isJsxExpression(init) && init.expression && ts.isStringLiteral(init.expression) ? init.expression : null);
-      if (literal && WORD.test(literal.text)) {
-        // Identifier/route/style/handler positions are not copy, whatever the value.
+      if (literal && WORD.test(literal.text) && !looksStructural(literal.text)) {
+        // Identifier/route/style/handler positions and URL values are not copy.
         if (!STRUCTURAL_ATTR.test(name)) report(node, `attribute ${name}=`, literal.text);
       }
     } else if (ts.isTemplateExpression(node)) {
