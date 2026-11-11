@@ -1374,3 +1374,26 @@ html.hoja-modal-open{overflow:hidden;scrollbar-gutter:stable}
 /* status: show the glyph, not the text, so it reads as the reference's 14px ring */
 .kanban .kanban-card-wrap .kanban-card-props>*:first-child{overflow:visible;width:20px;font-size:0;gap:0}
 .kanban .kanban-card-wrap .kanban-card-props>*:first-child svg{width:14px;height:14px}
+
+/* ---- Card chips: icon-only pills, like the reference -----------------------------
+   The controls stay the same elements and keep their aria-labels; the visible form
+   field is made transparent and stretched over the pill, so a click anywhere on the
+   chip still opens the picker. Previously the card showed a full mm/dd/yyyy input and
+   a select reading "No priority", which is what made it read as a form, not a card. */
+.kanban .kanban-card-wrap .kanban-card-props .kanban-prop{
+  position:relative;height:24px;min-width:0;padding:0 6px;display:inline-flex;
+  align-items:center;justify-content:center;gap:4px;overflow:hidden;
+  border:1px solid #d9d9d9;border-radius:48px;background:#fff;color:#5c5c5e}
+.kanban .kanban-card-wrap .kanban-card-props .kanban-prop select,
+.kanban .kanban-card-wrap .kanban-card-props .kanban-prop input{
+  position:absolute;inset:0;width:100%;height:100%;opacity:0;border:0;background:none;
+  cursor:pointer;font-size:0;color:transparent;appearance:none}
+.kanban .kanban-card-wrap .kanban-card-props .kanban-prop .priority{width:9px;height:9px;border-radius:50%;flex:none}
+.kanban .kanban-card-wrap .kanban-card-props .kanban-prop-date{width:28px;padding:0}
+.kanban .kanban-card-wrap .kanban-card-props .kanban-prop-date svg{width:13px;height:13px}
+/* priority pill: just the icon, 25px wide like the reference */
+.kanban .kanban-card-wrap .kanban-card-props .kanban-prop:has(select){width:25px;padding:0}
+/* column header: a real ring before the name */
+.kanban .kanban-columns .kanban-column>header .status-mark{
+  width:14px;height:14px;border-radius:50%;border:1.5px solid currentColor;
+  box-sizing:border-box;flex:none;display:inline-block}
