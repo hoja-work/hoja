@@ -1306,41 +1306,42 @@ html.hoja-modal-open{overflow:hidden;scrollbar-gutter:stable}
 @media (max-width:640px){.connector-board{grid-template-columns:1fr}}
 
 /* ---- Board: parity with the reference kanban ------------------------------------
-   Values measured from the reference board, expressed in our own tokens:
-   column 324 with a 22px gutter (chrome removed — the column is a lane, not a card),
-   header a 50px 13/500 row, cards 324x133 at radius 8 with a 6px row rhythm and a
-   three-layer shadow hairline instead of a border. Cards used to be 221x182 with a
-   5px inset and no elevation, which read as a table. */
-.kanban-columns{gap:22px;padding:0 24px 24px;align-items:flex-start}
-.kanban-column{flex:0 0 324px;width:324px;background:none;border:0;border-radius:0;padding:0;box-shadow:none}
-.kanban-column>header{height:50px;display:flex;align-items:center;gap:8px;padding:0 2px;border:0;background:none;font-size:13px;font-weight:500;color:var(--text)}
-.kanban-column>header b{font-weight:500}
-.kanban-column>header .count{font-size:13px;font-weight:400;color:var(--muted)}
-.kanban-column>header .status-mark{width:14px;height:14px;border-width:1.5px}
-.kanban-cards{display:flex;flex-direction:column;gap:8px;padding:0;max-height:none}
+   Column 324 with a 22px gutter (chrome removed — the column is a lane, not a card),
+   header a 50px 13/500 row, cards 324 wide at radius 8, 6px row rhythm, three-layer
+   shadow hairline instead of a border.
 
-.kanban-card-wrap{display:block}
-.kanban-card{
+   Scoped under .kanban with two-class card selectors on purpose: the older compact
+   rules are written `.kanban-card-wrap .kanban-card`, so a single-class rule loses no
+   matter how late it appears in the file. */
+.kanban .kanban-columns{gap:22px;padding:0 24px 24px;align-items:flex-start}
+.kanban .kanban-columns .kanban-column{flex:0 0 324px;width:324px;min-width:324px;box-sizing:border-box;
+  background:none;border:0;border-right:0;border-radius:0;padding:0;box-shadow:none}
+.kanban .kanban-columns .kanban-column>header{height:50px;display:flex;align-items:center;gap:8px;
+  padding:0 2px;border:0;background:none;font-size:13px;font-weight:500;color:var(--text)}
+.kanban .kanban-columns .kanban-column>header b{font-weight:500}
+.kanban .kanban-columns .kanban-column>header .count{font-size:13px;font-weight:400;color:var(--muted)}
+.kanban .kanban-columns .kanban-column>header .status-mark{width:14px;height:14px;border-width:1.5px}
+.kanban .kanban-cards{display:flex;flex-direction:column;gap:8px;padding:0;max-height:none}
+.kanban .kanban-card-wrap .kanban-card{
   box-sizing:border-box;width:100%;padding:8px 42px 8px 12px;
   display:flex;flex-direction:column;gap:6px;
   background:#fff;border:0;border-radius:8px;
   box-shadow:0 0 0 1px rgba(0,0,0,.029),0 3px 6px -2px rgba(0,0,0,.02),0 1px 1px 0 rgba(0,0,0,.04);
 }
-.kanban-card-open{
+.kanban .kanban-card-wrap .kanban-card-open{
   display:flex;flex-direction:column;gap:6px;width:100%;
   padding:0;border:0;background:none;text-align:left;cursor:pointer;
 }
-.kanban-card-open small{font-size:12px;font-weight:450;line-height:15px;color:#5c5c5e}
-.kanban-card-open strong{
+.kanban .kanban-card-wrap .kanban-card-open small{font-size:12px;font-weight:450;line-height:15px;color:#5c5c5e}
+.kanban .kanban-card-wrap .kanban-card-open strong{
   font-size:13px;font-weight:500;line-height:16px;color:var(--text);
   display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;
 }
-.kanban-card-props{display:flex;flex-wrap:wrap;align-items:center;gap:4px;min-height:24px;padding:0}
-.kanban-card-props .kanban-prop,
-.kanban-card-props select,
-.kanban-card-props button{
+.kanban .kanban-card-wrap .kanban-card-props{display:flex;flex-wrap:wrap;align-items:center;gap:4px;min-height:24px;padding:0}
+.kanban .kanban-card-wrap .kanban-card-props button,
+.kanban .kanban-card-wrap .kanban-card-props select,
+.kanban .kanban-card-wrap .kanban-card-props .kanban-prop{
   height:24px;border-radius:48px;border:1px solid #d9d9d9;background:#fff;
   font-size:12px;font-weight:450;color:#5c5c5e;padding:0 6px;
 }
-.kanban-card-props .kanban-prop-date svg{color:#5c5c5e}
 .kanban-empty{font-size:12px;color:var(--muted)}
