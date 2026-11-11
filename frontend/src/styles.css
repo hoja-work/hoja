@@ -1328,7 +1328,7 @@ html.hoja-modal-open{overflow:hidden;scrollbar-gutter:stable}
 /* the card itself */
 .kanban .kanban-card-wrap .kanban-card{
   position:relative;box-sizing:border-box;width:100%;
-  padding:8px 42px 12px 12px;                 /* 42px right gutter holds the avatar */
+  padding:8px 42px 12px 12px;min-height:133px; /* 42px right gutter holds the avatar */
   display:block;                              /* props are absolutely placed below */
   background:#fff;border:0;border-radius:8px;
   box-shadow:0 0 0 1px rgba(0,0,0,.029),0 3px 6px -2px rgba(0,0,0,.02),0 1px 1px 0 rgba(0,0,0,.04);
@@ -1347,11 +1347,11 @@ html.hoja-modal-open{overflow:hidden;scrollbar-gutter:stable}
 .kanban .kanban-card-wrap .kanban-card-props{position:absolute;left:12px;right:42px;top:63px;
   display:flex;flex-wrap:nowrap;align-items:center;gap:4px;height:24px;padding:0;overflow:hidden}
 /* status control becomes the glyph at (12,30), sitting left of the title text */
-.kanban .kanban-card-wrap .kanban-card-props>*:first-child{position:absolute;left:0;top:-33px;
-  width:20px;height:24px;min-width:0;overflow:hidden;border:0;background:none;padding:0;
+.kanban .kanban-card-wrap .kanban-card-props>*:first-child{position:absolute;left:0;top:-45px;
+  width:20px;height:24px;min-width:0;margin-left:-7px;overflow:hidden;border:0;background:none;padding:0;
   display:flex;align-items:center;justify-content:flex-start}
 /* assignee goes to the avatar gutter at (298,8) */
-.kanban .kanban-card-wrap .kanban-card-props .kanban-prop-assignee{position:absolute;right:-30px;top:-49px;
+.kanban .kanban-card-wrap .kanban-card-props .kanban-prop-assignee{position:absolute;right:-30px;top:-55px;
   width:18px;height:18px;padding:0;border:0;background:none}
 .kanban .kanban-card-wrap .kanban-card-props .kanban-prop-assignee .kanban-prop-avatar{width:18px;height:18px;
   font-size:9px}
