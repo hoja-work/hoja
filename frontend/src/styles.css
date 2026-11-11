@@ -1486,3 +1486,22 @@ html.hoja-modal-open{overflow:hidden;scrollbar-gutter:stable}
 .reviews-state{font-size:11px;font-weight:500;text-align:right;color:#5c5c5e;text-transform:capitalize}
 .reviews-state[data-state="merged"]{color:#5e6ad2}
 .reviews-issue{font-size:11px;color:var(--muted);text-align:right}
+
+/* Reviews ledger — geometry measured from Linear at 1440x900 */
+.reviews-body{display:flex;align-items:stretch;gap:0;margin:0 0 40px}
+.reviews-ledger{width:481px;flex:0 0 481px;padding:0 0 8px}
+.reviews-ledger-top{display:flex;aligned-items:center;gap:6px;padding:0 8px 10px}
+.reviews-tab{font-size:12px;font-weight:500;line-height:15px;color:var(--muted);padding:6px 10px;border-radius:5px}
+.reviews-tab.on{color:var(--text);background:var(--hover,#0000000d)}
+.reviews-group-head{display:flex;align-items:center;gap:6px;height:28px;margin:6px 0 2px;padding:0 8px;border-radius:6px;background:var(--hover,#0000000d);font-size:12px;font-weight:500;color:var(--text)}
+.reviews-group-head b{font-weight:450;color:var(--muted)}
+.reviews-caret{font-size:9px;color:var(--muted)}
+.reviews-row{display:flex;align-items:center;gap:8px;height:40px;padding:0 8px;border-radius:8px;text-decoration:none;color:inherit}
+.reviews-row:hover{background:var(--hover,#0000000d)}
+.reviews-glyph{width:14px;height:14px;flex:0 0 14px;border-radius:3px;border:1.5px solid currentColor;opacity:.45}
+.reviews-glyph[data-state="open"]{opacity:.55}
+.reviews-title{flex:1 1 auto;min-width:0;font-size:13px;line-height:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.reviews-mark{font-size:11px;color:#e5484d;flex:0 0 auto}
+.reviews-mark[data-state="draft"]{color:var(--muted)}
+.reviews-time{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;flex:0 0 auto}
+.reviews-pane{flex:1 1 auto;border-left:1px solid var(--line,#00000014);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px}
