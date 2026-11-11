@@ -1377,8 +1377,21 @@ def test_graphql_errors_do_not_leak_schema_suggestions(tmp_path) -> None:
 def test_login_rate_limit_attributes_per_client_behind_trusted_proxy(tmp_path) -> None:
     """Regression: without trusted-proxy IP resolution every visitor shared the
     reverse proxy's container IP, so 10 failed logins from ANY source locked out
-    ALL users (site-wide login DoS). With trust enabled, the edge's
-    CF-Connecting-IP must be the limiter key and per-client buckets independent."""
+    ALL users (site-wide login DoS). With trust enabled the bucket is the address
+    the proxy appended to ``x-forwarded-for``, never a header the caller chose,
+    and per-client buckets stay independent.
+
+    ``cf-connecting-ip`` is deliberately *not* the key (HOJA-43): it is
+    client-settable, so a caller that rotates it would never reach its budget.
+    The payloads below make the two headers disagree, and rotate the client-set
+    one. While they agreed, this test stayed green with the cf-connecting-ip
+    shortcut reintroduced — it could not tell the two header sources apart, so it
+    defended its docstring by accident rather than by assertion.
+
+    The prefix case at the end covers the other half of the claim: a caller may
+    also write its own ``x-forwarded-for`` prefix, so the bucket has to come from
+    the nearest hop the caller could not have written, not from the leftmost one.
+    """
     from starlette.testclient import TestClient
 
     db_path = tmp_path / "proxy-client-ip.db"
@@ -1389,22 +1402,52 @@ def test_login_rate_limit_attributes_per_client_behind_trusted_proxy(tmp_path) -
                          demo_issues=False)
     app = create_app(str(db_path), trusted_proxy_cidrs="172.18.0.0/16",
                      trusted_public_host="hoja.clover4.app", open_mode=False)
-    attacker = {"cf-connecting-ip": "198.51.100.7", "x-forwarded-for": "198.51.100.7, 172.18.0.2"}
-    victim = {"cf-connecting-ip": "198.51.100.8", "x-forwarded-for": "198.51.100.8, 172.18.0.2"}
+    attacker_real, victim_real = "198.51.100.7", "198.51.100.8"
+
+    def headers(real_client: str, cf: str) -> dict[str, str]:
+        """A proxied request whose client-set header disagrees with the real hop."""
+        return {"x-forwarded-for": f"{real_client}, 172.18.0.2", "cf-connecting-ip": cf}
+
     with TestClient(app, client=("172.18.0.2", 5000)) as client:
         # The attacker brute-forces a throwaway email: this must burn ONLY the
         # attacker's IP bucket (and that throwaway email), never the shared
-        # proxy IP and never the victim's email bucket.
+        # proxy IP and never the victim's email bucket. It rotates the header it
+        # controls on every attempt, so a bucket keyed on that header stays empty.
+        # Each attempt also uses a fresh mailbox: the limiter keys on ip *and*
+        # email, so a single shared email would reach the budget on its own and
+        # the IP bucket would never be the thing under test.
         for i in range(10):
-            r = client.post("/auth/login", headers=attacker,
-                            json={"email": "throwaway-target@nowhere.test", "password": f"bad-{i}"})
+            r = client.post("/auth/login", headers=headers(attacker_real, f"192.0.2.{i}"),
+                            json={"email": f"throwaway-{i}@nowhere.test", "password": f"bad-{i}"})
             assert r.status_code == 401, (i, r.status_code)
-        blocked = client.post("/auth/login", headers=attacker,
-                              json={"email": "throwaway-target@nowhere.test", "password": "bad-more"})
-        assert blocked.status_code == 429
-        other = client.post("/auth/login", headers=victim,
+        blocked = client.post("/auth/login", headers=headers(attacker_real, "192.0.2.250"),
+                              json={"email": "throwaway-fresh@nowhere.test", "password": "bad-more"})
+        assert blocked.status_code == 429, "a rotated cf-connecting-ip must not reset the budget"
+        # The victim reuses the attacker's eighth spoofed value: the bucket is the
+        # real hop, so that value must not carry the attacker's block across.
+        other = client.post("/auth/login", headers=headers(victim_real, "192.0.2.8"),
                             json={"email": "proxy-ip@example.test", "password": "also-wrong"})
         assert other.status_code == 401, "victim client IP must not share the attacker's bucket"
+        # The same attacker now writes its own *prefix* on x-forwarded-for. The
+        # proxy appends the address it saw, so the prefix is the caller's text
+        # and must not become the bucket: the walk is right-to-left and stops at
+        # the first hop that is not one of our proxies. A left-to-right walk
+        # would hand the caller a fresh bucket per attempt and never reach the
+        # budget, which the assertions below detect.
+        prefix_real = "198.51.100.9"
+        for i in range(10):
+            r = client.post("/auth/login",
+                            headers={"x-forwarded-for": f"203.0.113.{i}, {prefix_real}, 172.18.0.2",
+                                     "cf-connecting-ip": "203.0.113.200"},
+                            json={"email": f"prefix-{i}@nowhere.test", "password": f"bad-{i}"})
+            assert r.status_code == 401, (i, r.status_code)
+        blocked_prefix = client.post(
+            "/auth/login",
+            headers={"x-forwarded-for": f"203.0.113.250, {prefix_real}, 172.18.0.2",
+                     "cf-connecting-ip": "203.0.113.200"},
+            json={"email": "prefix-fresh@nowhere.test", "password": "bad-more"})
+        assert blocked_prefix.status_code == 429, (
+            "a client-written x-forwarded-for prefix must not pick the bucket")
         # Forwarded headers from an UNTRUSTED peer must not influence the key.
         with TestClient(app, client=("198.51.100.99", 5000)) as direct:
             r = direct.post("/auth/login", headers={"cf-connecting-ip": "1.2.3.4",
