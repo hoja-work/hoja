@@ -2,7 +2,10 @@
 // icon elements whose contrast against their effective background is below a threshold.
 // Usage: PROBE_TOKEN=... node scripts/ui-probes/dark-contrast.cjs <route-click-text or -> [min=3]
 // Route: "-" audits the current view; otherwise clicks the visible control with that exact text first.
+// Controls whose accessible role is "tab" (My issues / Team issues strips) are matched by role and by
+// tab-strip text; a missing control fails within ~5s naming the labels that exist instead of waiting 30s.
 const { chromium } = require('../../local-e2e/node_modules/playwright');
+const { clickControl } = require('./click-control.cjs');
 const url = process.env.PROBE_URL || 'http://127.0.0.1:8797';
 const token = process.env.PROBE_TOKEN;
 if (!token) { console.error('set PROBE_TOKEN'); process.exit(2); }
@@ -16,7 +19,8 @@ const min = Number(process.argv[3] || 3);
     await page.goto(url + '/');
     await page.waitForTimeout(1500);
     if (clickText !== '-') {
-      await page.getByRole('button', { name: clickText, exact: true }).first().click();
+      const via = await clickControl(page, clickText);
+      if (process.env.PROBE_VERBOSE) console.error(`clicked ${JSON.stringify(clickText)} via ${via}`);
       await page.waitForTimeout(600);
     }
     const rows = await page.evaluate(min => {
