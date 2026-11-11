@@ -1327,7 +1327,7 @@ html.hoja-modal-open{overflow:hidden;scrollbar-gutter:stable}
 
 /* the card itself */
 .kanban .kanban-card-wrap .kanban-card{
-  position:relative;box-sizing:border-box;width:100%;
+  position:relative;box-sizing:border-box;width:324px;max-width:100%;
   padding:8px 42px 12px 12px;min-height:133px; /* 42px right gutter holds the avatar */
   display:block;                              /* props are absolutely placed below */
   background:#fff;border:0;border-radius:8px;
@@ -1351,7 +1351,7 @@ html.hoja-modal-open{overflow:hidden;scrollbar-gutter:stable}
   width:20px;height:24px;min-width:0;margin-left:-7px;overflow:hidden;border:0;background:none;padding:0;
   display:flex;align-items:center;justify-content:flex-start}
 /* assignee goes to the avatar gutter at (298,8) */
-.kanban .kanban-card-wrap .kanban-card-props .kanban-prop-assignee{position:absolute;right:-30px;top:-55px;
+.kanban .kanban-card-wrap .kanban-card-props .kanban-prop-assignee{position:absolute;right:-30px;top:-65px;
   width:18px;height:18px;padding:0;border:0;background:none}
 .kanban .kanban-card-wrap .kanban-card-props .kanban-prop-assignee .kanban-prop-avatar{width:18px;height:18px;
   font-size:9px}
