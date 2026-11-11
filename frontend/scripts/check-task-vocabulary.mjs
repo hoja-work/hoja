@@ -52,6 +52,7 @@ const STRUCTURAL_VALUE = [
   /^hoja-issue:/, /^[a-z][a-z0-9]*(?:[-_:][a-z0-9]+)+$/, // kebab / snake / namespaced tokens
   /^[a-z]+$/,                                            // a bare enum/entity token ("issue")
   /^\.{1,2}\//, /^\/[\w./${}-]*$/, /^[.#][\w-]+(?:[ >+~][\w.-]+)*$/, // CSS selectors
+  /^https?:\/\//, /^[a-z0-9.-]+\.[a-z]{2,}(?:\/.*)?$/i,      // URLs and example hostnames
   /[{}\[\]]/,                                           // GraphQL documents and field lists
   /^#[0-9a-f]{3,8}$/i, /^\d+(?:\.\d+)?(?:px|rem|em|%)?$/,
   /^(?:query|mutation|subscription|fragment)\b/,
