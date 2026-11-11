@@ -1397,3 +1397,20 @@ html.hoja-modal-open{overflow:hidden;scrollbar-gutter:stable}
 .kanban .kanban-columns .kanban-column>header .status-mark{
   width:14px;height:14px;border-radius:50%;border:1.5px solid currentColor;
   box-sizing:border-box;flex:none;display:inline-block}
+
+/* ---- Scrolling: each lane scrolls on its own -------------------------------------
+   Setting max-height:none on .kanban-cards to let the card breathe removed the only
+   scroll container, so long columns could not be scrolled at all. The lane is restored
+   as a flex column with a bounded height, and the cards area is the scroller. */
+.kanban .kanban-columns{overflow:hidden auto;align-items:stretch;min-height:0}
+.kanban .kanban-columns .kanban-column{
+  display:flex;flex-direction:column;min-height:0;max-height:100%}
+.kanban .kanban-columns .kanban-column>header{flex:none}
+.kanban .kanban-cards{
+  flex:1 1 auto;min-height:0;max-height:none;overflow-y:auto;overscroll-behavior:contain;
+  scrollbar-width:thin;padding-bottom:8px}
+/* the status glyph was drawing in a near-invisible colour; give it a real one */
+.kanban .kanban-card-wrap .kanban-card-props>*:first-child{color:#5c5c5e}
+.kanban .kanban-card-wrap .kanban-card-props>*:first-child svg,
+.kanban .kanban-card-wrap .kanban-card-props>*:first-child svg *{
+  color:#5c5c5e!important;stroke:#5c5c5e!important;fill:none!important;opacity:1!important}
