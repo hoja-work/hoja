@@ -10,12 +10,14 @@ Three surfaces render the `issue.parent` relation. They are deliberately differe
   organisation and team, accepts an id or an identifier, and rejects self-parenting and
   ancestor cycles. `Issue.children(first, after)` is a `(created_at, id)` cursor connection.
 
-## Tree layout (`IssueLayout = 'Tree'`)
+## List layout (the default)
 
-`IssueTree` groups the same `visible` issues the list and board receive.
+`IssueTree` renders the list. It groups the same `visible` issues the board receives.
 
-- Roots are issues whose parent is absent **or filtered out**; a filtered-out parent is shown
-  as a `↳IDENT` chip on the row, so nothing disappears silently.
+- Roots are issues whose parent is absent, filtered out, or outside the `issues(first:100)`
+  snapshot. Missing parents are fetched by id (bounded to 40 per pass) and folded in, so a
+  child nests under its parent even when the parent is not in the page. A parent that cannot
+  be read is shown as a `↳IDENT` chip instead.
 - Depth is communicated by a 22px indent step (10px at depth 0, 32px at depth 1, 54px at
   depth 2) and the disclosure chevron. There are no guide rails: previous versions drew
   `::before`/`::after` lines and they were removed on request.
