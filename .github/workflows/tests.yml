@@ -92,6 +92,8 @@ jobs:
           tests/test_server_postgres.py
           tests/test_tenant_context.py
           tests/agent/test_dbos_crash_recovery.py
+          tests/test_meetings.py
+          tests/test_server_backend.py::test_cloverops_graphql_operation_contract
 
       # Runs even when the step above failed, so a broken database path reports
       # both the failing assertions and whether the cases ran at all.
