@@ -47,7 +47,19 @@ jobs:
       - name: Test suite
         # faulthandler_timeout mirrors the Cloud runner so a hang dumps stacks
         # instead of consuming the whole job timeout.
-        run: uv run --frozen --all-extras pytest -q -o faulthandler_timeout=240
+        run: >-
+          uv run --frozen --all-extras pytest -q
+          --junit-xml=results.xml
+          -o faulthandler_timeout=240
+
+      # pytest exits 0 when every test skips, so the exit code above cannot
+      # distinguish "1238 tests passed" from "1238 tests were skipped". This
+      # step makes the difference observable. --allow-skips because the
+      # Postgres-gated cases legitimately skip here; the floor is what carries
+      # the guarantee, and pytest-postgres owns the skip rule for its modules.
+      - name: Assert the suite actually executed
+        if: always()
+        run: python scripts/assert_pg_gate_ran.py results.xml --allow-skips --minimum 1150
 
   pytest-postgres:
     # Only the three database-gated modules; the SQLite job above owns the rest.
