@@ -30,9 +30,14 @@ const defects = [
   ['visible attribute', 'main.tsx', `const __probe = <button aria-label="Create new issue" />;\n`],
   ['string literal in expression', 'main.tsx', `const __probe = () => confirm('Delete this issue?');\n`],
   ['template literal with interpolation', 'main.tsx', `const __n = 3; const __probe = \`\${__n} issues failed\`;\n`],
+  // Both of these hid real copy from the first gate revision: a property value
+  // ("displayText: 'Summarize my open issues'") and a [key, copy] tuple array.
+  ['property value copy', 'main.tsx', `const __probe = [{displayText: 'Summarize my open issues'}];\n`],
+  ['tuple array copy', 'main.tsx', `const __probe = [['issueCreated', 'Issue created for me']];\n`],
 ];
 const nearMisses = [
   ['routing key comparison', 'main.tsx', `const __v = 'Team issues'; if (__v === 'Team issues') void 0;\n`],
+  ['routing key in a display-mapped list', 'main.tsx', `const __probe = ['Overview', 'All issues'];\n`],
   ['routing key returned by the resolver', 'routes.ts', `export const __probe = () => 'Team issues';\n`],
   ['GraphQL document', 'main.tsx', `const __probe = 'query X{issue(id:$id){id}}';\n`],
   ['entity discriminator', 'main.tsx', `const __probe = 'issue';\n`],

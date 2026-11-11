@@ -1647,7 +1647,7 @@ export function GraphIssueDetail({workspaceName, viewer, issue, issueList, onOpe
               ...actionMenuItems,
               {key: 'div', divider: true},
               {key: 'archive', label: 'Archive task', onSelect: async () => { if (await confirmDialog(`Archive ${detail.identifier}?`)) archive(); }},
-              {key: 'delete', label: 'Delete issue', danger: true, onSelect: async () => { if (await confirmDialog(`Permanently delete ${detail.identifier}? This cannot be undone.`)) remove(); }},
+              {key: 'delete', label: 'Delete task', danger: true, onSelect: async () => { if (await confirmDialog(`Permanently delete ${detail.identifier}? This cannot be undone.`)) remove(); }},
             ]} />}
           </span>
           {idx >= 0 && <>

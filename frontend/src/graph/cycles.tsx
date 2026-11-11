@@ -689,7 +689,7 @@ function CycleOptionsMenu({cycle, issues, onError, onClose}: {
       {key: 'fav', label: fav ? 'Remove from favorites' : 'Favorite', shortcut: 'ALT F', icon: fav ? <Check size={14} /> : undefined, onSelect: toggleFav},
       {key: 'copy', label: 'Copy link', icon: <Link2 size={14} />, onSelect: () => { void navigator.clipboard?.writeText(window.location.href); }},
       {key: 'cal', label: 'Subscribe to cycle calendar', icon: <CalendarDays size={14} />, onSelect: () => download(`${cname.replace(/\s+/g, '-').toLowerCase()}.ics`, cycleICS(cycle), 'text/calendar')},
-      {key: 'csv', label: 'Export issues as CSV…', icon: <Download size={14} />, onSelect: () => download(`${cname.replace(/\s+/g, '-').toLowerCase()}-issues.csv`, issuesCSV(issues), 'text/csv')},
+      {key: 'csv', label: 'Export tasks as CSV…', icon: <Download size={14} />, onSelect: () => download(`${cname.replace(/\s+/g, '-').toLowerCase()}-issues.csv`, issuesCSV(issues), 'text/csv')},
     ]} />
   );
 }
