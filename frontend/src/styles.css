@@ -1464,14 +1464,13 @@ html.hoja-modal-open{overflow:hidden;scrollbar-gutter:stable}
 .reviews-skip:hover{color:var(--text)}
 .rev-ic{display:inline-flex;color:var(--muted);margin-bottom:8px}
 /* Tree layout (IssueLayout='Tree'): hierarchy from issue.parent, same rows as the list. */
-.issues-tree{display:flex;flex-direction:column;padding:6px 0 28px}
-.issues-tree .tree-row{display:flex;align-items:center;gap:8px;min-height:34px;padding-right:10px;border-bottom:1px solid var(--line);cursor:pointer;position:relative;background:transparent;text-align:left;color:var(--text)}
-.issues-tree .tree-row:hover{background:var(--subtle)}
-.tree-toggle{display:grid;place-items:center;width:18px;height:18px;padding:0;border:0;border-radius:4px;background:transparent;color:var(--muted);flex:none}
+/* Hierarchy inside the grouped list: the row keeps its normal grid columns and only
+   gains a disclosure gutter plus a left offset, so status, priority, labels, assignee
+   and dates stay exactly as they were. */
+.tree-row{position:relative;padding-left:16px}
+.tree-toggle-slot{position:absolute;left:0;top:0;bottom:0;width:14px;display:flex;align-items:center}
+.tree-toggle{display:grid;place-items:center;width:14px;height:16px;padding:0;border:0;border-radius:3px;background:transparent;color:var(--muted)}
 .tree-toggle:hover{background:var(--subtle);color:var(--text)}
 .tree-toggle svg{transition:transform .12s ease}
-.tree-toggle-spacer{width:18px;flex:none}
-.tree-title{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.tree-rollup{margin-left:auto;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;border:1px solid var(--line);border-radius:10px;padding:0 6px;line-height:16px}
-.tree-parent-chip{font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:1px 5px;flex:none}
-.tree-empty{margin:16px 10px;color:var(--muted);font-size:13px}
+.tree-parent-chip{font-size:10px;line-height:15px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 4px;margin-right:5px;vertical-align:1px}
+.tree-rollup{margin-left:7px;font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums;border:1px solid var(--line);border-radius:9px;padding:0 5px;line-height:15px}

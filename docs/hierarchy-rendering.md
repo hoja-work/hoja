@@ -12,9 +12,11 @@ Three surfaces render the `issue.parent` relation. They are deliberately differe
 
 ## List layout (the default)
 
-The grouped list is unchanged: the same `my-issue-group` sections, headers, counts and spacing.
-`IssueTree` replaces only the rows *inside* each section, so a task nests under its parent when
-both fall in the same group. A child whose parent sits in another group keeps its `↳IDENT` chip
+The grouped list is unchanged: the same `my-issue-group` sections, headers, counts and spacing,
+and each row keeps its full composition (status picker, priority, identifier, labels, assignee,
+due, project, date). `treeOrder` only re-orders and offsets those rows, so a task nests under its
+parent when both fall in the same group; a disclosure toggle sits in a 16px gutter that the row
+reserves, and a completed/total rollup is appended inside the title cell. A child whose parent sits in another group keeps its `↳IDENT` chip
 and does not drag the parent into that section (the parent backfill is gated behind
 `fetchMissing` and off for grouped lists). It groups the same `visible` issues the board receives.
 
