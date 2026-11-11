@@ -480,6 +480,7 @@ function KanbanCard({issue, teams, dragged, onDragStart, onDragEnd, onSelect, on
      </select>
     </label>
    </div>
+   <span className="kanban-card-date">{new Date(issue.createdAt).toLocaleDateString(undefined,{month:'short',day:'numeric'})}</span>
   </div>
   <button className="kanban-move" aria-label={`Move ${issue.identifier} to next status`} title="Move to next status (Alt + Right Arrow)" onClick={onMoveNext} disabled={!canMoveNext}><span>Move</span><kbd aria-hidden="true">Alt + →</kbd></button>
  </div>

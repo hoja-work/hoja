@@ -1363,3 +1363,14 @@ html.hoja-modal-open{overflow:hidden;scrollbar-gutter:stable}
   height:24px;border-radius:48px;border:1px solid #d9d9d9;background:#fff;
   font-size:12px;font-weight:450;color:#5c5c5e;padding:0 6px;flex:none}
 .kanban-empty{font-size:12px;color:var(--muted)}
+
+/* the reference card shows a created-date line and no move affordance */
+.kanban .kanban-card-wrap .kanban-card-date{position:absolute;left:12px;top:99px;
+  font-size:12px;font-weight:450;line-height:15px;color:#5c5c5e}
+/* keep the move button reachable but out of the composition, as the reference does */
+.kanban .kanban-card-wrap .kanban-move{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
+.kanban .kanban-card-wrap .kanban-move:focus-visible{position:static;left:auto;width:auto;height:auto;
+  margin-top:6px}
+/* status: show the glyph, not the text, so it reads as the reference's 14px ring */
+.kanban .kanban-card-wrap .kanban-card-props>*:first-child{overflow:visible;width:20px;font-size:0;gap:0}
+.kanban .kanban-card-wrap .kanban-card-props>*:first-child svg{width:14px;height:14px}
