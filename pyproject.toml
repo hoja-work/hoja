@@ -73,6 +73,15 @@ server = [
 saas = [
     "asyncpg>=0.29",
 ]
+# The browser suite in tests/e2e declares playwright and sqlalchemy as hard
+# requirements (tests/e2e/conftest.py importorskips both), but no extra
+# installed them, so every case skipped in CI and locally. Keeping them in a
+# named extra -- rather than in `dev` -- is what lets the `pytest-e2e` job
+# install them deliberately and assert that the cases ran.
+e2e = [
+    "playwright>=1.47,<2.0",
+    "sqlalchemy>=2.0",
+]
 agent = [
     "pydantic-ai-slim[dbos,openai,mcp]>=2.54,<3.0",
     "google-workspace-connector",
