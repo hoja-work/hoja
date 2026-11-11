@@ -35,7 +35,10 @@ def prose_lines(path: Path):
 
 
 def main(argv: list[str]) -> int:
-    roots = [Path(a) for a in argv[1:]] or [Path("README.md"), Path("CHANGELOG.md"), Path("docs")]
+    # CHANGELOG.md is deliberately absent: it records what shipped in past
+    # releases under the name those releases used. Rewriting it would falsify the
+    # history the file exists to keep; the rename is announced at its top instead.
+    roots = [Path(a) for a in argv[1:]] or [Path("README.md"), Path("docs")]
     files: list[Path] = []
     for root in roots:
         if root.is_dir():

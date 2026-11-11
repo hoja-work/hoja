@@ -3,7 +3,7 @@
 Hoja sends outgoing webhooks using the upstream contract's wire contract, so existing the upstream API
 webhook consumers (including `LinearWebhookClient` from `@linear/sdk`) work with
 Hoja unchanged. Use them to run your own automation when work changes, for
-example to provision a worktree, ports, and a database branch when an issue is
+example to provision a worktree, ports, and a database branch when a task is
 created and tear them down when it closes.
 
 ## Manage webhooks
@@ -43,7 +43,7 @@ Each event is an HTTP `POST` with a JSON body:
 | --- | --- |
 | `action` | `create`, `update`, or `remove` |
 | `type` | `Issue` |
-| `data` | The issue: `id`, `identifier`, `title`, `branchName`, `url`, `stateId`, `state {id name type color}`, `teamId`, `team {id key name}`, `assigneeId`, `labelIds`, timestamps, and more |
+| `data` | The task: `id`, `identifier`, `title`, `branchName`, `url`, `stateId`, `state {id name type color}`, `teamId`, `team {id key name}`, `assigneeId`, `labelIds`, timestamps, and more |
 | `updatedFrom` | For `update`: the previous value of every changed field |
 | `actor` | Who made the change when known: `{id, type, name, email}`, `type` is `user` or `integration` (an extension bot) |
 | `url`, `createdAt`, `organizationId`, `webhookId` | Event context |
@@ -87,7 +87,7 @@ def verify(secret: str, raw_body: bytes, signature: str) -> dict:
   dispatch position, the queued deliveries, and the state used for `updatedFrom`
   are committed together.
 - **Coalescing.** Events are dispatched about once per second. Several changes to
-  one issue in that window arrive as one event carrying the latest state; an issue
+  one task in that window arrive as one event carrying the latest state; a task
   created and closed in the same window arrives as a single `create`.
 
 ## Server configuration
@@ -95,6 +95,6 @@ def verify(secret: str, raw_body: bytes, signature: str) -> dict:
 | Variable | Effect |
 | --- | --- |
 | `HOJA_SECRET_KEY` | Required. Encrypts webhook signing secrets at rest. |
-| `HOJA_APP_URL` | Base of the issue links in `url` and `data.url`. |
+| `HOJA_APP_URL` | Base of the task links in `url` and `data.url`. |
 | `HOJA_WEBHOOK_ALLOW_PRIVATE_NETWORKS=1` | Allows loopback, private, and link-local targets, plain `http`, and ports other than 443, for receivers on your own machine or LAN. Without it, only `https` URLs on port 443 that resolve to public addresses are accepted, checked both on save and before each send. |
 | `HOJA_WEBHOOK_WORKER=0` | Stops this server process from dispatching and sending. |
