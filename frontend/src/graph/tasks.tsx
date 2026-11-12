@@ -419,10 +419,10 @@ function DecisionPanel({decisions, onAnswer, onCancel}: {
 /* ---------------- issue row ---------------- */
 
 /* Memoized: with stable onSelect/onOpen only rows whose issue/selection changed re-render. */
-export const IssueRow = memo(function IssueRow({issue, display, selected, onSelect, onOpen, childCount, showCheckbox}: {
+export const IssueRow = memo(function IssueRow({issue, display, selected, onSelect, onOpen, childCount, childDone = 0, showCheckbox}: {
   issue: LinIssue; display: LinDisplay; selected: boolean;
   onSelect: (id: string, on: boolean) => void; onOpen: (issue: LinIssue) => void;
-  childCount: number; showCheckbox: boolean;
+  childCount: number; childDone?: number; showCheckbox: boolean;
 }) {
   const p = display.props;
   return (
@@ -440,7 +440,7 @@ export const IssueRow = memo(function IssueRow({issue, display, selected, onSele
       {p.id && <span className="ident">{issue.identifier}</span>}
       <button type="button" className="title" onClick={() => onOpen(issue)} title={issue.title}>{issue.title}</button>
       {issue.decisionNeeded && <DecisionFlag />}
-      {childCount > 0 && <SubIssuePill done={0} total={childCount} />}
+      {childCount > 0 && <SubIssuePill done={childDone} total={childCount} />}
       <span className="meta">
         {p.labels && issue.labels?.nodes.map(l => <LabelChip key={l.id} label={l} />)}
         {p.project && issue.project && <ProjectChip name={issue.project.name} />}
@@ -821,11 +821,15 @@ export function GraphTeamIssues({team, teams, orgId, workspaceName, projects, la
     }
   };
 
-  const childCounts = useMemo(() => {
-    const m = new Map<string, number>();
+  const childRollups = useMemo(() => {
+    const m = new Map<string, {done: number; total: number}>();
     for (const i of rows) {
       const pid = i.parent?.id;
-      if (pid) m.set(pid, (m.get(pid) || 0) + 1);
+      if (!pid) continue;
+      const r = m.get(pid) || {done: 0, total: 0};
+      r.total += 1;
+      if (i.state?.type === 'completed') r.done += 1;
+      m.set(pid, r);
     }
     return m;
   }, [rows]);
@@ -1009,7 +1013,8 @@ export function GraphTeamIssues({team, teams, orgId, workspaceName, projects, la
                       selected={selectedSet.has(i.id)}
                       showCheckbox
                       onSelect={onSelect}
-                      onOpen={openIssue} childCount={childCounts.get(i.id) || 0} />
+                      onOpen={openIssue} childCount={childRollups.get(i.id)?.total || 0}
+                      childDone={childRollups.get(i.id)?.done || 0} />
                   ))}
                   {end < n && <div aria-hidden="true" style={{height: (n - end) * rowH}} />}
                 </section>
@@ -1634,6 +1639,16 @@ export function GraphIssueDetail({workspaceName, viewer, issue, issueList, onOpe
           <span className="sep">›</span>
           <span>{workspaceName}</span>
           <span className="sep">›</span>
+          {detail.parent && (
+            <>
+              <button type="button" className="crumb-link lin-crumb-parent" data-parent-path={detail.parent.identifier}
+                title={`Parent: ${detail.parent.identifier} ${detail.parent.title}`}
+                onClick={() => onOpenIssue({...(detail.parent as LinIssue), id: detail.parent!.id})}>
+                {detail.parent.identifier}
+              </button>
+              <span className="sep">›</span>
+            </>
+          )}
           <span className="crumb-id">{detail.identifier}</span>
           <span className="current">{detail.title}</span>
         </nav>
@@ -1742,6 +1757,7 @@ export function GraphIssueDetail({workspaceName, viewer, issue, issueList, onOpe
               <div key={s.id} className={cx('lin-subrow', s.state?.type === 'completed' && 'done', isLocalIssueId(s.id) && 'pending')}
                 aria-busy={isLocalIssueId(s.id) || undefined} {...(isLocalIssueId(s.id) ? {} : issueIntentProps(s))}>
                 <GraphStatusIcon state={s.state} size={14} />
+                <span className="ident">{s.identifier}</span>
                 <button type="button" className="t" disabled={isLocalIssueId(s.id)} onClick={() => onOpenIssue(s)} title={s.title}>{s.title}</button>
                 {s.labels?.nodes.map(l => <LabelChip key={l.id} label={l} />)}
                 {s.assignee && <Avatar name={s.assignee.name} size={18} />}

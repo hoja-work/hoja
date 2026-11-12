@@ -33,13 +33,26 @@ and does not drag the parent into that section (the parent backfill is gated beh
 
 ## Board (`Kanban`)
 
-The board is unchanged by this work: it groups strictly by workflow state. A parent and a
-child with the same status appear as two peers in that column, and a child in another status
-appears in its own column. The board does not fetch or draw the parent relation, so it never
-claims a nesting it cannot honour.
+The board groups by workflow state first, then nests inside each column with the same
+`treeOrder` the list uses: a sub-task whose parent is in the same column is indented under it
+(`data-depth`, 18px per level, with a 2px rail) and the parent card carries the same rollup.
+A sub-task whose parent lives in another column stays a root in its own column and keeps the
+`↳IDENT` parent chip, so it is never read as an orphan. The board rollup spans every column
+(a done sub-task sits under Done even when its parent is in Todo), which is why it is computed
+over the whole `grouped` set rather than per column; like the list it counts loaded children.
+
+## Task page (`/workspace/task/<IDENT>`)
+
+The breadcrumb carries the parent (`lin-crumb-parent[data-parent-path]`, clickable, so a child
+navigates up) and the Sub-tasks section lists each child with its server-issued identifier and
+a `completed/total` pill. Both identifiers and counts come from the server payload; nothing is
+synthesised in the client.
 
 ## What is not true
 
-- The board does not fetch or show child counts; `GraphTeamIssues`' `showSubIssues` filter and
-  `SubIssuePill` live in an unmounted module and are not part of the live surface.
+- Rollups are not server aggregates: a parent whose children fall outside the loaded set shows
+  the ratio for what is loaded.
+- Identifiers are still flat and per-team (`ENG-42`), including for sub-tasks: the recursive
+  `TEAM-NUMBER-LETTER-NUMBER` scheme in HOJA-33 is an allocator change, not a rendering one,
+  and is not implemented here (see the verdict in the HOJA-33 report).
 - `a/b` rollups count loaded children only, not a server aggregate.

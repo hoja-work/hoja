@@ -679,21 +679,25 @@ function MyIssuesContent({issues,onNew,onOpenIssue,tab,activityEvents=NO_EVENTS,
 const KANBAN_PAGE=60,KANBAN_STEP=200;
 /* A card property control edits straight from the board: the change patches the shared
  * store now and rolls back if the server rejects it, so no issue-page round-trip is needed. */
-function KanbanCard({issue, teams, dragged, onDragStart, onDragEnd, onSelect, onUpdate, onMoveNext, canMoveNext}:{
+function KanbanCard({issue, teams, dragged, onDragStart, onDragEnd, onSelect, onUpdate, onMoveNext, canMoveNext, depth=0, parentIdent, rollup}:{
  issue:Issue; teams:Team[]; dragged:boolean; onDragStart:(e:React.DragEvent)=>void; onDragEnd:()=>void;
  onSelect:(issue:Issue)=>void; onUpdate:(issueId:string,input:Record<string,unknown>)=>Promise<void>;
- onMoveNext:()=>void; canMoveNext:boolean}) {
+ onMoveNext:()=>void; canMoveNext:boolean;
+ /* Board hierarchy (HOJA-33): depth 0 for a root, 1+ for a sub-task whose parent is in this
+  * column; parentIdent is set only when the parent is elsewhere, so the card is not mistaken
+  * for an orphan; rollup counts the direct children rendered in this column. */
+ depth?:number; parentIdent?:string; rollup?:{done:number;total:number}}) {
  const members=teams.find(t=>t.id===issue.team?.id)?.members?.nodes||[];
  const due=(issue.dueDate||'').slice(0,10);const overdue=dueIsOverdue(issue.dueDate);
  const [busy,setBusy]=useState(false);
  /* The board shows the failure banner; swallow the rejection here so an inline edit
   * never surfaces as an unhandled promise rejection. */
  const edit=async(input:Record<string,unknown>)=>{if(busy)return;setBusy(true);try{await onUpdate(issue.id,input)}catch{/* banner shown by Kanban */}finally{setBusy(false)}};
- return <div className={`kanban-card-wrap ${dragged?'dragging':''}`}>
+ return <div className={`kanban-card-wrap ${dragged?'dragging':''}`} data-depth={depth} data-parent={parentIdent||undefined} style={depth?{marginLeft:depth*18}:undefined}>
  {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- drag surface only; the keyboard path (alt+arrow) lives on the inner button */}
   <div className="kanban-card" draggable onDragStart={e=>{if((e.target as HTMLElement).closest('input,select,label,button')){e.preventDefault();return}onDragStart(e)}} onDragEnd={onDragEnd}>
    <button type="button" className="kanban-card-open" onClick={()=>onSelect(issue)} onKeyDown={e=>{if(e.altKey&&e.key==='ArrowRight'){e.preventDefault();onMoveNext()}}} aria-label={`Open ${issue.identifier}: ${issue.title}`}>
-    <small>{issue.identifier}{issue.decisionNeeded?<span className="my-issue-decision" role="img" aria-label="Needs a decision" title="Needs a decision">?</span>:null}</small>
+    <small>{parentIdent?<span className="kanban-parent-chip" title={`Parent ${parentIdent}`}>{`↳${parentIdent}`}</span>:null}{issue.identifier}{rollup?<span className="kanban-rollup" aria-label={`${rollup.done} of ${rollup.total} sub-tasks complete`}>{`${rollup.done}/${rollup.total}`}</span>:null}{issue.decisionNeeded?<span className="my-issue-decision" role="img" aria-label="Needs a decision" title="Needs a decision">?</span>:null}</small>
     <strong>{issue.title}</strong>
    </button>
    <div className="kanban-card-props" aria-busy={busy||undefined}>
@@ -736,7 +740,11 @@ function Kanban({grouped,onSelect,onNew,onMoved,onUpdate,teams=[]}:{grouped:{sta
  const [limits,setLimits]=useState<Record<string,number>>({});const grow=(id:string)=>setLimits(l=>({...l,[id]:(l[id]||KANBAN_PAGE)+KANBAN_STEP}));
  const moveNext=async(issue:Issue,stateId:string)=>{const idx=grouped.findIndex(g=>g.state.id===stateId),next=grouped[idx+1];if(!next)return;try{await onMoved(issue.id,next.state)}catch(err){setError((err as Error).message)}};
  const update=async(issueId:string,input:Record<string,unknown>)=>{try{await onUpdate(issueId,input)}catch(err){setError((err as Error).message);throw err}};
- return <div className="kanban"><div className="kanban-columns">{grouped.map(group=><section role="presentation" className={`kanban-column ${dragged?'drop-ready':''}`} key={group.state.id} onDragOver={e=>{e.preventDefault();e.dataTransfer.dropEffect='move'}} onDrop={async e=>{e.preventDefault();const id=e.dataTransfer.getData('text/hoja-issue')||dragged;setDragged('');if(id&&group.state.id!=='unknown'){try{await onMoved(id,group.state)}catch(err){setError((err as Error).message)}}}}><header><span className="status-mark" style={{borderColor:group.state.color}}></span><b>{group.state.name}</b><span className="count">{group.items.length}</span><button aria-label={`Create task in ${group.state.name}`} onClick={()=>onNew(group.state.id==='unknown'?undefined:group.state.id)}><Plus size={15}/></button></header><div className="kanban-cards" onScroll={group.items.length>(limits[group.state.id]||KANBAN_PAGE)?e=>{const el=e.currentTarget;if(el.scrollTop+el.clientHeight>el.scrollHeight-800)grow(group.state.id)}:undefined}>{group.items.length===0&&<p className="kanban-empty">No tasks in {group.state.name}.</p>}{group.items.slice(0,limits[group.state.id]||KANBAN_PAGE).map(issue=><KanbanCard key={issue.id} issue={issue} teams={teams} dragged={dragged===issue.id}
+ /* A card's rollup spans every column, not only its own: a done sub-task lives under Done even
+  * when its parent is in Todo, so counting per column would report 0 of N for a finished tree.
+  * Like the list, this counts the children this board has loaded, not a server aggregate. */
+ const rollups=useMemo(()=>{const m=new Map<string,{done:number;total:number}>();for(const g of grouped)for(const i of g.items){const pid=i.parent?.id;if(!pid)continue;const r=m.get(pid)||{done:0,total:0};r.total+=1;if(i.state?.type==='completed')r.done+=1;m.set(pid,r)}return m},[grouped]);
+ return <div className="kanban"><div className="kanban-columns">{grouped.map(group=><section role="presentation" className={`kanban-column ${dragged?'drop-ready':''}`} key={group.state.id} onDragOver={e=>{e.preventDefault();e.dataTransfer.dropEffect='move'}} onDrop={async e=>{e.preventDefault();const id=e.dataTransfer.getData('text/hoja-issue')||dragged;setDragged('');if(id&&group.state.id!=='unknown'){try{await onMoved(id,group.state)}catch(err){setError((err as Error).message)}}}}><header><span className="status-mark" style={{borderColor:group.state.color}}></span><b>{group.state.name}</b><span className="count">{group.items.length}</span><button aria-label={`Create task in ${group.state.name}`} onClick={()=>onNew(group.state.id==='unknown'?undefined:group.state.id)}><Plus size={15}/></button></header><div className="kanban-cards" onScroll={group.items.length>(limits[group.state.id]||KANBAN_PAGE)?e=>{const el=e.currentTarget;if(el.scrollTop+el.clientHeight>el.scrollHeight-800)grow(group.state.id)}:undefined}>{group.items.length===0&&<p className="kanban-empty">No tasks in {group.state.name}.</p>}{treeOrder(group.items,{}).slice(0,limits[group.state.id]||KANBAN_PAGE).map(({i:issue,depth,parentInGroup})=><KanbanCard key={issue.id} issue={issue} teams={teams} dragged={dragged===issue.id} depth={depth} parentIdent={parentInGroup?undefined:issue.parent?.identifier} rollup={rollups.get(issue.id)}
    onDragStart={e=>{setDragged(issue.id);e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/hoja-issue',issue.id)}}
    onDragEnd={()=>setDragged('')}
    onSelect={onSelect}
