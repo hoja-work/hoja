@@ -1,6 +1,7 @@
 import React, {useEffect, useId, useLayoutEffect, useRef, useState} from 'react';
 import {createPortal} from 'react-dom';
 import {Check, ChevronDown} from 'lucide-react';
+import {useMenuDismiss} from './menu';
 
 export type SettingsOption = {
   value: string;
@@ -53,29 +54,29 @@ export function SettingsSelect({label, value, options, onChange, placeholder = '
     setPlacement({top, left, width, maxHeight});
   };
 
-  useLayoutEffect(() => {
-    if (!open) return;
-    place();
-    const onResize = () => place();
-    const onPointer = (event: PointerEvent) => {
-      if (!trigger.current?.contains(event.target as Node) && !panel.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const onEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
+  // Escape keeps focus on the trigger: this is a combobox, so returning focus beats
+  // letting the key bubble to whatever else is listening.
+  useMenuDismiss({
+    open,
+    onDismiss: () => setOpen(false),
+    within: [trigger, panel],
+    onEscape: (event) => {
       event.preventDefault();
       event.stopPropagation();
       setOpen(false);
       trigger.current?.focus();
-    };
+    },
+  });
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    place();
+    const onResize = () => place();
     window.addEventListener('resize', onResize);
     window.addEventListener('scroll', onResize, true);
-    document.addEventListener('pointerdown', onPointer);
-    document.addEventListener('keydown', onEscape, true);
     return () => {
       window.removeEventListener('resize', onResize);
       window.removeEventListener('scroll', onResize, true);
-      document.removeEventListener('pointerdown', onPointer);
-      document.removeEventListener('keydown', onEscape, true);
     };
   }, [open]);
 

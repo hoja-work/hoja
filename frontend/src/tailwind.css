@@ -1,0 +1,14 @@
+@import "tailwindcss";
+
+/* The app palette lives in CSS variables (styles.css, light and dark). Registering them as
+ * theme colors lets markup style surfaces with utilities (bg-panel, bg-subtle, border-line,
+ * text-muted) instead of hard-coded neutrals that would ignore the theme. */
+@theme inline {
+  --color-panel: var(--panel);
+  --color-subtle: var(--subtle);
+  --color-line: var(--line);
+  --color-muted: var(--muted);
+  --color-danger: var(--danger);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+}

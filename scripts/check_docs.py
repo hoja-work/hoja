@@ -19,6 +19,7 @@ ROOT_DOCUMENTS = {
     "CHANGELOG.md",
     "CODE_OF_CONDUCT.md",
     "CONTRIBUTING.md",
+    "DESIGN.md",
     "GOVERNANCE.md",
     "LICENSE",
     "LICENSE.md",

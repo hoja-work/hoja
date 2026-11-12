@@ -49,9 +49,14 @@ const tryClick = async (page, locator, label) => {
     await nav(page, 'Board');
     await audit(page, 'board:' + 'default(All issues)');
     for (const t of ['Active', 'Backlog', 'All issues']) { await tryClick(page, page.getByRole('tab', { name: t, exact: true }), 'board tab ' + t); await audit(page, 'board-tab:' + t); }
-    const teamBtns = page.locator('.board-team-filter button');
-    console.log('team filter options=' + await teamBtns.count());
-    if (await teamBtns.count() > 1) { await tryClick(page, teamBtns.nth(1), 'team filter 2'); await audit(page, 'board-team:' + (await teamBtns.nth(1).innerText())); }
+    // Team scoping lives in the shared filter popover, not in a board-only tab row.
+    if (await tryClick(page, page.getByRole('button', { name: 'Add filter' }), 'board filter')) {
+      const teamSelect = page.locator('.my-issue-popover label', { hasText: 'Team' }).locator('select');
+      const options = await teamSelect.locator('option').count();
+      console.log('team filter options=' + options);
+      if (options > 1) { await teamSelect.selectOption({ index: 1 }); await audit(page, 'board-team:' + (await teamSelect.locator('option').nth(1).innerText())); }
+      await page.keyboard.press('Escape'); await page.waitForTimeout(200);
+    }
     if (await tryClick(page, page.locator('.status-picker-trigger').first(), 'status trigger')) await audit(page, 'board-status-menu-open');
     await page.keyboard.press('Escape'); await page.waitForTimeout(300);
     await nav(page, 'Inbox');

@@ -53,6 +53,17 @@ python3 scripts/check_docs.py
 python3 -m unittest discover -s tests -p 'test_check_docs.py' -v
 ```
 
+## Styling
+
+- Consult [`DESIGN.md`](DESIGN.md) before making any styling choice and follow
+  it strictly.
+- This applies to every styling decision, including layout, spacing, typography,
+  color, responsive behavior, animation, and component styling, across the web
+  frontend and mobile app.
+- Do not introduce a local pattern that conflicts with `DESIGN.md`. If a new
+  durable rule is genuinely required, update the design document first and use
+  that rule everywhere.
+
 ## Repository map
 
 ```text

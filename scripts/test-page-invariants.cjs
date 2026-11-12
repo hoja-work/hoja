@@ -39,6 +39,20 @@ const invariants = () => {
   const visible = el => { const r = el.getBoundingClientRect(), s = getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
   const name = el => (el.getAttribute('aria-label') || el.textContent || el.tagName).trim().replace(/\s+/g, ' ').slice(0, 60);
   if (document.documentElement.scrollWidth > W + 1) out.push(`page scrolls horizontally (${document.documentElement.scrollWidth}px at ${W}px)`);
+  // Sidebar pages use the shared main content container: an unrounded .main gap surface
+  // with a rounded, bordered shell flush to the sidebar and inset on the other edges.
+  const main = document.querySelector('.main');
+  const shell = document.querySelector('.workspace-page');
+  if (main && shell) {
+    const mr = main.getBoundingClientRect(), sr = shell.getBoundingClientRect();
+    const ms = getComputedStyle(main), ss = getComputedStyle(shell);
+    if (Math.abs(sr.left - mr.left) > 1) out.push(`content shell has a left gap (${Math.round(sr.left - mr.left)}px)`);
+    if (sr.right > mr.right + 1) out.push('content shell overflows the main surface');
+    if (sr.width < 1 || sr.height < 1) out.push('content shell has no size');
+    if (ms.borderTopLeftRadius !== '0px') out.push(`main gap surface is rounded (${ms.borderTopLeftRadius})`);
+    if (parseFloat(ss.borderTopLeftRadius) <= 0) out.push('content shell is not rounded');
+    if (parseFloat(ss.borderTopWidth) <= 0) out.push('content shell has no border');
+  }
   // A control inside an overflow-scrolling ancestor (tab rows, kanban lanes) is reachable by scrolling that container; only the page itself must not scroll.
   const clipped = el => { for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) { const o = getComputedStyle(p).overflowX; if (o === 'auto' || o === 'scroll' || o === 'hidden') return true; } return false; };
   for (const el of document.querySelectorAll('button,a[href],input,select,textarea,[role=button]')) {
@@ -80,6 +94,13 @@ const invariants = () => {
         await wait(900);
         if (extraCss) await page.addStyleTag({ content: extraCss });
         const problems = await page.evaluate(invariants);
+        if (what.startsWith('page ') && await page.locator('.workspace-page').count() === 0) problems.push('sidebar page is missing the main content container shell');
+        // Meetings owns the desktop height; on phones the header stays as the navigation drawer toggle.
+        if (what.includes('page "Meetings"')) {
+          const topbar = await page.evaluate(() => { const t = document.querySelector('.topbar'); return t ? getComputedStyle(t).display : 'none'; });
+          if (width >= 1001 && topbar !== 'none') problems.push('desktop Meetings keeps the app header');
+          if (width <= 700 && topbar === 'none') problems.push('phone Meetings loses the navigation header');
+        }
         audited++;
         for (const p of problems) failures.push(`${width}px ${what}: ${p}`);
       };

@@ -2,14 +2,19 @@
 /**
  * Board card invariants.
  *
- * styles.css pins the status control with `.kanban-card-props > :first-child`, which is
- * positional: whatever is first child of the props row gets absolutely positioned into a
- * 20px slot at the top-left of the title. Inserting the project chip before the status
- * control therefore clipped the project chip's text and moved the status dot into the row
- * — the bug that shipped as "I still don't see the project".
+ * This check used to pin the "verified card composition": a `.kanban-card-wrap` wrapper,
+ * a props row whose first child was absolutely positioned by `> :first-child`, and a
+ * `.kanban-move` button pushed out of the card. That composition is gone — the card is one
+ * flat surface built from Tailwind utilities over a vertical list of property rows — but
+ * the reasons the check existed still hold, so it now pins the invariants of the current
+ * card instead:
  *
- * Positional CSS is fine; positional CSS plus reorderable JSX is not. This check keeps the
- * one ordering assumption that CSS relies on.
+ *   - the card is a single surface, not a card inside a wrapper;
+ *   - the props row keeps its 28px row rhythm from styles.css;
+ *   - the status control is the first row, because that is the order the card reads in;
+ *   - no move button is rendered; the Alt + → keyboard path lives on the card-open button;
+ *   - sub-task nesting (HOJA-33) is carried by the card itself, so `data-depth` and its
+ *     rail rule have to stay.
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -18,41 +23,51 @@ import { dirname, join } from 'node:path';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const tsx = readFileSync(join(root, 'src/main.tsx'), 'utf8');
 const css = readFileSync(join(root, 'src/styles.css'), 'utf8');
+const flatCss = css.replace(/\s+/g, '');
 
 const failures = [];
 
-/** 1. The props row must keep the status control as its first child. */
-const propsStart = tsx.indexOf('className="kanban-card-props"');
-if (propsStart === -1) {
-  failures.push('main.tsx: no .kanban-card-props row found');
+/** 1. The card is one flat surface. */
+const cardRoot = tsx.match(/<div className="kanban-card([^"]*)"/);
+if (!cardRoot) {
+  failures.push('main.tsx: no `.kanban-card` root element found');
 } else {
-  // the row ends at the closing of the label that follows it in source order
-  const row = tsx.slice(propsStart, tsx.indexOf('</div>\n   {issue.assignee', propsStart));
-  const status = row.indexOf('<StatusPicker');
-  const projectChip = row.indexOf('kanban-chip-project');
-  if (status === -1) failures.push('card props row: StatusPicker is missing');
-  if (projectChip === -1) failures.push('card props row: project chip is missing');
-  if (status !== -1 && projectChip !== -1 && projectChip < status) {
-    failures.push(
-      'card props row: the project chip is before the status control. ' +
-      'styles.css pins `> :first-child` as the status slot, so the chip would be ' +
-      'absolutely positioned and its text clipped. Keep StatusPicker first.'
-    );
+  const classes = cardRoot[1];
+  for (const utility of ['rounded-2xl', 'border-line', 'bg-panel']) {
+    if (!classes.includes(utility)) failures.push(`card root: the flat surface lost its \`${utility}\` utility`);
   }
 }
-
-/** 2. A pinned first child only makes sense if the CSS still pins something. */
-if (!/\.kanban-card-props>\*:first-child\{/.test(css.replace(/\s+/g, ''))) {
-  failures.push('styles.css: the status-control pin (`> :first-child`) is gone; either restore it or drop the ordering rule from this check');
+if (tsx.includes('kanban-card-wrap')) {
+  failures.push('main.tsx: the `.kanban-card-wrap` wrapper came back; the card is a single surface now');
 }
 
-/** 3. The move hint must stay out of the card composition. */
-if (!/\.kanban-move\{[^}]*left:-9999px/.test(css.replace(/\n/g, ''))) {
-  failures.push('styles.css: .kanban-move is no longer pushed out of the card; the "Move Alt + →" hint would show on every card');
+/** 2. The props row keeps the row rhythm declared in styles.css. */
+if (!tsx.includes('kanban-card-props')) {
+  failures.push('main.tsx: no `.kanban-card-props` row found');
+}
+if (!flatCss.includes('.kanban-card-props>label,.kanban-card-props>div{display:flex;align-items:center;gap:8px;height:28px')) {
+  failures.push('styles.css: the props row lost its 28px row rhythm (`>label,>div` height)');
+}
+
+/** 3. The status control is the first row of the props row. */
+const propsStart = tsx.indexOf('className="kanban-card-props');
+if (propsStart !== -1) {
+  const row = tsx.slice(propsStart, tsx.indexOf('<label', propsStart));
+  if (!row.includes('<StatusPicker')) failures.push('card props row: the status control is no longer the first row');
+}
+
+/** 4. No move button; the keyboard path stays on the card-open button. */
+if (tsx.includes('kanban-move')) failures.push('main.tsx: the `.kanban-move` button is back; the card must not show a move affordance');
+if (!tsx.includes("e.altKey&&e.key==='ArrowRight'")) failures.push('main.tsx: the Alt + → keyboard path left the card-open button');
+
+/** 5. Sub-task nesting is carried by the card itself. */
+if (!/data-depth=\{depth\}/.test(tsx)) failures.push('main.tsx: the card no longer marks its sub-task depth (`data-depth`)');
+if (!flatCss.includes('.kanban-card[data-depth]:not([data-depth="0"])::before')) {
+  failures.push('styles.css: the sub-task rail rule is gone, so nested cards lose their indent marker');
 }
 
 if (failures.length) {
-  console.error('board card invariants failed:\n' + failures.map(f => '  ✗ ' + f).join('\n'));
+  console.error('board card invariants failed:\n' + failures.map((f) => '  ✗ ' + f).join('\n'));
   process.exit(1);
 }
-console.log('board card invariants ok: status first, project chip present, move hint hidden');
+console.log('board card invariants ok: one flat surface, 28px rows, status first, no move hint, nesting kept');

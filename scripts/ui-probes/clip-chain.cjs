@@ -16,7 +16,7 @@ if (!token) { console.error('set PROBE_TOKEN'); process.exit(2); }
     await page.locator('button,a').filter({ hasText: new RegExp('^\\s*' + label + '\\s*$') }).first().click({ timeout: 4000 }).catch(() => {});
     await page.waitForTimeout(900);
     const chain = await page.evaluate(() => {
-      const start = document.querySelector('.my-issues-view, .team-scoped-page--board, .inbox-page, .pulse-page, .projects-reference, .project-reference, .workspace-views-page, .issues-page, .board-page') || document.querySelector('main');
+      const start = document.querySelector('.my-issues-view, .team-scoped-page--board, .inbox-page, .pulse-page, .projects-reference, .project-reference, .workspace-views-page, .issues-page') || document.querySelector('main');
       const out = []; let e = start;
       for (let i = 0; i < 12 && e && e !== document.body; i++, e = e.parentElement) {
         const s = getComputedStyle(e), r = e.getBoundingClientRect();

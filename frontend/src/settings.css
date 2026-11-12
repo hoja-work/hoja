@@ -274,7 +274,7 @@
 
 @media (min-width: 701px) {
   .app:has(.settings-sidebar) { grid-template-columns: 264px minmax(0, 1fr); }
-  .app:has(.settings-sidebar) .main { padding: 43px clamp(26px, 4.5vw, 70px); background: radial-gradient(ellipse at 95% 0%, color-mix(in srgb, var(--settings-accent-soft) 38%, transparent), transparent 34%); }
+  .app:has(.settings-sidebar) .workspace-page:has(> .settings-page) { padding: 43px clamp(26px, 4.5vw, 70px); }
 }
 
 @media (max-width: 1100px) {
@@ -291,7 +291,7 @@
   .settings-drawer-close { display: grid; }
   .settings-drawer-scrim { position: fixed; z-index: 34; inset: 60px 0 0; display: block; visibility: hidden; background: #14141466; opacity: 0; transition: opacity .18s ease, visibility .18s ease; }
   .settings-drawer-scrim.visible { visibility: visible; opacity: 1; }
-  .app:has(.settings-sidebar) .main { padding: 25px 16px 40px; }
+  .app:has(.settings-sidebar) .workspace-page:has(> .settings-page) { padding: 25px 16px 40px; }
   .settings-page { padding-top: 0; }
   .settings-page-heading { margin-bottom: 23px; }
   .settings-page-heading > p { font-size: 12px; }
@@ -343,7 +343,7 @@
 }
 
 @media (max-width: 390px) {
-  .app:has(.settings-sidebar) .main { padding-right: 12px; padding-left: 12px; }
+  .app:has(.settings-sidebar) .workspace-page:has(> .settings-page) { padding-right: 12px; padding-left: 12px; }
   .conversation-summary { grid-template-columns: minmax(0, 1fr); }
   .api-key-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .settings-section-head { align-items: flex-start; }
@@ -555,7 +555,6 @@
 
 @media (min-width: 701px) {
   .app:has(.settings-sidebar) .workspace-content { background: #f6f6f6; }
-  .app:has(.settings-sidebar) .main { background: transparent; }
   :root[data-theme=dark] .app:has(.settings-sidebar) .workspace-content { background: #181818; }
 }
 

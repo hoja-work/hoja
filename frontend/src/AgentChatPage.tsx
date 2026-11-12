@@ -5,6 +5,7 @@ import '@openuidev/react-ui/styles/index.css';
 import { Markdown } from './markdown';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { History, SquarePen } from 'lucide-react';
+import {useMenuDismiss} from './menu';
 
 // The shared renderer lives in ./markdown. Re-exported so callers that imported
 // linkIssueIds from here keep working.
@@ -190,19 +191,14 @@ function ChatToolbar() {
   const ref = useRef<HTMLDivElement>(null);
   const switchToNewThread = useThreadList((s) => s.switchToNewThread);
   const title = useThreadList((s) => s.threads.find((t) => t.id === s.selectedThreadId)?.title);
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: PointerEvent) => {
-      const target = e.target as Element;
-      // Radix renders the thread actions menu in a portal outside the panel.
-      if (ref.current?.contains(target) || target.closest('.openui-agent-thread-button-dropdown-menu')) return;
-      setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
-    document.addEventListener('pointerdown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('pointerdown', onDown); document.removeEventListener('keydown', onKey); };
-  }, [open]);
+  // Radix renders the thread actions menu in a portal outside the toolbar, so that
+  // portal counts as inside this menu.
+  useMenuDismiss({
+    open,
+    onDismiss: () => setOpen(false),
+    within: [ref],
+    alsoWithin: (node) => node instanceof Element && Boolean(node.closest('.openui-agent-thread-button-dropdown-menu')),
+  });
   return (
     <div className="agent-toolbar" ref={ref}>
       <span className="agent-toolbar-title">{title || 'New chat'}</span>

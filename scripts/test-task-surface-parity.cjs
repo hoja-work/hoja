@@ -57,23 +57,25 @@ const W = Number(process.env.WIDTH || 1440), H = Number(process.env.HEIGHT || 90
     ['team', `/workspace/team/${team.key.toLowerCase()}/active`],
     ['project', `/workspace/project/${projectId}/issues`],
   ];
+  // One measurement shape for every surface, so comparisons are like for like.
+  const probe = () => ({
+    view: !!document.querySelector('.my-issues-view'),
+    rows: document.querySelectorAll('.my-issue-row').length,
+    rowTitles: [...document.querySelectorAll('.my-issue-row .my-issue-title')].map(e => e.textContent).sort(),
+    groups: [...document.querySelectorAll('.my-issue-group>header>b')].map(e => e.textContent),
+    cards: document.querySelectorAll('.kanban-card').length,
+    columns: [...document.querySelectorAll('.kanban-column>header>b')].map(e => e.textContent),
+    toolbar: [...document.querySelectorAll('.my-issue-toolbar button')].map(b => b.getAttribute('aria-label')),
+    rowHeight: document.querySelector('.my-issue-row')?.getBoundingClientRect().height || 0,
+    hscroll: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  });
   const sig = {};
   for (const layout of ['List', 'Board']) {
     for (const [name, url] of surfaces) {
       await ctx.addInitScript(l => localStorage.setItem('hoja_issue_layout', l), layout);
       await page.goto(`${base}${url}`, { waitUntil: 'networkidle' });
       await page.waitForTimeout(400);
-      const info = await page.evaluate(() => ({
-        view: !!document.querySelector('.my-issues-view'),
-        rows: document.querySelectorAll('.my-issue-row').length,
-        rowTitles: [...document.querySelectorAll('.my-issue-row .my-issue-title')].map(e => e.textContent).sort(),
-        groups: [...document.querySelectorAll('.my-issue-group>header>b')].map(e => e.textContent),
-        cards: document.querySelectorAll('.kanban-card').length,
-        columns: [...document.querySelectorAll('.kanban-column>header>b')].map(e => e.textContent),
-        toolbar: [...document.querySelectorAll('.my-issue-toolbar button')].map(b => b.getAttribute('aria-label')),
-        rowHeight: document.querySelector('.my-issue-row')?.getBoundingClientRect().height || 0,
-        hscroll: document.documentElement.scrollWidth > document.documentElement.clientWidth,
-      }));
+      const info = await page.evaluate(probe);
       sig[`${name}:${layout}`] = info;
       if (shots) { fs.mkdirSync(shots, { recursive: true }); await page.screenshot({ path: path.join(shots, `${name}-${layout.toLowerCase()}-${W}.png`) }); }
       ok(info.view, `${name} ${layout}: renders the My issues view`);
@@ -92,6 +94,19 @@ const W = Number(process.env.WIDTH || 1440), H = Number(process.env.HEIGHT || 90
       } else ok(JSON.stringify(s.columns) === JSON.stringify(m.columns), `${name} Board: same columns as My issues`, JSON.stringify(s.columns));
     }
   }
+  // The workspace board is the same surface with every team: it must match the My issues board,
+  // and it opens as a board even though the saved layout preference is List.
+  await page.goto(`${base}/workspace/board`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(400);
+  const workspaceBoard = await page.evaluate(probe);
+  const boardRef = sig['my:Board'];
+  ok(workspaceBoard.view, 'workspace Board: renders the My issues view');
+  ok(!workspaceBoard.hscroll, 'workspace Board: no horizontal page scroll');
+  ok(workspaceBoard.cards === boardRef.cards, 'workspace Board: same cards as My issues board', `${workspaceBoard.cards} vs ${boardRef.cards}`);
+  ok(JSON.stringify(workspaceBoard.columns) === JSON.stringify(boardRef.columns), 'workspace Board: same columns as My issues board', JSON.stringify(workspaceBoard.columns));
+  ok(JSON.stringify(workspaceBoard.toolbar) === JSON.stringify(boardRef.toolbar), 'workspace Board: same toolbar as My issues board', JSON.stringify(workspaceBoard.toolbar));
+  if (shots) { fs.mkdirSync(shots, { recursive: true }); await page.screenshot({ path: path.join(shots, `workspace-board-${W}.png`) }); }
+
   ok(errors.length === 0, 'no page errors', errors.join(' | '));
   await browser.close();
   server.kill();

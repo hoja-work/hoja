@@ -1,6 +1,7 @@
 import React, {useEffect, useRef, useState} from 'react';
 import type {IssueLabel} from '../main';
 import {statusAgeLabel, type StatusAgeIssue} from './statusAge';
+import {useMenuDismiss} from '../menu';
 
 /* Shared carry-over-style primitives for the 1:1 Issues/Cycles rebuild. */
 
@@ -208,18 +209,10 @@ export function fmtRange(start?: string | null, end?: string | null): string {
   return a || b || '';
 }
 
-/** Outside-click + Escape dismissal for popovers/menus. */
+/** Outside-click + Escape dismissal for popovers/menus. Returns the element that owns them. */
 export function useDismiss(onClose: () => void) {
   const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const onDown = (e: PointerEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
-    };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('pointerdown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('pointerdown', onDown); document.removeEventListener('keydown', onKey); };
-  }, [onClose]);
+  useMenuDismiss({open: true, onDismiss: onClose, within: [ref]});
   return ref;
 }
 
