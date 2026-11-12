@@ -1511,7 +1511,14 @@ def _extension_hooks(info, store, org, uid, event, input, current, input_type):
 @mutation.field("issueCreate")
 def m_issue_create(_, info, input):
     store, w, org, uid = _ctx(info)
-    if store.team_by_id_or_key(org, str(input.get("teamId") or ""), viewer_id=uid):
+    # A templated create may carry no teamId until the template supplies one;
+    # resolve the team the write will target so the extension gate still runs
+    # (and still refuses) for a team the caller cannot see.
+    team_ref = input.get("teamId")
+    if not team_ref and input.get("templateId"):
+        from hoja_server import task_templates
+        team_ref = task_templates.team_id_for(store.engine, org, input["templateId"])
+    if store.team_by_id_or_key(org, str(team_ref or ""), viewer_id=uid):
         # Only ask extensions about a write the caller is allowed to attempt.
         input, patches = _extension_hooks(info, store, org, uid, "issue.beforeCreate", input, None,
                                           "IssueCreateInput")
@@ -1740,7 +1747,7 @@ def _get_comment(store, org, cid):
 def build_schema():
     from pathlib import Path
     sdl = (Path(__file__).parent / "schema.graphql").read_text()
-    from hoja_server import decisions_api, extensions_api, model_providers, permissions, project_settings, views_api, webhooks_api
+    from hoja_server import decisions_api, extensions_api, model_providers, permissions, project_settings, task_templates, views_api, webhooks_api
     from hoja_server.agent_conversations import SDL as CONVERSATION_SDL
     from hoja_server.agent_conversations import query as conversation_query
     from hoja_server.model_providers import SDL as PROVIDER_SDL
@@ -1755,18 +1762,21 @@ def build_schema():
         raise RuntimeError("HOJA-288 task alias wiring incomplete: " + "; ".join(problems))
     return make_executable_schema(
         [sdl, PROVIDER_SDL, CONVERSATION_SDL, webhooks_api.SDL, extensions_api.SDL,
-         views_api.SDL, decisions_api.SDL, project_settings.SDL, permissions.SDL, tasks_sdl],
+         views_api.SDL, decisions_api.SDL, project_settings.SDL, permissions.SDL,
+         task_templates.SDL, tasks_sdl],
         query, mutation, *task_bindables,
         model_providers.query, model_providers.mutation,
         project_settings.query, project_settings.mutation,
         permissions.query, permissions.mutation,
+        task_templates.query, task_templates.mutation,
         webhooks_api.query, webhooks_api.mutation, webhooks_api.webhook_type,
         extensions_api.query, extensions_api.mutation, extensions_api.extension_type,
         views_api.query, views_api.mutation, views_api.view_type,
         decisions_api.query, decisions_api.mutation, decisions_api.decision_type,
         conversation_query,
         model_providers.model_provider_type, project_settings.project_status_type,
-        project_settings.project_template_type, Team, Initiative, InitiativeUpdate, Issue, IssueActivity, MyIssueActivity, Project, ProjectUpdate, Comment,
+        project_settings.project_template_type, task_templates.task_template_type,
+        Team, Initiative, InitiativeUpdate, Issue, IssueActivity, MyIssueActivity, Project, ProjectUpdate, Comment,
         permissions.workspace_permission_type, permissions.workspace_security_policy_type,
         WorkflowState, Cycle, Attachment,
         datetime_scalar, timeless_scalar, json_scalar, InboxNotification,

@@ -109,7 +109,12 @@ def test_tool_schemas_are_typed_and_annotated(hoja) -> None:
     assert "arguments" not in props
     assert update["inputSchema"]["required"] == ["id"]
     assert update["inputSchema"]["additionalProperties"] is False
-    assert create["inputSchema"]["required"] == ["title", "teamId"]
+    # title and teamId are optional now: a template may supply both, so the schema
+    # must not force an agent to send them — and the description must say so, or
+    # an agent that omits everything gets a BAD_USER_INPUT it was never warned of.
+    assert create["inputSchema"].get("required", []) == []
+    assert "templateId" in create["inputSchema"]["properties"]
+    assert "title and teamId are required unless templateId" in create["description"]
     assert tools["hoja_issues"]["annotations"]["readOnlyHint"] is True
     assert tools["hoja_issueDelete"]["annotations"]["destructiveHint"] is True
     # Credential- and admin-plumbing operations are not exposed to agents.

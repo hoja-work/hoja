@@ -22,7 +22,7 @@
  *   node scripts/check-settings.mjs --no-browser  # source only
  */
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -158,12 +158,6 @@ const unscoped = [...designRules.matchAll(/(?:^|\})\s*([^{}@]+)\{/g)]
 if (unscoped.length) fail.push(`design.css: ${unscoped.length} --ds- rule(s) are not :where()-scoped, so they beat responsive rules: ${unscoped.slice(0, 3).join(', ')}`);
 else ok('every design-layer rule is :where()-scoped, so a media query always wins');
 
-/* Nav availability inventory must be evidence-shaped: no cycles/extensions claimed missing. */
-for (const liar of ["['cycles'", "['extensions'"]) {
-  if (tsx.includes(liar + ',') && /SETTINGS_UNAVAILABLE[\s\S]{0,900}?\['cycles'/.test(tsx)) {
-    fail.push('main.tsx: cycles is listed as unavailable, but the live schema has teamCycleCadenceEnable/cycleUpdate');
-  }
-}
 const inventory = (tsx.match(/const SETTINGS_UNAVAILABLE[\s\S]*?\n\];/) || [''])[0];
 const entries = [...inventory.matchAll(/\['([a-z0-9-]+)',\s*'([^']+)',\s*'([^']+)',\s*'(HOJA-\d+)'\]/g)];
 if (entries.length < 3) fail.push('main.tsx: SETTINGS_UNAVAILABLE is missing or empty; unbacked panes would be silently absent');
@@ -171,6 +165,40 @@ else {
   const keys = [...new Set(entries.map((e) => e[4]))];
   ok(`the nav marks ${entries.length} unbacked panes, each naming the backend it needs and its Hoja issue (${keys.join(', ')})`);
 }
+
+/* Every settings pane the shell offers must be backed by a field the server
+ * actually declares, and every pane it marks unavailable must not be.
+ * This used to be a hardcoded cycles/extensions special case, so a pane could
+ * be wired into the nav with no SDL behind it — a control with nothing under
+ * it, which is exactly what this shell promises never to render. Both
+ * directions are now checked for every pane. */
+const serverDir = join(repo, 'app', 'hoja_server');
+const serverText = readdirSync(serverDir)
+  .filter((f) => f.endsWith('.graphql') || f.endsWith('.py'))
+  .map((f) => read(join(serverDir, f)))
+  .join('\n');
+const PANE_CONTRACTS = {
+  'issue-templates': /^\s*taskTemplates\s*[(:]/m,
+  'project-statuses': /^\s*projectStatuses\s*:/m,
+  'project-templates': /^\s*projectTemplates\s*:/m,
+  'permissions': /^\s*workspacePermissions\s*:/m,
+  'security': /^\s*workspaceSecurityPolicy\s*:/m,
+  'cycles': /^\s*cycles\s*[(:]/m,
+  'extensions': /^\s*extensions\s*[(:]/m,
+};
+const unbacked = new Set(entries.map((e) => e[1]));
+const paneProblems = [];
+for (const [id, signature] of Object.entries(PANE_CONTRACTS)) {
+  const backed = signature.test(serverText);
+  if (unbacked.has(id) && backed) {
+    paneProblems.push(`'${id}' is marked unavailable, but the server declares its field`);
+  }
+  if (!unbacked.has(id) && !backed) {
+    paneProblems.push(`'${id}' is offered in the nav, but no server field backs it`);
+  }
+}
+if (paneProblems.length) fail.push('main.tsx: pane availability disagrees with the server schema: ' + paneProblems.join('; '));
+else ok(`all ${Object.keys(PANE_CONTRACTS).length} settings panes agree with the server schema (offered ⇔ backed)`);
 
 /* The drawer width must be chosen by a media query at the measured boundary, not by a base rule. */
 const drawerRule = /@media[^{]*max-width:\s*880px[^{]*\{[\s\S]{0,400}?\.settings-sidebar\s*\{[^}]*var\(--ds-settings-nav-drawer-width\)/;

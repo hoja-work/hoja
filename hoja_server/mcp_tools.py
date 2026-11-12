@@ -106,9 +106,12 @@ WRITE_TOOLS: dict[str, str] = {
         "Runs once with no automatic retry and returns the extension's status and message."
     ),
     "issueCreate": (
-        "Create an issue. For multi-step work, create or reuse one parent issue, then create actionable "
-        "sub-issues with parentId instead of separate root issues; omit parentId for a standalone "
-        "issue or the parent itself. Returns the created issue including its identifier, parent and children."
+        "Create an issue. title and teamId are required unless templateId names a stored task "
+        "template that supplies them (a team-scoped template also supplies the team); an explicit "
+        "value always wins over the template's default. For multi-step work, create or reuse one "
+        "parent issue, then create actionable sub-issues with parentId instead of separate root "
+        "issues; omit parentId for a standalone issue or the parent itself. Returns the created "
+        "issue including its identifier, parent and children."
     ),
     "issueUpdate": (
         "Update an issue: title, description, priority, state (by name), assignee "
@@ -158,9 +161,12 @@ WRITE_TOOLS: dict[str, str] = {
     ),
 
     "taskCreate": (
-        "Create a task. For multi-step work, create or reuse one parent task, then create actionable "
-        "sub-tasks with parentId instead of separate root tasks; omit parentId for a standalone "
-        "task or the parent itself. Returns the created task including its identifier, parent and children."
+        "Create a task. title and teamId are required unless templateId names a stored task "
+        "template that supplies them (a team-scoped template also supplies the team); an explicit "
+        "value always wins over the template's default. For multi-step work, create or reuse one "
+        "parent task, then create actionable sub-tasks with parentId instead of separate root tasks; "
+        "omit parentId for a standalone task or the parent itself. Returns the created task including "
+        "its identifier, parent and children."
     ),
     "taskUpdate": (
         "Update a task: title, description, priority, state (by name), assignee "
@@ -200,6 +206,7 @@ FIELD_HINTS = {
     "projectIds": "Project names or ids.",
     "issueId": "Issue identifier (e.g. ENG-12) or id.",
     "parentId": "Parent issue identifier (e.g. ENG-12) or id. Must be in the same team; null detaches.",
+    "templateId": "A stored task template whose defaults fill the fields you leave absent.",
     "priority": "1 urgent, 2 high, 3 medium, 4 low (or those names). On updates use \"none\" to clear; 0 is ignored.",
     "first": "Page size.",
     "after": "Cursor from a previous pageInfo.endCursor.",

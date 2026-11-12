@@ -21,7 +21,7 @@ pytest.importorskip("starlette")
 from starlette.testclient import TestClient
 
 from hoja_server.app import create_app
-from hoja_server.db import applied_schema_revision, make_engine, migrate, seed_tenant
+from hoja_server.db import CURRENT_SCHEMA_REVISION, applied_schema_revision, make_engine, migrate, seed_tenant
 from hoja_server.store import Store
 
 STATUSES = "{ projectStatuses { id name category position } }"
@@ -249,7 +249,9 @@ def test_migration_is_idempotent_and_rows_survive_a_second_boot(tmp_path) -> Non
     # Second boot on the same file: migration is a no-op and the row is there.
     engine2 = make_engine(tmp_path / "project-settings.db")
     migrate(engine2)
-    assert applied_schema_revision(engine2) == 59
+    # The latest revision, not a hardcoded number: every later migration
+    # must keep this durable rather than force a test edit to notice.
+    assert applied_schema_revision(engine2) == CURRENT_SCHEMA_REVISION
     migrate(engine2)  # idempotent by construction (ledger at revision 57)
     app2 = create_app(str(tmp_path / "project-settings.db"), open_mode=False)
     with TestClient(app2) as client:

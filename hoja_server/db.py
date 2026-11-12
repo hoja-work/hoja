@@ -34,7 +34,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 59
+CURRENT_SCHEMA_REVISION = 60
 
 
 def now_iso() -> str:
@@ -1082,6 +1082,36 @@ project_template_team = Table(
     metadata,
     Column("template_id", String, ForeignKey("project_template.id"), primary_key=True),
     Column("team_id", String, ForeignKey("team.id"), primary_key=True),
+)
+
+# HOJA-492: task templates. A NULL team_id is a workspace-level template; a
+# team id is the reference's per-team list. Defaults are plain columns (not a
+# JSON blob) so the pane edits them one field at a time and issue_create reads
+# them without decoding anything but the label list. default_label_ids holds a
+# JSON array of issue_label ids, validated at write time with the same
+# ancestor rule issue_create applies — a template can never grant a label the
+# creator could not have chosen by hand.
+task_template = Table(
+    "task_template",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("team_id", String, ForeignKey("team.id"), index=True),
+    Column("name", String, nullable=False),
+    Column("description", String),
+    Column("default_title", String, nullable=False),
+    Column("default_description", Text),
+    Column("default_priority", Integer),
+    Column("default_assignee_id", String, ForeignKey("user.id")),
+    Column("default_project_id", String, ForeignKey("project.id")),
+    Column("default_label_ids", Text),
+    Column("archived_at", String),
+    Column("created_at", String),
+    Column("updated_at", String),
+    # SQL treats NULL team_id as distinct, so this constraint only enforces
+    # uniqueness among a team's templates; the workspace-level name collision
+    # is refused in task_templates.py, where the NULL case can be selected for.
+    UniqueConstraint("organization_id", "team_id", "name", name="uq_task_template_org_team_name"),
 )
 
 # HOJA-490: per-capability grants for the member role. A missing row means the
@@ -2262,6 +2292,30 @@ def _apply_workspace_permissions(conn):
         conn.exec_driver_sql("ALTER TABLE browser_session ADD COLUMN last_seen_at VARCHAR")
 
 
+def _apply_task_templates(conn):
+    """HOJA-492: the task-template store.
+
+    Additive and inert: no query or mutation reads this table until the pane
+    lands, and ``issue_create`` behaves exactly as before for a caller that
+    does not send ``templateId``. No existing column changes type or
+    nullability, so a rollback target that predates this revision still reads
+    every row it knows about.
+    """
+    task_template.create(conn, checkfirst=True)
+
+
+def _down_task_templates(conn) -> None:
+    """Reverse of revision 60, for the up -> down -> up equivalence proof.
+
+    Rows are not preserved across a down: a template is configuration authored
+    through the pane, and a dropped table cannot hand them back. The forward
+    ledger records nothing for a down, so this helper removes the ledger row
+    itself, exactly like ``_down_pulse_updates``.
+    """
+    task_template.drop(conn, checkfirst=True)
+    conn.execute(schema_revision.delete().where(schema_revision.c.revision == 60))
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -2406,6 +2460,11 @@ _MIGRATIONS = {
     # timestamp the idle timeout is measured from. All three are inert until a
     # workspace saves a policy, so the migration preserves today's behavior.
     59: _apply_workspace_permissions,
+    # 60: task templates (HOJA-492) — the workspace-level and per-team
+    # template store, plus the defaults issue_create expands when a caller
+    # sends templateId. Additive only: no column on an existing table changes,
+    # so the previous image keeps working against this schema.
+    60: _apply_task_templates,
 }
 
 

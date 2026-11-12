@@ -27,6 +27,7 @@ from starlette.testclient import TestClient
 from hoja_server import db as db_module
 from hoja_server.app import create_app
 from hoja_server.db import (
+    CURRENT_SCHEMA_REVISION,
     applied_schema_revision,
     browser_session,
     make_engine,
@@ -287,7 +288,7 @@ def test_migration_upgrades_a_populated_revision_58_database(tmp_path) -> None:
         db_module.CURRENT_SCHEMA_REVISION = original
 
     migrate(engine)
-    assert applied_schema_revision(engine) == 59
+    assert applied_schema_revision(engine) == CURRENT_SCHEMA_REVISION
     with engine.connect() as conn:
         from sqlalchemy import inspect as sa_inspect, select
         columns = {c["name"] for c in sa_inspect(conn).get_columns("browser_session")}
@@ -299,7 +300,7 @@ def test_migration_upgrades_a_populated_revision_58_database(tmp_path) -> None:
         tables = set(sa_inspect(conn).get_table_names())
         assert {"workspace_permission", "workspace_security_policy"} <= tables
     migrate(engine)  # idempotent
-    assert applied_schema_revision(engine) == 59
+    assert applied_schema_revision(engine) == CURRENT_SCHEMA_REVISION
     with engine.connect() as conn:
         from sqlalchemy import select as sa_select
         count = conn.execute(sa_select(browser_session.c.id)).all()

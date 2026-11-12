@@ -606,8 +606,12 @@ input CycleUpdateInput { name: String description: String startsAt: DateTime end
 type CyclePayload { success: Boolean! cycle: Cycle }
 input TeamCreateInput { name: String! key: String! description: String color: String icon: String visibility: String parentTeamId: String timezone: String memberIds: [String!] }
 input IssueCreateInput {
-  title: String!
-  teamId: String!
+  "Required unless templateId supplies it; an explicit value always wins."
+  title: String
+  "Required unless templateId supplies it (a team-scoped template); an explicit value always wins."
+  teamId: String
+  "A stored task template whose defaults fill the fields left absent."
+  templateId: String
   description: String
   priority: Int
   stateId: String

@@ -749,6 +749,27 @@ class Writer:
         return None
 
     def issue_create(self, org_id: str, viewer_id: str, inp: dict) -> str | None:
+        # HOJA-492: a template supplies what the caller left absent, and (for a
+        # team-scoped template) the team itself. This runs before reference
+        # validation so the expanded title/teamId/labels are validated by the
+        # same code a hand-written task goes through — never a second, parallel
+        # set of checks that could drift from it.
+        from hoja_server import task_templates
+
+        inp = dict(inp)
+        template = task_templates.resolve_for_create(self.engine, org_id, inp)
+        if template is not None:
+            inp = task_templates.expand(inp, template)
+        if not (inp.get("title") or "").strip():
+            raise GraphQLError(
+                "title is required when no task template supplies one.",
+                extensions={"code": "BAD_USER_INPUT", "field": "title"},
+            )
+        if not inp.get("teamId"):
+            raise GraphQLError(
+                "teamId is required when no task template supplies one.",
+                extensions={"code": "BAD_USER_INPUT", "field": "teamId"},
+            )
         with self.engine.begin() as conn:
             team_ref = inp["teamId"]
             trow = conn.execute(select(team).where(and_(
