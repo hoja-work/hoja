@@ -5,14 +5,12 @@ FastAPI middleware in app.py. Every resolver reads ctx and stays org-scoped.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import base64
 import binascii
 import json
 import logging
-import os
+from datetime import datetime, timedelta, timezone
 
-from graphql import GraphQLError
 from ariadne import (
     MutationType,
     ObjectType,
@@ -20,13 +18,15 @@ from ariadne import (
     ScalarType,
     make_executable_schema,
 )
+from graphql import GraphQLError
+
 from hoja_server import mail_events
 
 logger = logging.getLogger(__name__)
-from hoja_server.github_linking import parse_github_url
-from hoja_server import store as store_module
 from hoja_server import extensions
+from hoja_server import store as store_module
 from hoja_server.deployment import single_org_mode
+from hoja_server.github_linking import parse_github_url
 
 query = QueryType()
 mutation = MutationType()
@@ -408,6 +408,79 @@ def m_review_merge(_, info, linkId, sha, method="squash"):
 @query.field("reviewGate")
 def r_review_gate(_, info, linkId):
     return _run_coro(_review_gate_async(info, linkId))
+
+
+@mutation.field("githubFilePatchLoad")
+def m_github_file_patch_load(_, info, linkId, path, sha=None):
+    return _run_coro(_github_file_patch_load_async(info, linkId, path, sha))
+
+
+async def _github_file_patch_load_async(info, link_id, path, sha=None):
+    """Load one file's patch on demand and cache it back (HOJA-513).
+
+    The row is written only when GitHub actually returned a patch that fits the cap,
+    and only through the account's existing TokenSource — the same one credential
+    discipline the review writes keep. A sha that no longer matches the link's stored
+    head refuses instead of silently loading a diff from another commit.
+    """
+    import httpx
+    from github import GitHubAppConfig
+    from github.errors import ConnectorAPIError
+    from github.writes import GitHubWriteClient
+
+    from hoja_server import github_file_patches
+    from hoja_server.github_review_actions import split_repository
+    from hoja_server.github_tokens import GitHubTokenStore
+
+    store, _w, org, uid = _ctx(info)
+    link = store.github_link_by_id(org, link_id)
+    if link is None:
+        raise GraphQLError("Review not found.",
+                           extensions={"code": "NOT_FOUND", "field": "linkId"})
+    target = split_repository(link.get("url"))
+    if target is None:
+        raise GraphQLError("This link is not a pull request.",
+                           extensions={"code": "not_a_pull_request", "field": "linkId"})
+    if sha and link.get("sha") and sha != link.get("sha"):
+        raise GraphQLError(
+            "The pull request head moved since this review was read; load the diff "
+            "again for the new commit.",
+            extensions={"code": github_file_patches.HEAD_MOVED, "field": "sha"})
+    account = _review_account(store, org, uid)
+    if account is None or not account.get("encrypted_refresh_token"):
+        raise GraphQLError(
+            "GitHub is not connected for this workspace, so there is no diff to load.",
+            extensions={
+                "code": "not_connected",
+                "hint": "Connect GitHub in Settings > Connections, then try again.",
+            })
+    repository, number = target
+    stored_entry = next(
+        (f for f in (link.get("files") or [])
+         if isinstance(f, dict) and str(f.get("path") or "") == (path or "").strip()),
+        None)
+    async with httpx.AsyncClient(timeout=30.0) as http:
+        tokens = GitHubTokenStore(store.engine, http, GitHubAppConfig.from_env())
+        writes = GitHubWriteClient(http, tokens.source(account["id"], org))
+        try:
+            outcome = await github_file_patches.load_file_patch(
+                writes, repository, number, path, stored_entry=stored_entry)
+        except ConnectorAPIError as exc:
+            raise GraphQLError(str(exc), extensions={
+                "code": "github_error", "hint": getattr(exc, "hint", None),
+            }) from exc
+    marker = outcome["marker"]
+    patch = outcome["patch"]
+    cached = False
+    if patch is not None:
+        updated = store.github_link_cache_file_patch(org, link_id, path, patch)
+        if updated is not None:
+            link = updated
+            cached = True
+    result = github_file_patches.result_for(path, patch, marker, cached=cached,
+                                            reason=outcome["reason"])
+    result["link"] = link
+    return result
 
 
 async def _review_gate_async(info, linkId):
@@ -1672,13 +1745,10 @@ def _get_comment(store, org, cid):
 def build_schema():
     from pathlib import Path
     sdl = (Path(__file__).parent / "schema.graphql").read_text()
+    from hoja_server import decisions_api, extensions_api, model_providers, views_api, webhooks_api
+    from hoja_server.agent_conversations import SDL as CONVERSATION_SDL
+    from hoja_server.agent_conversations import query as conversation_query
     from hoja_server.model_providers import SDL as PROVIDER_SDL
-    from hoja_server import model_providers
-    from hoja_server.agent_conversations import SDL as CONVERSATION_SDL, query as conversation_query
-    from hoja_server import webhooks_api
-    from hoja_server import extensions_api
-    from hoja_server import views_api
-    from hoja_server import decisions_api
     from hoja_server.task_aliases import bind_task_surface
     tasks_sdl = (Path(__file__).parent / "schema_tasks.graphql").read_text()
     task_bindables, problems = bind_task_surface(

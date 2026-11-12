@@ -156,6 +156,8 @@ type Mutation {
   reviewComment(linkId: String!, body: String!): ReviewActionPayload!
   "Squash-merge exactly `sha`. Refuses when the head moved, checks fail or are undecided, the branch is dirty, or mergeability is unknown."
   reviewMerge(linkId: String!, sha: String!, method: String = "squash"): ReviewActionPayload!
+  "Load one file's diff on demand (HOJA-513): fetches it from GitHub, applies the stored cap, and caches it back under `cached: true` when it fits."
+  githubFilePatchLoad(linkId: String!, path: String!, sha: String): GithubFilePatchLoadResult!
   issueDelete(id: String!): DeletePayload @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   issueArchive(id: String!): DeletePayload @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   issueSubscribe(id: String!): Boolean! @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
@@ -469,6 +471,18 @@ type GithubFile {
   patch: String
   "Old path, only for a rename."
   previousPath: String
+  "True when the blob is proven non-text: GitHub legitimately sends no patch for it (HOJA-513)."
+  binary: Boolean
+  "True when a patch exists but was not stored: over the per-patch cap, over the row budget, or a text diff GitHub refuses to render."
+  oversize: Boolean
+  "The measured size for an oversize entry: patch characters when a patch exists, blob bytes when GitHub renders nothing."
+  oversizeSize: Int
+  "True for the empty blob: there is no content to diff."
+  empty: Boolean
+  "True for a pure rename with no content change."
+  unchanged: Boolean
+  "True when this patch was loaded on demand and cached back into the row (HOJA-513)."
+  cached: Boolean
 }
 
 "The merge gate for one pull request, as GitHub reported it at the moment of the call."
@@ -492,6 +506,23 @@ type ReviewGate {
   "Why a merge would be refused right now, from the same check the merge itself runs. Null when it would proceed."
   refusalCode: String
   refusalMessage: String
+}
+
+"The answer to loading one file's diff on demand (HOJA-513). Every absent patch carries a stable reason: over_cap, github_omitted, not_in_pull, head_moved."
+type GithubFilePatchLoadResult {
+  path: String!
+  "The patch, when one is loadable within the stored cap."
+  patch: String
+  binary: Boolean
+  oversize: Boolean
+  oversizeSize: Int
+  empty: Boolean
+  unchanged: Boolean
+  cached: Boolean
+  "Why no patch is available, when it is not. Stable codes, not prose."
+  reason: String
+  "The link with its refreshed files payload."
+  link: GithubLink
 }
 
 "The result of a review write, returned only after GitHub confirmed it."

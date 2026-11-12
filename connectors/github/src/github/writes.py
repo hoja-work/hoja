@@ -172,6 +172,32 @@ class GitHubWriteClient:
             raise ConnectorAPIError("GitHub returned an unexpected pull request payload.")
         return payload
 
+    async def fetch_pull_files(
+        self, repository: str, number: int, *, max_pages: int = 30
+    ) -> list[dict[str, Any]]:
+        """Every file entry of a pull request, raw.
+
+        Raw on purpose, like `fetch_pull`: the caller needs `patch`, `previous_filename`
+        and the blob `sha`, all of which the connector's `PullRequestFile` model drops
+        because tool callers never want them. GitHub caps a pull request's file list at
+        3000 entries; thirty pages of 100 reaches that ceiling, and a shorter list ends
+        the walk early.
+        """
+        repo = _checked_repo(repository)
+        pr = _checked_number(number)
+        entries: list[dict[str, Any]] = []
+        for page in range(1, max(1, max_pages) + 1):
+            payload = await self._read._get(
+                f"/repos/{repo}/pulls/{pr}/files", {"per_page": 100, "page": page}
+            )
+            raw = payload if isinstance(payload, list) else None
+            if not raw:
+                break
+            entries.extend(item for item in raw if isinstance(item, dict))
+            if len(raw) < 100:
+                break
+        return entries
+
     async def fetch_check_runs(self, repository: str, sha: str) -> list[dict[str, Any]]:
         """Every check run GitHub recorded for one commit."""
         repo = _checked_repo(repository)
@@ -251,9 +277,9 @@ def _headers(token: str) -> dict[str, str]:
 __all__ = [
     "APPROVE",
     "COMMENT",
-    "GitHubWriteClient",
     "MERGE_METHODS",
     "REQUEST_CHANGES",
     "REVIEW_EVENTS",
+    "GitHubWriteClient",
     "summarize_checks",
 ]

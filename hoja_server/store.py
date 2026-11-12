@@ -1082,7 +1082,10 @@ class Store:
         The four identity/count fields are non-null in the schema, so a stored entry that
         lost one (hand-edited JSON, an older writer) gets a safe default rather than
         failing the whole query. ``patch`` and ``previousPath`` stay None: a binary or
-        oversized file genuinely has no patch.
+        oversized file genuinely has no patch. The HOJA-513 reason markers (binary,
+        oversize + size, empty, unchanged, cached) pass through when present and stay
+        absent for older payloads, so the pane can say why a diff is missing instead of
+        rendering a blank row.
         """
         return {
             "path": str(entry.get("path") or ""),
@@ -1091,6 +1094,13 @@ class Store:
             "status": str(entry.get("status") or "modified"),
             "patch": entry.get("patch"),
             "previousPath": entry.get("previousPath"),
+            "binary": bool(entry["binary"]) if entry.get("binary") is not None else None,
+            "oversize": bool(entry["oversize"]) if entry.get("oversize") is not None else None,
+            "oversizeSize": (int(entry["size"]) if entry.get("oversize") and entry.get("size") is not None
+                             else None),
+            "empty": bool(entry["empty"]) if entry.get("empty") is not None else None,
+            "unchanged": bool(entry["unchanged"]) if entry.get("unchanged") is not None else None,
+            "cached": bool(entry["cached"]) if entry.get("cached") is not None else None,
         }
 
     def ser_issue(self, row: dict | None) -> dict | None:
@@ -2298,6 +2308,56 @@ class Store:
                 id=new_id(), organization_id=org_id, issue_id=row["issue_id"],
                 actor_id=actor_id, event_type=event_type,
                 changes=json.dumps(changes, sort_keys=True), created_at=stamp))
+            refreshed = _conn_rows(conn, select(github_link).where(
+                github_link.c.id == row["id"]))
+            return self.ser_github_link(refreshed[0]) if refreshed else None
+
+    def github_link_cache_file_patch(self, org_id: str, link_id: str, path: str,
+                                     patch: str) -> dict | None:
+        """Cache one on-demand-loaded patch back into the link's files payload (HOJA-513).
+
+        The entry keeps its identity fields and gains ``cached: true`` plus the patch,
+        and loses the ``oversize`` marker the patch replaces. The write happens only
+        when the recomputed payload differs from what is stored, so a second load of an
+        already-cached patch writes nothing — the same idempotency contract the bulk
+        enrichment script keeps. A missing link, a missing entry or a malformed stored
+        payload leaves the row exactly as it was and reports None.
+        """
+        from hoja_server.db import now_iso
+
+        stamp = now_iso()
+        with self.engine.begin() as conn:
+            row = conn.execute(select(github_link).where(and_(
+                github_link.c.organization_id == org_id,
+                github_link.c.id == link_id)).limit(1)).mappings().first()
+            if row is None or not isinstance(row["files"], str):
+                return None
+            try:
+                entries = json.loads(row["files"])
+            except ValueError:
+                return None
+            if not isinstance(entries, list):
+                return None
+            updated = False
+            for entry in entries:
+                if not (isinstance(entry, dict)
+                        and str(entry.get("path") or "") == (path or "").strip()):
+                    continue
+                if entry.get("cached") is True and entry.get("patch") == patch:
+                    return self.ser_github_link(dict(row))  # already cached: no write
+                entry["patch"] = patch
+                entry["cached"] = True
+                entry.pop("oversize", None)
+                entry.pop("size", None)
+                updated = True
+                break
+            if not updated:
+                return None
+            payload = json.dumps(entries, separators=(",", ":"), sort_keys=True,
+                                 ensure_ascii=False)
+            conn.execute(update(github_link).where(
+                github_link.c.id == row["id"]).values(
+                files=payload, updated_at=stamp))
             refreshed = _conn_rows(conn, select(github_link).where(
                 github_link.c.id == row["id"]))
             return self.ser_github_link(refreshed[0]) if refreshed else None
