@@ -432,6 +432,18 @@ def resolve_member(conn, *, email: str, subject: str, organization_id: str,
     The shared tier's counterpart of ``resolve_verified_email``: it never creates
     a workspace, never consults the per-instance owner or link settings, and
     admits only an existing active member of ``organization_id``.
+
+    The membership is consulted *before* the email-matched profile, because the
+    two records legitimately disagree: an admin who links an old profile to a
+    verified Google address (``_claim_profile``) keeps that profile's email as it
+    was. Requiring the profile's email to equal the verified address would then
+    refuse a member who is already in the organization — the identity, not the
+    address on the profile row, is what proves membership.
+
+    The membership lookup is scoped by ``organization_id`` on purpose: membership
+    of one workspace never admits a person to another. A person who is not a
+    member here still gets in only through the invite path — a profile in *this*
+    organization that carries the verified address and is not claimed yet.
     """
     address = addresses.canonical(email)
     if "@" not in address:
@@ -439,6 +451,50 @@ def resolve_member(conn, *, email: str, subject: str, organization_id: str,
     if not subject:
         return {"action": ACTION_DENIED, "reason": "missing_subject"}
     stamp = (now or datetime.now(timezone.utc)).isoformat()
+
+    # 1. Membership of *this* organization, found through the verified address.
+    #    One query, scoped by organization, so an identity that belongs to
+    #    another workspace is simply absent here. Several identities can share
+    #    one address (the column is indexed, not unique), so the membership row
+    #    — not an arbitrary identity lookup — supplies the identity the session
+    #    is made for.
+    rows = conn.execute(
+        select(
+            organization_membership.c.identity_id,
+            organization_membership.c.profile_user_id,
+            organization_membership.c.active,
+        )
+        .join(global_identity, global_identity.c.id == organization_membership.c.identity_id)
+        .where(
+            global_identity.c.email == address,
+            organization_membership.c.organization_id == organization_id,
+        )
+        .order_by(organization_membership.c.active.desc())
+    ).all()
+    active_rows = [row for row in rows if row[2]]
+    if rows and not active_rows:
+        return {"action": ACTION_DENIED, "reason": "membership_inactive"}
+    if active_rows:
+        identity_id, profile_user_id = active_rows[0][0], active_rows[0][1]
+        # The membership row can still say active while the profile is disabled
+        # (member removal and partial restores do exactly that). Linking a
+        # credential is not a way back in, so a disabled profile is refused.
+        profile = conn.execute(
+            select(user.c.id).where(
+                user.c.id == profile_user_id,
+                user.c.organization_id == organization_id,
+                user.c.active.is_(True),
+            )
+        ).first()
+        if profile is None:
+            return {"action": ACTION_DENIED, "reason": "account_disabled"}
+        return {"action": ACTION_LOGIN, "user_id": profile[0], "organization_id": organization_id,
+                "identity_id": identity_id}
+
+    # 2. No membership here: the invite path, unchanged. A profile in this
+    #    organization that carries the verified address and is not claimed yet is
+    #    linked. Nothing is written unless the person is actually admitted, so a
+    #    refusal leaves no rows behind.
     profile = conn.execute(
         select(user.c.id).where(
             user.c.organization_id == organization_id, user.c.email == address, user.c.active.is_(True)
@@ -446,27 +502,16 @@ def resolve_member(conn, *, email: str, subject: str, organization_id: str,
     ).first()
     if profile is None:
         return {"action": ACTION_DENIED, "reason": "not_invited"}
+    claimed = conn.execute(select(organization_membership.c.id).where(
+        organization_membership.c.profile_user_id == profile[0])).first()
+    if claimed is not None:
+        return {"action": ACTION_DENIED, "reason": "profile_linked_elsewhere"}
     identity = conn.execute(select(global_identity.c.id).where(global_identity.c.email == address)).first()
     identity_id = identity[0] if identity else new_id()
     if identity is None:
         conn.execute(global_identity.insert().values(id=identity_id, email=address, created_at=stamp))
-    membership = conn.execute(
-        select(organization_membership.c.profile_user_id, organization_membership.c.active).where(
-            organization_membership.c.identity_id == identity_id,
-            organization_membership.c.organization_id == organization_id,
-        )
-    ).first()
-    if membership is None:
-        claimed = conn.execute(select(organization_membership.c.id).where(
-            organization_membership.c.profile_user_id == profile[0])).first()
-        if claimed is not None:
-            return {"action": ACTION_DENIED, "reason": "profile_linked_elsewhere"}
-        conn.execute(organization_membership.insert().values(
-            id=new_id(), identity_id=identity_id, organization_id=organization_id,
-            profile_user_id=profile[0], active=True, created_at=stamp))
-        return {"action": ACTION_LOGIN, "user_id": profile[0], "organization_id": organization_id,
-                "identity_id": identity_id, "linked": True}
-    if not membership[1]:
-        return {"action": ACTION_DENIED, "reason": "membership_inactive"}
-    return {"action": ACTION_LOGIN, "user_id": membership[0], "organization_id": organization_id,
-            "identity_id": identity_id}
+    conn.execute(organization_membership.insert().values(
+        id=new_id(), identity_id=identity_id, organization_id=organization_id,
+        profile_user_id=profile[0], active=True, created_at=stamp))
+    return {"action": ACTION_LOGIN, "user_id": profile[0], "organization_id": organization_id,
+            "identity_id": identity_id, "linked": True}
