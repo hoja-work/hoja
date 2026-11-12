@@ -33,8 +33,14 @@ def test_admin_sees_archive_and_delete_on_issue_and_can_archive_initiative(serve
         page = browser.new_page()
         _sign_in(page, server)
         page.goto(f"{server}/workspace/issue/{ident}")
-        page.get_by_role("button", name="Archive issue").wait_for(timeout=15000)
-        assert page.get_by_role("button", name="Delete issue").count() == 1
+        # The UI speaks "task" since the vocabulary rename (HOJA-288). The archive
+        # control is the toolbar button (frontend/src/graph/tasks.tsx:1540); delete
+        # only exists inside the "Task options" menu (same file, :1513), so the test
+        # must open that menu before asserting it, as a user would.
+        page.get_by_role("button", name="Archive task").first.wait_for(timeout=15000)
+        page.get_by_role("button", name="Task options").click()
+        # LinMenu rows are role="menuitem", not buttons (frontend/src/graph/shared.tsx:239).
+        page.get_by_role("menuitem", name="Delete task").wait_for(timeout=15000)
         page.goto(f"{server}/workspace/initiatives")
         page.get_by_role("button", name="Archive").first.wait_for(timeout=15000)
         browser.close()

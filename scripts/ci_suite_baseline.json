@@ -1,0 +1,14 @@
+{
+  "commit": "db331af6",
+  "composed_with": "f0fd5225",
+  "measured_on": "2026-11-12",
+  "host_note": "measured on the workstation against the composed tree of db331af6 + f0fd5225; the runner is ~10% slower but runs the same set",
+  "command": "uv run --frozen --all-extras pytest -q --junit-xml=results.xml -o faulthandler_timeout=240 --ignore=tests/e2e",
+  "python": "3.10",
+  "collected": 1259,
+  "skipped": 16,
+  "executed": 1243,
+  "churn_allowance": 74,
+  "floor": 1169,
+  "floor_derivation": "round(executed * 0.941), the ratio the first record used at eb3341f"
+}

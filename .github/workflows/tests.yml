@@ -68,10 +68,76 @@ jobs:
       - name: Test suite
         # faulthandler_timeout mirrors the Cloud runner so a hang dumps stacks
         # instead of consuming the whole job timeout.
-        run: uv run --frozen --all-extras pytest -q -o faulthandler_timeout=240
+        # tests/e2e needs a browser and a built web bundle; `pytest-e2e` owns
+        # it. Leaving it here as well would only add skips that read like the
+        # Postgres-gated ones, and would tie this job's runtime to a browser.
+        run: >-
+          uv run --frozen --all-extras pytest -q
+          --junit-xml=results.xml
+          -o faulthandler_timeout=240
+          --ignore=tests/e2e
+
+      # pytest exits 0 when every test skips, so the exit code above cannot
+      # distinguish "1169 tests passed" from "1169 tests were skipped". This
+      # step makes the difference observable. --allow-skips because the
+      # Postgres-gated cases legitimately skip here; the floor is what carries
+      # the guarantee, and pytest-postgres owns the skip rule for its own
+      # modules. The floor is pinned to a measured baseline in
+      # scripts/ci_suite_baseline.json, and tests/test_ci_suite_floor.py fails
+      # when the record, the argument and the domain drift apart.
+      - name: Assert the suite actually executed
+        if: always()
+        run: python scripts/assert_pg_gate_ran.py results.xml --allow-skips --minimum 1169
+
+  pytest-e2e:
+    # HOJA-375: playwright was never installed, so every case in tests/e2e
+    # skipped and the browser suite was green by absence. This job installs
+    # the package, a real chromium and the web bundle it drives, then asserts
+    # the cases ran instead of trusting the colour of the check.
+    name: pytest-e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: '3.10'
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Install
+        run: uv sync --frozen --all-extras
+
+      # hoja_server serves frontend/dist and answers the root with an
+      # instruction page when it is absent, so the suite needs this build.
+      - name: Build the web bundle
+        run: npm ci --prefix frontend && npm run build --prefix frontend
+
+      - name: Install chromium
+        run: uv run --frozen --all-extras playwright install --with-deps chromium
+
+      - name: Browser suite
+        run: >-
+          uv run --frozen --all-extras pytest -q -rs
+          --junit-xml=e2e-results.xml
+          -o faulthandler_timeout=240
+          tests/e2e
+
+      # Runs even when the step above failed, so a broken browser path reports
+      # both the failing assertions and whether the cases ran at all.
+      - name: Assert the browser tests executed
+        if: always()
+        run: python scripts/assert_e2e_gate_ran.py e2e-results.xml
 
   pytest-postgres:
-    # Only the three database-gated modules; the SQLite job above owns the rest.
+    # Only the database-gated modules; the SQLite job above owns the rest. This
+    # list is not a judgement call: tests/test_ci_pg_gate_coverage.py derives it
+    # from the modules that read HOJA_TEST_POSTGRES_URL and fails if one is
+    # missing, because a module that quietly takes the SQLite branch looks
+    # exactly like a passing one.
     name: pytest-postgres
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -113,6 +179,8 @@ jobs:
           tests/test_server_postgres.py
           tests/test_tenant_context.py
           tests/agent/test_dbos_crash_recovery.py
+          tests/test_meetings.py
+          tests/test_server_backend.py::test_cloverops_graphql_operation_contract
 
       # Runs even when the step above failed, so a broken database path reports
       # both the failing assertions and whether the cases ran at all.
