@@ -34,7 +34,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 60
+CURRENT_SCHEMA_REVISION = 61
 
 
 def now_iso() -> str:
@@ -1112,6 +1112,54 @@ task_template = Table(
     # uniqueness among a team's templates; the workspace-level name collision
     # is refused in task_templates.py, where the NULL case can be selected for.
     UniqueConstraint("organization_id", "team_id", "name", name="uq_task_template_org_team_name"),
+)
+
+# HOJA-491: SLA policies and the per-task clock they start. A NULL team_id is a
+# workspace-wide policy; a team id scopes it, and a team's policy wins over the
+# workspace one for the same priority. The clock is a row of its own so a task
+# can be read without computing state, and so the pause arithmetic is auditable
+# (paused_ms is accumulated, not recomputed from a guessed event log).
+sla_policy = Table(
+    "sla_policy",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("team_id", String, ForeignKey("team.id"), index=True),
+    Column("name", String, nullable=False),
+    # JSON array of priorities this policy covers; NULL means every priority.
+    Column("applies_priorities", Text),
+    Column("first_response_minutes", Integer),
+    Column("resolution_minutes", Integer),
+    # JSON array of workflow_state ids that pause the clock (waiting on the
+    # customer). Stored as ids, not names: a rename must not silently unpause.
+    Column("pause_state_ids", Text),
+    Column("enabled", Boolean, nullable=False, default=True),
+    Column("archived_at", String),
+    Column("created_at", String),
+    Column("updated_at", String),
+    UniqueConstraint("organization_id", "team_id", "name", name="uq_sla_policy_org_team_name"),
+)
+
+sla_clock = Table(
+    "sla_clock",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("issue_id", String, ForeignKey("issue.id"), nullable=False, index=True),
+    Column("policy_id", String, ForeignKey("sla_policy.id"), nullable=False),
+    Column("started_at", String),
+    Column("first_response_due_at", String),
+    Column("resolution_due_at", String),
+    Column("first_responded_at", String),
+    Column("resolved_at", String),
+    Column("paused_since", String),
+    Column("paused_ms", Integer, nullable=False, default=0),
+    # Set once, when a read first observes the breach. That is the event
+    # Pulse/inbox can show, and it is recorded once rather than per read.
+    Column("breached_at", String),
+    Column("created_at", String),
+    Column("updated_at", String),
+    UniqueConstraint("issue_id", name="uq_sla_clock_issue"),
 )
 
 # HOJA-490: per-capability grants for the member role. A missing row means the
@@ -2292,6 +2340,31 @@ def _apply_workspace_permissions(conn):
         conn.exec_driver_sql("ALTER TABLE browser_session ADD COLUMN last_seen_at VARCHAR")
 
 
+def _apply_sla(conn):
+    """HOJA-491: SLA policies and the per-task clock.
+
+    Additive and inert. Nothing reads either table until a workspace creates a
+    policy; with no policy, ``issue_create`` writes exactly the row it wrote
+    before this revision, and a rollback target that predates 61 still reads
+    every task it knows about.
+    """
+    sla_policy.create(conn, checkfirst=True)
+    sla_clock.create(conn, checkfirst=True)
+
+
+def _down_sla(conn) -> None:
+    """Reverse of revision 61, for the up -> down -> up equivalence proof.
+
+    The clock rows are derived state (recomputable from the issues and their
+    activity), so dropping them loses nothing a live policy cannot re-earn;
+    the policies themselves are configuration and are lost, as with any
+    additive reversal.
+    """
+    sla_clock.drop(conn, checkfirst=True)
+    sla_policy.drop(conn, checkfirst=True)
+    conn.execute(schema_revision.delete().where(schema_revision.c.revision == 61))
+
+
 def _apply_task_templates(conn):
     """HOJA-492: the task-template store.
 
@@ -2465,6 +2538,9 @@ _MIGRATIONS = {
     # sends templateId. Additive only: no column on an existing table changes,
     # so the previous image keeps working against this schema.
     60: _apply_task_templates,
+    # 61: SLA policies and the per-task clock (HOJA-491). Additive; inert until
+    # a workspace creates a policy.
+    61: _apply_sla,
 }
 
 

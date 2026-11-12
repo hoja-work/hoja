@@ -14,6 +14,8 @@ type Task {
   id: ID!
   identifier: String!
   title: String!
+  "The SLA clock this task runs against, or null when no policy covers it."
+  sla: SlaClock
   description: String
   priority: Int
   priorityLabel: String

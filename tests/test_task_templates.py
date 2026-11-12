@@ -25,8 +25,7 @@ from starlette.testclient import TestClient
 
 from hoja_server.app import create_app
 from hoja_server.db import (
-    _apply_task_templates,
-    _down_task_templates,
+    CURRENT_SCHEMA_REVISION,
     applied_schema_revision,
     make_engine,
     migrate,
@@ -247,12 +246,13 @@ def test_defaults_are_validated_when_the_template_is_saved(tmp_path) -> None:
         assert "name" in str(dup.get("errors")), dup
 
 
-def test_revision_60_is_durable_and_a_59_database_is_untouched(tmp_path) -> None:
+def test_the_template_migration_is_durable_on_a_populated_database(tmp_path) -> None:
     """The migration on a populated database, not an empty one.
 
-    Seed a tenant and its issues at the current schema, then re-run the
-    forward step and the down/up cycle and assert (a) the revision is 60,
-    (b) existing rows survive, (c) a second boot changes nothing.
+    Seed a tenant and its issues, then re-run the ledger and assert (a) the
+    database is at the current revision, (b) existing rows survive, (c) a
+    second boot changes nothing. The up/down/up equivalence for the head
+    revision lives in test_slas.py, where the head is exercised.
     """
     engine, app, admin = _setup(tmp_path)
     with TestClient(app) as client:
@@ -263,27 +263,13 @@ def test_revision_60_is_durable_and_a_59_database_is_untouched(tmp_path) -> None
         count_before = _gql(client, admin["token"],
                             "{ issues { nodes { id title } } }")["data"]["issues"]["nodes"]
 
-    assert applied_schema_revision(engine) == 60
+    assert applied_schema_revision(engine) == CURRENT_SCHEMA_REVISION
     # Second boot: the ledger is a prefix, so nothing reapplies.
     migrate(engine)
-    assert applied_schema_revision(engine) == 60
+    assert applied_schema_revision(engine) == CURRENT_SCHEMA_REVISION
     with TestClient(create_app(str(tmp_path / "task-templates.db"), open_mode=False)) as client:
         after = _gql(client, admin["token"],
                      "{ issues { nodes { id title } } }")["data"]["issues"]["nodes"]
         assert [i["id"] for i in after] == [i["id"] for i in count_before]
 
-    # up -> down -> up equivalence: the table is dropped and recreated, and the
-    # revision ledger agrees at every step.
-    with engine.begin() as conn:
-        _down_task_templates(conn)
-    assert applied_schema_revision(engine) == 59
-    with engine.begin() as conn:
-        _apply_task_templates(conn)
-        from hoja_server.db import schema_revision, now_iso
-        conn.execute(schema_revision.insert().values(revision=60, applied_at=now_iso()))
-    assert applied_schema_revision(engine) == 60
-    with TestClient(create_app(str(tmp_path / "task-templates.db"), open_mode=False)) as client:
-        listed = _gql(client, admin["token"], TEMPLATES)
-        assert "errors" not in listed, listed
-        assert listed["data"]["taskTemplates"] == []
 

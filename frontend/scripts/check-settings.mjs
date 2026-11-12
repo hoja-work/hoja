@@ -179,6 +179,8 @@ const serverText = readdirSync(serverDir)
   .join('\n');
 const PANE_CONTRACTS = {
   'issue-templates': /^\s*taskTemplates\s*[(:]/m,
+  'slas': /^\s*slaPolicies\s*[(:]/m,
+  'model-providers': /^\s*modelProviders\s*[(:]/m,
   'project-statuses': /^\s*projectStatuses\s*:/m,
   'project-templates': /^\s*projectTemplates\s*:/m,
   'permissions': /^\s*workspacePermissions\s*:/m,
@@ -199,6 +201,44 @@ for (const [id, signature] of Object.entries(PANE_CONTRACTS)) {
 }
 if (paneProblems.length) fail.push('main.tsx: pane availability disagrees with the server schema: ' + paneProblems.join('; '));
 else ok(`all ${Object.keys(PANE_CONTRACTS).length} settings panes agree with the server schema (offered ⇔ backed)`);
+
+/* The contract map has to cover the nav, not just the panes someone remembered
+ * to add to it. A pane added to the sidebar and left out of PANE_CONTRACTS was
+ * checked in neither direction — so "offered ⇔ backed" was true only of the
+ * panes that had been listed, which is the failure mode this check exists to
+ * prevent. Ids whose screen is purely client-side are declared once here; a
+ * new nav entry that is in neither list fails until someone decides. */
+const navLiteral = (tsx.match(/const groups[^=]*=\[([\s\S]*?)\n \];/) || [])[1] || '';
+const navIds = [...new Set([...navLiteral.matchAll(/\['([a-z0-9-]+)'/g)].map((m) => m[1]))];
+const CLIENT_ONLY_PANES = new Set([
+  'preferences', 'profile', 'notifications', 'api-keys', 'agent-conversations',
+  'connections', 'workspace', 'teams', 'members', 'account', 'issue-labels',
+]);
+const undeclaredPanes = navIds.filter((id) => !CLIENT_ONLY_PANES.has(id) && !(id in PANE_CONTRACTS));
+if (!navIds.length) fail.push('main.tsx: the settings nav groups could not be read, so pane coverage cannot be checked');
+else if (undeclaredPanes.length) {
+  fail.push(`main.tsx: nav panes with no declared server contract: ${undeclaredPanes.join(', ')}; ` +
+    'add each to PANE_CONTRACTS or to CLIENT_ONLY_PANES so it is checked in both directions');
+} else {
+  ok(`every one of the ${navIds.length} nav panes is declared, so each is checked offered ⇔ backed`);
+}
+
+/* A contract with no screen behind it is the other half of the same lie: the
+ * gate would pass a field nothing renders. Routes are the authority here. */
+const routeIds = new Set([...tsx.matchAll(/section==='([a-z0-9-]+)'\)return/g)].map((m) => m[1]));
+const unrenderedPanes = Object.keys(PANE_CONTRACTS).filter((id) => !routeIds.has(id));
+if (unrenderedPanes.length) {
+  fail.push(`main.tsx: PANE_CONTRACTS names panes with no WorkspaceSettings route: ${unrenderedPanes.join(', ')}`);
+} else {
+  ok(`all ${Object.keys(PANE_CONTRACTS).length} contracted panes have a WorkspaceSettings route`);
+}
+
+/* Measured, not asserted away: 489/490 landed screens that are reachable by URL
+ * but are not offered in the sidebar. Reported on every run so the gap cannot
+ * be forgotten; not a failure, because a URL-reachable pane is still a real
+ * pane, and the fix for it is a nav decision, not a schema one. */
+const routeOnly = [...routeIds].filter((id) => !navIds.includes(id));
+ok(`route-only panes (no sidebar entry): ${routeOnly.length ? routeOnly.join(', ') : 'none'}`);
 
 /* The drawer width must be chosen by a media query at the measured boundary, not by a base rule. */
 const drawerRule = /@media[^{]*max-width:\s*880px[^{]*\{[\s\S]{0,400}?\.settings-sidebar\s*\{[^}]*var\(--ds-settings-nav-drawer-width\)/;

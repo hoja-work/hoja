@@ -857,6 +857,13 @@ class Writer:
                 due_date=inp.get("dueDate"), created_at=ts, updated_at=ts,
             ))
             self._apply_state_ts(conn, org_id, iid, state_id, ts)
+            # HOJA-491: a task created under an SLA policy starts its clock here,
+            # in the same transaction that creates the row — never retroactively.
+            from hoja_server import sla as sla_module
+
+            policy = sla_module.matching_policy(conn, org_id, tid, prio)
+            if policy is not None:
+                sla_module.start_clock(conn, org_id, iid, policy, ts)
             for lid in (inp.get("labelIds") or []):
                 conn.execute(issue_label_link.insert().values(issue_id=iid, label_id=lid))
             self._record_activity(conn, org_id, iid, viewer_id, "issueCreated", {"title": inp["title"]}, ts)
@@ -1045,6 +1052,11 @@ class Writer:
             conn.execute(issue.update().where(issue.c.id == iid).values(**values))
             if "stateId" in inp:
                 self._apply_state_ts(conn, org_id, iid, inp["stateId"], ts)
+                # HOJA-491: pause / resume / stop the clock on the same commit as
+                # the transition, so a reader never sees the two disagree.
+                from hoja_server import sla as sla_module
+
+                sla_module.on_state_change(conn, org_id, iid, inp["stateId"], ts)
             if "labelIds" in inp:
                 conn.execute(issue_label_link.delete().where(issue_label_link.c.issue_id == iid))
                 for lid in (inp.get("labelIds") or []):
@@ -1148,6 +1160,11 @@ class Writer:
                 user_id=viewer_id, url=f"{irow.get('url')}#comment-{cid[:8]}",
                 created_at=ts, updated_at=ts))
             self._record_activity(conn, org_id, irow["id"], viewer_id, "commentCreated", {"commentId": cid}, ts)
+            # HOJA-491: the first comment by someone other than the creator is the
+            # "first response" the target measures.
+            from hoja_server import sla as sla_module
+
+            sla_module.on_first_response(conn, org_id, irow["id"], viewer_id, ts)
             return cid
 
     def comment_update(self, org_id: str, viewer_id: str, cid: str, inp: dict) -> str | None:

@@ -1747,12 +1747,15 @@ def _get_comment(store, org, cid):
 def build_schema():
     from pathlib import Path
     sdl = (Path(__file__).parent / "schema.graphql").read_text()
-    from hoja_server import decisions_api, extensions_api, model_providers, permissions, project_settings, task_templates, views_api, webhooks_api
+    from hoja_server import decisions_api, extensions_api, model_providers, permissions, project_settings, sla, task_templates, views_api, webhooks_api
     from hoja_server.agent_conversations import SDL as CONVERSATION_SDL
     from hoja_server.agent_conversations import query as conversation_query
     from hoja_server.model_providers import SDL as PROVIDER_SDL
     from hoja_server.task_aliases import bind_task_surface
     tasks_sdl = (Path(__file__).parent / "schema_tasks.graphql").read_text()
+    # HOJA-491: bind Issue.sla before the alias surface copies Issue's resolvers
+    # onto Task, so the agent-facing vocabulary carries the clock too.
+    sla.bind(Issue)
     task_bindables, problems = bind_task_surface(
         query, mutation, Issue, MyIssueActivity,
         extra_roots=(views_api.query, views_api.mutation, decisions_api.query, decisions_api.mutation),
@@ -1763,12 +1766,13 @@ def build_schema():
     return make_executable_schema(
         [sdl, PROVIDER_SDL, CONVERSATION_SDL, webhooks_api.SDL, extensions_api.SDL,
          views_api.SDL, decisions_api.SDL, project_settings.SDL, permissions.SDL,
-         task_templates.SDL, tasks_sdl],
+         task_templates.SDL, sla.SDL, tasks_sdl],
         query, mutation, *task_bindables,
         model_providers.query, model_providers.mutation,
         project_settings.query, project_settings.mutation,
         permissions.query, permissions.mutation,
         task_templates.query, task_templates.mutation,
+        sla.query, sla.mutation,
         webhooks_api.query, webhooks_api.mutation, webhooks_api.webhook_type,
         extensions_api.query, extensions_api.mutation, extensions_api.extension_type,
         views_api.query, views_api.mutation, views_api.view_type,
@@ -1776,6 +1780,7 @@ def build_schema():
         conversation_query,
         model_providers.model_provider_type, project_settings.project_status_type,
         project_settings.project_template_type, task_templates.task_template_type,
+        sla.sla_policy_type, sla.sla_clock_type,
         Team, Initiative, InitiativeUpdate, Issue, IssueActivity, MyIssueActivity, Project, ProjectUpdate, Comment,
         permissions.workspace_permission_type, permissions.workspace_security_policy_type,
         WorkflowState, Cycle, Attachment,
