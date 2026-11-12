@@ -34,7 +34,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 53
+CURRENT_SCHEMA_REVISION = 54
 
 
 def now_iso() -> str:
@@ -524,6 +524,28 @@ github_link = Table(
     Column("environment", String),
     Column("created_at", String, nullable=False),
     Column("updated_at", String),
+    # Pull-request detail the Reviews pane renders (revision 54). Nullable and only
+    # filled by scripts/enrich-github-link-pulls.sh: the webhook body carries none of
+    # this, so a link stays readable with these empty until the enrichment runs.
+    # github_updated_at is GitHub's own timestamp; the varchar updated_at above stays
+    # what it always was — a row-touch stamp written by this server.
+    Column("additions", Integer),
+    Column("deletions", Integer),
+    Column("base_ref", String),
+    Column("head_ref", String),
+    Column("behind", Integer),
+    Column("ahead", Integer),
+    Column("mergeable", Boolean),
+    Column("merge_state", String),
+    Column("review_decision", String),
+    Column("reviewers", Text),
+    Column("checks_state", String),
+    Column("checks_total", Integer),
+    Column("checks_passing", Integer),
+    Column("checks_failing", Integer),
+    Column("body", Text),
+    Column("merged_at", String),
+    Column("github_updated_at", String),
     UniqueConstraint(
         "organization_id", "kind", "external_id", name="uq_github_link_external"
     ),
@@ -1948,6 +1970,49 @@ def _apply_connector_external_id(conn) -> None:
         conn.exec_driver_sql("ALTER TABLE connector_account ADD COLUMN external_id VARCHAR")
 
 
+_GITHUB_LINK_PULL_COLUMNS = {
+    "additions": "INTEGER",
+    "deletions": "INTEGER",
+    "base_ref": "VARCHAR",
+    "head_ref": "VARCHAR",
+    "behind": "INTEGER",
+    "ahead": "INTEGER",
+    "mergeable": "BOOLEAN",
+    "merge_state": "VARCHAR",
+    "review_decision": "VARCHAR",
+    "reviewers": "TEXT",
+    "checks_state": "VARCHAR",
+    "checks_total": "INTEGER",
+    "checks_passing": "INTEGER",
+    "checks_failing": "INTEGER",
+    "body": "TEXT",
+    "merged_at": "VARCHAR",
+    "github_updated_at": "VARCHAR",
+}
+
+
+def _apply_github_link_pull_meta(conn):
+    """The Reviews pane's pull-request detail on the link row (scripts/enrich-github-link-pulls.sh).
+
+    Every column is nullable and nothing here is authoritative for the issue's own state: a
+    pull request's diffstat, refs, mergeability, review decision, check summary and body are
+    display data. The webhook does not carry them, so leaving them NULL is a supported state
+    and the pane must render an em dash rather than a zero.
+
+    ``updated_at`` on this table is a varchar row-touch stamp this server writes; GitHub's own
+    timestamp lands in ``github_updated_at`` so the two are never confused.
+
+    The column probe keeps this a no-op on a fresh database (create_all already made the
+    columns) and on one already altered by hand, and it is the portable form: SQLite, which
+    the test suite migrates, has no ADD COLUMN IF NOT EXISTS.
+    """
+    existing = {column["name"] for column in inspect(conn).get_columns("github_link")}
+    for name, sql_type in _GITHUB_LINK_PULL_COLUMNS.items():
+        if name in existing:
+            continue
+        conn.exec_driver_sql(f"ALTER TABLE github_link ADD COLUMN {name} {sql_type}")
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -2061,6 +2126,11 @@ _MIGRATIONS = {
     52: lambda conn: github_link.create(conn, checkfirst=True),
     # 53: the delivery-id ledger that makes a re-sent webhook a no-op.
     53: lambda conn: github_delivery.create(conn, checkfirst=True),
+    # 54: the pull-request detail the Reviews pane renders (diffstat, refs, mergeability,
+    # review decision, check summary, body, GitHub's own updated_at). All nullable: the
+    # webhook does not carry it, so scripts/enrich-github-link-pulls.sh fills it and a link
+    # with no enrichment still reads correctly.
+    54: _apply_github_link_pull_meta,
 }
 
 

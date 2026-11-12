@@ -21,6 +21,22 @@ query($id: String!) {
 }
 """
 
+# What the Reviews detail pane asks for. Kept in the test so a field that stops being
+# resolvable fails here rather than in the pane.
+PULL_DETAIL_QUERY = """
+query($id: String!) {
+  issue(id: $id) {
+    githubLinks {
+      id externalId state
+      additions deletions baseRef headRef behind ahead
+      mergeable mergeState reviewDecision reviewers
+      checksState checksTotal checksPassing checksFailing
+      body mergedAt githubUpdatedAt
+    }
+  }
+}
+"""
+
 
 def _setup(tmp_path):
     db_path = tmp_path / "github-links-graphql.db"
@@ -84,3 +100,43 @@ def test_issue_without_links_returns_an_empty_list(tmp_path):
     body = response.json()
     assert "errors" not in body, body
     assert body["data"]["issue"]["githubLinks"] == []
+
+
+def test_pull_request_detail_is_queryable_for_the_reviews_pane(tmp_path):
+    """Revision 54 columns: enriched values come back, and an un-enriched link stays NULL."""
+    engine, app, seeded = _setup(tmp_path)
+    with engine.begin() as conn:
+        conn.execute(github_link.update().where(
+            github_link.c.external_id == "4242").values(
+                additions=126, deletions=18, base_ref="main",
+                head_ref="feat/reviews", behind=3, ahead=1, mergeable=True,
+                merge_state="clean", review_decision="APPROVED",
+                reviewers='[{"login":"rinadelph","state":"APPROVED"}]',
+                checks_state="passing", checks_total=4, checks_passing=4,
+                checks_failing=0, body="Fixes HOJA-1.",
+                merged_at=None, github_updated_at="2026-11-09T00:11:43Z",
+            ))
+    client = TestClient(app)
+
+    response = client.post(
+        "/graphql",
+        headers={"Authorization": f"Bearer {seeded['token']}"},
+        json={"query": PULL_DETAIL_QUERY, "variables": {"id": "ENG-1"}},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert "errors" not in body, body
+    link = body["data"]["issue"]["githubLinks"][0]
+    assert (link["additions"], link["deletions"]) == (126, 18)
+    assert (link["baseRef"], link["headRef"]) == ("main", "feat/reviews")
+    assert (link["behind"], link["ahead"]) == (3, 1)
+    assert link["mergeable"] is True
+    assert link["mergeState"] == "clean"
+    assert link["reviewDecision"] == "APPROVED"
+    assert link["reviewers"] == [{"login": "rinadelph", "state": "APPROVED"}]
+    assert (link["checksTotal"], link["checksPassing"], link["checksFailing"]) == (4, 4, 0)
+    assert link["checksState"] == "passing"
+    assert link["body"] == "Fixes HOJA-1."
+    assert link["mergedAt"] is None
+    assert link["githubUpdatedAt"] == "2026-11-09T00:11:43Z"

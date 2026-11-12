@@ -1028,6 +1028,14 @@ class Store:
     def ser_github_link(self, row: dict | None) -> dict | None:
         if not row:
             return None
+        reviewers = row.get("reviewers")
+        if isinstance(reviewers, str):
+            # Stored as JSON text by scripts/enrich-github-link-pulls.sh; a malformed blob
+            # must not break the task query, so it degrades to "no reviewers listed".
+            try:
+                reviewers = json.loads(reviewers)
+            except ValueError:
+                reviewers = None
         return {
             "id": row["id"], "kind": row.get("kind"),
             "externalId": row.get("external_id"), "url": row.get("url"),
@@ -1035,6 +1043,19 @@ class Store:
             "author": row.get("author"), "sha": row.get("sha"),
             "environment": row.get("environment"),
             "createdAt": row.get("created_at"), "updatedAt": row.get("updated_at"),
+            # Pull-request detail (revision 54). NULL means "not enriched yet", which the
+            # Reviews pane renders as an em dash — never as a zero-length diffstat.
+            "additions": row.get("additions"), "deletions": row.get("deletions"),
+            "baseRef": row.get("base_ref"), "headRef": row.get("head_ref"),
+            "behind": row.get("behind"), "ahead": row.get("ahead"),
+            "mergeable": row.get("mergeable"), "mergeState": row.get("merge_state"),
+            "reviewDecision": row.get("review_decision"), "reviewers": reviewers,
+            "checksState": row.get("checks_state"),
+            "checksTotal": row.get("checks_total"),
+            "checksPassing": row.get("checks_passing"),
+            "checksFailing": row.get("checks_failing"),
+            "body": row.get("body"), "mergedAt": row.get("merged_at"),
+            "githubUpdatedAt": row.get("github_updated_at"),
         }
 
     def ser_issue(self, row: dict | None) -> dict | None:

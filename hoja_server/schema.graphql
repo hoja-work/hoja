@@ -403,6 +403,23 @@ type GithubLink {
   environment: String
   createdAt: DateTime
   updatedAt: DateTime
+  additions: Int
+  deletions: Int
+  baseRef: String
+  headRef: String
+  behind: Int
+  ahead: Int
+  mergeable: Boolean
+  mergeState: String
+  reviewDecision: String
+  reviewers: JSON
+  checksState: String
+  checksTotal: Int
+  checksPassing: Int
+  checksFailing: Int
+  body: String
+  mergedAt: DateTime
+  githubUpdatedAt: DateTime
 }
 
 type RateLimitPayload {

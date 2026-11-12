@@ -1538,3 +1538,77 @@ body:has(.reviews-page) .workspace-content{grid-row:1/span 2}
 .reviews-pane{flex:1 1 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:23px;height:100%;color:var(--muted);font-size:13px}
 .reviews-illo{width:143px;height:152px;color:var(--muted);opacity:.6}
 .reviews-page .reviews-grid,.reviews-page .reviews-head,.reviews-page .reviews-actions,.reviews-page .reviews-skip{display:none}
+
+/* Reviews: selectable rows in the ledger. The row stays a flat 38px line; the click
+   target is a button inside it and the GitHub link is a sibling so neither nests in the
+   other. Selection is local state, so a row opens the right pane instead of leaving Hoja. */
+.reviews-rows{margin:0;padding:0 0 2px;list-style:none}
+.reviews-row{display:flex;align-items:center;gap:0;height:38px;margin:0;padding:0 4px 0 6px;border:0;background:none}
+.reviews-row[data-selected="true"]{background:color-mix(in srgb,var(--subtle) 90%,var(--accent-soft))}
+.reviews-row-main{display:flex;align-items:center;gap:8px;flex:1 1 auto;min-width:0;height:100%;padding:0 6px 0 6px;border:0;border-radius:6px;background:transparent;color:inherit;text-align:left}
+.reviews-row-main:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.reviews-row-ext{display:grid;place-items:center;width:22px;height:22px;flex:none;border-radius:5px;background:transparent;color:var(--muted);text-decoration:none;opacity:0}
+.reviews-row:hover .reviews-row-ext,.reviews-row:focus-within .reviews-row-ext,.reviews-row[data-selected="true"] .reviews-row-ext{opacity:1}
+.reviews-row-ext:hover{background:var(--subtle);color:var(--text)}
+
+/* Reviews: detail pane (right side of the split view). Geometry mirrors the measured
+   reference: 52px breadcrumb band, 44px tab row, 96px property label column, 24px/600
+   title. Everything a githubLink does not carry is labelled unknown rather than faked. */
+.reviews-pane{display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;gap:0;min-width:0;height:100%;overflow:hidden;background:var(--panel);color:var(--text);font-size:13px}
+.reviews-pane-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;height:100%;color:var(--muted);font-size:13px}
+.reviews-pane-hint{margin:0;font-size:12px;color:var(--muted)}
+.reviews-detail{display:flex;flex-direction:column;min-height:0;height:100%;width:100%}
+.reviews-detail-head{display:flex;align-items:center;gap:8px;flex:none;height:52px;padding:0 14px 0 24px}
+.reviews-crumbs{display:flex;align-items:center;gap:8px;flex:1 1 auto;min-width:0;font-size:13px;color:var(--muted)}
+.reviews-crumb-issue{flex:none;font-weight:500;color:var(--text);font-size:12px}
+.reviews-crumb-sep{flex:none;color:var(--muted)}
+.reviews-crumb-glyph{display:flex;align-items:center;flex:none;color:#4cb782}
+.reviews-crumb-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;color:var(--text)}
+.reviews-crumb-num{flex:none;color:var(--muted);font-variant-numeric:tabular-nums}
+.reviews-diffstat{flex:none;padding:1px 7px;border:1px dashed var(--line);border-radius:9999px;color:var(--muted);font-size:11px}
+.reviews-open-link{display:inline-flex;align-items:center;gap:5px;flex:none;padding:4px 8px;border-radius:6px;color:var(--muted);font-size:12px;text-decoration:none;white-space:nowrap}
+.reviews-open-link:hover{background:var(--subtle);color:var(--text)}
+.reviews-kebab{display:grid;place-items:center;width:24px;height:24px;flex:none;border-radius:6px;background:transparent;color:var(--muted)}
+.reviews-kebab:disabled{opacity:.55;cursor:default}
+.reviews-detail-tabs{display:flex;align-items:center;gap:4px;flex:none;height:44px;margin:0;padding:0 14px 0 18px;border-bottom:1px solid var(--line)}
+.reviews-tab{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;border-radius:6px;background:transparent;color:var(--muted);font-size:12px;font-weight:500}
+.reviews-tab.on{background:var(--subtle);color:var(--text)}
+.reviews-tab:disabled{opacity:.6;cursor:not-allowed}
+.reviews-tab-flag{padding:0 6px;border:1px solid var(--line);border-radius:9999px;color:var(--muted);font-size:10px;font-weight:450;line-height:15px}
+.reviews-tabs-spacer{flex:1 1 auto}
+.reviews-merge{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 12px;border-radius:6px;background:#5e6ad2;color:#fff;font-size:12px;font-weight:550}
+.reviews-merge:disabled{opacity:.55;cursor:not-allowed}
+.reviews-merge-split{display:grid;place-items:center;width:28px;height:28px;flex:none;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--muted)}
+.reviews-merge-split:disabled{opacity:.55;cursor:not-allowed}
+.reviews-detail-scroll{flex:1 1 auto;min-height:0;overflow-y:auto;padding:18px 24px 28px;scrollbar-width:thin}
+.reviews-detail-title{margin:0;max-width:640px;font-size:24px;font-weight:600;line-height:32px;letter-spacing:-.02em;color:var(--text)}
+.reviews-byline{display:flex;align-items:center;gap:8px;margin:10px 0 0;font-size:12px;color:var(--muted)}
+.reviews-avatar{display:grid;place-items:center;width:20px;height:20px;flex:none;border-radius:50%;background:var(--accent-soft);color:var(--accent);font-size:9px;font-weight:700}
+.reviews-avatar.small{width:18px;height:18px;font-size:8px}
+.reviews-author{color:var(--text);font-weight:500}
+.reviews-branchchip{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:5px;background:var(--subtle);color:var(--muted);font-size:11px}
+.reviews-props{display:flex;flex-direction:column;gap:8px;margin:20px 0 0;max-width:640px}
+.reviews-prop{display:flex;align-items:flex-start;gap:10px;min-height:20px;margin:0}
+.reviews-prop dt{flex:0 0 96px;width:96px;color:var(--muted);font-size:12px;font-weight:450;line-height:20px}
+.reviews-prop dd{display:flex;align-items:center;gap:6px;flex:1 1 auto;min-width:0;margin:0;color:var(--text);font-size:13px;line-height:20px}
+.reviews-prop code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
+.reviews-dot{width:10px;height:10px;flex:none;border-radius:50%;background:#4cb782}
+.reviews-dot[data-state="draft"],.reviews-dot[data-state="closed"]{background:#6b6f76}
+.reviews-dot[data-state="merged"]{background:#8b5cf6}
+.reviews-unknown{color:var(--muted);font-size:12px}
+.reviews-desc{margin:18px 0 0;max-width:640px;line-height:1.6}
+.reviews-activity{margin:22px 0 0;max-width:640px}
+.reviews-activity h2{margin:0 0 8px;color:var(--muted);font-size:12px;font-weight:500}
+.reviews-activity-list{display:flex;flex-direction:column;gap:10px;margin:0;padding:0;list-style:none}
+.reviews-activity-list li{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px}
+.reviews-activity-list p{margin:0}
+.reviews-activity-list b{color:var(--text);font-weight:500}
+.reviews-activity-list code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:var(--text)}
+.reviews-activity-icon{display:grid;place-items:center;width:18px;height:18px;flex:none;color:var(--muted)}
+.reviews-composer{display:flex;align-items:center;gap:6px;max-width:640px;height:48px;margin:18px 0 0;padding:0 8px 0 14px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
+.reviews-composer-input{flex:1 1 auto;min-width:0;height:100%;border:0;background:transparent;color:var(--text);font-size:13px}
+.reviews-composer-input::placeholder{color:var(--muted)}
+.reviews-composer-icon,.reviews-composer-send{display:grid;place-items:center;width:24px;height:24px;flex:none;border-radius:5px;background:transparent;color:var(--muted)}
+.reviews-composer-send{background:var(--subtle)}
+.reviews-composer-icon:disabled,.reviews-composer-send:disabled,.reviews-composer-input:disabled{opacity:.6;cursor:not-allowed}
+.reviews-composer-note{margin:8px 0 0;color:var(--muted);font-size:11px}

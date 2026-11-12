@@ -51,14 +51,13 @@ function declared(sel) {
   return map;
 }
 
-function expect(sel, prop, want) {
+function expect(sel, prop, want, why = 'The split-view ledger geometry (482px column, flat 38px rows, 22px group bar) depends on it.') {
   const map = declared(sel);
   if (!map) return failures.push(`styles.css: no ${sel} rule found`);
   const got = map[prop];
   if (got !== want) {
     failures.push(
-      `styles.css: ${sel} { ${prop} } is ${got === undefined ? 'missing' : `"${got}"`}, expected "${want}". ` +
-      'The split-view ledger geometry (482px column, flat 38px rows, 22px group bar) depends on it.'
+      `styles.css: ${sel} { ${prop} } is ${got === undefined ? 'missing' : `"${got}"`}, expected "${want}". ` + why
     );
   }
 }
@@ -97,8 +96,60 @@ for (const cls of ['reviews-col', 'reviews-pane']) {
   }
 }
 
+
+/** 5. The detail pane is real: breadcrumb band, tab row, property rows, activity, composer. */
+for (const cls of ['reviews-detail', 'reviews-detail-head', 'reviews-detail-tabs', 'reviews-prop', 'reviews-activity', 'reviews-composer']) {
+  if (!new RegExp(`className="${cls}"`).test(tsx)) {
+    failures.push(`main.tsx: no element with className="${cls}"; the review detail pane lost a section`);
+  }
+  if (!declared('.' + cls)) {
+    failures.push(`styles.css: no .${cls} rule found; the review detail pane lost a section`);
+  }
+}
+if (!/role="tab"/.test(tsx) || !/className="reviews-tab on"/.test(tsx)) {
+  failures.push('main.tsx: the detail pane lost its Overview/Diff tab row (role="tab" + the selected tab)');
+}
+if (!/reviews-tab[^"]*"\s+disabled/.test(tsx)) {
+  failures.push('main.tsx: the Diff tab must stay disabled while no diff data is stored, not link out or pretend to load');
+}
+if (!declared('.reviews-pane-empty')) {
+  failures.push('styles.css: no .reviews-pane-empty rule found; the pane lost its "select a review" state');
+}
+
+/** 6. Pane geometry: 52px breadcrumb band, 44px tab row, 96px property label column. */
+expect('.reviews-detail-head', 'height', '52px', 'The pane breadcrumb band is 52px in the measured reference.');
+expect('.reviews-detail-tabs', 'height', '44px', 'The Overview/Diff tab row is 44px in the measured reference.');
+expect('.reviews-prop dt', 'width', '96px', 'The property label column is a fixed 96px in the measured reference.');
+
+/** 7. Rows select locally instead of navigating: the click target is a button, and the
+ *     GitHub link is a sibling anchor so the row does not lose its external affordance. */
+for (const cls of ['reviews-row-main', 'reviews-row-ext']) {
+  if (!new RegExp(`className="${cls}"`).test(tsx)) {
+    failures.push(`main.tsx: no element with className="${cls}"; a review row must select in place and keep an explicit "open on GitHub" link`);
+  }
+}
+if (/<a className="reviews-row"/.test(tsx)) {
+  failures.push('main.tsx: the ledger row is an <a> again; clicking a row must select it instead of leaving Hoja');
+}
+if (row['height'] === undefined) {
+  failures.push('styles.css: .reviews-row lost its 38px height; only the click target inside it may change');
+}
+
+/** 8. Grouping axis is Linear's, minus the bucket we cannot derive: Open, Draft, then the
+ *     two terminal states we do know, Merged and Closed. "Ready to merge" needs a
+ *     mergeability signal a githubLink does not carry. */
+if (!/REVIEW_GROUPS=\['Open','Draft','Merged','Closed'\] as const/.test(tsx)) {
+  failures.push("main.tsx: review groups must be REVIEW_GROUPS=['Open','Draft','Merged','Closed']; do not silently claim a readiness bucket");
+}
+if (!/st==='draft'\s*\?\s*'Draft'/.test(tsx) || !/st==='merged'\s*\?\s*'Merged'/.test(tsx) || !/st==='closed'\s*\?\s*'Closed'\s*:\s*'Open'/.test(tsx)) {
+  failures.push('main.tsx: reviewGroupOf must derive Draft from state=draft, Merged from state=merged, Closed from state=closed, and Open otherwise');
+}
+if (!/REVIEW_GROUPS\.map\(/.test(tsx)) {
+  failures.push('main.tsx: the ledger must render its groups from REVIEW_GROUPS so the order stays Open, Draft, Merged, Closed');
+}
+
 if (failures.length) {
   console.error('reviews invariants failed:\n' + failures.map(f => '  ✗ ' + f).join('\n'));
   process.exit(1);
 }
-console.log('reviews invariants ok: 482px ledger, flat 38px rows, 22px group bar, two panes');
+console.log('reviews invariants ok: 482px ledger, flat 38px rows, 22px group bar, two panes, detail pane (52px breadcrumb, 44px tabs, 96px labels)');
