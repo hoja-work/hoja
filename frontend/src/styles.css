@@ -135,6 +135,12 @@ body{background:var(--bg)}.app{min-height:100dvh}.topbar{position:sticky;top:0;z
 .kanban-card-wrap{display:flex;flex-direction:column;gap:5px;padding:8px;border:1px solid var(--line);border-radius:9px;background:var(--panel);box-shadow:0 1px 2px #0001}
 .kanban-card-wrap .kanban-card{width:100%;border:0;box-shadow:none;padding:5px;background:transparent}
 .kanban-card-wrap.dragging{opacity:.45}
+/* A sub-task card sits inside its parent's column: inset, lighter, joined by a short rail. */
+.kanban-card-child{background:var(--subtle);position:relative}
+.kanban-card-child::before{content:"";position:absolute;left:-8px;top:16px;width:6px;height:1px;background:var(--line)}
+.kanban-card-child .kanban-card-open strong{font-weight:500;color:var(--muted)}
+.kanban-parentchip{display:inline-block;margin-left:6px;padding:0 4px;border:1px solid var(--line);border-radius:4px;font-size:10px;font-weight:600;color:var(--muted)}
+.kanban-subrollup{display:inline-block;margin-left:6px;padding:0 5px;border:1px solid var(--line);border-radius:99px;font-size:10px;font-weight:600;color:var(--muted)}
 .kanban-move{display:flex;align-items:center;justify-content:space-between;gap:8px;align-self:flex-end;padding:4px 7px;border-radius:5px;background:transparent;color:var(--muted);font-size:11px}
 .kanban-move:hover:not(:disabled),.kanban-move:focus-visible{background:var(--subtle);color:var(--text)}
 .kanban-move:disabled{opacity:.45;cursor:not-allowed}
@@ -204,6 +210,12 @@ body{background:var(--bg)}.app{min-height:100dvh}.topbar{position:sticky;top:0;z
 @media(min-width:701px){.workspace-content:has(.my-issues-view){min-width:0;overflow:hidden}.workspace-content:has(.my-issues-view) .main{width:calc(100% - 16px);min-height:calc(100dvh - 16px)}.app:has(.my-issues-view){min-width:0;overflow-x:clip}}
 @media(max-width:700px){.main:has(.my-issues-view) .my-issue-tabs{scrollbar-width:none}.main:has(.my-issues-view) .my-issue-tabs::-webkit-scrollbar{display:none}.my-issue-toolbar{z-index:2;background:#fafafa;padding-left:6px}}
 .my-issue-popover input[type=search]{width:100%;padding:7px;border:1px solid #ddd;border-radius:5px;background:#fff;color:#29292d}.my-issue-popover label:has(input[type=checkbox]){display:flex;align-items:center;gap:8px}.my-issue-popover input[type=checkbox]{accent-color:#62626b}.my-issues-view .my-issue-row.hide-project{grid-template-columns:16px 62px 18px minmax(100px,1fr) 52px}.my-issues-view .my-issue-row.hide-date{grid-template-columns:16px 62px 18px minmax(100px,1fr) minmax(0,150px)}.my-issues-view .my-issue-row.hide-project.hide-date{grid-template-columns:16px 62px 18px minmax(100px,1fr)}.my-issue-load-more{display:block;margin:16px auto;padding:8px 14px;border:1px solid #ddd;border-radius:6px;background:#fff;color:#333;font-size:12px}.my-issue-load-more:disabled{opacity:.6}.my-issue-page-error{padding:10px 20px;color:#b42318;font-size:12px}
+/* Sub-task tree in the list: the row keeps its height (the list is windowed on a fixed
+ * rowH), so depth is padding plus a rail, and the completed/total badge is painted from
+ * data-rollup instead of adding a grid cell that would shift every column. */
+.my-issue-row-child{border-left:2px solid var(--line)}
+.my-issue-row[data-rollup]{position:relative}
+.my-issue-row[data-rollup]::after{content:attr(data-rollup);position:absolute;right:8px;top:50%;transform:translateY(-50%);padding:0 5px;border:1px solid var(--line);border-radius:99px;background:var(--panel);font-size:10px;font-weight:600;color:var(--muted);pointer-events:none}
 @media(max-width:700px){.my-issues-view .my-issue-row.hide-project{grid-template-columns:14px 55px 16px minmax(70px,1fr) 46px}.my-issues-view .my-issue-row.hide-date{grid-template-columns:14px 55px 16px minmax(70px,1fr)}.my-issues-view .my-issue-row.hide-project.hide-date{grid-template-columns:14px 55px 16px minmax(70px,1fr)}}
 .my-activity-kind{color:#777;font-size:11px;font-weight:400}
 /* Flexible My issues metadata cells mirror the configurable reference columns without a fixed grid. */

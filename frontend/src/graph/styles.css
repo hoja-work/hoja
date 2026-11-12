@@ -12,6 +12,8 @@
 .lin-crumb .sep{color:var(--muted);opacity:.7;}
 .lin-crumb .current{color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .lin-crumb .crumb-id{font-weight:600;color:var(--muted);}
+/* The parent segment of a sub-task's path is a link back up, not another muted label. */
+.lin-crumb .lin-crumb-parent{color:var(--text);font-weight:600;}
 .lin-head-actions{display:flex;align-items:center;gap:2px;margin-left:auto;flex:none;}
 .lin-nav-count{font-size:12px;color:var(--muted);margin:0 4px;white-space:nowrap;}
 
@@ -107,6 +109,11 @@
 .lin-row .title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);background:none;border:0;text-align:left;font:inherit;padding:0;cursor:pointer;}
 .lin-row .meta{display:flex;align-items:center;gap:8px;flex:none;margin-left:auto;}
 .lin-row .date{color:var(--muted);font-size:12px;white-space:nowrap;}
+/* Sub-task tree. The row keeps its 42px height so the virtualised list still measures one
+ * height per row; only the left edge and the inline padding convey depth. */
+.lin-row-child{border-left:2px solid var(--line);}
+.lin-row-child .title{color:var(--muted);}
+.lin-parentchip{flex:none;font-size:11px;font-weight:600;color:var(--muted);border:1px solid var(--line);border-radius:5px;padding:1px 5px;white-space:nowrap;}
 
 /* Status symbol + age. Hover and keyboard focus reveal the same sentence; the row is
  * raised so the tooltip paints above the following row's background. */
@@ -155,6 +162,10 @@
 .lin-bcol > header button:hover{background:var(--line);color:var(--text);}
 .lin-bcards{display:flex;flex-direction:column;gap:8px;padding:2px 8px 12px;overflow-y:auto;min-height:40px;}
 .lin-bcard{border:1px solid var(--line);border-radius:8px;background:var(--panel);padding:10px 11px;display:flex;flex-direction:column;gap:8px;cursor:pointer;text-align:left;width:100%;font:inherit;color:var(--text);}
+/* A sub-task card sits inside its parent's lane: inset, lighter, and joined by a short rail. */
+.lin-bcard-child{background:var(--subtle);position:relative;}
+.lin-bcard-child::before{content:"";position:absolute;left:-10px;top:14px;width:8px;height:1px;background:var(--line);}
+.lin-bcard-child .ttl{font-weight:500;color:var(--muted);}
 .lin-bcard:hover{border-color:var(--accent);box-shadow:0 2px 8px #1b1b1b10;}
 .lin-bcard .top{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--muted);}
 .lin-bcard .top .ident{font-weight:700;color:var(--muted);}
@@ -184,6 +195,7 @@
 .lin-subrow{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:7px;font-family:inherit;font-size:13px;width:100%;background:none;border:0;text-align:left;color:var(--text);cursor:pointer;}
 .lin-subrow:hover{background:var(--subtle);}
 .lin-subrow .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.lin-subrow .ident{flex:none;font-weight:600;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;}
 .lin-subrow.done .t{text-decoration:line-through;color:var(--muted);}
 .lin-subrow.pending{opacity:.62;}
 .lin-activity{border-top:1px solid var(--line);padding-top:16px;margin-top:6px;}
