@@ -6,7 +6,7 @@
  * `viewBox="0 0 16 16"`) captured at 1440x900 by scripts/ui-probes/reviews-parity.mjs:
  *
  *   open / ready : 4 paths, fill #43bc58   (lch(68% 64.37 141.95) resolved through canvas)
- *   draft        : 5 paths, fill #6b6f76   (lch(39.176% 1.25 282)  resolved through canvas)
+ *   draft        : 5 paths, fill #5c5c5e   (lch(39.176% 1.25 282)  resolved through canvas)
  *
  * The draft icon keeps the branch and node of the open icon and replaces the merge head
  * with two X strokes, which is why the last two paths are shared. Reproduced rather than

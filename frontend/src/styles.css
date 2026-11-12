@@ -1539,11 +1539,11 @@ body:has(.reviews-page) .main>.app-error{flex:none}
 .reviews-row{display:flex;align-items:center;gap:8px;height:40px;margin:0;padding:0 4px 0 6px;border:0;border-radius:6px;background:none;text-decoration:none;color:inherit}
 .reviews-row:hover{background:#0000000a}
 /* Filled state glyph, measured from the reference: 14px box, 4 paths when open
-   (fill #43bc58) and 5 when draft (fill #6b6f76), never a stroke. */
+   (fill #43bc58) and 5 when draft (fill #5c5c5e), never a stroke. */
 .reviews-glyph{width:14px;height:14px;flex:0 0 14px;border:0;border-radius:0;display:flex;align-items:center;justify-content:center;background:none;color:#43bc58;opacity:1}
 .reviews-glyph svg{width:14px;height:14px;display:block}
 .reviews-glyph[data-state="open"]{background:none;color:#43bc58}
-.reviews-glyph[data-state="draft"],.reviews-glyph[data-state="merged"],.reviews-glyph[data-state="closed"]{background:none;color:#6b6f76}
+.reviews-glyph[data-state="draft"],.reviews-glyph[data-state="merged"],.reviews-glyph[data-state="closed"]{background:none;color:#5c5c5e}
 .reviews-title{flex:1 1 auto;min-width:0;font-size:13px;line-height:16px;color:#282a30;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .reviews-mark{font-size:12px;color:#e5484d;flex:0 0 auto}
 .reviews-mark[data-state="open"],.reviews-mark[data-state="draft"]{display:none}

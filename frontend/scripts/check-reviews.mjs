@@ -267,6 +267,10 @@ if (!/export function reviewGlyphPaths\(/.test(glyphFile)) {
   if (svgRule.width !== '14px') {
     failures.push(`styles.css: .reviews-glyph svg { width } is "${svgRule.width ?? 'missing'}"; the reference renders the icon at 14px`);
   }
+  const draftGlyph = declared('.reviews-glyph[data-state="draft"],.reviews-glyph[data-state="merged"],.reviews-glyph[data-state="closed"]') || {};
+  if (!/^#[0-9a-f]{6}$/i.test(draftGlyph.color || '')) {
+    failures.push('styles.css: the draft/terminal glyph needs the measured muted colour (#5c5c5e)');
+  }
   const openGlyph = declared('.reviews-glyph[data-state="open"]') || {};
   if (!/^#[0-9a-f]{6}$/i.test(openGlyph.color || '')) {
     failures.push('styles.css: .reviews-glyph[data-state="open"] needs the measured colour (#43bc58)');
