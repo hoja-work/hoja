@@ -37,6 +37,7 @@ const tsx = read(join(frontend, 'src/main.tsx'));
 const styles = read(join(frontend, 'src/styles.css'));
 const tokensCss = read(join(frontend, 'src/design/tokens.css'));
 const designCss = read(join(frontend, 'src/design/design.css'));
+const mobileCss = read(join(frontend, 'src/mobile-touch.css'));
 
 /* ---------------------------------------------------------------- 1. composition ---- */
 const start = tsx.indexOf('function PulsePage(');
@@ -133,6 +134,7 @@ const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><style>
 body{margin:0;background:var(--bg);font-family:Inter,system-ui,sans-serif}
 ${tokensCss}
 ${designCss}
+${mobileCss}
 ${styles}
 </style></head><body>
 <main class="workspace-content"><div class="main"><section class="pulse-page" aria-label="Pulse">
@@ -178,7 +180,8 @@ for (const vp of ['390x844', '1024x768', '1440x900']) {
   const v = raw.value;
   if (!v) { fail.push(`geometry ${vp}: no value returned`); continue; }
   if (v.overflow) fail.push(`geometry ${vp}: horizontal overflow (${v.scrollWidth} > ${v.innerWidth})`);
-  if (v.tab?.h !== px(v.tokens.tabH)) fail.push(`geometry ${vp}: tab height ${v.tab?.h} != ${v.tokens.tabH}`);
+  const wantTab = vp === '390x844' ? 44 : px(v.tokens.tabH); // mobile-touch.css pins [role=tab] to 44px below 700px
+  if (v.tab?.h !== wantTab) fail.push(`geometry ${vp}: tab height ${v.tab?.h} != ${wantTab}`);
   if (v.era?.h !== px(v.tokens.bandH)) fail.push(`geometry ${vp}: era band height ${v.era?.h} != ${v.tokens.bandH}`);
   if (v.avatar?.w !== px(v.tokens.avatar)) fail.push(`geometry ${vp}: avatar ${v.avatar?.w} != ${v.tokens.avatar}`);
   if (v.metaRow?.h !== px(v.tokens.avatar)) fail.push(`geometry ${vp}: meta row height ${v.metaRow?.h} != ${v.tokens.avatar}`);
@@ -187,6 +190,6 @@ for (const vp of ['390x844', '1024x768', '1440x900']) {
   if (vp === '1440x900' && v.content?.w !== px(v.tokens.width)) fail.push(`geometry 1440: content width ${v.content?.w} != ${v.tokens.width}`);
   writeFileSync(join(outDir, `pulse-${vp}.json`), JSON.stringify({ viewport: vp, value: v, capturedAt: new Date().toISOString() }, null, 2) + '\n');
 }
-if (!fail.some((f) => f.startsWith('geometry'))) ok('geometry at 390/1024/1440: tab=24, section band=28, meta row=24, property row>=20, avatar=24, label=96, feed=776, zero horizontal overflow');
+if (!fail.some((f) => f.startsWith('geometry'))) ok('geometry at 390/1024/1440: tab=44 touch/24 desktop, section band=28, meta row=24, property row>=20, avatar=24, label=96, feed=776, zero horizontal overflow');
 report();
 console.log('pulse gate ok');
