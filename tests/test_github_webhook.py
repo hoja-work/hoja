@@ -101,8 +101,10 @@ def _pr_payload(identifiers=("ENG-1",), *, updated=None, installation=INSTALLATI
             "html_url": "https://github.com/hoja-work/hoja/pull/67",
             "user": {"login": "rinadelph"},
             "head": {"ref": ref, "sha": "343458f"},
+            "base": {"repo": {"full_name": "hoja-work/hoja"}},
             "updated_at": updated,
         },
+        "repository": {"full_name": "hoja-work/hoja"},
     }
 
 
@@ -248,7 +250,9 @@ def test_pull_request_creates_a_pr_link(tmp_path):
     with engine.connect() as conn:
         row = conn.execute(select(github_link)).mappings().one()
     assert row["kind"] == "pr"
-    assert row["external_id"] == "4242"
+    # One key for one GitHub object, whichever path saw it first: the same string a pasted
+    # pull-request URL produces.
+    assert row["external_id"] == "hoja-work/hoja#67"
     assert row["author"] == "rinadelph"
     assert row["state"] == "open"
     assert row["sha"] == "343458f"

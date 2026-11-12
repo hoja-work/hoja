@@ -76,13 +76,40 @@ def _team_alternation(team_keys: frozenset[str]) -> str:
     return "|".join(re.escape(key) for key in ordered)
 
 
+# A recursive identifier appends one or more "<slot>-<sibling_no>" groups to the root
+# (identifiers.py states the grammar): HOJA-416-A-1, HOJA-416-A-1-a-1. The slot is letters and
+# the sibling ordinal is digits, so a generated branch slug ("hoja-416-a-10-fix-the-thing")
+# cannot be mistaken for a deeper segment: "-fix-the" has no ordinal.
+_RECURSIVE_SEGMENT = r"(?:-[A-Za-z]+-\d+)*"
+_SEGMENT = re.compile(r"-([A-Za-z]+)-(\d+)")
+
+
+def _canonical_identifier(key: str, number: str, rest: str | None) -> str:
+    """The identifier in the casing the issue row stores.
+
+    GitHub text is case-insensitive — Hoja's own generated branch is lowercased — so the team
+    key and the root number are upper-cased. Slot letters keep the case their depth carries
+    (``identifiers.slot_for``: uppercase at odd depths, lowercase at even depths). Blindly
+    upper-casing the whole identifier made every depth>=2 reference unresolvable, because
+    ``HOJA-416-A-1-A-1`` is not the stored ``HOJA-416-A-1-a-1``.
+    """
+    parts = [f"{key.upper()}-{number}"]
+    for index, segment in enumerate(_SEGMENT.finditer(rest or ""), start=1):
+        letters = segment.group(1).upper() if index % 2 == 1 else segment.group(1).lower()
+        parts.append(f"-{letters}-{segment.group(2)}")
+    return "".join(parts)
+
+
+def _identifier_body(alternation: str) -> str:
+    return rf"(?P<key>{alternation})-(?P<number>\d+)(?P<rest>{_RECURSIVE_SEGMENT})"
+
+
 def _identifier_pattern(team_keys: frozenset[str]) -> re.Pattern[str]:
     alternation = _team_alternation(team_keys)
-    # The key is followed by a hyphen and at least one digit. Digits only: a trailing letter
-    # belongs to some other token, and the boundary guard rejects it anyway, but limiting the
-    # class keeps the intent obvious.
+    # The key is followed by a hyphen and at least one digit, and then by zero or more
+    # recursive segments. The boundary guard keeps a hash or a version string from matching.
     return re.compile(
-        rf"{_BOUNDARY_BEFORE}(?P<key>{alternation})-(?P<number>\d+){_BOUNDARY_AFTER}",
+        rf"{_BOUNDARY_BEFORE}{_identifier_body(alternation)}{_BOUNDARY_AFTER}",
         re.IGNORECASE,
     )
 
@@ -94,7 +121,7 @@ def _closing_pattern(team_keys: frozenset[str]) -> re.Pattern[str]:
     # colon is optional and whitespace may be any run, but the keyword must be its own word.
     return re.compile(
         rf"{_BOUNDARY_BEFORE}(?P<keyword>{keywords})\b\s*:?\s*"
-        rf"(?P<key>{alternation})-(?P<number>\d+){_BOUNDARY_AFTER}",
+        rf"{_identifier_body(alternation)}{_BOUNDARY_AFTER}",
         re.IGNORECASE,
     )
 
@@ -119,11 +146,13 @@ def find_identifiers(
     closing: set[str] = set()
     closing_pattern = _closing_pattern(team_keys)
     for match in closing_pattern.finditer(bounded):
-        closing.add(f"{match.group('key')}-{match.group('number')}".upper())
+        closing.add(_canonical_identifier(
+            match.group("key"), match.group("number"), match.group("rest")))
 
     ordered: dict[str, LinkReference] = {}
     for match in _identifier_pattern(team_keys).finditer(bounded):
-        identifier = f"{match.group('key')}-{match.group('number')}".upper()
+        identifier = _canonical_identifier(
+            match.group("key"), match.group("number"), match.group("rest"))
         if identifier in ordered:
             continue
         ordered[identifier] = LinkReference(

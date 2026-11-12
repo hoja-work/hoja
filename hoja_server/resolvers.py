@@ -47,6 +47,7 @@ Comment = ObjectType("Comment")
 WorkflowState = ObjectType("WorkflowState")
 Cycle = ObjectType("Cycle")
 Attachment = ObjectType("Attachment")
+GithubLink = ObjectType("GithubLink")
 
 datetime_scalar = ScalarType("DateTime")
 timeless_scalar = ScalarType("TimelessDate")
@@ -411,6 +412,17 @@ def r_review_gate(_, info, linkId):
     return _run_coro(_review_gate_async(info, linkId))
 
 
+@query.field("pullRequests")
+def r_pull_requests(_, info, first=250):
+    """The Reviews queue: every linked pull request, independent of task recency."""
+    store, _w, org, _uid = _ctx(info)
+    first = _page_size(first)
+    links = store.pull_request_links(org, limit=first)
+    # One batched issue lookup for the whole page instead of one per row.
+    _prime(info, "issue_obj", [link.get("_issue_id") for link in links])
+    return links
+
+
 @mutation.field("githubFilePatchLoad")
 def m_github_file_patch_load(_, info, linkId, path, sha=None):
     return _run_coro(_github_file_patch_load_async(info, linkId, path, sha))
@@ -546,6 +558,12 @@ def m_notification_mark_all_read(_, info):
 
 
 InboxNotification = ObjectType("InboxNotification")
+
+
+@GithubLink.field("issue")
+def github_link_issue(obj, info):
+    """The task a link belongs to, batched with the rest of the page."""
+    return _issue_obj(info, obj["_issue_id"])
 
 
 @InboxNotification.field("issue")
@@ -1783,6 +1801,6 @@ def build_schema():
         sla.sla_policy_type, sla.sla_clock_type,
         Team, Initiative, InitiativeUpdate, Issue, IssueActivity, MyIssueActivity, Project, ProjectUpdate, Comment,
         permissions.workspace_permission_type, permissions.workspace_security_policy_type,
-        WorkflowState, Cycle, Attachment,
+        WorkflowState, Cycle, Attachment, GithubLink,
         datetime_scalar, timeless_scalar, json_scalar, InboxNotification,
     )

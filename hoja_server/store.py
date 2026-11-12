@@ -2268,6 +2268,33 @@ class Store:
                 stmt = stmt.limit(limit)
             return [self.ser_github_link(r) for r in _conn_rows(conn, stmt)]
 
+    def pull_request_links(self, org_id: str, limit: int = 250) -> list[dict]:
+        """Every pull request linked to a task in this workspace, newest link first.
+
+        The Reviews queue is a property of the links, not of task recency. Reading it as
+        "the newest N tasks, then their links" tied the queue to how busy the workspace was:
+        once more than N tasks had been touched, every linked pull request fell outside the
+        window and the pane showed an empty queue while the links still existed.
+
+        ``_issue_id`` rides along for the ``GithubLink.issue`` resolver; GraphQL ignores keys
+        that are not fields, so the serialized shape stays the one the task panel already uses.
+        """
+        with self.engine.connect() as conn:
+            stmt = select(github_link).where(and_(
+                github_link.c.organization_id == org_id,
+                github_link.c.kind == "pr",
+            )).order_by(
+                github_link.c.updated_at.desc(), github_link.c.id.desc()
+            ).limit(limit)
+            rows = _conn_rows(conn, stmt)
+            links = []
+            for row in rows:
+                link = self.ser_github_link(row)
+                if link is not None:
+                    link["_issue_id"] = row.get("issue_id")
+                    links.append(link)
+            return links
+
     def github_link_add(self, org_id: str, issue_id: str, *, kind: str,
                         external_id: str, url: str, title: str) -> dict | None:
         """Record a GitHub reference a person wrote into a task.

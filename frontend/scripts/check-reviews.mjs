@@ -444,11 +444,16 @@ if (queryAt === -1) {
   const selection = tsx.slice(queryAt, tsx.indexOf('.then(', queryAt));
   for (const field of [...PR_CORE_FIELDS, ...PR_FIELDS]) {
     if (!new RegExp(`\\b${field}\\b`).test(selection)) {
-      failures.push(`main.tsx: ReviewsLinks does not select githubLinks.${field}; the pane renders it, so it would regress to a labelled unknown while the server stores a real value`);
+      failures.push(`main.tsx: ReviewsLinks does not select ${field}; the pane renders it, so it would regress to a labelled unknown while the server stores a real value`);
     }
   }
-  if (!/githubLinks\s*\{/.test(selection)) {
-    failures.push('main.tsx: ReviewsLinks must select githubLinks (the pull-request rows come from there)');
+  if (!/pullRequests\s*\(/.test(selection) || !/issue\s*\{\s*identifier\s*\}/.test(selection)) {
+    failures.push('main.tsx: ReviewsLinks must read pullRequests and select issue { identifier } — the pane labels each row with the task it belongs to');
+  }
+  // The queue must not be derived from the newest N tasks again. That derivation emptied the
+  // pane once more than N tasks had been touched, while every linked pull request still existed.
+  if (/issues\s*\(\s*first\s*:/.test(selection)) {
+    failures.push('main.tsx: ReviewsLinks is reading issues(first:…) again; the queue must come from pullRequests so task recency cannot hide linked pull requests');
   }
 }
 
@@ -597,7 +602,7 @@ if (queryAt !== -1) {
   const selection = tsx.slice(queryAt, tsx.indexOf('.then(', queryAt));
   const filesAt = selection.indexOf('files {');
   if (filesAt === -1) {
-    failures.push('main.tsx: ReviewsLinks does not select githubLinks.files; the Diff tab would have no data to render');
+    failures.push('main.tsx: ReviewsLinks does not select files; the Diff tab would have no data to render');
   } else {
     const filesSel = selection.slice(filesAt, selection.indexOf('}', filesAt) + 1);
     for (const field of DIFF_FIELDS) {
@@ -704,4 +709,4 @@ if (failures.length) {
   console.error('reviews invariants failed:\n' + failures.map(f => '  ✗ ' + f).join('\n'));
   process.exit(1);
 }
-console.log('reviews invariants ok: 482px capped ledger, flat 40px rows, 28px group bar, filled 14px state glyphs, groups Ready to merge / Open / Draft from one gate, two panes above 1227px, one-pane overlay below it, 889px sidebar drawer, flex-derived page height, detail pane (52px breadcrumb, 44px tabs, 96px labels), ReviewsLinks selects all 17 pull-request detail fields and the pane renders them, and the Diff tab renders the stored file list (files{path,additions,deletions,status,patch,previousPath} in the query and the type, live tab, +green/-red patch lines inside their own horizontal scroller, patch:null note, honest empty state)');
+console.log('reviews invariants ok: 482px capped ledger, flat 40px rows, 28px group bar, filled 14px state glyphs, groups Ready to merge / Open / Draft from one gate, two panes above 1227px, one-pane overlay below it, 889px sidebar drawer, flex-derived page height, detail pane (52px breadcrumb, 44px tabs, 96px labels), ReviewsLinks reads pullRequests (not the newest N tasks) and selects all 17 pull-request detail fields and the pane renders them, and the Diff tab renders the stored file list (files{path,additions,deletions,status,patch,previousPath} in the query and the type, live tab, +green/-red patch lines inside their own horizontal scroller, patch:null note, honest empty state)');

@@ -116,6 +116,14 @@ type Query {
   rateLimitStatus: RateLimitPayload
   "The live merge gate for one linked pull request, read from GitHub now, never from the cached row."
   reviewGate(linkId: String!): ReviewGate!
+  """
+  Pull requests linked to a task in this workspace, newest link first.
+
+  The Reviews queue reads this. It used to be derived from the newest N tasks and their
+  links, which silently emptied the queue once more than N tasks had been touched — the
+  queue is a property of the links, not of task recency.
+  """
+  pullRequests(first: Int = 250): [GithubLink!]!
 }
 
 type Mutation {
@@ -429,6 +437,8 @@ type Attachment {
 
 type GithubLink {
   id: ID!
+  "The task this GitHub object is linked to."
+  issue: Issue
   kind: String!
   externalId: String!
   url: String!
