@@ -2718,6 +2718,44 @@ def create_app(
     async def health(request: Request):
         return JSONResponse({"status": "ok"})
 
+    async def build_version(request: Request):
+        # Which build this instance is running. A phone install and the site
+        # drift invisibly without it: the APK names a version, and until now
+        # nothing on this origin said which one the server was. Answers JSON
+        # rather than the SPA shell, so a probe can tell a version from a page.
+        from hoja_server import __version__
+
+        # Same three fields the homepage origin serves. `version` is read from
+        # app/VERSION when the package is imported, so it is the build's own
+        # value and never a literal in this file. `sha` only exists if the
+        # deploy stamped it; `unknown` is the honest answer otherwise, and is
+        # deliberately not a plausible-looking commit id.
+        sha = os.environ.get("HOJA_RELEASE_SHA", "").strip()
+        built_at = os.environ.get("HOJA_BUILT_AT", "").strip()
+        if not built_at:
+            # The image build writes app/BUILD_TIME itself, so builtAt survives
+            # a deploy that forgot to pass the environment variable.
+            try:
+                built_at = (_WEB_ROOT.parent / "BUILD_TIME").read_text().strip()
+            except OSError:
+                built_at = ""
+
+        return JSONResponse(
+            {"version": __version__, "sha": sha or "unknown", "builtAt": built_at or None},
+            headers={"Cache-Control": "no-store"},
+        )
+
+    async def api_not_found(request: Request):
+        # /api is a JSON surface. Without this, an unknown /api path fell into
+        # web_fallback and answered 200 text/html with the SPA shell — the exact
+        # trap that made a version probe look satisfied when nothing was there.
+        # Registered after every real /api route, so it only ever sees misses.
+        return JSONResponse(
+            {"error": "Not found", "path": request.url.path},
+            status_code=404,
+            headers={"Cache-Control": "no-store"},
+        )
+
     async def ready(request: Request):
         try:
             with engine.connect() as conn:
@@ -2942,6 +2980,14 @@ def create_app(
             Route("/sync/bootstrap", sync_bootstrap, methods=["GET"]),
             Route("/sync/delta", sync_delta, methods=["GET"]),
             Route("/health", health, methods=["GET"]),
+            Route("/api/version", build_version, methods=["GET"]),
+            # Every real /api route above; anything else under /api is a miss
+            # and must say so in JSON instead of serving the SPA shell.
+            Route(
+                "/api/{path:path}",
+                api_not_found,
+                methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+            ),
             Route("/ready", ready, methods=["GET"]),
             Route(
                 "/.well-known/oauth-authorization-server/mcp",

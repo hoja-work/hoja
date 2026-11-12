@@ -963,6 +963,90 @@ def test_health_and_readiness(tmp_path) -> None:
     assert ready.json() == {"status": "ready"}
 
 
+def test_api_version_reports_the_running_build(tmp_path, monkeypatch) -> None:
+    """The endpoint exists so a person (or a probe) can see which build runs.
+
+    It must answer JSON, not the SPA shell that swallowed the bare path; carry
+    the same three fields as the homepage origin; report the version built from
+    app/VERSION rather than a literal here; and report the deploy's own commit
+    sha and build time when the release stamped them.
+    """
+    from pathlib import Path
+
+    import hoja_server
+
+    version_file = Path(hoja_server.__file__).resolve().parent.parent / "VERSION"
+    release_sha = "968fa40" + "0" * 33
+    monkeypatch.setenv("HOJA_RELEASE_SHA", release_sha)
+    monkeypatch.setenv("HOJA_BUILT_AT", "2026-11-12T05:00:00Z")
+
+    db_path = tmp_path / "version.db"
+    engine = make_engine(db_path)
+    migrate(engine)
+    engine.dispose()
+    app = create_app(str(db_path), open_mode=False)
+
+    with TestClient(app) as client:
+        response = client.get("/api/version")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.headers["cache-control"] == "no-store"
+    payload = response.json()
+    assert set(payload) == {"version", "sha", "builtAt"}
+    assert payload["version"] == version_file.read_text(encoding="utf-8").strip()
+    assert payload["sha"] == release_sha
+    assert payload["builtAt"] == "2026-11-12T05:00:00Z"
+
+
+def test_api_version_never_invents_a_sha(tmp_path, monkeypatch) -> None:
+    """"unknown" is the answer when no release stamped the build.
+
+    A plausible-looking sha is worse than none: it makes a stale deploy ask a
+    question nobody re-checks.
+    """
+    monkeypatch.delenv("HOJA_RELEASE_SHA", raising=False)
+    monkeypatch.delenv("HOJA_BUILT_AT", raising=False)
+
+    db_path = tmp_path / "version-unstamped.db"
+    engine = make_engine(db_path)
+    migrate(engine)
+    engine.dispose()
+    app = create_app(str(db_path), open_mode=False)
+
+    with TestClient(app) as client:
+        payload = client.get("/api/version").json()
+
+    assert payload["sha"] == "unknown"
+    assert payload["builtAt"] is None or isinstance(payload["builtAt"], str)
+
+
+def test_unknown_api_path_is_json_404_not_the_spa_shell(tmp_path) -> None:
+    """A miss under /api must say 404 in JSON, while client routes still load.
+
+    Without this, /api/<anything> fell into web_fallback and answered 200
+    text/html. That is how a probe reports success against a page.
+    """
+    db_path = tmp_path / "api-miss.db"
+    engine = make_engine(db_path)
+    migrate(engine)
+    engine.dispose()
+    app = create_app(str(db_path), open_mode=False)
+
+    with TestClient(app) as client:
+        miss = client.get("/api/definitely-not-a-route")
+        page = client.get("/some-org/issue/HOJA-1")
+
+    assert miss.status_code == 404
+    assert miss.headers["content-type"].startswith("application/json")
+    assert miss.json()["path"] == "/api/definitely-not-a-route"
+    # The SPA catch-all is deliberate for client-side routes and must survive.
+    # In a test checkout there is no built frontend, so web_fallback answers its
+    # explicit 503 "unbuilt" page; the point is that it still owns this path and
+    # did not become a JSON 404.
+    assert page.status_code in (200, 302, 503)
+    assert not page.headers["content-type"].startswith("application/json")
+
 def test_team_create_graphql_admin_success_and_duplicate_key(tmp_path) -> None:
     db_path = tmp_path / "team-create.db"
     engine = make_engine(db_path)
