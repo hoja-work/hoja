@@ -43,6 +43,7 @@ from hoja_server.db import (
     inbox_notification,
     initiative,
     initiative_project,
+    initiative_update,
     issue,
     issue_activity,
     issue_decision,
@@ -2384,7 +2385,13 @@ class Store:
 
     def project_updates(self, org_id: str, after: tuple[str, str] | None = None,
                        project_id: str | None = None, limit: int = 51) -> list[dict]:
-        """Return organization-scoped update posts newest-first, with stable id tie-breaks."""
+        """Return organization-scoped update posts newest-change-first.
+
+        Keyset pagination on ``(updated_at, id)``: an edit moves a post to the top
+        of the feed, and the id tie-break keeps equal timestamps deterministic.
+        Cursors written before revision 57 still decode — backfilled rows carry
+        ``updated_at == created_at``, so the encoded timestamps compare unchanged.
+        """
         stmt = select(project_update).where(project_update.c.organization_id == org_id)
         stmt = stmt.join(project, and_(project.c.id == project_update.c.project_id,
                                        project.c.organization_id == org_id,
@@ -2392,11 +2399,11 @@ class Store:
         if project_id:
             stmt = stmt.where(project_update.c.project_id == project_id)
         if after:
-            created_at, update_id = after
-            stmt = stmt.where(project_update.c.created_at <= created_at).where(or_(project_update.c.created_at < created_at,
-                                  and_(project_update.c.created_at == created_at,
+            updated_at, update_id = after
+            stmt = stmt.where(project_update.c.updated_at <= updated_at).where(or_(project_update.c.updated_at < updated_at,
+                                  and_(project_update.c.updated_at == updated_at,
                                        project_update.c.id < update_id)))
-        stmt = stmt.order_by(project_update.c.created_at.desc(), project_update.c.id.desc()).limit(limit)
+        stmt = stmt.order_by(project_update.c.updated_at.desc(), project_update.c.id.desc()).limit(limit)
         with self.engine.connect() as conn:
             rows = _conn_rows(conn, stmt)
             result = []
@@ -2404,8 +2411,63 @@ class Store:
                 row["_project_id"] = row["project_id"]
                 row["_actor_id"] = row.get("actor_id")
                 row["createdAt"] = row["created_at"]
+                row["updatedAt"] = row["updated_at"]
                 result.append(row)
             return result
+
+    def project_update_by_id(self, org_id: str, pid: str) -> dict | None:
+        with self.engine.connect() as conn:
+            row = conn.execute(select(project_update).where(and_(
+                project_update.c.organization_id == org_id, project_update.c.id == pid))).mappings().first()
+            return self._ser_project_update(dict(row)) if row else None
+
+    def _ser_project_update(self, row: dict) -> dict:
+        row["_project_id"] = row["project_id"]
+        row["_actor_id"] = row.get("actor_id")
+        row["createdAt"] = row["created_at"]
+        row["updatedAt"] = row["updated_at"]
+        return row
+
+    def initiative_updates(self, org_id: str, after: tuple[str, str] | None = None,
+                           initiative_id: str | None = None, limit: int = 51) -> list[dict]:
+        """Initiative update posts newest-change-first, keyset on (updated_at, id)."""
+        stmt = select(initiative_update).where(initiative_update.c.organization_id == org_id)
+        stmt = stmt.join(initiative, and_(initiative.c.id == initiative_update.c.initiative_id,
+                                          initiative.c.organization_id == org_id,
+                                          initiative.c.archived_at.is_(None)))
+        if initiative_id:
+            stmt = stmt.where(initiative_update.c.initiative_id == initiative_id)
+        if after:
+            updated_at, update_id = after
+            stmt = stmt.where(initiative_update.c.updated_at <= updated_at).where(or_(
+                initiative_update.c.updated_at < updated_at,
+                and_(initiative_update.c.updated_at == updated_at,
+                     initiative_update.c.id < update_id)))
+        stmt = stmt.order_by(initiative_update.c.updated_at.desc(),
+                             initiative_update.c.id.desc()).limit(limit)
+        with self.engine.connect() as conn:
+            rows = _conn_rows(conn, stmt)
+            result = []
+            for row in rows:
+                row["_initiative_id"] = row["initiative_id"]
+                row["_actor_id"] = row.get("actor_id")
+                row["createdAt"] = row["created_at"]
+                row["updatedAt"] = row["updated_at"]
+                result.append(row)
+            return result
+
+    def initiative_update_by_id(self, org_id: str, pid: str) -> dict | None:
+        with self.engine.connect() as conn:
+            row = conn.execute(select(initiative_update).where(and_(
+                initiative_update.c.organization_id == org_id, initiative_update.c.id == pid))).mappings().first()
+            if not row:
+                return None
+            row = dict(row)
+            row["_initiative_id"] = row["initiative_id"]
+            row["_actor_id"] = row.get("actor_id")
+            row["createdAt"] = row["created_at"]
+            row["updatedAt"] = row["updated_at"]
+            return row
 
     def project_update_project(self, org_id: str, pid: str) -> dict | None:
         return self.project_by_id(org_id, pid)

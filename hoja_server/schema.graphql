@@ -105,6 +105,7 @@ type Query {
   initiatives(first: Int = 50, after: String, status: String): InitiativeConnection
   initiative(id: String!): Initiative
   projectUpdates(first: Int = 50, after: String, filter: ProjectUpdateFilter): ProjectUpdateConnection
+  initiativeUpdates(first: Int = 50, after: String, filter: InitiativeUpdateFilter): InitiativeUpdateConnection
   project(id: String!): Project
   workflowStates(filter: WorkflowStateFilter, first: Int = 100, after: String): WorkflowStateConnection
   cycles(filter: CycleFilter, first: Int = 100, after: String): CycleConnection
@@ -168,11 +169,16 @@ type Mutation {
   projectCreate(input: ProjectCreateInput!): ProjectPayload
   projectUpdate(id: String!, input: ProjectUpdateInput!): ProjectPayload
   projectUpdateCreate(input: ProjectUpdateCreateInput!): ProjectUpdatePayload
+  projectUpdateUpdate(id: String!, input: ProjectUpdateUpdateInput!): ProjectUpdatePayload
+  projectUpdateDelete(id: String!): DeletePayload
   projectArchive(id: String!): DeletePayload
   teamCycleCadenceEnable(teamId: String!, weekday: Int!): TeamCycleCadence!
   cycleUpdate(id: String!, input: CycleUpdateInput!): CyclePayload
   initiativeCreate(input: InitiativeCreateInput!): InitiativePayload
   initiativeUpdate(id: String!, input: InitiativeUpdateInput!): InitiativePayload
+  initiativeUpdateCreate(input: InitiativeUpdateCreateInput!): InitiativeUpdatePayload
+  initiativeUpdateUpdate(id: String!, input: InitiativeUpdateUpdateInput!): InitiativeUpdatePayload
+  initiativeUpdateDelete(id: String!): DeletePayload
   initiativeArchive(id: String!): DeletePayload
   attachmentCreate(input: AttachmentCreateInput!): AttachmentPayload
 }
@@ -305,11 +311,29 @@ type ProjectUpdate {
   status: String
   body: String!
   createdAt: DateTime!
+  updatedAt: DateTime!
   actor: User
   progress: Float
   health: String
 }
 type ProjectUpdatePayload { success: Boolean! projectUpdate: ProjectUpdate }
+
+input InitiativeUpdateFilter { initiative: InitiativeFilter }
+
+input InitiativeFilter { id: IDComparator }
+
+type InitiativeUpdate {
+  id: ID!
+  initiative: Initiative!
+  status: String
+  body: String!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  actor: User
+  health: String
+}
+type InitiativeUpdatePayload { success: Boolean! initiativeUpdate: InitiativeUpdate }
+type InitiativeUpdateConnection { nodes: [InitiativeUpdate!]! pageInfo: PageInfo! }
 
 type Comment {
   id: ID!
@@ -583,5 +607,9 @@ input IssueLabelUpdateInput { name: String color: String description: String }
 input IssueLabelCreateInput { name: String! teamId: String color: String description: String }
 input ProjectCreateInput { name: String! description: String teamIds: [String!] leadId: String state: String color: String icon: String startDate: TimelessDate targetDate: TimelessDate }
 input ProjectUpdateInput { name: String description: String leadId: String state: String color: String icon: String startDate: TimelessDate targetDate: TimelessDate teamIds: [String!] }
-input ProjectUpdateCreateInput { projectId: String! body: String! status: String }
+input ProjectUpdateCreateInput { projectId: String! body: String! status: String health: String }
+input ProjectUpdateUpdateInput { body: String status: String health: String }
+
+input InitiativeUpdateCreateInput { initiativeId: String! body: String! status: String health: String }
+input InitiativeUpdateUpdateInput { body: String status: String health: String }
 input AttachmentCreateInput { issueId: String! url: String! title: String! subtitle: String }

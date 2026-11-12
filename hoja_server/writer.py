@@ -20,6 +20,7 @@ from hoja_server.db import (
     inbox_notification,
     initiative,
     initiative_project,
+    initiative_update,
     issue,
     issue_activity,
     issue_decision,
@@ -1360,10 +1361,113 @@ class Writer:
             ts = now_iso()
             conn.execute(project_update.insert().values(
                 id=update_id, organization_id=org_id, project_id=pid,
-                actor_id=actor_id, body=body, status=inp.get("status"),
-                progress=self._project_progress(conn, org_id, pid), created_at=ts,
+                actor_id=actor_id, body=body, status=inp.get("status"), health=inp.get("health"),
+                progress=self._project_progress(conn, org_id, pid), created_at=ts, updated_at=ts,
             ))
             return update_id
+
+    def _pulse_update_row(self, conn, table, org_id: str, update_id: str):
+        """The update row in this org, or None — cross-org ids must look absent."""
+        return conn.execute(select(table).where(and_(
+            table.c.organization_id == org_id, table.c.id == update_id))).mappings().first()
+
+    @staticmethod
+    def _pulse_edit_body(inp: dict) -> str | None:
+        if "body" in inp and (not isinstance(inp["body"], str) or not inp["body"].strip()):
+            raise GraphQLError("Update body must not be empty.",
+                               extensions={"code": "BAD_USER_INPUT", "field": "body"})
+        return inp.get("body")
+
+    def project_update_update(self, org_id: str, viewer_id: str, update_id: str, inp: dict) -> str | None:
+        """Edit a project update. Author only: words carry their author's name, and an
+        admin edit would put words in someone else's mouth (comment_policy's matrix)."""
+        with self.engine.begin() as conn:
+            row = self._pulse_update_row(conn, project_update, org_id, update_id)
+            if not row or row["actor_id"] != viewer_id:
+                return None
+            values = {}
+            body = self._pulse_edit_body(inp)
+            if body is not None:
+                values["body"] = body
+            for field in ("status", "health"):
+                if field in inp:
+                    values[field] = inp[field]
+            if not values:
+                return update_id
+            values["updated_at"] = now_iso()
+            conn.execute(project_update.update().where(and_(
+                project_update.c.organization_id == org_id,
+                project_update.c.id == update_id)).values(**values))
+            return update_id
+
+    def project_update_delete(self, org_id: str, viewer_id: str, update_id: str) -> bool:
+        """Delete a project update: the author, or a workspace admin moderating."""
+        with self.engine.begin() as conn:
+            row = self._pulse_update_row(conn, project_update, org_id, update_id)
+            if not row:
+                return False
+            actor = conn.execute(select(user.c.admin).where(and_(
+                user.c.organization_id == org_id, user.c.id == viewer_id))).scalar()
+            if row["actor_id"] != viewer_id and not actor:
+                return False
+            conn.execute(project_update.delete().where(and_(
+                project_update.c.organization_id == org_id, project_update.c.id == update_id)))
+            return True
+
+    def initiative_update_create(self, org_id: str, initiative_id: str, actor_id: str, inp: dict) -> str | None:
+        body = inp.get("body")
+        if not isinstance(body, str) or not body.strip():
+            raise GraphQLError("Initiative update body must not be empty.",
+                               extensions={"code": "BAD_USER_INPUT", "field": "body"})
+        with self.engine.begin() as conn:
+            exists = conn.execute(select(initiative.c.id).where(and_(
+                initiative.c.organization_id == org_id, initiative.c.id == initiative_id,
+                initiative.c.archived_at.is_(None)))).scalar()
+            if not exists:
+                return None
+            update_id = new_id()
+            ts = now_iso()
+            conn.execute(initiative_update.insert().values(
+                id=update_id, organization_id=org_id, initiative_id=initiative_id,
+                actor_id=actor_id, body=body, status=inp.get("status"),
+                health=inp.get("health"), created_at=ts, updated_at=ts,
+            ))
+            return update_id
+
+    def initiative_update_update(self, org_id: str, viewer_id: str, update_id: str, inp: dict) -> str | None:
+        """Edit an initiative update. Author only, for the same reason as project updates."""
+        with self.engine.begin() as conn:
+            row = self._pulse_update_row(conn, initiative_update, org_id, update_id)
+            if not row or row["actor_id"] != viewer_id:
+                return None
+            values = {}
+            body = self._pulse_edit_body(inp)
+            if body is not None:
+                values["body"] = body
+            for field in ("status", "health"):
+                if field in inp:
+                    values[field] = inp[field]
+            if not values:
+                return update_id
+            values["updated_at"] = now_iso()
+            conn.execute(initiative_update.update().where(and_(
+                initiative_update.c.organization_id == org_id,
+                initiative_update.c.id == update_id)).values(**values))
+            return update_id
+
+    def initiative_update_delete(self, org_id: str, viewer_id: str, update_id: str) -> bool:
+        """Delete an initiative update: the author, or a workspace admin moderating."""
+        with self.engine.begin() as conn:
+            row = self._pulse_update_row(conn, initiative_update, org_id, update_id)
+            if not row:
+                return False
+            actor = conn.execute(select(user.c.admin).where(and_(
+                user.c.organization_id == org_id, user.c.id == viewer_id))).scalar()
+            if row["actor_id"] != viewer_id and not actor:
+                return False
+            conn.execute(initiative_update.delete().where(and_(
+                initiative_update.c.organization_id == org_id, initiative_update.c.id == update_id)))
+            return True
 
     def _project_progress(self, conn, org_id: str, pid: str) -> float:
         """Snapshot of the project's completion percent for a project update (see Store.project_progress_many)."""

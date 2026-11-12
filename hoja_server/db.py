@@ -34,7 +34,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 56
+CURRENT_SCHEMA_REVISION = 57
 
 
 def now_iso() -> str:
@@ -1046,9 +1046,27 @@ project_update = Table(
     Column("status", String),
     Column("body", Text, nullable=False),
     Column("created_at", String, nullable=False, index=True),
+    Column("updated_at", String, nullable=False),
     Column("actor_id", String, ForeignKey("user.id")),
     Column("progress", Float),
     Column("health", String),
+)
+
+ix_project_update_updated_at = Index(
+    "ix_project_update_updated_at", project_update.c.updated_at)
+
+initiative_update = Table(
+    "initiative_update",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("initiative_id", String, ForeignKey("initiative.id"), nullable=False, index=True),
+    Column("status", String),
+    Column("health", String),
+    Column("body", Text, nullable=False),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+    Column("actor_id", String, ForeignKey("user.id")),
 )
 
 project_member = Table(
@@ -1959,6 +1977,44 @@ def _apply_attachment_content_type(conn) -> None:
         conn.exec_driver_sql("ALTER TABLE attachment ADD COLUMN content_type VARCHAR")
 
 
+def _apply_pulse_updates(conn) -> None:
+    """Pulse: keep edit history honest and give the initiative feed its own rows.
+
+    Additive. ``project_update`` gains ``updated_at`` so an edit is observable and
+    the feed can order by when a post last changed; existing rows backfill from
+    ``created_at``, which reproduces today's ordering exactly. ``initiative_update``
+    mirrors ``project_update`` for initiatives (Linear's InitiativeUpdate), which
+    until now only existed as the field-editing ``initiativeUpdate`` mutation.
+    """
+    columns = {c["name"] for c in inspect(conn).get_columns("project_update")}
+    if "updated_at" not in columns:
+        conn.exec_driver_sql("ALTER TABLE project_update ADD COLUMN updated_at VARCHAR")
+        conn.exec_driver_sql("UPDATE project_update SET updated_at = created_at")
+    if conn.dialect.name == "postgresql":
+        conn.exec_driver_sql("ALTER TABLE project_update ALTER COLUMN updated_at SET NOT NULL")
+    initiative_update.create(conn, checkfirst=True)
+    if not any(ix["name"] == ix_project_update_updated_at.name
+               for ix in inspect(conn).get_indexes("project_update")):
+        ix_project_update_updated_at.create(conn)
+
+
+def _down_pulse_updates(conn) -> None:
+    """Reverse of revision 57: drop what it added, data included.
+
+    The forward-only ledger cannot record a down, so this helper exists for the
+    up -> down -> up equivalence proof: after down and a second up, the schema
+    must be identical. Rows are not preserved across a down (a dropped column
+    cannot be reconstituted); that is the standard cost of an additive reversal.
+    """
+    if any(ix["name"] == ix_project_update_updated_at.name
+           for ix in inspect(conn).get_indexes("project_update")):
+        ix_project_update_updated_at.drop(conn)
+    initiative_update.drop(conn, checkfirst=True)
+    if "updated_at" in {c["name"] for c in inspect(conn).get_columns("project_update")}:
+        conn.exec_driver_sql("ALTER TABLE project_update DROP COLUMN updated_at")
+    conn.execute(schema_revision.delete().where(schema_revision.c.revision == 57))
+
+
 def _apply_connector_access_token(conn) -> None:
     """Store the access half of a grant whose token expires.
 
@@ -2216,6 +2272,10 @@ _MIGRATIONS = {
     # forward and back by scripts/migrate_recursive_identifiers.py, after a
     # backup, and is never applied implicitly by a deploy.
     56: _apply_recursive_identifiers,
+    # 57: Pulse — project_update.updated_at (backfilled from created_at) and the
+    # initiative_update table, so the feed orders by last change and initiative
+    # updates exist as rows of their own.
+    57: _apply_pulse_updates,
 }
 
 

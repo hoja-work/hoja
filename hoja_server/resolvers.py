@@ -41,6 +41,7 @@ IssueActivity = ObjectType("IssueActivity")
 MyIssueActivity = ObjectType("MyIssueActivity")
 Project = ObjectType("Project")
 ProjectUpdate = ObjectType("ProjectUpdate")
+InitiativeUpdate = ObjectType("InitiativeUpdate")
 Comment = ObjectType("Comment")
 WorkflowState = ObjectType("WorkflowState")
 Cycle = ObjectType("Cycle")
@@ -200,7 +201,10 @@ def _decode_activity_cursor(cursor):
 
 
 def _project_update_cursor(row):
-    raw = json.dumps([row["created_at"], row["id"]], separators=(",", ":")).encode()
+    # Feed cursors encode the sort key: updated_at where the row has one (change
+    # feeds), created_at where the caller passes it explicitly (projects, initiatives).
+    sort_key = row.get("updated_at") or row["created_at"]
+    raw = json.dumps([sort_key, row["id"]], separators=(",", ":")).encode()
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
@@ -671,6 +675,25 @@ def r_project_updates(_, info, first=50, after=None, filter=None):
     return result
 
 
+@query.field("initiativeUpdates")
+def r_initiative_updates(_, info, first=50, after=None, filter=None):
+    store, _w, org, _uid = _ctx(info)
+    first = _page_size(first)
+    initiative_filter = (filter or {}).get("initiative") or {}
+    initiative_id = (initiative_filter.get("id") or {}).get("eq")
+    cursor = _decode_project_update_cursor(after, "initiative update")
+    rows = store.initiative_updates(org, after=cursor, initiative_id=initiative_id, limit=first + 1)
+    nodes = rows[:first]
+    _prime(info, "user_row", [n.get("_actor_id") for n in nodes])
+    result = _conn(nodes)
+    result["pageInfo"].update({
+        "hasNextPage": len(rows) > first, "hasPreviousPage": after is not None,
+        "startCursor": _project_update_cursor(nodes[0]) if nodes else None,
+        "endCursor": _project_update_cursor(nodes[-1]) if nodes else None,
+    })
+    return result
+
+
 @query.field("project")
 def r_project(_, info, id):
     store, _w, org, uid = _ctx(info)
@@ -1037,6 +1060,18 @@ def pu_project(obj, info):
 
 @ProjectUpdate.field("actor")
 def pu_actor(obj, info):
+    store, _w, _org, uid = _ctx(info)
+    return store.ser_user(_user_row(info, obj["_actor_id"]), uid) if obj.get("_actor_id") else None
+
+
+@InitiativeUpdate.field("initiative")
+def iu_initiative(obj, info):
+    store, _w, org, _uid = _ctx(info)
+    return store.initiative_by_id(org, obj["_initiative_id"])
+
+
+@InitiativeUpdate.field("actor")
+def iu_actor(obj, info):
     store, _w, _org, uid = _ctx(info)
     return store.ser_user(_user_row(info, obj["_actor_id"]), uid) if obj.get("_actor_id") else None
 
@@ -1530,6 +1565,39 @@ def m_project_update_create(_, info, input):
     return {"success": bool(created), "projectUpdate": created}
 
 
+@mutation.field("projectUpdateUpdate")
+def m_project_update_update(_, info, id, input):
+    store, w, org, uid = _ctx(info)
+    update_id = w.project_update_update(org, uid, id, input)
+    return {"success": bool(update_id), "projectUpdate": store.project_update_by_id(org, update_id) if update_id else None}
+
+
+@mutation.field("projectUpdateDelete")
+def m_project_update_delete(_, info, id):
+    _s, w, org, uid = _ctx(info)
+    return {"success": w.project_update_delete(org, uid, id)}
+
+
+@mutation.field("initiativeUpdateCreate")
+def m_initiative_update_create(_, info, input):
+    store, w, org, uid = _ctx(info)
+    update_id = w.initiative_update_create(org, input["initiativeId"], uid, input)
+    return {"success": bool(update_id), "initiativeUpdate": store.initiative_update_by_id(org, update_id) if update_id else None}
+
+
+@mutation.field("initiativeUpdateUpdate")
+def m_initiative_update_update(_, info, id, input):
+    store, w, org, uid = _ctx(info)
+    update_id = w.initiative_update_update(org, uid, id, input)
+    return {"success": bool(update_id), "initiativeUpdate": store.initiative_update_by_id(org, update_id) if update_id else None}
+
+
+@mutation.field("initiativeUpdateDelete")
+def m_initiative_update_delete(_, info, id):
+    _s, w, org, uid = _ctx(info)
+    return {"success": w.initiative_update_delete(org, uid, id)}
+
+
 @mutation.field("projectArchive")
 def m_project_archive(_, info, id):
     _s, w, org, uid = _ctx(info)
@@ -1630,7 +1698,7 @@ def build_schema():
         views_api.query, views_api.mutation, views_api.view_type,
         decisions_api.query, decisions_api.mutation, decisions_api.decision_type,
         conversation_query,
-        model_providers.model_provider_type, Team, Initiative, Issue, IssueActivity, MyIssueActivity, Project, ProjectUpdate, Comment,
+        model_providers.model_provider_type, Team, Initiative, InitiativeUpdate, Issue, IssueActivity, MyIssueActivity, Project, ProjectUpdate, Comment,
         WorkflowState, Cycle, Attachment,
         datetime_scalar, timeless_scalar, json_scalar, InboxNotification,
     )
