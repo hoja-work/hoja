@@ -8,10 +8,18 @@
  * carries legacy rules for `.reviews-row` (a bordered 40px card with a 6px bottom
  * margin) that are still in the file; the split view overrides them later in the
  * cascade. A reordering or a "tidy up" of styles.css silently resurrects the card
- * styling and the rows stop being a flat 38px list.
+ * styling and the rows stop being a flat 40px list.
  *
  * This check reads the LAST declaration block for each selector, i.e. the one that
- * actually wins the cascade here, and pins the three numbers the layout depends on.
+ * actually wins the cascade here, and pins the numbers the layout depends on.
+ *
+ * HOJA-417: those numbers are measurements, not guesses. scripts/ui-probes/reviews-parity.mjs
+ * measures linear.app/hoja/reviews and the target through one probe body at 1440x900 and
+ * writes artifacts/reviews-parity-<ts>.json; the row is 40px, the group band 28px, the state
+ * glyph 14px and filled (4 paths open / 5 draft, fill #43bc58 / #6b6f76), the glyph sits 18px
+ * into the row and the timestamp ends 8px from its right edge. The axis is
+ * Ready to merge / Open / Draft. Every one of those values was pinned here at the wrong
+ * number before, so this file is re-derived from the artifact rather than edited to taste.
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -84,7 +92,7 @@ function mediaBlocks(sel, frag) {
     .map((b) => ({ media: b.media, props: parse(b.body) }));
 }
 
-function expect(sel, prop, want, why = 'The split-view ledger geometry (482px column, flat 38px rows, 22px group bar) depends on it.') {
+function expect(sel, prop, want, why = 'The split-view ledger geometry (482px column, flat 40px rows, 28px group bar) depends on it.') {
   const map = declared(sel);
   if (!map) return failures.push(`styles.css: no ${sel} rule found`);
   const got = map[prop];
@@ -102,8 +110,16 @@ if (col && !/482px/.test(col.flex || '')) {
   failures.push(`styles.css: .reviews-col { flex } is "${col.flex}", expected a 482px basis (e.g. "0 0 482px"); a shrinkable column resizes the pane`);
 }
 
-/** 2. Rows are a flat 38px list row, not the legacy bordered card. */
-expect('.reviews-row', 'height', '38px');
+/** 2. Rows are a flat 40px list row (measured), not the legacy bordered card. Every base
+ *     block that sets a height must agree: three generations of `.reviews-row` live in
+ *     styles.css, and a stale one is exactly how 38px came back before. */
+expect('.reviews-row', 'height', '40px', 'Linear rows measure 40px at 1440x900 (artifacts/reviews-parity-*.json).');
+for (const b of blocks('.reviews-row').filter((x) => x.media === '')) {
+  const h = parse(b.body).height;
+  if (h !== undefined && h !== '40px') {
+    failures.push(`styles.css: an earlier .reviews-row block still sets height:"${h}"; every base block must say 40px or the cascade can resurrect the old value`);
+  }
+}
 const row = declared('.reviews-row') || {};
 const border = row.border;
 if (border !== undefined && !/^(0|0px|none)$/.test(border)) {
@@ -113,11 +129,26 @@ if (row['border-width'] !== undefined && !/^0(px)?$/.test(row['border-width'])) 
   failures.push(`styles.css: .reviews-row { border-width } is "${row['border-width']}"; rows must stay flat (no border)`);
 }
 if (row['margin-bottom'] !== undefined && !/^0(px)?$/.test(row['margin-bottom'])) {
-  failures.push(`styles.css: .reviews-row { margin-bottom } is "${row['margin-bottom']}"; that is the legacy card spacing and it breaks the 38px rhythm`);
+  failures.push(`styles.css: .reviews-row { margin-bottom } is "${row['margin-bottom']}"; that is the legacy card spacing and it breaks the 40px rhythm`);
 }
 
-/** 3. The group bar is a 22px band. */
-expect('.reviews-group-head', 'height', '22px');
+/** 3. The group bar is a 28px band with the reference's insets and 2px rhythm. */
+expect('.reviews-group-head', 'height', '28px', 'Linear group bars measure 28px at 1440x900 (artifacts/reviews-parity-*.json).');
+{
+  const band = declared('.reviews-group-head') || {};
+  const want = { padding: '0 9px 0 10px', margin: '2px 0 2px 10px', 'border-radius': '8px' };
+  for (const [prop, value] of Object.entries(want)) {
+    if (band[prop] !== value) {
+      failures.push(`styles.css: .reviews-group-head { ${prop} } is "${band[prop] ?? 'missing'}", expected "${value}" (measured from the reference band)`);
+    }
+  }
+}
+for (const b of blocks('.reviews-group-head').filter((x) => x.media === '')) {
+  const h = parse(b.body).height;
+  if (h !== undefined && h !== '28px') {
+    failures.push(`styles.css: an earlier .reviews-group-head block still sets height:"${h}"; every base block must say 28px`);
+  }
+}
 
 /** 4. The two-pane structure exists: .reviews-col + .reviews-pane, in JSX and CSS. */
 for (const cls of ['reviews-col', 'reviews-pane']) {
@@ -162,20 +193,84 @@ if (/<a className="reviews-row"/.test(tsx)) {
   failures.push('main.tsx: the ledger row is an <a> again; clicking a row must select it instead of leaving Hoja');
 }
 if (row['height'] === undefined) {
-  failures.push('styles.css: .reviews-row lost its 38px height; only the click target inside it may change');
+  failures.push('styles.css: .reviews-row lost its 40px height; only the click target inside it may change');
 }
 
-/** 8. Grouping axis is Linear's, minus the bucket we cannot derive: Open, Draft, then the
- *     two terminal states we do know, Merged and Closed. "Ready to merge" needs a
- *     mergeability signal a githubLink does not carry. */
-if (!/REVIEW_GROUPS=\['Open','Draft','Merged','Closed'\] as const/.test(tsx)) {
-  failures.push("main.tsx: review groups must be REVIEW_GROUPS=['Open','Draft','Merged','Closed']; do not silently claim a readiness bucket");
+const gateFile = readFileSync(join(root, 'src/reviews-gate.ts'), 'utf8');
+const glyphFile = readFileSync(join(root, 'src/reviews-glyphs.ts'), 'utf8');
+
+/** 8. Grouping axis is the reference's: Ready to merge / Open / Draft, in that order, and
+ *     the readiness rule is defined once in src/reviews-gate.ts. The axis, the gate and the
+ *     null rule are asserted separately: an axis without a gate is a label, and a gate
+ *     without the null rule is a claim Hoja cannot prove. */
+if (!/REVIEW_GROUP_NAMES = \['Ready to merge', 'Open', 'Draft'\] as const/.test(gateFile)) {
+  failures.push("reviews-gate.ts: the axis must be REVIEW_GROUP_NAMES = ['Ready to merge','Open','Draft'] as const — the measured reference order (Ready to merge 1 / Open 7 / Draft 16, no Merged or Closed bucket)");
 }
-if (!/st==='draft'\s*\?\s*'Draft'/.test(tsx) || !/st==='merged'\s*\?\s*'Merged'/.test(tsx) || !/st==='closed'\s*\?\s*'Closed'\s*:\s*'Open'/.test(tsx)) {
-  failures.push('main.tsx: reviewGroupOf must derive Draft from state=draft, Merged from state=merged, Closed from state=closed, and Open otherwise');
+if (!/export function reviewGroupOf\(/.test(gateFile) || !/export function reviewGroupsOf</.test(gateFile)) {
+  failures.push('reviews-gate.ts: reviewGroupOf/reviewGroupsOf are the single definition of the bucket; both must be exported');
 }
-if (!/REVIEW_GROUPS\.map\(/.test(tsx)) {
-  failures.push('main.tsx: the ledger must render its groups from REVIEW_GROUPS so the order stays Open, Draft, Merged, Closed');
+for (const [needle, why] of [
+  ["['clean', 'mergeable']", 'the ready merge states must be clean/mergeable'],
+  ["['passing']", 'the ready check state must be passing'],
+  ["['approved']", 'the ready review decision must be approved'],
+  ["reason: 'merge-state-unknown'", 'a null merge state must resolve to Open with a nameable reason'],
+  ["reason: 'checks-unknown'", 'a null check state must resolve to Open'],
+  ["reason: 'review-unknown'", 'a null review decision must resolve to Open — Hoja cannot prove "no required reviews" from a null'],
+  ["group: 'Draft'", 'a draft state must be decided before readiness'],
+  ["group: 'Terminal'", 'merged/closed must be Terminal, not a group'],
+]) {
+  if (!gateFile.includes(needle)) failures.push(`reviews-gate.ts: missing ${JSON.stringify(needle)} — ${why}`);
+}
+if (/const REVIEW_GROUPS=\['Open','Draft','Merged','Closed'\]/.test(tsx) || !/import \{reviewGroupsOf\} from '\.\/reviews-gate';/.test(tsx)) {
+  failures.push("main.tsx: the ledger must import reviewGroupsOf from ./reviews-gate; a local REVIEW_GROUPS array is how the axis drifted from the reference");
+}
+if (!/reviewGroupsOf\(links\)/.test(tsx)) {
+  failures.push('main.tsx: the ledger must group with reviewGroupsOf(links) so every link is accounted for');
+}
+if (!/terminal\.length/.test(tsx)) {
+  failures.push('main.tsx: the terminal rows the queue does not list must be reported, not silently dropped');
+}
+
+/** 8b. The state glyph is the reference's: 14px, filled, per-state path sets. The previous
+ *      icon was one stroked path at 12px — outline where Linear is solid. */
+if (!/REVIEW_GLYPH_PULL: readonly string\[\] = \[/.test(glyphFile) || !/REVIEW_GLYPH_DRAFT: readonly string\[\] = \[/.test(glyphFile)) {
+  failures.push('reviews-glyphs.ts: the filled path sets (REVIEW_GLYPH_PULL / REVIEW_GLYPH_DRAFT) are gone');
+}
+if (!/export function reviewGlyphPaths\(/.test(glyphFile)) {
+  failures.push('reviews-glyphs.ts: reviewGlyphPaths(state) is the only glyph selector');
+}
+{
+  const pullPaths = (glyphFile.slice(glyphFile.indexOf('REVIEW_GLYPH_PULL'), glyphFile.indexOf('REVIEW_GLYPH_DRAFT')).match(/^  'M/gm) || []).length;
+  const draftPaths = (glyphFile.slice(glyphFile.indexOf('REVIEW_GLYPH_DRAFT')).match(/^  'M/gm) || []).length;
+  if (pullPaths !== 4) failures.push(`reviews-glyphs.ts: the open glyph must keep the reference's 4 paths, found ${pullPaths}`);
+  if (draftPaths !== 5) failures.push(`reviews-glyphs.ts: the draft glyph must keep the reference's 5 paths, found ${draftPaths}`);
+}
+{
+  const glyphAt = tsx.indexOf('function ReviewGlyph(');
+  const glyphEnd = glyphAt === -1 ? -1 : tsx.indexOf('\nfunction ', glyphAt + 20);
+  const glyph = glyphAt === -1 ? '' : tsx.slice(glyphAt, glyphEnd === -1 ? undefined : glyphEnd);
+  if (!glyph) failures.push('main.tsx: no ReviewGlyph component; the ledger row lost its state icon');
+  if (/stroke=/.test(glyph)) failures.push('main.tsx: ReviewGlyph must not stroke anything; the reference glyph is filled');
+  if (!/fill="currentColor"/.test(glyph)) failures.push('main.tsx: ReviewGlyph must fill its paths with currentColor so the state colour comes from CSS');
+  if (!/fillRule="evenodd"/.test(glyph)) failures.push('main.tsx: ReviewGlyph paths must carry fillRule="evenodd" like the reference vectors');
+  if (!/width="14" height="14"/.test(glyph)) failures.push('main.tsx: ReviewGlyph must be 14x14 (measured glyph box)');
+}
+{
+  const g = declared('.reviews-glyph') || {};
+  const svgRule = declared('.reviews-glyph svg') || {};
+  if (g['border'] !== undefined && !/^0(px)?$/.test(g.border)) {
+    failures.push(`styles.css: .reviews-glyph { border } is "${g.border}"; the reference glyph has no outline`);
+  }
+  if (g.width !== '14px' || g.height !== '14px') {
+    failures.push(`styles.css: .reviews-glyph is ${g.width}x${g.height}; the measured glyph box is 14x14`);
+  }
+  if (svgRule.width !== '14px') {
+    failures.push(`styles.css: .reviews-glyph svg { width } is "${svgRule.width ?? 'missing'}"; the reference renders the icon at 14px`);
+  }
+  const openGlyph = declared('.reviews-glyph[data-state="open"]') || {};
+  if (!/^#[0-9a-f]{6}$/i.test(openGlyph.color || '')) {
+    failures.push('styles.css: .reviews-glyph[data-state="open"] needs the measured colour (#43bc58)');
+  }
 }
 
 /** 9. The detail pane only renders stored pull-request fields — so the ReviewsLinks query
@@ -453,4 +548,4 @@ if (failures.length) {
   console.error('reviews invariants failed:\n' + failures.map(f => '  ✗ ' + f).join('\n'));
   process.exit(1);
 }
-console.log('reviews invariants ok: 482px capped ledger, flat 38px rows, 22px group bar, two panes above 1227px, one-pane overlay below it, 889px sidebar drawer, flex-derived page height, detail pane (52px breadcrumb, 44px tabs, 96px labels), ReviewsLinks selects all 17 pull-request detail fields and the pane renders them, and the Diff tab renders the stored file list (files{path,additions,deletions,status,patch,previousPath} in the query and the type, live tab, +green/-red patch lines inside their own horizontal scroller, patch:null note, honest empty state)');
+console.log('reviews invariants ok: 482px capped ledger, flat 40px rows, 28px group bar, filled 14px state glyphs, groups Ready to merge / Open / Draft from one gate, two panes above 1227px, one-pane overlay below it, 889px sidebar drawer, flex-derived page height, detail pane (52px breadcrumb, 44px tabs, 96px labels), ReviewsLinks selects all 17 pull-request detail fields and the pane renders them, and the Diff tab renders the stored file list (files{path,additions,deletions,status,patch,previousPath} in the query and the type, live tab, +green/-red patch lines inside their own horizontal scroller, patch:null note, honest empty state)');

@@ -75,6 +75,8 @@ export function githubReferencesIn(text:string|null|undefined):string[]{if(!text
 export async function attachGithubReferences(issueId:string|null|undefined,text:string|null|undefined):Promise<string[]>{if(!issueId)return [];const attached:string[]=[];for(const url of githubReferencesIn(text)){try{await gql('mutation($issueId:String!,$url:String!){githubLinkAdd(issueId:$issueId,url:$url){id kind}}',{issueId,url});attached.push(url)}catch{/* not a reference the server can store */}}return attached}
 const sections=[['primary',[['My issues',CircleDot],['Reviews',MessageCircle],['Pulse',Zap],['Inbox',Inbox],['Meetings',Video],['Agent',Bot]]],['Workspace',[['Initiatives',Target],['Projects',FolderKanban],['Views',ListFilter]]],['Favorites',[['Favorite views',Layers3]]],['Your teams',[]],['More',[['Board',LayoutDashboard],['Cycles',CalendarDays],['Members',Users],['Settings',Settings]]]] as const;
 import {KNOWN_WORKSPACE_PAGES, routeView, redirectLegacyTaskPath} from './routes';
+import {reviewGroupsOf} from './reviews-gate';
+import {reviewGlyphPaths} from './reviews-glyphs';
 import {displayLabel} from './labels';
 type StatusEvent={id:string;at:string;actor?:string;from?:string|null;to?:string|null};
 const statusHistoryCache=new Map<string,StatusEvent[]>();
@@ -123,14 +125,14 @@ export type ReviewLink={id:string;kind:string;externalId:string;url?:string;titl
   mergeable?:boolean|null;mergeState?:string|null;reviewDecision?:string|null;reviewers?:ReviewReviewer[]|null;
   checksState?:string|null;checksTotal?:number|null;checksPassing?:number|null;checksFailing?:number|null;
   body?:string|null;mergedAt?:string|null;githubUpdatedAt?:string|null;files?:ReviewDiffFile[]|null;key:string};
-/* Linear groups its review list as Ready to merge / Open / Draft. Readiness needs a
-   mergeability signal (mergeable, review decision, required checks) that a githubLink
-   does not carry, so "Ready to merge" is never emitted: an open pull request lands in
-   Open rather than being claimed ready. Merged and closed links keep a group each so
-   they stay in the ledger and every row's Status matches the group it sits in. */
-const REVIEW_GROUPS=['Open','Draft','Merged','Closed'] as const;
-type ReviewGroup=typeof REVIEW_GROUPS[number];
-function reviewGroupOf(state?:string):ReviewGroup{const st=(state||'').toLowerCase();return st==='draft'?'Draft':st==='merged'?'Merged':st==='closed'?'Closed':'Open'}
+/* Linear groups its review list as Ready to merge / Open / Draft — measured, not assumed:
+   artifacts/reviews-parity-*.json records the reference at 1440x900 as
+   "Ready to merge / Open / Draft" with 24 rows and no Merged or Closed bucket.
+   The rule that decides the bucket lives in exactly one place, ./reviews-gate.ts, together
+   with the reason string for every outcome. Merged and closed pull requests are Terminal:
+   the queue does not list them, so the ledger does not either — it counts them in one
+   muted line instead of inventing groups the reference does not have. */
+function ReviewGlyph({state}:{state:string}){return <span className="reviews-glyph" data-state={state} aria-hidden="true"><svg viewBox="0 0 16 16" width="14" height="14" focusable="false"><g fill="currentColor">{reviewGlyphPaths(state).map((d,i)=><path key={i} fillRule="evenodd" clipRule="evenodd" d={d}/>)}</g></svg></span>}
 function reviewStateLabel(state?:string){const st=(state||'open').toLowerCase();return st==='draft'?'Draft':st==='merged'?'Merged':st==='closed'?'Closed':'Open'}
 function reviewPrNumber(externalId?:string){const m=(externalId||'').match(/#(\d+)$/);return m?m[1]:null}
 function reviewInitials(name?:string){const parts=(name||'').trim().split(/[\s._-]+/).filter(Boolean);return (parts.length>1?parts[0][0]+parts[1][0]:parts[0]?.slice(0,2)||'?').toUpperCase()}
@@ -174,7 +176,10 @@ function ReviewsShell({links,onOpenNav}:{links:ReviewLink[];onOpenNav?:()=>void}
   const hasRefs=Boolean(sel?.baseRef||sel?.headRef);
   const aheadBehind=[sel?.ahead!=null?`${sel.ahead} ahead`:null,sel?.behind!=null?`${sel.behind} behind`:null].filter(Boolean).join(' / ');
   const age=(d?:string)=>{const t=d?new Date(d).getTime():Date.now();const m=Math.max(1,Math.floor((Date.now()-t)/60000));return m<60?m+'m':m<1440?Math.floor(m/60)+'h':Math.floor(m/1440)+'d';};
-  const groups=REVIEW_GROUPS.map(name=>({name,items:links.filter(l=>reviewGroupOf(l.state)===name)})).filter(g=>g.items.length);
+  const {groups:allGroups,terminal}=reviewGroupsOf(links);
+  const groups=allGroups.filter(g=>g.items.length);
+  const terminalCount=terminal.length;
+  const queueCount=links.length-terminalCount;
   return <section className="reviews-page">
     <div className="reviews-col">
       <div className="reviews-col-head"><button type="button" className="reviews-nav-btn" aria-label="Open navigation" onClick={onOpenNav}><Menu size={17}/></button><h1>Reviews</h1><span className="reviews-tools"><i>⇅</i><i>⚙</i></span></div>
@@ -186,7 +191,7 @@ function ReviewsShell({links,onOpenNav}:{links:ReviewLink[];onOpenNav?:()=>void}
             <ul className="reviews-rows">
               {group.items.map(l=>{const st=(l.state||'open').toLowerCase();const isSel=l.id===selected;return <li className="reviews-row" key={l.id} data-selected={isSel?'true':undefined}>
                 <button type="button" className="reviews-row-main" aria-pressed={isSel} title={l.title||l.externalId} onClick={()=>selectRow(l.id)}>
-                  <span className="reviews-glyph" data-state={st}><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4v5a2 2 0 0 0 2 2h4M4 4a1.4 1.4 0 1 0 0-.01M10 11a1.4 1.4 0 1 0 0-.01" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg></span>
+                  <ReviewGlyph state={st}/>
                   <span className="reviews-title">{l.title||l.externalId}</span>
                   <span className="reviews-mark" data-state={st}>{st==='closed'||st==='merged'?'✕':''}</span>
                   <span className="reviews-time">{age(l.createdAt)}</span>
@@ -195,12 +200,13 @@ function ReviewsShell({links,onOpenNav}:{links:ReviewLink[];onOpenNav?:()=>void}
               </li>;})}
             </ul>
           </section>)}
+        {terminalCount>0&&<p className="reviews-note" title="Linear's reviews queue lists pull requests that are still open. These are kept in the data, not in the queue.">{terminalCount} merged or closed pull {terminalCount===1?'request is':'requests are'} not listed</p>}
       </div>
     </div>
     <aside className="reviews-pane" aria-label="Review detail">
       {!sel?<div className="reviews-pane-empty">
         <svg className="reviews-illo" viewBox="0 0 143 152" fill="none" aria-hidden="true"><g stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"><g transform="translate(9 12)"><g transform="rotate(-9 71.5 70)"><rect x="29.5" y="45" width="84" height="50" rx="7"/></g></g><g transform="translate(4.5 6)"><g transform="rotate(-4.5 71.5 70)"><rect x="29.5" y="45" width="84" height="50" rx="7"/></g></g><rect x="29.5" y="45" width="84" height="50" rx="7"/><path d="M44 62h56M44 74h40" strokeLinecap="round"/></g></svg>
-        <p>{links.length} reviews</p>
+        <p>{queueCount} {queueCount===1?'review':'reviews'}</p>
         <p className="reviews-pane-hint">Select a review to see its details.</p>
       </div>:<article className="reviews-detail">
         <header className="reviews-detail-head">

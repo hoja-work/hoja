@@ -26,7 +26,9 @@
     "test:status-age": "node ../scripts/test-status-age.mjs",
     "test:setup": "node ../scripts/test-setup-wizard.cjs",
     "test:setup:browser": "node ../scripts/test-setup-wizard-browser.cjs",
-    "lint:vocab": "node scripts/check-task-vocabulary.mjs"
+    "lint:vocab": "node scripts/check-task-vocabulary.mjs",
+    "test:reviews": "node scripts/check-reviews.mjs && node --experimental-strip-types scripts/test-reviews-gate.mjs && node scripts/test-reviews-guard-mutations.mjs",
+    "measure:reviews": "node scripts/ui-probes/reviews-parity.mjs"
   },
   "dependencies": {
     "@fontsource-variable/inter": "5.3.0",
