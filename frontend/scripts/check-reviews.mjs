@@ -161,14 +161,37 @@ for (const cls of ['reviews-col', 'reviews-pane']) {
 }
 
 
-/** 5. The detail pane is real: breadcrumb band, tab row, property rows, activity, composer. */
-for (const cls of ['reviews-detail', 'reviews-detail-head', 'reviews-detail-tabs', 'reviews-prop', 'reviews-activity', 'reviews-composer']) {
+/** 5. The detail pane is real: breadcrumb band, tab row, property rows, activity, and the
+ *     four write actions. The old disabled composer and merge button are deliberately gone:
+ *     a visible control that says "not connected" is a lie once the action is wired. */
+for (const cls of ['reviews-detail', 'reviews-detail-head', 'reviews-detail-tabs', 'reviews-prop', 'reviews-activity']) {
   if (!new RegExp(`className="${cls}"`).test(tsx)) {
     failures.push(`main.tsx: no element with className="${cls}"; the review detail pane lost a section`);
   }
   if (!declared('.' + cls)) {
     failures.push(`styles.css: no .${cls} rule found; the review detail pane lost a section`);
   }
+}
+let actions = '';
+try {
+  actions = readFileSync(join(root, 'src/reviews/ReviewActions.tsx'), 'utf8');
+} catch {
+  failures.push('src/reviews/ReviewActions.tsx is missing; the four write actions do not exist');
+}
+if (!/import \{ReviewActions\} from '\.\/reviews\/ReviewActions';/.test(tsx)) {
+  failures.push('main.tsx: ReviewActions is not imported; the four write actions are not mounted');
+}
+if (!/<ReviewActions linkId=\{sel\.id\} gql=\{gql\}/.test(tsx)) {
+  failures.push('main.tsx: ReviewActions must bind the selected link id and the app gql helper');
+}
+for (const m of ['reviewApprove', 'reviewRequestChanges', 'reviewComment', 'reviewMerge']) {
+  if (!actions.includes(m)) failures.push(`ReviewActions.tsx: mutation ${m} is missing`);
+}
+if (!/Confirm squash merge/.test(actions) || !/gate\.sha/.test(actions)) {
+  failures.push('ReviewActions.tsx: the merge confirm must print the exact sha it is merging');
+}
+if (/Merging from Hoja is not connected yet|Commenting on pull requests is not connected yet/.test(tsx)) {
+  failures.push('main.tsx: a dead "not connected" control is back; the action is wired, so the placeholder must not render');
 }
 if (!/role="tab"/.test(tsx) || !/reviews-tab on/.test(tsx)) {
   failures.push('main.tsx: the detail pane lost its Overview/Diff tab row (role="tab" + the selected tab)');

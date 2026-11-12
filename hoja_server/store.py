@@ -2259,6 +2259,47 @@ class Store:
             rows = _conn_rows(conn, select(github_link).where(github_link.c.id == link_id))
             return self.ser_github_link(rows[0]) if rows else None
 
+    def github_link_by_id(self, org_id: str, link_id: str) -> dict | None:
+        """One linked GitHub object, scoped to the organization that owns it."""
+        with self.engine.connect() as conn:
+            rows = _conn_rows(conn, select(github_link).where(and_(
+                github_link.c.organization_id == org_id,
+                github_link.c.id == link_id)).limit(1))
+            return self.ser_github_link(rows[0]) if rows else None
+
+    def github_review_recorded(self, org_id: str, link: dict, *, event_type: str,
+                               actor_id: str, changes: dict,
+                               merged_sha: str | None = None) -> dict | None:
+        """Record a review write GitHub actually confirmed.
+
+        Called only after the provider answered, which is what keeps a failed or ambiguous
+        response from flipping the row to "merged". The activity row carries the attribution in
+        `changes`, and the merge updates the link in the same transaction so the feed and the
+        list cannot disagree.
+        """
+        from hoja_server.db import new_id, now_iso
+
+        stamp = now_iso()
+        with self.engine.begin() as conn:
+            row = conn.execute(select(github_link).where(and_(
+                github_link.c.organization_id == org_id,
+                github_link.c.id == link["id"])).limit(1)).mappings().first()
+            if row is None:
+                return None
+            if merged_sha:
+                # `sha` stays the head commit that was merged. Writing the merge commit here
+                # would make the pane claim that commit was the PR head, and the next gate
+                # read would compare against a sha the pull request never had.
+                conn.execute(update(github_link).where(github_link.c.id == row["id"]).values(
+                    state="merged", merged_at=stamp, updated_at=stamp))
+            conn.execute(issue_activity.insert().values(
+                id=new_id(), organization_id=org_id, issue_id=row["issue_id"],
+                actor_id=actor_id, event_type=event_type,
+                changes=json.dumps(changes, sort_keys=True), created_at=stamp))
+            refreshed = _conn_rows(conn, select(github_link).where(
+                github_link.c.id == row["id"]))
+            return self.ser_github_link(refreshed[0]) if refreshed else None
+
     def upload_visible(self, org_id: str, viewer_id: str, file_id: str) -> bool:
         """May this viewer fetch an uploaded file?
 

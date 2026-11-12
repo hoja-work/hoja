@@ -1,0 +1,94 @@
+/* Write actions for the Reviews detail pane. Self-contained because the surrounding
+   Reviews styles live in styles.css, which the parity work owns. */
+.review-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--border-subtle, rgba(128, 128, 128, 0.2));
+}
+
+.review-actions-gate {
+  font-size: 12px;
+  color: var(--text-secondary, #6b7280);
+  font-variant-numeric: tabular-nums;
+}
+
+.review-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.review-actions-row button {
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle, rgba(128, 128, 128, 0.3));
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.review-actions-row button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.review-actions-merge {
+  background: var(--accent, #5e6ad2);
+  border-color: transparent;
+  color: #fff;
+}
+
+.review-actions-blocked,
+.review-actions-error {
+  font-size: 12px;
+  color: var(--danger, #d1453b);
+  margin: 0;
+}
+
+.review-actions-notice {
+  font-size: 12px;
+  color: var(--text-secondary, #6b7280);
+  margin: 0;
+}
+
+.review-actions-compose textarea {
+  width: 100%;
+  font: inherit;
+  font-size: 13px;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle, rgba(128, 128, 128, 0.3));
+  background: transparent;
+  color: inherit;
+  resize: vertical;
+}
+
+.review-actions-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 6px;
+  border: 1px solid var(--danger, #d1453b);
+}
+
+.review-actions-confirm p {
+  margin: 0;
+  font-size: 13px;
+}
+
+.review-actions-confirm-gate {
+  color: var(--text-secondary, #6b7280);
+  font-size: 12px;
+}
+
+.review-actions-confirm code {
+  font-family: ui-monospace, monospace;
+}
+
+/* Phone guard: see styles.css. Enforced by hoja/no-small-field-font. */
+@media(max-width:700px),(max-width:1000px) and (max-height:500px){input,select,textarea{font-size:16px!important}}

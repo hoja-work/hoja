@@ -113,6 +113,8 @@ type Query {
   issueLabels(filter: IssueLabelFilter, first: Int = 100, after: String): IssueLabelConnection @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   searchIssues(term: String!, first: Int = 20, after: String): IssueConnection @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   rateLimitStatus: RateLimitPayload
+  "The live merge gate for one linked pull request, read from GitHub now, never from the cached row."
+  reviewGate(linkId: String!): ReviewGate!
 }
 
 type Mutation {
@@ -145,6 +147,14 @@ type Mutation {
   notificationArchive(id: String!): Boolean!
   notificationMarkAllRead: Boolean!
   githubLinkAdd(issueId: String!, url: String!): GithubLink!
+  "Approve a pull request as the connected GitHub user, attributed to the Hoja actor."
+  reviewApprove(linkId: String!, body: String): ReviewActionPayload!
+  "Request changes on a pull request. A body is required by GitHub's own review semantics."
+  reviewRequestChanges(linkId: String!, body: String!): ReviewActionPayload!
+  "Comment on a pull request without approving or requesting changes."
+  reviewComment(linkId: String!, body: String!): ReviewActionPayload!
+  "Squash-merge exactly `sha`. Refuses when the head moved, checks fail or are undecided, the branch is dirty, or mergeability is unknown."
+  reviewMerge(linkId: String!, sha: String!, method: String = "squash"): ReviewActionPayload!
   issueDelete(id: String!): DeletePayload @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   issueArchive(id: String!): DeletePayload @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   issueSubscribe(id: String!): Boolean! @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
@@ -435,6 +445,44 @@ type GithubFile {
   patch: String
   "Old path, only for a rename."
   previousPath: String
+}
+
+"The merge gate for one pull request, as GitHub reported it at the moment of the call."
+type ReviewGate {
+  "The commit this gate describes. This is the sha a merge would merge."
+  sha: String!
+  "GitHub's mergeable flag. Null means GitHub has not computed it yet — not 'yes'."
+  mergeable: Boolean
+  "clean | dirty | blocked | behind | unstable | draft | unknown"
+  mergeState: String
+  "success | pending | failure | unknown"
+  checksState: String
+  checksTotal: Int
+  checksPassing: Int
+  checksFailing: Int
+  checksPending: Int
+  "open | closed | merged"
+  state: String
+  title: String
+  url: String
+  "Why a merge would be refused right now, from the same check the merge itself runs. Null when it would proceed."
+  refusalCode: String
+  refusalMessage: String
+}
+
+"The result of a review write, returned only after GitHub confirmed it."
+type ReviewActionPayload {
+  "approve | request_changes | comment | merge"
+  action: String!
+  "The commit the action applied to."
+  sha: String
+  "The commit GitHub reports as the merge commit; empty for non-merge actions."
+  mergeSha: String
+  "The gate read immediately before the action, so the recorded merge names its own state."
+  gate: ReviewGate
+  "The attributed actor, e.g. 'Hoja, on behalf of Luis'."
+  actor: String
+  link: GithubLink
 }
 
 type RateLimitPayload {

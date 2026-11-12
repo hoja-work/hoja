@@ -271,6 +271,196 @@ def m_github_link_add(_, info, issueId, url):
     return link
 
 
+def _review_account(store, org_id, user_id):
+    """The GitHub account Hoja may act through for this user.
+
+    Prefers the user's own grant over a workspace-wide one, and never returns a revoked row: an
+    action attributed to a person must run on that person's authorization.
+    """
+    from sqlalchemy import and_, or_, select
+
+    from hoja_server import tenant_context
+    from hoja_server.db import connector_account
+
+    with tenant_context.scoped(org_id), store.engine.connect() as conn:
+        return conn.execute(
+            select(connector_account).where(and_(
+                connector_account.c.organization_id == org_id,
+                connector_account.c.provider == "github",
+                connector_account.c.status == "active",
+                connector_account.c.revoked_at.is_(None),
+                or_(connector_account.c.owner_user_id == user_id,
+                    connector_account.c.owner_user_id.is_(None)),
+            )).order_by(connector_account.c.owner_user_id.is_(None),
+                        connector_account.c.created_at).limit(1)
+        ).mappings().first()
+
+
+def _run_coro(coro):
+    """Run one review operation to completion inside the resolver's thread.
+
+    The HTTP schema executes every operation through `graphql_sync` in a worker thread (app.py),
+    so a resolver cannot await: returning a coroutine would hand GraphQL an object it cannot
+    serialize and the field would come back null. `asyncio.run` is safe here only because this
+    thread owns no running loop, which is exactly the contract `run_in_threadpool` provides.
+    """
+    import asyncio
+
+    return asyncio.run(coro)
+
+
+async def _run_review_async(info, link_id, action, *, body=None, sha=None, method="squash"):
+    """One review write, end to end.
+
+    The row is updated only from the provider's confirmed answer, so a refusal or an ambiguous
+    response leaves the review exactly as it was — there is no path here that flips a pull request
+    to Merged on the strength of our own optimism.
+    """
+    import httpx
+    from github import GitHubAppConfig
+    from github.errors import ConnectorAPIError
+    from github.writes import GitHubWriteClient
+
+    from hoja_server.github_review_actions import ReviewRefused, perform
+    from hoja_server.github_tokens import GitHubTokenStore
+
+    store, _w, org, uid = _ctx(info)
+    link = store.github_link_by_id(org, link_id)
+    if link is None:
+        raise GraphQLError("Review not found.",
+                           extensions={"code": "NOT_FOUND", "field": "linkId"})
+    account = _review_account(store, org, uid)
+    if account is None or not account.get("encrypted_refresh_token"):
+        raise GraphQLError(
+            "GitHub is not connected for this workspace, so Hoja cannot act on your behalf.",
+            extensions={
+                "code": "not_connected",
+                "hint": "Connect GitHub in Settings > Connections, then try again.",
+            })
+    viewer = store.viewer(org, uid) or {}
+    user_name = viewer.get("displayName") or viewer.get("name") or "a teammate"
+    async with httpx.AsyncClient(timeout=30.0) as http:
+        tokens = GitHubTokenStore(store.engine, http, GitHubAppConfig.from_env())
+        writes = GitHubWriteClient(http, tokens.source(account["id"], org))
+        try:
+            outcome = await perform(
+                writes, link=link, action=action, user_name=user_name,
+                body=body, sha=sha, method=method)
+        except ReviewRefused as exc:
+            raise GraphQLError(exc.message, extensions={
+                "code": exc.code,
+                "gate": exc.gate.as_dict() if exc.gate else None,
+            }) from exc
+        except ConnectorAPIError as exc:
+            raise GraphQLError(str(exc), extensions={
+                "code": "github_error", "hint": getattr(exc, "hint", None),
+            }) from exc
+
+    gate = outcome.get("gate")
+    gate_json = gate.as_dict() if gate else None
+    updated = store.github_review_recorded(
+        org, link, event_type=outcome["eventType"], actor_id=uid,
+        changes={
+            "via": "github",
+            "action": outcome["action"],
+            "pullRequest": link.get("url"),
+            "sha": outcome.get("sha") or None,
+            "mergeSha": outcome.get("mergeSha") or None,
+            "actor": outcome["actor"],
+            "onBehalfOf": user_name,
+            "gate": gate_json,
+        },
+        merged_sha=outcome.get("mergeSha") or None)
+    return {
+        "action": outcome["action"],
+        "sha": outcome.get("sha") or None,
+        "mergeSha": outcome.get("mergeSha") or None,
+        "gate": gate_json,
+        "actor": outcome["actor"],
+        "link": updated,
+    }
+
+
+@mutation.field("reviewApprove")
+def m_review_approve(_, info, linkId, body=None):
+    return _run_coro(_run_review_async(info, linkId, "approve", body=body))
+
+
+@mutation.field("reviewRequestChanges")
+def m_review_request_changes(_, info, linkId, body):
+    return _run_coro(_run_review_async(info, linkId, "request_changes", body=body))
+
+
+@mutation.field("reviewComment")
+def m_review_comment(_, info, linkId, body):
+    return _run_coro(_run_review_async(info, linkId, "comment", body=body))
+
+
+@mutation.field("reviewMerge")
+def m_review_merge(_, info, linkId, sha, method="squash"):
+    return _run_coro(_run_review_async(info, linkId, "merge", sha=sha, method=method))
+
+
+@query.field("reviewGate")
+def r_review_gate(_, info, linkId):
+    return _run_coro(_review_gate_async(info, linkId))
+
+
+async def _review_gate_async(info, linkId):
+    """Read the gate from GitHub now.
+
+    The merge mutation runs this same `refusal()` against the same live read, so what the UI
+    offers to merge and what the server permits cannot drift apart. A disabled Merge button here
+    is the server's answer, not a client-side guess.
+    """
+    import httpx
+    from github import GitHubAppConfig
+    from github.errors import ConnectorAPIError
+    from github.writes import GitHubWriteClient
+
+    from hoja_server.github_review_actions import gate_from, refusal, split_repository
+    from hoja_server.github_tokens import GitHubTokenStore
+
+    store, _w, org, uid = _ctx(info)
+    link = store.github_link_by_id(org, linkId)
+    if link is None:
+        raise GraphQLError("Review not found.",
+                           extensions={"code": "NOT_FOUND", "field": "linkId"})
+    target = split_repository(link.get("url"))
+    if target is None:
+        raise GraphQLError("This link is not a pull request.",
+                           extensions={"code": "not_a_pull_request", "field": "linkId"})
+    repository, number = target
+    account = _review_account(store, org, uid)
+    if account is None or not account.get("encrypted_refresh_token"):
+        raise GraphQLError(
+            "GitHub is not connected for this workspace, so there is no gate to read.",
+            extensions={
+                "code": "not_connected",
+                "hint": "Connect GitHub in Settings > Connections, then try again.",
+            })
+    async with httpx.AsyncClient(timeout=30.0) as http:
+        tokens = GitHubTokenStore(store.engine, http, GitHubAppConfig.from_env())
+        writes = GitHubWriteClient(http, tokens.source(account["id"], org))
+        try:
+            pull = await writes.fetch_pull(repository, number)
+            head = (pull.get("head") or {}).get("sha") or ""
+            gate = gate_from(
+                pull,
+                await writes.fetch_check_runs(repository, head) if head else [],
+                await writes.fetch_combined_status(repository, head) if head else {},
+            )
+        except ConnectorAPIError as exc:
+            raise GraphQLError(str(exc), extensions={
+                "code": "github_error", "hint": getattr(exc, "hint", None),
+            }) from exc
+    blocked = refusal(gate)
+    payload = gate.as_dict()
+    payload["refusalCode"] = blocked[0] if blocked else None
+    payload["refusalMessage"] = blocked[1] if blocked else None
+    return payload
+
+
 @mutation.field("notificationMarkAllRead")
 def m_notification_mark_all_read(_, info):
     store, _w, org, uid = _ctx(info)
