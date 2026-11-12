@@ -1506,13 +1506,23 @@ html.hoja-modal-open{overflow:hidden;scrollbar-gutter:stable}
 .reviews-time{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;flex:0 0 auto}
 .reviews-pane{flex:1 1 auto;border-left:1px solid var(--line,#00000014);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px}
 
-/* Reviews: full-bleed split view (Linear: 482px list + detail pane) */
+/* Reviews: full-bleed split view (Linear: 482px list + detail pane).
+   The page height comes from a flex chain (app -> body -> content -> main -> page),
+   never from 100dvh on the page itself, so a header that is hidden, shown or
+   collapsed can never push the ledger past the bottom of the viewport. Column
+   geometry (482px ledger cap, 664px pane floor, ledger yields first, pane dropped
+   below 1228px) lives in the measured responsive block at the end of this file. */
 body:has(.reviews-page) .topbar{display:none}
-body:has(.reviews-page) .main{max-width:none;margin:0;padding:0;height:100dvh;overflow:hidden}
-body:has(.reviews-page) .workspace-content{grid-row:1/span 2}
-.reviews-page{display:flex;align-items:stretch;height:100dvh;padding:0;max-width:none;overflow:hidden}
-.reviews-col{flex:0 0 482px;width:482px;display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line,#00000014)}
-.reviews-col-head{display:flex;align-items:center;justify-content:space-between;flex:none;height:44px;padding:0 19px;border-bottom:1px solid var(--line,#00000014)}
+body:has(.reviews-page) .app{display:flex;flex-direction:column;height:100dvh;min-height:0;min-width:0;overflow:clip}
+body:has(.reviews-page) .app-body{display:flex;flex:1 1 auto;min-height:0;min-width:0}
+body:has(.reviews-page) .sidebar{position:relative;top:auto;height:auto;max-height:none;align-self:stretch;grid-column:auto;grid-row:auto}
+body:has(.reviews-page) .workspace-content{flex:1 1 auto;display:flex;min-width:0;min-height:0}
+body:has(.reviews-page) .main{flex:1 1 auto;display:flex;flex-direction:column;width:auto;max-width:none;margin:0;padding:0;min-width:0;min-height:0;overflow:hidden}
+body:has(.reviews-page) .main>.app-error{flex:none}
+.reviews-page{position:relative;display:flex;align-items:stretch;flex:1 1 auto;min-height:0;min-width:0;padding:0;max-width:none;overflow:hidden}
+.reviews-col{display:flex;flex-direction:column;min-height:0;min-width:0;border-right:1px solid var(--line,#00000014)}
+.reviews-col-head{display:flex;align-items:center;gap:8px;flex:none;height:44px;padding:0 19px;border-bottom:1px solid var(--line,#00000014)}
+.reviews-tools{margin-left:auto}
 .reviews-col-head h1{margin:0;font-size:13px;font-weight:500;line-height:20px}
 .reviews-tools{display:flex;gap:12px;color:var(--muted);font-size:13px}
 .reviews-tabs{display:flex;align-items:center;flex:none;gap:6px;height:44px;margin:0;padding:0 8px;border-bottom:1px solid var(--line,#00000014);font-size:12px}
@@ -1627,3 +1637,49 @@ body:has(.reviews-page) .workspace-content{grid-row:1/span 2}
 .reviews-composer-send{background:var(--subtle)}
 .reviews-composer-icon:disabled,.reviews-composer-send:disabled,.reviews-composer-input:disabled{opacity:.6;cursor:not-allowed}
 .reviews-composer-note{margin:8px 0 0;color:var(--muted);font-size:11px}
+
+/* ---- Reviews: responsive geometry, measured from Linear ---------------------------
+   Linear at 1920/1600/1440: 244px sidebar, 482px ledger, detail pane fills the rest.
+   At 1280 the ledger yields first (381px) because the pane keeps a 664px floor; the
+   ledger only re-caps at 482px once vw >= 1391. At 1228 the pane becomes the whole
+   page (one pane, ledger full width) and stays that way down to the phone. Below
+   890px the sidebar stops being a column and becomes the off-canvas drawer.
+   Which pane is on screen is decided by width only; the geometry uses flex
+   grow/shrink + min/max clamps so the widths in between degrade instead of snapping. */
+.reviews-col{flex:1 1 482px;width:482px;max-width:482px;min-width:0}
+.reviews-pane{flex:1 1 auto;min-width:664px}
+.reviews-nav-btn,.reviews-pane-close{display:none;place-items:center;width:26px;height:26px;flex:none;padding:0;border:0;border-radius:6px;background:transparent;color:var(--muted)}
+.reviews-nav-btn:hover,.reviews-pane-close:hover{background:var(--subtle);color:var(--text)}
+
+/* One pane: the ledger is the page and a selected review opens over it. */
+@media (max-width:1227px){
+  .reviews-col{flex:1 1 auto;max-width:none;border-right:0}
+  .reviews-pane{display:none}
+  .reviews-pane:has(.reviews-detail){display:flex;position:absolute;inset:0;z-index:6;min-width:0;border-left:0;background:var(--panel)}
+  .reviews-pane-close{display:grid;margin-right:2px}
+}
+
+/* Drawer: no sidebar column, so the ledger takes the whole width. */
+@media (max-width:889px){
+  body:has(.reviews-page) .sidebar{position:fixed;z-index:35;top:0;bottom:0;left:0;width:min(290px,85vw);height:100dvh;max-height:100dvh;transform:translateX(-105%);transition:transform .18s ease;box-shadow:var(--shadow);background:var(--panel)}
+  body:has(.reviews-page) .sidebar.open{transform:none}
+  .reviews-nav-btn{display:grid}
+  .reviews-col-head{padding:0 10px;gap:2px}
+  .reviews-col-head h1{margin-left:2px}
+}
+
+/* Phones: Linear keeps the row rhythm (40px rows, 28px group bars) and only trims
+   the chrome, so the ledger stays a full-bleed list and the pane keeps phone padding. */
+@media (max-width:600px){
+  .reviews-tabs{gap:4px;padding:0 6px}
+  .reviews-col-head{height:48px}
+  .reviews-detail-head{height:48px;padding:0 8px 0 10px;gap:6px}
+  .reviews-detail-tabs{padding:0 8px;gap:2px}
+  .reviews-merge{padding:0 8px}
+  .reviews-open-link{gap:0;padding:4px;font-size:0}
+  .reviews-open-link svg{width:14px;height:14px}
+  .reviews-detail-scroll{padding:14px 14px 24px}
+  .reviews-detail-title{font-size:20px;line-height:28px}
+  .reviews-props{margin-top:16px}
+  .reviews-composer{height:44px}
+}

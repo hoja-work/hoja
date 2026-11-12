@@ -23,7 +23,28 @@ const css = readFileSync(join(root, 'src/styles.css'), 'utf8').replace(/\/\*[\s\
 
 const failures = [];
 
-/** Every declaration block whose selector is exactly `sel`, in source order. */
+/** The @-rule (or '') that contains the block starting at `index`. */
+function atRuleOf(index) {
+  const stack = [];
+  for (let i = 0; i < index; i++) {
+    const c = css[i];
+    if (c === '{') {
+      let end = i - 1;
+      while (end >= 0 && /\s/.test(css[end])) end--;
+      let start = end;
+      while (start >= 0 && !'{};'.includes(css[start])) start--;
+      const head = css.slice(start + 1, end + 1).trim();
+      stack.push(head.startsWith('@') ? head : null);
+    } else if (c === '}') {
+      stack.pop();
+    }
+  }
+  const atRules = stack.filter(Boolean);
+  return atRules.length ? atRules[atRules.length - 1].replace(/\s+/g, ' ') : '';
+}
+
+/** Every declaration block whose selector is exactly `sel`, in source order, with the
+ *  @-rule it lives under ('' for the unconditional rules). */
 function blocks(sel) {
   const out = [];
   let i = 0;
@@ -32,23 +53,35 @@ function blocks(sel) {
     if (prev && /[A-Za-z0-9_-]/.test(prev)) { i += sel.length; continue; }
     const end = css.indexOf('}', i);
     if (end === -1) break;
-    out.push({ body: css.slice(i + sel.length + 1, end), at: i });
+    out.push({ body: css.slice(i + sel.length + 1, end), at: i, media: atRuleOf(i) });
     i = end;
   }
   return out;
 }
 
-/** The winning block (last in cascade order) as a property map. */
-function declared(sel) {
-  const found = blocks(sel);
-  if (!found.length) return null;
+function parse(body) {
   const map = {};
-  for (const part of found[found.length - 1].body.split(';')) {
+  for (const part of body.split(';')) {
     const at = part.indexOf(':');
     if (at === -1) continue;
     map[part.slice(0, at).trim()] = part.slice(at + 1).trim();
   }
   return map;
+}
+
+/** The unconditional ("base") winning block as a property map. Media-query blocks are
+ *  responsive overrides, so the pinned base geometry must be read from these only. */
+function declared(sel) {
+  const found = blocks(sel).filter((b) => b.media === '');
+  if (!found.length) return null;
+  return parse(found[found.length - 1].body);
+}
+
+/** Every declaration of `sel` under an @media whose condition contains `frag`. */
+function mediaBlocks(sel, frag) {
+  return blocks(sel)
+    .filter((b) => b.media.includes('@media') && b.media.includes(frag))
+    .map((b) => ({ media: b.media, props: parse(b.body) }));
 }
 
 function expect(sel, prop, want, why = 'The split-view ledger geometry (482px column, flat 38px rows, 22px group bar) depends on it.') {
@@ -228,8 +261,88 @@ if (!/^#[0-9a-f]{6}$/i.test(add.color || '')) failures.push('styles.css: .review
 if (!/^#[0-9a-f]{6}$/i.test(del.color || '')) failures.push('styles.css: .reviews-diffstat-del needs an explicit red colour');
 if ((add.color || '').toLowerCase() === (del.color || '').toLowerCase()) failures.push('styles.css: the additions and deletions colours must differ');
 
+/** 13. Responsive contract, measured from Linear (not guessed):
+ *      - the ledger column is capped, never a bare fixed width: 482px is a max, and it
+ *        must be able to grow to the full page when the detail pane is gone;
+ *      - the detail pane is dropped at 1227px and below (Linear: pane present at 1228,
+ *        absent at 1227), and a selected review opens over the ledger instead;
+ *      - the workspace sidebar stops being a column at 889px (Linear: 244px at 890,
+ *        off-canvas at 880) and becomes the off-canvas drawer that already exists;
+ *      - the page height can never be a bare 100dvh, which ignores the header.
+ */
+const colBase = declared('.reviews-col') || {};
+if (colBase['max-width'] !== '482px') {
+  failures.push(`styles.css: .reviews-col { max-width } is ${colBase['max-width'] === undefined ? 'missing' : `"${colBase['max-width']}"`}; 482px must be a max, not only a width, or the ledger cannot give space back`);
+}
+const colMedia = blocks('.reviews-col').filter((b) => b.media !== '');
+for (const b of colMedia) {
+  const props = parse(b.body);
+  if (props.width && props.width !== 'auto' && props.width !== '482px') {
+    failures.push(`styles.css: ${b.media} pins .reviews-col width="${props.width}"; responsive overrides must grow the column (flex/max-width), not pin a new fixed width`);
+  }
+}
+if (colBase['min-width'] !== '0') {
+  failures.push(`styles.css: .reviews-col needs min-width:0 so it can shrink below its 482px basis instead of overflowing`);
+}
+
+const onePane = mediaBlocks('.reviews-pane', 'max-width:1227px');
+if (!onePane.length) {
+  failures.push('styles.css: no @media (max-width:1227px) block for .reviews-pane; Linear drops the two-pane split at 1227px (pane present at 1228, absent at 1227)');
+} else {
+  const hide = onePane.find((b) => b.props.display === 'none');
+  if (!hide) failures.push('styles.css: the 1227px block must set .reviews-pane { display:none }; that is the one-pane breakpoint');
+  const overlay = mediaBlocks('.reviews-pane:has(.reviews-detail)', 'max-width:1227px');
+  if (!overlay.length) {
+    failures.push('styles.css: at one-pane widths a selected review must open over the ledger (.reviews-pane:has(.reviews-detail) inside the 1227px block)');
+  } else if (overlay[0].props.position !== 'absolute' || overlay[0].props.inset !== '0') {
+    failures.push('styles.css: the one-pane detail must be an absolute inset:0 overlay, not a column that squeezes the ledger');
+  }
+  const grow = mediaBlocks('.reviews-col', 'max-width:1227px')[0];
+  if (!grow || grow.props['max-width'] !== 'none') {
+    failures.push('styles.css: the 1227px block must release the ledger cap (.reviews-col { max-width:none }) so it becomes the full page');
+  }
+}
+
+const drawer = mediaBlocks('body:has(.reviews-page) .sidebar', 'max-width:889px');
+if (!drawer.length) {
+  failures.push('styles.css: no @media (max-width:889px) drawer rule for the workspace sidebar; Linear collapses it between 890px (244px column) and 880px (off-canvas)');
+} else {
+  if (drawer[0].props.position !== 'fixed') failures.push('styles.css: below 889px the reviews sidebar must be position:fixed (a drawer), not a column');
+  if (!/translateX\(-1/.test(drawer[0].props.transform || '')) {
+    failures.push(`styles.css: the 889px drawer must start off-canvas (translateX(-105%)); got "${drawer[0].props.transform || 'none'}"`);
+  }
+  const opened = mediaBlocks('body:has(.reviews-page) .sidebar.open', 'max-width:889px');
+  if (!opened.length || !/^(none|translateX\(0\)|translateX\(0px\))$/.test(opened[0].props.transform || '')) {
+    failures.push('styles.css: the 889px drawer needs a .sidebar.open rule that brings it back on screen');
+  }
+}
+
+const pageBase = declared('.reviews-page') || {};
+if (/100dvh|100vh/.test(pageBase.height || '')) {
+  failures.push(`styles.css: .reviews-page { height:"${pageBase.height}" } breaks as soon as the header is visible or collapses; take the height from the flex chain instead`);
+}
+if ((pageBase.flex || '') !== '1 1 auto') {
+  failures.push(`styles.css: .reviews-page { flex } is "${pageBase.flex}", expected "1 1 auto" so the page fills whatever the shell header and any error banner leave`);
+}
+const mainBase = declared('body:has(.reviews-page) .main') || {};
+if (mainBase['flex-direction'] !== 'column') {
+  failures.push(`styles.css: body:has(.reviews-page) .main { flex-direction } is "${mainBase['flex-direction']}"; it must be a column so an error banner stacks above the ledger instead of squeezing it`);
+}
+for (const [sel, prop] of [['body:has(.reviews-page) .app', 'display'], ['body:has(.reviews-page) .main', 'display']]) {
+  const d = declared(sel);
+  if (!d) { failures.push(`styles.css: no ${sel} rule found; the reviews page lost its full-bleed shell`); continue; }
+  if (prop === 'display' && d.display !== 'flex') failures.push(`styles.css: ${sel} { display } is "${d.display}", expected flex so the page height is derived from the shell`);
+}
+
+if (!/className="reviews-nav-btn"/.test(tsx)) {
+  failures.push('main.tsx: the reviews header lost its drawer button; below 889px there is no other way to open the sidebar (the page topbar is hidden)');
+}
+if (!/className="reviews-pane-close"/.test(tsx)) {
+  failures.push('main.tsx: the one-pane detail needs a back button (.reviews-pane-close); without it the overlay cannot be dismissed');
+}
+
 if (failures.length) {
   console.error('reviews invariants failed:\n' + failures.map(f => '  ✗ ' + f).join('\n'));
   process.exit(1);
 }
-console.log('reviews invariants ok: 482px ledger, flat 38px rows, 22px group bar, two panes, detail pane (52px breadcrumb, 44px tabs, 96px labels), ReviewsLinks selects all 17 pull-request detail fields and the pane renders them');
+console.log('reviews invariants ok: 482px capped ledger, flat 38px rows, 22px group bar, two panes above 1227px, one-pane overlay below it, 889px sidebar drawer, flex-derived page height, detail pane (52px breadcrumb, 44px tabs, 96px labels), ReviewsLinks selects all 17 pull-request detail fields and the pane renders them');

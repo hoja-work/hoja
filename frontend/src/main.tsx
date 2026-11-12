@@ -139,7 +139,7 @@ function reviewDiffstat(l:ReviewLink){return l.additions!=null||l.deletions!=nul
 function reviewChecksTone(state?:string|null,total?:number|null){const st=(state||'').toLowerCase();if(st==='passing'||st==='success')return 'passing';if(st==='failing'||st==='failure'||st==='error'||st==='errored')return 'failing';if(st==='pending'||st==='queued'||st==='in_progress')return 'pending';return (total??0)>0?'unknown':'none'}
 function reviewReviewerList(l:ReviewLink){const raw=Array.isArray(l.reviewers)?l.reviewers:[];return raw.filter(r=>r&&typeof r==='object'&&(r as ReviewReviewer).login).map(r=>r as ReviewReviewer)}
 function reviewBodyPreview(body?:string|null,limit=1200){const text=(body||'').trim();if(!text)return null;return text.length>limit?text.slice(0,limit).replace(/\s+\S*$/,'')+'…':text}
-function ReviewsShell({links}:{links:ReviewLink[]}){
+function ReviewsShell({links,onOpenNav}:{links:ReviewLink[];onOpenNav?:()=>void}){
   const [selected,setSelected]=useState<string|null>(null);
   const sel=links.find(l=>l.id===selected)||null;
   const authorName=sel?.author?.trim()||null;
@@ -155,7 +155,7 @@ function ReviewsShell({links}:{links:ReviewLink[]}){
   const groups=REVIEW_GROUPS.map(name=>({name,items:links.filter(l=>reviewGroupOf(l.state)===name)})).filter(g=>g.items.length);
   return <section className="reviews-page">
     <div className="reviews-col">
-      <div className="reviews-col-head"><h1>Reviews</h1><span className="reviews-tools"><i>⇅</i><i>⚙</i></span></div>
+      <div className="reviews-col-head"><button type="button" className="reviews-nav-btn" aria-label="Open navigation" onClick={onOpenNav}><Menu size={17}/></button><h1>Reviews</h1><span className="reviews-tools"><i>⇅</i><i>⚙</i></span></div>
       <div className="reviews-tabs"><span className="on">Created{links.length?<b>{links.length}</b>:null}</span><span>To review</span></div>
       <div className="reviews-scroll">
         {links.length===0?<p className="reviews-empty">No linked pull requests yet.</p>:groups.map(group=>
@@ -182,6 +182,7 @@ function ReviewsShell({links}:{links:ReviewLink[]}){
         <p className="reviews-pane-hint">Select a review to see its details.</p>
       </div>:<article className="reviews-detail">
         <header className="reviews-detail-head">
+          <button type="button" className="reviews-pane-close" aria-label="Back to the review list" onClick={()=>setSelected(null)}><ArrowLeft size={16}/></button>
           <div className="reviews-crumbs">
             <span className="reviews-crumb-issue" title="Task this pull request is linked to">{sel.key}</span>
             <span className="reviews-crumb-sep" aria-hidden="true">›</span>
@@ -361,7 +362,7 @@ const pageContent = view === 'Issue detail' ? <IssueDetailPage workspaceName={wo
   : view === 'Favorite views' ? <ViewsPage key={`favorites-${workspace.id}`} orgId={workspace.id} issues={issues} projects={projects} path={window.location.pathname} onNavigate={navigate} onSelect={openIssue} favoriteOnly revision={revision}/>
   : view === 'Agent' ? <AgentChatPage workspaceName={workspace.name}/>
   : view === 'Views' ? <ViewsPage key={workspace.id} orgId={workspace.id} issues={issues} projects={projects} path={window.location.pathname} onNavigate={navigate} onSelect={openIssue} revision={revision}/>
-  : view === 'Reviews' ? <ReviewsShell links={reviewsLinks}/>
+  : view === 'Reviews' ? <ReviewsShell links={reviewsLinks} onOpenNav={()=>setMobile(true)}/>
   : view === 'Board' ? dashboardContent
   : view === 'Cycles' ? <CyclesPage teams={teams} viewer={viewer} workspaceName={workspace.name} onCycle={c=>{setActiveCycle(c);navigate('Cycle detail',`/workspace/cycle/${c.id}`)}} onSettings={t=>navigate('Team cycle settings',`/workspace/team/${t.key.toLowerCase()}/cycles/settings`)} revision={revision} onNavigate={navigate}/>
   : view === 'Not found' ? <section className="not-found-page" role="alert"><h1>Page not found</h1><p>This page does not exist.</p></section>
