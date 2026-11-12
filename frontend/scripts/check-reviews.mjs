@@ -148,8 +148,88 @@ if (!/REVIEW_GROUPS\.map\(/.test(tsx)) {
   failures.push('main.tsx: the ledger must render its groups from REVIEW_GROUPS so the order stays Open, Draft, Merged, Closed');
 }
 
+/** 9. The detail pane only renders stored pull-request fields — so the ReviewsLinks query
+ *     must ask for every one of them. A field the query omits silently arrives as
+ *     undefined and the pane degrades to "no diffstat" / "no checks recorded" even
+ *     though the server stores the value. This is the exact regression that shipped once. */
+const PR_FIELDS = [
+  'additions', 'deletions', 'baseRef', 'headRef', 'behind', 'ahead', 'mergeable', 'mergeState',
+  'reviewDecision', 'reviewers', 'checksState', 'checksTotal', 'checksPassing', 'checksFailing',
+  'body', 'mergedAt', 'githubUpdatedAt',
+];
+const PR_CORE_FIELDS = ['id', 'kind', 'externalId', 'url', 'title', 'state', 'author', 'sha', 'environment', 'createdAt', 'updatedAt'];
+const queryAt = tsx.indexOf('query ReviewsLinks{');
+if (queryAt === -1) {
+  failures.push('main.tsx: no ReviewsLinks query found; the Reviews page lost its data source');
+} else {
+  const selection = tsx.slice(queryAt, tsx.indexOf('.then(', queryAt));
+  for (const field of [...PR_CORE_FIELDS, ...PR_FIELDS]) {
+    if (!new RegExp(`\\b${field}\\b`).test(selection)) {
+      failures.push(`main.tsx: ReviewsLinks does not select githubLinks.${field}; the pane renders it, so it would regress to a labelled unknown while the server stores a real value`);
+    }
+  }
+  if (!/githubLinks\s*\{/.test(selection)) {
+    failures.push('main.tsx: ReviewsLinks must select githubLinks (the pull-request rows come from there)');
+  }
+}
+
+/** 10. The TS type carries the same fields, so tsc keeps the render honest. */
+const typeAt = tsx.indexOf('export type ReviewLink=');
+const typeLine = typeAt === -1 ? '' : tsx.slice(typeAt, tsx.indexOf('};', typeAt) + 2);
+if (!typeLine) {
+  failures.push('main.tsx: no `export type ReviewLink=` line; the Reviews data contract is gone');
+} else {
+  for (const field of PR_FIELDS) {
+    if (!new RegExp(`\\b${field}\\?:`).test(typeLine)) {
+      failures.push(`main.tsx: ReviewLink is missing the optional ${field} field that the pane renders`);
+    }
+  }
+}
+
+/** 11. The pane renders the stored values instead of hardcoded unknowns. Each assertion
+ *     pairs the real branch with the unknown branch, so deleting either one fails. */
+const paneAt = tsx.indexOf('function ReviewsShell(');
+if (paneAt === -1) {
+  failures.push('main.tsx: no ReviewsShell component found');
+} else {
+  const paneEnd = tsx.indexOf('\nfunction ', paneAt + 30);
+  const pane = tsx.slice(paneAt, paneEnd === -1 ? undefined : paneEnd);
+  const need = (pattern, why) => { if (!pattern.test(pane)) failures.push(`main.tsx (ReviewsShell): ${why}`); };
+
+  need(/reviewDiffstat\(sel\)/, 'the breadcrumb must branch on reviewDiffstat(sel) (additions/deletions) instead of always printing "no diffstat"');
+  need(/reviews-diffstat-add[^]*\+\{sel\.additions\}/, 'the diffstat must print +additions in .reviews-diffstat-add');
+  need(/reviews-diffstat-del[^]*−\{sel\.deletions\}/, 'the diffstat must print −deletions in .reviews-diffstat-del');
+  need(/data-known="true"/, 'the real diffstat must be marked data-known="true" so the "no diffstat" pill styling does not leak onto real numbers');
+  need(/checksTotal>0/, 'the Checks row must switch on checksTotal>0');
+  need(/reviews-check-dot/, 'the Checks row needs a state dot when check runs exist');
+  need(/checksPassing[^]*passing/, 'the Checks row must print "<n> passing"');
+  need(/\{checksFailing\} facing|\{checksFailing\} failing/, 'the Checks row must print "<n> failing" when failing checks exist');
+  need(/\{checksTotal\} total/, 'the Checks row must print the run total');
+  need(/no checks recorded/, 'the Checks row must keep an explicit "no checks recorded" empty state');
+  need(/hasRefs/, 'the Branch row must branch on hasRefs (baseRef/headRef)');
+  need(/\{sel\.baseRef\|\|'\?'\}[^]*‹[^]*\{sel\.headRef\|\|'\?'\}/, 'the Branch row must render "baseRef ‹ headRef"');
+  need(/aheadBehind/, 'the Branch row must render "N ahead / M behind" when those counts are non-null');
+  need(/reviewerList/, 'the Reviewers row must render the stored reviewers list');
+  need(/no reviews upstream/, 'the Reviewers row must say "no reviews upstream" when the list is empty');
+  need(/\{bodyPreview\?<div className="reviews-desc">/, 'the description must render the stored body when present ({bodyPreview? <div className="reviews-desc">})');
+  need(/reviewBodyPreview\(sel\?\.body\)/, 'the description preview must be derived from the stored body via reviewBodyPreview');
+  need(/No pull request description is stored/, 'the description keeps its explicit empty state');
+  need(/reviewStateLabel\(sel\.state\)/, 'Status must stay the primary value derived from the link state');
+  need(/merge state: /, 'the GitHub merge state may only appear as a secondary tag next to the link state');
+}
+
+/** 12. The new diffstat/checks/refs styling exists and the diff colours are not the muted ink. */
+for (const sel of ['.reviews-diffstat-add', '.reviews-diffstat-del', '.reviews-check-dot', '.reviews-refs', '.reviews-aheadbehind']) {
+  if (!declared(sel)) failures.push(`styles.css: no ${sel} rule found; the rebuilt review detail row lost its styling`);
+}
+const add = declared('.reviews-diffstat-add') || {};
+const del = declared('.reviews-diffstat-del') || {};
+if (!/^#[0-9a-f]{6}$/i.test(add.color || '')) failures.push('styles.css: .reviews-diffstat-add needs an explicit green colour');
+if (!/^#[0-9a-f]{6}$/i.test(del.color || '')) failures.push('styles.css: .reviews-diffstat-del needs an explicit red colour');
+if ((add.color || '').toLowerCase() === (del.color || '').toLowerCase()) failures.push('styles.css: the additions and deletions colours must differ');
+
 if (failures.length) {
   console.error('reviews invariants failed:\n' + failures.map(f => '  ✗ ' + f).join('\n'));
   process.exit(1);
 }
-console.log('reviews invariants ok: 482px ledger, flat 38px rows, 22px group bar, two panes, detail pane (52px breadcrumb, 44px tabs, 96px labels)');
+console.log('reviews invariants ok: 482px ledger, flat 38px rows, 22px group bar, two panes, detail pane (52px breadcrumb, 44px tabs, 96px labels), ReviewsLinks selects all 17 pull-request detail fields and the pane renders them');

@@ -1490,7 +1490,7 @@ html.hoja-modal-open{overflow:hidden;scrollbar-gutter:stable}
 /* Reviews ledger — geometry measured from Linear at 1440x900 */
 .reviews-body{display:flex;align-items:stretch;gap:0;margin:0 0 40px}
 .reviews-ledger{width:481px;flex:0 0 481px;padding:0 0 8px}
-.reviews-ledger-top{display:flex;aligned-items:center;gap:6px;padding:0 8px 10px}
+.reviews-ledger-top{display:flex;align-items:center;gap:6px;padding:0 8px 10px}
 .reviews-tab{font-size:12px;font-weight:500;line-height:15px;color:var(--muted);padding:6px 10px;border-radius:5px}
 .reviews-tab.on{color:var(--text);background:var(--hover,#0000000d)}
 .reviews-group-head{display:flex;align-items:center;gap:6px;height:28px;margin:6px 0 2px;padding:0 8px;border-radius:6px;background:var(--hover,#0000000d);font-size:12px;font-weight:500;color:var(--text)}
@@ -1566,6 +1566,9 @@ body:has(.reviews-page) .workspace-content{grid-row:1/span 2}
 .reviews-crumb-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;color:var(--text)}
 .reviews-crumb-num{flex:none;color:var(--muted);font-variant-numeric:tabular-nums}
 .reviews-diffstat{flex:none;padding:1px 7px;border:1px dashed var(--line);border-radius:9999px;color:var(--muted);font-size:11px}
+.reviews-diffstat[data-known="true"]{display:inline-flex;align-items:center;gap:6px;padding:0;border:0;font-variant-numeric:tabular-nums}
+.reviews-diffstat-add{color:#4cb782}
+.reviews-diffstat-del{color:#e5534b}
 .reviews-open-link{display:inline-flex;align-items:center;gap:5px;flex:none;padding:4px 8px;border-radius:6px;color:var(--muted);font-size:12px;text-decoration:none;white-space:nowrap}
 .reviews-open-link:hover{background:var(--subtle);color:var(--text)}
 .reviews-kebab{display:grid;place-items:center;width:24px;height:24px;flex:none;border-radius:6px;background:transparent;color:var(--muted)}
@@ -1587,6 +1590,7 @@ body:has(.reviews-page) .workspace-content{grid-row:1/span 2}
 .reviews-avatar.small{width:18px;height:18px;font-size:8px}
 .reviews-author{color:var(--text);font-weight:500}
 .reviews-branchchip{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:5px;background:var(--subtle);color:var(--muted);font-size:11px}
+.reviews-branchchip-sep{color:var(--muted)}
 .reviews-props{display:flex;flex-direction:column;gap:8px;margin:20px 0 0;max-width:640px}
 .reviews-prop{display:flex;align-items:flex-start;gap:10px;min-height:20px;margin:0}
 .reviews-prop dt{flex:0 0 96px;width:96px;color:var(--muted);font-size:12px;font-weight:450;line-height:20px}
@@ -1595,8 +1599,19 @@ body:has(.reviews-page) .workspace-content{grid-row:1/span 2}
 .reviews-dot{width:10px;height:10px;flex:none;border-radius:50%;background:#4cb782}
 .reviews-dot[data-state="draft"],.reviews-dot[data-state="closed"]{background:#6b6f76}
 .reviews-dot[data-state="merged"]{background:#8b5cf6}
+.reviews-tag{display:inline-flex;align-items:center;height:18px;padding:0 6px;border:1px solid var(--line);border-radius:4px;color:var(--muted);font-size:10px;line-height:16px}
+.reviews-check-dot{width:10px;height:10px;flex:none;border-radius:50%;background:#4cb782}
+.reviews-check-dot[data-checks="failing"]{background:#e5534b}
+.reviews-check-dot[data-checks="pending"]{background:#d4a72c}
+.reviews-check-dot[data-checks="none"],.reviews-check-dot[data-checks="unknown"]{background:#6b6f76}
+.reviews-reviewers{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.reviews-reviewer{display:inline-flex;align-items:center;gap:4px;color:var(--text)}
+.reviews-refs{display:inline-flex;align-items:center;gap:5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.reviews-refs code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.reviews-refs-sep{color:var(--muted)}
+.reviews-aheadbehind{flex:none;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
 .reviews-unknown{color:var(--muted);font-size:12px}
-.reviews-desc{margin:18px 0 0;max-width:640px;line-height:1.6}
+.reviews-desc{margin:18px 0 0;max-width:640px;line-height:1.6;overflow-wrap:anywhere;color:var(--text);font-size:13px}
 .reviews-activity{margin:22px 0 0;max-width:640px}
 .reviews-activity h2{margin:0 0 8px;color:var(--muted);font-size:12px;font-weight:500}
 .reviews-activity-list{display:flex;flex-direction:column;gap:10px;margin:0;padding:0;list-style:none}
