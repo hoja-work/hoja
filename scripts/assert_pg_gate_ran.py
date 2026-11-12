@@ -15,10 +15,18 @@ from __future__ import annotations
 import sys
 import xml.etree.ElementTree as ET
 
-# 15 cases live in the three database-gated modules: 5 in test_server_postgres.py,
-# 7 in test_tenant_context.py, 3 in agent/test_dbos_crash_recovery.py. Raising
-# this number is how new database coverage becomes mandatory rather than optional.
-DEFAULT_MINIMUM = 15
+# 37 cases live in the database-gated modules: 5 in test_server_postgres.py,
+# 7 in test_tenant_context.py, 3 in agent/test_dbos_crash_recovery.py, 21 in
+# test_meetings.py and 1 in test_server_backend.py (the cloverops operation
+# contract). Raising this number is how new database coverage becomes mandatory
+# rather than optional.
+#
+# test_meetings.py and test_server_backend.py are here because they too branch on
+# HOJA_TEST_POSTGRES_URL: without it they quietly run the SQLite path, so leaving
+# them out of the job kept 22 cases' Postgres behaviour unexercised while the
+# SQLite job reported green. tests/test_ci_pg_gate_coverage.py now fails if a
+# gated module is ever dropped from the job again.
+DEFAULT_MINIMUM = 37
 
 
 def main(argv: list[str]) -> int:
