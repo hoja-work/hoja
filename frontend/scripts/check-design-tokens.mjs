@@ -52,7 +52,10 @@ const MEASURED = {
   '--ds-row-glyph-size': ['14px', 'reviews-parity rows[].glyph.size'],
   '--ds-group-bar-height': ['28px', 'reviews-parity bands[].h (both sides)'],
   '--ds-group-bar-padding': ['0 9px 0 10px', 'reviews-parity bands[].padding'],
-  '--ds-group-bar-margin': ['2px 0 2px 10px', 'reviews-parity bands[].margin'],
+  '--ds-group-bar-margin': ['0 0 0 10px', 'reviews-residual bands[].margin (reference "0px 0px 0px 10px")'],
+  '--ds-row-padding': ['0', 'reviews-residual rows[].padding (reference "0px"; the 6px/4px inset was ours)'],
+  '--ds-row-main-padding': ['0 8px 0 18px', 'reviews-residual glyph inset 18 and timestamp inset 8'],
+  '--ds-list-inset-right': ['10px', 'reviews-residual row/band right 716 in a column ending at 726'],
   '--ds-group-bar-radius': ['8px', 'reviews-parity bands[].radius'],
   '--ds-pane-head-height': ['52px', 'measured pane breadcrumb band (HOJA-417)'],
   '--ds-pane-tabs-height': ['44px', 'measured Overview/Diff tab row (HOJA-417)'],
@@ -200,17 +203,65 @@ writeFileSync(beforeFile, page(oldCss));
 writeFileSync(afterFile, page(stylesCss + '\n' + tokensCss + '\n' + designCss));
 const before = measureFile(beforeFile);
 const after = measureFile(afterFile);
+/* HOJA-500 — the one intentional departure from "the refactor must not change rendering".
+ *
+ * The parity diff below exists to prove a token conversion is value-preserving. HOJA-500 is
+ * not a refactor: it deliberately moves four cascade decisions onto the numbers the live
+ * reference reports, and the rest of this list is their arithmetic consequence (a row 10px
+ * narrower makes the title 10px narrower; two 2px band margins removed make the column 8px
+ * shorter). Enumerating them keeps the check load-bearing in both directions: a value that
+ * differs from this list still fails, and an entry here that stops occurring also fails.
+ *
+ * Cascade decisions (measured by scripts/ui-probes/reviews-residual.mjs):
+ *   .reviews-row        padding-left 6px -> 0, padding-right 4px -> 0     (reference "0px")
+ *   .reviews-row-main   padding 12px -> 18px left, 4px -> 8px right       (glyph inset 18, time inset 8)
+ *   .reviews-group-head margin-top/bottom 2px -> 0                        (reference "0px 0px 0px 10px")
+ *   .reviews-scroll     padding-right 0 -> 10px                           (rows end at 716, column at 726)
+ */
+const ACCEPTED = new Map();
+for (const [el, prop, to] of [
+  ['SECTION.reviews-page', 'height', '342px'],
+  ['DIV.reviews-col', 'height', '342px'],
+  ['DIV.reviews-scroll', 'height', '254px'],
+  ['DIV.reviews-scroll', 'padding-right', '10px'],
+  ['SECTION.reviews-group', 'height', '70px'],
+  ['SECTION.reviews-group', 'width', '471px'],
+  ['H3.reviews-group-head', 'width', '461px'],
+  ['H3.reviews-group-head', 'margin-top', '0px'],
+  ['H3.reviews-group-head', 'margin-bottom', '0px'],
+  ['UL.reviews-rows', 'width', '471px'],
+  ['LI.reviews-row', 'width', '471px'],
+  ['LI.reviews-row', 'padding-right', '0px'],
+  ['LI.reviews-row', 'padding-left', '0px'],
+  ['BUTTON.reviews-row-main', 'padding-right', '8px'],
+  ['BUTTON.reviews-row-main', 'padding-left', '18px'],
+  ['SPAN.reviews-title', 'width', '371px'],
+  ['SECTION.reviews-group', 'height', '150px'],
+  ['P.reviews-note', 'width', '451px'],
+]) {
+  const key = `${el} ${prop}`;
+  ACCEPTED.set(key, [...(ACCEPTED.get(key) || []), to]);
+}
+const used = new Set();
 if (before.length !== after.length) fail.push(`parity: element count ${before.length} -> ${after.length}; the refactor changed the DOM shape`);
 let cells = 0;
+let accepted = 0;
 for (let i = 0; i < Math.min(before.length, after.length); i++) {
   const a = before[i], b = after[i];
   if (a.tag !== b.tag || a.cls !== b.cls) { fail.push(`parity: element ${i} is ${a.tag}.${a.cls} vs ${b.tag}.${b.cls}`); continue; }
   for (const p of PROPS) {
     cells++;
-    if (a.props[p] !== b.props[p]) fail.push(`parity: ${a.tag}.${a.cls} ${p}: "${a.props[p]}" -> "${b.props[p]}"`);
+    if (a.props[p] === b.props[p]) continue;
+    const sig = `${a.tag}.${a.cls} ${p}`;
+    const targets = ACCEPTED.get(sig) || [];
+    if (targets.includes(b.props[p])) { used.add(`${sig}=${b.props[p]}`); accepted++; continue; }
+    fail.push(`parity: ${a.tag}.${a.cls} ${p}: "${a.props[p]}" -> "${b.props[p]}"`);
   }
 }
-if (!fail.some(f => f.startsWith('parity:'))) ok(`parity: ${before.length} elements x ${PROPS.length} computed properties identical before/after the refactor (${cells} cells)`);
+for (const [sig, targets] of ACCEPTED) {
+  for (const t of targets) if (!used.has(`${sig}=${t}`)) fail.push(`parity: accepted delta "${sig} -> ${t}" no longer occurs; the manifest is stale or the change was reverted silently`);
+}
+if (!fail.some(f => f.startsWith('parity:'))) ok(`parity: ${before.length} elements x ${PROPS.length} computed properties identical before/after the refactor (${cells} cells) apart from ${used.size} declared HOJA-500 deltas... `);
 
 /* 3. LOAD-BEARING: the token drives the DOM, proven by mutating it in the page. */
 const fixture = `<!doctype html><html><head><meta charset="utf-8"><style>
@@ -246,7 +297,7 @@ const readFile = (expr) => {
 };
 const plain = readFile(READ);
 const EXPECT = [['row height', plain.row.height, '40px'], ['group bar height', plain.bar.height, '28px'],
-  ['group bar padding', plain.bar.padding, '0px 9px 0px 10px'], ['group bar margin', plain.bar.margin, '2px 0px 2px 10px'],
+  ['group bar padding', plain.bar.padding, '0px 9px 0px 10px'], ['group bar margin', plain.bar.margin, '0px 0px 0px 10px'],
   ['group bar radius', plain.bar['border-radius'], '8px'], ['ledger width', plain.col.width, '482px'],
   ['ledger max-width', plain.col['max-width'], '482px'], ['property label width', plain.prop.width, '96px'],
   ['composer height', plain.composer.height, '48px'], ['token readback', plain.token, '40px']];

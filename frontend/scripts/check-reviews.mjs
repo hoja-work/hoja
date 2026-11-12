@@ -21,6 +21,7 @@
  * Ready to merge / Open / Draft. Every one of those values was pinned here at the wrong
  * number before, so this file is re-derived from the artifact rather than edited to taste.
  */
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -155,13 +156,57 @@ for (const [name, want] of Object.entries({
   '--ds-row-height': '40px',
   '--ds-group-bar-height': '28px',
   '--ds-group-bar-padding': '0 9px 0 10px',
-  '--ds-group-bar-margin': '2px 0 2px 10px',
+  '--ds-group-bar-margin': '0 0 0 10px',
   '--ds-group-bar-radius': '8px',
   '--ds-prop-label-width': '96px',
   '--ds-pane-head-height': '52px',
   '--ds-pane-tabs-height': '44px',
   '--ds-row-glyph-size': '14px',
 })) expectToken(name, want);
+
+/* HOJA-500 — the four residual deltas, pinned to what the LIVE reference reports rather than
+ * to the previous worker's report. Re-measured with scripts/ui-probes/reviews-residual.mjs
+ * against linear.app/hoja/reviews at 390/1024/1440 (artifacts/reviews-residual-*.json);
+ * three of the four numbers in that report were mis-stated, and "glyph shape unmeasurable"
+ * was simply wrong: state-for-state path data is measurable and 9 of 10 paths already
+ * matched byte for byte. */
+for (const [name, want] of Object.entries({
+  '--ds-row-padding': '0',                  // reference row padding is "0px", not our 0 4px 0 6px
+  '--ds-row-main-padding': '0 8px 0 18px',  // glyph inset 18, timestamp inset 8 @1440
+  '--ds-group-bar-margin': '0 0 0 10px',    // reference band margin is "0px 0px 0px 10px"
+  '--ds-list-inset-right': '10px',          // rows/bands end at 716 in a column ending at 726
+})) expectToken(name, want);
+
+/* The 1px of "row x: 244 vs 245". Linear's sidebar is 244 wide and the separator sits at
+ * x=244, so its ledger content column starts at 245. We drew that separator on the ledger's
+ * RIGHT edge instead, which started content at 244 and left every row 1px left of the
+ * reference. The separator belongs on the left; one-pane mode must clear it. */
+{
+  const bases = blocks('.reviews-col').filter((b) => b.media === '').map((b) => parse(b.body));
+  if (!bases.some((r) => /^1px/.test(String(r['border-left'] || '')))) {
+    failures.push('styles.css: .reviews-col must draw the sidebar separator as border-left:1px — the reference ledger content column starts at 245 (sidebar 244 + separator), and without it every row measures 1px left');
+  }
+  if (bases.some((r) => r['border-right'] !== undefined && !/^0(px)?$/.test(String(r['border-right'])))) {
+    failures.push('styles.css: .reviews-col must not keep a right border — that is the rule that put the ledger content at 244 instead of 245');
+  }
+  if (!mediaBlocks('.reviews-col', '889').some((m) => /^0(px)?$/.test(String(m.props['border-left'] ?? '')))) {
+    failures.push('styles.css: drawer mode (<=889px, no sidebar column) must clear .reviews-col border-left, or a 1px separator is drawn at x=0 on phones');
+  }
+  if (mediaBlocks('.reviews-col', '1227').some((m) => /^0(px)?$/.test(String(m.props['border-left'] ?? '')))) {
+    failures.push('styles.css: the separator must SURVIVE one-pane mode (890-1227px): the sidebar is still a column there and the reference ledger content starts at 245, not 244');
+  }
+}
+
+/* The 10px hiding inside "row padding": the reference's rows and bands stop 10px short of
+ * the ledger column's right edge (716 vs 726). Padding on the row cannot express that — it
+ * shrinks the row's content box while its background stays full-bleed — so the inset belongs
+ * on the scrolling list. */
+{
+  const sc = declared('.reviews-scroll') || {};
+  if (!/var\(--ds-list-inset-right\)/.test(String(sc.padding || ''))) {
+    failures.push('styles.css: .reviews-scroll must pad its right edge with var(--ds-list-inset-right); the reference rows and bands end 10px short of the column edge (716 vs 726)');
+  }
+}
 
 /* HOJA-419: Reviews must consume the primitives, not re-implement them. Each hook class has
  * to be bound to its primitive, and the primitive module has to be imported. */
@@ -190,11 +235,13 @@ if (row['margin-bottom'] !== undefined && !/^0(px)?$/.test(row['margin-bottom'])
   failures.push(`styles.css: .reviews-row { margin-bottom } is "${row['margin-bottom']}"; that is the legacy card spacing and it breaks the 40px rhythm`);
 }
 
-/** 3. The group bar is a 28px band with the reference's insets and 2px rhythm. */
+/** 3. The group bar is a 28px band with the reference's insets and no vertical margin.
+ *  HOJA-500 re-measured this: the reference band margin is "0px 0px 0px 10px", so the "2px
+ *  rhythm" this comment used to assert was our invention and pushed every band 2px off. */
 expect('.reviews-group-head', 'height', '28px', 'Linear group bars measure 28px at 1440x900 (artifacts/reviews-parity-*.json).');
 {
   const band = declared('.reviews-group-head') || {};
-  const want = { padding: '0 9px 0 10px', margin: '2px 0 2px 10px', 'border-radius': '8px' };
+  const want = { padding: '0 9px 0 10px', margin: '0 0 0 10px', 'border-radius': '8px' };
   for (const [prop, value] of Object.entries(want)) {
     if (resolveAll(band[prop]) !== value) {
       failures.push(`styles.css: .reviews-group-head { ${prop} } is "${resolveAll(band[prop]) ?? 'missing'}", expected "${value}" (measured from the reference band)`);
@@ -329,6 +376,24 @@ if (!/export function reviewGlyphPaths\(/.test(glyphFile)) {
   const draftPaths = (glyphFile.slice(glyphFile.indexOf('REVIEW_GLYPH_DRAFT')).match(/^  'M/gm) || []).length;
   if (pullPaths !== 4) failures.push(`reviews-glyphs.ts: the open glyph must keep the reference's 4 paths, found ${pullPaths}`);
   if (draftPaths !== 5) failures.push(`reviews-glyphs.ts: the draft glyph must keep the reference's 5 paths, found ${draftPaths}`);
+  /* HOJA-500: a path count cannot see a transcribed typo. Ours matched 4/5 path counts and
+   * still carried `14.663` where the reference vector has `14.6631`. Compare the bytes.
+   * Checksums are of the live reference's svg path[d] set, state for state. */
+  const pathsOf = (name) => {
+    const from = glyphFile.indexOf(name);
+    const to = glyphFile.indexOf('];', from);
+    return from === -1 || to === -1 ? [] : [...glyphFile.slice(from, to).matchAll(/'(M[^']+)'/g)].map((m) => m[1]);
+  };
+  const hashOf = (paths) => createHash('sha256').update(paths.join('\n')).digest('hex');
+  for (const [name, want] of [
+    ['REVIEW_GLYPH_PULL', '0bd8836dbd1bcc8d620b0b5fe71acd69cc9ca4ff89ac26bb5ddb1831015f645d'],
+    ['REVIEW_GLYPH_DRAFT', 'f3a3f095aa0a584c3edfb13a74579b32c1761f4c12d315e59fe41e6e71eebc1b'],
+  ]) {
+    const got = hashOf(pathsOf(name));
+    if (got !== want) {
+      failures.push(`reviews-glyphs.ts: ${name} path data is not the reference vector set (sha256 ${got.slice(0, 12)}…, expected ${want.slice(0, 12)}…) — the glyph shape must be the measured one, byte for byte`);
+    }
+  }
 }
 {
   const glyphAt = tsx.indexOf('function ReviewGlyph(');

@@ -25,6 +25,7 @@ const cssPath = join(root, 'src/styles.css');
  * token back must turn it green again. A guard that only watched styles.css would stay green. */
 const tokenPath = join(root, 'src/design/tokens.css');
 const gatePath = join(root, 'src/reviews-gate.ts');
+const glyphPath = join(root, 'src/reviews-glyphs.ts');
 
 const mutations = [
   {
@@ -44,12 +45,12 @@ const mutations = [
     expect: '.reviews-group-head { height } is "22px", expected "28px"',
   },
   {
-    name: 'band rhythm token 2px -> 8px',
+    name: 'band rhythm token 0 -> 8px (HOJA-500: the measured margin is 0 vertical)',
     file: tokenPath,
-    from: '--ds-group-bar-margin:2px 0 2px 10px;',
+    from: '--ds-group-bar-margin:0 0 0 10px;',
     to: '--ds-group-bar-margin:8px 0 0 10px;',
     runner: ['scripts/check-reviews.mjs'],
-    expect: '.reviews-group-head { margin } is "8px 0 0 10px", expected "2px 0 2px 10px"',
+    expect: '.reviews-group-head { margin } is "8px 0 0 10px", expected "0 0 0 10px"',
   },
   {
     name: 'glyph 14px -> 12px',
@@ -66,6 +67,17 @@ const mutations = [
     to: '.reviews-glyph{width:14px;height:14px;flex:0 0 14px;border:1.5px solid currentColor;border-radius:0;',
     runner: ['scripts/check-reviews.mjs'],
     expect: '.reviews-glyph { border }',
+  },
+  {
+    /* HOJA-500: the glyph is pinned as PATH DATA. Reverting the one-character transcription
+     * slip must be caught — a path-count assertion cannot see it, which is why the old guard
+     * was green with the wrong shape. */
+    name: 'draft glyph loses a digit (14.6631 -> 14.663)',
+    file: glyphPath,
+    from: 'C2.75018 14.6631 3.0859',
+    to: 'C2.75018 14.663 3.0859',
+    runner: ['scripts/check-reviews.mjs'],
+    expect: 'REVIEW_GLYPH_DRAFT path data is not the reference vector set',
   },
   {
     name: 'gate treats a null review decision as approved',
@@ -93,7 +105,7 @@ const run = (args) => {
   }
 };
 
-const originals = new Map([[cssPath, readFileSync(cssPath, 'utf8')], [gatePath, readFileSync(gatePath, 'utf8')]]);
+const originals = new Map([[cssPath, readFileSync(cssPath, 'utf8')], [gatePath, readFileSync(gatePath, 'utf8')], [tokenPath, readFileSync(tokenPath, 'utf8')], [glyphPath, readFileSync(glyphPath, 'utf8')]]);
 let failures = 0;
 
 const baseline = run(['scripts/check-reviews.mjs']);

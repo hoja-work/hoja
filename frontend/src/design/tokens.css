@@ -22,17 +22,34 @@
   /* List row. Artifact rows[].height = 40 on BOTH sides at every viewport measured. */
   --ds-row-height:40px;
   --ds-row-gap:8px;
-  --ds-row-padding:0 4px 0 6px;        /* artifact: reference "0px", target "0px 4px 0px 6px" */
+  --ds-row-padding:0;                  /* artifact: reference row padding "0px" (HOJA-500); the
+                                          6px/4px inset this token used to carry was our invention,
+                                          not the reference's — it now lives on .ds-list-row-main */
   --ds-row-radius:6px;
-  --ds-row-main-padding:0 4px 0 12px;  /* click target inset; glyph lands 18px in (glyphInset=18) */
+  --ds-row-main-padding:0 8px 0 18px;
+  /* One-pane and below: the reference timestamp ends 16px from the row's right edge, not 8px
+     (measured at 1227, 1100 and 390; 8px at 1228 and above). */
+  --ds-row-main-padding-narrow:0 16px 0 18px;  /* glyph lands 18px into the row (glyphInset=18) and the
+                                          timestamp ends 8px short of the row's right edge
+                                          (reference time inset = 8px @1440) */
   --ds-row-time-width:44px;
   --ds-row-glyph-size:14px;            /* artifact glyph.size = 14, viewBox 0 0 16 16 */
+  /* The ledger's right inset: the reference's rows and bands end at 716 inside a ledger whose
+     content column ends at 726 (reference row right 716, band right 716, column right 726).
+     Ours ran full-bleed to the column edge, which is the 10px the "row padding" delta was
+     really reporting. Measured by scripts/ui-probes/reviews-residual.mjs at 390/1024/1440. */
+  --ds-list-inset-right:10px;
 
   /* Group bar. Artifact bands[].h = 28 both sides; padding/margin/radius identical on both
      sides in the 02:07Z run, so these are measured agreement, not a guess. */
   --ds-group-bar-height:28px;
   --ds-group-bar-padding:0 9px 0 10px;
-  --ds-group-bar-margin:2px 0 2px 10px;
+  --ds-group-bar-margin:0 0 0 10px;
+  /* At 1227px and below the reference band gains an 8px right margin (measured at 1227 and
+     1100: "0px 8px 0px 10px"; at 1228 and above it is "0px 0px 0px 10px"). */
+  --ds-group-bar-margin-narrow:0 8px 0 10px;    /* artifact: reference "0px 0px 0px 10px" — the 2px
+                                          vertical margin was ours, and it pushed every band
+                                          2px off the reference rhythm (HOJA-500) */
   --ds-group-bar-radius:8px;
   --ds-group-bar-gap:6px;
 
