@@ -34,9 +34,10 @@
 
 /* Navigation shell */
 .settings-sidebar {
-  width: 264px;
-  flex-basis: 264px;
-  padding: 20px 14px 14px;
+  /* SETTINGS-SPEC: nav is 244px persistent, 330px as a drawer (measured at 881px and 390px). */
+  width: var(--ds-settings-nav-width);
+  flex-basis: var(--ds-settings-nav-width);
+  padding: var(--ds-settings-nav-padding);
   border-color: var(--settings-line);
   background: #f4f4f4;
   color: var(--settings-ink);
@@ -44,7 +45,7 @@
 
 :root[data-theme=dark] .settings-sidebar { background: #1c1c1c; }
 .settings-sidebar-top { display: flex; align-items: center; gap: 6px; margin-bottom: 22px; }
-.settings-sidebar .settings-back { min-height: 32px; margin: 0; padding: 0 9px; color: var(--settings-muted); font-size: 12px; }
+.settings-sidebar .settings-back { min-height: var(--ds-settings-back-height); height: var(--ds-settings-back-height); margin: 0; padding: 0 9px; color: var(--settings-muted); font-size: var(--ds-settings-nav-font-size); font-weight: var(--ds-settings-nav-font-weight); }
 .settings-sidebar .settings-back svg { flex: none; }
 .settings-drawer-close { display: none; width: 32px; height: 32px; margin-left: auto; place-items: center; border-radius: 8px; background: transparent; color: var(--settings-muted); }
 .settings-workspace-name { display: flex; align-items: center; gap: 11px; padding: 0 8px 20px; }
@@ -52,15 +53,16 @@
 .settings-workspace-name > span:last-child { display: grid; gap: 2px; min-width: 0; }
 .settings-workspace-name b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 650; }
 .settings-workspace-name small { color: var(--settings-muted); font-size: 11px; }
-.settings-search { min-height: 34px; margin: 0 2px 18px; padding: 0 9px; border-color: var(--settings-line); border-radius: 9px; background: var(--settings-card); }
-.settings-search input { height: 32px; font-size: 12px; }
+.settings-search { min-height: var(--ds-settings-search-height); margin: 0 2px 18px; padding: 0 9px; border-color: var(--settings-line); border-radius: 9px; background: var(--settings-card); }
+.settings-search input { height: var(--ds-settings-search-height); font-size: var(--ds-settings-nav-font-size); }
 .settings-search > button { display: grid; place-items: center; width: 24px; height: 24px; flex: none; padding: 0; border-radius: 6px; background: transparent; color: var(--settings-muted); }
 .settings-sidebar nav { scrollbar-width: thin; scrollbar-color: var(--settings-line) transparent; }
-.settings-sidebar .nav-group { margin: 0 0 18px; }
-.settings-sidebar .nav-group > p { margin: 0 10px 6px; color: var(--settings-muted); font-size: 10px; font-weight: 650; letter-spacing: .09em; }
-.settings-sidebar .nav-item { position: relative; gap: 10px; height: 30px; min-height: 30px; margin: 1px 0; padding: 0 9px; border: 1px solid transparent; border-radius: 8px; color: var(--settings-muted); font-size: 12px; font-weight: 480; }
+.settings-sidebar .nav-group { margin: 0 0 var(--ds-settings-group-gap); }
+/* The reference labels groups at 13px/500 with no tracking, not 10px uppercase. */
+.settings-sidebar .nav-group > p { margin: 0 10px 6px; color: var(--settings-muted); font-size: var(--ds-settings-group-label-size); font-weight: var(--ds-settings-nav-font-weight); letter-spacing: 0; line-height: var(--ds-settings-group-label-height); }
+.settings-sidebar .nav-item { position: relative; gap: 8px; height: var(--ds-settings-nav-row-height); min-height: var(--ds-settings-nav-row-height); margin: var(--ds-settings-nav-row-gap) 0; padding: var(--ds-settings-nav-row-padding); border: 1px solid transparent; border-radius: var(--ds-settings-nav-row-radius); color: var(--settings-muted); font-size: var(--ds-settings-nav-font-size); font-weight: var(--ds-settings-nav-font-weight); }
 .settings-sidebar .nav-item > span { flex: 1; }
-.settings-sidebar .nav-item > svg { flex: none; opacity: .8; }
+.settings-sidebar .nav-item > svg { flex: none; width: var(--ds-settings-nav-icon-size); height: var(--ds-settings-nav-icon-size); opacity: .8; }
 .settings-sidebar .nav-item:hover { background: color-mix(in srgb, var(--settings-accent-soft) 55%, transparent); color: var(--settings-ink); }
 .settings-sidebar .nav-item.active { border-color: color-mix(in srgb, var(--settings-accent) 12%, transparent); background: var(--settings-accent-soft); color: var(--settings-accent-strong); font-weight: 620; }
 .settings-sidebar .nav-item.active::before { position: absolute; top: 7px; bottom: 7px; left: -4px; width: 2px; border-radius: 2px; background: var(--settings-accent); content: ''; }
@@ -78,19 +80,24 @@
 .settings-drawer-scrim { display: none; }
 
 /* Page hierarchy and shared panels */
-.settings-page { width: min(100%, 840px); max-width: 840px; min-width: 0; margin: 0 auto; padding: 6px 0 64px; color: var(--settings-ink); }
-.settings-page.settings-wide { width: min(100%, 1040px); max-width: 1040px; }
+.settings-page { width: min(100%, var(--ds-settings-column-width)); max-width: var(--ds-settings-column-width); min-width: 0; margin: 0 auto; padding: var(--ds-settings-column-padding) var(--ds-settings-column-padding) 64px; color: var(--settings-ink); }
+/* The reference has ONE content column: the member roster or team list does not widen it. */
+.settings-page.settings-wide { width: min(100%, var(--ds-settings-column-width)); max-width: var(--ds-settings-column-width); }
 .settings-page-heading { margin: 0 0 30px; }
 .settings-page-heading .eyebrow,
 .settings-page > .settings-page-heading > .eyebrow { display: block; margin: 0 0 9px; color: var(--settings-accent); font-size: 10px; font-weight: 700; letter-spacing: .12em; }
-.settings-page-heading h1 { margin: 0 0 8px; color: var(--settings-ink); font-size: 14px; font-weight: 680; letter-spacing: -.015em; line-height: 1.35; }
+/* Title band. The reference has no h1 and no divider: a 24px/500 page name in a 32px band. The
+   five earlier declarations for this selector (14px, serif clamp, 34px, 32–40px clamp, 32px) all
+   collapsed into this one; the last one used to win inside this very file, which is why live
+   rendered a 40px serif title while the source said 14px. */
+.settings-page-heading h1 { margin: 0 0 8px; color: var(--settings-ink); font-family: var(--hoja-font-ui); font-size: var(--ds-settings-title-size); font-weight: var(--ds-settings-title-weight); letter-spacing: -.01em; line-height: var(--ds-settings-title-line); }
 .settings-page-heading > p { max-width: 660px; margin: 0; color: var(--settings-muted); font-size: 13px; line-height: 1.65; }
 .settings-page .settings-group,
 .settings-page .workspace-settings-form { width: 100%; max-width: none; min-width: 0; margin: 0 0 18px; padding: 23px 24px; border: 1px solid var(--settings-line); border-radius: 15px; background: var(--settings-card); box-shadow: 0 1px 2px #24242404, 0 10px 30px #24242403; color: var(--settings-ink); }
 .settings-stack { display: grid; }
 .settings-leading-note { margin: -10px 0 20px; color: var(--settings-muted); font-size: 12px; line-height: 1.6; }
 .settings-section-kicker { display: block; margin-bottom: 5px; color: var(--settings-accent); font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
-.settings-page .settings-group h2 { margin: 0; color: var(--settings-ink); font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
+.settings-page .settings-group h2 { margin: 0; color: var(--settings-ink); font-family: var(--hoja-font-ui); font-size: var(--ds-settings-section-size); font-weight: var(--ds-settings-section-weight); letter-spacing: 0; line-height: var(--ds-settings-section-line); }
 .settings-section-intro { margin: 6px 0 20px !important; color: var(--settings-muted) !important; font-size: 12px !important; line-height: 1.55 !important; }
 .settings-section-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
 .settings-badge { display: inline-flex; align-items: center; width: fit-content; min-height: 23px; padding: 2px 8px; border: 1px solid var(--settings-line); border-radius: 999px; background: var(--settings-subtle); color: var(--settings-muted); font-size: 10px; font-weight: 600; white-space: nowrap; }
@@ -280,7 +287,7 @@
 }
 
 @media (max-width: 700px) {
-  .settings-sidebar { width: min(310px, 88vw); flex-basis: auto; padding-top: 14px; }
+  .settings-sidebar { width: var(--ds-settings-nav-drawer-width); flex-basis: var(--ds-settings-nav-drawer-width); padding-top: 14px; }
   .settings-drawer-close { display: grid; }
   .settings-drawer-scrim { position: fixed; z-index: 34; inset: 60px 0 0; display: block; visibility: hidden; background: #14141466; opacity: 0; transition: opacity .18s ease, visibility .18s ease; }
   .settings-drawer-scrim.visible { visibility: visible; opacity: 1; }
@@ -375,21 +382,21 @@
 }
 
 .settings-page-heading h1 {
-  margin-bottom: 12px;
-  font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
-  font-size: clamp(30px, 3.2vw, 42px);
-  font-weight: 500;
-  letter-spacing: -.045em;
-  line-height: 1.05;
+  margin-bottom: 8px;
+  font-family: var(--hoja-font-ui);
+  font-size: var(--ds-settings-title-size);
+  font-weight: var(--ds-settings-title-weight);
+  letter-spacing: -.01em;
+  line-height: var(--ds-settings-title-line);
 }
 
-.settings-page-heading { margin-bottom: 36px; padding-bottom: 24px; border-bottom: 1px solid var(--settings-line); }
+.settings-page-heading { margin-bottom: 32px; padding-bottom: 0; border-bottom: 0; }
 .settings-page-heading > p { max-width: 580px; font-size: 14px; line-height: 1.65; }
 .settings-page-heading .eyebrow { margin-bottom: 13px; font-size: 11px; letter-spacing: .14em; }
 .settings-page .settings-group h2,
-.settings-section-head h2 { font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; font-size: 21px; font-weight: 550; letter-spacing: -.025em; }
-.settings-page { max-width: 880px; }
-.settings-page.settings-wide { max-width: 1100px; }
+.settings-section-head h2 { font-family: var(--hoja-font-ui); font-size: var(--ds-settings-section-size); font-weight: var(--ds-settings-section-weight); letter-spacing: 0; line-height: var(--ds-settings-section-line); }
+.settings-page { max-width: var(--ds-settings-column-width); }
+.settings-page.settings-wide { max-width: var(--ds-settings-column-width); }
 .settings-page .settings-group { margin-bottom: 36px; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
 .settings-page .workspace-settings-form { padding: 28px; border: 1px solid var(--settings-line); border-radius: 7px; background: var(--settings-card); box-shadow: none; }
 .settings-leading-note { max-width: 570px; margin-top: -18px; margin-bottom: 28px; font-size: 13px; }
@@ -406,8 +413,11 @@
 .settings-search { border-color: #ffffff2e; background: #ffffff0a; }
 .settings-search input { color: var(--settings-ink); }
 .settings-search input::placeholder { color: #c6c6c6; }
-.settings-sidebar .nav-group > p { font-size: 11px; }
-.settings-sidebar .nav-item { height: 34px; min-height: 34px; font-size: 13px; }
+/* Third-generation block: these three properties used to restate 34px/11px here and win over the
+   measured rule above purely by coming later in the file. They now read the same tokens, so the
+   two blocks cannot disagree again. */
+.settings-sidebar .nav-group > p { font-size: var(--ds-settings-group-label-size); }
+.settings-sidebar .nav-item { height: var(--ds-settings-nav-row-height); min-height: var(--ds-settings-nav-row-height); font-size: var(--ds-settings-nav-font-size); }
 .settings-sidebar .nav-item:hover { background: #ffffff0d; color: #fff; }
 .settings-sidebar .nav-item.active { border-color: #eeeeee; background: #eeeeee; color: #343434; }
 .settings-sidebar .nav-item.active::before { display: none; }
@@ -558,7 +568,7 @@
   .app:has(.settings-sidebar) .workspace-content { background: #f6f6f6; }
   :root[data-theme=dark] .app:has(.settings-sidebar) .workspace-content { background: #181818; }
   .settings-page-heading { margin-bottom: 27px; padding-bottom: 20px; }
-  .settings-page-heading h1 { font-size: 34px; }
+  .settings-page-heading h1 { font-size: var(--ds-settings-title-size); }
   .settings-page-heading > p { font-size: 13px; }
   .settings-page .settings-group { margin-bottom: 28px; }
   .settings-page .workspace-settings-form { padding: 20px; }
@@ -621,10 +631,10 @@
   font-family: var(--hoja-font-ui);
   letter-spacing: -.035em;
 }
-.settings-page-heading h1 { font-size: clamp(32px, 3.2vw, 40px); font-weight: 610; line-height: 1.08; }
+.settings-page-heading h1 { font-size: var(--ds-settings-title-size); font-weight: var(--ds-settings-title-weight); line-height: var(--ds-settings-title-line); }
 .settings-page .settings-group h2,
-.settings-section-head h2 { font-size: 18px; font-weight: 630; }
-.settings-page-heading { padding-bottom: 27px; }
+.settings-section-head h2 { font-size: var(--ds-settings-section-size); font-weight: var(--ds-settings-section-weight); line-height: var(--ds-settings-section-line); }
+.settings-page-heading { padding-bottom: 0; }
 .settings-page-heading .eyebrow { color: #5c5c5c; }
 .settings-page .workspace-settings-form,
 .profile-form { border-radius: 10px; }
@@ -738,7 +748,7 @@
 @media (max-width: 700px) {
   .app:has(.settings-sidebar) .workspace-content { background: #f7f7f7; }
   :root[data-theme=dark] .app:has(.settings-sidebar) .workspace-content { background: #151515; }
-  .settings-page-heading h1 { font-size: 32px; }
+  .settings-page-heading h1 { font-size: var(--ds-settings-title-size); }
 }
 
 /* Keep foreground and background owned by the final settings theme, rather
@@ -807,3 +817,44 @@
   .extension-card-actions > button { flex: 1 1 auto; justify-content: center; }
   .extension-card .api-key-confirm button { flex: 1 1 100%; justify-content: center; }
 }
+
+/* ------------------------------------------------------------------ *
+ * Settings shell (HOJA-421) — geometry from SETTINGS-SPEC.md.
+ * These rules are the screen's own cascade, not the design layer, so they are
+ * deliberately NOT wrapped in :where(): they must be able to beat the legacy
+ * cascade above. Any class this file adds to a design primitive below IS :where()
+ * scoped, so a media query can always override it.
+ * ------------------------------------------------------------------ */
+.settings-page .settings-group .setting-row,
+.settings-page .settings-group .ds-list-row {
+  min-height: var(--ds-settings-row-height);
+  padding: var(--ds-settings-row-padding) 0;
+}
+.settings-page .settings-group > .setting-row:first-of-type { padding-top: 0; }
+.settings-page-heading .eyebrow { font-size: 11px; font-weight: 600; letter-spacing: .08em; }
+.settings-page-heading > p { max-width: 100%; margin: 0; font-size: 13px; line-height: 1.6; }
+
+/* The mobile drawer is a 330px panel, not the 244px column squeezed. */
+@media (max-width: 880px) {
+  .settings-sidebar {
+    width: var(--ds-settings-nav-drawer-width);
+    flex-basis: var(--ds-settings-nav-drawer-width);
+    max-width: var(--ds-settings-nav-drawer-width);
+  }
+}
+
+/* From 881px up the reference draws the content as an inset card and the column keeps its
+   640px cap: it gains margins, not width. */
+@media (min-width: 881px) {
+  .app:has(.settings-sidebar) .main {
+    margin: var(--ds-settings-main-inset) var(--ds-settings-main-inset) var(--ds-settings-main-inset) 0;
+    border-radius: var(--ds-settings-main-radius);
+  }
+  .settings-page { padding-left: var(--ds-settings-column-padding); padding-right: var(--ds-settings-column-padding); }
+}
+
+/* A menu entry that names a screen Hoja cannot serve yet: visibly unavailable, never a
+   control that pretends to work. */
+.settings-sidebar .nav-item[data-availability='unavailable'] { cursor: not-allowed; opacity: .72; }
+.settings-sidebar .nav-item[data-availability='unavailable'] .settings-nav-state { flex: none; font-size: 10px; font-weight: 600; letter-spacing: .02em; }
+.settings-sidebar .nav-item[data-availability='unavailable']:hover { background: transparent; color: var(--settings-muted); }

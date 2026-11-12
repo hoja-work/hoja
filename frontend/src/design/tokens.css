@@ -86,4 +86,39 @@
   --ds-feed-avatar-size:24px;
   --ds-feed-page-title-size:13px;
   --ds-feed-title-size:19px;
+
+  /* Settings shell (HOJA-421). Artifact: reference/linear/settings-artifacts/linear-settings-*.json,
+     written by scripts/ui-probes/cdp-tab.mjs against linear.app/hoja/settings/account/preferences at
+     7 viewports; SETTINGS-SPEC.md is generated from those artifacts by settings-spec.mjs. A number
+     here is a measurement, never an intention. */
+  --ds-settings-nav-width:244px;        /* artifact value.nav.w @1440 (persistent column) */
+  --ds-settings-nav-drawer-width:330px; /* artifact value.nav.w @390/@600 while off-canvas */
+  --ds-settings-nav-padding:20px 16px 14px;
+  --ds-settings-nav-row-height:28px;    /* artifact value.link.h @every viewport */
+  --ds-settings-nav-row-radius:8px;     /* artifact value.linkStyle.border-radius */
+  --ds-settings-nav-row-padding:0 8px 0 10px; /* artifact value.linkStyle.padding, right inset added */
+  --ds-settings-nav-row-gap:1px;        /* rows sit 29px apart: 28px row + 1px */
+  --ds-settings-nav-font-size:13px;     /* artifact value.linkText.font-size */
+  --ds-settings-nav-font-weight:500;    /* artifact value.linkText.font-weight */
+  --ds-settings-nav-icon-size:16px;     /* artifact value.linkIcon.w */
+  --ds-settings-group-label-size:13px;  /* artifact value.groupText.font-size */
+  --ds-settings-group-label-height:16px;/* artifact value.group.h */
+  --ds-settings-group-gap:22px;         /* label top to first row top: 135 - 113 */
+  --ds-settings-search-height:28px;     /* artifact value.search.h */
+  --ds-settings-back-height:28px;       /* artifact value.back.h */
+  --ds-settings-column-width:640px;     /* artifact value.titleChain.2.r.w: the cap, wider screens do not grow it */
+  --ds-settings-column-padding:16px;    /* artifact value.titleChain.2.style.padding-left */
+  --ds-settings-column-margin:40px;     /* artifact value.titleChain.4.style.margin-left @1440 */
+  --ds-settings-title-size:24px;        /* artifact value.titleChain.0.style.font-size */
+  --ds-settings-title-weight:500;       /* artifact value.titleChain.0.style.font-weight */
+  --ds-settings-title-line:32px;        /* artifact value.titleChain.0.style.line-height */
+  --ds-settings-section-size:15px;      /* artifact value.sectionText.font-size */
+  --ds-settings-section-weight:500;     /* artifact value.sectionText.font-weight */
+  --ds-settings-section-line:23px;      /* artifact value.sectionText.line-height */
+  --ds-settings-row-height:66px;        /* artifact value.card.h: 34px control + 16px padding, measured not derived */
+  --ds-settings-row-padding:16px;       /* artifact value.cardStyle.padding @1440 */
+  --ds-settings-row-radius:10px;        /* artifact value.cardStyle.border-radius (first row of a card) */
+  --ds-settings-main-radius:12px;       /* artifact value.mainStyle.border-radius */
+  --ds-settings-main-inset:8px;         /* artifact value.mainStyle.margin: the card inset inside the shell */
+  --ds-settings-drawer-breakpoint:881px;/* bisected: drawer at 880, persistent column at 881 */
 }
