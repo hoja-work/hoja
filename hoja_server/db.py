@@ -34,7 +34,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 54
+CURRENT_SCHEMA_REVISION = 55
 
 
 def now_iso() -> str:
@@ -546,6 +546,15 @@ github_link = Table(
     Column("body", Text),
     Column("merged_at", String),
     Column("github_updated_at", String),
+    # Per-file diff of the pull request (revision 55), for the Reviews pane's file
+    # list. JSON text rather than a child table on purpose: the pane reads up to 100
+    # issues in one query and each issue can carry several links, so a child table
+    # would either fan the join out or cost one query per link. A pull request's file
+    # list is small and bounded (the enrichment caps it), and nothing ever filters or
+    # sorts by file, so it is opaque display data that belongs on the row it describes
+    # — the same treatment reviewers already gets. NULL means "not fetched yet"; the
+    # serializer serves that as an empty list, never as a missing field.
+    Column("files", Text),
     UniqueConstraint(
         "organization_id", "kind", "external_id", name="uq_github_link_external"
     ),
@@ -2013,6 +2022,25 @@ def _apply_github_link_pull_meta(conn):
         conn.exec_driver_sql(f"ALTER TABLE github_link ADD COLUMN {name} {sql_type}")
 
 
+def _apply_github_link_files(conn):
+    """The pull request's per-file diff (scripts/enrich-github-link-files.sh).
+
+    One nullable TEXT column holding a JSON array, not a child table: the Reviews pane
+    asks for up to 100 issues in a single query and each issue can carry several links,
+    so a child table would make that either a fan-out join or a query per link. Nothing
+    filters on a file, so the payload is display data on the link row, exactly like
+    ``reviewers``. NULL is a supported state (a link the enrichment has not reached,
+    or a real PR whose file list GitHub refused) and the serializer turns it into [].
+
+    The column probe keeps this a no-op on a fresh database (create_all already made
+    the column) and on a database where it was added by hand, and it is the portable
+    form: SQLite has no ADD COLUMN IF NOT EXISTS.
+    """
+    existing = {column["name"] for column in inspect(conn).get_columns("github_link")}
+    if "files" not in existing:
+        conn.exec_driver_sql("ALTER TABLE github_link ADD COLUMN files TEXT")
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -2131,6 +2159,10 @@ _MIGRATIONS = {
     # webhook does not carry it, so scripts/enrich-github-link-pulls.sh fills it and a link
     # with no enrichment still reads correctly.
     54: _apply_github_link_pull_meta,
+    # 55: the pull request's per-file diff, as JSON text on the link row (one read for the
+    # whole Reviews list, no child-table join). Nullable, filled by
+    # scripts/enrich-github-link-files.sh; NULL reads back as an empty file list.
+    55: _apply_github_link_files,
 }
 
 

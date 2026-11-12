@@ -420,6 +420,21 @@ type GithubLink {
   body: String
   mergedAt: DateTime
   githubUpdatedAt: DateTime
+  "Per-file diff of the pull request; empty when it is not a pull request or not fetched yet."
+  files: [GithubFile!]!
+}
+
+"One file changed by a pull request."
+type GithubFile {
+  path: String!
+  additions: Int!
+  deletions: Int!
+  "added | modified | removed | renamed (GitHub's lesser states fold into modified)."
+  status: String!
+  "Unified diff. Null when GitHub omits it (binary file) or it exceeded the stored size cap."
+  patch: String
+  "Old path, only for a rename."
+  previousPath: String
 }
 
 type RateLimitPayload {

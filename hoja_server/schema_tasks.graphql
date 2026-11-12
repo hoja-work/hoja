@@ -218,7 +218,7 @@ extend type Query {
   taskLabels(filter: TaskLabelFilter, first: Int = 100, after: String): TaskLabelConnection
   tasks(filter: TaskFilter, first: Int = 50, after: String, orderBy: PaginationOrderBy): TaskConnection
   myTaskActivity(first: Int = 50, after: String): MyTaskActivityConnection
-  searchTasks(term: String!, first: Int = 20): TaskConnection
+  searchTasks(term: String!, first: Int = 20, after: String): TaskConnection
 }
 
 extend type Mutation {

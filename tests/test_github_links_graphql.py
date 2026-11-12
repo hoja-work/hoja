@@ -140,3 +140,78 @@ def test_pull_request_detail_is_queryable_for_the_reviews_pane(tmp_path):
     assert link["body"] == "Fixes HOJA-1."
     assert link["mergedAt"] is None
     assert link["githubUpdatedAt"] == "2026-11-09T00:11:43Z"
+
+
+FILES_QUERY = """
+query($id: String!) {
+  issue(id: $id) {
+    githubLinks {
+      externalId
+      files { path additions deletions status patch previousPath }
+    }
+  }
+}
+"""
+
+
+def _post(app, token, query, variables):
+    return TestClient(app).post(
+        "/graphql",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"query": query, "variables": variables},
+    )
+
+
+def test_files_returns_the_stored_per_file_diff(tmp_path):
+    """Revision 55: the pane's file list, including a rename and a patch GitHub omitted."""
+    engine, app, seeded = _setup(tmp_path)
+    stored = (
+        '[{"path":"clinear/cli.py","additions":27,"deletions":1,"status":"modified",'
+        '"patch":"@@ -1 +1 @@","previousPath":null},'
+        '{"path":"docs/api.md","additions":3,"deletions":0,"status":"renamed",'
+        '"patch":null,"previousPath":"docs/http.md"}]'
+    )
+    with engine.begin() as conn:
+        conn.execute(github_link.update().where(
+            github_link.c.external_id == "4242").values(files=stored))
+
+    response = _post(app, seeded["token"], FILES_QUERY, {"id": "ENG-1"})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert "errors" not in body, body
+    files = body["data"]["issue"]["githubLinks"][0]["files"]
+    assert [f["path"] for f in files] == ["clinear/cli.py", "docs/api.md"]
+    assert (files[0]["additions"], files[0]["deletions"]) == (27, 1)
+    assert files[0]["status"] == "modified"
+    assert files[0]["patch"] == "@@ -1 +1 @@"
+    assert files[0]["previousPath"] is None
+    # A binary or oversized file legitimately has no patch; it is still a file row.
+    assert files[1]["status"] == "renamed"
+    assert files[1]["patch"] is None
+    assert files[1]["previousPath"] == "docs/http.md"
+
+
+def test_files_is_an_empty_list_when_the_link_was_not_enriched(tmp_path):
+    """The field is non-null: an un-enriched link must answer [] and never null."""
+    _engine, app, seeded = _setup(tmp_path)
+
+    response = _post(app, seeded["token"], FILES_QUERY, {"id": "ENG-1"})
+
+    body = response.json()
+    assert "errors" not in body, body
+    assert body["data"]["issue"]["githubLinks"][0]["files"] == []
+
+
+def test_files_survives_a_malformed_stored_payload(tmp_path):
+    """Hand-edited JSON must not take the whole task query down with it."""
+    engine, app, seeded = _setup(tmp_path)
+    with engine.begin() as conn:
+        conn.execute(github_link.update().where(
+            github_link.c.external_id == "4242").values(files="{not json"))
+
+    response = _post(app, seeded["token"], FILES_QUERY, {"id": "ENG-1"})
+
+    body = response.json()
+    assert "errors" not in body, body
+    assert body["data"]["issue"]["githubLinks"][0]["files"] == []

@@ -139,11 +139,8 @@ for (const cls of ['reviews-detail', 'reviews-detail-head', 'reviews-detail-tabs
     failures.push(`styles.css: no .${cls} rule found; the review detail pane lost a section`);
   }
 }
-if (!/role="tab"/.test(tsx) || !/className="reviews-tab on"/.test(tsx)) {
+if (!/role="tab"/.test(tsx) || !/reviews-tab on/.test(tsx)) {
   failures.push('main.tsx: the detail pane lost its Overview/Diff tab row (role="tab" + the selected tab)');
-}
-if (!/reviews-tab[^"]*"\s+disabled/.test(tsx)) {
-  failures.push('main.tsx: the Diff tab must stay disabled while no diff data is stored, not link out or pretend to load');
 }
 if (!declared('.reviews-pane-empty')) {
   failures.push('styles.css: no .reviews-pane-empty rule found; the pane lost its "select a review" state');
@@ -341,8 +338,119 @@ if (!/className="reviews-pane-close"/.test(tsx)) {
   failures.push('main.tsx: the one-pane detail needs a back button (.reviews-pane-close); without it the overlay cannot be dismissed');
 }
 
+/** 14. The Diff tab renders the stored pull-request file list. It used to be a disabled
+ *      "not available" tab; the server now stores `files { path additions deletions status
+ *      patch previousPath }`, so the tab must be live, the query must select those fields,
+ *      the renderer must colour-code + and - lines from the patch itself, and a file whose
+ *      patch is null must say so instead of drawing an empty body. */
+const DIFF_FIELDS = ['path', 'additions', 'deletions', 'status', 'patch', 'previousPath'];
+if (queryAt !== -1) {
+  const selection = tsx.slice(queryAt, tsx.indexOf('.then(', queryAt));
+  const filesAt = selection.indexOf('files {');
+  if (filesAt === -1) {
+    failures.push('main.tsx: ReviewsLinks does not select githubLinks.files; the Diff tab would have no data to render');
+  } else {
+    const filesSel = selection.slice(filesAt, selection.indexOf('}', filesAt) + 1);
+    for (const field of DIFF_FIELDS) {
+      if (!new RegExp(`\\b${field}\\b`).test(filesSel)) {
+        failures.push(`main.tsx: ReviewsLinks does not select files.${field}; the diff renderer reads it`);
+      }
+    }
+  }
+}
+if (typeAt !== -1 && !/files\?:ReviewDiffFile\[\]\|null/.test(typeLine)) {
+  failures.push('main.tsx: ReviewLink is missing `files?:ReviewDiffFile[]|null`');
+}
+const diffTypeAt = tsx.indexOf('export type ReviewDiffFile=');
+if (diffTypeAt === -1) {
+  failures.push('main.tsx: no `export type ReviewDiffFile=` line; the diff data contract is gone');
+} else {
+  const diffType = tsx.slice(diffTypeAt, tsx.indexOf('};', diffTypeAt) + 2);
+  for (const field of DIFF_FIELDS) {
+    if (!new RegExp(`\\b${field}[?]?:`).test(diffType)) {
+      failures.push(`main.tsx: ReviewDiffFile is missing ${field}`);
+    }
+  }
+}
+
+const diffTabAt = tsx.indexOf('id="reviews-tab-diff"');
+if (diffTabAt === -1) {
+  failures.push('main.tsx: no Diff tab (id="reviews-tab-diff"); the pane lost its second view');
+} else {
+  const tabStart = tsx.lastIndexOf('<button', diffTabAt);
+  const tabTag = tsx.slice(tabStart, tsx.indexOf('</button>', diffTabAt));
+  if (/\bdisabled\b/.test(tabTag)) {
+    failures.push('main.tsx: the Diff tab is disabled again; it must render the stored file list (or an explicit empty state)');
+  }
+  if (!/role="tab"/.test(tabTag) || !/aria-selected=\{paneTab==='diff'\}/.test(tabTag)) {
+    failures.push('main.tsx: the Diff tab must be role="tab" with aria-selected bound to the pane state');
+  }
+  if (!/onClick=\{\(\)=>setPaneTab\('diff'\)\}/.test(tabTag)) {
+    failures.push("main.tsx: clicking the Diff tab must switch the pane body (onClick={()=>setPaneTab('diff')})");
+  }
+  if (!/aria-controls="reviews-panel"/.test(tabTag)) {
+    failures.push('main.tsx: the Diff tab must wire aria-controls="reviews-panel" (the tabpanel)');
+  }
+}
+if (!/role="tabpanel" id="reviews-panel" aria-labelledby="reviews-tab-diff"/.test(tsx)) {
+  failures.push('main.tsx: the diff view needs its own role="tabpanel" region labelled by the Diff tab');
+}
+if (!/onKeyDown=\{onTabKeyDown\}/.test(tsx) || !/ArrowRight/.test(tsx)) {
+  failures.push('main.tsx: the tab row must stay keyboard-driven (arrow keys move between Overview and Diff)');
+}
+
+const shellAt = tsx.indexOf('function ReviewsShell(');
+const shellEnd = shellAt === -1 ? -1 : tsx.indexOf('\nfunction ', shellAt + 30);
+const shell = shellAt === -1 ? '' : tsx.slice(shellAt, shellEnd === -1 ? undefined : shellEnd);
+const diffNeed = (pattern, why) => { if (!pattern.test(shell)) failures.push(`main.tsx (ReviewsShell diff): ${why}`); };
+diffNeed(/\{files\.length\} \{files\.length===1\?'file':'files'\} changed/, 'the diff summary must print "<n> file(s) changed"');
+diffNeed(/reviewFileTotals\(files\)/, 'the diff summary must total additions/deletions from the file list');
+diffNeed(/f\.previousPath\?/, 'a renamed file must show its previousPath');
+diffNeed(/reviewStatusLabel\(f\.status\)/, 'each file needs a status badge');
+diffNeed(/reviews-diff-file-head[^]*aria-expanded=\{open\}/, 'each file must be collapsible (aria-expanded on its header button)');
+diffNeed(/reviewPatchLines\(f\.patch\)/, 'the patch body must come from the stored patch, split into lines');
+diffNeed(/reviewLineKind\(line\)/, 'each patch line must be classified before it is styled');
+diffNeed(/`reviews-diff-line reviews-diff-\$\{kind\}`/, 'each patch line must carry reviews-diff-<kind> so + / - lines are colour-coded');
+diffNeed(/Binary file or too large to display/, 'a file with patch:null must carry an explicit "binary or too large" note');
+diffNeed(/No file data stored for this pull request/, 'an empty/absent file list must show an honest empty state instead of a fake diff');
+for (const [kind, prefix] of [['add', '+'], ['del', '-']]) {
+  if (!new RegExp(`if\\(line\\.startsWith\\('\\${prefix}'\\)\\)return '${kind}'`).test(tsx)) {
+    failures.push(`main.tsx: a patch line starting with "${prefix}" must classify as "${kind}"`);
+  }
+}
+if (!/if\(line\.startsWith\('@@'\)\)return 'hunk'/.test(tsx)) {
+  failures.push("main.tsx: @@ hunk headers must classify as 'hunk' (muted), not as context");
+}
+for (const sel of ['.reviews-diff-add', '.reviews-diff-del', '.reviews-diff-hunk', '.reviews-diff-line', '.reviews-diff-patch']) {
+  if (!declared(sel)) failures.push(`styles.css: no ${sel} rule found; the diff renderer lost its styling`);
+}
+const diffAdd = declared('.reviews-diff-add') || {};
+const diffDel = declared('.reviews-diff-del') || {};
+if (!/^#[0-9a-f]{6}$/i.test(diffAdd.color || '')) failures.push('styles.css: .reviews-diff-add needs an explicit green colour');
+if (!/^#[0-9a-f]{6}$/i.test(diffDel.color || '')) failures.push('styles.css: .reviews-diff-del needs an explicit red colour');
+if ((diffAdd.color || '').toLowerCase() === (diffDel.color || '').toLowerCase()) {
+  failures.push('styles.css: + and - patch lines must not share a colour');
+}
+if ((declared('.reviews-diff-line') || {})['white-space'] !== 'pre') {
+  failures.push('styles.css: .reviews-diff-line must preserve indentation with white-space:pre');
+}
+
+/** 15. The diff must scroll inside itself: a long line may not widen the page, at any
+ *     width, including inside the <=1227px overlay where the pane is the whole page. */
+const patchRule = declared('.reviews-diff-patch') || {};
+if (patchRule['overflow-x'] !== 'auto') {
+  failures.push(`styles.css: .reviews-diff-patch { overflow-x } is "${patchRule['overflow-x']}"; monospace lines must scroll in their own container`);
+}
+if ((declared('.reviews-diff') || {})['min-width'] !== '0' || (declared('.reviews-diff-scroll') || {})['min-width'] !== '0') {
+  failures.push('styles.css: .reviews-diff/.reviews-diff-scroll need min-width:0 so the patch cannot push the pane wider than the page');
+}
+if ((declared('.reviews-diff') || {}).overflow !== 'hidden') {
+  failures.push('styles.css: .reviews-diff must clip its own overflow; the pane never scrolls sideways');
+}
+
+
 if (failures.length) {
   console.error('reviews invariants failed:\n' + failures.map(f => '  ✗ ' + f).join('\n'));
   process.exit(1);
 }
-console.log('reviews invariants ok: 482px capped ledger, flat 38px rows, 22px group bar, two panes above 1227px, one-pane overlay below it, 889px sidebar drawer, flex-derived page height, detail pane (52px breadcrumb, 44px tabs, 96px labels), ReviewsLinks selects all 17 pull-request detail fields and the pane renders them');
+console.log('reviews invariants ok: 482px capped ledger, flat 38px rows, 22px group bar, two panes above 1227px, one-pane overlay below it, 889px sidebar drawer, flex-derived page height, detail pane (52px breadcrumb, 44px tabs, 96px labels), ReviewsLinks selects all 17 pull-request detail fields and the pane renders them, and the Diff tab renders the stored file list (files{path,additions,deletions,status,patch,previousPath} in the query and the type, live tab, +green/-red patch lines inside their own horizontal scroller, patch:null note, honest empty state)');

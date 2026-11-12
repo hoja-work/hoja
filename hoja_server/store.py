@@ -1036,6 +1036,20 @@ class Store:
                 reviewers = json.loads(reviewers)
             except ValueError:
                 reviewers = None
+        files = row.get("files")
+        if isinstance(files, str):
+            # JSON text written by scripts/enrich-github-link-files.sh (revision 55). The
+            # field is non-null in the schema, so a malformed or absent blob degrades to an
+            # empty list: "no file detail", never a broken task query.
+            try:
+                files = json.loads(files)
+            except ValueError:
+                files = None
+        if not isinstance(files, list):
+            files = []
+        else:
+            files = [self._ser_github_file(entry) for entry in files
+                     if isinstance(entry, dict)]
         return {
             "id": row["id"], "kind": row.get("kind"),
             "externalId": row.get("external_id"), "url": row.get("url"),
@@ -1056,6 +1070,26 @@ class Store:
             "checksFailing": row.get("checks_failing"),
             "body": row.get("body"), "mergedAt": row.get("merged_at"),
             "githubUpdatedAt": row.get("github_updated_at"),
+            # Per-file diff (revision 55), always a list: [] when unknown.
+            "files": files,
+        }
+
+    @staticmethod
+    def _ser_github_file(entry: dict) -> dict:
+        """One row of the stored file list, in its GraphQL shape.
+
+        The four identity/count fields are non-null in the schema, so a stored entry that
+        lost one (hand-edited JSON, an older writer) gets a safe default rather than
+        failing the whole query. ``patch`` and ``previousPath`` stay None: a binary or
+        oversized file genuinely has no patch.
+        """
+        return {
+            "path": str(entry.get("path") or ""),
+            "additions": int(entry.get("additions") or 0),
+            "deletions": int(entry.get("deletions") or 0),
+            "status": str(entry.get("status") or "modified"),
+            "patch": entry.get("patch"),
+            "previousPath": entry.get("previousPath"),
         }
 
     def ser_issue(self, row: dict | None) -> dict | None:

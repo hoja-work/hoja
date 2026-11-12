@@ -1587,7 +1587,6 @@ body:has(.reviews-page) .main>.app-error{flex:none}
 .reviews-tab{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;border-radius:6px;background:transparent;color:var(--muted);font-size:12px;font-weight:500}
 .reviews-tab.on{background:var(--subtle);color:var(--text)}
 .reviews-tab:disabled{opacity:.6;cursor:not-allowed}
-.reviews-tab-flag{padding:0 6px;border:1px solid var(--line);border-radius:9999px;color:var(--muted);font-size:10px;font-weight:450;line-height:15px}
 .reviews-tabs-spacer{flex:1 1 auto}
 .reviews-merge{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 12px;border-radius:6px;background:#5e6ad2;color:#fff;font-size:12px;font-weight:550}
 .reviews-merge:disabled{opacity:.55;cursor:not-allowed}
@@ -1682,4 +1681,51 @@ body:has(.reviews-page) .main>.app-error{flex:none}
   .reviews-detail-title{font-size:20px;line-height:28px}
   .reviews-props{margin-top:16px}
   .reviews-composer{height:44px}
+}
+
+/* Reviews: Diff tab. The pane body swaps from the overview scroll to a diff panel that
+   never widens the page: the file list and every patch line live inside their own
+   horizontal scroller, and the panel itself is a min-width:0 flex child of .reviews-detail
+   so a 200-character line scrolls inside .reviews-diff-patch instead of pushing the
+   ledger or the one-pane overlay sideways. Line colours come from the patch prefix only
+   (data-kind from reviewLineKind): additions green, deletions red, hunk headers muted,
+   context in normal ink, file headers/"no newline" notices muted italic. */
+.reviews-tab-count{margin-left:1px;color:var(--muted);font-weight:450;font-size:11px;font-variant-numeric:tabular-nums}
+.reviews-diff{display:flex;flex-direction:column;flex:1 1 auto;min-height:0;min-width:0;overflow:hidden}
+.reviews-diff-summary{display:flex;align-items:center;gap:8px;flex:none;height:40px;padding:0 24px;border-bottom:1px solid var(--line);color:var(--muted);font-size:12px}
+.reviews-diff-count{color:var(--text);font-weight:500;font-size:12px;font-variant-numeric:tabular-nums}
+.reviews-diff-scroll{flex:1 1 auto;min-height:0;min-width:0;overflow-y:auto;overflow-x:hidden;scrollbar-width:thin}
+.reviews-diff-files{margin:0;padding:0;list-style:none}
+.reviews-diff-file{border-bottom:1px solid var(--line)}
+.reviews-diff-file-head{display:flex;align-items:center;gap:8px;width:100%;min-width:0;height:36px;padding:0 24px;border:0;background:transparent;color:var(--text);font-size:12px;text-align:left}
+.reviews-diff-file-head:hover{background:var(--subtle)}
+.reviews-diff-file-head:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.reviews-diff-caret{flex:none;color:var(--muted);transform:rotate(-90deg);transition:transform .12s ease}
+.reviews-diff-caret[data-open="true"]{transform:none}
+.reviews-diff-file-path{display:flex;align-items:center;gap:8px;flex:1 1 auto;min-width:0;overflow:hidden}
+.reviews-diff-file-path code{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--text)}
+.reviews-diff-file-from{flex:none;max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11px}
+.reviews-diff-file-from code{color:var(--muted);font-size:11px}
+.reviews-diff-file-stat{display:flex;align-items:center;gap:6px;flex:none;font-size:11px;font-variant-numeric:tabular-nums}
+.reviews-diff-status{flex:none;height:18px;padding:0 6px;border:1px solid var(--line);border-radius:4px;color:var(--muted);font-size:10px;line-height:16px}
+.reviews-diff-status[data-status="added"]{color:#4cb782;border-color:#4cb78266}
+.reviews-diff-status[data-status="removed"]{color:#e5534b;border-color:#e5534b66}
+.reviews-diff-status[data-status="renamed"]{color:#5e6ad2;border-color:#5e6ad266}
+.reviews-diff-patch{margin:0;padding:6px 0;max-width:100%;min-width:0;overflow-x:auto;overflow-y:hidden;background:var(--subtle);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:18px;tab-size:4;scrollbar-width:thin}
+.reviews-diff-patch:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.reviews-diff-line{min-height:18px;padding:0 24px 0 0;white-space:pre;color:var(--text)}
+.reviews-diff-add{color:#0f7b46;background:#4cb7821f}
+.reviews-diff-del{color:#b3261e;background:#e5534b1f}
+.reviews-diff-hunk{color:var(--muted);background:color-mix(in srgb,var(--subtle) 60%,var(--panel))}
+.reviews-diff-ctx{color:var(--text)}
+.reviews-diff-meta{color:var(--muted);font-style:italic}
+.reviews-diff-none{margin:0;padding:8px 24px 12px;color:var(--muted);font-size:12px}
+.reviews-diff-empty{margin:0;padding:16px 24px;color:var(--muted);font-size:13px}
+
+@media (max-width:600px){
+  .reviews-diff-summary{padding:0 14px}
+  .reviews-diff-file-head{padding:0 14px}
+  .reviews-diff-line{padding-right:14px}
+  .reviews-diff-none,.reviews-diff-empty{padding-left:14px;padding-right:14px}
+  .reviews-diff-file-from{max-width:30%}
 }
