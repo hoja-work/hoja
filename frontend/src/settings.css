@@ -883,3 +883,15 @@
   .project-status-row select, .project-status-row input[type='color'], .project-status-row .primary, .project-status-row .outline { grid-column: auto / span 1; }
   .project-template-form { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* HOJA-490 — permissions and security. Each row is a real server-side control,
+ * so the row states the capability id it changes and the current effective value. */
+.permission-copy { display: flex; min-width: 0; flex: 1 1 auto; flex-direction: column; gap: 2px; }
+.permission-copy small { color: var(--settings-muted); font-size: 11px; }
+.permission-code { font-family: var(--settings-mono, ui-monospace, monospace); font-size: 10px; letter-spacing: .02em; color: var(--settings-subtle-ink, var(--settings-muted)); }
+.permission-toggle { display: inline-flex; align-items: center; gap: 8px; color: var(--settings-ink); font-size: 11px; white-space: nowrap; }
+.permission-toggle input { width: 14px; height: 14px; accent-color: var(--settings-accent-strong); }
+.security-form { align-items: flex-start; flex-wrap: wrap; }
+.security-form fieldset { flex: 1 1 260px; }
+.security-form fieldset small { display: block; margin-top: 6px; color: var(--settings-muted); font-size: 11px; }
+.security-form label { min-width: 0; }

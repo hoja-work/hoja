@@ -563,6 +563,32 @@ def create_app(
             keys.append(f"email:{email}")
         return keys
 
+    security_policy_cache: dict[str, tuple[float, dict]] = {}
+
+    def _org_security_policy(org_id: str) -> dict:
+        """The workspace's security policy, cached for a few seconds.
+
+        Every authenticated request needs it for the IP allowlist, and a settings
+        save is rare. The TTL only bounds how long a revoked allowlist entry can
+        still be honoured by this process; the mutation invalidates locally, and
+        a restart or the next TTL tick covers the other workers.
+        """
+        from hoja_server import permissions as permission_rules
+        now = time.monotonic()
+        hit = security_policy_cache.get(org_id)
+        if hit and now - hit[0] < 10:
+            return hit[1]
+        policy = permission_rules.security_policy(engine, org_id)
+        security_policy_cache[org_id] = (now, policy)
+        return policy
+
+    def _drop_cached_policy(org_id: str) -> None:
+        security_policy_cache.pop(org_id, None)
+
+    from hoja_server import permissions as _permission_rules
+    if _drop_cached_policy not in _permission_rules.POLICY_INVALIDATORS:
+        _permission_rules.POLICY_INVALIDATORS.append(_drop_cached_policy)
+
     def _open_mode_identity(request: Request):
         if not open_mode or not _is_loopback(request):
             return None, None, None, False
@@ -584,6 +610,16 @@ def create_app(
             pinned = tenant_hosts.required_org(request.scope)
             if pinned and result[1] != pinned:
                 return None, None, None, False
+            # HOJA-490: an IP allowlist is enforced here, not in the UI. An
+            # admin is exempt on purpose: a wrong allowlist must not lock the
+            # workspace out of the screen that fixes it.
+            from hoja_server import permissions as permission_rules
+            policy = _org_security_policy(result[1])
+            if policy.get("ipAllowlist"):
+                actor = store.get_user(result[1], result[0])
+                if not (actor and actor.get("admin")) and not permission_rules.ip_allowed(
+                        policy, _client_ip(request)):
+                    return None, None, None, False
             org_slots.enter(request.scope, result[1])
             tenant_context.bind(result[1])
         return result
@@ -1653,6 +1689,25 @@ def create_app(
             )
         if not result:
             return JSONResponse({"error": "Invalid credentials"}, status_code=401)
+        from hoja_server import permissions as permission_rules
+        identity_org = result[1].get("organization_id")
+        if identity_org:
+            policy = _org_security_policy(identity_org)
+            if not api_key_value and not permission_rules.signin_method_allowed(policy, "password"):
+                return JSONResponse(
+                    {"error": "Password sign-in is turned off for this workspace.",
+                     "reason": "signin_method_disabled"},
+                    status_code=403,
+                )
+            if policy.get("ipAllowlist"):
+                actor = store.get_user(identity_org, result[1]["user_id"])
+                if not (actor and actor.get("admin")) and not permission_rules.ip_allowed(
+                        policy, _client_ip(request)):
+                    return JSONResponse(
+                        {"error": "This network is not allowed for this workspace.",
+                         "reason": "ip_not_allowed"},
+                        status_code=403,
+                    )
         session_token, identity = result
         response = JSONResponse({"status": "authenticated", "expiresAt": identity["expires_at"]})
         response.set_cookie(
@@ -2392,6 +2447,28 @@ def create_app(
                 host=host,
                 email=claims.get("email"),
             )
+        from hoja_server import permissions as permission_rules
+        if not resolved.get("owner"):
+            policy = _org_security_policy(resolved["organization_id"])
+            if not permission_rules.signin_method_allowed(policy, "google"):
+                return _signin_failure(
+                    request,
+                    error="Google sign-in is turned off for this workspace.",
+                    reason="signin_method_disabled",
+                    status_code=403,
+                    host=host,
+                    email=claims.get("email"),
+                )
+            if policy.get("ipAllowlist") and not permission_rules.ip_allowed(
+                    policy, _client_ip(request)):
+                return _signin_failure(
+                    request,
+                    error="This network is not allowed for this workspace.",
+                    reason="ip_not_allowed",
+                    status_code=403,
+                    host=host,
+                    email=claims.get("email"),
+                )
         if resolved.get("owner") or resolved.get("adopted"):
             _security_log.warning(
                 f"auth.owner_admitted host={host} adopted={bool(resolved.get('adopted'))}"

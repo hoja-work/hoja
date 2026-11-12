@@ -66,6 +66,7 @@ from hoja_server.db import (
     token_hash,
     user,
     user_preference,
+    workspace_security_policy,
     workflow_state,
 )
 
@@ -579,11 +580,13 @@ class Store:
                                     or_(api_key.c.expires_at.is_(None), api_key.c.expires_at > now),
                                     user.c.active.is_(True), user.c.archived_at.is_(None)))):
                     out[("key", th)] = (uid, org)
+            session_rows = []
             for start in range(0, len(sessions), 500):
                 chunk = sessions[start:start + 500]
-                for th, uid, org in conn.execute(
+                for th, uid, org, last_seen, created in conn.execute(
                         select(browser_session.c.token_hash, browser_session.c.user_id,
-                               browser_session.c.organization_id)
+                               browser_session.c.organization_id,
+                               browser_session.c.last_seen_at, browser_session.c.created_at)
                         .join(user, and_(user.c.id == browser_session.c.user_id,
                                          user.c.organization_id == browser_session.c.organization_id))
                         .join(organization_membership, and_(
@@ -594,6 +597,26 @@ class Store:
                                     browser_session.c.revoked_at.is_(None),
                                     browser_session.c.expires_at > now,
                                     user.c.active.is_(True), user.c.archived_at.is_(None)))):
+                    session_rows.append((th, uid, org, last_seen, created))
+            # HOJA-490: a websocket must not outlive its session's idle window
+            # either. One policy query for every organization in the batch, so
+            # revalidating N sockets stays two round trips.
+            orgs = {row[2] for row in session_rows}
+            policies: dict[str, dict] = {}
+            if orgs:
+                for row in conn.execute(
+                        select(workspace_security_policy)
+                        .where(workspace_security_policy.c.organization_id.in_(orgs))
+                ).mappings():
+                    policies[row["organization_id"]] = {
+                        "idleTimeoutMinutes": row["idle_timeout_minutes"],
+                        "allowedSigninMethods": json.loads(row["allowed_signin_methods"] or "[]"),
+                        "ipAllowlist": json.loads(row["ip_allowlist"] or "[]"),
+                    }
+            from hoja_server import permissions as permission_rules
+            for th, uid, org, last_seen, created in session_rows:
+                policy = policies.get(org) or {"idleTimeoutMinutes": None}
+                if permission_rules.session_idle_ok(policy, last_seen, created):
                     out[("session", th)] = (uid, org)
         return out
 
@@ -911,6 +934,14 @@ class Store:
                     user.c.active.is_(True), user.c.archived_at.is_(None))))
             if not session:
                 return None
+            # HOJA-490: the workspace's idle timeout, enforced here because this
+            # is the one place a browser session becomes a caller. A session past
+            # its idle window is treated exactly like an expired one.
+            from hoja_server import permissions as permission_rules
+            policy = permission_rules.security_policy(self.engine, session["organization_id"])
+            if not permission_rules.session_idle_ok(
+                    policy, session.get("last_seen_at"), session.get("created_at")):
+                return None
             membership = _one(conn, select(organization_membership).where(and_(
                 organization_membership.c.profile_user_id == session["user_id"],
                 organization_membership.c.organization_id == session["organization_id"],
@@ -918,7 +949,13 @@ class Store:
             if not membership:
                 return None
             session["identity_id"] = membership["identity_id"]
-            return session
+        # Record the sighting outside the read connection: a sliding window only
+        # slides when the request that used the session is allowed to complete.
+        with self.engine.begin() as conn:
+            conn.execute(browser_session.update()
+                         .where(browser_session.c.id == session["id"])
+                         .values(last_seen_at=now))
+        return session
 
     def revoke_browser_session(self, raw: str) -> None:
         with self.engine.begin() as conn:

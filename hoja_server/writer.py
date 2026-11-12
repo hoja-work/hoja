@@ -250,13 +250,17 @@ class Writer:
         if not isinstance(key, str) or not key.strip() or not key.strip().isalnum():
             raise GraphQLError("Team key must be alphanumeric", extensions={"code": "BAD_USER_INPUT", "field": "key"})
         key = key.strip().upper()
+        # HOJA-490: `team.create` is a capability, not a role check, so a
+        # workspace can let a member create teams without making them an
+        # admin. Checked before the write transaction opens, because the grant
+        # lookup uses its own connection.
+        from hoja_server import permissions as permission_rules
+        if not permission_rules.can_for_engine(self.engine, org_id, viewer_id, "team.create"):
+            raise GraphQLError(
+                "Your workspace role does not allow this: Create teams.",
+                extensions={"code": "FORBIDDEN", "capability": "team.create"},
+            )
         with self.engine.begin() as conn:
-            admin = conn.execute(select(user.c.id).where(and_(
-                user.c.id == viewer_id, user.c.organization_id == org_id,
-                user.c.active.is_(True), user.c.archived_at.is_(None), user.c.admin.is_(True)
-            ))).first()
-            if not admin:
-                raise GraphQLError("Admin access required", extensions={"code": "FORBIDDEN"})
             if conn.execute(select(team.c.id).where(and_(
                 team.c.organization_id == org_id, team.c.key == key
             ))).first():
@@ -1057,7 +1061,22 @@ class Writer:
         if vals:
             conn.execute(issue.update().where(issue.c.id == iid).values(**vals))
 
-    def _authorize_issue_change(self, org_id: str, viewer_id: str, ident: str) -> None:
+    def _authorize_issue_change(self, org_id: str, viewer_id: str, ident: str,
+                                capability: str | None = None) -> None:
+        """Creator, admin, or (when named) a holder of the delete capability.
+
+        HOJA-490 adds ``capability`` so a workspace can grant deleting other
+        people's tasks without granting admin. Visibility is still checked first:
+        a capability never reveals a private team's task.
+        """
+        # The capability lookup uses its own connection, so it runs before the
+        # transaction opens: taking a second connection inside a SQLite write
+        # transaction would wait on the lock it already holds.
+        holds_capability = False
+        if capability:
+            from hoja_server import permissions as permission_rules
+            holds_capability = permission_rules.can_for_engine(
+                self.engine, org_id, viewer_id, capability)
         with self.engine.begin() as conn:
             row = conn.execute(select(issue.c.creator_id, issue.c.team_id).where(and_(
                 issue.c.organization_id == org_id,
@@ -1065,14 +1084,15 @@ class Writer:
             ))).first()
             if row:
                 self._require_team_visible(conn, org_id, viewer_id, row[1])
-                self._require_creator_or_admin(conn, org_id, viewer_id, row[0])
+                if not holds_capability:
+                    self._require_creator_or_admin(conn, org_id, viewer_id, row[0])
 
     def issue_archive(self, org_id: str, viewer_id: str, ident: str) -> bool:
-        self._authorize_issue_change(org_id, viewer_id, ident)
+        self._authorize_issue_change(org_id, viewer_id, ident, capability="task.delete")
         return self._soft_delete(issue, org_id, ident, by_identifier=True, event_type="issueArchived")
 
     def issue_delete(self, org_id: str, viewer_id: str, ident: str) -> bool:
-        self._authorize_issue_change(org_id, viewer_id, ident)
+        self._authorize_issue_change(org_id, viewer_id, ident, capability="task.delete")
         return self._soft_delete(issue, org_id, ident, by_identifier=True)
 
     def _soft_delete(self, table, org_id, ident, by_identifier=False, event_type=None) -> bool:
@@ -1283,13 +1303,15 @@ class Writer:
         for field in ("color", "description"):
             if field in inp:
                 values[field] = inp[field]
+        # HOJA-490: `label.manage` replaces the bare admin check, so the
+        # capability that already gates create/delete gates update too.
+        from hoja_server import permissions as permission_rules
+        if not permission_rules.can_for_engine(self.engine, org_id, viewer_id, "label.manage"):
+            raise GraphQLError(
+                "Your workspace role does not allow this: Manage labels.",
+                extensions={"code": "FORBIDDEN", "capability": "label.manage"},
+            )
         with self.engine.begin() as conn:
-            admin = conn.execute(select(user.c.id).where(and_(
-                user.c.id == viewer_id, user.c.organization_id == org_id,
-                user.c.active.is_(True), user.c.archived_at.is_(None), user.c.admin.is_(True),
-            ))).first()
-            if not admin:
-                raise GraphQLError("Admin access required", extensions={"code": "FORBIDDEN"})
             if not values:
                 return conn.execute(select(issue_label.c.id).where(and_(
                     issue_label.c.id == lid, issue_label.c.organization_id == org_id,

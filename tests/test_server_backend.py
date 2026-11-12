@@ -1186,11 +1186,15 @@ def test_profile_notification_and_label_settings_graphql_authorization(tmp_path)
         denied_create = client.post("/graphql", headers=member_headers, json={
             "query": "mutation($input:IssueLabelCreateInput!){issueLabelCreate(input:$input){success}}",
             "variables": {"input": {"name": "Member cannot create"}}}).json()
-        assert denied_create["data"]["issueLabelCreate"]["success"] is False
+        # HOJA-490: a refused label mutation is a FORBIDDEN error carrying the
+        # capability, not a success:false payload. Either way, nothing is created.
+        assert denied_create["errors"][0]["extensions"]["code"] == "FORBIDDEN", denied_create
+        assert (denied_create.get("data") or {}).get("issueLabelCreate") is None
         denied_delete = client.post("/graphql", headers=member_headers, json={
             "query": "mutation($id:String!){issueLabelDelete(id:$id){success}}",
             "variables": {"id": label_id}}).json()
-        assert denied_delete["data"]["issueLabelDelete"]["success"] is False
+        assert denied_delete["errors"][0]["extensions"]["code"] == "FORBIDDEN", denied_delete
+        assert (denied_delete.get("data") or {}).get("issueLabelDelete") is None
         deleted = client.post("/graphql", headers=admin_headers, json={
             "query": "mutation($id:String!){issueLabelDelete(id:$id){success}}",
             "variables": {"id": label_id}}).json()

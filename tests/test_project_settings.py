@@ -249,7 +249,7 @@ def test_migration_is_idempotent_and_rows_survive_a_second_boot(tmp_path) -> Non
     # Second boot on the same file: migration is a no-op and the row is there.
     engine2 = make_engine(tmp_path / "project-settings.db")
     migrate(engine2)
-    assert applied_schema_revision(engine2) == 58
+    assert applied_schema_revision(engine2) == 59
     migrate(engine2)  # idempotent by construction (ledger at revision 57)
     app2 = create_app(str(tmp_path / "project-settings.db"), open_mode=False)
     with TestClient(app2) as client:

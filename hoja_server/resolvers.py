@@ -24,6 +24,7 @@ from hoja_server import mail_events
 
 logger = logging.getLogger(__name__)
 from hoja_server import extensions
+from hoja_server import permissions
 from hoja_server import store as store_module
 from hoja_server.deployment import single_org_mode
 from hoja_server.github_linking import parse_github_url
@@ -1347,9 +1348,8 @@ def m_workspace_switch(_, info, organizationId):
 @mutation.field("membershipInvitationCreate")
 def m_membership_invitation_create(_, info, userId):
     store, _w, org, uid = _ctx(info)
-    actor = store.get_user(org, uid)
     target = store.get_user(org, userId)
-    if not actor or not actor.get("admin") or not target:
+    if not permissions.can(store, org, uid, "member.invite") or not target:
         return {"success": False, "user": None, "inviteCode": None, "emailQueued": False}
     code = store.create_membership_invitation(org, userId, uid)
     email_queued = False
@@ -1357,11 +1357,12 @@ def m_membership_invitation_create(_, info, userId):
         workspace = store.workspace(org) or {}
         # Delivery is best-effort on purpose: the invite row is already committed,
         # and the caller still gets the link to share if sending fails.
+        inviter = store.get_user(org, uid) or {}
         delivery = mail_events.send_invite(
             store.engine,
             organization_id=org,
             organization_name=workspace.get("name") or "your workspace",
-            inviter_name=actor.get("name") or "",
+            inviter_name=inviter.get("name") or "",
             invitee_name=target.get("name") or "",
             invitee_email=target.get("email"),
             code=code,
@@ -1390,8 +1391,7 @@ def q_pending_membership_invitations(_, info):
 @mutation.field("membershipInvitationRevoke")
 def m_membership_invitation_revoke(_, info, userId):
     store, _w, org, uid = _ctx(info)
-    actor = store.get_user(org, uid)
-    if not actor or not actor.get("admin"):
+    if not permissions.can(store, org, uid, "member.invite"):
         return {"success": False}
     return {"success": store.revoke_membership_invitation(org, userId)}
 
@@ -1410,8 +1410,7 @@ def m_member_reactivate(_, info, userId):
 def m_member_archive(_, info, userId):
     """Remove a member: archived, sessions and keys ended, re-invitable."""
     store, _w, org, uid = _ctx(info)
-    actor = store.get_user(org, uid)
-    if not actor or not actor.get("admin"):
+    if not permissions.can(store, org, uid, "member.invite"):
         return {"success": False, "user": None}
     target = store.archive_member(org, uid, userId)
     return {"success": bool(target), "user": store.ser_user(target, uid)}
@@ -1421,8 +1420,7 @@ def m_member_archive(_, info, userId):
 def m_member_restore(_, info, userId):
     """Undo a removal without making the admin re-invite the person."""
     store, _w, org, uid = _ctx(info)
-    actor = store.get_user(org, uid)
-    if not actor or not actor.get("admin"):
+    if not permissions.can(store, org, uid, "member.invite"):
         return {"success": False, "user": None}
     target = store.restore_member(org, uid, userId)
     return {"success": bool(target), "user": store.ser_user(target, uid)}
@@ -1430,8 +1428,7 @@ def m_member_restore(_, info, userId):
 
 def _set_member_active(info, user_id, *, active: bool):
     store, _w, org, uid = _ctx(info)
-    actor = store.get_user(org, uid)
-    if not actor or not actor.get("admin"):
+    if not permissions.can(store, org, uid, "member.invite"):
         return {"success": False, "user": None}
     target = store.set_member_active(org, uid, user_id, active)
     return {"success": bool(target), "user": store.ser_user(target, uid)}
@@ -1458,8 +1455,7 @@ def m_member_role_update(_, info, userId, admin):
 @mutation.field("memberInvite")
 def m_member_invite(_, info, input):
     store, _w, org, uid = _ctx(info)
-    actor = store.get_user(org, uid)
-    if not actor or not actor.get("admin"):
+    if not permissions.can(store, org, uid, "member.invite"):
         return {"success": False, "user": None, "apiKey": None}
     team_ids = input.get("teamIds") or []
     for team_id in team_ids:
@@ -1481,8 +1477,7 @@ def m_member_invite(_, info, input):
 
 def _set_team_membership(info, team_id, user_id, *, add: bool, role: str = "member"):
     store, _w, org, uid = _ctx(info)
-    actor = store.get_user(org, uid)
-    if not actor or not actor.get("admin"):
+    if not permissions.can(store, org, uid, "member.invite"):
         return {"success": False, "user": None, "apiKey": None}
     if not store.team_by_id_or_key(org, team_id, viewer_id=uid):
         raise GraphQLError("Team not found", extensions={"code": "BAD_USER_INPUT", "field": "teamId"})
@@ -1547,6 +1542,9 @@ def m_issue_update(_, info, id, input):
 
 @mutation.field("issueDelete")
 def m_issue_delete(_, info, id):
+    # Authorization lives in writer._authorize_issue_change: creator, admin, or a
+    # holder of task.delete. Demanding the capability here would take away the
+    # creator's own right to delete their task.
     _s, w, org, uid = _ctx(info)
     return {"success": w.issue_delete(org, uid, id)}
 
@@ -1584,9 +1582,7 @@ def m_comment_delete(_, info, id):
 @mutation.field("issueLabelCreate")
 def m_label_create(_, info, input):
     store, w, org, uid = _ctx(info)
-    actor = store.get_user(org, uid)
-    if not actor or not actor.get("admin"):
-        return {"success": False, "issueLabel": None}
+    permissions.require(store, org, uid, "label.manage")
     name = str(input.get("name", "")).strip()
     if not name or len(name) > 64:
         return {"success": False, "issueLabel": None}
@@ -1600,6 +1596,7 @@ def m_label_create(_, info, input):
 @mutation.field("issueLabelUpdate")
 def m_label_update(_, info, id, input):
     store, w, org, uid = _ctx(info)
+    permissions.require(store, org, uid, "label.manage")
     if not w.label_update(org, uid, id, input):
         return {"success": False, "issueLabel": None}
     node = next((label for label in store.labels(org) if label["id"] == id), None)
@@ -1609,9 +1606,7 @@ def m_label_update(_, info, id, input):
 @mutation.field("issueLabelDelete")
 def m_label_delete(_, info, id):
     store, w, org, uid = _ctx(info)
-    actor = store.get_user(org, uid)
-    if not actor or not actor.get("admin"):
-        return {"success": False}
+    permissions.require(store, org, uid, "label.manage")
     return {"success": w.label_delete(org, id)}
 
 
@@ -1745,7 +1740,7 @@ def _get_comment(store, org, cid):
 def build_schema():
     from pathlib import Path
     sdl = (Path(__file__).parent / "schema.graphql").read_text()
-    from hoja_server import decisions_api, extensions_api, model_providers, project_settings, views_api, webhooks_api
+    from hoja_server import decisions_api, extensions_api, model_providers, permissions, project_settings, views_api, webhooks_api
     from hoja_server.agent_conversations import SDL as CONVERSATION_SDL
     from hoja_server.agent_conversations import query as conversation_query
     from hoja_server.model_providers import SDL as PROVIDER_SDL
@@ -1760,10 +1755,11 @@ def build_schema():
         raise RuntimeError("HOJA-288 task alias wiring incomplete: " + "; ".join(problems))
     return make_executable_schema(
         [sdl, PROVIDER_SDL, CONVERSATION_SDL, webhooks_api.SDL, extensions_api.SDL,
-         views_api.SDL, decisions_api.SDL, project_settings.SDL, tasks_sdl],
+         views_api.SDL, decisions_api.SDL, project_settings.SDL, permissions.SDL, tasks_sdl],
         query, mutation, *task_bindables,
         model_providers.query, model_providers.mutation,
         project_settings.query, project_settings.mutation,
+        permissions.query, permissions.mutation,
         webhooks_api.query, webhooks_api.mutation, webhooks_api.webhook_type,
         extensions_api.query, extensions_api.mutation, extensions_api.extension_type,
         views_api.query, views_api.mutation, views_api.view_type,
@@ -1771,6 +1767,7 @@ def build_schema():
         conversation_query,
         model_providers.model_provider_type, project_settings.project_status_type,
         project_settings.project_template_type, Team, Initiative, InitiativeUpdate, Issue, IssueActivity, MyIssueActivity, Project, ProjectUpdate, Comment,
+        permissions.workspace_permission_type, permissions.workspace_security_policy_type,
         WorkflowState, Cycle, Attachment,
         datetime_scalar, timeless_scalar, json_scalar, InboxNotification,
     )

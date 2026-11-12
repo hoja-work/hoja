@@ -34,7 +34,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 58
+CURRENT_SCHEMA_REVISION = 59
 
 
 def now_iso() -> str:
@@ -151,6 +151,9 @@ browser_session = Table(
     Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
     Column("created_at", String, nullable=False),
     Column("expires_at", String, nullable=False, index=True),
+    # HOJA-490: last request this session was seen on, for the workspace's idle
+    # timeout. NULL on a pre-59 row reads as created_at (see store.session_idle_ok).
+    Column("last_seen_at", String),
     Column("revoked_at", String),
 )
 
@@ -1079,6 +1082,41 @@ project_template_team = Table(
     metadata,
     Column("template_id", String, ForeignKey("project_template.id"), primary_key=True),
     Column("team_id", String, ForeignKey("team.id"), primary_key=True),
+)
+
+# HOJA-490: per-capability grants for the member role. A missing row means the
+# capability's default (see permissions.CAPABILITIES), and every default is
+# False — today's behavior, where these actions are admin-only. Only the
+# organization that opens the pane stores rows, so nothing changes for a
+# workspace that never does.
+workspace_permission = Table(
+    "workspace_permission",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("capability", String, nullable=False),
+    Column("member_allowed", Boolean, nullable=False, default=False),
+    Column("updated_by", String, ForeignKey("user.id")),
+    Column("updated_at", String),
+    UniqueConstraint("organization_id", "capability", name="uq_workspace_permission_org_cap"),
+)
+
+# HOJA-490: the workspace security policy. One row per workspace, created on
+# first save; a missing row is the conservative default (no idle timeout, any
+# sign-in method, no IP allowlist), which is exactly today's auth behavior.
+workspace_security_policy = Table(
+    "workspace_security_policy",
+    metadata,
+    Column("organization_id", String, ForeignKey("organization.id"), primary_key=True),
+    # Minutes of inactivity after which a browser session is refused. NULL = no
+    # idle timeout (only the absolute 14-day expiry applies).
+    Column("idle_timeout_minutes", Integer),
+    # JSON array of "password" | "google". NULL = every method the server offers.
+    Column("allowed_signin_methods", Text),
+    # JSON array of CIDR strings. NULL or empty = no restriction.
+    Column("ip_allowlist", Text),
+    Column("updated_by", String, ForeignKey("user.id")),
+    Column("updated_at", String),
 )
 
 project_update = Table(
@@ -2206,6 +2244,24 @@ def _apply_project_settings(conn):
     project_template_team.create(conn, checkfirst=True)
 
 
+def _apply_workspace_permissions(conn):
+    """HOJA-490: capability grants for members, and the workspace security policy.
+
+    Additive. Both tables are empty after this runs: an empty
+    ``workspace_permission`` means every capability keeps its default (False,
+    which is exactly the admin-only behavior of revision 58), and an absent
+    ``workspace_security_policy`` row means no idle timeout, no sign-in-method
+    restriction and no IP allowlist. ``browser_session.last_seen_at`` is added
+    NULL, and NULL reads as ``created_at`` in ``store.session_idle_ok``, so a
+    session opened before this revision keeps the lifetime it was created with.
+    """
+    workspace_permission.create(conn, checkfirst=True)
+    workspace_security_policy.create(conn, checkfirst=True)
+    columns = {c["name"] for c in inspect(conn).get_columns("browser_session")}
+    if "last_seen_at" not in columns:
+        conn.exec_driver_sql("ALTER TABLE browser_session ADD COLUMN last_seen_at VARCHAR")
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -2345,6 +2401,11 @@ _MIGRATIONS = {
     # Status defaults are lazily seeded per workspace on first read; see
     # _apply_project_settings.
     58: _apply_project_settings,
+    # 59: permissions and security settings (HOJA-490) — per-capability member
+    # grants, the workspace security policy, and the session's last-seen
+    # timestamp the idle timeout is measured from. All three are inert until a
+    # workspace saves a policy, so the migration preserves today's behavior.
+    59: _apply_workspace_permissions,
 }
 
 
