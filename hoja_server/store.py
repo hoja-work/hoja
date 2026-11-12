@@ -2896,6 +2896,20 @@ def _apply_issue_filter(conn, stmt, org_id, viewer_id, flt: dict | None):
             stmt = stmt.where(c)
     if "identifier" in flt:
         c = _apply_str_cmp(issue.c.identifier, flt["identifier"])
+        # Issues(filter:{identifier}) is what a client asks when it was handed
+        # one identifier: an MCP call, a link, a commit message. A retired flat
+        # identifier must resolve here exactly as it does in issue_ref_clause
+        # (HOJA-523); issue_by_id_or_identifier alone was not enough because
+        # the MCP lookup tool never calls issue(id:).
+        alias_refs = []
+        if "eq" in flt["identifier"]:
+            alias_refs.append(flt["identifier"]["eq"])
+        if "in" in flt["identifier"]:
+            alias_refs.extend(flt["identifier"]["in"] or [])
+        if alias_refs and "nin" not in flt["identifier"]:
+            alias_clause = issue.c.id.in_(
+                identifiers.retired_issue_ids(org_id, alias_refs))
+            c = alias_clause if c is None else or_(c, alias_clause)
         if c is not None:
             stmt = stmt.where(c)
     if "title" in flt:

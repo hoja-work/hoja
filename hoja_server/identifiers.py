@@ -93,8 +93,33 @@ def issue_ref_clause(org_id: str, ref: str) -> ColumnElement[bool]:
         issue_identifier_alias.c.organization_id == org_id,
         issue_identifier_alias.c.old_identifier == upper,
     ))
+    # The grammar lowercases slots at odd depths (slot_for), so "HOJA-1-A-1-a-1"
+    # is a real, current identifier. Comparing only against the uppercased form
+    # made every depth>=2 identifier unresolvable *by its own canonical text*;
+    # compare the raw value too. Both are equality tests on the identifier
+    # index, so this stays a seek.
+    live_forms = [value] if value == upper else [value, upper]
     return or_(
         issue.c.id == value,
-        issue.c.identifier == upper,
+        issue.c.identifier.in_(live_forms),
         issue.c.id.in_(retired),
     )
+
+
+def retired_issue_ids(org_id: str, refs) -> ColumnElement:
+    """Selectable of issue ids whose retired identifier is one of ``refs``.
+
+    ``refs`` is what an ``IssueFilter.identifier`` equality comparator named.
+    Only the equality forms of that filter use this: a caller who asks for
+    ``HOJA-8`` is quoting one specific issue, which is exactly the case the
+    alias ledger exists for. Text comparators (contains/neq/nin) keep their
+    plain column meaning, because a substring search must not silently return
+    issues that were renamed out of the match.
+    """
+    from hoja_server.db import issue_identifier_alias
+
+    wanted = [str(ref).upper() for ref in refs]
+    return select(issue_identifier_alias.c.issue_id).where(and_(
+        issue_identifier_alias.c.organization_id == org_id,
+        issue_identifier_alias.c.old_identifier.in_(wanted),
+    ))

@@ -173,3 +173,87 @@ def _issue_rows(engine, seeded, columns):
     with engine.connect() as conn:
         return conn.execute(select(*names).where(
             issue.c.organization_id == seeded["org_id"])).mappings().all()
+
+
+# --- HOJA-523: the issues(filter:{identifier}) read path must resolve aliases too.
+#
+# hoja_get in the pi extension does not call issue(id:); it calls
+# issues(filter:{identifier:{eq:...}}). That filter compared issue.identifier
+# only, so a retired flat id returned zero rows while issue(id:) resolved it.
+
+def _migrated(tmp_path):
+    engine, seeded = _seeded(tmp_path)
+    writer, store = Writer(engine), Store(engine)
+    root = _create(writer, seeded, "Root")
+    flat = _insert_flat_child(engine, seeded, root, "HOJA-517", 517)
+    forward(engine, apply=True)
+    return engine, seeded, store, flat
+
+
+def test_issues_filter_resolves_a_retired_identifier(tmp_path) -> None:
+    engine, seeded, store, flat = _migrated(tmp_path)
+    rows = store.issues(seeded["org_id"], seeded["user_id"],
+                        {"identifier": {"eq": "HOJA-517"}})
+    assert [r["id"] for r in rows] == [flat]
+    assert rows[0]["identifier"] == "HOJA-1-A-1"
+    assert store.issues(seeded["org_id"], seeded["user_id"],
+                        {"identifier": {"in": ["HOJA-517"]}})[0]["id"] == flat
+
+
+def test_issues_filter_keeps_the_current_identifier_and_real_misses(tmp_path) -> None:
+    engine, seeded, store, flat = _migrated(tmp_path)
+    assert [r["id"] for r in store.issues(seeded["org_id"], seeded["user_id"],
+                                          {"identifier": {"eq": "HOJA-1-A-1"}})] == [flat]
+    # a genuinely nonexistent id is still empty: the alias fallback must not
+    # turn into a wildcard
+    assert store.issues(seeded["org_id"], seeded["user_id"],
+                        {"identifier": {"eq": "HOJA-999999"}}) == []
+
+
+def test_issues_filter_does_not_resolve_another_orgs_retired_identifier(tmp_path) -> None:
+    engine, seeded, store, _flat = _migrated(tmp_path)
+    other = seed_tenant(engine, org_name="Other", org_url_key="other", team_key="OTHR",
+                        team_name="Other", user_name="Other User",
+                        user_email="other@example.test", demo_issues=False)
+    assert store.issues(other["org_id"], other["user_id"],
+                        {"identifier": {"eq": "HOJA-517"}}) == []
+
+
+def test_every_alias_row_resolves_on_every_read_surface(tmp_path) -> None:
+    """Reconcile the whole ledger: no row is written that a reader cannot use."""
+    engine, seeded = _seeded(tmp_path)
+    writer, store = Writer(engine), Store(engine)
+    root = _create(writer, seeded, "Root")
+    created = {}
+    for number in range(500, 520):
+        created[f"HOJA-{number}"] = _insert_flat_child(
+            engine, seeded, root, f"HOJA-{number}", number)
+    forward(engine, apply=True)
+    with engine.connect() as conn:
+        aliases = conn.execute(select(issue_identifier_alias.c.old_identifier,
+                                      issue_identifier_alias.c.new_identifier,
+                                      issue_identifier_alias.c.issue_id)).mappings().all()
+    assert len(aliases) == 20
+    for row in aliases:
+        by_id = store.issue_by_id_or_identifier(seeded["org_id"], row["old_identifier"])
+        assert by_id and by_id["id"] == row["issue_id"], row["old_identifier"]
+        listed = store.issues(seeded["org_id"], seeded["user_id"],
+                              {"identifier": {"eq": row["old_identifier"]}})
+        assert [r["id"] for r in listed] == [row["issue_id"]], row["old_identifier"]
+        assert listed[0]["identifier"].upper() == row["new_identifier"].upper()
+
+
+def test_depth_two_identifier_looks_up_by_its_own_canonical_text(tmp_path) -> None:
+    """The grammar lowercases odd-depth slots, so the mixed-case form is the
+    identifier. Uppercasing it before the comparison made depth>=2 nodes
+    unreachable by identifier entirely (HOJA-523)."""
+    engine, seeded = _seeded(tmp_path)
+    writer, store = Writer(engine), Store(engine)
+    root = _create(writer, seeded, "Root")
+    depth1 = _create(writer, seeded, "Child", parent=root)
+    depth2 = _create(writer, seeded, "Grandchild", parent=depth1)
+    ident = store.issue_by_id_or_identifier(seeded["org_id"], depth2)["identifier"]
+    assert ident != ident.upper(), f"expected a mixed-case slot, got {ident}"
+    assert store.issue_by_id_or_identifier(seeded["org_id"], ident)["id"] == depth2
+    assert [r["id"] for r in store.issues(seeded["org_id"], seeded["user_id"],
+                                          {"identifier": {"eq": ident}})] == [depth2]
