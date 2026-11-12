@@ -2398,12 +2398,15 @@ class Store:
                                        project.c.archived_at.is_(None)))
         if project_id:
             stmt = stmt.where(project_update.c.project_id == project_id)
+        # NULL updated_at means never edited and reads as created_at, so rows from
+        # before revision 57 keep their original position without a backfill write.
+        sort_key = func.coalesce(project_update.c.updated_at, project_update.c.created_at)
         if after:
             updated_at, update_id = after
-            stmt = stmt.where(project_update.c.updated_at <= updated_at).where(or_(project_update.c.updated_at < updated_at,
-                                  and_(project_update.c.updated_at == updated_at,
+            stmt = stmt.where(sort_key <= updated_at).where(or_(sort_key < updated_at,
+                                  and_(sort_key == updated_at,
                                        project_update.c.id < update_id)))
-        stmt = stmt.order_by(project_update.c.updated_at.desc(), project_update.c.id.desc()).limit(limit)
+        stmt = stmt.order_by(sort_key.desc(), project_update.c.id.desc()).limit(limit)
         with self.engine.connect() as conn:
             rows = _conn_rows(conn, stmt)
             result = []
@@ -2411,7 +2414,7 @@ class Store:
                 row["_project_id"] = row["project_id"]
                 row["_actor_id"] = row.get("actor_id")
                 row["createdAt"] = row["created_at"]
-                row["updatedAt"] = row["updated_at"]
+                row["updatedAt"] = row["updated_at"] or row["created_at"]
                 result.append(row)
             return result
 
@@ -2425,7 +2428,7 @@ class Store:
         row["_project_id"] = row["project_id"]
         row["_actor_id"] = row.get("actor_id")
         row["createdAt"] = row["created_at"]
-        row["updatedAt"] = row["updated_at"]
+        row["updatedAt"] = row["updated_at"] or row["created_at"]
         return row
 
     def initiative_updates(self, org_id: str, after: tuple[str, str] | None = None,

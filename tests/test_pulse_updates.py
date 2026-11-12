@@ -275,12 +275,21 @@ def test_migration_57_is_additive_reversible_and_backfills(tmp_path, monkeypatch
     columns = {c["name"] for c in inspect(engine).get_columns("project_update")}
     assert "updated_at" in columns
     assert inspect(engine).has_table("initiative_update")
-    assert any(ix["name"] == "ix_project_update_updated_at"
-               for ix in inspect(engine).get_indexes("project_update"))
+    # SQLite reflection omits expression indexes, so read the catalog directly.
     with engine.connect() as conn:
-        backfilled = conn.execute(select(project_update.c.updated_at).where(
+        feed_index = conn.exec_driver_sql(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name='ix_project_update_feed'").first()
+    assert feed_index is not None
+    with engine.connect() as conn:
+        legacy_updated = conn.execute(select(project_update.c.updated_at).where(
             project_update.c.id == rid)).scalar()
-    assert backfilled == "2025-12-31T00:00:00Z", "existing rows must order exactly as before"
+    # No backfill UPDATE: on the production table it queues deferred capture-trigger
+    # events and PostgreSQL then refuses in-transaction DDL. NULL reads as created_at.
+    assert legacy_updated is None
+    with TestClient(create_app(str(tmp_path / "migrate57.db"), open_mode=False)) as client:
+        nodes = _data(client, "mig-token", UPDATES, {"first": 10})["projectUpdates"]["nodes"]
+    assert [n["id"] for n in nodes] == [rid]
+    assert nodes[0]["updatedAt"] == "2025-12-31T00:00:00Z"
 
     def snapshot():
         insp = inspect(engine)

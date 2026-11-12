@@ -1046,14 +1046,20 @@ project_update = Table(
     Column("status", String),
     Column("body", Text, nullable=False),
     Column("created_at", String, nullable=False, index=True),
-    Column("updated_at", String, nullable=False),
+    # NULL means "never edited" and reads as created_at. Declared nullable so the
+    # migration is a pure ADD COLUMN: a backfill UPDATE would queue deferred
+    # realtime-capture trigger events, and PostgreSQL then refuses ALTER TABLE
+    # ("cannot ALTER TABLE ... because it has pending trigger events").
+    Column("updated_at", String),
     Column("actor_id", String, ForeignKey("user.id")),
     Column("progress", Float),
     Column("health", String),
 )
 
-ix_project_update_updated_at = Index(
-    "ix_project_update_updated_at", project_update.c.updated_at)
+ix_project_update_feed = Index(
+    "ix_project_update_feed",
+    func.coalesce(project_update.c.updated_at, project_update.c.created_at),
+    project_update.c.id)
 
 initiative_update = Table(
     "initiative_update",
@@ -1981,21 +1987,21 @@ def _apply_pulse_updates(conn) -> None:
     """Pulse: keep edit history honest and give the initiative feed its own rows.
 
     Additive. ``project_update`` gains ``updated_at`` so an edit is observable and
-    the feed can order by when a post last changed; existing rows backfill from
-    ``created_at``, which reproduces today's ordering exactly. ``initiative_update``
+    the feed can order by when a post last changed; existing rows stay NULL and
+    read as ``created_at``, which reproduces today's ordering exactly without
+    writing to a table whose deferred capture triggers forbid in-transaction DDL. ``initiative_update``
     mirrors ``project_update`` for initiatives (Linear's InitiativeUpdate), which
     until now only existed as the field-editing ``initiativeUpdate`` mutation.
     """
     columns = {c["name"] for c in inspect(conn).get_columns("project_update")}
     if "updated_at" not in columns:
         conn.exec_driver_sql("ALTER TABLE project_update ADD COLUMN updated_at VARCHAR")
-        conn.exec_driver_sql("UPDATE project_update SET updated_at = created_at")
-    if conn.dialect.name == "postgresql":
-        conn.exec_driver_sql("ALTER TABLE project_update ALTER COLUMN updated_at SET NOT NULL")
     initiative_update.create(conn, checkfirst=True)
-    if not any(ix["name"] == ix_project_update_updated_at.name
-               for ix in inspect(conn).get_indexes("project_update")):
-        ix_project_update_updated_at.create(conn)
+    # IF NOT EXISTS: SQLite's reflection does not report expression indexes, so an
+    # inspect() guard cannot see the one create_all made on a fresh database.
+    conn.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_project_update_feed ON project_update "
+        "(COALESCE(updated_at, created_at), id)")
 
 
 def _down_pulse_updates(conn) -> None:
@@ -2006,9 +2012,7 @@ def _down_pulse_updates(conn) -> None:
     must be identical. Rows are not preserved across a down (a dropped column
     cannot be reconstituted); that is the standard cost of an additive reversal.
     """
-    if any(ix["name"] == ix_project_update_updated_at.name
-           for ix in inspect(conn).get_indexes("project_update")):
-        ix_project_update_updated_at.drop(conn)
+    conn.exec_driver_sql("DROP INDEX IF EXISTS ix_project_update_feed")
     initiative_update.drop(conn, checkfirst=True)
     if "updated_at" in {c["name"] for c in inspect(conn).get_columns("project_update")}:
         conn.exec_driver_sql("ALTER TABLE project_update DROP COLUMN updated_at")
