@@ -858,3 +858,28 @@
 .settings-sidebar .nav-item[data-availability='unavailable'] { cursor: not-allowed; opacity: .72; }
 .settings-sidebar .nav-item[data-availability='unavailable'] .settings-nav-state { flex: none; font-size: 10px; font-weight: 600; letter-spacing: .02em; }
 .settings-sidebar .nav-item[data-availability='unavailable']:hover { background: transparent; color: var(--settings-muted); }
+
+/* HOJA-489: project statuses and project templates. Both panes are real controls over
+   the workspace store, so the rows read like the label editor and never like a form that
+   saves nowhere. */
+.project-status-row { display: grid; grid-template-columns: 28px 10px minmax(90px, 1fr) minmax(110px, auto) auto auto auto auto; gap: 8px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--settings-line); }
+.project-status-row:last-child { border-bottom: 0; }
+.project-status-row input:not([type='color']) { min-width: 0; }
+.project-status-row input[type='color'] { width: 28px; padding: 0; border: 0; background: none; }
+.project-status-row .outline, .project-status-row .primary { white-space: nowrap; }
+.project-status-order { color: var(--settings-muted); font-size: 11px; font-variant-numeric: tabular-nums; text-align: center; }
+.project-status-row .projects-status-dot { width: 10px; height: 10px; border-radius: 999px; box-shadow: 0 0 0 3px var(--settings-subtle); }
+.project-template-form { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.project-template-form label:has(textarea), .project-template-form fieldset, .project-template-form button { grid-column: 1 / -1; }
+.project-template-teams { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 0; padding: 10px 12px; border: 1px solid var(--settings-line); border-radius: 8px; }
+.project-template-teams legend { padding: 0 4px; color: var(--settings-muted); font-size: 11px; }
+.project-template-teams label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.project-template-row { display: flex; align-items: center; gap: 10px; }
+.project-template-copy { display: flex; min-width: 0; flex: 1 1 auto; flex-direction: column; gap: 2px; }
+.project-template-copy small { color: var(--settings-muted); font-size: 11px; }
+
+@media (max-width: 640px) {
+  .project-status-row { grid-template-columns: 24px 10px minmax(0, 1fr); }
+  .project-status-row select, .project-status-row input[type='color'], .project-status-row .primary, .project-status-row .outline { grid-column: auto / span 1; }
+  .project-template-form { grid-template-columns: minmax(0, 1fr); }
+}

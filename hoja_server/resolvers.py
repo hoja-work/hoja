@@ -1745,7 +1745,7 @@ def _get_comment(store, org, cid):
 def build_schema():
     from pathlib import Path
     sdl = (Path(__file__).parent / "schema.graphql").read_text()
-    from hoja_server import decisions_api, extensions_api, model_providers, views_api, webhooks_api
+    from hoja_server import decisions_api, extensions_api, model_providers, project_settings, views_api, webhooks_api
     from hoja_server.agent_conversations import SDL as CONVERSATION_SDL
     from hoja_server.agent_conversations import query as conversation_query
     from hoja_server.model_providers import SDL as PROVIDER_SDL
@@ -1760,15 +1760,17 @@ def build_schema():
         raise RuntimeError("HOJA-288 task alias wiring incomplete: " + "; ".join(problems))
     return make_executable_schema(
         [sdl, PROVIDER_SDL, CONVERSATION_SDL, webhooks_api.SDL, extensions_api.SDL,
-         views_api.SDL, decisions_api.SDL, tasks_sdl],
+         views_api.SDL, decisions_api.SDL, project_settings.SDL, tasks_sdl],
         query, mutation, *task_bindables,
         model_providers.query, model_providers.mutation,
+        project_settings.query, project_settings.mutation,
         webhooks_api.query, webhooks_api.mutation, webhooks_api.webhook_type,
         extensions_api.query, extensions_api.mutation, extensions_api.extension_type,
         views_api.query, views_api.mutation, views_api.view_type,
         decisions_api.query, decisions_api.mutation, decisions_api.decision_type,
         conversation_query,
-        model_providers.model_provider_type, Team, Initiative, InitiativeUpdate, Issue, IssueActivity, MyIssueActivity, Project, ProjectUpdate, Comment,
+        model_providers.model_provider_type, project_settings.project_status_type,
+        project_settings.project_template_type, Team, Initiative, InitiativeUpdate, Issue, IssueActivity, MyIssueActivity, Project, ProjectUpdate, Comment,
         WorkflowState, Cycle, Attachment,
         datetime_scalar, timeless_scalar, json_scalar, InboxNotification,
     )

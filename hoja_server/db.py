@@ -34,7 +34,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 57
+CURRENT_SCHEMA_REVISION = 58
 
 
 def now_iso() -> str:
@@ -1035,6 +1035,50 @@ project = Table(
     Column("created_at", String),
     Column("updated_at", String),
     Column("archived_at", String),
+)
+
+project_status = Table(
+    "project_status",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("name", String, nullable=False),
+    # One of backlog | started | completed | canceled — the same four kinds a
+    # workflow_state carries, so project status and issue state stay comparable.
+    Column("category", String, nullable=False),
+    Column("color", String),
+    Column("position", Integer, nullable=False, default=0),
+    Column("created_at", String),
+    Column("updated_at", String),
+    UniqueConstraint("organization_id", "name", name="uq_project_status_org_name"),
+)
+
+project_template = Table(
+    "project_template",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("name", String, nullable=False),
+    Column("description", String),
+    Column("lead_id", String, ForeignKey("user.id")),
+    # A configured project-status NAME, validated at apply time (HOJA-489):
+    # stored as text so a later status rename stays a settings edit,
+    # not a cascade.
+    Column("state", String),
+    Column("color", String),
+    Column("icon", String),
+    # JSON array of task titles created in the project when it is applied.
+    Column("task_set", Text),
+    Column("archived_at", String),
+    Column("created_at", String),
+    Column("updated_at", String),
+)
+
+project_template_team = Table(
+    "project_template_team",
+    metadata,
+    Column("template_id", String, ForeignKey("project_template.id"), primary_key=True),
+    Column("team_id", String, ForeignKey("team.id"), primary_key=True),
 )
 
 project_update = Table(
@@ -2148,6 +2192,20 @@ def _apply_recursive_identifiers(conn):
             "ALTER TABLE team ADD COLUMN child_counter INTEGER DEFAULT 0")
 
 
+def _apply_project_settings(conn):
+    """HOJA-489: workspace-managed project statuses and project templates.
+
+    Tables only. The default status set (the six state names the frontend
+    already offers as free strings) is lazily seeded per workspace on first
+    read by project_settings.ensure_default_statuses, so an existing database,
+    a fresh database, and a workspace created after this migration all
+    converge without touching organization creation.
+    """
+    project_status.create(conn, checkfirst=True)
+    project_template.create(conn, checkfirst=True)
+    project_template_team.create(conn, checkfirst=True)
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -2280,6 +2338,13 @@ _MIGRATIONS = {
     # initiative_update table, so the feed orders by last change and initiative
     # updates exist as rows of their own.
     57: _apply_pulse_updates,
+    # 58: settings-controlled project statuses (ordered, editable, replacing
+    # the free-string Project.state) and project templates applied at
+    # projectCreate time. Renumbered 57 -> 58 on the merge: main shipped 57
+    # (_apply_pulse_updates) first, so this branch takes the next free number.
+    # Status defaults are lazily seeded per workspace on first read; see
+    # _apply_project_settings.
+    58: _apply_project_settings,
 }
 
 

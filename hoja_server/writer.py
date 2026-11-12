@@ -34,6 +34,8 @@ from hoja_server.db import (
     project,
     project_member,
     project_team,
+    project_template,
+    project_template_team,
     project_update,
     saved_view,
     saved_view_favorite,
@@ -1303,13 +1305,58 @@ class Writer:
 
     # -------------------------------------------------------------- projects
     def project_create(self, org_id: str, viewer_id: str, inp: dict) -> str | None:
+        from hoja_server import project_settings
+
+        # HOJA-489: a project's state is a workspace-configured status, and a
+        # template may supply every field the caller leaves absent. Validation
+        # happens before the transaction opens; the stored value is the
+        # configured status's own spelling.
+        template = None
+        if inp.get("templateId"):
+            with self.engine.connect() as conn:
+                template = conn.execute(select(project_template).where(and_(
+                    project_template.c.organization_id == org_id,
+                    project_template.c.id == inp["templateId"],
+                    project_template.c.archived_at.is_(None),
+                ))).first()
+            if not template:
+                raise GraphQLError(
+                    "Project template not found.",
+                    extensions={"code": "BAD_USER_INPUT", "field": "templateId"})
+            template = dict(template._mapping)
+        if inp.get("state"):
+            state_name = project_settings.validate_project_state(self.engine, org_id, inp["state"])
+        elif template and template["state"]:
+            state_name = project_settings.validate_project_state(self.engine, org_id, template["state"])
+        else:
+            state_name = project_settings.default_project_state(self.engine, org_id)
+        # Template expansion: absent fields fall back to the template's, so the
+        # API and the web client produce the same project field-for-field.
+        expanded = dict(inp)
+        if template:
+            if not (expanded.get("name") or "").strip():
+                expanded["name"] = template["name"]
+            if expanded.get("description") in (None, ""):
+                expanded["description"] = template["description"]
+            if not expanded.get("leadId"):
+                expanded["leadId"] = template["lead_id"]
+            if not expanded.get("icon"):
+                expanded["icon"] = template["icon"]
+            if not expanded.get("color"):
+                expanded["color"] = template["color"]
+            if not expanded.get("teamIds"):
+                with self.engine.connect() as conn:
+                    expanded["teamIds"] = list(conn.execute(
+                        select(project_template_team.c.team_id).where(
+                            project_template_team.c.template_id == template["id"])
+                    ).scalars())
         with self.engine.begin() as conn:
-            if lead_id := inp.get("leadId"):
+            if lead_id := expanded.get("leadId"):
                 _require_org_reference(
                     conn, user, org_id, lead_id, "leadId",
                     user.c.active.is_(True),
                 )
-            team_ids = set(inp.get("teamIds") or [])
+            team_ids = set(expanded.get("teamIds") or [])
             if team_ids:
                 found = set(
                     conn.execute(
@@ -1329,21 +1376,30 @@ class Writer:
                         raise InvalidReferenceError("teamIds")
             ts = now_iso()
             pid = new_id()
-            slug = _slug(inp["name"])
+            slug = _slug(expanded["name"])
             url_key = _org_url_key(conn, org_id)
             conn.execute(project.insert().values(
-                id=pid, organization_id=org_id, name=inp["name"],
-                description=inp.get("description"), slug_id=slug,
-                icon=inp.get("icon"), color=inp.get("color"),
-                state=inp.get("state", "backlog"), progress=0,
-                lead_id=inp.get("leadId"), creator_id=viewer_id,
-                start_date=inp.get("startDate"), target_date=inp.get("targetDate"),
+                id=pid, organization_id=org_id, name=expanded["name"],
+                description=expanded.get("description"), slug_id=slug,
+                icon=expanded.get("icon"), color=expanded.get("color"),
+                state=state_name, progress=0,
+                lead_id=expanded.get("leadId"), creator_id=viewer_id,
+                start_date=expanded.get("startDate"), target_date=expanded.get("targetDate"),
                 url=entity_url(url_key, "project", slug),
                 created_at=ts, updated_at=ts))
             conn.execute(project_member.insert().values(project_id=pid, user_id=viewer_id))
             for team_id in team_ids:
                 conn.execute(project_team.insert().values(project_id=pid, team_id=team_id))
-            return pid
+        # The optional task set becomes real tasks in the project, through the
+        # same tested issue_create path the API uses — never a row written by
+        # hand. issue_create opens its own transaction, so this runs after the
+        # project transaction has committed.
+        task_titles = json.loads(template["task_set"]) if template and template["task_set"] else []
+        if task_titles and team_ids:
+            for title in task_titles:
+                self.issue_create(org_id, viewer_id, {
+                    "teamId": sorted(team_ids)[0], "title": title, "projectId": pid})
+        return pid
 
     def project_update_create(self, org_id: str, pid: str, actor_id: str, inp: dict) -> str | None:
         body = inp.get("body")
@@ -1492,6 +1548,14 @@ class Writer:
         return True
 
     def project_update(self, org_id: str, viewer_id: str, pid: str, inp: dict) -> str | None:
+        from hoja_server import project_settings
+
+        # Validate before the transaction opens: project_settings seeds default
+        # statuses on first read, and a seed on a second connection while the
+        # outer transaction holds SQLite's read lock would deadlock.
+        canonical_state = (
+            project_settings.validate_project_state(self.engine, org_id, inp["state"])
+            if inp.get("state") else None)
         with self.engine.begin() as conn:
             row = conn.execute(select(project.c.id).where(and_(
                 project.c.organization_id == org_id, project.c.id == pid))).first()
@@ -1526,6 +1590,8 @@ class Writer:
             for k, col in m.items():
                 if k in inp:
                     vals[col] = inp[k]
+            if canonical_state is not None:
+                vals["state"] = canonical_state
             conn.execute(project.update().where(project.c.id == pid).values(**vals))
             return pid
 
