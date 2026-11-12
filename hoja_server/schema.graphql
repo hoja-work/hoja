@@ -509,6 +509,8 @@ type ReviewGate {
   checksPassing: Int
   checksFailing: Int
   checksPending: Int
+  "True when GitHub refused the check read itself (the app lacks Checks / Commit statuses), which is not the same as having no checks."
+  checksUnavailable: Boolean!
   "open | closed | merged"
   state: String
   title: String

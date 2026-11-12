@@ -61,6 +61,10 @@ class ReviewGate:
     state: str
     title: str
     url: str | None
+    # True when GitHub refused the check read itself (the app lacks Checks / Commit statuses).
+    # That is not "no checks": an unreadable gate can never prove a merge is safe, so refusal
+    # must treat it as undecided rather than as the benign empty case.
+    checks_unavailable: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -72,6 +76,7 @@ class ReviewGate:
             "checksPassing": self.checks.get("passing"),
             "checksFailing": self.checks.get("failing"),
             "checksPending": self.checks.get("pending"),
+            "checksUnavailable": self.checks_unavailable,
             "state": self.state,
             "title": self.title,
             "url": self.url,
@@ -106,7 +111,8 @@ def split_repository(url: str | None) -> tuple[str, int] | None:
 
 
 def gate_from(pull: dict[str, Any], check_runs: list[dict[str, Any]],
-              combined: dict[str, Any] | None = None) -> ReviewGate:
+              combined: dict[str, Any] | None = None, *,
+              checks_unavailable: bool = False) -> ReviewGate:
     """Build the gate from GitHub's own fields, without inventing a value GitHub left null."""
     head = pull.get("head") or {}
     mergeable = pull.get("mergeable")
@@ -118,6 +124,7 @@ def gate_from(pull: dict[str, Any], check_runs: list[dict[str, Any]],
         state=str(pull.get("state") or ""),
         title=str(pull.get("title") or ""),
         url=pull.get("html_url") if isinstance(pull.get("html_url"), str) else None,
+        checks_unavailable=checks_unavailable,
     )
 
 
@@ -137,6 +144,13 @@ def refusal(gate: ReviewGate, *, expected_sha: str | None = None) -> tuple[str, 
             HEAD_MOVED,
             f"The pull request head moved from {expected_sha[:7]} to {gate.sha[:7]} "
             "since this review was read; nothing was merged.",
+        )
+    if gate.checks_unavailable:
+        return (
+            CHECK_UNKNOWN,
+            "GitHub will not let Hoja read this pull request's checks: the Hoja Connector app "
+            "has no Checks or Commit statuses permission. Merging stays blocked until the app "
+            "is granted Checks: Read-only and Commit statuses: Read-only.",
         )
     checks_state = str(gate.checks.get("state") or "none")
     if checks_state == "failure":

@@ -147,9 +147,20 @@ the owner must:
    it as `HOJA_GITHUB_WEBHOOK_SECRET` on the server.
 2. **Subscribe to events:** `Pull request`, `Push`, `Issues`, `Deployment`,
    `Deployment status`, `Check suite`.
-3. **Permissions, all read-only:** `Metadata: read` (always required), `Contents: read`,
-   `Issues: read`, `Pull requests: read`, `Deployments: read`, `Checks: read`. No write
-   permission is needed and none should be granted.
+3. **Permissions for linking and reading the merge gate, all read-only:** `Metadata: read`
+   (always required), `Contents: read`, `Issues: read`, `Pull requests: read`,
+   `Deployments: read`, **`Checks: read`**, **`Commit statuses: read`**.
+   The last two are what the Reviews merge gate needs: it reads check runs and the legacy
+   commit status for the pull request's head sha, and GitHub answers **403** without them
+   (`GET /repos/{o}/{r}/commits/{sha}/check-runs`). That 403 is a permission gap, not
+   repository access — a private repository the app cannot see answers 404, not 403.
+   Review **write** actions (approve / request changes / merge) are a separate decision and
+   need `Pull requests: Read and write` (approve, comment, request changes) and
+   `Contents: Read and write` (merge). Grant those only if Hoja is meant to act on GitHub.
+4. **After changing permissions:** the installation owner must approve the new permissions,
+   and each user must re-authorize, because a user-to-server token keeps the permissions it
+   was issued with. Until then the Reviews gate reports
+   `checksUnavailable` and refuses to merge with `checks_unknown`.
 4. **Optionally**, to test from a non-production origin, add that origin's
    `/api/connectors/github/callback` to the redirect allow-list. GitHub compares redirect URIs as
    strings, so a local server cannot complete the OAuth flow until its callback is listed.

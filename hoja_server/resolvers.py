@@ -534,16 +534,30 @@ async def _review_gate_async(info, linkId):
         writes = GitHubWriteClient(http, tokens.source(account["id"], org))
         try:
             pull = await writes.fetch_pull(repository, number)
-            head = (pull.get("head") or {}).get("sha") or ""
-            gate = gate_from(
-                pull,
-                await writes.fetch_check_runs(repository, head) if head else [],
-                await writes.fetch_combined_status(repository, head) if head else {},
-            )
         except ConnectorAPIError as exc:
+            # The pull request itself is unreadable: there is no gate to show.
             raise GraphQLError(str(exc), extensions={
                 "code": "github_error", "hint": getattr(exc, "hint", None),
             }) from exc
+        head = (pull.get("head") or {}).get("sha") or ""
+        # A failed *check* read is different: GitHub answers 403 for an app without Checks and
+        # Commit statuses permissions, which is a fact about the install, not about this pull
+        # request. Losing the whole gate hid mergeability and the review decision behind
+        # "cannot read that resource"; instead the gate is returned undecided, the pane keeps
+        # showing what GitHub did answer, and refusal() blocks the merge with the reason.
+        checks_unavailable = False
+        check_runs: list[dict] = []
+        combined: dict = {}
+        if head:
+            try:
+                check_runs = await writes.fetch_check_runs(repository, head)
+            except ConnectorAPIError:
+                checks_unavailable = True
+            try:
+                combined = await writes.fetch_combined_status(repository, head)
+            except ConnectorAPIError:
+                checks_unavailable = True
+        gate = gate_from(pull, check_runs, combined, checks_unavailable=checks_unavailable)
     blocked = refusal(gate)
     payload = gate.as_dict()
     payload["refusalCode"] = blocked[0] if blocked else None

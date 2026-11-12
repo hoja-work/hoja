@@ -14,6 +14,7 @@ API = "https://api.github.com"
 USER = f"{API}/user"
 INSTALLATIONS = f"{API}/user/installations"
 REPO = "hoja-work/hoja-cloud"
+CHECKS = f"{API}/repos/{REPO}/commits/abc1234/check-runs"
 
 
 class _Tokens:
@@ -401,6 +402,17 @@ async def test_a_spent_rate_limit_is_reported_with_its_reset_time() -> None:
         await client.get_current_user()
     assert "rate-limited" in str(caught.value).lower()
     assert "5,000" in (caught.value.hint or "")
+
+
+def test_a_403_on_checks_names_the_permission_the_app_is_missing() -> None:
+    """The Reviews gate failed with "cannot read that resource", which sent people to
+    repository access. The permission a 403 means is knowable from the path, so it is named."""
+    assert GitHubClient._permission_for("/repos/o/r/commits/abc1234/check-runs") == (
+        "Checks", "Checks: Read-only")
+    assert GitHubClient._permission_for("/repos/o/r/commits/abc1234/status") == (
+        "Commit statuses", "Commit statuses: Read-only")
+    assert GitHubClient._permission_for("/repos/o/r/pulls/12/reviews") == (
+        "Pull requests", "Pull requests: Read and write")
 
 
 @respx.mock

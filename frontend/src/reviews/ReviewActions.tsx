@@ -28,6 +28,8 @@ export type ReviewGate = {
   checksPassing: number | null;
   checksFailing: number | null;
   checksPending: number | null;
+  /** GitHub refused the check read (app lacks Checks / Commit statuses) — not "no checks". */
+  checksUnavailable: boolean | null;
   state: string | null;
   refusalCode: string | null;
   refusalMessage: string | null;
@@ -42,7 +44,7 @@ type Props = {
 
 const GATE_QUERY = `query ReviewGate($id:String!){reviewGate(linkId:$id){
   sha mergeable mergeState checksState checksTotal checksPassing checksFailing checksPending
-  state refusalCode refusalMessage}}`;
+  checksUnavailable state refusalCode refusalMessage}}`;
 
 function shortSha(sha?: string | null): string {
   return sha ? sha.slice(0, 7) : 'unknown';
@@ -51,9 +53,11 @@ function shortSha(sha?: string | null): string {
 function gateLine(gate: ReviewGate): string {
   const parts = [
     `sha ${shortSha(gate.sha)}`,
-    gate.checksState === 'unknown' || gate.checksState === 'none'
-      ? 'no checks'
-      : `${gate.checksPassing ?? 0}/${gate.checksTotal ?? 0} checks passing`,
+    gate.checksUnavailable
+      ? 'checks unreadable by this GitHub app'
+      : gate.checksState === 'unknown' || gate.checksState === 'none'
+        ? 'no checks'
+        : `${gate.checksPassing ?? 0}/${gate.checksTotal ?? 0} checks passing`,
     gate.mergeState ? `branch ${gate.mergeState}` : 'branch state unknown',
   ];
   return parts.join(' · ');

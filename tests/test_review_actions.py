@@ -115,6 +115,20 @@ def test_pending_checks_refuse_but_absent_checks_do_not():
     assert refusal(absent) is None, "no checks is not a failing gate"
 
 
+def test_unreadable_checks_refuse_the_merge_instead_of_becoming_no_checks():
+    """A 403 on the check read is not "this repo runs no CI".
+
+    `none` is deliberately mergeable here because the project runs no platform CI. If GitHub
+    simply refuses to show the checks (the app lacks Checks / Commit statuses), the same empty
+    list would wrongly read as "no checks", so the gate must carry that fact and refuse.
+    """
+    gate = gate_from(_pull(), [], {}, checks_unavailable=True)
+    code, message = refusal(gate)
+    assert code == "checks_unknown"
+    assert "Checks" in message and "Commit statuses" in message
+    assert gate.as_dict()["checksUnavailable"] is True
+
+
 def test_a_moved_head_refuses_the_merge():
     gate = gate_from(_pull(head={"sha": "new999"}), _green(), {"state": "success"})
     assert refusal(gate, expected_sha="old111")[0] == "head_moved"

@@ -351,6 +351,24 @@ class GitHubClient:
             truncated=truncated,
         )
 
+    @staticmethod
+    def _permission_for(path: str) -> tuple[str, str] | None:
+        """Which app permission a 403 on this path means, named the way GitHub's UI names it.
+
+        "This GitHub grant cannot read that resource" was true and useless: it sent people to
+        repository access when the real gap was a permission the app registration never had.
+        """
+        for marker, permission, grant in (
+            ("/check-runs", "Checks", "Checks: Read-only"),
+            ("/status", "Commit statuses", "Commit statuses: Read-only"),
+            ("/merge", "Contents", "Contents: Read and write"),
+            ("/reviews", "Pull requests", "Pull requests: Read and write"),
+            ("/comments", "Pull requests", "Pull requests: Read and write"),
+        ):
+            if marker in path:
+                return permission, grant
+        return None
+
     async def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         token = await self._tokens.access_token()
         url = f"{self._base()}{path}"
@@ -374,13 +392,16 @@ class GitHubClient:
                         "requests an hour."
                     ),
                 )
+            missing = self._permission_for(path)
+            named = f": the Hoja Connector app has no {missing[0]} permission." if missing else "."
+            grant = missing[1] if missing else "the permission this call needs"
             raise ConnectorAPIError(
-                "This GitHub grant cannot read that resource.",
+                f"GitHub refused this read (403) for {path}{named}",
                 hint=(
-                    "Either the app is not installed on this repository (check the installation's "
-                    "repository access in the organization settings) or the grant lacks the "
-                    "permission this call needs; check the app registration and re-authorize if "
-                    "it changed."
+                    f"Grant {grant} on the app registration, let the installation accept the new "
+                    "permissions, then reconnect GitHub in Settings > Connections. A 403 is a "
+                    "permission gap: GitHub answers 404, not 403, for a private repository the "
+                    "app is not installed on."
                 ),
             )
         if response.status_code == 404:
