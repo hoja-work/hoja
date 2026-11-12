@@ -21,12 +21,14 @@ from sqlalchemy import text
 from sqlalchemy.engine import make_url
 
 from hoja_server.db import make_engine
-from hoja_server.rls_policy import GLOBAL_TABLES as GLOBALS
 
 ENABLED = bool(os.environ.get("HOJA_TEST_RLS")) and bool(os.environ.get("HOJA_TEST_POSTGRES_URL"))
 
-# GLOBALS is the server's own allowlist (hoja_server.rls_policy), not a second
-# copy: the policies these tests apply must be the ones /ready verifies.
+# Hosted global tables (Hoja-Cloud rls/global-tables.txt): not tenant data.
+GLOBALS = ("global_identity", "identity_credential", "oauth_client", "oauth_state_nonce", "rate_limit_event",
+           "github_delivery",
+           "schema_revision", "signup_flow", "signup_identity", "signup_eligibility", "signup_invite",
+           "signup_session", "tenant_membership_hint", "turnstile_use", "alembic_version")
 
 _CUR = "current_setting('hoja.org_id', true)"
 _SYS = "current_setting('hoja.system', true) = 'on' OR "
