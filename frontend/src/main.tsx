@@ -19,6 +19,7 @@ import {AgentConversationsSettings} from './AgentConversationsSettings';
 import {bodyLayer, errorText, navigateTo, searchTerms, warmSearchIndex, useEntityVersion, useIssueSearch, useIssues, useOptimisticList, type Layer} from './localFirst';
 import {Markdown} from './markdown';
 import {ReviewActions} from './reviews/ReviewActions';
+import {SplitPane, ScrollArea, TabStrip, Tab, GroupBar, ListRow, PropertyRow, EmptyState} from './design';
 import './graph/styles.css';
 import './settings.css';
 import {SettingsSelect} from './SettingsSelect';
@@ -224,35 +225,33 @@ function ReviewsShell({links,onOpenNav,onRefresh}:{links:ReviewLink[];onOpenNav?
   const groups=allGroups.filter(g=>g.items.length);
   const terminalCount=terminal.length;
   const queueCount=links.length-terminalCount;
-  return <section className="reviews-page">
-    <div className="reviews-col">
+  return <SplitPane className="reviews-page" ledgerClassName="reviews-col" detailClassName="reviews-pane" detailLabel="Review detail"
+    ledger={<>
       <div className="reviews-col-head"><button type="button" className="reviews-nav-btn" aria-label="Open navigation" onClick={onOpenNav}><Menu size={17}/></button><h1>Reviews</h1><span className="reviews-tools"><i>⇅</i><i>⚙</i></span></div>
-      <div className="reviews-tabs"><span className="on">Created{links.length?<b>{links.length}</b>:null}</span><span>To review</span></div>
-      <div className="reviews-scroll">
+      <TabStrip className="reviews-tabs"><span className="on">Created{links.length?<b>{links.length}</b>:null}</span><span>To review</span></TabStrip>
+      <ScrollArea className="reviews-scroll" variant="list">
         {links.length===0?<p className="reviews-empty">No linked pull requests yet.</p>:groups.map(group=>
           <section className="reviews-group" key={group.name}>
-            <h3 className="reviews-group-head">{group.name}<b>{group.items.length}</b><ChevronDown size={11} className="reviews-caret"/></h3>
+            <GroupBar className="reviews-group-head" label={group.name} count={group.items.length} caret={<ChevronDown size={11} className="reviews-caret"/>}/>
             <ul className="reviews-rows">
-              {group.items.map(l=>{const st=(l.state||'open').toLowerCase();const isSel=l.id===selected;return <li className="reviews-row" key={l.id} data-selected={isSel?'true':undefined}>
-                <button type="button" className="reviews-row-main" aria-pressed={isSel} title={l.title||l.externalId} onClick={()=>selectRow(l.id)}>
+              {group.items.map(l=>{const st=(l.state||'open').toLowerCase();const isSel=l.id===selected;return <ListRow key={l.id} className="reviews-row" selected={isSel}
+                main={<button type="button" className="reviews-row-main" aria-pressed={isSel} title={l.title||l.externalId} onClick={()=>selectRow(l.id)}>
                   <ReviewGlyph state={st}/>
                   <span className="reviews-title">{l.title||l.externalId}</span>
                   <span className="reviews-mark" data-state={st}>{st==='closed'||st==='merged'?'✕':''}</span>
                   <span className="reviews-time">{age(l.createdAt)}</span>
-                </button>
-                {l.url?<a className="reviews-row-ext" href={l.url} target="_blank" rel="noreferrer" title="Open on GitHub" aria-label={`Open ${l.externalId} on GitHub`}><ExternalLink size={12}/></a>:null}
-              </li>;})}
+                </button>}
+                aside={l.url?<a className="reviews-row-ext" href={l.url} target="_blank" rel="noreferrer" title="Open on GitHub" aria-label={`Open ${l.externalId} on GitHub`}><ExternalLink size={12}/></a>:null}/>;})}
             </ul>
           </section>)}
         {terminalCount>0&&<p className="reviews-note" title="Linear's reviews queue lists pull requests that are still open. These are kept in the data, not in the queue.">{terminalCount} merged or closed pull {terminalCount===1?'request is':'requests are'} not listed</p>}
-      </div>
-    </div>
-    <aside className="reviews-pane" aria-label="Review detail">
-      {!sel?<div className="reviews-pane-empty">
+      </ScrollArea>
+    </>}
+    detail={!sel?<EmptyState className="reviews-pane-empty">
         <svg className="reviews-illo" viewBox="0 0 143 152" fill="none" aria-hidden="true"><g stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"><g transform="translate(9 12)"><g transform="rotate(-9 71.5 70)"><rect x="29.5" y="45" width="84" height="50" rx="7"/></g></g><g transform="translate(4.5 6)"><g transform="rotate(-4.5 71.5 70)"><rect x="29.5" y="45" width="84" height="50" rx="7"/></g></g><rect x="29.5" y="45" width="84" height="50" rx="7"/><path d="M44 62h56M44 74h40" strokeLinecap="round"/></g></svg>
         <p>{queueCount} {queueCount===1?'review':'reviews'}</p>
         <p className="reviews-pane-hint">Select a review to see its details.</p>
-      </div>:<article className="reviews-detail">
+      </EmptyState>:<article className="reviews-detail">
         <header className="reviews-detail-head">
           <button type="button" className="reviews-pane-close" aria-label="Back to the review list" onClick={closeDetail}><ArrowLeft size={16}/></button>
           <div className="reviews-crumbs">
@@ -268,13 +267,13 @@ function ReviewsShell({links,onOpenNav,onRefresh}:{links:ReviewLink[];onOpenNav?
           {sel.url?<a className="reviews-open-link" href={sel.url} target="_blank" rel="noreferrer"><ExternalLink size={12}/>Open on GitHub</a>:null}
           <button type="button" className="reviews-kebab" disabled title="More review actions are not available yet" aria-label="More review actions (not available)"><MoreHorizontal size={15}/></button>
         </header>
-        <div className="reviews-detail-tabs" role="tablist" aria-label="Review views">
-          <button type="button" role="tab" id="reviews-tab-overview" aria-controls="reviews-panel" aria-selected={paneTab==='overview'} tabIndex={paneTab==='overview'?0:-1} className={paneTab==='overview'?'reviews-tab on':'reviews-tab'} onClick={()=>setPaneTab('overview')} onKeyDown={onTabKeyDown}>Overview</button>
+        <TabStrip className="reviews-detail-tabs" role="tablist" label="Review views">
+          <Tab role="tab" id="reviews-tab-overview" aria-controls="reviews-panel" aria-selected={paneTab==='overview'} tabIndex={paneTab==='overview'?0:-1} className={paneTab==='overview'?'reviews-tab on':'reviews-tab'} onClick={()=>setPaneTab('overview')} onKeyDown={onTabKeyDown}>Overview</Tab>
           {/* The Diff tab is live: the file list comes from the stored pull-request row, and
               an unenriched link opens an explicit empty state rather than a fake diff. */}
-          <button type="button" role="tab" id="reviews-tab-diff" aria-controls="reviews-panel" aria-selected={paneTab==='diff'} tabIndex={paneTab==='diff'?0:-1} className={paneTab==='diff'?'reviews-tab on':'reviews-tab'} onClick={()=>setPaneTab('diff')} onKeyDown={onTabKeyDown} title={files.length?`${files.length} files changed`:'No file data stored for this pull request'}>Diff{files.length?<span className="reviews-tab-count">{files.length}</span>:null}</button>
+          <Tab role="tab" id="reviews-tab-diff" aria-controls="reviews-panel" aria-selected={paneTab==='diff'} tabIndex={paneTab==='diff'?0:-1} className={paneTab==='diff'?'reviews-tab on':'reviews-tab'} onClick={()=>setPaneTab('diff')} onKeyDown={onTabKeyDown} title={files.length?`${files.length} files changed`:'No file data stored for this pull request'}>Diff{files.length?<span className="reviews-tab-count">{files.length}</span>:null}</Tab>
           <span className="reviews-tabs-spacer"/>
-        </div>
+        </TabStrip>
         {/* The four writes live behind a live gate. The gate is read for this link, and the
             server re-reads it plus the exact sha before a merge, so this pane never claims a
             merge the provider did not confirm. */}
@@ -285,7 +284,7 @@ function ReviewsShell({links,onOpenNav,onRefresh}:{links:ReviewLink[];onOpenNav?
               <span className="reviews-diff-count">{files.length} {files.length===1?'file':'files'} changed</span>
               <span className="reviews-diffstat" data-known="true"><span className="reviews-diffstat-add">+{fileTotals.additions}</span><span className="reviews-diffstat-del">−{fileTotals.deletions}</span></span>
             </div>
-            <div className="reviews-diff-scroll">
+            <ScrollArea className="reviews-diff-scroll" variant="diff">
               <ul className="reviews-diff-files">
                 {files.map((f,index)=>{const open=openFiles[f.path]??index===0;const lines=reviewPatchLines(f.patch);return <li className="reviews-diff-file" key={`${index}-${f.path}`}>
                   <button type="button" className="reviews-diff-file-head" aria-expanded={open} onClick={()=>setOpenFiles(o=>({...o,[f.path]:!open}))}>
@@ -299,9 +298,9 @@ function ReviewsShell({links,onOpenNav,onRefresh}:{links:ReviewLink[];onOpenNav?
                   </div>:<p className="reviews-diff-none">Binary file or too large to display — GitHub stored no patch for this file.</p>):null}
                 </li>})}
               </ul>
-            </div>
+            </ScrollArea>
           </>:<p className="reviews-diff-empty" role="status">No file data stored for this pull request.</p>}
-        </div>:<div className="reviews-detail-scroll" role="tabpanel" id="reviews-panel" aria-labelledby="reviews-tab-overview">
+        </div>:<ScrollArea className="reviews-detail-scroll" variant="detail" role="tabpanel" id="reviews-panel" labelledBy="reviews-tab-overview">
           <h1 className="reviews-detail-title">{sel.title||sel.externalId}</h1>
           <p className="reviews-byline">
             <span className="reviews-avatar" aria-hidden="true">{authorName?reviewInitials(authorName):'?'}</span>
@@ -312,13 +311,13 @@ function ReviewsShell({links,onOpenNav,onRefresh}:{links:ReviewLink[];onOpenNav?
           <dl className="reviews-props">
             {/* The GitHub merge signal is a second opinion, never the headline: the link's own
                 state stays the primary value, and no "Ready to merge" claim is inferred from it. */}
-            <div className="reviews-prop"><dt>Status</dt><dd><span className="reviews-dot" data-state={(sel.state||'open').toLowerCase()}/>{reviewStateLabel(sel.state)}{sel.mergeState?<span className="reviews-tag" title={sel.mergeable==null?'Mergeability not reported by GitHub':sel.mergeable?'GitHub reports this pull request as mergeable':'GitHub reports this pull request as not mergeable'}>merge state: {sel.mergeState.toLowerCase()}</span>:null}</dd></div>
-            <div className="reviews-prop"><dt>Reviewers</dt><dd>{reviewerList.length?<span className="reviews-reviewers">{reviewerList.map((r,i)=><span className="reviews-reviewer" key={`${r.login}-${i}`} title={r.state?`${r.login}: ${r.state.toLowerCase()}`:r.login}>{r.login}{r.state?<span className="reviews-unknown">{r.state.toLowerCase()}</span>:null}</span>)}</span>:<span className="reviews-unknown">no reviews upstream</span>}</dd></div>
-            <div className="reviews-prop"><dt>Checks</dt><dd>{checksTotal>0?<><span className="reviews-check-dot" data-checks={checksTone} aria-hidden="true"/>{checksPassing!=null?<span>{checksPassing} passing</span>:null}{checksFailing!=null&&checksFailing>0?<span>{checksFailing} failing</span>:null}<span className="reviews-unknown" title={`${checksTotal} check runs`}>{checksTotal} total</span></>:<span className="reviews-unknown">no checks recorded</span>}</dd></div>
-            <div className="reviews-prop"><dt>Branch</dt><dd>{hasRefs?<><span className="reviews-refs"><code>{sel.baseRef||'?'}</code><span className="reviews-refs-sep" aria-hidden="true">‹</span><code>{sel.headRef||'?'}</code></span>{aheadBehind?<span className="reviews-aheadbehind">{aheadBehind}</span>:null}</>:<span className="reviews-unknown">Base and head refs not stored</span>}</dd></div>
-            <div className="reviews-prop"><dt>Issues</dt><dd>{sel.key}</dd></div>
-            <div className="reviews-prop"><dt>Commit</dt><dd>{sel.sha?<code>{sel.sha.slice(0,7)}</code>:<span className="reviews-unknown">Not linked</span>}</dd></div>
-            <div className="reviews-prop"><dt>Environment</dt><dd>{sel.environment?sel.environment:<span className="reviews-unknown">None recorded</span>}</dd></div>
+            <PropertyRow className="reviews-prop" label="Status"><span className="reviews-dot" data-state={(sel.state||'open').toLowerCase()}/>{reviewStateLabel(sel.state)}{sel.mergeState?<span className="reviews-tag" title={sel.mergeable==null?'Mergeability not reported by GitHub':sel.mergeable?'GitHub reports this pull request as mergeable':'GitHub reports this pull request as not mergeable'}>merge state: {sel.mergeState.toLowerCase()}</span>:null}</PropertyRow>
+            <PropertyRow className="reviews-prop" label="Reviewers">{reviewerList.length?<span className="reviews-reviewers">{reviewerList.map((r,i)=><span className="reviews-reviewer" key={`${r.login}-${i}`} title={r.state?`${r.login}: ${r.state.toLowerCase()}`:r.login}>{r.login}{r.state?<span className="reviews-unknown">{r.state.toLowerCase()}</span>:null}</span>)}</span>:<span className="reviews-unknown">no reviews upstream</span>}</PropertyRow>
+            <PropertyRow className="reviews-prop" label="Checks">{checksTotal>0?<><span className="reviews-check-dot" data-checks={checksTone} aria-hidden="true"/>{checksPassing!=null?<span>{checksPassing} passing</span>:null}{checksFailing!=null&&checksFailing>0?<span>{checksFailing} failing</span>:null}<span className="reviews-unknown" title={`${checksTotal} check runs`}>{checksTotal} total</span></>:<span className="reviews-unknown">no checks recorded</span>}</PropertyRow>
+            <PropertyRow className="reviews-prop" label="Branch">{hasRefs?<><span className="reviews-refs"><code>{sel.baseRef||'?'}</code><span className="reviews-refs-sep" aria-hidden="true">‹</span><code>{sel.headRef||'?'}</code></span>{aheadBehind?<span className="reviews-aheadbehind">{aheadBehind}</span>:null}</>:<span className="reviews-unknown">Base and head refs not stored</span>}</PropertyRow>
+            <PropertyRow className="reviews-prop" label="Issues">{sel.key}</PropertyRow>
+            <PropertyRow className="reviews-prop" label="Commit">{sel.sha?<code>{sel.sha.slice(0,7)}</code>:<span className="reviews-unknown">Not linked</span>}</PropertyRow>
+            <PropertyRow className="reviews-prop" label="Environment">{sel.environment?sel.environment:<span className="reviews-unknown">None recorded</span>}</PropertyRow>
           </dl>
           {bodyPreview?<div className="reviews-desc"><Markdown text={bodyPreview} density="block"/></div>
             :<p className="reviews-desc reviews-unknown">No pull request description is stored for this link.</p>}
@@ -331,11 +330,10 @@ function ReviewsShell({links,onOpenNav,onRefresh}:{links:ReviewLink[];onOpenNav?
               {sel.updatedAt?<li><span className="reviews-activity-icon" aria-hidden="true"><Clock size={12}/></span><p>Link last updated · {age(sel.updatedAt)}</p></li>:null}
             </ol>
           </section>
-        </div>}
-      </article>}
-    </aside>
-  </section>;
+        </ScrollArea>}
+      </article>}/>
 }
+
 function App(){const [setupResume,setSetupResume]=useState<{workspaceId:string;workspaceUrlKey:string}|null>(null);const [pendingWorkspace,setPendingWorkspaceState]=useState<PendingWorkspace|null>(()=>null);useEffect(()=>{const onPop=()=>{if(location.pathname!=='/login/workspace')setPendingWorkspaceState(null)};window.addEventListener('popstate',onPop);return()=>window.removeEventListener('popstate',onPop)},[]);const setPendingWorkspace=(p:PendingWorkspace|null)=>{setPendingWorkspaceState(p);history.pushState({},'',p?'/login/workspace':'/login')};if(localStorage.getItem('hoja_token')==='session')localStorage.removeItem('hoja_token');const [token,setToken]=useState(storedApiToken());useEffect(()=>{if(!token)return;const next=takeConsentReturn();if(next)location.assign(next)},[token]);const [inviteCode,setInviteCode]=useState(()=>new URLSearchParams(location.search).get('invite')||new URLSearchParams(location.hash.slice(1)).get('invite')||'');const [onboarding,setOnboarding]=useState<{checked:boolean;initialized:boolean;singleOrg:boolean}>({checked:false,initialized:true,singleOrg:false});const [hostedSignIn,setHostedSignIn]=useState(false);const [viewer,setViewer]=useState<Viewer>({});const [workspace,setWorkspace]=useState<{id:string;name:string;urlKey:string}>({id:'',name:'',urlKey:''});const [workspaces,setWorkspaces]=useState<{organizationId:string;name:string;urlKey:string;role:string}[]>([]);const [switchError,setSwitchError]=useState('');const [switching,setSwitching]=useState(false);const [teams,setTeams]=useState<Team[]>([]);const [issues,setIssues]=useState<Issue[]>([]);const [dataLoading,setDataLoading]=useState(true);const [olderMine,setOlderMine]=useState<OlderMine>({});const olderMineRef=useRef<OlderMine>({});const [activityEvents,setActivityEvents]=useState<IssueActivityEvent[]>([]);const [activityCursor,setActivityCursor]=useState<string|null>(null);const [activityHasMore,setActivityHasMore]=useState(false);const [activityLoading,setActivityLoading]=useState(false);const [activityError,setActivityError]=useState('');const activityLoadRef=useRef(false);const activityGeneration=useRef(0);const issueLoadGeneration=useRef(0);const [projects,setProjects]=useState<Project[]>([]);const [projectCursor,setProjectCursor]=useState<string|null>(null);const [projectHasMore,setProjectHasMore]=useState(false);const [projectLoading,setProjectLoading]=useState(false);const [projectError,setProjectError]=useState('');const [projectDetailLoading,setProjectDetailLoading]=useState(false);const [projectDetailRefresh,setProjectDetailRefresh]=useState(0);const [projectDetailError,setProjectDetailError]=useState('');const projectLoadRef=useRef(false);const projectGeneration=useRef(0);const [labels,setLabels]=useState<{id:string;name:string;color?:string}[]>([]);const [cycles,setCycles]=useState<Cycle[]>([]);const [activeCycle,setActiveCycle]=useState<Cycle|null>(null);const [cycleDetailError,setCycleDetailError]=useState(''),[cycleDetailLoading,setCycleDetailLoading]=useState(false);const [activeProject,setActiveProject]=useState<Project|null>(null);const [activeIssue,setActiveIssue]=useState<Issue|null>(null);const [issueReturnProject,setIssueReturnProject]=useState<string|null>(null);const [issueReturn,setIssueReturn]=useState<{label:string;view:string;path:string}|null>(null);const [issueLoading,setIssueLoading]=useState(false);const [issueError,setIssueError]=useState('');const [issueRetry,setIssueRetry]=useState(0);const [view,setView]=useState(()=>routeView(applyLegacyTaskRedirect()));const [settingsSection,setSettingsSection]=useState(()=>window.location.pathname.split('/')[3]||'preferences');const settingsReturn=useRef('/workspace/my-issues/assigned');const [myIssuesTab,setMyIssuesTab]=useState<MyIssuesTab>(()=>window.location.pathname.split('/').pop()==='created'?'Created':window.location.pathname.split('/').pop()==='subscribed'?'Subscribed':window.location.pathname.split('/').pop()==='activity'?'Activity':'Assigned');const [boardTab,setBoardTab]=useState<BoardTab>('All issues');const [reviewsLinks,setReviewsLinks]=useState<ReviewLink[]>([]);const [reviewsReload,setReviewsReload]=useState(0);useEffect(()=>{if(view!=='Reviews')return;gql(`query ReviewsLinks{ issues(first:100,orderBy:updatedAt){ nodes { identifier githubLinks { id kind externalId url title state author sha environment createdAt updatedAt additions deletions baseRef headRef behind ahead mergeable mergeState reviewDecision reviewers checksState checksTotal checksPassing checksFailing body mergedAt githubUpdatedAt files { path additions deletions status patch previousPath } } } } }`).then((d:{issues:{nodes:{identifier:string;githubLinks?:ReviewLink[]}[]}})=>{const out:ReviewLink[]=[];for(const n of d.issues.nodes)for(const l of (n.githubLinks||[]))if(l.kind==='pr')out.push({...l,key:n.identifier});setReviewsLinks(out);}).catch(()=>{});},[view,reviewsReload]);const [boardTeam,setBoardTeam]=useState('');const [issueLayout,setIssueLayout]=useState<IssueLayout>(()=>localStorage.getItem('hoja_issue_layout')==='Board'?'Board':'List');const changeIssueLayout=(layout:IssueLayout)=>{localStorage.setItem('hoja_issue_layout',layout);setIssueLayout(layout)};const [teamCycle,setTeamCycle]=useState<Cycle|null>(null),[teamCycleRoute,setTeamCycleRoute]=useState(()=>location.pathname),[teamCycleLoading,setTeamCycleLoading]=useState(false),[teamCycleError,setTeamCycleError]=useState('');const [theme,setTheme]=useState(localStorage.getItem('theme')||'light');const [fontScale,setFontScale]=useState(localStorage.getItem('hoja_font_scale')||'100');const [preferenceMessage,setPreferenceMessage]=useState('');useEffect(()=>{document.documentElement.dataset.theme=theme;localStorage.setItem('theme',theme)},[theme]);useEffect(()=>{document.documentElement.style.setProperty('--font-scale',String(Number(fontScale)/100));localStorage.setItem('hoja_font_scale',fontScale)},[fontScale]);const savePreference=async(key:string,value:string)=>{setPreferenceMessage('Saving…');try{const d=await gql(`mutation($key:String!,$value:String!){userPreferenceSet(key:$key,value:$value){success theme fontSize}}`,{key,value});if(!d.userPreferenceSet.success)throw Error('Preference was not saved');if(key==='theme')setTheme(value);else setFontScale(value);setPreferenceMessage('Saved to your account.')}catch(e){setPreferenceMessage(`Could not save: ${(e as Error).message}`)}};const [search,setSearch]=useState('');const [filter,setFilter]=useState('');const [selected,setSelected]=useState<Issue|null>(null);const [newOpen,setNewOpen]=useState(false);const [newStateId,setNewStateId]=useState('');const [projectOpen,setProjectOpen]=useState(false);const [mobile,setMobile]=useState(false);const mobileToggleRef=useRef<HTMLButtonElement>(null);const mobileSidebarRef=useRef<HTMLElement>(null);const closeMobileNav=useCallback(()=>{setMobile(false);if(mobileToggleRef.current&&mobileToggleRef.current.offsetParent!==null)mobileToggleRef.current.focus()},[]);const [orgMenu,setOrgMenu]=useState(false);const [commandOpen,setCommandOpen]=useState(false);const [commandQuery,setCommandQuery]=useState('');const [filtersOpen,setFiltersOpen]=useState(false);const [collapsedSections,setCollapsedSections]=useState<Record<string,boolean>>({});const [sidebarCollapsed,setSidebarCollapsed]=useState(()=>localStorage.getItem('hoja_sidebar_collapsed')==='true');useEffect(()=>{localStorage.setItem('hoja_sidebar_collapsed',String(sidebarCollapsed))},[sidebarCollapsed]);const [collapsedTeams,setCollapsedTeams]=useState<Record<string,boolean>>({});const [moreOpen,setMoreOpen]=useState(false);const [error,setError]=useState('');
 useEffect(()=>{Promise.all([fetch('/onboarding/status').then(r=>r.json()),fetch('/auth/me',{credentials:'include'}).then(r=>r.ok),fetch('/api/signup/config').then(r=>r.ok?r.json():null)]).then(([v,session,config])=>{setOnboarding({checked:true,initialized:!!v.initialized,singleOrg:!!v.singleOrg});setHostedSignIn(Boolean(config?.hosted&&config?.signInUrl));if(session)setToken(localStorage.getItem('hoja_token')||'session')}).catch(()=>setOnboarding(v=>({...v,checked:true,initialized:true})))},[]);
 useEffect(()=>{if(!token||!workspace.id||setupResume)return;const saved=loadDraft(localStorage,{edition:'cloud'});if(!saved||saved.step==='ready')return;const sameWorkspace=saved.workspaceId===workspace.id;const googleReturn=Boolean(saved.googleStarted&&!saved.workspaceId);if(sameWorkspace||googleReturn)setSetupResume({workspaceId:workspace.id,workspaceUrlKey:workspace.urlKey})},[token,workspace.id,workspace.urlKey,setupResume]);

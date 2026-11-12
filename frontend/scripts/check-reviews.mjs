@@ -31,6 +31,34 @@ const css = readFileSync(join(root, 'src/styles.css'), 'utf8').replace(/\/\*[\s\
 
 const failures = [];
 
+/* HOJA-419: the measured numbers now live in src/design/tokens.css and every Reviews rule
+ * references them (var(--ds-…)). The invariants in this file are unchanged — 482/40/28/96/52/44
+ * still have to hold — but they are resolved THROUGH the token layer, because a literal in
+ * styles.css would be a second source of truth for a number the design system owns. A rule
+ * that stops resolving to the measured value still fails. */
+const designDir = join(root, 'src/design');
+const strip = (text) => text.replace(/\/\*[\s\S]*?\*\//g, '');
+const tokenCss = strip(readFileSync(join(designDir, 'tokens.css'), 'utf8'));
+const designCss = strip(readFileSync(join(designDir, 'design.css'), 'utf8'));
+const tokens = {};
+for (const m of tokenCss.matchAll(/(--ds-[a-z0-9-]+)\s*:\s*([^;]+);/g)) tokens[m[1]] = m[2].trim();
+/** Replace every var(--ds-…) with its token value (repeatedly, for aliases). */
+function resolveAll(value) {
+  if (value == null) return value;
+  let out = String(value);
+  for (let guard = 0; out.includes('var(') && guard < 10; guard++) {
+    out = out.replace(/var\((--ds-[a-z0-9-]+)(?:,\s*([^)]*))?\)/g, (_, name, fallback) => tokens[name] ?? (fallback || '').trim());
+  }
+  return out.replace(/\s+/g, ' ').trim();
+}
+/** The token itself must carry the measured number, cited in tokens.css. */
+function expectToken(name, want) {
+  const got = tokens[name];
+  if (got !== want) {
+    failures.push(`tokens.css: ${name} is ${got === undefined ? 'missing' : `"${got}"`}, expected "${want}" — the measured value must live in the token layer, cited to its measurement`);
+  }
+}
+
 /** The @-rule (or '') that contains the block starting at `index`. */
 function atRuleOf(index) {
   const stack = [];
@@ -95,7 +123,7 @@ function mediaBlocks(sel, frag) {
 function expect(sel, prop, want, why = 'The split-view ledger geometry (482px column, flat 40px rows, 28px group bar) depends on it.') {
   const map = declared(sel);
   if (!map) return failures.push(`styles.css: no ${sel} rule found`);
-  const got = map[prop];
+  const got = resolveAll(map[prop]);
   if (got !== want) {
     failures.push(
       `styles.css: ${sel} { ${prop} } is ${got === undefined ? 'missing' : `"${got}"`}, expected "${want}". ` + why
@@ -106,7 +134,7 @@ function expect(sel, prop, want, why = 'The split-view ledger geometry (482px co
 /** 1. The ledger column is a pinned 482px pane on the left. */
 expect('.reviews-col', 'width', '482px');
 const col = declared('.reviews-col');
-if (col && !/482px/.test(col.flex || '')) {
+if (col && !/482px/.test(resolveAll(col.flex) || '')) {
   failures.push(`styles.css: .reviews-col { flex } is "${col.flex}", expected a 482px basis (e.g. "0 0 482px"); a shrinkable column resizes the pane`);
 }
 
@@ -115,11 +143,41 @@ if (col && !/482px/.test(col.flex || '')) {
  *     styles.css, and a stale one is exactly how 38px came back before. */
 expect('.reviews-row', 'height', '40px', 'Linear rows measure 40px at 1440x900 (artifacts/reviews-parity-*.json).');
 for (const b of blocks('.reviews-row').filter((x) => x.media === '')) {
-  const h = parse(b.body).height;
+  const h = resolveAll(parse(b.body).height);
   if (h !== undefined && h !== '40px') {
     failures.push(`styles.css: an earlier .reviews-row block still sets height:"${h}"; every base block must say 40px or the cascade can resurrect the old value`);
   }
 }
+/* HOJA-419: the numbers the design system owns must be tokens, and the tokens must carry the
+ * measured value. Pinned here so a token edit cannot quietly move the layout. */
+for (const [name, want] of Object.entries({
+  '--ds-ledger-width': '482px',
+  '--ds-row-height': '40px',
+  '--ds-group-bar-height': '28px',
+  '--ds-group-bar-padding': '0 9px 0 10px',
+  '--ds-group-bar-margin': '2px 0 2px 10px',
+  '--ds-group-bar-radius': '8px',
+  '--ds-prop-label-width': '96px',
+  '--ds-pane-head-height': '52px',
+  '--ds-pane-tabs-height': '44px',
+  '--ds-row-glyph-size': '14px',
+})) expectToken(name, want);
+
+/* HOJA-419: Reviews must consume the primitives, not re-implement them. Each hook class has
+ * to be bound to its primitive, and the primitive module has to be imported. */
+if (!/from '\.\/design'/.test(tsx)) {
+  failures.push("main.tsx: does not import './design'; Reviews is assembling its own primitives again");
+}
+for (const [primitive, hook, attr = 'className'] of [
+  ['SplitPane', 'reviews-col', 'ledgerClassName'], ['ScrollArea', 'reviews-scroll'], ['TabStrip', 'reviews-detail-tabs'],
+  ['GroupBar', 'reviews-group-head'], ['ListRow', 'reviews-row'], ['PropertyRow', 'reviews-prop'],
+  ['EmptyState', 'reviews-pane-empty'],
+]) {
+  if (!new RegExp(`<${primitive}[^>]*${attr}="${hook}"`).test(tsx)) {
+    failures.push(`main.tsx: ${primitive} is not bound to .${hook}; the design primitive is not what renders that element`);
+  }
+}
+
 const row = declared('.reviews-row') || {};
 const border = row.border;
 if (border !== undefined && !/^(0|0px|none)$/.test(border)) {
@@ -138,13 +196,13 @@ expect('.reviews-group-head', 'height', '28px', 'Linear group bars measure 28px 
   const band = declared('.reviews-group-head') || {};
   const want = { padding: '0 9px 0 10px', margin: '2px 0 2px 10px', 'border-radius': '8px' };
   for (const [prop, value] of Object.entries(want)) {
-    if (band[prop] !== value) {
-      failures.push(`styles.css: .reviews-group-head { ${prop} } is "${band[prop] ?? 'missing'}", expected "${value}" (measured from the reference band)`);
+    if (resolveAll(band[prop]) !== value) {
+      failures.push(`styles.css: .reviews-group-head { ${prop} } is "${resolveAll(band[prop]) ?? 'missing'}", expected "${value}" (measured from the reference band)`);
     }
   }
 }
 for (const b of blocks('.reviews-group-head').filter((x) => x.media === '')) {
-  const h = parse(b.body).height;
+  const h = resolveAll(parse(b.body).height);
   if (h !== undefined && h !== '28px') {
     failures.push(`styles.css: an earlier .reviews-group-head block still sets height:"${h}"; every base block must say 28px`);
   }
@@ -152,7 +210,11 @@ for (const b of blocks('.reviews-group-head').filter((x) => x.media === '')) {
 
 /** 4. The two-pane structure exists: .reviews-col + .reviews-pane, in JSX and CSS. */
 for (const cls of ['reviews-col', 'reviews-pane']) {
-  if (!new RegExp(`className="${cls}"`).test(tsx)) {
+  /* HOJA-419: the two panes are now SplitPane's ledger/detail slots, so the hook arrives as
+   * ledgerClassName/detailClassName. Either spelling proves the pane exists; the primitive
+   * import is asserted separately below so the hook cannot be orphaned. */
+  const hook = new RegExp(`(className|ledgerClassName|detailClassName)="${cls}"`).test(tsx);
+  if (!hook) {
     failures.push(`main.tsx: no element with className="${cls}"; the reviews split view lost a pane`);
   }
   if (!declared('.' + cls)) {
@@ -390,7 +452,7 @@ if ((add.color || '').toLowerCase() === (del.color || '').toLowerCase()) failure
  *      - the page height can never be a bare 100dvh, which ignores the header.
  */
 const colBase = declared('.reviews-col') || {};
-if (colBase['max-width'] !== '482px') {
+if (resolveAll(colBase['max-width']) !== '482px') {
   failures.push(`styles.css: .reviews-col { max-width } is ${colBase['max-width'] === undefined ? 'missing' : `"${colBase['max-width']}"`}; 482px must be a max, not only a width, or the ledger cannot give space back`);
 }
 const colMedia = blocks('.reviews-col').filter((b) => b.media !== '');
@@ -499,8 +561,10 @@ const diffTabAt = tsx.indexOf('id="reviews-tab-diff"');
 if (diffTabAt === -1) {
   failures.push('main.tsx: no Diff tab (id="reviews-tab-diff"); the pane lost its second view');
 } else {
-  const tabStart = tsx.lastIndexOf('<button', diffTabAt);
-  const tabTag = tsx.slice(tabStart, tsx.indexOf('</button>', diffTabAt));
+  const tabStart = tsx.lastIndexOf('<', diffTabAt);
+  let tagEnd = diffTabAt;
+  while (tagEnd < tsx.length && !(tsx[tagEnd] === '>' && tsx[tagEnd - 1] !== '=')) tagEnd++;
+  const tabTag = tsx.slice(tabStart, tagEnd + 1);
   if (/\bdisabled\b/.test(tabTag)) {
     failures.push('main.tsx: the Diff tab is disabled again; it must render the stored file list (or an explicit empty state)');
   }

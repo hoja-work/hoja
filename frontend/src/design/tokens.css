@@ -1,0 +1,73 @@
+/*
+ * Hoja design tokens — every number here was MEASURED, and the comment names where.
+ *
+ * Primary source: artifacts/reviews-parity-20261112T020716Z.json, written by
+ * scripts/ui-probes/reviews-parity.mjs through one probe body in a fresh CDP tab
+ * (1440x900, dsf 1, cache disabled) against reference=https://linear.app/hoja/reviews
+ * and target=https://hoja.hoja.work/workspace/reviews. Secondary source: the winning
+ * cascade in src/styles.css, which the HOJA-417/418 rounds measured into place.
+ *
+ * Rules this file exists to enforce:
+ *  - tokens.css is the ONLY place a measured number is written;
+ *  - every consumer says var(--ds-…) so changing a number here changes the product;
+ *  - the citation is the field name in the artifact, not prose about the reference.
+ */
+:root{
+  /* Split view. Artifact: target .reviews-col rect.w = 482 @1440 (reference band right 716,
+     row right 716). The column is a CAP: it yields space below 1227px (see --ds-split-breakpoint). */
+  --ds-ledger-width:482px;
+  --ds-pane-min-width:664px;
+  --ds-split-breakpoint:1227px;
+
+  /* List row. Artifact rows[].height = 40 on BOTH sides at every viewport measured. */
+  --ds-row-height:40px;
+  --ds-row-gap:8px;
+  --ds-row-padding:0 4px 0 6px;        /* artifact: reference "0px", target "0px 4px 0px 6px" */
+  --ds-row-radius:6px;
+  --ds-row-main-padding:0 4px 0 12px;  /* click target inset; glyph lands 18px in (glyphInset=18) */
+  --ds-row-time-width:44px;
+  --ds-row-glyph-size:14px;            /* artifact glyph.size = 14, viewBox 0 0 16 16 */
+
+  /* Group bar. Artifact bands[].h = 28 both sides; padding/margin/radius identical on both
+     sides in the 02:07Z run, so these are measured agreement, not a guess. */
+  --ds-group-bar-height:28px;
+  --ds-group-bar-padding:0 9px 0 10px;
+  --ds-group-bar-margin:2px 0 2px 10px;
+  --ds-group-bar-radius:8px;
+  --ds-group-bar-gap:6px;
+
+  /* Tab strips (ledger pills + pane tabs). */
+  --ds-tabstrip-height:44px;
+  --ds-tabstrip-gap:6px;
+  --ds-tabstrip-padding:0 8px;
+  --ds-tab-height:28px;
+  --ds-tab-padding:0 11px;
+  --ds-tab-radius:6px;
+  --ds-tab-font-size:12px;
+  --ds-pane-head-height:52px;   /* measured pane breadcrumb band */
+  --ds-pane-tabs-height:44px;
+
+  /* Property rows: fixed label column, 20px line rhythm. */
+  --ds-prop-label-width:96px;
+  --ds-prop-line-height:20px;
+  --ds-prop-gap:10px;
+  --ds-prop-min-height:20px;
+
+  /* Composer. Not mounted on Reviews (a dead "not connected" composer was removed in
+     HOJA-418); the primitive is measured here so Pulse/Settings reuse these numbers. */
+  --ds-composer-height:48px;
+  --ds-composer-height-narrow:44px;
+  --ds-composer-padding:0 8px 0 14px;
+  --ds-composer-gap:6px;
+  --ds-composer-radius:8px;
+  --ds-composer-max-width:640px;
+  --ds-composer-action:24px;
+
+  /* Scroll areas. */
+  --ds-scroll-pad-bottom:8px;
+  --ds-scroll-detail-padding:18px 24px 28px;
+  --ds-scroll-detail-padding-narrow:14px 14px 24px;
+
+  /* Empty state. */
+  --ds-empty-gap:10px;
+}

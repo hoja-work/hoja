@@ -20,30 +20,34 @@ import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const cssPath = join(root, 'src/styles.css');
+/* HOJA-419: the three geometry numbers moved into the design tokens, so the mutation proves the
+ * token is what the guard reads — mutating the token must turn check-reviews red, and moving a
+ * token back must turn it green again. A guard that only watched styles.css would stay green. */
+const tokenPath = join(root, 'src/design/tokens.css');
 const gatePath = join(root, 'src/reviews-gate.ts');
 
 const mutations = [
   {
-    name: 'row height 40px -> 38px',
-    file: cssPath,
-    from: 'gap:0;height:40px;margin:0;padding:0 4px 0 6px;border:0;background:none;position:relative',
-    to: 'gap:0;height:38px;margin:0;padding:0 4px 0 6px;border:0;background:none;position:relative',
+    name: 'row height token 40px -> 38px',
+    file: tokenPath,
+    from: '--ds-row-height:40px;',
+    to: '--ds-row-height:38px;',
     runner: ['scripts/check-reviews.mjs'],
     expect: '.reviews-row { height } is "38px", expected "40px"',
   },
   {
-    name: 'group bar 28px -> 22px',
-    file: cssPath,
-    from: 'gap:6px;height:28px;margin:2px 0 2px 10px',
-    to: 'gap:6px;height:22px;margin:2px 0 2px 10px',
+    name: 'group bar token 28px -> 22px',
+    file: tokenPath,
+    from: '--ds-group-bar-height:28px;',
+    to: '--ds-group-bar-height:22px;',
     runner: ['scripts/check-reviews.mjs'],
     expect: '.reviews-group-head { height } is "22px", expected "28px"',
   },
   {
-    name: 'band rhythm 2px -> 8px',
-    file: cssPath,
-    from: 'margin:2px 0 2px 10px;padding:0 9px 0 10px',
-    to: 'margin:8px 0 0 10px;padding:0 9px 0 10px',
+    name: 'band rhythm token 2px -> 8px',
+    file: tokenPath,
+    from: '--ds-group-bar-margin:2px 0 2px 10px;',
+    to: '--ds-group-bar-margin:8px 0 0 10px;',
     runner: ['scripts/check-reviews.mjs'],
     expect: '.reviews-group-head { margin } is "8px 0 0 10px", expected "2px 0 2px 10px"',
   },
