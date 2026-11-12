@@ -10,7 +10,7 @@
 export const KNOWN_WORKSPACE_PAGES = [
   'my-issues', 'inbox', 'pulse', 'agent', 'initiatives', 'projects', 'views', 'board',
   'cycles', 'members', 'team', 'settings', 'issue', 'task', 'project', 'cycle', 'favorite-views',
-  'more', 'meetings',, 'reviews',
+  'more', 'meetings',, 'reviews', 'agents',
 ];
 
 export function routeView(path: string): string {
@@ -46,6 +46,17 @@ export function routeView(path: string): string {
   if (p.includes('/projects')) return 'Projects';
   if (p.includes('/cycles')) return 'Cycles';
   if (p.includes('/members')) return 'Members';
+  // Before '/agent': every agent-surface URL contains '/agents', which the Agent page's
+  // substring test would otherwise swallow (HOJA-602-A-16).
+  //
+  // The detail page is its own view, for the same reason 'Issue detail' is: the app puts the
+  // list views inside the rounded workspace shell and lets a detail page be full-bleed. One
+  // view name cannot be both, so the shape of the URL decides, exactly as it does for tasks.
+  if (p.includes('/agents')) {
+    const rest = p.split('/').filter(Boolean);
+    const tail = rest.slice(rest.indexOf('agents') + 1);
+    return tail.length === 1 && !['queue', 'audit'].includes(tail[0]) ? 'Agent detail' : 'Agents';
+  }
   if (p.includes('/agent')) return 'Agent';
 
   const parts = p.split('/').filter(Boolean);

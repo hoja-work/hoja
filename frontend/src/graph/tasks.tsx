@@ -55,7 +55,10 @@ export const emptyFilters: LinFilters = {
 };
 
 export type LinDisplay = {
-  grouping: 'none' | 'status' | 'priority' | 'assignee' | 'labels' | 'project';
+  /** The agent surface groups by `runner`, and the audit log by `actor` or `action`
+   * (HOJA-602-A-16). The issue list never sets those; `groupLinIssues` treats any grouping it
+   * does not implement as one ungrouped list, so a stored value cannot hide rows. */
+  grouping: 'none' | 'status' | 'priority' | 'assignee' | 'labels' | 'project' | 'runner' | 'actor' | 'action';
   ordering: 'created' | 'updated' | 'priority';
   direction: 'desc' | 'asc';
   hideCompleted: boolean;
@@ -118,7 +121,8 @@ export function orderLinIssues(issues: LinIssue[], d: LinDisplay): LinIssue[] {
 }
 
 export function groupLinIssues(issues: LinIssue[], d: LinDisplay, states: IssueState[]): {key: string; name: string; state?: IssueState; items: LinIssue[]}[] {
-  if (d.grouping === 'none') return [{key: 'all', name: '', items: issues}];
+  const IMPLEMENTED = ['status', 'priority', 'assignee', 'labels', 'project'];
+  if (!IMPLEMENTED.includes(d.grouping)) return [{key: 'all', name: '', items: issues}];
   const groups = new Map<string, {key: string; name: string; state?: IssueState; items: LinIssue[]}>();
   const keyOf = (i: LinIssue): {key: string; name: string; state?: IssueState} => {
     if (d.grouping === 'status') {
@@ -168,10 +172,23 @@ const FILTER_DEFS = [
 ] as const;
 const FILTER_UNAVAILABLE = ['AI filter', 'Advanced filter', 'Agent', 'Agent Session', 'Relations', 'Suggested label', 'Project properties', 'Initiative', 'Added to cycle', 'Customers', 'Auto-closed', 'Links', 'Template'];
 
-export function FilterMenu({filters, setFilters, team, teams, projects, labels, cycles, onClose, anchorClass}: {
+/* The filter menu only needs the states it can filter by and the people it can filter on, so it
+ * accepts that shape instead of a whole Team. The agent surface passes its own status list and
+ * owners here (HOJA-602-A-16) without inventing a Team; a real Team satisfies it unchanged. */
+export type FilterTeam = {
+  id: string;
+  states: {nodes: IssueState[]};
+  members?: {nodes: {id: string; name: string; email?: string}[]};
+};
+
+export function FilterMenu({filters, setFilters, team, teams, projects, labels, cycles, onClose, anchorClass, only}: {
   filters: LinFilters; setFilters: (f: LinFilters) => void;
-  team?: Team; teams: Team[]; projects: Project[]; labels: IssueLabel[]; cycles: Cycle[];
+  team?: FilterTeam; teams: Team[]; projects: Project[]; labels: IssueLabel[]; cycles: Cycle[];
   onClose: () => void; anchorClass?: string;
+  /** Restrict the menu to these filter definitions. The agent surface reads status, owner and
+   * content from the same `LinFilters` shape, and listing priority/labels/cycles there would
+   * offer a filter that cannot match anything. Omitted means every definition, as on issues. */
+  only?: readonly string[];
 }) {
   const ref = useDismiss(onClose);
   const [sub, setSub] = useState<string | null>(null);
@@ -207,7 +224,7 @@ export function FilterMenu({filters, setFilters, team, teams, projects, labels, 
       {!sub && <>
         <div className="fm-search"><input placeholder="Add filter…" value={search} onChange={e => setSearch(e.target.value)} /></div>
         <div style={{padding: '4px 0'}}>
-          {FILTER_DEFS.filter(d => d.label.toLowerCase().includes(search.toLowerCase())).map(d => (
+          {FILTER_DEFS.filter(d => (!only || only.includes(d.key)) && d.label.toLowerCase().includes(search.toLowerCase())).map(d => (
             <button type="button" key={d.key} className="fm-item" onClick={() => setSub(d.key)}>
               <span className="fm-ic">{d.icon}</span>
               <span style={{flex: 1}}>{d.label}</span>
@@ -215,7 +232,7 @@ export function FilterMenu({filters, setFilters, team, teams, projects, labels, 
               <ChevronRight size={14} color="var(--muted)" />
             </button>
           ))}
-          {FILTER_UNAVAILABLE.filter(l => l.toLowerCase().includes(search.toLowerCase())).map(l => (
+          {!only && FILTER_UNAVAILABLE.filter(l => l.toLowerCase().includes(search.toLowerCase())).map(l => (
             <Tip key={l} label="Not available in Hoja yet" className="fm-item" >
               <span className="fm-item" style={{opacity: .45, cursor: 'not-allowed', width: '100%'}}>
                 <span className="fm-ic">○</span><span style={{flex: 1}}>{l}</span>
@@ -254,8 +271,15 @@ export function FilterMenu({filters, setFilters, team, teams, projects, labels, 
 
 /* ---------------- display options panel ---------------- */
 
-export function DisplayPanel({display, setDisplay, onClose, anchorClass}: {
+export function DisplayPanel({display, setDisplay, onClose, anchorClass, groupingOptions, groupingLabel = 'Group tasks by', propertyRows, entityToggles = true}: {
   display: LinDisplay; setDisplay: (d: LinDisplay) => void; onClose: () => void; anchorClass?: string;
+  /** Which groupings this surface can actually produce. Defaults to the issue list's set. */
+  groupingOptions?: [string, string][];
+  groupingLabel?: string;
+  /** Replace the issue property checkboxes with the caller's own fields (agent surface). */
+  propertyRows?: {key: string; label: string; checked: boolean; onToggle: () => void}[];
+  /** The completed/sub-task/empty-column switches are issue concepts; a caller can drop them. */
+  entityToggles?: boolean;
 }) {
   const ref = useDismiss(onClose);
   const set = (patch: Partial<LinDisplay>) => setDisplay({...display, ...patch});
@@ -266,6 +290,7 @@ export function DisplayPanel({display, setDisplay, onClose, anchorClass}: {
     ['created', 'Created'], ['updated', 'Updated'],
   ];
   const UNAVAILABLE_PROPS = ['Milestone', 'Links', 'Customers', 'Customer revenue', 'Time in status'];
+  const GROUPS: [string, string][] = groupingOptions || [['none', 'No grouping'], ['status', 'Status'], ['priority', 'Priority'], ['assignee', 'Assignee'], ['labels', 'Labels'], ['project', 'Project']];
   return (
     <div ref={ref} className={cx('lin-popover lin-display', anchorClass)} role="dialog" aria-label="Display options">
       <div className="dp-sec">
@@ -279,14 +304,9 @@ export function DisplayPanel({display, setDisplay, onClose, anchorClass}: {
       </div>
       <div className="dp-sec">
         <div className="dp-title">Grouping</div>
-        <select aria-label="Group tasks by" value={display.grouping}
+        <select aria-label={groupingLabel} value={display.grouping}
           onChange={e => set({grouping: e.target.value as LinDisplay['grouping']})}>
-          <option value="none">No grouping</option>
-          <option value="status">Status</option>
-          <option value="priority">Priority</option>
-          <option value="assignee">Assignee</option>
-          <option value="labels">Labels</option>
-          <option value="project">Project</option>
+          {GROUPS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select>
       </div>
       <div className="dp-sec">
@@ -303,19 +323,26 @@ export function DisplayPanel({display, setDisplay, onClose, anchorClass}: {
             <button type="button" aria-pressed={display.direction === 'asc'} onClick={() => set({direction: 'asc'})}>Asc</button>
           </div>
         </div>
-        <div className="dp-row"><label><input type="checkbox" className="lin-check" checked={display.hideCompleted}
-          onChange={e => set({hideCompleted: e.target.checked})} /> Hide completed tasks</label></div>
-        <div className="dp-row"><label><input type="checkbox" className="lin-check" checked={display.showSubIssues}
-          onChange={e => set({showSubIssues: e.target.checked})} /> Show sub-tasks</label></div>
-        <div className="dp-row"><label><input type="checkbox" className="lin-check" checked={display.showEmptyColumns}
-          onChange={e => set({showEmptyColumns: e.target.checked})} /> Show empty columns</label></div>
+        {entityToggles && <>
+          <div className="dp-row"><label><input type="checkbox" className="lin-check" checked={display.hideCompleted}
+            onChange={e => set({hideCompleted: e.target.checked})} /> Hide completed tasks</label></div>
+          <div className="dp-row"><label><input type="checkbox" className="lin-check" checked={display.showSubIssues}
+            onChange={e => set({showSubIssues: e.target.checked})} /> Show sub-tasks</label></div>
+          <div className="dp-row"><label><input type="checkbox" className="lin-check" checked={display.showEmptyColumns}
+            onChange={e => set({showEmptyColumns: e.target.checked})} /> Show empty columns</label></div>
+        </>}
       </div>
       <div className="dp-sec">
         <div className="dp-title">Display properties</div>
-        {PROP_LABELS.map(([k, label]) => (
-          <div className="dp-row" key={k}><label><input type="checkbox" className="lin-check"
-            checked={display.props[k]} onChange={() => toggleProp(k)} /> {label}</label></div>
-        ))}
+        {propertyRows
+          ? propertyRows.map(row => (
+            <div className="dp-row" key={row.key}><label><input type="checkbox" className="lin-check"
+              checked={row.checked} onChange={row.onToggle} /> {row.label}</label></div>
+          ))
+          : PROP_LABELS.map(([k, label]) => (
+            <div className="dp-row" key={k}><label><input type="checkbox" className="lin-check"
+              checked={display.props[k]} onChange={() => toggleProp(k)} /> {label}</label></div>
+          ))}
         {UNAVAILABLE_PROPS.map(label => (
           <div className="dp-row" key={label} style={{opacity: .45}}>
             <Tip label="Not available in Hoja yet"><label style={{cursor: 'not-allowed'}}><input type="checkbox" className="lin-check" disabled /> {label}</label></Tip>
@@ -419,10 +446,31 @@ function DecisionPanel({decisions, onAnswer, onCancel}: {
 /* ---------------- issue row ---------------- */
 
 /* Memoized: with stable onSelect/onOpen only rows whose issue/selection changed re-render. */
-export const IssueRow = memo(function IssueRow({issue, display, selected, onSelect, onOpen, childCount, childDone = 0, showCheckbox}: {
-  issue: LinIssue; display: LinDisplay; selected: boolean;
+/* The fields a list row actually reads. Narrower than LinIssue so a surface that is not the
+ * issue store — the agent run queue, which renders a delegated task from its session record
+ * (HOJA-602-A-16) — can build a row without inventing a whole issue. LinIssue satisfies it. */
+export type IssueRowModel = {
+  id: string; identifier: string; title: string; priority?: number | null;
+  state?: {id?: string; name?: string; type?: string; color?: string} | null;
+  stateChangedAt?: string | null;
+  decisionNeeded?: boolean;
+  labels?: {nodes: IssueLabel[]};
+  project?: {id: string; name: string} | null;
+  cycle?: {id: string; name?: string; number?: number} | null;
+  dueDate?: string | null;
+  assignee?: {id: string; name?: string} | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export const IssueRow = memo(function IssueRow({issue, display, selected, onSelect, onOpen, childCount, childDone = 0, showCheckbox, trailing}: {
+  issue: IssueRowModel; display: LinDisplay; selected: boolean;
   onSelect: (id: string, on: boolean) => void; onOpen: (issue: LinIssue) => void;
   childCount: number; childDone?: number; showCheckbox: boolean;
+  /** A caller-owned chip that belongs to this row but not to the issue model, such as the agent
+   * session badge on the run queue. Rendered beside the row's own flags so it inherits the row's
+   * height and alignment instead of becoming a second, separately styled row. */
+  trailing?: React.ReactNode;
 }) {
   const p = display.props;
   return (
@@ -438,9 +486,12 @@ export const IssueRow = memo(function IssueRow({issue, display, selected, onSele
       {p.status && <StatusAgeIcon issue={issue} />}
       {p.priority && <PriorityIcon priority={issue.priority} />}
       {p.id && <span className="ident">{issue.identifier}</span>}
-      <button type="button" className="title" onClick={() => onOpen(issue)} title={issue.title}>{issue.title}</button>
+      {/* The row hands back the object it was handed. `IssueRowModel` is the render contract;
+          a caller that passes a projection owns the consequence of its own missing fields. */}
+      <button type="button" className="title" onClick={() => onOpen(issue as LinIssue)} title={issue.title}>{issue.title}</button>
       {issue.decisionNeeded && <DecisionFlag />}
       {childCount > 0 && <SubIssuePill done={childDone} total={childCount} />}
+      {trailing}
       <span className="meta">
         {p.labels && issue.labels?.nodes.map(l => <LabelChip key={l.id} label={l} />)}
         {p.project && issue.project && <ProjectChip name={issue.project.name} />}
@@ -902,7 +953,7 @@ export function GraphTeamIssues({team, teams, orgId, workspaceName, projects, la
   let y = LIST_PAD_TOP;
 
   return (
-    <section className="lin-page" aria-label={`${team.name} issues`}>
+    <section className="lin-page" data-surface="issue-list" aria-label={`${team.name} issues`}>
       <header className="lin-head">
         <nav className="lin-crumb" aria-label="Breadcrumb">
           <button type="button" className="crumb-link" onClick={() => onNavigate('Team Home', `/workspace/team/${team.key.toLowerCase()}/home`)}>{workspaceName}</button>
@@ -1053,7 +1104,9 @@ export function GraphTeamIssues({team, teams, orgId, workspaceName, projects, la
 
 /* ---------------- property dropdown ---------------- */
 
-function PropDropdown({label, icon, value, onPick, options, disabled}: {
+/* The properties-sidebar control. Exported so the agent detail page (HOJA-602-A-16) edits its
+ * policy with the same widget, keyboard behaviour and row height as an issue property. */
+export function PropDropdown({label, icon, value, onPick, options, disabled}: {
   label: string; icon: React.ReactNode; value: React.ReactNode;
   onPick: (id: string | null) => void;
   options: {id: string | null; label: React.ReactNode; selected?: boolean; hint?: string}[];
@@ -1632,7 +1685,7 @@ export function GraphIssueDetail({workspaceName, viewer, issue, issueList, onOpe
   const subsDone = subsView.filter(s => s.state?.type === 'completed').length;
 
   return (
-    <section className="lin-page" aria-label={`${detail.identifier}: ${detail.title}`}>
+    <section className="lin-page" data-surface="issue-detail" aria-label={`${detail.identifier}: ${detail.title}`}>
       <header className="lin-head">
         <nav className="lin-crumb" aria-label="Breadcrumb">
           <button type="button" className="crumb-link" onClick={onBack}>← {backLabel}</button>

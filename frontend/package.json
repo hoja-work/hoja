@@ -31,7 +31,8 @@
     "test:design": "node scripts/check-design-tokens.mjs && node scripts/check-design-tokens.mjs --self-test",
     "measure:reviews": "node scripts/ui-probes/reviews-parity.mjs",
     "test:pulse": "node scripts/check-pulse.mjs",
-    "test:settings": "node scripts/check-settings.mjs"
+    "test:settings": "node scripts/check-settings.mjs",
+    "test:agent-screens": "node ../scripts/test-agent-screens-geometry.cjs"
   },
   "dependencies": {
     "@fontsource-variable/inter": "5.3.0",
