@@ -377,8 +377,10 @@ class GitHubClient:
             raise ConnectorAPIError(
                 "This GitHub grant cannot read that resource.",
                 hint=(
-                    "The app's repository permissions (metadata, contents, issues, pull_requests) "
-                    "are read-only; check the app registration and re-authorize if they changed."
+                    "Either the app is not installed on this repository (check the installation's "
+                    "repository access in the organization settings) or the grant lacks the "
+                    "permission this call needs; check the app registration and re-authorize if "
+                    "it changed."
                 ),
             )
         if response.status_code == 404:
