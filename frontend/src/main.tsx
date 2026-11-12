@@ -225,7 +225,7 @@ function ReviewsShell({links,onOpenNav,onRefresh}:{links:ReviewLink[];onOpenNav?
   const groups=allGroups.filter(g=>g.items.length);
   const terminalCount=terminal.length;
   const queueCount=links.length-terminalCount;
-  return <SplitPane className="reviews-page" ledgerClassName="reviews-col" detailClassName="reviews-pane" detailLabel="Review detail"
+  return <SplitPane as="section" className="reviews-page" ledgerClassName="reviews-col" detailClassName="reviews-pane" detailLabel="Review detail"
     ledger={<>
       <div className="reviews-col-head"><button type="button" className="reviews-nav-btn" aria-label="Open navigation" onClick={onOpenNav}><Menu size={17}/></button><h1>Reviews</h1><span className="reviews-tools"><i>⇅</i><i>⚙</i></span></div>
       <TabStrip className="reviews-tabs"><span className="on">Created{links.length?<b>{links.length}</b>:null}</span><span>To review</span></TabStrip>

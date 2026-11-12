@@ -11,14 +11,16 @@ import React from 'react';
 const cx = (...parts: Array<string | false | null | undefined>) => parts.filter(Boolean).join(' ');
 
 /** Two-pane split: a capped ledger column and the detail pane that takes the rest. */
-export function SplitPane({className, ledgerClassName, detailClassName, ledger, detail, detailLabel}:{
+export function SplitPane({as: Root='div', className, ledgerClassName, detailClassName, ledger, detail, detailLabel}:{
+  /** Element for the outer split. A screen that used a landmark (<section>/<main>) keeps it. */
+  as?: 'div'|'section'|'main';
   className?: string; ledgerClassName?: string; detailClassName?: string;
   ledger: React.ReactNode; detail: React.ReactNode; detailLabel?: string;
 }) {
-  return <div className={cx('ds-split', className)}>
+  return <Root className={cx('ds-split', className)}>
     <div className={cx('ds-split-ledger', ledgerClassName)}>{ledger}</div>
     <aside className={cx('ds-split-detail', detailClassName)} aria-label={detailLabel}>{detail}</aside>
-  </div>;
+  </Root>;
 }
 
 /** Scroll region that owns its own overflow, so the page never scrolls sideways. */

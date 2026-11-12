@@ -79,15 +79,26 @@ const BOUND = {
   '.ds-composer': {'height': '--ds-composer-height'},
 };
 for (const [sel, props] of Object.entries(BOUND)) {
-  const at = designCss.indexOf(sel + '{');
+  /* Primitive rules are :where(.ds-…) so a screen's override wins; accept either spelling. */
+  const plain = designCss.indexOf(sel + '{');
+  const wrapped = designCss.indexOf(':where(' + sel + '){');
+  const at = plain !== -1 ? plain : wrapped;
   if (at === -1) { fail.push(`design.css: no ${sel} rule; the primitive has no styling`); continue; }
-  const body = designCss.slice(at + sel.length + 1, designCss.indexOf('}', at));
+  const head = at === wrapped ? `:where(${sel})`.length : sel.length;
+  const body = designCss.slice(at + head + 1, designCss.indexOf('}', at));
   for (const [prop, token] of Object.entries(props)) {
     if (!new RegExp(`(^|;)\\s*${prop}:var\\(${token}\\)`).test(body)) {
       fail.push(`design.css: ${sel} { ${prop} } does not reference var(${token}); the primitive restates a number instead of reading the token`);
     }
   }
 }
+
+/* Primitive rules must be zero-specificity (:where). A .ds-* rule at full class specificity beats a
+ * screen's media-query override loaded earlier — that is exactly how the detail pane stopped hiding
+ * below 1227px after the first deploy, and only the live measurement caught it. */
+const bare = designCss.match(/(^|\})\s{0,4}((?:[^@{}]*)?\.ds-[a-z0-9-]+)(\.[a-z0-9-]+)*\{/);
+if (bare) fail.push(`design.css: "${bare[2].trim()}{…}" is not wrapped in :where(); a primitive at full specificity overrides the screen that adopts it`);
+else ok('every primitive rule is :where()-scoped, so a screen override always wins');
 
 /* styles.css must not keep a second copy of a measured geometry value on a reviews class. */
 const DUPLICATED = [
@@ -172,9 +183,13 @@ const measureFile = (file, expr = SNAP) => {
 
 /* 2. PARITY: same DOM, old stylesheet vs the design layer. */
 const dom = readFileSync(join(repo, 'artifacts/reviews-dom-before.html'), 'utf8');
+/* The pre-refactor stylesheet is a FROZEN artifact, captured from origin/main at 1e14812 before
+ * this refactor. Reading git here would silently compare the new file with itself once the change
+ * is merged — that is how a parity check turns into a tautology. */
+const oldCssPath = join(repo, 'artifacts/styles-before.css');
 let oldCss;
-try { oldCss = execFileSync('git', ['-C', repo, 'show', 'origin/main:app/frontend/src/styles.css'], {encoding: 'utf8'}); }
-catch { oldCss = readFileSync(join(repo, 'artifacts/styles-before.css'), 'utf8'); }
+try { oldCss = readFileSync(oldCssPath, 'utf8'); }
+catch { console.error(`missing ${oldCssPath}: capture it with \`git show 1e14812:app/frontend/src/styles.css > artifacts/styles-before.css\``); process.exit(1); }
 const page = (css) => `<!doctype html><html><head><meta charset="utf-8"><style>
 :root{font-family:Inter,sans-serif}
 ${css}
