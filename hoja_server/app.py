@@ -2785,7 +2785,10 @@ def create_app(
         org_key = parts[0]
         if org_key == "workspace" and len(parts) >= 3:
             org_key = parts[1]
-        with engine.connect() as conn:
+        # The fallback runs before authentication, so no tenant is bound and
+        # row-level security would hide both tables. This is an enumerated
+        # pre-auth lookup, the same reason /auth/ runs as system.
+        with tenant_context.system(), engine.connect() as conn:
             org_id = conn.execute(select(organization.c.id).where(or_(
                 organization.c.url_key == org_key,
                 organization.c.vanity_host == request.url.hostname,
