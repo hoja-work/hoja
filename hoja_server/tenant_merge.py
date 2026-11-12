@@ -212,9 +212,11 @@ def _carry(dst: Connection, meta: MetaData, carried: dict[str, list[dict]], repo
 def _open(token: str, org_id: str, source_secret: str, target_secret: str | None, report: "Report") -> str:
     """Open with the tenant's key; a tenant cloned from the shared database may hold tokens sealed with its key."""
     try:
-        return secrets_box.decrypt_secret(token, org_id, secret=source_secret)
+        # A tenant that never ran `reseal-secrets` still holds master-key ciphertexts; this
+        # is the one place that must open them, and it re-seals every row as v2 on the way out.
+        return secrets_box.decrypt_secret(token, org_id, secret=source_secret, allow_legacy=True)
     except secrets_box.SecretBoxError:
-        plain = secrets_box.decrypt_secret(token, org_id, secret=target_secret)
+        plain = secrets_box.decrypt_secret(token, org_id, secret=target_secret, allow_legacy=True)
         report.opened_with_shared_key += 1
         return plain
 

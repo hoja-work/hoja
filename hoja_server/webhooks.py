@@ -479,6 +479,28 @@ def _iso(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat()
 
 
+def _lease_predicate(row: dict):
+    """Identify the delivery *as the claimant read it*: id, status, attempts and lease.
+
+    The lease belongs in the compare-and-swap (HOJA-602-A-1, F7). ``attempts`` only
+    counts failed sends, so two senders that both read the same expired ``sending``
+    row see identical status and attempts; the lease is the only column that differs
+    between their reads. Without it in the predicate both updates match and both
+    POST the same delivery.
+    """
+    lease = webhook_delivery.c.lease_until
+    held = lease.is_(None) if row["lease_until"] is None else lease == row["lease_until"]
+    return and_(webhook_delivery.c.id == row["id"], webhook_delivery.c.status == row["status"],
+                webhook_delivery.c.attempts == row["attempts"], held)
+
+
+def _lease(conn: Connection, row: dict, now: datetime, now_s: str) -> bool:
+    """Take the lease on ``row``; False when another sender won the same read."""
+    result = conn.execute(webhook_delivery.update().where(_lease_predicate(row)).values(
+        status="sending", lease_until=_iso(now + LEASE), updated_at=now_s))
+    return result.rowcount == 1
+
+
 def _claim(engine: Engine, now: datetime) -> list[dict]:
     """Lease the oldest due delivery of each webhook (strict per-webhook order)."""
     now_s = _iso(now)
@@ -496,11 +518,7 @@ def _claim(engine: Engine, now: datetime) -> list[dict]:
                 continue
             if row["status"] == "sending" and (row["lease_until"] or "") > now_s:
                 continue
-            result = conn.execute(webhook_delivery.update().where(and_(
-                webhook_delivery.c.id == row["id"], webhook_delivery.c.status == row["status"],
-                webhook_delivery.c.attempts == row["attempts"],
-            )).values(status="sending", lease_until=_iso(now + LEASE), updated_at=now_s))
-            if result.rowcount == 1:
+            if _lease(conn, dict(row), now, now_s):
                 claimed.append(dict(row))
     return claimed
 

@@ -225,7 +225,8 @@ def test_a_passed_deadline_reads_breached_and_is_recorded_once(tmp_path) -> None
 
 def test_revision_61_upgrades_a_populated_database(tmp_path) -> None:
     engine, app, admin = _setup(tmp_path)
-    assert applied_schema_revision(engine) == CURRENT_SCHEMA_REVISION == 61
+    assert applied_schema_revision(engine) == CURRENT_SCHEMA_REVISION
+    assert CURRENT_SCHEMA_REVISION >= 61
     with TestClient(app) as client:
         team_id, _states = _team_and_states(client, admin["token"])
         _gql(client, admin["token"], CREATE_POLICY, {"i": {
@@ -234,7 +235,7 @@ def test_revision_61_upgrades_a_populated_database(tmp_path) -> None:
                     {"i": {"teamId": team_id, "title": "Survives"}})
         assert task["data"]["issueCreate"]["success"] is True
     migrate(engine)  # idempotent second boot
-    assert applied_schema_revision(engine) == 61
+    assert applied_schema_revision(engine) == CURRENT_SCHEMA_REVISION
     with TestClient(create_app(str(tmp_path / "slas.db"), open_mode=False)) as client:
         listed = _gql(client, admin["token"], POLICIES)
         assert [p["name"] for p in listed["data"]["slaPolicies"]] == ["Durable"]
@@ -250,11 +251,17 @@ def test_revision_61_up_down_up_is_equivalent(tmp_path) -> None:
     from sqlalchemy import inspect as sa_inspect
 
     engine, _app, _admin = _setup(tmp_path)
+    with engine.begin() as conn:
+        # This test is about revision 61's reverse step; later revisions are not its
+        # subject, and their ledger rows would make the prefix non-contiguous when
+        # only 61 is rolled back.
+        conn.execute(schema_revision.delete().where(schema_revision.c.revision > 61))
+    assert applied_schema_revision(engine) == 61
     with engine.connect() as conn:
         before = set(sa_inspect(conn).get_table_names())
     with engine.begin() as conn:
         _down_sla(conn)
-    assert applied_schema_revision(engine) == CURRENT_SCHEMA_REVISION - 1
+    assert applied_schema_revision(engine) == 60
     with engine.connect() as conn:
         dropped = set(sa_inspect(conn).get_table_names())
     assert {"sla_policy", "sla_clock"}.isdisjoint(dropped)
@@ -264,4 +271,4 @@ def test_revision_61_up_down_up_is_equivalent(tmp_path) -> None:
     with engine.connect() as conn:
         after = set(sa_inspect(conn).get_table_names())
     assert {"sla_policy", "sla_clock"} <= after
-    assert applied_schema_revision(engine) == CURRENT_SCHEMA_REVISION
+    assert applied_schema_revision(engine) == 61

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import secrets
 import time
@@ -34,7 +35,9 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 61
+CURRENT_SCHEMA_REVISION = 63
+
+log = logging.getLogger(__name__)
 
 
 def now_iso() -> str:
@@ -128,7 +131,10 @@ api_key = Table(
     Column("expires_at", String),
     Column("last_used_at", String),
     Column("user_id", String, ForeignKey("user.id")),
-    Column("organization_id", String, ForeignKey("organization.id")),
+    # Mandatory: a key with no organization authenticates nobody (resolve_token joins
+    # `user` on organization equality) and is invisible to every bound tenant, so a NULL
+    # here is only ever an inert row that a later feature would mistake for an org-wide key.
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False),
     Column("created_at", String),
     Column("revoked_at", String),
 )
@@ -2389,6 +2395,97 @@ def _down_task_templates(conn) -> None:
     conn.execute(schema_revision.delete().where(schema_revision.c.revision == 60))
 
 
+def _set_not_null(conn, table: Table, name: str) -> None:
+    """Make ``table.name`` NOT NULL on both backends.
+
+    PostgreSQL alters the column in place. SQLite has no ALTER COLUMN, so the table
+    is rebuilt from its declared definition — which already says NOT NULL — with the
+    rows, indexes and unique constraints carried over, all inside the revision's
+    transaction.
+    """
+    if conn.dialect.name != "sqlite":
+        conn.exec_driver_sql(f'ALTER TABLE "{table.name}" ALTER COLUMN "{name}" SET NOT NULL')
+        return
+    inspector = inspect(conn)
+    indexes = inspector.get_indexes(table.name)
+    # Inline UNIQUE constraints travel with the declared table; standalone unique
+    # indexes (api_key's uq_api_key_token_hash was created by raw SQL) do not.
+    # The schema is cloned into a throwaway MetaData first so the staged table's
+    # foreign keys resolve; only the staged table is ever created.
+    scratch = MetaData()
+    for other in metadata.sorted_tables:
+        other.to_metadata(scratch)
+    staging = table.to_metadata(scratch, name=f"{table.name}__rebuild")
+    staging.indexes.clear()
+    staging.create(conn)
+    columns = ", ".join(f'"{column.name}"' for column in table.columns)
+    conn.exec_driver_sql(f'INSERT INTO "{staging.name}" ({columns}) SELECT {columns} FROM "{table.name}"')
+    table.drop(conn)
+    conn.exec_driver_sql(f'ALTER TABLE "{staging.name}" RENAME TO "{table.name}"')
+    for index in indexes:
+        cols = ", ".join(f'"{c}"' for c in index["column_names"] if c is not None)
+        unique = "UNIQUE " if index.get("unique") else ""
+        conn.exec_driver_sql(f'CREATE {unique}INDEX "{index["name"]}" ON "{table.name}" ({cols})')
+
+
+def _apply_api_key_organization(conn) -> None:
+    """Backfill ``api_key.organization_id`` from the owner and make it mandatory (F8).
+
+    The backfill is the only defensible source of truth: a key belongs to the
+    organization its user belongs to, which is exactly the equality ``resolve_token``
+    already joins on. A key that cannot be backfilled (no owner, or an owner with no
+    organization) authenticates nothing today and would authenticate nothing after the
+    constraint; the revision refuses to invent an organization for it and names the
+    rows instead, unless the operator opts into dropping those dead rows.
+    """
+    owner_org = select(user.c.organization_id).where(user.c.id == api_key.c.user_id).scalar_subquery()
+    conn.execute(api_key.update().where(api_key.c.organization_id.is_(None))
+                 .values(organization_id=owner_org))
+    orphaned = conn.execute(select(api_key.c.id, api_key.c.label)
+                            .where(api_key.c.organization_id.is_(None))).all()
+    if orphaned:
+        listing = ", ".join(f"{row[0]} ({row[1] or 'no label'})" for row in orphaned[:20])
+        if os.environ.get("HOJA_MIGRATION_PRUNE_ORPHAN_API_KEYS") != "1":
+            raise RuntimeError(
+                f"api_key.organization_id cannot become NOT NULL: {len(orphaned)} key(s) have "
+                f"no organization and no owner to take one from: {listing}. They authenticate "
+                "nobody (resolve_token joins the owner on organization equality). Re-point them "
+                "with an UPDATE, or set HOJA_MIGRATION_PRUNE_ORPHAN_API_KEYS=1 to delete them."
+            )
+        conn.execute(api_key.delete().where(api_key.c.organization_id.is_(None)))
+        log.warning("revision 62 pruned %s api_key rows with no organization: %s",
+                    len(orphaned), listing)
+    _set_not_null(conn, api_key, "organization_id")
+
+
+def _apply_org_bound_secrets(conn) -> None:
+    """Re-seal every credential written before per-organization keys (F5).
+
+    A pre-``v2`` ciphertext was sealed with the master key and no associated data, so
+    the same blob opens inside every organization. Nothing in the server will open one
+    any more; this revision rewrites the stored ones under their own organization's key
+    in the transaction that records the revision, so a failure leaves the ledger and the
+    rows exactly where they were. A database with nothing to rewrite needs no key.
+    """
+    from hoja_server import secrets_box
+
+    legacy = secrets_box.count_legacy(conn)
+    remaining = sum(legacy.values())
+    if not remaining:
+        return
+    if not os.environ.get(secrets_box.KEY_ENV):
+        raise RuntimeError(
+            f"revision 63 must re-seal {remaining} credential(s) but {secrets_box.KEY_ENV} "
+            "is not set; run the migration with the same key the server was sealed with."
+        )
+    report = secrets_box.reseal_legacy(
+        conn, allow_unopenable=os.environ.get("HOJA_RESEAL_SKIP_UNOPENABLE") == "1")
+    log.warning("revision 63 resealed %s credential(s) per organization: %s",
+                report.total, report.resealed)
+    for table_name, row_id, error in report.unopenable:
+        log.error("revision 63 left %s row %s unsealed: %s", table_name, row_id, error)
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -2541,6 +2638,15 @@ _MIGRATIONS = {
     # 61: SLA policies and the per-task clock (HOJA-491). Additive; inert until
     # a workspace creates a policy.
     61: _apply_sla,
+    # 62: api_key.organization_id is the tenant column, so it is backfilled from the
+    # key's owner and made NOT NULL (HOJA-602-A-1, F8). Constraining, not additive:
+    # a writer that omits the organization now fails at the database rather than
+    # leaving a row that authenticates nobody.
+    62: _apply_api_key_organization,
+    # 63: re-seal every credential written before per-organization keys, under its
+    # own organization's key (HOJA-602-A-1, F5). Data-only; a database with nothing
+    # legacy to rewrite is a no-op and needs no HOJA_SECRET_KEY.
+    63: _apply_org_bound_secrets,
 }
 
 

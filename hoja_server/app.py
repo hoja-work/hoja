@@ -996,15 +996,12 @@ def create_app(
         await hub.serve(websocket, uid, org, cred, cursor, proto)
 
     async def agent_chat_server(request: Request):
-        uid, org, _identity_id, _is_browser = _auth(request)
-        if not uid:
-            return JSONResponse(
-                {"errors": [{"message": "Authentication required", "extensions": {"code": "AUTHENTICATION_ERROR"}}]},
-                status_code=401,
-            )
-        csrf = _cookie_csrf_error(request, json_only=True)
-        if csrf:
-            return csrf
+        # HOJA-602-A-1 (F6): this route authenticates like every other agent route, so a
+        # read-only credential cannot open a conversation or spend model budget, and the
+        # CSRF rule is the same one the thread routes apply.
+        uid, org, identity_id, is_browser, err = await _agent_auth(request)
+        if err:
+            return err
         body = await request.json()
         messages = body.get("messages") if isinstance(body, dict) else None
         if not isinstance(messages, list) or not messages:
@@ -1028,8 +1025,8 @@ def create_app(
             "writer": writer,
             "org_id": org,
             "user_id": uid,
-            "identity_id": _identity_id,
-            "browser_session": _is_browser,
+            "identity_id": identity_id,
+            "browser_session": is_browser,
             "access": getattr(request.state, "api_key_access", "read_write"),
         }
         try:
@@ -1051,33 +1048,34 @@ def create_app(
         return sse_response(_resume())
 
     async def _agent_auth(request: Request):
-        uid, org, _identity_id, _is_browser = _auth(request)
+        """Authenticate an agent route: a caller, a non-read credential for a write, CSRF."""
+        uid, org, identity_id, is_browser = _auth(request)
         if not uid:
-            return None, None, JSONResponse(
+            return None, None, None, None, JSONResponse(
                 {"errors": [{"message": "Authentication required", "extensions": {"code": "AUTHENTICATION_ERROR"}}]},
                 status_code=401,
             )
         if request.method != "GET" and getattr(request.state, "api_key_access", "read_write") == "read":
-            return None, None, JSONResponse(
+            return None, None, None, None, JSONResponse(
                 {"errors": [{"message": "This API key is read-only.",
                              "extensions": {"code": "FORBIDDEN", "agentHint": READ_ONLY_HINT}}]},
                 status_code=403,
             )
         csrf = _cookie_csrf_error(request, json_only=True)
         if csrf:
-            return None, None, csrf
-        return uid, org, None
+            return None, None, None, None, csrf
+        return uid, org, identity_id, is_browser, None
 
     async def agent_threads_list(request: Request):
         from hoja_server import agent_threads
-        uid, org, err = await _agent_auth(request)
+        uid, org, _identity_id, _is_browser, err = await _agent_auth(request)
         if err:
             return err
         return JSONResponse(agent_threads.list_threads(store, org, uid))
 
     async def agent_threads_create(request: Request):
         from hoja_server import agent_threads
-        uid, org, err = await _agent_auth(request)
+        uid, org, _identity_id, _is_browser, err = await _agent_auth(request)
         if err:
             return err
         body = await request.json()
@@ -1088,7 +1086,7 @@ def create_app(
 
     async def agent_thread_get(request: Request):
         from hoja_server import agent_threads
-        uid, org, err = await _agent_auth(request)
+        uid, org, _identity_id, _is_browser, err = await _agent_auth(request)
         if err:
             return err
         messages = agent_threads.get_messages(store, org, uid, request.path_params["thread_id"])
@@ -1098,7 +1096,7 @@ def create_app(
 
     async def agent_thread_update(request: Request):
         from hoja_server import agent_threads
-        uid, org, err = await _agent_auth(request)
+        uid, org, _identity_id, _is_browser, err = await _agent_auth(request)
         if err:
             return err
         body = await request.json()
@@ -1110,7 +1108,7 @@ def create_app(
 
     async def agent_thread_delete(request: Request):
         from hoja_server import agent_threads
-        uid, org, err = await _agent_auth(request)
+        uid, org, _identity_id, _is_browser, err = await _agent_auth(request)
         if err:
             return err
         if not agent_threads.delete_thread(store, org, uid, request.path_params["thread_id"]):

@@ -158,28 +158,45 @@ def _cmd_mail(args):
 
 
 def _cmd_reseal_secrets(args):
-    """Rewrite credentials sealed with the master key under their organization's key."""
-    from sqlalchemy import select, update
+    """Rewrite credentials sealed with the master key under their organization's key.
+
+    The column inventory lives in ``secrets_box.SEALED_COLUMNS`` so this command,
+    the reseal revision and the tests cannot drift apart. ``--check`` reports the
+    inventory without touching it and exits non-zero while anything is left, which
+    is the gate a deploy can run before it starts refusing legacy tokens.
+    """
+    import os
 
     from hoja_server import secrets_box, tenant_context
-    from hoja_server.db import connector_account, extension, model_provider, webhook
 
     engine = make_engine(_database_target(args))
-    columns = ((connector_account, "encrypted_refresh_token"), (extension, "secret_sealed"),
-               (model_provider, "encrypted_api_key"), (webhook, "secret_sealed"))
-    total = 0
-    with tenant_context.system(), engine.begin() as conn:
-        for table, name in columns:
-            column = table.c[name]
-            rows = conn.execute(select(table.c.id, table.c.organization_id, column)).all()
-            for row_id, org_id, token in rows:
-                if not secrets_box.is_legacy(token):
-                    continue
-                plain = secrets_box.decrypt_secret(token, org_id)
-                conn.execute(update(table).where(table.c.id == row_id)
-                             .values({name: secrets_box.encrypt_secret(plain, org_id)}))
-                total += 1
-    print(f"resealed={total}")
+    if args.check:
+        with tenant_context.system(), engine.connect() as conn:
+            counts = secrets_box.count_legacy(conn)
+        remaining = sum(counts.values())
+        for name, count in sorted(counts.items()):
+            print(f"{name}={count}")
+        print(f"legacy={remaining}")
+        raise SystemExit(0 if remaining == 0 else 1)
+    allow_unopenable = os.environ.get("HOJA_RESEAL_SKIP_UNOPENABLE") == "1"
+    failure = None
+    report = None
+    try:
+        with tenant_context.system(), engine.begin() as conn:
+            report = secrets_box.reseal_legacy(conn, dry_run=args.dry_run,
+                                               allow_unopenable=allow_unopenable)
+    except secrets_box.SecretBoxError as exc:  # nothing was written: the transaction rolled back
+        failure = exc
+    if failure is not None:
+        print(f"reseal failed: {failure}", file=sys.stderr)
+        raise SystemExit(1)
+    for name, count in sorted(report.resealed.items()):
+        print(f"{name}={count}")
+    for table_name, row_id, error in report.unopenable:
+        print(f"skipped {table_name} {row_id}: {error}", file=sys.stderr)
+    print(f"{'would_reseal' if args.dry_run else 'resealed'}={report.total} "
+          f"unopenable={len(report.unopenable)}")
+    raise SystemExit(0 if not report.unopenable else 1)
 
 
 def _cmd_merge_tenant(args):
@@ -311,6 +328,10 @@ def main(argv=None):
     rs.add_argument("--tenant", default="default")
     rs.add_argument("--database-url", default=None)
     rs.add_argument("--db", default=None)
+    rs.add_argument("--check", action="store_true",
+                    help="report how many unbound ciphertexts remain; exit 1 if any do")
+    rs.add_argument("--dry-run", action="store_true",
+                    help="open and count what would be rewritten, without writing")
     rs.set_defaults(func=_cmd_reseal_secrets)
 
     mt = sub.add_parser("merge-tenant", help="copy a dedicated tenant database into the shared database")

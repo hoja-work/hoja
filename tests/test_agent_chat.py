@@ -124,6 +124,43 @@ def test_rejects_request_without_user_message(tmp_path) -> None:
         assert "Last message must be a user message" in res.json()["error"]
 
 
+def test_read_only_key_cannot_start_a_chat_or_spend_budget(tmp_path, stub_base_url) -> None:
+    """F6: this route authenticated with `_auth`, so a read-only key opened conversations."""
+    from sqlalchemy import func, select
+
+    from hoja_server.db import agent_conversation
+    from hoja_server.store import Store
+
+    engine, app, admin = _setup(tmp_path)
+    created = Store(engine).create_api_key(admin["org_id"], admin["user_id"], "read-only", "read")
+    assert created, "the read-only key fixture failed to create"
+    _StubOpenAI.seen_auth.clear()
+    with TestClient(app) as client:
+        assert _gql(client, admin["token"], CREATE, {"k": SECRET, "u": stub_base_url})["data"]
+        res = client.post("/api/agent/chat", json=MESSAGES,
+                          headers={"Authorization": f"Bearer {created[1]}"})
+        assert res.status_code == 403
+        assert res.json()["errors"][0]["extensions"]["code"] == "FORBIDDEN"
+        assert _StubOpenAI.seen_auth == []  # no model call, so no budget spent
+    with engine.connect() as conn:
+        assert conn.execute(select(func.count()).select_from(agent_conversation)).scalar() == 0
+
+
+def test_a_read_write_key_still_streams(tmp_path, stub_base_url) -> None:
+    """The gate is the credential's access, not the credential's kind."""
+    from hoja_server.store import Store
+
+    engine, app, admin = _setup(tmp_path)
+    created = Store(engine).create_api_key(admin["org_id"], admin["user_id"], "rw", "read_write")
+    _StubOpenAI.seen_auth.clear()
+    with TestClient(app) as client:
+        assert _gql(client, admin["token"], CREATE, {"k": SECRET, "u": stub_base_url})["data"]
+        res = client.post("/api/agent/chat", json=MESSAGES,
+                          headers={"Authorization": f"Bearer {created[1]}"})
+    assert res.status_code == 200
+    assert _StubOpenAI.seen_auth == [f"Bearer {SECRET}"]
+
+
 
 def test_agent_recovers_from_empty_graphql_call(tmp_path) -> None:
     from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
