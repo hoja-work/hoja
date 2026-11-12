@@ -29,7 +29,8 @@
     "lint:vocab": "node scripts/check-task-vocabulary.mjs",
     "test:reviews": "node scripts/check-reviews.mjs && node --experimental-strip-types scripts/test-reviews-gate.mjs && node scripts/test-reviews-guard-mutations.mjs",
     "test:design": "node scripts/check-design-tokens.mjs && node scripts/check-design-tokens.mjs --self-test",
-    "measure:reviews": "node scripts/ui-probes/reviews-parity.mjs"
+    "measure:reviews": "node scripts/ui-probes/reviews-parity.mjs",
+    "test:pulse": "node scripts/check-pulse.mjs"
   },
   "dependencies": {
     "@fontsource-variable/inter": "5.3.0",

@@ -576,13 +576,43 @@ function PulsePage({path,onOpenProject}:{path:string;onOpenProject:(project:Proj
  useEffect(()=>{const onPop=()=>setSelectedTab(location.pathname.endsWith('/following')?'For me':location.pathname.endsWith('/popular')?'Popular':'Recent');window.addEventListener('popstate',onPop);return()=>window.removeEventListener('popstate',onPop)},[]);
  const time=(date:string)=>{const t=Date.parse(date);if(!Number.isFinite(t))return 'Date unavailable';const days=Math.max(0,Math.floor((Date.now()-t)/86400000));return days<1?'Today':days<7?`${days} day${days===1?'':'s'} ago`:days<35?`${Math.floor(days/7)} weeks ago`:`${Math.floor(days/30)} months ago`};
  const health=(post:PulsePost)=>post.health||post.status;
- return <section className="pulse-page"><header className="pulse-heading"><h1>Pulse</h1><button className="pulse-subscription" type="button" disabled title="Pulse email subscriptions are not available on this server" aria-label="Subscription unavailable"><Bell size={15}/></button></header>
-  <nav className="pulse-tabs" aria-label="Pulse views">{([['For me','following'],['Popular','popular'],['Recent','all']] as const).map(([label,slug])=><a key={slug} href={`/workspace/pulse/${slug}`} onClick={e=>{e.preventDefault();history.pushState({},'',`/workspace/pulse/${slug}`);setSelectedTab(label)}} aria-current={tab===label?'page':undefined} title={label==='Recent'?undefined:`${label} ranking is not available; showing recent project updates`}>{label}</a>)}<button className="pulse-add-view" type="button" disabled title="Custom Pulse views are not available" aria-label="Add new view unavailable"><Plus size={15}/></button></nav>
-  <div className="pulse-content">{tab!=='Recent'&&<p className="pulse-approx-note" role="status">{tab} ranking is not available in Hoja yet. Showing recent project updates.</p>}{posts.map((post,index)=><React.Fragment key={post.id}>{(index===0||((Date.now()-Date.parse(post.createdAt)>=30*86400000)!==(Date.now()-Date.parse(posts[index-1].createdAt)>=30*86400000)))&&<p className="pulse-era">{Date.now()-Date.parse(post.createdAt)>=30*86400000?'Older':'Recent'}</p>}<article className="pulse-post" key={post.id}><header className="pulse-post-heading"><div><h2><a href={`/workspace/project/${encodeURIComponent(post.project.id)}`} onClick={e=>{e.preventDefault();onOpenProject(post.project)}}>{post.project.name}</a></h2><div className="pulse-meta">{health(post)&&<span className="pulse-health"><Activity size={14}/>Project {health(post)}</span>}{post.actor?.name&&<><span className="pulse-avatar" aria-hidden="true">{post.actor.name.slice(0,1).toUpperCase()}</span><span>{post.actor.name}</span></>}<time dateTime={post.createdAt} title={post.createdAt}>{time(post.createdAt)}</time></div></div></header><div className="pulse-post-body"><Markdown text={post.body} density="block"/></div>{(post.progress!=null||post.project.targetDate||post.project.lead?.name)&&<dl className="pulse-changes">{post.project.lead?.name&&<div><dt>Lead</dt><dd>{post.project.lead.name}</dd></div>}{post.project.targetDate&&<div><dt>Target date</dt><dd>{post.project.targetDate}</dd></div>}{post.progress!=null&&<div><dt>Progress</dt><dd>{Math.round(post.progress)}%</dd></div>}</dl>}<div className="pulse-actions"><button type="button" aria-expanded={openComments===post.id} aria-label={`${openComments===post.id?'Close':'Open'} comments for ${post.project.name}`} onClick={()=>setOpenComments(v=>v===post.id?null:post.id)}><MessageCircle size={15}/></button></div>{openComments===post.id&&<p className="pulse-comment-notice" role="status">Comments on project updates are not available in this workspace.</p>}</article></React.Fragment>)}
-  {!feed.hasData&&!error&&<div className="pulse-status" role="status">Loading project updates…</div>}{feed.hasData&&!posts.length&&!error&&<div className="pulse-status"><Activity size={24}/><h2>No project updates yet</h2><p>Project updates will appear here when they are published. Task activity is separate from Pulse.</p></div>}{error&&<div className="pulse-status" role="alert"><h2>Couldn’t load Pulse</h2><p>{error}</p><button type="button" onClick={feed.retry}>Retry</button></div>}{hasMore&&<button className="pulse-load-more" type="button" disabled={feed.loadingMore} onClick={feed.loadMore}>{feed.loadingMore?'Loading updates…':'Load more updates'}</button>}</div>
+ const views=[['For me','following'],['Popular','popular'],['Recent','all']] as const;
+ const eraOf=(iso:string)=>Date.now()-Date.parse(iso)>=30*86400000?'Older':'Recent';
+ const setView=(label:'For me'|'Popular'|'Recent',slug:string)=>{history.pushState({},'',`/workspace/pulse/${slug}`);setSelectedTab(label)};
+ return <section className="pulse-page" aria-label="Pulse">
+  <header className="pulse-heading"><h1>Pulse</h1><button className="pulse-subscription" type="button" disabled title="Pulse email subscriptions are not available on this server" aria-label="Subscription unavailable"><Bell size={15} aria-hidden="true"/></button></header>
+  <TabStrip className="pulse-tabs" role="tablist" label="Pulse views">
+   {views.map(([label,slug])=><Tab key={slug} role="tab" aria-selected={tab===label} title={label==='Recent'?undefined:`${label} ranking is not available; showing recent project updates`} onClick={()=>setView(label,slug)}>{label}</Tab>)}
+   <button className="pulse-add-view" type="button" disabled title="Custom Pulse views are not available" aria-label="Add new view unavailable"><Plus size={15} aria-hidden="true"/></button>
+  </TabStrip>
+  <ScrollArea className="pulse-scroll" variant="list">
+   <div className="pulse-content">
+    {tab!=='Recent'&&<p className="pulse-approx-note" role="status">{tab} ranking is not available in Hoja yet. Showing recent project updates.</p>}
+    {posts.map((post,index)=><React.Fragment key={post.id}>
+     {(index===0||eraOf(post.createdAt)!==eraOf(posts[index-1].createdAt))&&<GroupBar as="h2" className="pulse-era" label={eraOf(post.createdAt)}/>}
+     <article className="pulse-post" aria-labelledby={`pulse-post-${post.id}`}>
+      <header className="pulse-post-heading"><div>
+       <h3 id={`pulse-post-${post.id}`}><a href={`/workspace/project/${encodeURIComponent(post.project.id)}`} onClick={e=>{e.preventDefault();onOpenProject(post.project)}}>{post.project.name}</a></h3>
+       <div className="pulse-meta">{health(post)&&<span className="pulse-health"><Activity size={14} aria-hidden="true"/>Project {health(post)}</span>}{post.actor?.name&&<><span className="pulse-avatar" aria-hidden="true">{post.actor.name.slice(0,1).toUpperCase()}</span><span>{post.actor.name}</span></>}<time dateTime={post.createdAt} title={new Date(post.createdAt).toLocaleString()}>{time(post.createdAt)}</time></div>
+      </div></header>
+      <div className="pulse-post-body"><Markdown text={post.body} density="block"/></div>
+      {(post.progress!=null||post.project.targetDate||post.project.lead?.name)&&<dl className="pulse-changes">
+       {post.project.lead?.name&&<PropertyRow className="pulse-prop" label="Lead">{post.project.lead.name}</PropertyRow>}
+       {post.project.targetDate&&<PropertyRow className="pulse-prop" label="Target date">{post.project.targetDate}</PropertyRow>}
+       {post.progress!=null&&<PropertyRow className="pulse-prop" label="Progress">{Math.round(post.progress)}%</PropertyRow>}
+      </dl>}
+      <div className="pulse-actions"><button type="button" aria-expanded={openComments===post.id} aria-label={`${openComments===post.id?'Close':'Open'} comments for ${post.project.name}`} onClick={()=>setOpenComments(v=>v===post.id?null:post.id)}><MessageCircle size={15} aria-hidden="true"/></button></div>
+      {openComments===post.id&&<p className="pulse-comment-notice" role="status">Comments on project updates are not available in this workspace.</p>}
+     </article>
+    </React.Fragment>)}
+    {!feed.hasData&&!error&&<p className="pulse-status" role="status">Loading project updates…</p>}
+    {feed.hasData&&!posts.length&&!error&&<EmptyState className="pulse-status"><Activity size={24} aria-hidden="true"/><h2>No project updates yet</h2><p>Project updates will appear here when they are published. Task activity is separate from Pulse.</p></EmptyState>}
+    {error&&<div className="pulse-status" role="alert"><h2>Couldn’t load Pulse</h2><p>{error}</p><button type="button" onClick={feed.retry}>Retry</button></div>}
+    {hasMore&&<button className="pulse-load-more" type="button" disabled={feed.loadingMore} onClick={feed.loadMore}>{feed.loadingMore?'Loading updates…':'Load more updates'}</button>}
+   </div>
+  </ScrollArea>
  </section>;
 }
-
 export function StatusIcon({state}:{state:{name?:string;type?:string;color?:string}}){
  const c=state.color||'#a1a1aa',n=(state.name||'').toLowerCase(),t=state.type||'';
  const svg=(body:React.ReactNode)=><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke={c} strokeWidth="1.5" aria-hidden="true" className="status-icon">{body}</svg>;

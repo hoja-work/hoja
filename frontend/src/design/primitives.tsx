@@ -45,13 +45,15 @@ export function Tab(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
 }
 
 /** A collapsible group band (Ready to merge / Open / Draft, and any grouped list). */
-export function GroupBar({className, label, count, caret, controls}:{
+export function GroupBar({as: Heading='h3', className, label, count, caret, controls}:{
+  /** Heading level. A feed's era band sits above post titles, so Pulse asks for h2. */
+  as?: 'h2'|'h3'|'h4';
   className?: string; label: React.ReactNode; count?: number;
   caret?: React.ReactNode; controls?: string;
 }) {
-  return <h3 className={cx('ds-group-bar', className)} aria-controls={controls}>
+  return <Heading className={cx('ds-group-bar', className)} aria-controls={controls}>
     {label}{count != null ? <b>{count}</b> : null}{caret}
-  </h3>;
+  </Heading>;
 }
 
 /** A flat list row: 40px, no border, with a full-height click target passed in. */
