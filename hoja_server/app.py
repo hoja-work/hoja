@@ -25,7 +25,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 
-from ariadne import format_error, graphql, graphql_sync
+from ariadne import format_error, graphql_sync
 from graphql import (
     FieldNode,
     FragmentDefinitionNode,
@@ -35,17 +35,31 @@ from graphql import (
     OperationDefinitionNode,
     parse,
 )
-from sqlalchemy import select, text
+from sqlalchemy import and_, or_, select, text
 from starlette.applications import Starlette
+from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import MutableHeaders
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Route, WebSocketRoute
-from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocket
 
-from hoja_server import cors, org_limits, tenant_hosts
+from hoja_server import (
+    cors,
+    google_login,
+    google_oidc,
+    identity_transfer,
+    mail_events,
+    membership_announce,
+    org_limits,
+    realtime,
+    signin_pages,
+    sync,
+    tenant_context,
+    tenant_hosts,
+    uploads,
+)
 from hoja_server.cloudflare_realtime import CloudflareRealtime
 from hoja_server.connectors_api import connector_binding_for, connector_routes
 from hoja_server.db import (
@@ -79,14 +93,6 @@ from hoja_server.meetings import MeetingService
 from hoja_server.meetings_api import MeetingHub, meeting_routes
 from hoja_server.resolvers import build_schema
 from hoja_server.secrets_box import SecretBoxError
-from hoja_server import (
-    google_login,
-    identity_transfer,
-    google_oidc,
-    mail_events,
-    membership_announce,
-    signin_pages,
-)
 from hoja_server.signup_config import (
     TURNSTILE_SCRIPT_URL,
     SignupConfigError,
@@ -99,9 +105,6 @@ from hoja_server.signup_gate import (
 )
 from hoja_server.signup_store import SignupStore
 from hoja_server.store import Store
-from hoja_server import tenant_context
-from hoja_server import realtime, sync
-from hoja_server import uploads
 from hoja_server.writer import Writer
 
 _schema = build_schema()
@@ -2756,10 +2759,51 @@ def create_app(
         return FileResponse(asset, media_type="image/svg+xml")
 
     async def web_fallback(request: Request):
+        # A retired flat identifier still loads: /<workspace>/issue/HOJA-517
+        # resolves to the recursive identifier that replaced it (HOJA-472).
+        # Only identifier-shaped issue paths are looked up, so the catch-all
+        # does not turn every SPA route into a database query.
+        retired = _retired_identifier_target(request)
+        if retired is not None:
+            return RedirectResponse(retired, status_code=302)
         index = _WEB_ROOT / "index.html"
         if not index.is_file():
             return HTMLResponse(_UNBUILT_HTML, status_code=503)
         return FileResponse(index)
+
+    def _retired_identifier_target(request: Request) -> str | None:
+        parts = [part for part in request.url.path.split("/") if part]
+        if len(parts) < 2 or parts[-2] not in ("issue", "task"):
+            return None
+        candidate = parts[-1]
+        if not re.match(r"^[A-Za-z][A-Za-z0-9_]*-[A-Za-z0-9]+(-[A-Za-z0-9]+)*$", candidate):
+            return None
+        from hoja_server.db import issue_identifier_alias, organization
+
+        # One database serves several organizations, so the workspace comes
+        # from the path (or the vanity host), never from "the first org".
+        org_key = parts[0]
+        if org_key == "workspace" and len(parts) >= 3:
+            org_key = parts[1]
+        with engine.connect() as conn:
+            org_id = conn.execute(select(organization.c.id).where(or_(
+                organization.c.url_key == org_key,
+                organization.c.vanity_host == request.url.hostname,
+            )).limit(1)).scalar()
+            if not org_id:
+                return None
+            replacement = conn.execute(select(
+                issue_identifier_alias.c.new_identifier).where(and_(
+                    issue_identifier_alias.c.organization_id == org_id,
+                    issue_identifier_alias.c.old_identifier == candidate.upper(),
+                ))).scalar()
+        if not replacement or replacement.upper() == candidate.upper():
+            return None
+        parts[-1] = replacement
+        target = "/" + "/".join(parts)
+        if request.url.query:
+            target = f"{target}?{request.url.query}"
+        return target
 
     def _sqlite_analyze():
         # Without planner statistics SQLite prefers the (single-valued, in a

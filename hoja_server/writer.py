@@ -8,17 +8,8 @@ from graphql import GraphQLError
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.engine import Engine
 
-from hoja_server.store import (
-    PUBLIC,
-    TEAM_ACCESS_LEVELS,
-    _scope_projects,
-    team_ancestor_ids,
-    team_descendant_ids,
-    team_visible,
-)
-from hoja_server import comment_policy
+from hoja_server import comment_policy, identifiers, uploads
 from hoja_server import decisions as decisiondocs
-from hoja_server import uploads
 from hoja_server import views as viewdocs
 from hoja_server.db import (
     PRIORITY_LABELS,
@@ -26,10 +17,12 @@ from hoja_server.db import (
     comment,
     cycle,
     entity_url,
+    inbox_notification,
+    initiative,
+    initiative_project,
     issue,
     issue_activity,
     issue_decision,
-    inbox_notification,
     issue_label,
     issue_label_link,
     issue_subscriber,
@@ -39,10 +32,8 @@ from hoja_server.db import (
     organization,
     project,
     project_member,
-    project_update,
-    initiative,
-    initiative_project,
     project_team,
+    project_update,
     saved_view,
     saved_view_favorite,
     seed_states_for_team,
@@ -50,6 +41,14 @@ from hoja_server.db import (
     team_member,
     user,
     workflow_state,
+)
+from hoja_server.store import (
+    PUBLIC,
+    TEAM_ACCESS_LEVELS,
+    _scope_projects,
+    team_ancestor_ids,
+    team_descendant_ids,
+    team_visible,
 )
 
 
@@ -144,8 +143,10 @@ def _validate_issue_references(
             issue.c.organization_id == org_id,
             issue.c.team_id == team_id,
             issue.c.archived_at.is_(None),
-            or_(issue.c.id == supplied_parent_id,
-                issue.c.identifier == str(supplied_parent_id).upper()),
+            # A retired flat identifier resolves through the alias ledger too,
+            # so a caller can parent a child under HOJA-517 after it has been
+            # renumbered to its recursive form.
+            identifiers.issue_ref_clause(org_id, supplied_parent_id),
         ))).first()
         if not parent:
             raise InvalidReferenceError("parentId")
@@ -193,7 +194,7 @@ class Writer:
 
     def workspace_create(self, actor_org_id: str, actor_id: str, inp: dict) -> dict:
         """Create a workspace and enroll its creating identity as admin."""
-        from hoja_server.db import global_identity, organization_membership
+        from hoja_server.db import organization_membership
 
         name = inp.get("name")
         raw_key = inp.get("urlKey")
@@ -570,6 +571,7 @@ class Writer:
     def enable_team_cadence(self, org_id: str, team_id: str, weekday: int, *, now=None) -> dict:
         """Enable once and reconcile the fixed one-week, two-upcoming policy."""
         from datetime import datetime, timezone
+
         from hoja_server.cadence import reconcile_team_cadence, validate_timezone
         if type(weekday) is not int or weekday not in range(7):
             raise ValueError("Choose a weekday from Monday (0) through Sunday (6).")
@@ -604,6 +606,7 @@ class Writer:
 
     def reconcile_team_cadence(self, org_id: str, team_id: str, *, now=None, viewer_id: str | None = None) -> dict:
         from datetime import datetime, timezone
+
         from hoja_server.cadence import reconcile_team_cadence, validate_timezone
         instant = now or datetime.now(timezone.utc)
         # Read paths (teams/activeCycle/cycles) call this on every request. Without a
@@ -756,19 +759,56 @@ class Writer:
                 inp,
                 default_state_id=trow.get("default_state_id"),
             )
-            result = conn.execute(
-                team.update()
-                .where(and_(team.c.id == tid, team.c.organization_id == org_id))
-                .values(issue_counter=func.coalesce(team.c.issue_counter, 0) + 1)
-            )
-            if result.rowcount != 1:
-                raise InvalidReferenceError("teamId")
-            n = conn.execute(
-                select(team.c.issue_counter).where(
-                    and_(team.c.id == tid, team.c.organization_id == org_id)
+            if parent_id:
+                # Recursive identifiers (HOJA-472). The child takes its own
+                # number from the disjoint child range, so a sub-issue never
+                # consumes a top-level HOJA-nnn number. The team-row update
+                # below serialises concurrent creates in Postgres, which is
+                # what makes the sibling count stable.
+                parent = conn.execute(select(
+                    issue.c.identifier, issue.c.slot, issue.c.depth,
+                ).where(and_(
+                    issue.c.id == parent_id,
+                    issue.c.organization_id == org_id,
+                ))).mappings().one()
+                depth = int(parent["depth"] or 0) + 1
+                if depth > identifiers.MAX_DEPTH:
+                    raise InvalidReferenceError("parentId")
+                conn.execute(
+                    team.update()
+                    .where(and_(team.c.id == tid, team.c.organization_id == org_id))
+                    .values(child_counter=func.coalesce(team.c.child_counter, 0) + 1)
                 )
-            ).scalar_one()
-            ident = f"{trow['key']}-{n}"
+                child_counter = conn.execute(
+                    select(team.c.child_counter).where(
+                        and_(team.c.id == tid, team.c.organization_id == org_id)
+                    )
+                ).scalar_one()
+                sibling_no = 1 + (conn.execute(
+                    select(func.count()).select_from(issue).where(and_(
+                        issue.c.organization_id == org_id,
+                        issue.c.parent_id == parent_id,
+                    ))
+                ).scalar() or 0)
+                n = identifiers.child_number(child_counter)
+                ident = identifiers.child_identifier(
+                    parent["identifier"], parent["slot"], sibling_no)
+                slot, issue_depth = identifiers.slot_for(sibling_no, depth), depth
+            else:
+                result = conn.execute(
+                    team.update()
+                    .where(and_(team.c.id == tid, team.c.organization_id == org_id))
+                    .values(issue_counter=func.coalesce(team.c.issue_counter, 0) + 1)
+                )
+                if result.rowcount != 1:
+                    raise InvalidReferenceError("teamId")
+                n = conn.execute(
+                    select(team.c.issue_counter).where(
+                        and_(team.c.id == tid, team.c.organization_id == org_id)
+                    )
+                ).scalar_one()
+                ident = f"{trow['key']}-{n}"
+                slot, issue_depth = identifiers.ROOT_SLOT, 0
             prio = int(inp.get("priority", 0) or 0)
             state_id = inp.get("stateId") or trow.get("default_state_id")
             cycle_id = inp.get("cycleId") or self._auto_add_cycle_id(conn, org_id, trow, state_id)
@@ -777,6 +817,7 @@ class Writer:
             iid = new_id()
             conn.execute(issue.insert().values(
                 id=iid, organization_id=org_id, team_id=tid, number=n, identifier=ident,
+                slot=slot, depth=issue_depth,
                 title=inp["title"], description=inp.get("description"),
                 priority=prio, priority_label=PRIORITY_LABELS.get(prio, "No priority"),
                 estimate=inp.get("estimate"), state_id=state_id, state_changed_at=ts,
@@ -800,7 +841,7 @@ class Writer:
     def _issue_row_for_decision(self, conn, org_id: str, viewer_id: str, ref: str) -> dict:
         row = conn.execute(select(issue).where(and_(
             issue.c.organization_id == org_id,
-            (issue.c.id == ref) | (issue.c.identifier == str(ref).upper()),
+            identifiers.issue_ref_clause(org_id, ref),
             issue.c.archived_at.is_(None)))).mappings().first()
         if not row:
             raise GraphQLError("Issue not found.", extensions={"code": "NOT_FOUND"})
@@ -918,7 +959,7 @@ class Writer:
         with self.engine.begin() as conn:
             row = conn.execute(select(issue).where(and_(
                 issue.c.organization_id == org_id,
-                (issue.c.id == ident) | (issue.c.identifier == ident.upper())))).first()
+                identifiers.issue_ref_clause(org_id, ident)))).first()
             if not row:
                 return None
             issue_row = dict(row._mapping)
@@ -1017,7 +1058,7 @@ class Writer:
         with self.engine.begin() as conn:
             row = conn.execute(select(issue.c.creator_id, issue.c.team_id).where(and_(
                 issue.c.organization_id == org_id,
-                (issue.c.id == ident) | (issue.c.identifier == ident.upper()),
+                identifiers.issue_ref_clause(org_id, ident),
             ))).first()
             if row:
                 self._require_team_visible(conn, org_id, viewer_id, row[1])
@@ -1051,7 +1092,7 @@ class Writer:
         with self.engine.begin() as conn:
             irow = conn.execute(select(issue).where(and_(
                 issue.c.organization_id == org_id,
-                (issue.c.id == inp["issueId"]) | (issue.c.identifier == str(inp["issueId"]).upper())))).first()
+                identifiers.issue_ref_clause(org_id, inp["issueId"])))).first()
             if not irow:
                 return None
             irow = dict(irow._mapping)
@@ -1122,8 +1163,7 @@ class Writer:
                 raise InvalidReferenceError("url")
             irow = conn.execute(select(issue.c.id).where(and_(
                 issue.c.organization_id == org_id,
-                (issue.c.id == inp["issueId"])
-                | (issue.c.identifier == str(inp["issueId"]).upper()),
+                identifiers.issue_ref_clause(org_id, inp["issueId"]),
             ))).first()
             if not irow:
                 return None
@@ -1157,7 +1197,7 @@ class Writer:
     def _issue_row_for(self, conn, org_id: str, issue_id: str):
         return conn.execute(select(issue.c.id).where(and_(
             issue.c.organization_id == org_id,
-            (issue.c.id == issue_id) | (issue.c.identifier == str(issue_id).upper()),
+            identifiers.issue_ref_clause(org_id, issue_id),
         ))).first()
 
     def issue_subscribe(self, org_id: str, user_id: str, issue_id: str) -> bool:

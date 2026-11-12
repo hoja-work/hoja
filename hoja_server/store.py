@@ -7,8 +7,8 @@ hoja's Pydantic models expect.
 from __future__ import annotations
 
 import hashlib
-import json
 import hmac
+import json
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -16,7 +16,7 @@ from graphql import GraphQLError
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.engine import Engine
 
-from hoja_server import addresses
+from hoja_server import addresses, identifiers
 from hoja_server import decisions as decisiondocs
 from hoja_server import views as viewdocs
 
@@ -33,36 +33,36 @@ class InviteRefused(Exception):
 from hoja_server.db import (
     api_key,
     attachment,
-    github_link,
-    change_event,
     browser_session,
+    change_event,
     comment,
     cycle,
-    issue,
-    issue_activity,
-    issue_decision,
+    github_link,
+    global_identity,
+    identity_credential,
     inbox_notification,
     initiative,
     initiative_project,
-    organization,
-    global_identity,
-    organization_membership,
-    identity_credential,
-    membership_invitation,
-    new_id,
+    issue,
+    issue_activity,
+    issue_decision,
     issue_label,
     issue_label_link,
     issue_subscriber,
+    membership_invitation,
+    new_id,
+    organization,
+    organization_membership,
+    password_credential,
     project,
-    project_update,
     project_member,
     project_team,
+    project_update,
     saved_view,
     saved_view_favorite,
     team,
     team_member,
     token_hash,
-    password_credential,
     user,
     user_preference,
     workflow_state,
@@ -371,7 +371,7 @@ class Store:
         """Resolve an issue by identifier or id, honouring team visibility."""
         stmt = select(issue.c.id, issue.c.identifier, issue.c.team_id).where(and_(
             issue.c.organization_id == org_id,
-            or_(issue.c.id == issue_ref, issue.c.identifier == issue_ref)))
+            identifiers.issue_ref_clause(org_id, issue_ref)))
         clause = visible_team_clause(conn, org_id, viewer_id, issue.c.team_id)
         if clause is not None:
             stmt = stmt.where(clause)
@@ -1541,7 +1541,8 @@ class Store:
         and its team seats survive. Every other refusal names its cause, because
         "invite failed" made the admin guess between four different situations.
         """
-        from hoja_server.db import api_key as api_key_table, gen_token, new_id, token_hash
+        from hoja_server.db import api_key as api_key_table
+        from hoja_server.db import gen_token, new_id, token_hash
 
         normalized_email = addresses.canonical(email)
         clean_name = name.strip()
@@ -1872,7 +1873,7 @@ class Store:
         with self.engine.connect() as conn:
             stmt = select(issue).where(and_(
                 issue.c.organization_id == org_id,
-                or_(issue.c.id == ident, issue.c.identifier == ident.upper())))
+                identifiers.issue_ref_clause(org_id, ident)))
             stmt = _scope_teams(conn, stmt, org_id, viewer_id, issue.c.team_id)
             return self.ser_issue(_one(conn, stmt))
 

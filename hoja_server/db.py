@@ -34,7 +34,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 55
+CURRENT_SCHEMA_REVISION = 56
 
 
 def now_iso() -> str:
@@ -614,6 +614,10 @@ team = Table(
     Column("cadence_cooldown_weeks", Integer, nullable=False, default=0),
     Column("cadence_upcoming_count", Integer, nullable=False, default=2),
     Column("issue_counter", Integer, default=0),
+    # Children allocate from a disjoint range (CHILD_NUMBER_BASE + this), so a
+    # sub-issue never burns a top-level key number. The increment shares the
+    # team-row update that serialises concurrent issue creates.
+    Column("child_counter", Integer, default=0),
     Column("active_cycle_id", String),
     Column("auto_add_started", Boolean, nullable=False, default=True),
     Column("auto_add_completed", Boolean, nullable=False, default=True),
@@ -657,6 +661,11 @@ issue = Table(
     Column("team_id", String, ForeignKey("team.id"), index=True),
     Column("number", Integer),
     Column("identifier", String, index=True),
+    # Recursive identifiers (HOJA-472): the slot this node contributes to its
+    # children's prefix, and its number of parent hops. Roots have slot "A",
+    # depth 0. See hoja_server/identifiers.py for the grammar.
+    Column("slot", String),
+    Column("depth", Integer),
     Column("title", String, nullable=False),
     Column("description", Text),
     Column("priority", Integer, default=0),
@@ -683,6 +692,24 @@ issue = Table(
     # board or list reads "waiting on me" without a subquery per row (docs/decisions.md).
     Column("decision_needed", Boolean, nullable=False, default=False),
     UniqueConstraint("team_id", "number", name="uq_issue_team_number"),
+)
+
+
+# Every retired flat identifier resolves to its recursive replacement, so old
+# URLs, commit messages and GitHub links keep working. Rows are written only by
+# scripts/migrate_recursive_identifiers.py and are never used to rewrite text a
+# person wrote: reads fall back through this table, writes never touch it.
+issue_identifier_alias = Table(
+    "issue_identifier_alias",
+    metadata,
+    Column("organization_id", String, ForeignKey("organization.id"), primary_key=True),
+    Column("old_identifier", String, primary_key=True),
+    Column("issue_id", String, ForeignKey("issue.id"), nullable=False, index=True),
+    # Enough to run the migration backwards: the number the row held before it
+    # was moved to the child range, and the identifier it was given.
+    Column("old_number", Integer),
+    Column("new_identifier", String, nullable=False),
+    Column("created_at", String, nullable=False),
 )
 
 
@@ -2041,6 +2068,26 @@ def _apply_github_link_files(conn):
         conn.exec_driver_sql("ALTER TABLE github_link ADD COLUMN files TEXT")
 
 
+def _apply_recursive_identifiers(conn):
+    """Schema half of HOJA-472: alias ledger and the recursive-identifier columns.
+
+    The data half lives in scripts/migrate_recursive_identifiers.py so that a
+    deploy never renumbers a live database as a side effect of starting up.
+    Column probes keep this a no-op on a fresh database (create_all already
+    made them) and on a database where they were added by hand.
+    """
+    issue_identifier_alias.create(conn, checkfirst=True)
+    issue_columns = {column["name"] for column in inspect(conn).get_columns("issue")}
+    if "slot" not in issue_columns:
+        conn.exec_driver_sql("ALTER TABLE issue ADD COLUMN slot VARCHAR")
+    if "depth" not in issue_columns:
+        conn.exec_driver_sql("ALTER TABLE issue ADD COLUMN depth INTEGER")
+    team_columns = {column["name"] for column in inspect(conn).get_columns("team")}
+    if "child_counter" not in team_columns:
+        conn.exec_driver_sql(
+            "ALTER TABLE team ADD COLUMN child_counter INTEGER DEFAULT 0")
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -2163,6 +2210,12 @@ _MIGRATIONS = {
     # whole Reviews list, no child-table join). Nullable, filled by
     # scripts/enrich-github-link-files.sh; NULL reads back as an empty file list.
     55: _apply_github_link_files,
+    # 56: recursive identifiers — the alias ledger plus the two columns that
+    # let the allocator compose HOJA-416-A-1 without touching a top-level
+    # number. The data migration is deliberately NOT here: it is runnable
+    # forward and back by scripts/migrate_recursive_identifiers.py, after a
+    # backup, and is never applied implicitly by a deploy.
+    56: _apply_recursive_identifiers,
 }
 
 

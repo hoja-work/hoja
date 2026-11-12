@@ -155,6 +155,7 @@ def _team_keys(engine: Engine, organization_id: str) -> frozenset[str]:
 def _issue_by_identifier(engine: Engine, organization_id: str, identifier: str):
     """Resolve one identifier to an issue id, or None."""
     from hoja_server.db import issue
+    from hoja_server.identifiers import issue_ref_clause
 
     with engine.connect() as conn:
         row = conn.execute(
@@ -162,7 +163,9 @@ def _issue_by_identifier(engine: Engine, organization_id: str, identifier: str):
             .where(
                 and_(
                     issue.c.organization_id == organization_id,
-                    issue.c.identifier == identifier,
+                    # A GitHub link or commit message may quote the retired
+                    # flat identifier; the alias ledger keeps it resolvable.
+                    issue_ref_clause(organization_id, identifier),
                 )
             )
             .limit(1)
