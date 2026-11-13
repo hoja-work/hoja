@@ -92,6 +92,7 @@ from hoja_server.deployment import single_org_mode
 from hoja_server.meetings import MeetingService
 from hoja_server.meetings_api import MeetingHub, meeting_routes
 from hoja_server.resolvers import build_schema
+from hoja_server.runner_api import runner_routes
 from hoja_server.secrets_box import SecretBoxError
 from hoja_server.signup_config import (
     TURNSTILE_SCRIPT_URL,
@@ -2989,6 +2990,15 @@ def create_app(
         await hub.ensure_started()
         meeting_hub.start()
         maintenance = asyncio.create_task(_sqlite_maintenance()) if engine.dialect.name == "sqlite" else None
+        # The lease reaper (WP07 T033): Hoja's own clock decides when a run is
+        # lost. It never asks a runner or the DBOS process whether it is alive,
+        # because a database outage blocks DBOS silently (plan D9).
+        lease_reaper = None
+        if os.environ.get("HOJA_LEASE_REAPER", "1").strip().lower() not in ("0", "false", "no"):
+            from hoja_server import runner_api as runner_lease_api
+
+            lease_reaper = asyncio.create_task(
+                tenant_context.as_system(runner_lease_api.run_reaper_forever(engine)))
         webhook_worker = None
         if os.environ.get("HOJA_WEBHOOK_WORKER", "1").strip().lower() not in ("0", "false", "no"):
             from hoja_server import webhooks
@@ -3026,6 +3036,10 @@ def create_app(
             await sfu.aclose()
         if maintenance is not None:
             maintenance.cancel()
+        if lease_reaper is not None:
+            lease_reaper.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await lease_reaper
         if webhook_worker is not None:
             webhook_worker.cancel()
         if pinned_mcp is not None:
@@ -3046,6 +3060,10 @@ def create_app(
             Route("/api/agent/threads/update/{thread_id}", agent_thread_update, methods=["PATCH"]),
             Route("/api/agent/threads/delete/{thread_id}", agent_thread_delete, methods=["DELETE"]),
             *connector_routes(engine, store, _auth),
+            # The runner lease API (HOJA-602-A-6). Each route authenticates its
+            # own runner bearer token, so it sits before the /api catch-all and
+            # outside the browser session/cookie path.
+            *runner_routes(engine),
             *meeting_routes(
                 engine, meeting_service, meeting_hub, auth=_auth,
                 csrf=lambda request: _cookie_csrf_error(request, json_only=True),

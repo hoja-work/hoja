@@ -297,7 +297,9 @@ def test_a_revision_64_database_gains_the_audit_trail(tmp_path):
         conn.exec_driver_sql("DROP TABLE audit_event")
     assert applied_schema_revision(engine) == 64
     migrate(engine)
-    assert applied_schema_revision(engine) == CURRENT_SCHEMA_REVISION == 65
+    # Revision 65 added this table; later work packages (66 is the runner lease,
+    # HOJA-602-A-6) take further numbers, so the assertion is "current", not "65".
+    assert applied_schema_revision(engine) == CURRENT_SCHEMA_REVISION >= 65
 
     admin = seed_tenant(engine, org_name="Upgraded", org_url_key="upgraded",
                         user_email="admin@upgraded.test", token="upgraded-tok")

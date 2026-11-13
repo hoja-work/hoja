@@ -35,7 +35,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 65
+CURRENT_SCHEMA_REVISION = 66
 
 log = logging.getLogger(__name__)
 
@@ -882,6 +882,114 @@ issue_activity = Table(
     Column("event_type", String, nullable=False),
     Column("changes", Text),
     Column("created_at", String, nullable=False, index=True),
+)
+
+# ---------------------------------------------------------------------------
+# Runner lease (HOJA-602-A-6, WP07). A runner is a machine the workspace has
+# enrolled; a lease is one grant of one task to one runner under a monotonic
+# fence; an effect is one external write that must happen exactly once.
+#
+# Runner credentials live here and never in ``api_key``: ``api_key.access``
+# accepts only read|read_write (store.py, create_api_key), and a runner token is
+# neither a person's key nor tenant-readable data. Only the hash is stored, and
+# the plaintext is returned exactly once, at registration.
+# ---------------------------------------------------------------------------
+runner = Table(
+    "runner",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("name", String, nullable=False),
+    # JSON: the operator's free-form labels (pool, host, region).
+    Column("labels", Text),
+    # JSON list: the harnesses this runner declared at registration. The lease
+    # route refuses to hand out work this runner did not say it can run, so the
+    # server is the allowlist authority and a modified runner cannot exceed it.
+    Column("harnesses", Text),
+    # sha256 of the bearer token. Never the token itself.
+    Column("lease_token_hash", String(64), nullable=False, unique=True),
+    Column("token_hint", String(8)),
+    Column("enabled", Boolean, nullable=False, default=True),
+    Column("last_seen", String),
+    Column("created_at", String, nullable=False),
+    Column("revoked_at", String),
+    UniqueConstraint("organization_id", "name", name="uq_runner_org_name"),
+)
+
+runner_enrollment = Table(
+    "runner_enrollment",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("token_hash", String(64), nullable=False, unique=True),
+    Column("hint", String(8)),
+    Column("label", String),
+    Column("created_by", String, ForeignKey("user.id")),
+    Column("expires_at", String),
+    # Single use: the registration that spends it writes ``used_at`` in the same
+    # transaction as the runner insert, so a replay finds it spent (T029).
+    Column("used_at", String),
+    Column("used_by_runner", String),
+    Column("created_at", String, nullable=False),
+)
+
+agent_lease = Table(
+    "agent_lease",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("task_id", String, ForeignKey("issue.id"), nullable=False, index=True),
+    Column("runner_id", String, ForeignKey("runner.id"), index=True),
+    # Monotonic per task. A stale fence is refused with 409 on every route
+    # (FR-018): a workflow id is an idempotency key, not a fence.
+    Column("fence", Integer, nullable=False, default=1),
+    # The run identity the daemon journals and keys its effects by.
+    Column("run_id", String, nullable=False, unique=True),
+    # queued | active | finished | released | canceled | lost
+    Column("state", String, nullable=False, index=True),
+    Column("attempt", Integer, nullable=False, default=1),
+    Column("harness", String, nullable=False),
+    Column("prompt", Text, nullable=False),
+    # Per-lease capability token, hashed at rest and re-issued on every grant.
+    Column("lease_token_hash", String(64)),
+    Column("ttl_seconds", Integer, nullable=False),
+    # Hoja's clock, not the runner's: the reaper compares this to the server's now.
+    Column("lease_until", String),
+    Column("granted_at", String),
+    Column("last_heartbeat_at", String),
+    Column("cancel_requested_at", String),
+    Column("cancel_reason", String),
+    Column("finish_state", String),
+    # The effect key the finish was applied under; the idempotency witness.
+    Column("finish_key", String),
+    # JSON: the claim's summary/evidence, kept verbatim for the verifier (WP10).
+    Column("result", Text),
+    # Highest activity seq accepted, so a re-delivered batch is a no-op.
+    Column("last_event_seq", Integer, nullable=False, default=0),
+    Column("finished_at", String),
+    Column("lost_at", String),
+    Column("lost_reason", String),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+    UniqueConstraint("task_id", "fence", name="uq_agent_lease_task_fence"),
+)
+
+agent_side_effect = Table(
+    "agent_side_effect",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("lease_id", String, ForeignKey("agent_lease.id"), index=True),
+    Column("run_id", String, nullable=False, index=True),
+    Column("seq", Integer, nullable=False),
+    # run_id + ":" + seq (FR-019). Unique per organization, which is what makes a
+    # duplicate finish record the effect once.
+    Column("key", String, nullable=False),
+    Column("kind", String, nullable=False),
+    Column("payload", Text),
+    Column("external_ref", String),
+    Column("created_at", String, nullable=False),
+    UniqueConstraint("organization_id", "key", name="uq_agent_side_effect_key"),
 )
 
 # Outgoing webhooks (wire-compatible). A webhook only receives change events
@@ -2650,6 +2758,24 @@ $fn$;""")
                 f"SELECT RAISE(ABORT, 'audit_event is append-only: {op} refused'); END")
 
 
+def _apply_runner_lease(conn) -> None:
+    """Runner lease: runner, runner_enrollment, agent_lease, agent_side_effect (WP07).
+
+    Additive only. Nothing existing changes shape, so the previous image keeps
+    serving a database that has already run this revision, and a workspace with
+    no runner enrolled pays one empty table each.
+
+    ``agent_lease`` (task, fence) is unique rather than merely indexed: the fence
+    is the only proof that a write comes from the runner that currently owns the
+    task, so two leases may never share one. The reaper allocates ``max(fence)+1``
+    per task, which is why the constraint can be a plain unique index.
+    """
+    runner.create(conn, checkfirst=True)
+    runner_enrollment.create(conn, checkfirst=True)
+    agent_lease.create(conn, checkfirst=True)
+    agent_side_effect.create(conn, checkfirst=True)
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -2821,6 +2947,12 @@ _MIGRATIONS = {
     # taken rather than renumbering a revision another branch already owns. The
     # ledger stays a contiguous prefix.
     65: _apply_audit_log,
+    # 66: the runner lease (HOJA-602-A-6, WP07) — runner, single-use
+    # runner_enrollment, agent_lease with a monotonic fence, and the
+    # agent_side_effect ledger keyed run_id + seq (FR-018, FR-019, FR-020).
+    # Additive; the reaper is what turns an expired lease into work for the next
+    # runner, and it uses Hoja's clock, never the runner's process.
+    66: _apply_runner_lease,
 }
 
 
