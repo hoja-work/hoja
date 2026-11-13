@@ -735,40 +735,46 @@ def create_app(
                 return True
         return False
 
-    def _mcp_oauth_auth(request: Request):
-        """Resolve a valid MCP access token to the same pinned Hoja identity."""
-        raw = request.headers.get("authorization", "")
-        if not raw.lower().startswith("bearer "):
-            return None
+    def _mcp_bearer_credential(token: str):
+        """Enumerated cross-tenant lookup of one MCP bearer, by token hash.
+
+        An MCP request presents its credential before any tenant is known, so these
+        are the only reads here that may run in system context: an OAuth access
+        token matched by hash, then an API key matched the same way. The result is
+        an identity and the organization to bind, never another tenant's rows.
+        """
         from datetime import datetime, timezone
 
         from sqlalchemy import select
 
         from hoja_server.db import oauth_access_token
 
-        digest = token_hash(raw[7:].strip())
-        with engine.connect() as conn:
-            row = (
-                conn.execute(
-                    select(oauth_access_token).where(
-                        oauth_access_token.c.token_hash == digest,
-                        oauth_access_token.c.revoked_at.is_(None),
-                        oauth_access_token.c.expires_at > datetime.now(timezone.utc).isoformat(),
+        with tenant_context.system():
+            with engine.connect() as conn:
+                row = (
+                    conn.execute(
+                        select(oauth_access_token).where(
+                            oauth_access_token.c.token_hash == token_hash(token),
+                            oauth_access_token.c.revoked_at.is_(None),
+                            oauth_access_token.c.expires_at > datetime.now(timezone.utc).isoformat(),
+                        )
                     )
+                    .mappings()
+                    .first()
                 )
-                .mappings()
-                .first()
-            )
-        if not row:
-            # An API key authenticates the same identity as an OAuth access token, so the
-            # MCP surface does not require a second credential type. read/read_write maps
-            # onto hoja:read/hoja:write, keeping write tools gated by scope.
-            with tenant_context.system():
-                key = store.resolve_token(raw[7:].strip())
-            if not key:
-                return None
-            member = store.membership_for_profile(key["organization_id"], key["user_id"])
-            if not member:
+            if row is not None:
+                return {
+                    "user_id": row["user_id"],
+                    "org_id": row["organization_id"],
+                    "scopes": row["scopes"],
+                    "client_id": row["client_id"],
+                }
+            # An API key authenticates the same identity as an OAuth access token, so
+            # the MCP surface does not require a second credential type.
+            # read/read_write maps onto hoja:read/hoja:write, keeping write tools
+            # gated by scope.
+            key = store.resolve_token(token)
+            if key is None:
                 return None
             from hoja_server.mcp_oauth import ALL_SCOPES, READ_SCOPE
 
@@ -776,21 +782,32 @@ def create_app(
             return {
                 "user_id": key["user_id"],
                 "org_id": key["organization_id"],
-                "identity_id": member.get("identity_id"),
                 "scopes": json.dumps(scopes),
                 "client_id": "api-key",
-                "org_name": (store.workspace(key["organization_id"]) or {}).get("name"),
             }
-        member = store.membership_for_profile(row["organization_id"], row["user_id"])
+
+    def _mcp_oauth_auth(request: Request):
+        """Resolve a valid MCP bearer to the same pinned Hoja identity."""
+        raw = request.headers.get("authorization", "")
+        if not raw.lower().startswith("bearer "):
+            return None
+        principal = _mcp_bearer_credential(raw[7:].strip())
+        if principal is None:
+            return None
+        pinned = tenant_hosts.required_org(request.scope)
+        if pinned and principal["org_id"] != pinned:
+            return None
+        # Bind before the membership and workspace reads: those are tenant rows, and
+        # under RLS an unbound read returns no rows instead of raising, so a missing
+        # bind reads as "not a member" rather than as an error.
+        tenant_context.bind(principal["org_id"])
+        member = store.membership_for_profile(principal["org_id"], principal["user_id"])
         if not member:
             return None
         return {
-            "user_id": row["user_id"],
-            "org_id": row["organization_id"],
+            **principal,
             "identity_id": member.get("identity_id"),
-            "scopes": row["scopes"],
-            "client_id": row["client_id"],
-            "org_name": (store.workspace(row["organization_id"]) or {}).get("name"),
+            "org_name": (store.workspace(principal["org_id"]) or {}).get("name"),
         }
 
     missing = _missing_packages(_SERVER_REQUIRED_PACKAGES)
