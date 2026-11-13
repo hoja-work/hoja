@@ -35,7 +35,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 64
+CURRENT_SCHEMA_REVISION = 65
 
 log = logging.getLogger(__name__)
 
@@ -842,6 +842,34 @@ change_event = Table(
     Column("actor_id", String),
     # For an agent turn: the human whose request the agent is acting on.
     Column("on_behalf_of", String),
+)
+
+# Append-only audit trail (revision 65, HOJA-602-A-8 / WP05). Deliberately
+# separate from change_event: change_event is the realtime "what changed" feed,
+# this is the repudiation ledger of "who asked for what", and it must survive a
+# row rewrite. ``prev_hash``/``row_hash`` chain each row to its predecessor in
+# the same organization (see hoja_server.audit); the trigger created by
+# _apply_audit_log refuses every UPDATE and DELETE.
+audit_event = Table(
+    "audit_event",
+    metadata,
+    Column("seq", Integer, primary_key=True, autoincrement=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False),
+    Column("action", String, nullable=False),
+    Column("actor_kind", String, nullable=False),
+    Column("actor_id", String, nullable=False),
+    # For an agent turn: the human whose request the agent is acting on.
+    Column("on_behalf_of", String),
+    Column("target_kind", String),
+    Column("target_id", String),
+    Column("ip", String),
+    Column("runner", String),
+    Column("request_id", String),
+    Column("detail", Text),
+    Column("prev_hash", String(64), nullable=False),
+    Column("row_hash", String(64), nullable=False),
+    Column("created_at", String, nullable=False),
+    Index("ix_audit_event_organization_seq", "organization_id", "seq"),
 )
 
 issue_activity = Table(
@@ -2579,6 +2607,49 @@ END $$;""")
         _apply_realtime_v2_capture(conn)
 
 
+def _apply_audit_log(conn) -> None:
+    """Append-only audit trail (HOJA-602-A-8, WP05).
+
+    Additive: a deployment that audits nothing keeps every behavior it has, and
+    the trigger only exists on the new table.
+
+    Immutability is a trigger, not a grant. REVOKE UPDATE, DELETE would be the
+    smaller statement, but any deployment (or test harness) that re-grants on
+    all tables silently re-opens the ledger, so the refusal has to be attached
+    to the table itself. The trigger fires for the table owner too — which is
+    why the chain test disables it explicitly to prove ``verify_chain`` notices
+    a rewrite.
+    """
+    audit_event.create(conn, checkfirst=True)
+    conn.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_audit_event_organization_seq "
+        "ON audit_event (organization_id, seq)")
+    if conn.dialect.name == "postgresql":
+        # No `%` anywhere in this function body: psycopg treats it as a pyformat
+        # placeholder even when SQLAlchemy sends no parameters, and the CREATE
+        # FUNCTION then fails at migration time rather than at the refusal.
+        conn.exec_driver_sql("""
+CREATE OR REPLACE FUNCTION audit_event_append_only() RETURNS trigger LANGUAGE plpgsql AS $fn$
+BEGIN
+  RAISE EXCEPTION 'audit_event is append-only: updates and deletes are refused'
+    USING ERRCODE = 'insufficient_privilege';
+END;
+$fn$;""")
+        conn.exec_driver_sql(
+            "DROP TRIGGER IF EXISTS trg_audit_event_append_only ON audit_event")
+        conn.exec_driver_sql(
+            "CREATE TRIGGER trg_audit_event_append_only BEFORE UPDATE OR DELETE "
+            "ON audit_event FOR EACH ROW EXECUTE FUNCTION audit_event_append_only()")
+        # Also close the grant, for deployments that do not re-grant broadly.
+        conn.exec_driver_sql("REVOKE UPDATE, DELETE ON audit_event FROM PUBLIC")
+    elif conn.dialect.name == "sqlite":
+        for op in ("UPDATE", "DELETE"):
+            conn.exec_driver_sql(
+                f"CREATE TRIGGER IF NOT EXISTS trg_audit_event_no_{op.lower()} "
+                f"BEFORE {op} ON audit_event BEGIN "
+                f"SELECT RAISE(ABORT, 'audit_event is append-only: {op} refused'); END")
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -2744,6 +2815,12 @@ _MIGRATIONS = {
     # actor_kind / actor_id / on_behalf_of on change_event. Additive; the capture
     # functions are rebuilt so a delegated agent's writes are attributable.
     64: _apply_agent_identity,
+    # 65: the append-only audit trail (HOJA-602-A-8, WP05). The work-package
+    # prompt says this revision "owns schema revision 64", but WP04 shipped 64
+    # (agent identity) and this work stacks on it, so the next free number is
+    # taken rather than renumbering a revision another branch already owns. The
+    # ledger stays a contiguous prefix.
+    65: _apply_audit_log,
 }
 
 

@@ -21,6 +21,7 @@ from ariadne import (
 from graphql import GraphQLError
 
 from hoja_server import mail_events
+from hoja_server import audit
 
 logger = logging.getLogger(__name__)
 from hoja_server import extensions
@@ -614,6 +615,24 @@ def r_viewer(_, info):
 def r_my_api_keys(_, info):
     store, _w, org, uid = _ctx(info)
     return store.list_api_keys(org, uid)
+
+
+@query.field("auditEvents")
+def r_audit_events(_, info, first=50, after=None, actorId=None, action=None):
+    """The organization's audit ledger, admin only, paged, never unbounded.
+
+    An explicit admin check rather than a capability: reading the ledger is not
+    a grant anyone hands out, and a non-admin is refused instead of being told
+    the rows exist by an empty connection.
+    """
+    store, _w, org, uid = _ctx(info)
+    actor = store.get_user(org, uid)
+    if not actor or not actor.get("admin"):
+        raise GraphQLError("Only workspace admins can read the audit log.",
+                           extensions={"code": "FORBIDDEN"})
+    return audit.read_events(store.engine, org, first=first,
+                             after=int(after) if after not in (None, "") else None,
+                             actor_id=actorId, action=action)
 
 
 def _preference_payload(store, uid, *, success=True):
@@ -1340,13 +1359,21 @@ def m_api_key_create(_, info, label, access="read_write", expiresAt=None):
     if not created:
         return {"success": False, "apiKey": None, "secret": None}
     metadata, secret = created
+    # Audit after the key exists; never the secret, only what the admin chose.
+    audit.record_request(store, info, user_id=uid, action="api_key.create",
+                         target_kind="api_key", target_id=metadata["id"],
+                         detail={"label": metadata["label"], "access": metadata["access"]})
     return {"success": True, "apiKey": metadata, "secret": secret}
 
 
 @mutation.field("apiKeyRevoke")
 def m_api_key_revoke(_, info, id):
     store, _w, org, uid = _ctx(info)
-    return store.revoke_api_key(org, uid, id)
+    revoked = store.revoke_api_key(org, uid, id)
+    if revoked:
+        audit.record_request(store, info, user_id=uid, action="api_key.revoke",
+                             target_kind="api_key", target_id=id)
+    return revoked
 
 
 @mutation.field("userPreferenceSet")
@@ -1458,6 +1485,9 @@ def m_member_archive(_, info, userId):
     if not permissions.can(store, org, uid, "member.invite"):
         return {"success": False, "user": None}
     target = store.archive_member(org, uid, userId)
+    if target:
+        audit.record_request(store, info, user_id=uid, action="member.archive",
+                             target_kind="user", target_id=userId)
     return {"success": bool(target), "user": store.ser_user(target, uid)}
 
 
@@ -1468,6 +1498,9 @@ def m_member_restore(_, info, userId):
     if not permissions.can(store, org, uid, "member.invite"):
         return {"success": False, "user": None}
     target = store.restore_member(org, uid, userId)
+    if target:
+        audit.record_request(store, info, user_id=uid, action="member.restore",
+                             target_kind="user", target_id=userId)
     return {"success": bool(target), "user": store.ser_user(target, uid)}
 
 
@@ -1476,6 +1509,11 @@ def _set_member_active(info, user_id, *, active: bool):
     if not permissions.can(store, org, uid, "member.invite"):
         return {"success": False, "user": None}
     target = store.set_member_active(org, uid, user_id, active)
+    if target:
+        audit.record_request(
+            store, info, user_id=uid,
+            action="member.reactivate" if active else "member.deactivate",
+            target_kind="user", target_id=user_id, detail={"active": bool(active)})
     return {"success": bool(target), "user": store.ser_user(target, uid)}
 
 
@@ -1494,6 +1532,10 @@ def m_member_role_update(_, info, userId, admin):
     if not actor or not actor.get("admin"):
         return {"success": False, "user": None}
     target = store.set_member_admin_role(org, userId, admin)
+    if target:
+        audit.record_request(store, info, user_id=uid, action="member.role.change",
+                             target_kind="user", target_id=userId,
+                             detail={"admin": bool(admin)})
     return {"success": bool(target), "user": store.ser_user(target, uid)}
 
 
@@ -1517,6 +1559,11 @@ def m_member_invite(_, info, input):
     if not created:
         return {"success": False, "user": None, "apiKey": None}
     user_row, api_key = created
+    audit.record_request(store, info, user_id=uid, action="member.invite",
+                         target_kind="user",
+                         target_id=user_row["id"] if user_row is not None else None,
+                         detail={"admin": bool(input.get("admin", False)),
+                                 "teamIds": list(team_ids)})
     return {"success": True, "user": store.ser_user(user_row, uid), "apiKey": api_key}
 
 

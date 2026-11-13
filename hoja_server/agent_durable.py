@@ -40,6 +40,7 @@ from sqlalchemy import and_, select
 
 from hoja_server import agent_chat as chat
 from hoja_server import agent_members
+from hoja_server import audit
 from hoja_server import tenant_context
 from hoja_server.agent_conversations import save_message, start_conversation
 from hoja_server.agent_threads import _owned as _owned_thread
@@ -253,6 +254,14 @@ async def agent_turn(turn: dict) -> dict:
                      if agent_user_id else nullcontext())
     token = _principal.set(principal)
     ask = None
+    # WP05: the durable turn is a session too, and it outlives the client, so its
+    # start/stop pair is the only record that it ran at all.
+    if agent_user_id:
+        audit.record(_runtime.store.engine, organization_id=turn["org_id"],
+                     action="agent.session.start", actor_kind="agent",
+                     actor_id=agent_user_id, on_behalf_of=turn["user_id"],
+                     target_kind="conversation", target_id=turn["conversation_id"],
+                     runner="durable")
     try:
         with actor_context:
             result = await agent.run(prompt, message_history=history, deps=deps,
@@ -264,6 +273,12 @@ async def agent_turn(turn: dict) -> dict:
         text = FAILED_REPLY
     finally:
         _principal.reset(token)
+        if agent_user_id:
+            audit.record(_runtime.store.engine, organization_id=turn["org_id"],
+                         action="agent.session.stop", actor_kind="agent",
+                         actor_id=agent_user_id, on_behalf_of=turn["user_id"],
+                         target_kind="conversation", target_id=turn["conversation_id"],
+                         runner="durable")
     await _save_reply(turn["conversation_id"], text + (ask or ""))
     return {"text": text, "ask": ask}
 

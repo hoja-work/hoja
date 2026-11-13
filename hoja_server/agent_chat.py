@@ -25,7 +25,7 @@ from sqlalchemy import and_, select
 from starlette.responses import StreamingResponse
 
 from hoja_server.agent_conversations import save_message, start_conversation
-from hoja_server import agent_members, tenant_context
+from hoja_server import agent_members, audit, tenant_context
 from hoja_server.agent_prompt import compose_prompt, workspace_snapshot
 from hoja_server.agent_threads import _owned as _owned_thread
 from hoja_server.agent_threads import _title_from
@@ -238,6 +238,15 @@ async def stream_reply(store, org_id: str, uid: str, messages: list[dict], schem
     # asked as on_behalf_of. No agent member means the writes stay unattributed
     # rather than borrowing the human's identity.
     agent_user_id = agent_members.turn_agent(store.engine, org_id)
+    # WP05: an agent turn is the session this stack has (WP06 adds the durable
+    # schedule/session). Start/stop bracket the turn, so a crash leaves a start
+    # with no stop — which is the trace an operator needs, not a missing one.
+    # A workspace with no agent member runs the human's turn, and that is not an
+    # agent session: it is not audited here.
+    if agent_user_id:
+        audit.record(store.engine, organization_id=org_id, action="agent.session.start",
+                     actor_kind="agent", actor_id=agent_user_id, on_behalf_of=uid,
+                     target_kind="conversation", target_id=conversation_id)
     try:
         with (tenant_context.actor("agent", agent_user_id, on_behalf_of=uid)
               if agent_user_id else nullcontext()):
@@ -263,6 +272,11 @@ async def stream_reply(store, org_id: str, uid: str, messages: list[dict], schem
     except UnexpectedModelBehavior:
         reply_parts = ["The assistant could not complete that request. Please try again."]
         yield _chunk(completion_id, {"content": reply_parts[0]})
+    finally:
+        if agent_user_id:
+            audit.record(store.engine, organization_id=org_id, action="agent.session.stop",
+                         actor_kind="agent", actor_id=agent_user_id, on_behalf_of=uid,
+                         target_kind="conversation", target_id=conversation_id)
     with store.engine.begin() as conn:
         save_message(conn, conversation_id, "assistant", "".join(reply_parts))
     yield _chunk(completion_id, {}, "stop")

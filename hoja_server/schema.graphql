@@ -86,6 +86,8 @@ input MemberInviteInput {
 type Query {
   viewer: User
   myApiKeys: [ApiKey!]!
+  "The workspace's append-only audit ledger, admin only, oldest first, paged."
+  auditEvents(first: Int = 50, after: String, actorId: String, action: String): AuditEventConnection!
   myPreferences: UserPreferencesPayload!
   myNotificationPreferences: NotificationPreferencesPayload!
   issueLabelSettings: [IssueLabel!]! @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
@@ -201,6 +203,32 @@ type PageInfo {
   startCursor: String
   endCursor: String
 }
+
+"""
+One append-only audit event: who asked for what, and the hash that chains it to
+the event before it in the same workspace. Admins read this; nothing writes it
+through the API, and the storage layer refuses every update and delete.
+"""
+type AuditEvent {
+  seq: Int!
+  action: String!
+  actorKind: String!
+  actorId: String!
+  "For an agent turn: the human whose request the agent acted on."
+  onBehalfOf: String
+  targetKind: String
+  targetId: String
+  ip: String
+  runner: String
+  requestId: String
+  "Non-secret context only; a credential never appears here."
+  detail: String
+  prevHash: String!
+  rowHash: String!
+  createdAt: DateTime!
+}
+
+type AuditEventConnection { nodes: [AuditEvent!]! pageInfo: PageInfo! }
 
 type InboxNotification {
   id: ID!
