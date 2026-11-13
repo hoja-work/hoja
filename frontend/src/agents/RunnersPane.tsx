@@ -30,7 +30,7 @@ import {confirmDialog} from '../dialogs';
 import {GraphStatusIcon, IconBtn, LabelChip, StatusAgeIcon, Tip} from '../graph/shared';
 import {DisplayPanel, IssueRow, PropDropdown, defaultDisplay, type IssueRowModel, type LinDisplay} from '../graph/tasks';
 import {getAgentsAdapter} from './adapter';
-import {AGENTS_TABS, AgentsListShell, SearchField} from './chrome';
+import {AGENTS_TABS, AgentsListShell, SampleDataNotice, SearchField} from './chrome';
 import {RUNNER_STATUSES, runnerStatus, ttlLabel, ttlSecondsLeft} from './types';
 import type {ConnectExposure, Runner, RunnerStatus} from './types';
 
@@ -180,6 +180,7 @@ export function RunnersPane({workspaceName, onOpen, tab, onTab}: {
       {error && <p className="lin-error" role="alert">{error}</p>}
       {!loading && !error && (
         <div className="lin-list">
+          <SampleDataNotice surface="runners" />
           {groups.map(g => {
             const isCollapsed = collapsedSet.has(g.key);
             return (
@@ -391,6 +392,7 @@ export function RunnerDetailPage({runnerId, workspaceName, viewerName, onBack}: 
             {runner.labels.length ? ` · ${runner.labels.join(', ')}` : ''}
           </p>
 
+          <SampleDataNotice surface="runners" />
           <section className="lin-activity" aria-label="Connect exposures">
             <header>
               <b>Connect exposures</b>

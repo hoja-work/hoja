@@ -112,9 +112,9 @@ export function AgentsSurface({workspaceName, viewerName}: {workspaceName: strin
         tab={tab}
         onTab={onTab}
         onOpenAgent={key => go(`${AGENTS_ROOT}/${encodeURIComponent(key)}`)}
-        /* A delegated task's own page (screen 4) is out of this slice, so a queue row opens the
-           agent that ran it — the only page that exists for the run today. */
-        onOpenRun={run => go(`${AGENTS_ROOT}/${encodeURIComponent(run.agentKey)}`)}
+        /* A delegated task's own session view is WP06, so a queue row opens that agent's queue —
+           the run's own context in this slice, and a route that exists for a fixture key. */
+        onOpenRun={run => go(`${AGENTS_ROOT}/${encodeURIComponent(run.agentKey)}/queue`)}
       />
     );
   }
@@ -148,7 +148,7 @@ export function AgentsSurface({workspaceName, viewerName}: {workspaceName: strin
       workspaceName={workspaceName}
       tab={tab}
       onTab={onTab}
-      onOpen={agent => go(`${AGENTS_ROOT}/${encodeURIComponent(agent.key)}`)}
+      onOpen={agent => go(`${AGENTS_ROOT}/${encodeURIComponent(agent.id)}`)}
     />
   );
 }

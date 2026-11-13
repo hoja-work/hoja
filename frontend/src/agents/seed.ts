@@ -1,36 +1,24 @@
-/* Fixture data for the agent surface (HOJA-602-A-16).
+/* Fixture data for the surfaces whose backend is not on main (HOJA-602-A-16).
  *
- * Values are fixed, not random: the geometry test screenshots the same rows on every run, so a
- * random budget or timestamp would make two screenshots of "the same" screen differ for no
- * reason. Everything here is replaced when WP04/WP06 swap the adapter for GraphQL.
+ * Scope, as of WP13 slice 3: the agent *identity* half (list, detail, create/edit, delegate) is
+ * read from and written to GraphQL, so no agent row lives here any more. What is still a fixture is
+ * exactly what has no server table on main:
+ *
+ *   - agent sessions and their events   (WP06 delegated sessions)          → seedSessions
+ *   - audit rows                        (WP05 `auditEvents`, admin-only)    → seedAudit
+ *   - runners, leases and Connect       (WP07/WP08 lease and tailcat)       → seedRunnerRecords…
+ *
+ * Every screen that renders one of these carries a visible `SampleDataNotice`
+ * (agents/chrome.tsx), and `SAMPLE_SURFACES` in adapter.ts names them in one place, so a row from
+ * this file can never be mistaken for a server row. Values are fixed, not random: the geometry test
+ * screenshots the same rows on every run.
  */
 
-import type {Agent, AgentDetail, AgentEvent, AgentPolicy, AgentSession, AuditEvent, RawExposure, RunnerRecord} from './types';
+import type {AgentSession, AuditEvent, RawExposure, RunnerRecord} from './types';
 
-const OWNER_A = {id: 'u-ada', name: 'Ada Lovelace'};
-const OWNER_K = {id: 'u-kevin', name: 'Kevin Sanchez'};
-const OWNER_L = {id: 'u-luis', name: 'Luis Rincon'};
-
-export const seedAgents: Agent[] = [
-  {id: 'ag-1', key: 'AGENT-1', name: 'Triage', harness: 'claude-code', model: 'claude-sonnet-4', status: 'working',
-    running: 2, capacity: 3, budgetUsedUsd: 12.4, budgetLimitUsd: 40, runnerPool: 'linux-x64', owner: OWNER_A,
-    statusChangedAt: '2026-11-12T21:12:00Z', updatedAt: '2026-11-12T21:40:00Z'},
-  {id: 'ag-2', key: 'AGENT-2', name: 'Docs writer', harness: 'codex', model: 'gpt-5', status: 'idle',
-    running: 0, capacity: 2, budgetUsedUsd: 3.1, budgetLimitUsd: 20, runnerPool: 'linux-x64', owner: OWNER_K,
-    statusChangedAt: '2026-11-12T19:05:00Z', updatedAt: '2026-11-12T19:05:00Z'},
-  {id: 'ag-3', key: 'AGENT-3', name: 'Review sentinel', harness: 'claude-code', model: 'claude-haiku-4.5', status: 'queued',
-    running: 1, capacity: 1, budgetUsedUsd: 8.9, budgetLimitUsd: 25, runnerPool: 'linux-arm64', owner: OWNER_L,
-    statusChangedAt: '2026-11-12T20:12:00Z', updatedAt: '2026-11-12T20:12:00Z'},
-  {id: 'ag-4', key: 'AGENT-4', name: 'Migration runner', harness: 'custom', model: 'qwen3-coder', status: 'paused',
-    running: 0, capacity: 2, budgetUsedUsd: 27.8, budgetLimitUsd: 30, runnerPool: 'linux-x64', owner: OWNER_A,
-    statusChangedAt: '2026-11-11T09:30:00Z', updatedAt: '2026-11-11T09:30:00Z'},
-  {id: 'ag-5', key: 'AGENT-5', name: 'Flake hunter', harness: 'codex', model: 'gpt-5-mini', status: 'idle',
-    running: 0, capacity: 4, budgetUsedUsd: 1.2, budgetLimitUsd: 15, runnerPool: 'macos-arm64', owner: OWNER_L,
-    statusChangedAt: '2026-11-12T16:48:00Z', updatedAt: '2026-11-12T16:48:00Z'},
-  {id: 'ag-6', key: 'AGENT-6', name: 'Release scribe', harness: 'claude-code', model: 'claude-sonnet-4', status: 'working',
-    running: 1, capacity: 2, budgetUsedUsd: 5.5, budgetLimitUsd: 20, runnerPool: 'linux-arm64', owner: OWNER_K,
-    statusChangedAt: '2026-11-12T22:01:00Z', updatedAt: '2026-11-12T22:01:00Z'},
-];
+/* The run queue's rows refer to an agent by the fixture's own key ("AGENT-1"), which is not a real
+ * `agent_member` id: those are UUIDs, so a queue row can never be mistaken for a server record.
+ */
 
 export const seedSessions: AgentSession[] = [
   {id: 's-1', agentId: 'ag-1', agentKey: 'AGENT-1', status: 'active', issueId: 'i-1', issueIdentifier: 'HOJA-612', issueTitle: 'Resolve the failing RLS test on a fresh Postgres', priority: 2, startedAt: '2026-11-12T21:20:00Z'},
@@ -41,26 +29,6 @@ export const seedSessions: AgentSession[] = [
   {id: 's-6', agentId: 'ag-5', agentKey: 'AGENT-5', status: 'done', issueId: 'i-6', issueIdentifier: 'HOJA-611', issueTitle: 'Reproduce the flaky login test', priority: 3, startedAt: '2026-11-11T14:00:00Z', endedAt: '2026-11-11T15:12:00Z'},
 ];
 
-export const seedEvents: AgentEvent[] = [
-  {id: 'e-1', sessionId: 's-1', kind: 'thought', at: '2026-11-12T21:20:12Z', text: 'Read the failing test and the resolver it exercises before changing anything.'},
-  {id: 'e-2', sessionId: 's-1', kind: 'action', at: '2026-11-12T21:20:41Z', text: 'Read app/tests/test_rls.py', tool: 'read_file'},
-  {id: 'e-3', sessionId: 's-1', kind: 'action', at: '2026-11-12T21:22:03Z', text: 'Ran pytest -q app/tests/test_rls.py', tool: 'bash'},
-  {id: 'e-4', sessionId: 's-1', kind: 'elicitation', at: '2026-11-12T21:24:10Z', text: 'A decision is needed: keep the fail-closed gate or skip it behind HOJA_TEST_RLS?'},
-  {id: 'e-5', sessionId: 's-1', kind: 'response', at: '2026-11-12T21:26:00Z', text: 'Kept the gate; the test now seeds a tenant before asserting the refusal.'},
-  {id: 'e-6', sessionId: 's-1', kind: 'error', at: '2026-11-12T21:27:30Z', text: 'Postgres refused the connection: migration 0042 is not applied on this host.'},
-];
-
-export const seedPolicy: AgentPolicy = {
-  tools: ['read_file', 'write_file', 'bash', 'gh', 'git'],
-  scope: 'repo',
-  repos: ['hoja-work/hoja-cloud'],
-  secrets: ['HOJA_TOKEN', 'POSTGRES_URL'],
-  network: ['api.anthropic.com', 'github.com'],
-  budgetUsd: 40,
-  workingHours: 'Mon–Fri 08:00–19:00 UTC',
-  approvers: ['Ada Lovelace', 'Kevin Sanchez'],
-};
-
 export const seedAudit: AuditEvent[] = [
   {id: 'a-1', at: '2026-11-12T22:03:00Z', actor: 'Ada Lovelace', action: 'policy.update', target: 'AGENT-1', detail: 'budget 30 → 40 USD'},
   {id: 'a-2', at: '2026-11-12T21:58:00Z', actor: 'AGENT-6', action: 'session.start', target: 'HOJA-623', detail: 'session s-5 on linux-arm64'},
@@ -69,19 +37,6 @@ export const seedAudit: AuditEvent[] = [
   {id: 'a-5', at: '2026-11-12T20:05:00Z', actor: 'Luis Rincon', action: 'runner.revoke', target: 'runner-3', detail: 'lease revoked, last seen 20:04'},
   {id: 'a-6', at: '2026-11-11T09:30:00Z', actor: 'Ada Lovelace', action: 'agent.pause', target: 'AGENT-4', detail: 'budget at 93%'},
 ];
-
-export function seedDetail(key: string): AgentDetail | null {
-  const agent = seedAgents.find(a => a.key.toLowerCase() === key.toLowerCase());
-  if (!agent) return null;
-  const sessions = seedSessions.filter(s => s.agentId === agent.id);
-  const ids = new Set(sessions.map(s => s.id));
-  return {
-    agent,
-    policy: {...seedPolicy, budgetUsd: agent.budgetLimitUsd},
-    sessions,
-    events: seedEvents.filter(e => ids.has(e.sessionId)),
-  };
-}
 
 /* ---------------- Runners and Connect (slice 2) ----------------
  *

@@ -104,6 +104,50 @@ def test_delegate_is_separate_from_the_assignee(two_workspaces):
     assert task["assignee"]["id"] == alpha["user_id"]
 
 
+def _update(client: TestClient, token: str, member_id: str, fields: str) -> dict:
+    return _post(client, token, f'''
+        mutation {{
+          agentMemberUpdate(id: "{member_id}", input: {{{fields}}}) {{
+            success
+            agentMember {{ id capacity monthlyBudgetCredits model runnerPool user {{ id name displayName }} }}
+          }}
+        }}''')
+
+
+def test_an_update_that_omits_the_name_keeps_the_identity(two_workspaces):
+    """A partial edit is the normal edit.
+
+    The web sidebar writes one column at a time (capacity, budget, pool …), so an update
+    that names only the column it changes has to work. It used to raise ``KeyError`` on the
+    absent ``_name``, which surfaced as INTERNAL_SERVER_ERROR for every control on the agent
+    page, and it blanked ``display_name`` on the way.
+    """
+    _engine, client, alpha, _bravo = two_workspaces
+    agent = _create_agent(client, alpha["token"])
+    body = _update(client, alpha["token"], agent["id"], "capacity: 7")
+    assert "errors" not in body, body
+    updated = body["data"]["agentMemberUpdate"]
+    assert updated["success"] is True
+    assert updated["agentMember"]["capacity"] == 7
+    # Untouched identity columns survive an edit that did not mention them.
+    assert updated["agentMember"]["user"]["name"] == "Scout"
+    assert updated["agentMember"]["user"]["displayName"] == "Scout (agent)"
+
+
+def test_an_update_can_clear_a_nullable_column(two_workspaces):
+    """``null`` is a value here: it means "the workspace default", not "leave it alone"."""
+    _engine, client, alpha, _bravo = two_workspaces
+    agent = _create_agent(client, alpha["token"])
+    body = _update(client, alpha["token"], agent["id"], "monthlyBudgetCredits: null, model: null")
+    assert "errors" not in body, body
+    updated = body["data"]["agentMemberUpdate"]["agentMember"]
+    assert updated["monthlyBudgetCredits"] is None
+    assert updated["model"] is None
+    # The columns the update did not mention are still the created ones.
+    assert updated["capacity"] == 2
+    assert updated["runnerPool"] == "default"
+
+
 def test_a_human_cannot_be_delegated(two_workspaces):
     _engine, client, alpha, _bravo = two_workspaces
     body = _create_issue(client, alpha["token"], alpha["team_id"],

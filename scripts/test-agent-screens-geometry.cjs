@@ -36,6 +36,9 @@ const db = path.join(dir, 'p.db');
 /* Not shaped like a real API key on purpose: this value is written into a disposable
  * database by this file and never authenticates anything else. */
 const token = 'agent-screens-geometry-fixture';
+/* A second principal with no admin bit, so the run can prove that a refused read (403) is drawn as
+ * a refusal and not as an empty workspace. Written to the disposable database by this file. */
+const memberToken = 'agent-screens-geometry-member-fixture';
 const py = path.join(repo, '.venv/bin/python');
 const run = code => {
   const r = spawnSync(py, ['-c', code], { cwd: repo, env: { ...process.env, PYTHONPATH: repo }, encoding: 'utf8' });
@@ -43,7 +46,16 @@ const run = code => {
 };
 run(`from hoja_server.db import make_engine,migrate,seed_tenant
 e=make_engine(${JSON.stringify(db)}); migrate(e)
-seed_tenant(e, org_name='Acme', team_key='TREBOL', team_name='Trebol', user_name='Ada', user_email='ada@example.test', token=${JSON.stringify(token)}, demo_issues=False)
+info=seed_tenant(e, org_name='Acme', team_key='TREBOL', team_name='Trebol', user_name='Ada', user_email='ada@example.test', token=${JSON.stringify(token)}, demo_issues=False)
+# A non-admin teammate: same workspace, no admin bit. Used for the 403 check.
+from hoja_server.db import user, api_key, new_id, now_iso, token_hash
+ts=now_iso(); uid=new_id()
+with e.begin() as c:
+    c.execute(user.insert().values(id=uid, organization_id=info['org_id'], name='Sam Member',
+                                   display_name='Sam Member', email='sam@example.test', active=True,
+                                   admin=False, timezone='UTC', created_at=ts, updated_at=ts))
+    c.execute(api_key.insert().values(id=new_id(), token_hash=token_hash(${JSON.stringify(memberToken)}),
+                                      label='member', user_id=uid, organization_id=info['org_id'], created_at=ts))
 e.dispose()`);
 const port = 19400 + Math.floor(Math.random() * 90);
 const base = `http://127.0.0.1:${port}`;
@@ -157,6 +169,19 @@ const focusStop = page => page.evaluate(() => {
   const listed = await gql('{issues(first:10){nodes{identifier title}}}');
   const reference = listed.issues.nodes.find(n => n.title === 'Ship the onboarding flow');
   assert.ok(reference, 'the reference issue exists');
+
+  /* Two real agent members, through the mutation WP04 added (admin-gated: the seeded token is the
+   * workspace admin). From here on the agent list and detail are measured on server rows, so the
+   * geometry is the geometry of real data and the fixture can no longer hide a broken mapping. */
+  const AGENT_SELECTION = `{id userId capacity monthlyBudgetCredits workingHours timezone model runnerPool archivedAt createdAt updatedAt user{id name displayName}}`;
+  const createMember = async input => {
+    const r = await gql(`mutation($input:AgentMemberCreateInput!){agentMemberCreate(input:$input){success agentMember${AGENT_SELECTION}}}`, {input});
+    assert.ok(r.agentMemberCreate.success && r.agentMemberCreate.agentMember, 'agentMemberCreate succeeded');
+    return r.agentMemberCreate.agentMember;
+  };
+  const triage = await createMember({name: 'Triage agent', capacity: 2, monthlyBudgetCredits: 500,
+    model: 'claude-sonnet-4', runnerPool: 'linux-x64', timezone: 'UTC'});
+  const docsAgent = await createMember({name: 'Docs agent', capacity: 1});
   const cyclePath = `/workspace/team/${key}/cycle/active`;
   const referencePath = `/workspace/task/${encodeURIComponent(reference.identifier)}/issue`;
 
@@ -206,7 +231,7 @@ const focusStop = page => page.evaluate(() => {
   const issueDetail = await page.evaluate(detailProbe);
   await page.screenshot({ path: path.join(shots, `issue-detail-${W}.png`) });
 
-  await page.goto(`${base}/workspace/agents/AGENT-1`, { waitUntil: 'networkidle' });
+  await page.goto(`${base}/workspace/agents/${encodeURIComponent(triage.id)}`, { waitUntil: 'networkidle' });
   await page.waitForSelector('[data-surface="agent-detail"] .lin-detail-main', { timeout: 15000 });
   await page.waitForTimeout(400);
   const agentDetail = await page.evaluate(detailProbe);
@@ -436,7 +461,124 @@ const focusStop = page => page.evaluate(() => {
   await page.waitForSelector('[data-surface="runners-list"]', { timeout: 15000 }).catch(() => undefined);
   ok(new URL(page.url()).pathname === RUNNERS, 'the Runners tab opens the runner list', new URL(page.url()).pathname);
 
-  /* ---- 7. the production build ships the surface off by default ---- */
+  /* ---- 7. the surface reads and writes WP04 through GraphQL, and states its refusals ----
+   *
+   * Slices 1–2 drew every agent row from a fixture. This section is what proves that changed: the
+   * rows are the members the mutation created above, the create form and the sidebar write through
+   * `agentMemberCreate`/`agentMemberUpdate`, the issue page's Delegate field writes
+   * `issue.delegateId`, and a refusal is drawn as a refusal rather than as an empty workspace. */
+  const apiMembers = async () => (await gql(`{agentMembers${AGENT_SELECTION}}`)).agentMembers;
+  const apiMember = async id => (await gql(`query($id:String!){agentMember(id:$id)${AGENT_SELECTION}}`, {id})).agentMember;
+  const apiIssueDelegate = async () => (await gql(
+    `query($id:String!){issue(id:$id){delegateId delegate{id name}}}`, {id: reference.identifier})).issue;
+
+  await page.goto(`${base}/workspace/agents`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-surface="agents-list"] .lin-row', { timeout: 15000 });
+  await page.waitForTimeout(300);
+  const serverRows = await page.evaluate(() => [...document.querySelectorAll('[data-surface="agents-list"] .lin-row')]
+    .map(r => ({id: r.getAttribute('data-agent'), title: r.querySelector('.title')?.textContent || '', ident: r.querySelector('.ident')?.textContent || ''})));
+  ok(serverRows.length === 2, 'agents list: one row per server agent member (WP04 agentMembers)', String(serverRows.length));
+  ok(serverRows.some(r => r.id === triage.id && r.title === 'Triage agent'), 'agents list: the rows are the members the mutation created', JSON.stringify(serverRows));
+  ok(!serverRows.some(r => /^AGENT-\d+$/.test(r.ident)), 'agents list: no fixture identifier is presented as an agent', serverRows.map(r => r.ident).join(','));
+  ok(await page.evaluate(() => !document.querySelector('[data-surface="agents-list"] [data-sample="on"]')),
+    'agents list: carries no sample-data notice, because no row on it is a fixture');
+  ok(await page.evaluate(() => !document.body.innerText.includes('AGENT-1')), 'agents list: no fixture text reached the page');
+
+  /* Create through the UI, then read it back through the API: a form that posts into local state
+   * would pass a screenshot and fail this. */
+  await page.getByRole('button', { name: /New agent/ }).first().click();
+  await page.waitForSelector('[role="dialog"][aria-label="New agent"]', { timeout: 5000 });
+  await page.fill('[role="dialog"][aria-label="New agent"] input[aria-label="Agent name"]', 'Release scribe');
+  await page.fill('[role="dialog"][aria-label="New agent"] input[aria-label="Capacity"]', '3');
+  await page.click('[role="dialog"][aria-label="New agent"] button[type="submit"]');
+  await page.waitForSelector('[data-surface="agent-detail"] .lin-detail-main', { timeout: 15000 });
+  const created = (await apiMembers()).find(m => m.user?.name === 'Release scribe');
+  ok(Boolean(created), 'create agent: the form wrote an agentMemberCreate the API can read back');
+  ok(created && created.capacity === 3, 'create agent: capacity travelled with the write', String(created && created.capacity));
+  ok(created && created.userId && created.id, 'create agent: the row has its own identity and a delegate target id');
+
+  /* Edit through the sidebar, then read it back. */
+  const capacityField = '[data-surface="agent-detail"] input[aria-label="Capacity"]';
+  await page.fill(capacityField, '4');
+  await page.press(capacityField, 'Enter');
+  await page.waitForTimeout(700);
+  ok((await apiMember(created.id)).capacity === 4, 'edit agent: the sidebar wrote agentMemberUpdate the API can read back');
+
+  /* Delegate, on the task page, with the task page's own property control. */
+  await page.goto(`${base}${referencePath}`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('.lin-detail .lin-props', { timeout: 15000 });
+  await page.waitForTimeout(500);
+  const delegateRow = page.locator('.lin-props .lin-prop.lin-dd').filter({ has: page.locator('.k', { hasText: 'Delegate' }) }).first();
+  ok(await delegateRow.count() === 1, 'task page: a Delegate property row sits in the sidebar');
+  ok(await delegateRow.locator('.v button').innerText() === 'No delegate', 'task page: the delegate starts empty');
+  await delegateRow.locator('.v button').click();
+  await delegateRow.getByRole('option', { name: 'Triage agent' }).click();
+  await page.waitForTimeout(700);
+  const afterSet = await apiIssueDelegate();
+  ok(afterSet.delegateId === triage.userId, 'task page: picking an agent wrote issue.delegateId', `${afterSet.delegateId} vs ${triage.userId}`);
+  ok(afterSet.delegate && afterSet.delegate.name === 'Triage agent', 'task page: the task now reads back the delegated agent');
+  ok(await delegateRow.locator('.v button').innerText() === 'Triage agent', 'task page: the field shows the delegate it stored');
+
+  /* Clear it with the same control. */
+  await delegateRow.locator('.v button').click();
+  await delegateRow.getByRole('option', { name: 'No delegate' }).click();
+  await page.waitForTimeout(700);
+  ok((await apiIssueDelegate()).delegateId === null, 'task page: choosing No delegate cleared issue.delegateId');
+  ok(await delegateRow.locator('.v button').innerText() === 'No delegate', 'task page: the field is empty again');
+  /* Put it back, so the screenshot below is of the delegated state a reader expects. */
+  await delegateRow.locator('.v button').click();
+  await delegateRow.getByRole('option', { name: 'Triage agent' }).click();
+  await page.waitForTimeout(700);
+  await page.screenshot({ path: path.join(shots, `issue-delegate-${W}.png`) });
+
+  /* A refusal is not an empty workspace. The seeded non-admin is refused by `_require_admin`. */
+  const memberCtx = await browser.newContext({ viewport: { width: W, height: H } });
+  await memberCtx.addInitScript(t => {
+    localStorage.setItem('hoja_token', t);
+    localStorage.setItem('hoja_agents_surface', 'on');
+  }, memberToken);
+  const memberPage = await memberCtx.newPage();
+  await memberPage.goto(`${base}/workspace/agents`, { waitUntil: 'networkidle' });
+  const refusal = await memberPage.waitForSelector('[data-surface="agents-list"] [data-state="error"]', { timeout: 15000 }).catch(() => null);
+  ok(Boolean(refusal), 'non-admin: a 403 renders as a stated refusal, not as an empty list');
+  ok(await memberPage.evaluate(() => /admin/i.test(document.body.innerText)), 'non-admin: the refusal says who can see agents');
+  ok(await memberPage.evaluate(() => !document.querySelector('[data-surface="agents-list"] .lin-row')), 'non-admin: no rows are drawn for a refused read');
+  ok(await memberPage.evaluate(() => !document.querySelector('[data-surface="agents-list"] [data-state="empty"]')), 'non-admin: the refusal is not the empty-workspace state');
+  await memberPage.screenshot({ path: path.join(shots, `agents-forbidden-${W}.png`) });
+  /* The detail page makes the same distinction: a refused read must not claim the agent is absent. */
+  await memberPage.goto(`${base}/workspace/agents/${triage.id}`, { waitUntil: 'networkidle' });
+  const refusedDetail = await memberPage.waitForSelector('[data-surface="agent-detail"] [data-state="error"]', { timeout: 15000 }).catch(() => null);
+  ok(Boolean(refusedDetail), 'non-admin: the agent page states the refusal instead of a missing agent');
+  const refusedText = await memberPage.evaluate(() => document.querySelector('[data-surface="agent-detail"] [data-state="error"]')?.innerText || '');
+  ok(/admin/i.test(refusedText), 'non-admin: the agent-page refusal says who can see agents', refusedText.replace(/\n/g, ' '));
+  ok(!/no agent member/i.test(refusedText), 'non-admin: a 403 is not reported as a 404', refusedText.replace(/\n/g, ' '));
+  /* The same refusal inside the task page's Delegate menu: no list, no silent "No delegate". */
+  await memberPage.goto(`${base}${referencePath}`, { waitUntil: 'networkidle' });
+  await memberPage.waitForSelector('.lin-detail .lin-props', { timeout: 15000 });
+  const memberDelegate = memberPage.locator('.lin-props .lin-prop.lin-dd')
+    .filter({ has: memberPage.locator('.k', { hasText: 'Delegate' }) }).first();
+  await memberDelegate.locator('.v button').click();
+  await memberPage.waitForTimeout(600);
+  const menuSays = await memberDelegate.locator('.lin-dd-panel').innerText();
+  ok(/admin/i.test(menuSays), 'non-admin: the Delegate menu states the refusal instead of offering nothing', menuSays.replace(/\n/g, ' '));
+  await memberCtx.close();
+
+  /* The fixture surfaces say they are fixtures; the real ones do not. */
+  for (const [url, surface] of [['/workspace/agents/queue', 'run-queue'], ['/workspace/agents/audit', 'audit-log'], ['/workspace/agents/runners', 'runners-list']]) {
+    await page.goto(`${base}${url}`, { waitUntil: 'networkidle' });
+    await page.waitForSelector(`[data-surface="${surface}"]`, { timeout: 15000 });
+    ok(await page.evaluate(s => Boolean(document.querySelector(`[data-surface="${s}"] [data-sample="on"]`)), surface),
+      `${surface}: says out loud that its rows are sample data`);
+  }
+
+  /* A genuinely absent agent is stated as absent — the other half of the 403/404 distinction. */
+  await page.goto(`${base}/workspace/agents/00000000-0000-0000-0000-000000000000`, { waitUntil: 'networkidle' });
+  const missing = await page.waitForSelector('[data-surface="agent-detail"] [data-state="error"]', { timeout: 15000 }).catch(() => null);
+  ok(Boolean(missing), 'agent page: an unknown id is stated, not left loading');
+  const missingText = await page.evaluate(() => document.querySelector('[data-surface="agent-detail"] [data-state="error"]')?.innerText || '');
+  ok(/no agent member/i.test(missingText), 'agent page: an unknown id says no such member exists', missingText.replace(/\n/g, ' '));
+
+  /* ---- 8. the production build ships the surface off by default ---- */
   const offCtx = await browser.newContext({ viewport: { width: W, height: H } });
   await offCtx.addInitScript(t => { localStorage.setItem('hoja_token', t); }, token);
   const offPage = await offCtx.newPage();
@@ -447,6 +589,20 @@ const focusStop = page => page.evaluate(() => {
   ok(await offPage.evaluate(() => ![...document.querySelectorAll('.nav-item')].some(b => b.textContent?.trim() === 'Agents')), 'unflagged production build: no Agents entry in the sidebar');
   await offPage.screenshot({ path: path.join(shots, `agents-disabled-${W}.png`) });
   await offCtx.close();
+
+  /* ---- 9. a 401 is never an empty list ---- */
+  /* The shell answers a refused session before the surface renders (sign-in gate), so this asserts
+   * the whole path: no agents list, and no empty-workspace state claiming the workspace has none. */
+  const anonCtx = await browser.newContext({ viewport: { width: W, height: H } });
+  await anonCtx.addInitScript(() => { localStorage.setItem('hoja_token', 'expired-token'); localStorage.setItem('hoja_agents_surface', 'on'); });
+  const anonPage = await anonCtx.newPage();
+  await anonPage.goto(`${base}/workspace/agents`, { waitUntil: 'networkidle' });
+  await anonPage.waitForTimeout(700);
+  ok(await anonPage.evaluate(() => !document.querySelector('[data-surface="agents-list"]')), 'signed-out: no agent list is drawn');
+  ok(await anonPage.evaluate(() => !document.querySelector('[data-surface="agents-list"] [data-state="empty"]')), 'signed-out: the workspace is not reported as having no agents');
+  ok(await anonPage.evaluate(() => /sign in|welcome back|authentication required/i.test(document.body.innerText)), 'signed-out: the page asks the reader to sign in');
+  await anonPage.screenshot({ path: path.join(shots, `agents-signed-out-${W}.png`) });
+  await anonCtx.close();
 
   ok(errors.length === 0, 'no page errors', errors.join(' | '));
   await browser.close();

@@ -8,8 +8,9 @@
  */
 
 import type {ReactNode} from 'react';
-import {Search} from 'lucide-react';
+import {FlaskConical, Search} from 'lucide-react';
 import {cx} from '../graph/shared';
+import {SAMPLE_SURFACES} from './adapter';
 
 export type AgentsTab = {id: string; name: string};
 
@@ -65,5 +66,21 @@ export function SearchField({value, onChange, placeholder, label}: {value: strin
       <Search size={14} aria-hidden="true" />
       <input placeholder={placeholder} value={value} onChange={e => onChange(e.target.value)} aria-label={label} />
     </label>
+  );
+}
+
+/* Said out loud, on the screen, on every surface that still renders a fixture row. `data-sample`
+ * is the machine-readable half: the geometry test asserts that a screen showing fixture rows
+ * carries this notice, so "sample data, clearly marked" is checkable and not a promise. A surface
+ * leaves this component behind when its resolver lands — see SAMPLE_SURFACES in adapter.ts. */
+export function SampleDataNotice({surface}: {surface: keyof typeof SAMPLE_SURFACES}) {
+  const {what, pending} = SAMPLE_SURFACES[surface];
+  return (
+    <p className="lin-note" data-sample="on" role="note"
+      style={{display: 'flex', alignItems: 'center', gap: 6, margin: '0 0 8px'}}>
+      <FlaskConical size={13} aria-hidden="true" />
+      <span><b>Sample data.</b> {what} is not stored on this server yet ({pending}), so these rows are a
+        fixture. Anything you change here does not leave this browser.</span>
+    </p>
   );
 }

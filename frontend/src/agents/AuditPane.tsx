@@ -11,7 +11,7 @@ import {Circle, Play, Settings2, ShieldOff, SlidersHorizontal, Square} from 'luc
 import {Avatar, IconBtn, cx} from '../graph/shared';
 import {DisplayPanel, defaultDisplay, type LinDisplay} from '../graph/tasks';
 import {getAgentsAdapter} from './adapter';
-import {AGENTS_TABS, AgentsListShell, SearchField} from './chrome';
+import {AGENTS_TABS, AgentsListShell, SampleDataNotice, SearchField} from './chrome';
 import type {AuditEvent} from './types';
 
 export const AUDIT_DISPLAY: LinDisplay = {...defaultDisplay, grouping: 'action', ordering: 'updated', direction: 'desc'};
@@ -154,6 +154,7 @@ export function AuditPane({workspaceName, tab, onTab}: {workspaceName: string; t
       {error && <p className="lin-error" role="alert">{error}</p>}
       {!loading && !error && (
         <div className="lin-list">
+          <SampleDataNotice surface="audit" />
           {groups.map(g => (
             <section key={g.key} className="lin-group">
               {g.name && <header className="lin-group-head"><b>{g.name}</b><span className="count">{g.items.length}</span><span className="grow" /></header>}
@@ -163,7 +164,7 @@ export function AuditPane({workspaceName, tab, onTab}: {workspaceName: string; t
           {!visible.length && (
             <div className="lin-empty">
               <h2>No audit events match</h2>
-              <p>Every policy change, session start and session stop is recorded here by the server.</p>
+              <p>Clear the filters to see every event in the fixture this screen currently reads.</p>
             </div>
           )}
         </div>

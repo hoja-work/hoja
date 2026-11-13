@@ -13,7 +13,7 @@ import {useEffect, useMemo, useState} from 'react';
 import {GraphStatusIcon} from '../graph/shared';
 import {IssueRow, defaultDisplay, type IssueRowModel, type LinDisplay} from '../graph/tasks';
 import {getAgentsAdapter} from './adapter';
-import {AGENTS_TABS, AgentsListShell, SearchField} from './chrome';
+import {AGENTS_TABS, AgentsListShell, SampleDataNotice, SearchField} from './chrome';
 import {SESSION_STATUSES, sessionStatusName} from './types';
 import type {AgentSession, SessionStatus} from './types';
 
@@ -114,6 +114,7 @@ export function RunQueue({workspaceName, agentKey, onOpenRun, onOpenAgent, tab, 
       {error && <p className="lin-error" role="alert">{error}</p>}
       {!loading && !error && (
         <div className="lin-list">
+          <SampleDataNotice surface="sessions" />
           {groups.map(g => {
             const isCollapsed = collapsedSet.has(g.key);
             const tone = SESSION_TYPE[g.key as SessionStatus];
@@ -160,7 +161,7 @@ export function RunQueue({workspaceName, agentKey, onOpenRun, onOpenAgent, tab, 
         </p>
       )}
       <p className="lin-note" style={{padding: '0 20px 24px'}}>
-        A queue row opens the agent that ran it; that task's own session view ships in the next slice.
+        A queue row opens that agent's queue; the task's own session view ships with WP06.
       </p>
     </AgentsListShell>
   );

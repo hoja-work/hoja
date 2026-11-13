@@ -1,6 +1,6 @@
 import React, {memo, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState} from 'react';
 import {confirmDialog, promptDialog} from '../dialogs';
-import {Bell, Check, ChevronDown, ChevronRight, Copy, ExternalLink, FileText, Link2, ListFilter, Plus, Search, Settings2, SlidersHorizontal, Trash2, X, Zap} from 'lucide-react';
+import {Bell, Bot, Check, ChevronDown, ChevronRight, Copy, ExternalLink, FileText, Link2, ListFilter, Plus, Search, Settings2, SlidersHorizontal, Trash2, X, Zap} from 'lucide-react';
 import {attachGithubReferences, gql, relTime, stateKey} from '../main';
 import type {Cycle, Issue, IssueActivityEvent, IssueLabel, IssueState, Project, Team, Viewer} from '../main';
 import {Markdown} from '../markdown';
@@ -10,6 +10,7 @@ import {Avatar, CycleChip, CycleGlyph, DueChip, FavStar, IconBtn, LabelChip, Lin
 import {runExtensionAction, useIssueExtensionActions, type ExtensionAction} from '../extensions';
 import {createView, fieldsFromFilters, filtersFromFields, listViews, type ServerView} from '../views';
 import {answerDecision, cancelDecision, decisionFields, type IssueDecision} from '../decisions';
+import {getAgentsAdapter, type AgentChoice} from '../agents/adapter';
 
 /* Linear 1:1 Issues list + board + detail. */
 
@@ -1111,11 +1112,15 @@ export function GraphTeamIssues({team, teams, orgId, workspaceName, projects, la
 
 /* The properties-sidebar control. Exported so the agent detail page (HOJA-602-A-16) edits its
  * policy with the same widget, keyboard behaviour and row height as an issue property. */
-export function PropDropdown({label, icon, value, onPick, options, disabled}: {
+export function PropDropdown({label, icon, value, onPick, options, disabled, onOpen, footer}: {
   label: string; icon: React.ReactNode; value: React.ReactNode;
   onPick: (id: string | null) => void;
   options: {id: string | null; label: React.ReactNode; selected?: boolean; hint?: string}[];
   disabled?: boolean;
+  /** Called when the menu opens, for a picker whose options are fetched on demand (Delegate). */
+  onOpen?: () => void;
+  /** A sentence under the options — a refusal or an empty workspace, not a bare panel. */
+  footer?: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useDismiss(() => setOpen(false));
@@ -1124,7 +1129,7 @@ export function PropDropdown({label, icon, value, onPick, options, disabled}: {
       <span className="k">{icon}{label}</span>
       <span className="v">
         <button type="button" className="plain" disabled={disabled} aria-haspopup="listbox" aria-expanded={open}
-          onClick={() => setOpen(v => !v)}><span className="trunc">{value}</span></button>
+          onClick={() => { if (!open) onOpen?.(); setOpen(v => !v); }}><span className="trunc">{value}</span></button>
       </span>
       {open && (
         <div className="lin-menu lin-dd-panel" role="listbox" aria-label={label}>
@@ -1135,6 +1140,7 @@ export function PropDropdown({label, icon, value, onPick, options, disabled}: {
               {o.selected && <Check size={14} />}
             </button>
           ))}
+          {footer}
         </div>
       )}
     </div>
@@ -1158,7 +1164,7 @@ export function attachmentKind(a: {url?: string | null; contentType?: string | n
 // canEdit/canDelete come from the server's comment policy; the UI never re-derives them.
 const commentFields = `{id body createdAt editedAt canEdit canDelete user{id name}}`;
 const detailFields = `{ id identifier title description createdAt updatedAt dueDate priority priorityLabel estimate branchName url
-  state{id name color type} team{id key name} project{id name} assignee{id name} creator{id name}
+  state{id name color type} team{id key name} project{id name} assignee{id name} delegate{id name} delegateId creator{id name}
   cycle{id name number} parent{id identifier title}
   labels{nodes{id name color}} subscribers{nodes{id name}}
   attachments{nodes{id url title subtitle contentType createdAt}}
@@ -1279,11 +1285,11 @@ function mergeIssueView(base: LinIssue, live: Issue | undefined, users: Map<stri
   let out: LinIssue = base;
   if (live) {
     const sameVersion = !live.updatedAt || !base.updatedAt || base.updatedAt >= live.updatedAt;
-    const ref = <K extends 'project' | 'cycle' | 'assignee' | 'creator' | 'team'>(k: K) => (live[k] || (sameVersion ? base[k] : undefined)) as LinIssue[K];
+    const ref = <K extends 'project' | 'cycle' | 'assignee' | 'delegate' | 'creator' | 'team'>(k: K) => (live[k] || (sameVersion ? base[k] : undefined)) as LinIssue[K];
     out = {
       ...base, id: live.id, identifier: live.identifier, title: live.title,
       priority: live.priority, priorityLabel: live.priorityLabel, state: live.state || (sameVersion ? base.state : undefined),
-      team: ref('team'), project: ref('project'), cycle: ref('cycle'), assignee: ref('assignee'), creator: ref('creator'),
+      team: ref('team'), project: ref('project'), cycle: ref('cycle'), assignee: ref('assignee'), delegate: ref('delegate'), creator: ref('creator'),
       labels: live.labels, dueDate: live.dueDate, createdAt: base.createdAt || live.createdAt,
       decisionNeeded: live.decisionNeeded ?? base.decisionNeeded,
       updatedAt: live.updatedAt && (!base.updatedAt || live.updatedAt > base.updatedAt) ? live.updatedAt : base.updatedAt,
@@ -1343,6 +1349,21 @@ export function GraphIssueDetail({workspaceName, viewer, issue, issueList, onOpe
   const [parentSearch, setParentSearch] = useState(false);
   const [parentQuery, setParentQuery] = useState('');
   const [parentResults, setParentResults] = useState<LinIssue[]>([]);
+  /* The Delegate picker's options are agent members (WP04, admin-only), fetched the first time the
+   * menu opens rather than on every task page: a non-admin reading a task must not be shown an
+   * error about a control they did not ask for, and a refused read is stated in the menu itself. */
+  const [agentChoices, setAgentChoices] = useState<AgentChoice[] | null>(null);
+  const [agentChoicesError, setAgentChoicesError] = useState('');
+  const [agentChoicesLoading, setAgentChoicesLoading] = useState(false);
+  const loadAgentChoices = () => {
+    if (agentChoices || agentChoicesLoading) return;
+    setAgentChoicesError('');
+    setAgentChoicesLoading(true);
+    getAgentsAdapter().listAgentChoices()
+      .then(rows => setAgentChoices(rows))
+      .catch((e: Error) => setAgentChoicesError(e.message))
+      .finally(() => setAgentChoicesLoading(false));
+  };
   const [attachMenu, setAttachMenu] = useState(false);
   const [attachUrl, setAttachUrl] = useState('');
   const [attachTitle, setAttachTitle] = useState('');
@@ -1459,6 +1480,13 @@ export function GraphIssueDetail({workspaceName, viewer, issue, issueList, onOpe
     if (has('dueDate')) out.dueDate = (input.dueDate as string) || undefined;
     if (has('stateId')) out.state = states.find(s => s.id === input.stateId);
     if (has('assigneeId')) { const m = members.find(x => x.id === input.assigneeId); out.assignee = m ? {id: m.id, name: m.name || m.email || ''} : undefined; }
+    /* The delegate is an agent member, so its label comes from the agent list rather than the
+     * team's members: `delegateId` holds a `user.id`, and `agent_member` is where it is named. */
+    if (has('delegateId')) {
+      const choice = agentChoices?.find(x => x.id === input.delegateId);
+      out.delegate = choice ? {id: choice.id, name: choice.name} : input.delegateId ? detail.delegate : null;
+      out.delegateId = (input.delegateId as string | null) ?? null;
+    }
     if (has('cycleId')) { const c = teamCycles.find(x => x.id === input.cycleId); out.cycle = c ? {id: c.id, name: c.name, number: c.number} : undefined; }
     if (has('projectId')) { const p = projects.find(x => x.id === input.projectId); out.project = p ? {id: p.id, name: p.name} : undefined; }
     if (has('labelIds')) {
@@ -1995,6 +2023,24 @@ export function GraphIssueDetail({workspaceName, viewer, issue, issueList, onOpe
               ...members.map(m => ({id: m.id as string | null, selected: m.id === detail.assignee?.id,
                 hint: m.name || m.email || undefined,
                 label: <span style={{display: 'inline-flex', alignItems: 'center', gap: 8}}><Avatar name={m.name} size={18} />{m.name || m.email}</span>}))]} />
+          {/* The agent this task is delegated to — `issue.delegate_id` (WP04), separate from the
+              assignee: the assignee is the person accountable, the delegate is the agent that runs
+              it. Same control, same row height and same keyboard behaviour as the Assignee row. */}
+          <PropDropdown label="Delegate" icon={<Bot size={14} />}
+            value={detail.delegate?.name || 'No delegate'}
+            onOpen={loadAgentChoices}
+            onPick={id => void change({delegateId: id})}
+            options={[{id: null, selected: !detail.delegate, label: 'No delegate', hint: 'Nothing is delegated'},
+              ...(agentChoices || []).map(a => ({id: a.id as string | null, selected: a.id === detail.delegate?.id,
+                hint: a.name,
+                label: <span style={{display: 'inline-flex', alignItems: 'center', gap: 8}}><Bot size={14} aria-hidden="true" />{a.name}</span>}))]}
+            footer={agentChoicesError
+              ? <p className="lin-note" role="alert" style={{padding: '8px 10px'}}>{agentChoicesError}</p>
+              : agentChoicesLoading || !agentChoices
+                ? <p className="lin-note" style={{padding: '8px 10px'}} role="status">Loading agents…</p>
+                : !agentChoices.length
+                  ? <p className="lin-note" style={{padding: '8px 10px'}}>This workspace has no active agent member to delegate to.</p>
+                  : undefined} />
           <PropDropdown label="Cycle" icon={<CycleGlyph />}
             value={detail.cycle ? (detail.cycle.name || `Cycle ${detail.cycle.number}`) : 'No cycle'}
             onPick={id => void change({cycleId: id})}

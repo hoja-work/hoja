@@ -1,33 +1,55 @@
 /* Typed model for the agent surface (HOJA-602-A-16 / WP13).
  *
- * These are the shapes the screens render, not the database rows: WP04 (agent identity and
- * delegate actor) and WP06 (delegation, schedule, session) own the server contract. Keeping the
- * wire names out of here means the adapter below is the only place that has to change when the
- * GraphQL fields land.
+ * These are the shapes the screens render, not the database rows. As of WP04 (`agent_member` and
+ * `AgentMember` in app/hoja_server/agent_members.py, live on main at 1a296bc) the identity half is
+ * read from GraphQL, so the fields below are the ones the server actually reports — no more.
+ *
+ * The rule this file enforces: a column the server does not have is `null` here, never a plausible
+ * placeholder. A screen renders `null` as "not reported", which is a different sentence from "0
+ * running" and from "no agents". Adding a field back is a backend change, not a fixture change.
  */
 
-export type AgentStatus = 'idle' | 'working' | 'queued' | 'paused';
+/* The only agent state the server records: an `agent_member` row is live, or it is archived
+ * (`archived_at`). Session liveness (working / queued / paused) is WP06 and is not modelled here,
+ * because rendering it from a fixture is how a fake "working" dot reaches a real screen. */
+export type AgentStatus = 'active' | 'archived';
 
 export type Agent = {
-  /** Stable server id. The key is what the URL and the row identifier use. */
+  /** `AgentMember.id`: the server identity and the URL segment. */
   id: string;
+  /** The identifier column's short handle: the first 8 characters of `id`, so it is derived from
+   * the server's own id instead of being invented. */
   key: string;
+  /** The agent's `user.id`. This is the value `Issue.delegateId` holds, which is why the issue
+   * page's Delegate picker is keyed by it. */
+  userId: string;
   name: string;
-  harness: string;
-  model: string;
-  status: AgentStatus;
-  /** Sessions occupying a slot right now, and the slots the policy allows. */
-  running: number;
+  displayName: string | null;
+  /** Concurrent turns the agent may run (`agent_member.capacity`). */
   capacity: number;
-  budgetUsedUsd: number;
-  budgetLimitUsd: number;
-  runnerPool: string;
-  owner: {id: string; name: string};
-  /** When the status last changed. The row's status glyph reads its age from this, exactly as an
-   * issue row reads `stateChangedAt`, so the two lists answer "how long has it been like this?"
-   * with the same math. */
-  statusChangedAt: string;
+  /** Credits per calendar month; `null` means the workspace default, not unlimited. */
+  monthlyBudgetCredits: number | null;
+  /** Opaque working-hours document, kept as the JSON text the sidebar edits. */
+  workingHours: string | null;
+  timezone: string | null;
+  model: string | null;
+  runnerPool: string | null;
+  archivedAt: string | null;
+  createdAt: string;
   updatedAt: string;
+  /** Derived from `archivedAt`, so the status glyph and its age are server facts. */
+  status: AgentStatus;
+  /** The row's status glyph reads its age from this, exactly as an issue row reads
+   * `stateChangedAt`, so the two lists answer "how long has it been like this?" with the same
+   * math. For an archived agent that is `archivedAt`; otherwise the last write. */
+  statusChangedAt: string;
+  /* ---- Facts no server column holds on main. Rendered as "not reported", never guessed. ---- */
+  /** Sessions occupying a slot right now (WP06 session rows). */
+  running: number | null;
+  /** The harness profile (WP11). */
+  harness: string | null;
+  /** Who the agent works for. `agent_member` has no owner column. */
+  owner: {id: string; name: string} | null;
 };
 
 export type SessionStatus = 'queued' | 'active' | 'awaiting-input' | 'awaiting-verification' | 'done';
@@ -59,16 +81,20 @@ export type AgentEvent = {
   tool?: string;
 };
 
+/* Exactly the columns `agentMemberUpdate` accepts (agent_members.py `_clean`). Nothing else is
+ * editable, and nothing here is a WP12 policy field: tools, scope, repos, secrets, network and
+ * approvers have no column on main, so they are not in the type and the sidebar says so instead
+ * of editing a fixture. */
 export type AgentPolicy = {
-  tools: string[];
-  scope: 'repo' | 'workspace';
-  repos: string[];
-  /** Names only. A secret value never reaches the browser (WP03 owns the lease). */
-  secrets: string[];
-  network: string[];
-  budgetUsd: number;
-  workingHours: string;
-  approvers: string[];
+  name: string;
+  displayName: string | null;
+  capacity: number;
+  monthlyBudgetCredits: number | null;
+  model: string | null;
+  runnerPool: string | null;
+  timezone: string | null;
+  workingHours: string | null;
+  archived: boolean;
 };
 
 export type AgentDetail = {
@@ -88,10 +114,8 @@ export type AuditEvent = {
 };
 
 export const AGENT_STATUSES: {id: AgentStatus; name: string; color: string; type: 'started' | 'unstarted' | 'backlog' | 'canceled'}[] = [
-  {id: 'working', name: 'Working', color: '#5e6ad2', type: 'started'},
-  {id: 'queued', name: 'Queued', color: '#e2a03f', type: 'unstarted'},
-  {id: 'idle', name: 'Idle', color: '#95a2b3', type: 'backlog'},
-  {id: 'paused', name: 'Paused', color: '#d4553f', type: 'canceled'},
+  {id: 'active', name: 'Active', color: '#2f9e6f', type: 'started'},
+  {id: 'archived', name: 'Archived', color: '#95a2b3', type: 'canceled'},
 ];
 
 export const SESSION_STATUSES: {id: SessionStatus; name: string}[] = [
@@ -103,7 +127,7 @@ export const SESSION_STATUSES: {id: SessionStatus; name: string}[] = [
 ];
 
 export function agentStatus(id: AgentStatus) {
-  return AGENT_STATUSES.find(s => s.id === id) || AGENT_STATUSES[2];
+  return AGENT_STATUSES.find(s => s.id === id) || AGENT_STATUSES[0];
 }
 
 export function sessionStatusName(status: SessionStatus): string {

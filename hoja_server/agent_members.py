@@ -227,8 +227,15 @@ def m_update(_, info, id, input):
     if current is None:
         raise GraphQLError("Agent member not found.", extensions={"code": "NOT_FOUND"})
     values = _clean(input, creating=False)
-    identity = {"name": values.pop("_name"), "display_name": values.pop("_display_name", None)}
-    identity = {k: v for k, v in identity.items() if v is not None or k == "display_name"}
+    # Both identity columns are optional on an update: `name` is only present when the
+    # caller sent it, and an absent `displayName` must leave the stored one alone rather
+    # than blank it. Reading them with `pop` keyed on presence (not on a default) is what
+    # keeps a capacity-only edit from raising KeyError and from wiping the display name.
+    identity = {}
+    if "_name" in values:
+        identity["name"] = values.pop("_name")
+    if "_display_name" in values:
+        identity["display_name"] = values.pop("_display_name")
     with store.engine.begin() as conn:
         if identity:
             conn.execute(user.update().where(and_(
