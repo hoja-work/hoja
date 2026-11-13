@@ -54,6 +54,72 @@ AGENT_NAME = "hoja-agent"
 MODEL_PREFIX = "hoja-provider:"
 FAILED_REPLY = "The assistant could not complete that request. Please try again."
 
+# One queue, one partition per agent (HOJA-602-A-7, subtask T028). The partition
+# key is the agent's user id, so an agent's turns serialize against each other and
+# never against another agent's.
+AGENT_QUEUE = "agent-turns"
+DEFAULT_GLOBAL_CONCURRENCY = 8
+# The name DBOS registers the turn workflow under. Named here once so the enqueue
+# path and the decorator cannot drift apart.
+TURN_WORKFLOW = f"{AGENT_NAME}.turn"
+
+
+def max_configured_capacity(store, default: int = 1) -> int:
+    """The largest ``agent_member.capacity`` in this deployment.
+
+    DBOS's ``partition_concurrency`` is one number applied to every partition, so a
+    deployment whose agents have different capacities can only express the largest
+    one here. That is a backstop, not the decision: the schedule check counts the
+    live sessions of *this* agent against *its own* capacity, and it is what
+    ``agent_sessions.SLOT_STATES`` means. The queue bound exists so a bug in the
+    check cannot turn into unbounded concurrency.
+    """
+    from sqlalchemy import func, select
+
+    from hoja_server.db import agent_member
+
+    with store.engine.connect() as conn:
+        value = conn.execute(select(func.max(agent_member.c.capacity))).scalar()
+    return max(1, int(value or default))
+
+
+async def register_agent_queue(capacity: int,
+                               *, global_concurrency: int = DEFAULT_GLOBAL_CONCURRENCY):
+    """Register the partitioned queue. Must run *after* ``DBOS.launch()``.
+
+    DBOS reads the system database inside ``register_queue`` and raises
+    "System database accessed before DBOS was launched" otherwise — measured in
+    ``agent-security/05-durability.md`` §5 while building experiment g.
+
+    Asynchronous on purpose: the app's lifespan runs inside the event loop, and the
+    synchronous ``register_queue`` refuses there ("called while an event loop is
+    running. Use await register_queue_async(...) instead").
+    """
+    return await DBOS.register_queue_async(
+        AGENT_QUEUE,
+        partition_concurrency=max(1, int(capacity)),
+        global_concurrency=global_concurrency,
+    )
+
+
+def enqueue_agent_turn(workflow_id: str, turn: dict, *, agent_user_id: str):
+    """Enqueue one turn into the agent's partition.
+
+    ``Queue.enqueue``'s ``**kwargs`` are the *workflow's* arguments, not enqueue
+    options (``dbos/_queue.py:628-637``), so the partition key has to travel through
+    ``enqueue_workflow_with_options``. Passing it as a kwarg would silently put it in
+    the turn payload and leave every run in the default partition.
+    """
+    from dbos import EnqueueOptions
+
+    options = EnqueueOptions(
+        workflow_name=TURN_WORKFLOW,
+        queue_name=AGENT_QUEUE,
+        workflow_id=workflow_id,
+        queue_partition_key=agent_user_id,
+    )
+    return DBOS.enqueue_workflow_with_options(options, turn)
+
 
 @dataclass
 class _Runtime:
@@ -223,7 +289,7 @@ def _reply_text(result) -> str:
     )
 
 
-@DBOS.workflow(name=f"{AGENT_NAME}.turn")
+@DBOS.workflow(name=TURN_WORKFLOW)
 async def agent_turn(turn: dict) -> dict:
     """One chat turn. Inputs are plain ids so a new process can rebuild everything on recovery."""
     assert _runtime is not None

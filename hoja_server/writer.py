@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from urllib.parse import urlparse
 
 from graphql import GraphQLError
@@ -53,6 +54,8 @@ from hoja_server.store import (
     team_descendant_ids,
     team_visible,
 )
+
+log = logging.getLogger(__name__)
 
 
 def _slug(text: str, n: int = 24) -> str:
@@ -879,7 +882,62 @@ class Writer:
             self._notify_issue_recipients(
                 conn, org_id, iid, viewer_id, [inp.get("assigneeId"), viewer_id], "issueCreated", ts
             )
-            return iid
+            session = self._open_delegation_session(
+                conn, org_id, iid, inp.get("delegateId"), viewer_id, ts)
+        self._dispatch_admitted(session)
+        return iid
+
+    # ----------------------------------------------------------- delegation
+    def _open_delegation_session(self, conn, org_id: str, issue_id: str,
+                                 delegate_id: str | None, actor_id: str | None,
+                                 ts: str) -> dict | None:
+        """Delegating opens a session; it is not a label on the issue (HOJA-602-A-7).
+
+        Runs in the delegating transaction, so the schedule verdict and the first
+        activity exist by the time the caller can read the issue back. Withdrawing
+        the delegate cancels the live session instead of leaving a runner with a
+        claim on a task nobody delegated.
+        """
+        from hoja_server import agent_schedule, agent_sessions
+
+        previous = agent_sessions.latest_for_issue(conn, org_id, issue_id)
+        superseded = bool(
+            previous
+            and previous["state"] not in agent_sessions.TERMINAL
+            and previous["agent_user_id"] != delegate_id
+        )
+        if superseded:
+            # Removing the delegate, or moving it to another agent, ends the old run:
+            # two live claims on one task is what invariant I1 forbids.
+            agent_sessions.transition(
+                conn, previous, "cancel", at=ts, actor_id=actor_id,
+                reason="the delegate changed" if delegate_id else "the delegate was removed",
+            )
+        if delegate_id:
+            row = conn.execute(select(issue).where(and_(
+                issue.c.organization_id == org_id, issue.c.id == issue_id,
+            ))).mappings().one()
+            return agent_schedule.delegate(conn, org_id, dict(row), delegate_id,
+                                           actor_id, at=ts)
+        return None
+
+    def _dispatch_admitted(self, session: dict | None) -> None:
+        """Hand an admitted session to WP07's queue, after the commit.
+
+        ``runner_api.enqueue_task`` opens its own connection, so it cannot run
+        inside this writer's transaction (SQLite would wait on the lock the
+        transaction already holds). A failure here leaves the session admitted with
+        no lease: visible, and retryable by the next ``reevaluate``, which is a
+        better outcome than rolling back an issue the caller already created.
+        """
+        if not session:
+            return
+        from hoja_server import agent_schedule
+
+        try:
+            agent_schedule.enqueue_admitted(self.engine, session)
+        except Exception:  # the issue write has already committed
+            log.exception("could not enqueue lease for agent session %s", session.get("id"))
 
     # ------------------------------------------------------------- decisions
     def _issue_row_for_decision(self, conn, org_id: str, viewer_id: str, ref: str) -> dict:
@@ -1000,6 +1058,7 @@ class Writer:
         return True
 
     def issue_update(self, org_id: str, ident: str, inp: dict, actor_id: str | None = None) -> str | None:
+        session = None
         with self.engine.begin() as conn:
             row = conn.execute(select(issue).where(and_(
                 issue.c.organization_id == org_id,
@@ -1060,6 +1119,11 @@ class Writer:
                 if field in inp and issue_row.get(column) != values.get(column):
                     changes[field] = {"from": issue_row.get(column), "to": values.get(column)}
             conn.execute(issue.update().where(issue.c.id == iid).values(**values))
+            # HOJA-602-A-7: moving the delegate opens or cancels the session in this
+            # same commit, so the issue never points at an agent with no session.
+            if "delegateId" in inp and issue_row.get("delegate_id") != inp.get("delegateId"):
+                session = self._open_delegation_session(
+                    conn, org_id, iid, inp.get("delegateId"), actor_id, ts)
             if "stateId" in inp:
                 self._apply_state_ts(conn, org_id, iid, inp["stateId"], ts)
                 # HOJA-491: pause / resume / stop the clock on the same commit as
@@ -1078,7 +1142,8 @@ class Writer:
                     [issue_row.get("assignee_id"), values.get("assignee_id", issue_row.get("assignee_id")),
                      issue_row.get("creator_id")], "issueUpdated", ts,
                 )
-            return iid
+        self._dispatch_admitted(session)
+        return iid
 
     def _apply_state_ts(self, conn, org_id, iid, state_id, ts):
         if not state_id:

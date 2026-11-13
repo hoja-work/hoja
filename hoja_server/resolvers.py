@@ -1848,6 +1848,11 @@ def build_schema():
     # HOJA-491: bind Issue.sla before the alias surface copies Issue's resolvers
     # onto Task, so the agent-facing vocabulary carries the clock too.
     sla.bind(Issue)
+    # HOJA-602-A-7: same reason — a delegated Task exposes the session a delegated
+    # Issue does.
+    from hoja_server import agent_sessions
+
+    agent_sessions.bind(Issue)
     task_bindables, problems = bind_task_surface(
         query, mutation, Issue, MyIssueActivity,
         extra_roots=(views_api.query, views_api.mutation, decisions_api.query, decisions_api.mutation),
@@ -1858,7 +1863,7 @@ def build_schema():
     return make_executable_schema(
         [sdl, PROVIDER_SDL, CONVERSATION_SDL, webhooks_api.SDL, extensions_api.SDL,
          views_api.SDL, decisions_api.SDL, project_settings.SDL, permissions.SDL,
-         task_templates.SDL, sla.SDL, agent_members.SDL, tasks_sdl],
+         task_templates.SDL, sla.SDL, agent_members.SDL, agent_sessions.SDL, tasks_sdl],
         query, mutation, *task_bindables,
         model_providers.query, model_providers.mutation,
         project_settings.query, project_settings.mutation,
@@ -1874,6 +1879,8 @@ def build_schema():
         model_providers.model_provider_type, project_settings.project_status_type,
         project_settings.project_template_type, task_templates.task_template_type,
         sla.sla_policy_type, sla.sla_clock_type, agent_members.agent_member_type,
+        agent_sessions.query, agent_sessions.mutation,
+        agent_sessions.agent_session_type, agent_sessions.agent_activity_type,
         Team, Initiative, InitiativeUpdate, Issue, IssueActivity, MyIssueActivity, Project, ProjectUpdate, Comment,
         permissions.workspace_permission_type, permissions.workspace_security_policy_type,
         WorkflowState, Cycle, Attachment, GithubLink,

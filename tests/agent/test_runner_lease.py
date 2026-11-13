@@ -162,12 +162,17 @@ def test_a_revision_65_database_gains_the_lease_tables(tmp_path):
     legacy_schema.create_schema(engine, 65)
     with engine.begin() as conn:
         # Children first: a side effect points at a lease, a lease at a task and a
-        # runner, and a runner enrollment at its organization.
-        for name in ("agent_side_effect", "agent_lease", "runner_enrollment", "runner"):
+        # runner, and a runner enrollment at its organization. Revision 67's
+        # session tables point at a lease, so they go first; the ledger still reads
+        # 65, which is what a database that has only taken 65 looks like.
+        for name in ("agent_activity", "agent_session",
+                     "agent_side_effect", "agent_lease", "runner_enrollment", "runner"):
             conn.exec_driver_sql(f"DROP TABLE {name}")
     assert applied_schema_revision(engine) == 65
     migrate(engine)
-    assert applied_schema_revision(engine) == CURRENT_SCHEMA_REVISION == 66
+    # Whatever the head is now: what this test proves is that an existing database
+    # upgrades through every revision instead of needing a fresh create.
+    assert applied_schema_revision(engine) == CURRENT_SCHEMA_REVISION
     with engine.connect() as conn:
         tables = set(inspect(conn).get_table_names())
     assert {"runner", "runner_enrollment", "agent_lease", "agent_side_effect"} <= tables

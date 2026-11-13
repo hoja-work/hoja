@@ -35,7 +35,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 66
+CURRENT_SCHEMA_REVISION = 67
 
 log = logging.getLogger(__name__)
 
@@ -621,12 +621,85 @@ agent_member = Table(
     # server; the runner that honors it lands with WP06/WP07.
     Column("working_hours", Text),
     Column("timezone", String),
+    # When true, a delegation waits in the queue until a human answers the
+    # approval decision it opens, instead of running on the agent's own judgement.
+    Column("require_approval", Boolean, nullable=False, default=False),
     Column("model", String),
     # Which runner pool may execute this agent's work, e.g. "default".
     Column("runner_pool", String),
     Column("created_at", String, nullable=False),
     Column("updated_at", String, nullable=False),
     Column("archived_at", String),
+)
+
+# One run of an agent against one task (HOJA-602-A-7). Linear separates three
+# ideas that are easy to conflate: the delegate (who the agent works for, on the
+# issue), the session (one run, with a status), and the activities (the visible
+# transcript). ``state`` is our ten-state assignment machine;
+# ``status`` is Linear's seven-value AgentSessionStatus, derived from it, stored
+# so a client written against Linear reads the same row.
+agent_session = Table(
+    "agent_session",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("issue_id", String, ForeignKey("issue.id"), nullable=False, index=True),
+    # The agent's user row; agent_member is the schedule it runs under.
+    Column("agent_user_id", String, ForeignKey("user.id"), nullable=False, index=True),
+    # Who delegated: the human the agent acts on behalf of.
+    Column("creator_id", String, ForeignKey("user.id")),
+    # pending|active|awaitingInput|complete|error|stale|stopping — Linear's names.
+    Column("status", String, nullable=False),
+    # delegated|queued|leased|running|awaiting_input|verifying|in_review|done|failed|cancelled
+    Column("state", String, nullable=False),
+    # JSON array of reason codes, in the fixed order the schedule check reports
+    # them; NULL once the session is admitted (nothing left to wait for).
+    Column("queue_reason", Text),
+    # delegation|prompt|approval — what opened this session.
+    Column("trigger", String, nullable=False, default="delegation"),
+    # Set when the schedule check found every fact true; the lease service (WP07)
+    # consumes admitted sessions. NULL means queued.
+    Column("admitted_at", String),
+    # The WP07 lease this session is waiting on. The lease is WP07's row; this is
+    # only the join, so the session and the runner's queue never disagree.
+    Column("lease_id", String, ForeignKey("agent_lease.id")),
+    Column("acked_at", String),
+    Column("ended_at", String),
+    Column("dismissed_at", String),
+    Column("dismissed_by", String, ForeignKey("user.id")),
+    # The decision a member with require_approval waits on; NULL when the agent
+    # may run on its own judgement.
+    Column("approval_decision_id", String, ForeignKey("issue_decision.id")),
+    Column("error_message", Text),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+    # Capacity, budget and the queue all read "live sessions for this agent".
+    Index("ix_agent_session_live", "organization_id", "agent_user_id", "state"),
+    Index("ix_agent_session_issue", "organization_id", "issue_id", "created_at"),
+)
+
+# The transcript. Append-only: an activity is never rewritten, because a
+# transcript that can be edited is not evidence.
+agent_activity = Table(
+    "agent_activity",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("session_id", String, ForeignKey("agent_session.id"), nullable=False, index=True),
+    # thought|action|elicitation|response|error, plus prompt, which only a human
+    # may author (Linear: "An agent cannot generate a prompt type activity").
+    Column("kind", String, nullable=False),
+    Column("author_kind", String, nullable=False, default="agent"),
+    Column("author_id", String, ForeignKey("user.id")),
+    Column("body", Text),
+    # JSON: the structured payload (queue reasons, elapsed seconds, signal).
+    Column("payload", Text),
+    # continue|select|stop|auth — Linear's signal vocabulary.
+    Column("signal", String),
+    # An ephemeral thought keeps a waiting session observably alive without
+    # pretending work happened; it is not part of the durable conversation.
+    Column("ephemeral", Boolean, nullable=False, default=False),
+    Column("created_at", String, nullable=False),
 )
 
 team = Table(
@@ -2773,6 +2846,22 @@ def _apply_runner_lease(conn) -> None:
     runner.create(conn, checkfirst=True)
     runner_enrollment.create(conn, checkfirst=True)
     agent_lease.create(conn, checkfirst=True)
+def _apply_agent_delegation(conn) -> None:
+    """Delegation, the schedule check and the Linear session (HOJA-602-A-7, WP06).
+
+    Additive: three new tables plus one nullable-defaulted column on agent_member.
+    A deployment that delegates nothing creates no session and every existing
+    query is unchanged. The ten assignment states live in ``agent_session.state``
+    and Linear's seven statuses in ``agent_session.status``: the status is derived
+    from the state, never the other way round, because ``complete`` is a session
+    status while ``in_review`` and ``done`` are issue states.
+    """
+    if "require_approval" not in {c["name"] for c in inspect(conn).get_columns("agent_member")}:
+        conn.exec_driver_sql(
+            "ALTER TABLE agent_member ADD COLUMN require_approval BOOLEAN NOT NULL DEFAULT FALSE"
+        )
+    agent_session.create(conn, checkfirst=True)
+    agent_activity.create(conn, checkfirst=True)
     agent_side_effect.create(conn, checkfirst=True)
 
 
@@ -2953,6 +3042,11 @@ _MIGRATIONS = {
     # Additive; the reaper is what turns an expired lease into work for the next
     # runner, and it uses Hoja's clock, never the runner's process.
     66: _apply_runner_lease,
+    # 67: delegation (HOJA-602-A-7, WP06) — agent_session, agent_activity and
+    # agent_member.require_approval. Additive. The side-effect ledger this work
+    # package's design sketched belongs to WP07 (66) and is used, not duplicated:
+    # one idempotency witness per run, keyed run_id + seq.
+    67: _apply_agent_delegation,
 }
 
 

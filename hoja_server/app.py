@@ -3021,6 +3021,10 @@ def create_app(
                 agent_durable.configure(store, writer, _schema)
                 DBOS(config={"name": "hoja-agent", "system_database_url": agent_dbos_url})
                 DBOS.launch()
+                # HOJA-602-A-7: the queue is registered after launch, because DBOS reads
+                # its system database inside register_queue and refuses before then.
+                await agent_durable.register_agent_queue(
+                    agent_durable.max_configured_capacity(store))
                 durable_agent = agent_durable
                 try:
                     yield

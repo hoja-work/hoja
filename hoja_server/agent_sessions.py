@@ -1,0 +1,644 @@
+"""Agent sessions: one run of an agent against one task, and its transcript (HOJA-602-A-7).
+
+Linear separates three ideas that are easy to conflate, and this module keeps them
+separate: the **delegate** (who the agent works for, on the issue), the **session**
+(one run, with a status), and the **activities** (the visible conversation). A
+session carries two labels — ``state``, our ten-state assignment machine, and
+``status``, Linear's seven-value ``AgentSessionStatus`` — and the status is always
+derived from the state. The direction matters: ``complete`` is a *session* status,
+while ``in_review`` and ``done`` are issue workflow states, so a session is not the
+place to infer what happened to the task.
+
+Two rules from Linear's agent documentation shape the code below, because a
+queueing design violates them silently rather than loudly:
+
+* The first activity must arrive within ten seconds of the session being created,
+  or the agent is shown as unresponsive. **Queueing is therefore itself an act
+  that must emit an activity**: ``queued`` is not "doing nothing", it is "has
+  acknowledged and is deliberately waiting", and it says so.
+* After that first activity a session stays usable for thirty minutes before it
+  is ``stale``, and stale is documented as recoverable. A session that is merely
+  waiting on capacity must not look broken, so the scheduler re-emits one
+  ephemeral ``thought`` per window instead of letting it age out.
+
+Cancel is authoritative: a human stop moves the session to ``stopping`` and then
+``cancelled``, and no later event can revive it. Cancel does not need to race a
+runner — it only needs to make the runner's later work unattributable, which is
+why the transition set has no edge out of a terminal state.
+"""
+from __future__ import annotations
+
+import json
+
+from ariadne import MutationType, ObjectType, QueryType, gql
+from graphql import GraphQLError
+from sqlalchemy import and_, desc, select
+
+from hoja_server.db import agent_activity, agent_session, new_id, now_iso
+
+query = QueryType()
+mutation = MutationType()
+agent_session_type = ObjectType("AgentSession")
+agent_activity_type = ObjectType("AgentActivity")
+
+# --- the ten states (agent-security/04-assignment-state-machine.md §4.1) -------
+DELEGATED = "delegated"
+QUEUED = "queued"
+LEASED = "leased"
+RUNNING = "running"
+AWAITING_INPUT = "awaiting_input"
+VERIFYING = "verifying"
+IN_REVIEW = "in_review"
+DONE = "done"
+FAILED = "failed"
+CANCELLED = "cancelled"
+
+STATES = (DELEGATED, QUEUED, LEASED, RUNNING, AWAITING_INPUT, VERIFYING,
+          IN_REVIEW, DONE, FAILED, CANCELLED)
+TERMINAL = frozenset({DONE, FAILED, CANCELLED})
+# States that hold one of the agent's concurrency slots. ``awaiting_input`` is
+# deliberately absent: an elicitation releases the slot and drops the lease,
+# otherwise an agent waiting on a human would block its own capacity.
+SLOT_STATES = frozenset({LEASED, RUNNING})
+# States in which the task has a live claim on it, so a second session for the
+# same task is ``lease_held`` rather than admitted twice.
+CLAIM_STATES = frozenset({LEASED, RUNNING, AWAITING_INPUT, VERIFYING})
+
+
+def holds_slot(row: dict) -> bool:
+    """Does this session actually occupy one of its agent's concurrency slots?
+
+    Only a leased or running session does. The slot is released when the runner
+    reports a finish (the row moves to ``verifying``), because nothing is executing
+    any more — I5a says no ``in_review`` or ``done`` state may hold a lease.
+    """
+    return row["state"] in SLOT_STATES
+
+
+def reserves_capacity(row: dict) -> bool:
+    """Should the capacity fact in the schedule check count this session?
+
+    Yes once it holds a slot, and also once it is *admitted*: an admitted session has
+    passed the check and is waiting for the lease service to hand it to a runner.
+    Without that, a burst of delegations all pass the same check before any of them
+    reaches ``leased`` and the bound the check promised is never enforced.
+    """
+    return holds_slot(row) or (row["state"] in (DELEGATED, QUEUED) and bool(row.get("admitted_at")))
+
+# Linear's AgentSessionStatus, and the mapping from our state (§4.3).
+STATUSES = ("pending", "active", "awaitingInput", "complete", "error", "stale", "stopping")
+STATUS_BY_STATE = {
+    DELEGATED: "pending",
+    QUEUED: "pending",
+    LEASED: "active",
+    RUNNING: "active",
+    AWAITING_INPUT: "awaitingInput",
+    VERIFYING: "active",
+    IN_REVIEW: "complete",
+    DONE: "complete",
+    FAILED: "error",
+    CANCELLED: "complete",
+}
+
+# Linear's AgentActivityType. ``prompt`` is user-only: an agent may not author it.
+ACTIVITY_KINDS = ("thought", "action", "elicitation", "response", "error")
+USER_ONLY_ACTIVITY_KINDS = frozenset({"prompt"})
+SIGNALS = ("auth", "continue", "select", "stop")
+
+ACK_DEADLINE_SECONDS = 10
+STALE_AFTER_SECONDS = 30 * 60
+
+# §4.2. ``heartbeat`` is absent: it renews a lease and leaves the state alone.
+TRANSITIONS = {
+    (DELEGATED, "schedule"): QUEUED,
+    (QUEUED, "lease"): LEASED,
+    (LEASED, "start"): RUNNING,
+    (RUNNING, "finish"): VERIFYING,
+    (RUNNING, "await_input"): AWAITING_INPUT,
+    (AWAITING_INPUT, "prompt"): QUEUED,
+    (VERIFYING, "verify_pass"): IN_REVIEW,
+    (VERIFYING, "verify_fail"): FAILED,
+    (IN_REVIEW, "accept"): DONE,
+    # A crashed runner leaves the row claiming the lease; only the timer moves it.
+    (LEASED, "tick"): QUEUED,
+    (RUNNING, "tick"): QUEUED,
+}
+# Events that are legal but leave the state where it is.
+STEADY_EVENTS = {
+    (LEASED, "heartbeat"),
+    (RUNNING, "heartbeat"),
+    (RUNNING, "open_pr"),
+}
+
+
+class RefusedTransitionError(GraphQLError):
+    """A transition the machine does not allow, carrying the reason as data."""
+
+
+def _refuse(session, event, why):
+    raise RefusedTransitionError(
+        f"{session['state']} cannot take {event}: {why}",
+        extensions={"code": "CONFLICT", "field": "state", "reason": why},
+    )
+
+
+def status_for(state: str, *, stale: bool = False) -> str:
+    """Linear's status for one of our states; ``stale`` only qualifies a pending session."""
+    if state in (DELEGATED, QUEUED) and stale:
+        return "stale"
+    return STATUS_BY_STATE[state]
+
+
+def parse_reasons(value) -> list[str]:
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        return []
+    return [r for r in parsed if isinstance(r, str)] if isinstance(parsed, list) else []
+
+
+def open_session(conn, org_id: str, issue_id: str, agent_user_id: str,
+                 creator_id: str | None, *, trigger: str = "delegation",
+                 at: str | None = None) -> dict:
+    """Create the session a delegation starts. It begins in ``delegated``: nothing has
+    been checked yet, and saying otherwise would claim a decision nobody made."""
+    at = at or now_iso()
+    sid = new_id()
+    conn.execute(agent_session.insert().values(
+        id=sid, organization_id=org_id, issue_id=issue_id,
+        agent_user_id=agent_user_id, creator_id=creator_id,
+        status=status_for(DELEGATED), state=DELEGATED, queue_reason=None,
+        trigger=trigger, admitted_at=None, acked_at=None, ended_at=None,
+        dismissed_at=None, dismissed_by=None, error_message=None,
+        created_at=at, updated_at=at,
+    ))
+    return get_session(conn, org_id, sid)
+
+
+def get_session(conn, org_id: str, session_id: str) -> dict | None:
+    row = conn.execute(select(agent_session).where(and_(
+        agent_session.c.organization_id == org_id,
+        agent_session.c.id == session_id,
+    ))).mappings().first()
+    return dict(row) if row else None
+
+
+def latest_for_issue(conn, org_id: str, issue_id: str) -> dict | None:
+    row = conn.execute(select(agent_session).where(and_(
+        agent_session.c.organization_id == org_id,
+        agent_session.c.issue_id == issue_id,
+    )).order_by(desc(agent_session.c.created_at)).limit(1)).mappings().first()
+    return dict(row) if row else None
+
+
+def live_sessions(conn, org_id: str, agent_user_id: str) -> list[dict]:
+    """Sessions that are not terminal for one agent — the input to capacity."""
+    rows = conn.execute(select(agent_session).where(and_(
+        agent_session.c.organization_id == org_id,
+        agent_session.c.agent_user_id == agent_user_id,
+        ~agent_session.c.state.in_(tuple(TERMINAL)),
+    ))).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def _save(conn, session: dict, *, at: str, **changes) -> dict:
+    changes.setdefault("updated_at", at)
+    conn.execute(agent_session.update().where(agent_session.c.id == session["id"]).values(**changes))
+    session.update(changes)
+    return session
+
+
+def append_activity(conn, org_id: str, session_id: str, kind: str, *, body: str | None = None,
+                    payload: dict | None = None, signal: str | None = None,
+                    author_kind: str = "agent", author_id: str | None = None,
+                    ephemeral: bool = False, at: str | None = None) -> dict:
+    """Append one activity. Append-only by construction: there is no update path."""
+    if kind not in ACTIVITY_KINDS and kind not in USER_ONLY_ACTIVITY_KINDS:
+        raise ValueError(f"unknown activity kind {kind!r}")
+    if kind in USER_ONLY_ACTIVITY_KINDS and author_kind != "user":
+        # Linear: "An agent cannot generate a prompt type activity."
+        raise ValueError("prompt activities are authored by a human, never by an agent")
+    if signal is not None and signal not in SIGNALS:
+        raise ValueError(f"unknown signal {signal!r}")
+    at = at or now_iso()
+    aid = new_id()
+    conn.execute(agent_activity.insert().values(
+        id=aid, organization_id=org_id, session_id=session_id, kind=kind,
+        author_kind=author_kind, author_id=author_id, body=body,
+        payload=json.dumps(payload) if payload is not None else None,
+        # A real boolean, not 1/0: SQLite accepts either into a BOOLEAN column,
+        # PostgreSQL rejects the integer with "operator does not exist: boolean = integer".
+        signal=signal, ephemeral=bool(ephemeral), created_at=at,
+    ))
+    return {"id": aid, "kind": kind, "authorKind": author_kind, "authorId": author_id,
+            "body": body, "payload": payload, "signal": signal,
+            "ephemeral": ephemeral, "createdAt": at}
+
+
+def activities(conn, org_id: str, session_id: str, first: int = 50) -> list[dict]:
+    rows = conn.execute(select(agent_activity).where(and_(
+        agent_activity.c.organization_id == org_id,
+        agent_activity.c.session_id == session_id,
+        # Ephemeral thoughts keep a waiting session observably alive; they are not
+        # part of the durable transcript as Linear defines it.
+        agent_activity.c.ephemeral.is_(False),
+    )).order_by(agent_activity.c.created_at).limit(max(1, min(first, 200)))).mappings().all()
+    out = []
+    for row in rows:
+        item = dict(row)
+        try:
+            item["payload"] = json.loads(item["payload"]) if item["payload"] else None
+        except (TypeError, ValueError):
+            item["payload"] = None
+        out.append(item)
+    return out
+
+
+def acknowledge(conn, session: dict, *, at: str | None = None) -> dict:
+    """Post the first activity, which is what stops the session looking unresponsive.
+
+    Idempotent: a retry finds ``acked_at`` set and posts nothing, so a client that
+    re-sends a delegation cannot make the transcript claim two starts. The elapsed
+    time is recorded rather than asserted, so a late ack is visible in the payload
+    instead of being quietly fixed up.
+    """
+    if session.get("acked_at"):
+        return session
+    at = at or now_iso()
+    reasons = parse_reasons(session.get("queue_reason"))
+    elapsed = _seconds_between(session["created_at"], at)
+    if reasons:
+        append_activity(
+            conn, session["organization_id"], session["id"], "thought",
+            body="Waiting: " + ", ".join(reasons) + ".",
+            payload={"reasons": reasons, "elapsed_seconds": elapsed,
+                     "ack_deadline_seconds": ACK_DEADLINE_SECONDS},
+            at=at,
+        )
+    else:
+        append_activity(
+            conn, session["organization_id"], session["id"], "action",
+            body="Starting now.",
+            payload={"elapsed_seconds": elapsed,
+                     "ack_deadline_seconds": ACK_DEADLINE_SECONDS},
+            at=at,
+        )
+    return _save(conn, session, at=at, acked_at=at)
+
+
+def _seconds_between(start_iso: str, end_iso: str) -> float:
+    from datetime import datetime
+
+    start = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
+    end = datetime.fromisoformat(end_iso.replace("Z", "+00:00"))
+    return round((end - start).total_seconds(), 3)
+
+
+def ack_deadline_missed(session: dict) -> bool:
+    """True when the first activity arrived later than the ten-second rule allows."""
+    if not session.get("acked_at"):
+        return True
+    return _seconds_between(session["created_at"], session["acked_at"]) > ACK_DEADLINE_SECONDS
+
+
+def apply_schedule(conn, session: dict, reasons: list[str], *, at: str | None = None) -> dict:
+    """Move ``delegated`` to ``queued`` and record the verdict.
+
+    Every delegation passes through ``queued``; the 64-row decision table is about
+    the *reason list*, and exactly one of its rows is empty. An empty list means the
+    session is admitted — it has nothing left to wait for — and the lease service
+    (WP07) is what turns an admitted session into ``leased``. Recording an empty
+    verdict as ``leased`` here would claim a lease nobody holds.
+    """
+    at = at or now_iso()
+    if session["state"] != DELEGATED:
+        _refuse(session, "schedule", "the schedule check runs once, from delegated")
+    changes = {
+        "state": QUEUED,
+        "status": status_for(QUEUED),
+        "queue_reason": json.dumps(reasons) if reasons else None,
+        "admitted_at": None if reasons else at,
+    }
+    return _save(conn, session, at=at, **changes)
+
+
+def transition(conn, session: dict, event: str, *, at: str | None = None,
+               lease_live: bool = True, actor_id: str | None = None,
+               reason: str | None = None) -> dict:
+    """Apply one event from §4.2 and return the updated session.
+
+    ``lease_live`` is the fencing check WP07 owns; this module takes it as an input
+    rather than inventing lease columns, so the guard is testable now and real
+    later. Cancel is handled here, not by the table, because it is allowed from any
+    non-terminal state — that asymmetry *is* "cancel always wins".
+    """
+    at = at or now_iso()
+    state = session["state"]
+    if state in TERMINAL:
+        # I3b: nothing leaves a terminal state, so a late finish cannot revive a
+        # cancelled task.
+        _refuse(session, event, f"{state} is terminal; no event reopens it")
+    if event == "cancel":
+        return _cancel(conn, session, at=at, actor_id=actor_id, reason=reason)
+    if event == "finish" and not lease_live:
+        # I4: a finish from an expired or superseded lease has no edge at all.
+        _refuse(session, event, "the lease is not live, so the finish is unattributable")
+    if event in ("start", "heartbeat", "finish") and not lease_live:
+        _refuse(session, event, "the lease is not live")
+    if (state, event) in STEADY_EVENTS:
+        return _save(conn, session, at=at)
+    target = TRANSITIONS.get((state, event))
+    if target is None:
+        _refuse(session, event, f"{event} is not an event of {state}")
+    if event == "lease" and not session.get("admitted_at"):
+        # The only admitted row in the decision table runs; a queued one waits.
+        _refuse(session, event, "the schedule check has not admitted this session")
+    changes = {"state": target, "status": status_for(target)}
+    if target in TERMINAL:
+        changes["ended_at"] = at
+    if target != QUEUED:
+        # The promise of a lease is spent once there is a lease; keeping it would
+        # make a verifying or finished session look like it still reserves capacity.
+        changes["admitted_at"] = None
+    if target == RUNNING:
+        append_activity(conn, session["organization_id"], session["id"], "action",
+                        body="Started.", at=at)
+    if target == VERIFYING:
+        append_activity(conn, session["organization_id"], session["id"], "action",
+                        body="Verifying.", at=at)
+    if target == IN_REVIEW:
+        append_activity(conn, session["organization_id"], session["id"], "response",
+                        body="Work is ready for review.", at=at)
+    if target == FAILED:
+        append_activity(conn, session["organization_id"], session["id"], "error",
+                        body=reason or "Verification failed.", at=at)
+        changes["error_message"] = reason or "Verification failed."
+    return _save(conn, session, at=at, **changes)
+
+
+def _cancel(conn, session: dict, *, at: str, actor_id: str | None, reason: str | None) -> dict:
+    """Stopping, then cancelled. The transient status exists so a client can show
+    "stopping" while a runner settles; the state is cancelled immediately, because
+    the row — not the runner — is what the rest of the system reads."""
+    conn.execute(agent_session.update().where(agent_session.c.id == session["id"]).values(
+        status="stopping", updated_at=at))
+    session["status"] = "stopping"
+    append_activity(conn, session["organization_id"], session["id"], "response",
+                    body="Cancelled" + (f": {reason}" if reason else "") +
+                         "; no completion implied.",
+                    payload={"cancelled": True}, signal="stop",
+                    author_kind="user" if actor_id else "agent", author_id=actor_id, at=at)
+    changes = {
+        "state": CANCELLED, "status": status_for(CANCELLED),
+        "ended_at": at, "dismissed_at": at, "dismissed_by": actor_id,
+        "admitted_at": None,
+    }
+    return _save(conn, session, at=at, **changes)
+
+
+def keepalive(conn, session: dict, *, at: str | None = None,
+              idle_seconds: float | None = None) -> dict:
+    """Re-emit one ephemeral thought per stale window for a waiting session.
+
+    A session that is merely waiting on capacity must not be shown as
+    unresponsive, and a ``stale`` session must be recoverable, so this both
+    prevents and clears ``stale`` without pretending work happened.
+    """
+    at = at or now_iso()
+    if session["state"] not in (DELEGATED, QUEUED):
+        return session
+    idle = idle_seconds if idle_seconds is not None else _seconds_between(session["updated_at"], at)
+    if idle < STALE_AFTER_SECONDS and session["status"] != "stale":
+        return session
+    reasons = parse_reasons(session.get("queue_reason"))
+    append_activity(conn, session["organization_id"], session["id"], "thought",
+                    body="Still waiting" + (f": {', '.join(reasons)}." if reasons else "."),
+                    payload={"reasons": reasons}, ephemeral=True, at=at)
+    return _save(conn, session, at=at, status=status_for(session["state"]))
+
+
+def mark_stale(session: dict, *, idle_seconds: float) -> str:
+    """The status a waiting session has after a full window with no activity."""
+    if session["state"] in (DELEGATED, QUEUED) and idle_seconds >= STALE_AFTER_SECONDS:
+        return "stale"
+    return session["status"]
+
+
+def serialize(conn, org_id: str, row: dict) -> dict:
+    """One session in its GraphQL shape."""
+    reasons = parse_reasons(row.get("queue_reason"))
+    return {
+        "id": row["id"],
+        "issueId": row["issue_id"],
+        "agentUserId": row["agent_user_id"],
+        "creatorId": row["creator_id"],
+        "status": row["status"],
+        "state": row["state"],
+        "queueReason": reasons,
+        "admitted": bool(row.get("admitted_at")),
+        "leaseId": row.get("lease_id"),
+        "trigger": row["trigger"],
+        "ackedAt": row.get("acked_at"),
+        "activatedAt": row.get("admitted_at"),
+        "endedAt": row.get("ended_at"),
+        "createdAt": row["created_at"],
+        "updatedAt": row["updated_at"],
+        "_row": row,
+    }
+
+
+SDL = gql(
+    """
+    "Linear's AgentSessionStatus, so a client written against Linear reads the same values."
+    enum AgentSessionStatus { pending active awaitingInput complete error stale stopping }
+
+    "Linear's AgentActivityType. prompt is user-only: an agent may not author it."
+    enum AgentActivityType { thought action elicitation response error prompt }
+
+    enum AgentSessionState {
+      delegated queued leased running awaiting_input verifying in_review done failed cancelled
+    }
+
+    type AgentActivity {
+      id: ID!
+      kind: AgentActivityType!
+      authorKind: String!
+      authorId: String
+      body: String
+      payload: JSON
+      signal: String
+      createdAt: DateTime!
+    }
+
+    type AgentSession {
+      id: ID!
+      issueId: ID!
+      agentUserId: ID!
+      agent: User
+      creatorId: ID
+      "Linear's seven values, derived from state."
+      status: AgentSessionStatus!
+      "Our ten-state assignment machine."
+      state: AgentSessionState!
+      "Why the session is queued, in the fixed order of the schedule check. Empty once admitted."
+      queueReason: [String!]!
+      admitted: Boolean!
+      "The WP07 lease this session is waiting on, or null while queued."
+      leaseId: ID
+      trigger: String!
+      ackedAt: DateTime
+      activatedAt: DateTime
+      endedAt: DateTime
+      createdAt: DateTime!
+      updatedAt: DateTime!
+      activities(first: Int): [AgentActivity!]!
+    }
+
+    type AgentSessionPayload { success: Boolean! agentSession: AgentSession }
+
+    extend type Issue {
+      "The most recent agent session on this issue, or null when it was never delegated."
+      agentSession: AgentSession
+      "Every session on this issue, newest first."
+      agentSessions(first: Int): [AgentSession!]!
+    }
+
+    # Extended here rather than in schema_tasks.graphql, which is generated from
+    # schema.graphql and cannot reference a type this module owns.
+    extend type Task {
+      "The most recent agent session on this task, or null when it was never delegated."
+      agentSession: AgentSession
+      "Every session on this task, newest first."
+      agentSessions(first: Int): [AgentSession!]!
+    }
+
+    extend type Query {
+      agentSession(id: String!): AgentSession
+      "Sessions for one issue, newest first."
+      agentSessions(issueId: String!, first: Int): [AgentSession!]!
+    }
+
+    extend type Mutation {
+      "A human stop. Cancel always wins: no later event revives the session."
+      agentSessionStop(id: String!, reason: String): AgentSessionPayload!
+      "A human prompt on a session that is waiting for one; it queues the work again."
+      agentSessionPrompt(id: String!, body: String!): AgentSessionPayload!
+    }
+    """
+)
+
+
+def _ctx(info):
+    return info.context["store"], info.context["org_id"], info.context["user_id"]
+
+
+def _bad(field, message):
+    raise GraphQLError(message, extensions={"code": "BAD_USER_INPUT", "field": field})
+
+
+def _require_session(conn, org_id, session_id):
+    row = get_session(conn, org_id, session_id)
+    if not row:
+        _bad("id", "No such agent session in this workspace.")
+    return row
+
+
+@query.field("agentSession")
+def r_agent_session(_obj, info, id):
+    store, org, _uid = _ctx(info)
+    with store.engine.connect() as conn:
+        row = get_session(conn, org, id)
+        return serialize(conn, org, row) if row else None
+
+
+@query.field("agentSessions")
+def r_agent_sessions(_obj, info, issueId, first=None):  # noqa: N803 - GraphQL argument name
+    store, org, _uid = _ctx(info)
+    with store.engine.connect() as conn:
+        rows = conn.execute(select(agent_session).where(and_(
+            agent_session.c.organization_id == org,
+            agent_session.c.issue_id == issueId,
+        )).order_by(desc(agent_session.c.created_at)).limit(max(1, min(first or 20, 100)))).mappings().all()
+        return [serialize(conn, org, dict(r)) for r in rows]
+
+
+@mutation.field("agentSessionStop")
+def m_agent_session_stop(_obj, info, id, reason=None):
+    store, org, uid = _ctx(info)
+    with store.engine.begin() as conn:
+        row = _require_session(conn, org, id)
+        try:
+            row = transition(conn, row, "cancel", actor_id=uid, reason=reason)
+        except RefusedTransitionError as exc:
+            raise GraphQLError(str(exc), extensions=exc.extensions) from exc
+        payload = serialize(conn, org, row)
+    return {"success": True, "agentSession": payload}
+
+
+@mutation.field("agentSessionPrompt")
+def m_agent_session_prompt(_obj, info, id, body):
+    store, org, uid = _ctx(info)
+    with store.engine.begin() as conn:
+        row = _require_session(conn, org, id)
+        if row["state"] != AWAITING_INPUT:
+            _bad("id", "A prompt answers a session that is awaiting input.")
+        append_activity(conn, org, row["id"], "prompt", body=body, author_kind="user",
+                        author_id=uid, signal="continue")
+        row = transition(conn, row, "prompt", actor_id=uid)
+        # The prompt answers the elicitation, so the session rejoins the schedule
+        # rather than sitting queued on a verdict that was computed for a question
+        # that no longer exists.
+        from hoja_server import agent_schedule
+
+        row = agent_schedule.reevaluate(conn, row, at=now_iso())
+        payload = serialize(conn, org, row)
+    return {"success": True, "agentSession": payload}
+
+
+@agent_session_type.field("agent")
+def r_agent(obj, info):
+    store, org, uid = _ctx(info)
+    return store.ser_user(store.get_user(org, obj["agentUserId"]), uid)
+
+
+@agent_session_type.field("activities")
+def r_activities(obj, info, first=None):
+    store, org, _uid = _ctx(info)
+    with store.engine.connect() as conn:
+        return activities(conn, org, obj["id"], first or 50)
+
+
+@agent_activity_type.field("payload")
+def r_payload(obj, info):
+    return obj.get("payload")
+
+
+def bind(issue_type):
+    """Attach the session surface to Issue before the Task alias copies it."""
+
+    @issue_type.field("agentSession")
+    def r_latest(issue_row, info):
+        store, org, _uid = _ctx(info)
+        issue_id = issue_row.get("id") if isinstance(issue_row, dict) else None
+        if not issue_id:
+            return None
+        with store.engine.connect() as conn:
+            row = latest_for_issue(conn, org, issue_id)
+            return serialize(conn, org, row) if row else None
+
+    @issue_type.field("agentSessions")
+    def r_all(issue_row, info, first=None):
+        store, org, _uid = _ctx(info)
+        issue_id = issue_row.get("id") if isinstance(issue_row, dict) else None
+        if not issue_id:
+            return []
+        with store.engine.connect() as conn:
+            rows = conn.execute(select(agent_session).where(and_(
+                agent_session.c.organization_id == org,
+                agent_session.c.issue_id == issue_id,
+            )).order_by(desc(agent_session.c.created_at)).limit(max(1, min(first or 20, 100)))).mappings().all()
+            return [serialize(conn, org, dict(r)) for r in rows]
+
+    return issue_type
