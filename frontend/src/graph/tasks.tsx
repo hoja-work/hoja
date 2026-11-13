@@ -463,10 +463,15 @@ export type IssueRowModel = {
   updatedAt?: string | null;
 };
 
-export const IssueRow = memo(function IssueRow({issue, display, selected, onSelect, onOpen, childCount, childDone = 0, showCheckbox, trailing}: {
+export const IssueRow = memo(function IssueRow({issue, display, selected, onSelect, onOpen, childCount, childDone = 0, showCheckbox, trailing, leading}: {
   issue: IssueRowModel; display: LinDisplay; selected: boolean;
   onSelect: (id: string, on: boolean) => void; onOpen: (issue: LinIssue) => void;
   childCount: number; childDone?: number; showCheckbox: boolean;
+  /** A caller-owned glyph for the row's second 14 px slot, where an issue shows priority. A
+   * surface whose rows have no priority — the runner list (HOJA-602-A-16) — fills the column with
+   * its own scarce resource instead of leaving a blank, and keeps the identifier column where the
+   * issue list puts it. Absent by default, so every existing caller is unchanged. */
+  leading?: React.ReactNode;
   /** A caller-owned chip that belongs to this row but not to the issue model, such as the agent
    * session badge on the run queue. Rendered beside the row's own flags so it inherits the row's
    * height and alignment instead of becoming a second, separately styled row. */
@@ -484,7 +489,7 @@ export const IssueRow = memo(function IssueRow({issue, display, selected, onSele
       {/* Linear leads every row with the status indicator, so the eye can scan state
           down the left edge; priority and identifier follow. */}
       {p.status && <StatusAgeIcon issue={issue} />}
-      {p.priority && <PriorityIcon priority={issue.priority} />}
+      {leading ?? (p.priority && <PriorityIcon priority={issue.priority} />)}
       {p.id && <span className="ident">{issue.identifier}</span>}
       {/* The row hands back the object it was handed. `IssueRowModel` is the render contract;
           a caller that passes a projection owns the consequence of its own missing fields. */}

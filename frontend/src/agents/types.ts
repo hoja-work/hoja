@@ -109,3 +109,93 @@ export function agentStatus(id: AgentStatus) {
 export function sessionStatusName(status: SessionStatus): string {
   return SESSION_STATUSES.find(s => s.id === status)?.name || status;
 }
+
+/* ---------------- Runners and Connect (slice 2) ---------------- */
+
+/* The two server sources this slice is allowed to read from, kept in the server's own
+ * vocabulary so the contract check can compare them field for field:
+ *
+ *   runner/hoja_runnerd/connect.py  ->  Exposure.public_row()
+ *   spec.md glossary            ->  "Runner — org, name, labels, lease token hash, last seen"
+ *
+ * A mapping here is not documentation: app/scripts/check-runner-contract.py reads these objects
+ * and fails when a server field has no local one, or a local one has no server field. The two
+ * secrets are mapped to booleans on purpose — `lease_token_hash` becomes `enrolled` (FR-018: the
+ * token is single-use and its hash is a server column) and the tailcat address is not mapped at
+ * all, because it is a bearer secret (connect.py:8-12).
+ */
+export const EXPOSURE_SERVER_FIELDS = {
+  exposure_id: 'id',
+  workspace_id: 'workspaceId',
+  ports: 'ports',
+  pinned_peer: 'pinnedPeer',
+  expires_at: 'expiresAt',
+  live: 'live',
+} as const;
+
+export const RUNNER_SERVER_FIELDS = {
+  org: 'workspaceId',
+  name: 'name',
+  labels: 'labels',
+  'lease token hash': 'enrolled',
+  'last seen': 'lastSeenAt',
+} as const;
+
+export type RunnerStatus = 'online' | 'offline';
+
+export const RUNNER_STATUSES: {id: RunnerStatus; name: string; color: string; type: 'started' | 'canceled'}[] = [
+  {id: 'online', name: 'Online', color: '#2f9e6f', type: 'started'},
+  {id: 'offline', name: 'Offline', color: '#95a2b3', type: 'canceled'},
+];
+
+export function runnerStatus(id: RunnerStatus) {
+  return RUNNER_STATUSES.find(s => s.id === id) || RUNNER_STATUSES[1];
+}
+
+/** A runner as the screens render it. `enrolled` replaces the token hash; nothing else from the
+ * registration is a credential. */
+export type Runner = {
+  /** Stable server id. */
+  id: string;
+  /** Server name, e.g. "mac-mini-01". */
+  name: string;
+  workspaceId: string;
+  status: RunnerStatus;
+  labels: string[];
+  /** A single-use token was presented and accepted (FR-018); the hash itself never ships. */
+  enrolled: boolean;
+  /** The heartbeat the server uses to derive `status` (FR-020: our clock, not the runner's). */
+  lastSeenAt: string;
+};
+
+/** The raw registration the runner's own record holds. Present in the fixture so the projection
+ * to `Runner` has a real secret to drop, and so the contract check can prove it is dropped. */
+export type RunnerRecord = Runner & {leaseTokenHash: string};
+
+/** A live Connect exposure, exactly the public row `Exposure.public_row()` returns. */
+export type ConnectExposure = {
+  id: string;
+  workspaceId: string;
+  ports: number[];
+  /** The worker node key this exposure is pinned to (`--allow=nodekey:…`). */
+  pinnedPeer: string;
+  /** Unix seconds, as the server sends it. */
+  expiresAt: number;
+  live: boolean;
+};
+
+/** The lease channel's payload (connect.py `LeasePayload`): the bearer `address` lives here and
+ * is projected away before anything reaches a screen. */
+export type RawExposure = ConnectExposure & {address: string};
+
+export function ttlSecondsLeft(expiresAt: number, at: number = Date.now()): number {
+  return Math.max(0, Math.round(expiresAt - at / 1000));
+}
+
+/** `m:ss` while under an hour, which is the only lifetime Connect allows (MAX_TTL_SECONDS). */
+export function ttlLabel(expiresAt: number, at: number = Date.now()): string {
+  const left = ttlSecondsLeft(expiresAt, at);
+  const m = Math.floor(left / 60);
+  const s = left % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}

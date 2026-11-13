@@ -11,7 +11,7 @@ import {Circle, Play, Settings2, ShieldOff, SlidersHorizontal, Square} from 'luc
 import {Avatar, IconBtn, cx} from '../graph/shared';
 import {DisplayPanel, defaultDisplay, type LinDisplay} from '../graph/tasks';
 import {getAgentsAdapter} from './adapter';
-import {AgentsListShell, SearchField} from './chrome';
+import {AGENTS_TABS, AgentsListShell, SearchField} from './chrome';
 import type {AuditEvent} from './types';
 
 export const AUDIT_DISPLAY: LinDisplay = {...defaultDisplay, grouping: 'action', ordering: 'updated', direction: 'desc'};
@@ -104,7 +104,7 @@ export function AuditPane({workspaceName, tab, onTab}: {workspaceName: string; t
       surface="audit-log"
       workspaceName={workspaceName}
       trail="Audit log"
-      tabs={[{id: 'agents', name: 'Agents'}, {id: 'queue', name: 'Run queue'}, {id: 'audit', name: 'Audit log'}]}
+      tabs={AGENTS_TABS}
       activeTab={tab}
       onTab={onTab}
       toolbar={<>

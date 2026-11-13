@@ -55,7 +55,11 @@ export function routeView(path: string): string {
   if (p.includes('/agents')) {
     const rest = p.split('/').filter(Boolean);
     const tail = rest.slice(rest.indexOf('agents') + 1);
-    return tail.length === 1 && !['queue', 'audit'].includes(tail[0]) ? 'Agent detail' : 'Agents';
+    // `runners/<id>` is a detail page for the same reason `<key>` is: it is full-bleed like the
+    // issue page, while `runners` itself is a list and stays in the rounded shell (HOJA-602-A-16).
+    const detail = (tail.length === 1 && !['queue', 'audit', 'runners'].includes(tail[0]))
+      || (tail.length === 2 && tail[0] === 'runners');
+    return detail ? 'Agent detail' : 'Agents';
   }
   if (p.includes('/agent')) return 'Agent';
 

@@ -318,7 +318,125 @@ const focusStop = page => page.evaluate(() => {
     ok(new URL(page.url()).pathname === '/workspace/agents', 'flagged-on build: the sidebar entry opens the agent list', new URL(page.url()).pathname);
   }
 
-  /* ---- 6. the production build ships the surface off by default ---- */
+  /* ---- 6. the runner screens (slice 2): lists and details, measured against the same two
+   * reference pages, with a non-vacuity guard ----
+   *
+   * The guard matters: the loops above compare with `ok(a === b)`, which passes when a selector
+   * was missing and both sides are `null`. A new screen has no history to reassure us, so every
+   * key is first asserted to have been *measured* on both sides. */
+  const RUNNERS = '/workspace/agents/runners';
+  const canary = /\btc[A-Za-z0-9_-]{20,}\b/; // mirrors TAILCAT_ADDRESS_RE in runner/hoja_runnerd/connect.py;
+  // app/scripts/check-runner-contract.py proves the fixture matches the Python regex itself.
+
+  await page.goto(`${base}${RUNNERS}`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-surface="runners-list"] .lin-row', { timeout: 15000 });
+  await page.waitForTimeout(400);
+  const runnerList = await page.evaluate(listProbe);
+  await page.screenshot({ path: path.join(shots, `runners-list-${W}.png`) });
+
+  ok(Boolean(runnerList.rowHeight), 'runner list renders rows');
+  for (const k of LIST_KEYS) {
+    const a = issueList[k], b = runnerList[k];
+    ok(a != null && b != null, `runner list: ${k} is measured on both sides`, `${a} vs ${b}`);
+    if (typeof a === 'number' && typeof b === 'number') ok(Math.abs(a - b) <= TOL, `runner list ${k} matches the issue list (${TOL}px)`, `${a} vs ${b}`);
+    else ok(a === b, `runner list ${k} matches the issue list exactly`, `${a} vs ${b}`);
+  }
+  ok(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1), 'runner list has no horizontal page scroll');
+
+  /* No new design language, mechanically: every class token on a runner row must already have a
+   * rule in the stylesheets this app ships, and no token may be runner-specific. */
+  const runnerTokens = await page.evaluate(() => [...new Set(
+    [...document.querySelectorAll('[data-surface="runners-list"] .lin-row, [data-surface="runners-list"] .lin-row *')]
+      .flatMap(el => [...el.classList]))]);
+  const cssText = (function walk(dir) {
+    return fs.readdirSync(dir, { withFileTypes: true }).flatMap(d => {
+      const full = path.join(dir, d.name);
+      if (d.isDirectory()) return walk(full);
+      return d.name.endsWith('.css') ? [fs.readFileSync(full, 'utf8')] : [];
+    });
+  })(path.join(repo, 'frontend/src')).join('\n');
+  /* The pinned peer is an identifier, not a secret: its full form may live in a `title`. What
+   * must not happen is a class that no stylesheet styles and no shared component emits. */
+  const sharedText = ['graph/shared.tsx', 'graph/tasks.tsx']
+    .map(f => fs.readFileSync(path.join(repo, 'frontend/src', f), 'utf8')).join('\n');
+  const unstyled = runnerTokens.filter(t =>
+    !cssText.includes(`.${t}`) && !sharedText.includes(t) && !/^lucide/.test(t));
+  ok(unstyled.length === 0, 'every class on a runner row is styled by the app or emitted by a shared component', unstyled.join(', '));
+  ok(!runnerTokens.some(t => /runner/i.test(t)), 'no runner-specific class token was invented', runnerTokens.filter(t => /runner/i.test(t)).join(', '));
+
+  await page.goto(`${base}${RUNNERS}/RUNNER-1`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-surface="runner-detail"] .lin-props', { timeout: 15000 });
+  await page.waitForTimeout(400);
+  const runnerDetail = await page.evaluate(detailProbe);
+  await page.screenshot({ path: path.join(shots, `runner-detail-${W}.png`) });
+
+  for (const k of DETAIL_KEYS) {
+    const a = issueDetail[k], b = runnerDetail[k];
+    ok(a != null && b != null, `runner detail: ${k} is measured on both sides`, `${a} vs ${b}`);
+    if (typeof a === 'number' && typeof b === 'number') ok(Math.abs(a - b) <= TOL, `runner detail ${k} matches the issue page (${TOL}px)`, `${a} vs ${b}`);
+    else ok(a === b, `runner detail ${k} matches the issue page exactly`, `${a} vs ${b}`);
+  }
+  if (W > 900) ok(runnerDetail.propsLeft > runnerDetail.mainLeft, 'wide viewport: the runner sidebar sits beside the main column');
+  else ok(runnerDetail.propsTop > runnerDetail.mainTop, 'narrow viewport: the runner sidebar sits below the main column, as the issue page does');
+
+  /* The address is a bearer secret. The fixture seeds one, the adapter drops it, and the page
+   * must not contain it in any form. */
+  ok(!canary.test(await page.content()), 'runner detail: no tailcat address anywhere in the rendered HTML');
+  ok(await page.evaluate(() => !/nodekey:[0-9a-f]{64}/.test(document.body.innerText)),
+    'runner detail: the pinned peer is shortened in the row, full only in a title attribute');
+
+  /* Revoke: two steps, then a state transition that is visible on a different screen. */
+  const exposureRows = () => page.evaluate(() => document.querySelectorAll('[data-surface="runner-detail"] [data-exposure]').length);
+  const beforeRevoke = await exposureRows();
+  ok(beforeRevoke >= 1, 'runner detail shows its live exposure', String(beforeRevoke));
+  await page.click('[data-exposure="exp-1"] button.lin-btn');
+  await page.waitForSelector('[role="dialog"]', { timeout: 5000 });
+  ok(await exposureRows() === beforeRevoke, 'revoke is two-step: the exposure stays until the dialog is confirmed');
+  await page.click('[role="dialog"] button.danger');
+  await page.waitForTimeout(400);
+  ok(await exposureRows() === beforeRevoke - 1, 'revoke removes the exposure only after confirmation', `${beforeRevoke} → ${await exposureRows()}`);
+  ok(await page.getByText(/Revoked and audited/).count() > 0, 'revoke reports the audit row it wrote');
+  await page.screenshot({ path: path.join(shots, `runner-detail-revoked-${W}.png`) });
+
+  /* Through the app, not a fresh load: the mock store is in-memory, so a reload would re-seed it
+   * and this would be asserting the fixture rather than the transition. The detail page has no
+   * tab strip (it is a detail page), so go back to the list the way a person does, then switch. */
+  await page.click('[data-surface="runner-detail"] button.crumb-link');
+  await page.waitForSelector('[data-surface="runners-list"]', { timeout: 15000 });
+  await page.getByRole('tab', { name: 'Audit log' }).click();
+  await page.waitForSelector('[data-surface="audit-log"] [data-action="connect.revoked"]', { timeout: 15000 });
+  ok(true, 'the revoke is visible on the audit screen in the same session, which reads the same store');
+
+  /* The kill switch is a state, not an empty list. */
+  const offConnect = await browser.newContext({ viewport: { width: W, height: H } });
+  await offConnect.addInitScript(t => {
+    localStorage.setItem('hoja_token', t);
+    localStorage.setItem('hoja_agents_surface', 'on');
+    localStorage.setItem('hoja_agents_connect', 'off');
+  }, token);
+  const offConnectPage = await offConnect.newPage();
+  await offConnectPage.goto(`${base}${RUNNERS}/RUNNER-2`, { waitUntil: 'networkidle' });
+  await offConnectPage.waitForSelector('[data-surface="runner-detail"][data-connect="off"]', { timeout: 15000 });
+  ok(await offConnectPage.evaluate(() => Boolean(document.querySelector('[data-connect-notice="off"]'))),
+    'Connect disabled: the screen says so instead of showing an empty list');
+  ok(await offConnectPage.evaluate(() => [...document.querySelectorAll('[data-exposure] button')].every(b => b.disabled)),
+    'Connect disabled: no revoke control is offered');
+  await offConnectPage.screenshot({ path: path.join(shots, `runner-detail-connect-off-${W}.png`) });
+  await offConnect.close();
+
+  /* Keyboard parity with the issue list, on the new list. */
+  const runnerKb = await rowKeyboard(RUNNERS);
+  ok(Boolean(runnerKb.entered) && runnerKb.entered.inRow, 'runner list: Tab from the group header lands inside a row', `after ${runnerKb.tabs} tab(s)`);
+  ok(runnerKb.second.isTitle && runnerKb.second.inRow, 'runner list: the next Tab reaches the row title', runnerKb.second.label || runnerKb.second.tag);
+  ok(runnerKb.after < runnerKb.before && /^Expand /.test(runnerKb.afterLabel || ''), 'runner list: the group chevron collapses from the keyboard', `${runnerKb.before} → ${runnerKb.after} rows`);
+
+  /* The tab strip reaches it. */
+  await page.goto(`${base}/workspace/agents`, { waitUntil: 'networkidle' });
+  await page.getByRole('tab', { name: 'Runners' }).click();
+  await page.waitForSelector('[data-surface="runners-list"]', { timeout: 15000 }).catch(() => undefined);
+  ok(new URL(page.url()).pathname === RUNNERS, 'the Runners tab opens the runner list', new URL(page.url()).pathname);
+
+  /* ---- 7. the production build ships the surface off by default ---- */
   const offCtx = await browser.newContext({ viewport: { width: W, height: H } });
   await offCtx.addInitScript(t => { localStorage.setItem('hoja_token', t); }, token);
   const offPage = await offCtx.newPage();

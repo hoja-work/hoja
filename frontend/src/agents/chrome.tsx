@@ -1,4 +1,4 @@
-/* The list chrome shared by the three agent list screens (HOJA-602-A-16).
+/* The list chrome shared by the four agent list screens (HOJA-602-A-16).
  *
  * It is the issue list's chrome, element for element: `.lin-head` breadcrumb, `.lin-viewbar`
  * tabs, `.lin-toolbar` with a `.lin-search`, optional `.lin-filterbar` chips, then a
@@ -12,6 +12,15 @@ import {Search} from 'lucide-react';
 import {cx} from '../graph/shared';
 
 export type AgentsTab = {id: string; name: string};
+
+/* The four list screens share one strip. It lives here, not in each pane, because a screen that
+ * forgot a tab would silently drop a route from the UI while the router still served it. */
+export const AGENTS_TABS: AgentsTab[] = [
+  {id: 'agents', name: 'Agents'},
+  {id: 'queue', name: 'Run queue'},
+  {id: 'runners', name: 'Runners'},
+  {id: 'audit', name: 'Audit log'},
+];
 
 export function AgentsListShell({ariaLabel, surface, workspaceName, trail, tabs, activeTab, onTab, toolbar, chips, children}: {
   ariaLabel: string;

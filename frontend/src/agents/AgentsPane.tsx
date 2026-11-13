@@ -13,7 +13,7 @@ import {Avatar, GraphStatusIcon, IconBtn, Ring, StatusAgeIcon, cx} from '../grap
 import {DisplayPanel, FilterMenu, defaultDisplay, emptyFilters, type FilterTeam, type LinDisplay, type LinFilters} from '../graph/tasks';
 import {stateKey} from '../main';
 import {getAgentsAdapter} from './adapter';
-import {AgentsListShell, SearchField} from './chrome';
+import {AGENTS_TABS, AgentsListShell, SearchField} from './chrome';
 import {AGENT_STATUSES, agentStatus} from './types';
 import type {Agent, AgentStatus} from './types';
 
@@ -180,7 +180,7 @@ export function AgentsPane({workspaceName, onOpen, tab, onTab}: {
       surface="agents-list"
       workspaceName={workspaceName}
       trail="Agents"
-      tabs={[{id: 'agents', name: 'Agents'}, {id: 'queue', name: 'Run queue'}, {id: 'audit', name: 'Audit log'}]}
+      tabs={AGENTS_TABS}
       activeTab={tab}
       onTab={onTab}
       toolbar={<>

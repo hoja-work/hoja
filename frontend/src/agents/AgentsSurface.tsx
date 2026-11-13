@@ -8,6 +8,11 @@
  *   /workspace/agents/queue         → the workspace run queue    (screen 3)
  *   /workspace/agents/<key>/queue   → that agent's run queue     (screen 3)
  *   /workspace/agents/audit         → the audit log              (screen 6)
+ *   /workspace/agents/runners       → the runners list           (screen 4)
+ *   /workspace/agents/runners/<id>  → that runner and its Connect exposures (screen 5)
+ *
+ * `runners` is matched before the `<agentKey>` branch, exactly as `queue` and `audit` are, so a
+ * runner id can never be read as an agent key.
  *
  * The router is read from `location.pathname` and re-read on `popstate`, which is how the rest
  * of the app navigates (pushState + a view state). Nothing here fetches: each screen owns its
@@ -20,6 +25,7 @@ import {AgentDetailPage} from './AgentDetail';
 import {AgentsPane} from './AgentsPane';
 import {AuditPane} from './AuditPane';
 import {RunQueue} from './RunQueue';
+import {RunnerDetailPage, RunnersPane} from './RunnersPane';
 
 export const AGENTS_ROOT = '/workspace/agents';
 
@@ -27,6 +33,8 @@ export type AgentsRoute =
   | {kind: 'list'}
   | {kind: 'queue'; agentKey?: string}
   | {kind: 'audit'}
+  | {kind: 'runners'}
+  | {kind: 'runner'; runnerId: string}
   | {kind: 'detail'; agentKey: string};
 
 export function parseAgentsRoute(pathname: string): AgentsRoute {
@@ -34,6 +42,9 @@ export function parseAgentsRoute(pathname: string): AgentsRoute {
   if (!rest.length) return {kind: 'list'};
   if (rest[0].toLowerCase() === 'audit') return {kind: 'audit'};
   if (rest[0].toLowerCase() === 'queue') return {kind: 'queue'};
+  if (rest[0].toLowerCase() === 'runners') {
+    return rest[1] ? {kind: 'runner', runnerId: decodeURIComponent(rest[1])} : {kind: 'runners'};
+  }
   const agentKey = decodeURIComponent(rest[0]);
   if (rest[1] && rest[1].toLowerCase() === 'queue') return {kind: 'queue', agentKey};
   return {kind: 'detail', agentKey};
@@ -74,8 +85,12 @@ export function AgentsSurface({workspaceName, viewerName}: {workspaceName: strin
   }
 
   const route = parseAgentsRoute(path);
-  const tab = route.kind === 'queue' ? 'queue' : route.kind === 'audit' ? 'audit' : 'agents';
-  const onTab = (id: string) => go(id === 'queue' ? `${AGENTS_ROOT}/queue` : id === 'audit' ? `${AGENTS_ROOT}/audit` : AGENTS_ROOT);
+  const tab = route.kind === 'queue' ? 'queue'
+    : route.kind === 'audit' ? 'audit'
+      : route.kind === 'runners' || route.kind === 'runner' ? 'runners' : 'agents';
+  const onTab = (id: string) => go(id === 'queue' ? `${AGENTS_ROOT}/queue`
+    : id === 'audit' ? `${AGENTS_ROOT}/audit`
+      : id === 'runners' ? `${AGENTS_ROOT}/runners` : AGENTS_ROOT);
 
   if (route.kind === 'detail') {
     return (
@@ -105,6 +120,28 @@ export function AgentsSurface({workspaceName, viewerName}: {workspaceName: strin
   }
 
   if (route.kind === 'audit') return <AuditPane workspaceName={workspaceName} tab={tab} onTab={onTab} />;
+
+  if (route.kind === 'runner') {
+    return (
+      <RunnerDetailPage
+        runnerId={route.runnerId}
+        workspaceName={workspaceName}
+        viewerName={viewerName}
+        onBack={() => go(`${AGENTS_ROOT}/runners`)}
+      />
+    );
+  }
+
+  if (route.kind === 'runners') {
+    return (
+      <RunnersPane
+        workspaceName={workspaceName}
+        tab={tab}
+        onTab={onTab}
+        onOpen={runner => go(`${AGENTS_ROOT}/runners/${encodeURIComponent(runner.id)}`)}
+      />
+    );
+  }
 
   return (
     <AgentsPane

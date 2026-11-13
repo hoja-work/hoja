@@ -13,7 +13,7 @@ import {useEffect, useMemo, useState} from 'react';
 import {GraphStatusIcon} from '../graph/shared';
 import {IssueRow, defaultDisplay, type IssueRowModel, type LinDisplay} from '../graph/tasks';
 import {getAgentsAdapter} from './adapter';
-import {AgentsListShell, SearchField} from './chrome';
+import {AGENTS_TABS, AgentsListShell, SearchField} from './chrome';
 import {SESSION_STATUSES, sessionStatusName} from './types';
 import type {AgentSession, SessionStatus} from './types';
 
@@ -86,7 +86,7 @@ export function RunQueue({workspaceName, agentKey, onOpenRun, onOpenAgent, tab, 
       surface="run-queue"
       workspaceName={workspaceName}
       trail={agentKey ? `${agentKey} · Run queue` : 'Run queue'}
-      tabs={[{id: 'agents', name: 'Agents'}, {id: 'queue', name: 'Run queue'}, {id: 'audit', name: 'Audit log'}]}
+      tabs={AGENTS_TABS}
       activeTab={tab}
       onTab={onTab}
       toolbar={<>
