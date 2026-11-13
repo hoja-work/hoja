@@ -191,20 +191,20 @@ def test_reseal_can_leave_unopenable_rows_explicitly(tmp_path, monkeypatch):
 
 def test_the_reseal_revision_rewrites_legacy_rows_and_is_rerunnable(tmp_path, monkeypatch):
     """Revision 63 is the deploy-time path; a second run must be a no-op."""
-    from hoja_server.db import applied_schema_revision, migrate, schema_revision
+    from hoja_server.db import CURRENT_SCHEMA_REVISION, applied_schema_revision, migrate, schema_revision
 
     monkeypatch.setenv("HOJA_SECRET_KEY", "test-master-key")
     _db, engine, admin, planted = _world(tmp_path, name="revision")
     with engine.begin() as conn:  # step the ledger back to 61: this is an upgrade, not a fresh DB
-        conn.execute(schema_revision.delete().where(schema_revision.c.revision.in_((62, 63))))
+        conn.execute(schema_revision.delete().where(schema_revision.c.revision >= 62))
     assert applied_schema_revision(engine) == 61
     migrate(engine)
-    assert applied_schema_revision(engine) == 63
+    assert applied_schema_revision(engine) == CURRENT_SCHEMA_REVISION
     tokens = _sealed_values(engine, planted)
     assert all(not secrets_box.is_legacy(token) for token in tokens.values())
     assert decrypt_secret(tokens["webhook.secret_sealed"], admin["org_id"]) == "hook-secret"
     snapshot = dict(tokens)
     with engine.begin() as conn:  # a second pass over already-sealed rows changes nothing
-        conn.execute(schema_revision.delete().where(schema_revision.c.revision == 63))
+        conn.execute(schema_revision.delete().where(schema_revision.c.revision >= 63))
     migrate(engine)
     assert _sealed_values(engine, planted) == snapshot

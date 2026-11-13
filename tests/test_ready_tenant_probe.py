@@ -55,8 +55,12 @@ def test_ready_under_row_level_security(shared):
 
 def test_ready_fails_when_the_tenant_hook_binds_the_wrong_org(shared, monkeypatch):
     _owner, app_url = shared
+    # The hook binds the tenant and the actor in one statement; only the tenant is
+    # corrupted here, so the probe must still notice it.
     monkeypatch.setattr(tenant_context, "_SET",
-                        "SELECT set_config('hoja.org_id', %s || '-x', true), set_config('hoja.system', %s, true)")
+                        "SELECT set_config('hoja.org_id', %s || '-x', true), set_config('hoja.system', %s, true), "
+                        "set_config('hoja.actor_kind', %s, true), set_config('hoja.actor_id', %s, true), "
+                        "set_config('hoja.on_behalf_of', %s, true)")
     status, body = _ready(create_app(None, database_url=app_url, open_mode=False))
     assert (status, body["reason"]) == (503, "tenant_read_failed")
 

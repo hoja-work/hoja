@@ -43,6 +43,14 @@ T = TypeVar("T")
 
 _org: ContextVar[str | None] = ContextVar("hoja_tenant_org", default=None)
 _system: ContextVar[bool] = ContextVar("hoja_tenant_system", default=False)
+# Who is writing (revision 64, HOJA-602-A-3). change_event is written by a trigger,
+# so attribution has to travel the same way the tenant does: a transaction-local
+# session setting. Unset means "no actor recorded", which is what every local
+# (SQLite) database and every pre-agent call path keeps getting.
+_actor: ContextVar[tuple[str | None, str | None, str | None]] = ContextVar(
+    "hoja_tenant_actor", default=(None, None, None))
+# user.kind values: "human", "bot" (an extension's identity), "agent" (revision 64).
+ACTOR_KINDS = ("human", "bot", "agent")
 
 # Paths that run before a tenant is known, or that are tenant-agnostic by
 # nature. They see every row, exactly as before row-level security. Keep this
@@ -56,7 +64,9 @@ SYSTEM_PATH_PREFIXES = (
 )
 SYSTEM_PATHS = frozenset({"/health", "/ready"})
 
-_SET = "SELECT set_config('hoja.org_id', %s, true), set_config('hoja.system', %s, true)"
+_SET = ("SELECT set_config('hoja.org_id', %s, true), set_config('hoja.system', %s, true), "
+        "set_config('hoja.actor_kind', %s, true), set_config('hoja.actor_id', %s, true), "
+        "set_config('hoja.on_behalf_of', %s, true)")
 
 
 def bind(org: str | None) -> None:
@@ -75,6 +85,50 @@ def enter_system() -> None:
 
 def current() -> tuple[str | None, bool]:
     return _org.get(), _system.get()
+
+
+def current_actor() -> tuple[str | None, str | None, str | None]:
+    return _actor.get()
+
+
+def set_actor(kind: str, actor_id: str, on_behalf_of: str | None = None) -> None:
+    """Scope the rest of the current context's writes to ``actor_id`` (mirrors ``bind``)."""
+    if kind not in ACTOR_KINDS:
+        raise ValueError(f"actor kind must be one of {ACTOR_KINDS}, not {kind!r}")
+    if not actor_id:
+        raise ValueError("a write must name its actor_id")
+    _actor.set((kind, actor_id, on_behalf_of))
+
+
+def enter(org: str | None, uid: str, kind: str = "human") -> None:
+    """Scope the rest of the request to its tenant and to whoever authenticated.
+
+    ``kind='agent'`` when the credential names an agent principal (a runner or an
+    agent's own MCP key), so its writes are attributed to the agent, not to a
+    person it never was.
+    """
+    bind(org)
+    set_actor(kind, uid)
+
+
+@contextmanager
+def actor(kind: str, actor_id: str, on_behalf_of: str | None = None) -> Iterator[None]:
+    """Attribute every change in this context to ``actor_id`` (revision 64).
+
+    An agent turn runs with ``kind='agent'``, the agent's user id, and the human
+    whose request it serves as ``on_behalf_of``. An ordinary request is already
+    attributed to its human by ``enter``; this context overrides that for the
+    duration of the block, and restores it after.
+
+    Fails closed when an agent write names no agent: an anonymous agent write is
+    exactly the unattributable row this change exists to prevent.
+    """
+    token = _actor.set((None, None, None))
+    try:
+        set_actor(kind, actor_id, on_behalf_of)
+        yield
+    finally:
+        _actor.reset(token)
 
 
 @contextmanager
@@ -153,11 +207,13 @@ def install(engine: Engine) -> None:
     @event.listens_for(engine, "begin")
     def _set_tenant(conn: Any) -> None:
         org, sys_ = current()
+        actor_kind, actor_id, on_behalf_of = current_actor()
         # The raw DBAPI cursor: psycopg opens the transaction implicitly on this
         # first statement, so the settings are local to exactly this transaction.
         cursor = conn.connection.dbapi_connection.cursor()
         try:
-            cursor.execute(_SET, (org or "", "on" if sys_ else ""))
+            cursor.execute(_SET, (org or "", "on" if sys_ else "",
+                                  actor_kind or "", actor_id or "", on_behalf_of or ""))
         finally:
             cursor.close()
 

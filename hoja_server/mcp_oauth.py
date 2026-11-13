@@ -372,7 +372,7 @@ class HojaOAuthProvider(OAuthAuthorizationServerProvider):
             return await self._load_api_key(token)
         if self.required_org and row["organization_id"] != self.required_org:
             return None
-        tenant_context.bind(row["organization_id"])
+        tenant_context.enter(row["organization_id"], row["user_id"])
         subject = json.dumps({"user_id": row["user_id"], "org_id": row["organization_id"]})
         return AccessToken(
             token=token,
@@ -395,7 +395,8 @@ class HojaOAuthProvider(OAuthAuthorizationServerProvider):
             key = self.store.resolve_token(token)
         if not key or (self.required_org and key["organization_id"] != self.required_org):
             return None
-        tenant_context.bind(key["organization_id"])
+        # An agent principal's own key writes as the agent, never as a person.
+        tenant_context.enter(key["organization_id"], key["user_id"], key.get("kind") or "human")
         scopes = [READ_SCOPE] if key.get("access") == "read" else list(ALL_SCOPES)
         return AccessToken(
             token=token,

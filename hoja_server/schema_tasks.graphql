@@ -33,6 +33,9 @@ type Task {
   snoozedUntilAt: DateTime
   state: WorkflowState
   assignee: User
+  "The agent this task is delegated to; separate from the assignee (Linear's Issue.delegate)."
+  delegate: User
+  delegateId: ID
   creator: User
   team: Team
   project: Project

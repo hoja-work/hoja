@@ -125,6 +125,14 @@ def _validate_issue_references(
         )
     if assignee_id := inp.get("assigneeId"):
         _require_team_user(conn, org_id, team_id, assignee_id, "assigneeId")
+    # Delegation is cross-tenant-safe by construction: the predicate is scoped to
+    # this organization, so an agent member of another workspace never matches —
+    # even when the caller knows its id.
+    if delegate_id := inp.get("delegateId"):
+        from hoja_server import agent_members
+
+        if not agent_members.is_delegate_target(conn, org_id, delegate_id):
+            raise InvalidReferenceError("delegateId")
     if project_id := inp.get("projectId"):
         _require_org_reference(conn, project, org_id, project_id, "projectId")
         project_teams = list(
@@ -849,7 +857,8 @@ class Writer:
                 title=inp["title"], description=inp.get("description"),
                 priority=prio, priority_label=PRIORITY_LABELS.get(prio, "No priority"),
                 estimate=inp.get("estimate"), state_id=state_id, state_changed_at=ts,
-                assignee_id=inp.get("assigneeId"), creator_id=viewer_id,
+                assignee_id=inp.get("assigneeId"), delegate_id=inp.get("delegateId"),
+                creator_id=viewer_id,
                 project_id=inp.get("projectId"), cycle_id=cycle_id,
                 parent_id=parent_id,
                 url=entity_url(url_key, "issue", ident),
@@ -1017,7 +1026,8 @@ class Writer:
             values: dict = {"updated_at": ts}
             mapping = {
                 "title": "title", "description": "description", "estimate": "estimate",
-                "assigneeId": "assignee_id", "projectId": "project_id",
+                "assigneeId": "assignee_id", "delegateId": "delegate_id",
+                "projectId": "project_id",
                 "cycleId": "cycle_id", "parentId": "parent_id", "dueDate": "due_date",
             }
             for k, col in mapping.items():
@@ -1046,7 +1056,7 @@ class Writer:
                             if auto_id:
                                 values["cycle_id"] = auto_id
             changes = {}
-            for field, column in {"title": "title", "description": "description", "priority": "priority", "stateId": "state_id", "assigneeId": "assignee_id", "projectId": "project_id"}.items():
+            for field, column in {"title": "title", "description": "description", "priority": "priority", "stateId": "state_id", "assigneeId": "assignee_id", "delegateId": "delegate_id", "projectId": "project_id"}.items():
                 if field in inp and issue_row.get(column) != values.get(column):
                     changes[field] = {"from": issue_row.get(column), "to": values.get(column)}
             conn.execute(issue.update().where(issue.c.id == iid).values(**values))

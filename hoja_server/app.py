@@ -621,7 +621,7 @@ def create_app(
                         policy, _client_ip(request)):
                     return None, None, None, False
             org_slots.enter(request.scope, result[1])
-            tenant_context.bind(result[1])
+            tenant_context.enter(result[1], result[0], getattr(request.state, "actor_kind", "human"))
         return result
 
     def _resolve_auth(request: Request):
@@ -633,6 +633,8 @@ def create_app(
             if key:
                 store.touch_api_key(key["id"], key.get("last_used_at"))
                 request.state.api_key_access = key["access"]
+                # An agent principal's key writes as the agent (HOJA-602-A-3).
+                request.state.actor_kind = key.get("kind") or "human"
                 return key["user_id"], key["organization_id"], None, False
             # The presented credential did not resolve (e.g. the browser SPA's
             # "session" sentinel). Fall through to the browser session cookie
@@ -675,15 +677,17 @@ def create_app(
         hit = sync_auth_cache.get(key)
         if hit is not None and now - hit[0] < _SYNC_AUTH_TTL:
             request.state.api_key_access = hit[2]
+            request.state.actor_kind = hit[3] if len(hit) > 3 else "human"
             # a cache hit skips _auth, so it must scope the request itself
             org_slots.enter(request.scope, hit[1][1])
-            tenant_context.bind(hit[1][1])
+            tenant_context.enter(hit[1][1], hit[1][0], request.state.actor_kind)
             return hit[1]
         result = _auth(request)
         if result[0]:
             if len(sync_auth_cache) > 10000:
                 sync_auth_cache.clear()
-            sync_auth_cache[key] = (now, result, getattr(request.state, "api_key_access", "read_write"))
+            sync_auth_cache[key] = (now, result, getattr(request.state, "api_key_access", "read_write"),
+                                    getattr(request.state, "actor_kind", "human"))
         return result
 
     def _credential_slot(uid: str, org: str):
@@ -993,7 +997,7 @@ def create_app(
         ]
         uid, org, cred = await run_in_threadpool(_socket_identity, websocket)
         if uid:  # resolved in a worker thread: its context copy is gone, bind here
-            tenant_context.bind(org)
+            tenant_context.enter(org, uid, getattr(websocket.state, "actor_kind", "human"))
         await websocket.accept(subprotocol=subprotocol)
         if not uid:
             await websocket.close(code=4401)
@@ -1135,7 +1139,7 @@ def create_app(
     async def graphql_server(request: Request):
         uid, org, identity_id, is_browser_session = await run_in_threadpool(_auth, request)
         if uid:  # resolved in a worker thread: its context copy is gone, bind here
-            tenant_context.bind(org)
+            tenant_context.enter(org, uid, getattr(request.state, "actor_kind", "human"))
         if not uid:
             return JSONResponse(
                 {
@@ -2697,7 +2701,7 @@ def create_app(
     async def sync_bootstrap(request: Request):
         uid, org, identity_id, is_browser = await run_in_threadpool(_auth_sync, request)
         if uid:  # resolved in a worker thread: its context copy is gone, bind here
-            tenant_context.bind(org)
+            tenant_context.enter(org, uid, getattr(request.state, "actor_kind", "human"))
         if not uid:
             return JSONResponse({"error": "Authentication required"}, status_code=401)
         try:
@@ -2773,7 +2777,7 @@ def create_app(
     async def sync_delta(request: Request):
         uid, org, identity_id, is_browser = await run_in_threadpool(_auth_sync, request)
         if uid:  # resolved in a worker thread: its context copy is gone, bind here
-            tenant_context.bind(org)
+            tenant_context.enter(org, uid, getattr(request.state, "actor_kind", "human"))
         if not uid:
             return JSONResponse({"error": "Authentication required"}, status_code=401)
         try:

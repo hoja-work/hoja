@@ -621,12 +621,16 @@ class Store:
         return out
 
     def resolve_token(self, token: str) -> dict | None:
-        """token → {user_id, organization_id} or None."""
+        """token → {user_id, organization_id, kind} or None.
+
+        ``kind`` is the owner's user kind, so a caller can attribute the request
+        to an agent principal instead of assuming a person (HOJA-602-A-3).
+        """
         th = token_hash(token)
         with self.engine.connect() as conn:
             row = _one(
                 conn,
-                select(api_key)
+                select(api_key, user.c.kind.label("kind"))
                 .join(
                     user,
                     and_(
@@ -1155,6 +1159,7 @@ class Store:
             "stateChangedAt": row.get("state_changed_at"),
             # ids for lazy field resolvers
             "_state_id": row.get("state_id"), "_assignee_id": row.get("assignee_id"),
+            "_delegate_id": row.get("delegate_id"),
             "_creator_id": row.get("creator_id"), "_team_id": row.get("team_id"),
             "_project_id": row.get("project_id"), "_cycle_id": row.get("cycle_id"),
             "_parent_id": row.get("parent_id"), "_org_id": row.get("organization_id"),

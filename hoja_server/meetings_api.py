@@ -350,7 +350,10 @@ def meeting_routes(engine, service: MeetingService, hub: MeetingHub, *, auth: Ca
         """The app's auth runs in a worker thread whose context copy is discarded,
         so the tenant is bound here, in the request's own context."""
         uid, org, identity, browser = await run_in_threadpool(auth, conn)
-        tenant_context.bind(org if uid else None)
+        if uid:
+            tenant_context.enter(org, uid)
+        else:
+            tenant_context.bind(None)
         return uid, org, identity, browser
 
     async def scope_to_meeting(conn, org: str | None) -> None:

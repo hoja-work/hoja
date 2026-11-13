@@ -24,6 +24,7 @@ from hoja_server import mail_events
 
 logger = logging.getLogger(__name__)
 from hoja_server import extensions
+from hoja_server import agent_members
 from hoja_server import permissions
 from hoja_server import store as store_module
 from hoja_server.deployment import single_org_mode
@@ -982,6 +983,18 @@ def i_creator(obj, info):
                  lambda: store.ser_user(_user_row(info, obj["_creator_id"]), uid)) if obj.get("_creator_id") else None
 
 
+@Issue.field("delegate")
+def i_delegate(obj, info):
+    store, _w, org, uid = _ctx(info)
+    return _memo(info, "user", (org, obj["_delegate_id"]),
+                 lambda: store.ser_user(_user_row(info, obj["_delegate_id"]), uid)) if obj.get("_delegate_id") else None
+
+
+@Issue.field("delegateId")
+def i_delegate_id(obj, info):
+    return obj.get("_delegate_id")
+
+
 @Issue.field("team")
 def i_team(obj, info):
     store, _w, org, uid = _ctx(info)
@@ -1798,12 +1811,13 @@ def build_schema():
     return make_executable_schema(
         [sdl, PROVIDER_SDL, CONVERSATION_SDL, webhooks_api.SDL, extensions_api.SDL,
          views_api.SDL, decisions_api.SDL, project_settings.SDL, permissions.SDL,
-         task_templates.SDL, sla.SDL, tasks_sdl],
+         task_templates.SDL, sla.SDL, agent_members.SDL, tasks_sdl],
         query, mutation, *task_bindables,
         model_providers.query, model_providers.mutation,
         project_settings.query, project_settings.mutation,
         permissions.query, permissions.mutation,
         task_templates.query, task_templates.mutation,
+        agent_members.query, agent_members.mutation,
         sla.query, sla.mutation,
         webhooks_api.query, webhooks_api.mutation, webhooks_api.webhook_type,
         extensions_api.query, extensions_api.mutation, extensions_api.extension_type,
@@ -1812,7 +1826,7 @@ def build_schema():
         conversation_query,
         model_providers.model_provider_type, project_settings.project_status_type,
         project_settings.project_template_type, task_templates.task_template_type,
-        sla.sla_policy_type, sla.sla_clock_type,
+        sla.sla_policy_type, sla.sla_clock_type, agent_members.agent_member_type,
         Team, Initiative, InitiativeUpdate, Issue, IssueActivity, MyIssueActivity, Project, ProjectUpdate, Comment,
         permissions.workspace_permission_type, permissions.workspace_security_policy_type,
         WorkflowState, Cycle, Attachment, GithubLink,

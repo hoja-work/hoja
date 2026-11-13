@@ -7,6 +7,7 @@ import json
 import time
 import uuid
 from collections.abc import AsyncIterator
+from contextlib import nullcontext
 from dataclasses import dataclass
 
 import openai
@@ -24,6 +25,7 @@ from sqlalchemy import and_, select
 from starlette.responses import StreamingResponse
 
 from hoja_server.agent_conversations import save_message, start_conversation
+from hoja_server import agent_members, tenant_context
 from hoja_server.agent_prompt import compose_prompt, workspace_snapshot
 from hoja_server.agent_threads import _owned as _owned_thread
 from hoja_server.agent_threads import _title_from
@@ -232,26 +234,32 @@ async def stream_reply(store, org_id: str, uid: str, messages: list[dict], schem
             conversation_id = start_conversation(conn, org_id, uid, title=_title_from(prompt))
         save_message(conn, conversation_id, "user", prompt)
     reply_parts: list[str] = []
+    # F4: what the agent writes is attributed to the agent, with the person who
+    # asked as on_behalf_of. No agent member means the writes stay unattributed
+    # rather than borrowing the human's identity.
+    agent_user_id = agent_members.turn_agent(store.engine, org_id)
     try:
-        # Stream every model turn: run_stream/stream_text stops after the first text response,
-        # so text written after a tool call (the final answer) was never sent to the user.
-        async with agent.iter(prompt, message_history=history, deps=deps) as run:
-            async for node in run:
-                if Agent.is_model_request_node(node):
-                    async with node.stream(run.ctx) as stream:
-                        async for event in stream:
-                            text = None
-                            if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
-                                text = event.part.content
-                            elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
-                                text = event.delta.content_delta
-                            if text:
-                                reply_parts.append(text)
-                                yield _chunk(completion_id, {"content": text})
-        if run.result is not None and isinstance(run.result.output, AskUser):
-            block = ask_block(run.result.output)
-            reply_parts.append(block)
-            yield _chunk(completion_id, {"content": block})
+        with (tenant_context.actor("agent", agent_user_id, on_behalf_of=uid)
+              if agent_user_id else nullcontext()):
+            # Stream every model turn: run_stream/stream_text stops after the first text response,
+            # so text written after a tool call (the final answer) was never sent to the user.
+            async with agent.iter(prompt, message_history=history, deps=deps) as run:
+                async for node in run:
+                    if Agent.is_model_request_node(node):
+                        async with node.stream(run.ctx) as stream:
+                            async for event in stream:
+                                text = None
+                                if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                                    text = event.part.content
+                                elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+                                    text = event.delta.content_delta
+                                if text:
+                                    reply_parts.append(text)
+                                    yield _chunk(completion_id, {"content": text})
+            if run.result is not None and isinstance(run.result.output, AskUser):
+                block = ask_block(run.result.output)
+                reply_parts.append(block)
+                yield _chunk(completion_id, {"content": block})
     except UnexpectedModelBehavior:
         reply_parts = ["The assistant could not complete that request. Please try again."]
         yield _chunk(completion_id, {"content": reply_parts[0]})

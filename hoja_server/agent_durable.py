@@ -17,6 +17,7 @@ import asyncio
 import contextvars
 import os
 import uuid
+from contextlib import nullcontext
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -38,6 +39,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from sqlalchemy import and_, select
 
 from hoja_server import agent_chat as chat
+from hoja_server import agent_members
 from hoja_server import tenant_context
 from hoja_server.agent_conversations import save_message, start_conversation
 from hoja_server.agent_threads import _owned as _owned_thread
@@ -242,11 +244,19 @@ async def agent_turn(turn: dict) -> dict:
                           sink=_sinks.get(DBOS.workflow_id or ""))
     principal = turn.get("principal")
     agent = CONNECTOR_AGENT if principal and CONNECTOR_AGENT is not None else AGENT
+    # F4: the turn writes as the workspace's agent, not as the person who asked.
+    # A workspace with exactly one agent member has an unambiguous agent; anything
+    # else records the human rather than guessing which agent acted.
+    agent_user_id = agent_members.turn_agent(_runtime.store.engine, turn["org_id"])
+    actor_context = (tenant_context.actor("agent", agent_user_id,
+                                          on_behalf_of=turn["user_id"])
+                     if agent_user_id else nullcontext())
     token = _principal.set(principal)
     ask = None
     try:
-        result = await agent.run(prompt, message_history=history, deps=deps,
-                                 model=MODEL_PREFIX + turn["provider_id"])
+        with actor_context:
+            result = await agent.run(prompt, message_history=history, deps=deps,
+                                     model=MODEL_PREFIX + turn["provider_id"])
         text = _reply_text(result)
         if isinstance(result.output, chat.AskUser):
             ask = chat.ask_block(result.output)

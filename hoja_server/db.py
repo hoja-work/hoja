@@ -35,7 +35,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 63
+CURRENT_SCHEMA_REVISION = 64
 
 log = logging.getLogger(__name__)
 
@@ -601,6 +601,34 @@ user = Table(
     Column("kind", String, nullable=False, server_default="human"),
 )
 
+# An agent's principal (HOJA-602-A-3, finding F4). The identity is the user row:
+# kind='agent', so every existing actor_id/assignee_id/delegate_id points at one
+# user table. This row carries only what an agent needs beyond an identity:
+# runtime capacity and the budget/working-hours policy it runs under. It is not a
+# seat: seat counting reads organization_membership, which an agent never gets.
+agent_member = Table(
+    "agent_member",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    # One agent per user row, and only that row may be delegated work.
+    Column("user_id", String, ForeignKey("user.id"), nullable=False, unique=True),
+    # How many turns/delegations may run concurrently for this agent.
+    Column("capacity", Integer, nullable=False, default=1),
+    # Credits per calendar month; NULL means the workspace's default, not unlimited.
+    Column("monthly_budget_credits", Integer),
+    # JSON document: [{start, end, days}] in the member's timezone. Opaque to the
+    # server; the runner that honors it lands with WP06/WP07.
+    Column("working_hours", Text),
+    Column("timezone", String),
+    Column("model", String),
+    # Which runner pool may execute this agent's work, e.g. "default".
+    Column("runner_pool", String),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+    Column("archived_at", String),
+)
+
 team = Table(
     "team",
     metadata,
@@ -682,6 +710,11 @@ issue = Table(
     Column("estimate", Float),
     Column("state_id", String, ForeignKey("workflow_state.id"), index=True),
     Column("assignee_id", String, ForeignKey("user.id"), index=True),
+    # The agent this task is delegated to (Linear's Issue.delegate), distinct from
+    # the assignee: the assignee is the person accountable, the delegate is the
+    # agent that may work it. Only a user of kind 'agent' in the same organization,
+    # holding an agent_member row, is accepted (revision 64).
+    Column("delegate_id", String, ForeignKey("user.id", name="fk_issue_delegate_id"), index=True),
     Column("creator_id", String, ForeignKey("user.id")),
     Column("project_id", String, index=True),
     Column("cycle_id", String),
@@ -800,6 +833,15 @@ change_event = Table(
     Column("created_at", String, nullable=False),
     # Set for per-user events (notifications): only this user is told about them.
     Column("recipient_id", String),
+    # Who caused the change (revision 64): 'human', 'bot' or 'agent'. Capture runs inside
+    # a database trigger, which cannot see a Python caller, so these are read from
+    # the transaction's actor context (hoja.actor_kind / hoja.actor_id /
+    # hoja.on_behalf_of), set by hoja_server.tenant_context.actor(). NULL on
+    # SQLite, which has no session settings and no shared-tenancy attribution.
+    Column("actor_kind", String),
+    Column("actor_id", String),
+    # For an agent turn: the human whose request the agent is acting on.
+    Column("on_behalf_of", String),
 )
 
 issue_activity = Table(
@@ -1578,6 +1620,17 @@ _CHANGE_CAPTURE = (
 )
 
 
+# Actor attribution (revision 64). A capture trigger cannot see the Python caller,
+# so the actor comes from the transaction's session settings — the same seam that
+# carries hoja.org_id for row-level security. An unset setting is '' and becomes
+# NULL. SQLite has no session settings, so it records no actor: it is the
+# single-tenant local mode, where the actor is always the local user.
+_ACTOR_PG = ("NULLIF(current_setting('hoja.actor_kind', true), ''), "
+             "NULLIF(current_setting('hoja.actor_id', true), ''), "
+             "NULLIF(current_setting('hoja.on_behalf_of', true), '')")
+_ACTOR_SQLITE = "NULL, NULL, NULL"
+
+
 def _change_trigger_sql(dialect: str, table_name: str, entity: str, pk: str,
                         team_expr: str | None, org_expr: str):
     """Return one CREATE TRIGGER statement per insert/update/delete for a table."""
@@ -1588,9 +1641,10 @@ def _change_trigger_sql(dialect: str, table_name: str, entity: str, pk: str,
         org = org_expr.format(row=row)
         pk_value = f"{row}.{pk}"
         body = (
-            "INSERT INTO change_event (organization_id, entity, entity_id, action, team_id, created_at) "
+            "INSERT INTO change_event (organization_id, entity, entity_id, action, team_id, created_at, "
+            "actor_kind, actor_id, on_behalf_of) "
             f"VALUES ({org}, '{entity}', CAST({pk_value} AS TEXT), '{label}', "
-            f"{team_value}, strftime('%Y-%m-%dT%H:%M:%fZ','now'));"
+            f"{team_value}, strftime('%Y-%m-%dT%H:%M:%fZ','now'), {_ACTOR_SQLITE});"
         )
         statements.append(
             f"CREATE TRIGGER IF NOT EXISTS trg_chg_{table_name}_{label} "
@@ -1613,15 +1667,17 @@ def _postgres_change_trigger_sql(table_name: str, entity: str, pk: str,
         f"""CREATE OR REPLACE FUNCTION {function}() RETURNS trigger LANGUAGE plpgsql AS $fn$
 BEGIN
   IF TG_OP = 'DELETE' THEN
-    INSERT INTO change_event (organization_id, entity, entity_id, action, team_id, created_at)
+    INSERT INTO change_event (organization_id, entity, entity_id, action, team_id, created_at,
+                              actor_kind, actor_id, on_behalf_of)
     VALUES ({org_old}, '{entity}', CAST({pk_old} AS TEXT), 'delete', {team_old},
-            to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"+00:00"'));
+            to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"+00:00"'), {_ACTOR_PG});
     RETURN OLD;
   END IF;
-  INSERT INTO change_event (organization_id, entity, entity_id, action, team_id, created_at)
+  INSERT INTO change_event (organization_id, entity, entity_id, action, team_id, created_at,
+                            actor_kind, actor_id, on_behalf_of)
   VALUES ({org_new}, '{entity}', CAST({pk_new} AS TEXT),
           CASE WHEN TG_OP = 'INSERT' THEN 'create' ELSE 'update' END, {team_new},
-          to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"+00:00"'));
+          to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"+00:00"'), {_ACTOR_PG});
   RETURN NEW;
 END;
 $fn$;""",
@@ -1660,9 +1716,11 @@ def _apply_issue_link_capture(conn):
                 conn.exec_driver_sql(
                     f"CREATE TRIGGER IF NOT EXISTS trg_chg_{table_name}_{op} "
                     f"AFTER {op.upper()} ON {table_name} FOR EACH ROW BEGIN "
-                    "INSERT INTO change_event (organization_id, entity, entity_id, action, team_id, created_at) "
+                    "INSERT INTO change_event (organization_id, entity, entity_id, action, team_id, created_at, "
+                    "actor_kind, actor_id, on_behalf_of) "
                     "SELECT organization_id, 'issue', id, 'update', team_id, "
-                    f"strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM issue WHERE id = {row}.issue_id; END;"
+                    f"strftime('%Y-%m-%dT%H:%M:%fZ','now'), {_ACTOR_SQLITE} "
+                    f"FROM issue WHERE id = {row}.issue_id; END;"
                 )
         elif dialect == "postgresql":
             conn.exec_driver_sql(f"""CREATE OR REPLACE FUNCTION chg_{table_name}() RETURNS trigger LANGUAGE plpgsql AS $fn$
@@ -1704,8 +1762,9 @@ def _pg_publish_body(org: str, entity: str, entity_id: str, action: str, team: s
   -- Evaluated at commit: the org (or a link's issue) may be gone by then.
   IF v_org IS NULL OR NOT EXISTS (SELECT 1 FROM organization WHERE id = v_org) THEN RETURN NULL; END IF;
   PERFORM pg_advisory_xact_lock(hashtext('hoja.change:' || v_org));
-  INSERT INTO change_event (organization_id, entity, entity_id, action, team_id, created_at, recipient_id)
-  VALUES (v_org, {entity}, {entity_id}, {action}, {team}, {_PG_CHANGE_TS}, {recipient})
+  INSERT INTO change_event (organization_id, entity, entity_id, action, team_id, created_at, recipient_id,
+                            actor_kind, actor_id, on_behalf_of)
+  VALUES (v_org, {entity}, {entity_id}, {action}, {team}, {_PG_CHANGE_TS}, {recipient}, {_ACTOR_PG})
   RETURNING seq INTO v_seq;
   PERFORM pg_notify('{CHANGE_NOTIFY_CHANNEL}',
                     json_build_array(v_seq, v_org, {entity}, {entity_id}, {action}, {team}, {recipient})::text);"""
@@ -1732,18 +1791,19 @@ def _apply_realtime_v2_capture(conn):
             conn.exec_driver_sql(
                 f"CREATE TRIGGER trg_chg_inbox_notification_{label} AFTER {op.upper()} ON inbox_notification "
                 "FOR EACH ROW BEGIN INSERT INTO change_event "
-                "(organization_id, entity, entity_id, action, team_id, created_at, recipient_id) "
+                "(organization_id, entity, entity_id, action, team_id, created_at, recipient_id, "
+                "actor_kind, actor_id, on_behalf_of) "
                 f"VALUES ({row}.organization_id, 'notification', CAST({row}.id AS TEXT), '{label}', NULL, "
-                f"strftime('%Y-%m-%dT%H:%M:%fZ','now'), {row}.recipient_id); END;")
+                f"strftime('%Y-%m-%dT%H:%M:%fZ','now'), {row}.recipient_id, {_ACTOR_SQLITE}); END;")
         # Allocating an issue number bumps team.issue_counter; that is not a team
         # change, and publishing it made every client re-bootstrap on issue create.
         conn.exec_driver_sql("DROP TRIGGER IF EXISTS trg_chg_team_update")
         conn.exec_driver_sql(
             "CREATE TRIGGER trg_chg_team_update AFTER UPDATE ON team FOR EACH ROW "
             "WHEN OLD.issue_counter IS NEW.issue_counter BEGIN INSERT INTO change_event "
-            "(organization_id, entity, entity_id, action, team_id, created_at) "
+            "(organization_id, entity, entity_id, action, team_id, created_at, actor_kind, actor_id, on_behalf_of) "
             "VALUES (NEW.organization_id, 'team', CAST(NEW.id AS TEXT), 'update', NEW.id, "
-            "strftime('%Y-%m-%dT%H:%M:%fZ','now')); END;")
+            "strftime('%Y-%m-%dT%H:%M:%fZ','now'), NULL, NULL, NULL); END;")
         return
     if conn.dialect.name != "postgresql":
         raise RuntimeError(f"Realtime capture is not implemented for {conn.dialect.name}")
@@ -2486,6 +2546,39 @@ def _apply_org_bound_secrets(conn) -> None:
         log.error("revision 63 left %s row %s unsealed: %s", table_name, row_id, error)
 
 
+def _apply_agent_identity(conn) -> None:
+    """Agent identity: agent_member, issue.delegate_id, and an actor on every change (F4).
+
+    All three are additive, so a deployment that creates no agent member, delegates
+    nothing and runs no agent turn behaves exactly as it does today. The capture
+    triggers are rebuilt on PostgreSQL because a trigger — not Python — writes
+    change_event: the actor reaches the row only through the transaction's session
+    settings, so the function bodies have to read them. SQLite has no session
+    settings, so its triggers insert NULL actor columns and local mode records no
+    attribution; that is the same single-tenant boundary row-level security stops at.
+    """
+    if "delegate_id" not in {c["name"] for c in inspect(conn).get_columns("issue")}:
+        conn.exec_driver_sql("ALTER TABLE issue ADD COLUMN delegate_id VARCHAR")
+    conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_issue_delegate_id ON issue (delegate_id)")
+    captured = {c["name"] for c in inspect(conn).get_columns("change_event")}
+    for name in ("actor_kind", "actor_id", "on_behalf_of"):
+        if name not in captured:
+            conn.exec_driver_sql(f"ALTER TABLE change_event ADD COLUMN {name} VARCHAR")
+    agent_member.create(conn, checkfirst=True)
+    if conn.dialect.name == "postgresql":
+        # The column-only ALTER above carries no constraint; add the one a fresh
+        # create_all gets, under the same name so both paths converge.
+        conn.exec_driver_sql("""
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_issue_delegate_id') THEN
+    ALTER TABLE issue ADD CONSTRAINT fk_issue_delegate_id
+      FOREIGN KEY (delegate_id) REFERENCES "user" (id);
+  END IF;
+END $$;""")
+        # Rebuild every capture function so it reads the actor settings.
+        _apply_realtime_v2_capture(conn)
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -2647,6 +2740,10 @@ _MIGRATIONS = {
     # own organization's key (HOJA-602-A-1, F5). Data-only; a database with nothing
     # legacy to rewrite is a no-op and needs no HOJA_SECRET_KEY.
     63: _apply_org_bound_secrets,
+    # 64: agent identity (HOJA-602-A-3, F4) — agent_member, issue.delegate_id, and
+    # actor_kind / actor_id / on_behalf_of on change_event. Additive; the capture
+    # functions are rebuilt so a delegated agent's writes are attributable.
+    64: _apply_agent_identity,
 }
 
 

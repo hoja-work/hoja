@@ -12,6 +12,7 @@ from sqlalchemy import insert, inspect, select
 from sqlalchemy.exc import IntegrityError
 
 from hoja_server.db import (
+    CURRENT_SCHEMA_REVISION,
     api_key,
     applied_schema_revision,
     make_engine,
@@ -58,7 +59,7 @@ def test_backfills_from_the_owner_and_then_makes_the_column_mandatory(upgraded):
     key_id = _plant_key(engine, user_id=admin["user_id"], organization_id=None)
     assert _org_of(engine, key_id) is None
     migrate(engine)
-    assert applied_schema_revision(engine) == 63
+    assert applied_schema_revision(engine) == CURRENT_SCHEMA_REVISION
     assert _org_of(engine, key_id) == admin["org_id"]
     assert _nullable(engine) is False
     # The key resolves again: the backfill took the same organization resolve_token joins on.

@@ -381,6 +381,9 @@ type Issue {
   snoozedUntilAt: DateTime
   state: WorkflowState
   assignee: User
+  "The agent this task is delegated to; separate from the assignee."
+  delegate: User
+  delegateId: ID
   creator: User
   team: Team
   project: Project
@@ -628,6 +631,8 @@ input IssueCreateInput {
   priority: Int
   stateId: String
   assigneeId: String
+  "An agent member of this workspace; delegating to anyone else is rejected."
+  delegateId: String
   projectId: String
   cycleId: String
   parentId: String
@@ -641,6 +646,7 @@ input IssueUpdateInput {
   priority: Int
   stateId: String
   assigneeId: String
+  delegateId: String
   projectId: String
   cycleId: String
   parentId: String
