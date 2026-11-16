@@ -112,9 +112,10 @@ export function AgentsSurface({workspaceName, viewerName}: {workspaceName: strin
         tab={tab}
         onTab={onTab}
         onOpenAgent={key => go(`${AGENTS_ROOT}/${encodeURIComponent(key)}`)}
-        /* A delegated task's own session view is WP06, so a queue row opens that agent's queue —
-           the run's own context in this slice, and a route that exists for a fixture key. */
-        onOpenRun={run => go(`${AGENTS_ROOT}/${encodeURIComponent(run.agentKey)}/queue`)}
+        /* A queue row opens that agent's queue: the run's own transcript lives on the agent page,
+           and the task page's inline session view is a later slice. `agentId` is the agent member
+           the adapter resolved from the session's agent user id, so the route is a real one. */
+        onOpenRun={run => go(`${AGENTS_ROOT}/${encodeURIComponent(run.agentId)}/queue`)}
       />
     );
   }

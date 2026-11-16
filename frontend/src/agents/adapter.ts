@@ -1,10 +1,11 @@
 /* The single data seam for the agent surface (HOJA-602-A-16).
  *
- * Every screen reads through `getAgentsAdapter()`. Since WP04 landed on main (1a296bc:
- * `agent_member`, `AgentMember`, `Issue.delegate`) the identity half of this surface is real: the
- * agent list and detail, create and edit, and the issue page's Delegate field are GraphQL reads and
- * writes. What is still a fixture is listed once, in `SAMPLE_SURFACES`, and each of those screens
- * renders a visible `SampleDataNotice`, so no sample row can be read as a server row.
+ * Every screen reads through `getAgentsAdapter()`. Since slice 4 every screen but the runners and
+ * Connect pair reads the server: WP04 gave agents their identity (`agent_member`, `AgentMember`,
+ * `Issue.delegate`), WP05 the audit ledger (`auditEvents`, admin-only, paged), WP06 the sessions and
+ * their transcript, and slice 4 added the workspace-wide `workspaceAgentSessions` read the run queue
+ * needs. What is still a fixture is listed once, in `SAMPLE_SURFACES`, and its screens render a
+ * visible `SampleDataNotice`, so no sample row can be read as a server row.
  *
  * The interface is the *screens'* vocabulary, not the wire vocabulary, so a resolver that names
  * things differently is a translation problem inside this file rather than an edit to six
@@ -12,14 +13,30 @@
  * doing them in the UI would hide a missing audit trail:
  *
  *   - a policy write reports the audit row the server produced, or `null` when the server does not
- *     record one (WP05 `auditEvents` is not on main yet). It never invents a row;
- *   - stopping a session is a state transition, and a session already done stays done.
+ *     record one: `agentMemberUpdate` writes a `change_event`, not an `audit_event`. It never
+ *     invents a row;
+ *   - stopping a session is a state transition the server owns, and the server (not this file)
+ *     writes the `agent.session.stop` audit event, which is read back through `auditEvents`.
  */
 
-import {seedAudit, seedConnectEnabled, seedExposuresByRunner, seedRunnerRecords, seedSessions} from './seed';
-import type {Agent, AgentDetail, AgentPolicy, AgentSession, AuditEvent, ConnectExposure, RawExposure, Runner, RunnerRecord} from './types';
+import {seedConnectEnabled, seedExposuresByRunner, seedRunnerRecords} from './seed';
+import type {
+  Agent, AgentDetail, AgentEvent, AgentPolicy, AgentSession, AuditEvent, ConnectExposure,
+  RawExposure, Runner, RunnerRecord, SessionStatus,
+} from './types';
 
 export type PolicyPatch = Partial<AgentPolicy>;
+
+/** One page of a connection, in the screens' vocabulary. The cursor is the server's own
+ * `endCursor`, handed back verbatim: a client-side offset would silently skip a row whenever a
+ * session is created between two reads. */
+export type SessionPage = {sessions: AgentSession[]; hasNextPage: boolean; endCursor: string | null};
+export type AuditPage = {events: AuditEvent[]; hasNextPage: boolean; endCursor: string | null};
+
+/** The run queue's page size. Small enough that a `Load more` control is reachable in a test,
+ * large enough that a normal queue is one read. */
+export const SESSION_PAGE = 20;
+export const AUDIT_PAGE = 25;
 
 /** The create form's fields: `AgentMemberCreateInput` minus the ones the UI does not ask for. */
 export type AgentDraft = {
@@ -49,13 +66,18 @@ export type AgentsAdapter = {
    * none. */
   updatePolicy(id: string, patch: PolicyPatch, actor: string): Promise<{policy: AgentPolicy; audit: AuditEvent | null}>;
 
-  /* -- sample-backed: no server table on main yet --------------------------------------------
-   * Session rows (WP06), audit rows (WP05) and runner/Connect rows (WP07/WP08). Marked here and on
-   * screen; see SAMPLE_SURFACES below. */
-  listSessions(sampleAgentKey?: string): Promise<AgentSession[]>;
-  listAuditEvents(filter?: {actor?: string; action?: string}): Promise<AuditEvent[]>;
-  /** Stops the running session for an agent; a finished session is returned unchanged. */
-  stopSession(sessionId: string, actor: string): Promise<{session: AgentSession; audit: AuditEvent}>;
+  /* -- server-backed: GraphQL, WP06 and slice 4 ---------------------------------------------- */
+  /** One page of the workspace run queue, newest first. `agentId` is an `AgentMember.id`, so a
+   * screen can pass the same value it uses in a route. */
+  listSessions(options?: {agentId?: string; after?: string}): Promise<SessionPage>;
+  /** Stops a run through `agentSessionStop`. A terminal session is returned unchanged by the
+   * server's machine, which refuses the event rather than pretending it happened. */
+  stopSession(sessionId: string): Promise<{session: AgentSession; audit: null}>;
+
+  /* -- server-backed: GraphQL, WP05 ---------------------------------------------------------- */
+  /** One page of the workspace audit ledger, oldest first, filtered server-side. A non-admin is
+   * refused with FORBIDDEN, which the pane states instead of drawing an empty list. */
+  listAuditEvents(filter?: {actor?: string; action?: string; after?: string}): Promise<AuditPage>;
 
   listRunners(): Promise<Runner[]>;
   getRunner(id: string): Promise<{runner: Runner; exposures: ConnectExposure[]} | null>;
@@ -68,10 +90,13 @@ export type AgentsAdapter = {
 };
 
 /* One line to grep, and the single justification for every fixture row that can reach a screen. A
- * surface leaves this list when its resolver lands, not when its screen looks finished. */
+ * surface leaves this list when its resolver lands, not when its screen looks finished.
+ *
+ * Slice 4 removed `sessions` and `audit`: WP06 stores sessions and activities, WP05 stores the
+ * ledger, and slice 4 added the workspace-wide session read. What remains is the runner lease and
+ * Connect (WP07 is REST-only today: runner_api.py), and the verifier (WP10) will join this list
+ * when its screen lands. */
 export const SAMPLE_SURFACES = {
-  sessions: {what: 'Session runs and their activity', pending: 'WP06 delegated sessions'},
-  audit: {what: 'The audit log', pending: 'WP05 auditEvents (admin-only), not on main at 1a296bc'},
   runners: {what: 'Runners and Connect', pending: 'WP07/WP08 lease and tailcat storage'},
 } as const;
 
@@ -231,6 +256,134 @@ function createInput(draft: AgentDraft): Record<string, unknown> {
   return input;
 }
 
+/* ------------------------------------------------------------------ sessions (WP06) */
+
+/* `AgentSession` in agent_sessions.py plus the issue the queue row shows. `activities` is a
+ * separate selection because it costs a query per session on the server: the queue never renders a
+ * transcript, so it never asks for one. */
+const SESSION_FIELDS = `id issueId agentUserId status state queueReason admitted trigger
+  ackedAt activatedAt endedAt createdAt updatedAt
+  issue { id identifier title priority }`;
+const ACTIVITY_FIELDS = `id kind authorKind authorId body payload signal createdAt`;
+
+type ServerActivity = {
+  id: string; kind: AgentEvent['kind']; authorKind: string; authorId: string | null;
+  body: string | null; payload: unknown; signal: string | null; createdAt: string;
+};
+
+type ServerSession = {
+  id: string; issueId: string; agentUserId: string;
+  /** Linear's seven `AgentSessionStatus` values. */
+  status: 'pending' | 'active' | 'awaitingInput' | 'complete' | 'error' | 'stale' | 'stopping';
+  /** The ten-state assignment machine (agent_sessions.py `STATES`). */
+  state: string;
+  queueReason: string[]; admitted: boolean; trigger: string;
+  ackedAt: string | null; activatedAt: string | null; endedAt: string | null; createdAt: string;
+  updatedAt: string;
+  issue: {id: string; identifier: string; title: string; priority: number | null} | null;
+  activities?: ServerActivity[];
+};
+
+/* The ten server states → the five groups the run queue draws (HOJA-602-A-16 screen 3), plus
+ * `failed`, which the server can report and the queue must not fold into "done": a run that failed
+ * verification did not finish its work. `stale` is a *waiting* session past its window, so it
+ * belongs with queued, not with the terminal states. */
+const STATUS_BY_STATE: Record<string, SessionStatus> = {
+  delegated: 'queued',
+  queued: 'queued',
+  leased: 'active',
+  running: 'active',
+  awaiting_input: 'awaiting-input',
+  verifying: 'awaiting-verification',
+  in_review: 'done',
+  done: 'done',
+  failed: 'failed',
+  cancelled: 'done',
+};
+
+function sessionStatus(state: string, status: ServerSession['status']): SessionStatus {
+  if (status === 'error') return 'failed';
+  return STATUS_BY_STATE[state] || 'queued';
+}
+
+function issueOf(row: ServerSession) {
+  return {
+    issueId: row.issueId,
+    issueIdentifier: row.issue?.identifier || row.issueId.slice(0, 8),
+    issueTitle: row.issue?.title || 'This task',
+    priority: row.issue?.priority ?? 0,
+  };
+}
+
+function fromSession(row: ServerSession, agent?: {id: string; name: string}): AgentSession {
+  const reasons = Array.isArray(row.queueReason) ? row.queueReason : [];
+  return {
+    id: row.id,
+    agentId: agent?.id || '',
+    agentName: agent?.name || 'agent',
+    agentUserId: row.agentUserId,
+    status: sessionStatus(row.state, row.status),
+    state: row.state,
+    queueReason: reasons,
+    reason: reasons.length ? reasons.join(', ') : undefined,
+    admitted: Boolean(row.admitted),
+    ...issueOf(row),
+    startedAt: row.activatedAt || row.createdAt,
+    endedAt: row.endedAt || undefined,
+  };
+}
+
+/* `AgentMember.id` for a session's agent, because that is the id the agent routes take. One extra
+ * read per page, not one per row. */
+async function membersByUserId(): Promise<Map<string, {id: string; name: string}>> {
+  const data = await request<{agentMembers: {id: string; userId: string; user: {name: string | null; displayName: string | null} | null}[]}>(
+    `query SessionAgents { agentMembers { id userId user { id name displayName } } }`);
+  const byUser = new Map<string, {id: string; name: string}>();
+  for (const row of data.agentMembers || []) {
+    byUser.set(row.userId, {id: row.id, name: row.user?.name || row.user?.displayName || row.userId});
+  }
+  return byUser;
+}
+
+function eventsOf(sessions: ServerSession[]): AgentEvent[] {
+  const events: AgentEvent[] = [];
+  for (const session of sessions) {
+    for (const activity of session.activities || []) {
+      events.push({
+        id: activity.id,
+        sessionId: session.id,
+        kind: activity.kind,
+        at: activity.createdAt,
+        text: activity.body || '',
+      });
+    }
+  }
+  return events.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+}
+
+/* ------------------------------------------------------------------ audit (WP05) */
+
+const AUDIT_FIELDS = `seq action actorKind actorId onBehalfOf targetKind targetId detail createdAt`;
+
+type ServerAudit = {
+  seq: number; action: string; actorKind: string; actorId: string;
+  onBehalfOf: string | null; targetKind: string | null; targetId: string | null;
+  detail: string | null; createdAt: string;
+};
+
+function fromAudit(row: ServerAudit): AuditEvent {
+  return {
+    id: `#${row.seq}`,
+    at: row.createdAt,
+    actor: row.actorId,
+    actorKind: row.actorKind,
+    action: row.action,
+    target: row.targetId || row.targetKind || '—',
+    detail: row.detail || '',
+    onBehalfOf: row.onBehalfOf,
+  };
+}
+
 /* ------------------------------------------------------------------ the GraphQL half */
 
 /** The WP04 half of the surface: `agentMembers`/`agentMember` reads, `agentMemberCreate` and
@@ -252,9 +405,21 @@ function createGraphqlAdapter(sample: AgentsAdapter): AgentsAdapter {
         `query Agent($id: String!) { agentMember(id: $id) ${AGENT_FIELDS} }`, {id});
       if (!data.agentMember) return null;
       const agent = fromServer(data.agentMember);
-      /* Sessions and events are WP06; the server stores none, so the page gets none. It states
-       * that instead of borrowing the run queue's fixture rows. */
-      return {agent, policy: policyOf(agent), sessions: [], events: []};
+      /* WP06 stores the runs and their transcript, so the page reads both through the workspace
+       * session connection: the transcript is nested on the session, which is where the server
+       * keeps it, so this is one read and not one per run. */
+      const runs = await request<{workspaceAgentSessions: {nodes: ServerSession[]}}>(
+        `query AgentRuns($agentId: String!) {
+           workspaceAgentSessions(agentId: $agentId, first: 50) {
+             nodes { ${SESSION_FIELDS} activities(first: 50) { ${ACTIVITY_FIELDS} } } } }`,
+        {agentId: agent.userId});
+      const rows = runs.workspaceAgentSessions?.nodes || [];
+      return {
+        agent,
+        policy: policyOf(agent),
+        sessions: rows.map(row => fromSession(row, {id: agent.id, name: agent.name})),
+        events: eventsOf(rows),
+      };
     },
 
     async createAgent(draft: AgentDraft) {
@@ -294,7 +459,63 @@ function createGraphqlAdapter(sample: AgentsAdapter): AgentsAdapter {
       void actor;
       return {policy: policyOf(fromServer(row)), audit: null};
     },
+
+    async listSessions(options) {
+      /* `workspaceAgentSessions` filters by the agent's `user.id` (it is
+       * `agent_session.agent_user_id`) while every route carries the `AgentMember.id`, so the
+       * translation happens here, once, instead of in each screen. */
+      const [members, agentUserId] = await Promise.all([
+        membersByUserId(),
+        options?.agentId ? agentUserFor(options.agentId) : Promise.resolve(null),
+      ]);
+      const data = await request<{workspaceAgentSessions: {nodes: ServerSession[]; pageInfo: {hasNextPage: boolean; endCursor: string | null}}}>(
+        `query Sessions($first: Int!, $after: String, $agentId: String) {
+           workspaceAgentSessions(first: $first, after: $after, agentId: $agentId) {
+             nodes { ${SESSION_FIELDS} }
+             pageInfo { hasNextPage endCursor } } }`,
+        {first: SESSION_PAGE, after: options?.after ?? null, agentId: agentUserId});
+      const page = data.workspaceAgentSessions;
+      return {
+        sessions: (page?.nodes || []).map(row => fromSession(row, members.get(row.agentUserId))),
+        hasNextPage: Boolean(page?.pageInfo?.hasNextPage),
+        endCursor: page?.pageInfo?.endCursor ?? null,
+      };
+    },
+
+    async stopSession(sessionId: string) {
+      const data = await request<{agentSessionStop: {success: boolean; agentSession: ServerSession | null}}>(
+        `mutation Stop($id: String!) {
+           agentSessionStop(id: $id) { success agentSession { ${SESSION_FIELDS} } } }`,
+        {id: sessionId});
+      const row = data.agentSessionStop?.agentSession;
+      if (!data.agentSessionStop?.success || !row) throw new AgentApiError('ERROR', 'The session was not stopped.');
+      /* `null`, not a fabricated row: the server writes the `agent.session.stop` event into the
+       * ledger itself, and the audit screen reads it back through `auditEvents`. */
+      return {session: fromSession(row), audit: null};
+    },
+
+    async listAuditEvents(filter) {
+      const data = await request<{auditEvents: {nodes: ServerAudit[]; pageInfo: {hasNextPage: boolean; endCursor: string | null}}}>(
+        `query Audit($first: Int!, $after: String, $actorId: String, $action: String) {
+           auditEvents(first: $first, after: $after, actorId: $actorId, action: $action) {
+             nodes { ${AUDIT_FIELDS} }
+             pageInfo { hasNextPage endCursor } } }`,
+        {first: AUDIT_PAGE, after: filter?.after ?? null,
+          actorId: filter?.actor || null, action: filter?.action || null});
+      const page = data.auditEvents;
+      return {
+        events: (page?.nodes || []).map(fromAudit),
+        hasNextPage: Boolean(page?.pageInfo?.hasNextPage),
+        endCursor: page?.pageInfo?.endCursor ?? null,
+      };
+    },
   };
+}
+
+async function agentUserFor(memberId: string): Promise<string | null> {
+  const data = await request<{agentMember: {userId: string} | null}>(
+    `query AgentUser($id: String!) { agentMember(id: $id) { userId } }`, {id: memberId});
+  return data.agentMember?.userId ?? null;
 }
 
 /* ------------------------------------------------------------------ the sample half */
@@ -326,8 +547,6 @@ export function publicRunner(record: RunnerRecord): Runner {
 /** The fixtures behind SAMPLE_SURFACES, and nothing else. Read-only for the agent screens: the
  * only writes here are the ones whose screen is itself a fixture. */
 function createSampleAdapter(): AgentsAdapter {
-  const sessions: AgentSession[] = clone(seedSessions);
-  const audit: AuditEvent[] = clone(seedAudit);
   const runners: RunnerRecord[] = clone(seedRunnerRecords);
   const exposuresByRunner: Record<string, RawExposure[]> = clone(seedExposuresByRunner);
   /* The kill switch, sample-only. `ConnectSupervisor.set_org_enabled` is an admin action owned by
@@ -364,18 +583,9 @@ function createSampleAdapter(): AgentsAdapter {
     async listAgentChoices() { return serverOnly('the delegate picker'); },
     async updatePolicy() { return serverOnly('agent edits'); },
 
-    async listSessions(sampleAgentKey?: string) {
-      return clone(sampleAgentKey
-        ? sessions.filter(s => s.agentKey.toLowerCase() === sampleAgentKey.toLowerCase())
-        : sessions);
-    },
-    async listAuditEvents(filter?: {actor?: string; action?: string}) {
-      const actor = filter?.actor?.trim().toLowerCase();
-      const action = filter?.action?.trim().toLowerCase();
-      return clone(audit.filter(e =>
-        (!actor || e.actor.toLowerCase().includes(actor)) &&
-        (!action || e.action.toLowerCase().includes(action))));
-    },
+    async listSessions() { return serverOnly('the run queue'); },
+    async listAuditEvents() { return serverOnly('the audit log'); },
+    async stopSession() { return serverOnly('stopping a session'); },
     async listRunners() {
       return clone(runners.map(publicRunner));
     },
@@ -402,23 +612,10 @@ function createSampleAdapter(): AgentsAdapter {
         id: auditId(), at: nowIso(), actor, action: 'connect.revoked', target: row.id,
         detail: `ports ${row.ports.join(',')} · peer ${row.pinnedPeer.slice(0, 15)}… · process gone`,
       };
-      audit.unshift(entry);
+      /* The returned row is what the detail screen reports. It is *not* written to the ledger:
+       * Connect is still a fixture (WP08), and `auditEvents` reads the server's table, so a fixture
+       * event could never appear there and must not pretend it would. */
       return clone({exposure: publicExposure({...row, live: false}), audit: entry});
-    },
-    async stopSession(sessionId: string, actor: string) {
-      const session = sessions.find(s => s.id === sessionId);
-      if (!session) throw new Error('That session was not found.');
-      if (session.status === 'done') {
-        return clone({session, audit: {id: auditId(), at: nowIso(), actor, action: 'session.stop', target: session.issueIdentifier, detail: 'already done'}});
-      }
-      session.status = 'done';
-      session.endedAt = nowIso();
-      const row: AuditEvent = {
-        id: auditId(), at: session.endedAt, actor, action: 'session.stop', target: session.issueIdentifier,
-        detail: `stopped ${session.id} on ${session.agentKey}`,
-      };
-      audit.unshift(row);
-      return clone({session, audit: row});
     },
   };
 }

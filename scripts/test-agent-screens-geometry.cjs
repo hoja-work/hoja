@@ -56,6 +56,12 @@ with e.begin() as c:
                                    admin=False, timezone='UTC', created_at=ts, updated_at=ts))
     c.execute(api_key.insert().values(id=new_id(), token_hash=token_hash(${JSON.stringify(memberToken)}),
                                       label='member', user_id=uid, organization_id=info['org_id'], created_at=ts))
+# Enough ledger rows to page the audit screen: the pane asks for 25 at a time, so 30 seeded
+# events (plus the stop this run performs) make the second page the one that proves paging.
+from hoja_server import audit
+for n in range(30):
+    audit.record(e, organization_id=info['org_id'], action='api_key.create', actor_kind='human',
+                 actor_id=info['user_id'], target_kind='api_key', target_id='seeded-key-%d' % n)
 e.dispose()`);
 const port = 19400 + Math.floor(Math.random() * 90);
 const base = `http://127.0.0.1:${port}`;
@@ -184,6 +190,23 @@ const focusStop = page => page.evaluate(() => {
   const docsAgent = await createMember({name: 'Docs agent', capacity: 1});
   const cyclePath = `/workspace/team/${key}/cycle/active`;
   const referencePath = `/workspace/task/${encodeURIComponent(reference.identifier)}/issue`;
+
+  /* Three delegated tasks, before the browser opens, so the run queue and the agent page are
+   * measured on server rows: delegating a task opens its session (WP06), the triage agent has two
+   * slots, so the third waits and says why. */
+  const delegateTask = async (title, delegateId, priority) => {
+    const r = await gql(`mutation($i:IssueCreateInput!){issueCreate(input:$i){success issue{id identifier
+      agentSession{id state status queueReason admitted}}}}`,
+    {i: {title, teamId: team.id, cycleId: cycle.id, delegateId, priority, stateId: st('started')}});
+    assert.ok(r.issueCreate.success && r.issueCreate.issue.agentSession, `delegation opened a session: ${title}`);
+    return r.issueCreate.issue;
+  };
+  const runOne = await delegateTask('Rotate the staging credentials', triage.userId, 2);
+  const runTwo = await delegateTask('Backfill the audit chain verifier', triage.userId, 3);
+  const runQueued = await delegateTask('Regenerate the SDK types', triage.userId, 4);
+  assert.deepEqual(runOne.agentSession.queueReason, [], 'the first delegation is admitted');
+  assert.ok(runQueued.agentSession.queueReason.includes('capacity'),
+    `the third waits on capacity: ${JSON.stringify(runQueued.agentSession.queueReason)}`);
 
   const browser = await chromium.launch({ headless: true });
   const ctx = await browser.newContext({ viewport: { width: W, height: H } });
@@ -423,14 +446,15 @@ const focusStop = page => page.evaluate(() => {
   ok(await page.getByText(/Revoked and audited/).count() > 0, 'revoke reports the audit row it wrote');
   await page.screenshot({ path: path.join(shots, `runner-detail-revoked-${W}.png`) });
 
-  /* Through the app, not a fresh load: the mock store is in-memory, so a reload would re-seed it
-   * and this would be asserting the fixture rather than the transition. The detail page has no
-   * tab strip (it is a detail page), so go back to the list the way a person does, then switch. */
+  /* Through the app, not a fresh load. Connect is still a fixture (WP08), and the audit screen now
+   * reads the server's ledger, so the fixture event this revoke reports on the detail screen must
+   * *not* appear there: a sample row may never be filed as a server record. */
   await page.click('[data-surface="runner-detail"] button.crumb-link');
   await page.waitForSelector('[data-surface="runners-list"]', { timeout: 15000 });
   await page.getByRole('tab', { name: 'Audit log' }).click();
-  await page.waitForSelector('[data-surface="audit-log"] [data-action="connect.revoked"]', { timeout: 15000 });
-  ok(true, 'the revoke is visible on the audit screen in the same session, which reads the same store');
+  await page.waitForSelector('[data-surface="audit-log"] .lin-row', { timeout: 15000 });
+  ok(!(await page.evaluate(() => Boolean(document.querySelector('[data-surface="audit-log"] [data-action="connect.revoked"]')))),
+    'audit log: reads the server ledger, so the sample Connect revoke is not filed in it');
 
   /* The kill switch is a state, not an empty list. */
   const offConnect = await browser.newContext({ viewport: { width: W, height: H } });
@@ -529,6 +553,13 @@ const focusStop = page => page.evaluate(() => {
   await delegateRow.locator('.v button').click();
   await delegateRow.getByRole('option', { name: 'Triage agent' }).click();
   await page.waitForTimeout(700);
+  /* Delegation is not just a column: WP06 opens a session for it, which is what the run queue and
+   * the agent page read. So the write above is checked for its run, not only for its delegate. */
+  const delegatedRun = (await gql(`query($id:String!){issue(id:$id){agentSession{id state queueReason admitted}}}`,
+    { id: reference.identifier })).issue.agentSession;
+  ok(Boolean(delegatedRun), 'task page: delegating through the UI opened a session the API can read back', JSON.stringify(delegatedRun));
+  ok(['delegated', 'queued'].includes(delegatedRun?.state),
+    'task page: the session is a real WP06 row, in the state machine\'s own vocabulary', JSON.stringify(delegatedRun));
   await page.screenshot({ path: path.join(shots, `issue-delegate-${W}.png`) });
 
   /* A refusal is not an empty workspace. The seeded non-admin is refused by `_require_admin`. */
@@ -563,12 +594,16 @@ const focusStop = page => page.evaluate(() => {
   ok(/admin/i.test(menuSays), 'non-admin: the Delegate menu states the refusal instead of offering nothing', menuSays.replace(/\n/g, ' '));
   await memberCtx.close();
 
-  /* The fixture surfaces say they are fixtures; the real ones do not. */
-  for (const [url, surface] of [['/workspace/agents/queue', 'run-queue'], ['/workspace/agents/audit', 'audit-log'], ['/workspace/agents/runners', 'runners-list']]) {
+  /* The fixture surface says it is a fixture; the real ones do not. */
+  await page.goto(`${base}${RUNNERS}`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-surface="runners-list"]', { timeout: 15000 });
+  ok(await page.evaluate(() => Boolean(document.querySelector('[data-surface="runners-list"] [data-sample="on"]'))),
+    'runners-list: says out loud that its rows are sample data (WP08 is not on main)');
+  for (const [url, surface] of [['/workspace/agents/queue', 'run-queue'], ['/workspace/agents/audit', 'audit-log']]) {
     await page.goto(`${base}${url}`, { waitUntil: 'networkidle' });
-    await page.waitForSelector(`[data-surface="${surface}"]`, { timeout: 15000 });
-    ok(await page.evaluate(s => Boolean(document.querySelector(`[data-surface="${s}"] [data-sample="on"]`)), surface),
-      `${surface}: says out loud that its rows are sample data`);
+    await page.waitForSelector(`[data-surface="${surface}"] .lin-row`, { timeout: 15000 });
+    ok(!(await page.evaluate(s => Boolean(document.querySelector(`[data-surface="${s}"] [data-sample="on"]`)), surface)),
+      `${surface}: carries no sample-data notice, because its rows are server rows now`);
   }
 
   /* A genuinely absent agent is stated as absent — the other half of the 403/404 distinction. */
@@ -578,7 +613,148 @@ const focusStop = page => page.evaluate(() => {
   const missingText = await page.evaluate(() => document.querySelector('[data-surface="agent-detail"] [data-state="error"]')?.innerText || '');
   ok(/no agent member/i.test(missingText), 'agent page: an unknown id says no such member exists', missingText.replace(/\n/g, ' '));
 
-  /* ---- 8. the production build ships the surface off by default ---- */
+  /* ---- 8. the run queue, the agent's runs and the audit pane read WP06 and WP05 ----
+   *
+   * Slice 4's claim is that these three screens stopped drawing fixtures. So the rows are checked
+   * against the API that wrote them, the queue's reason is the schedule check's own code, Stop goes
+   * through `agentSessionStop`, and the audit event it writes is found by paging the real ledger.
+   */
+  const apiSession = async id => (await gql(`query($id:String!){agentSession(id:$id){id state status queueReason
+    issue{identifier title} activities{kind body}}}`, { id })).agentSession;
+
+  await page.goto(`${base}/workspace/agents/queue`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-surface="run-queue"] .lin-row', { timeout: 15000 });
+  await page.waitForTimeout(500);
+  const queueRows = await page.evaluate(() => [...document.querySelectorAll('[data-surface="run-queue"] .lin-row')]
+    .map(r => ({
+      ident: r.querySelector('.ident')?.textContent || '',
+      chip: r.querySelector('[data-session-chip]')?.getAttribute('data-session-chip') || '',
+      chipTitle: r.querySelector('[data-session-chip]')?.getAttribute('title') || '',
+      text: r.innerText.replace(/\s+/g, ' '),
+    })));
+  /* `>= 3`: section 7 delegates the reference task twice more through the UI, so the queue may hold
+   * more runs by now. The three below are the ones this file created through the API, and the count
+   * is asserted to be a reading of the server, not a fixture's row count. */
+  ok(queueRows.length >= 3, 'run queue: one row per session the server stored (workspaceAgentSessions)', String(queueRows.length));
+  ok(['Rotate the staging credentials', 'Backfill the audit chain verifier', 'Regenerate the SDK types']
+    .every(title => queueRows.some(r => r.text.includes(title))),
+    'run queue: every run this file delegated through the API is a row', JSON.stringify(queueRows.map(r => r.ident)));
+  ok(!queueRows.some(r => /^AGENT-\d+$/.test(r.ident)), 'run queue: no fixture identifier is presented as a run',
+    queueRows.map(r => r.ident).join(','));
+  ok(queueRows.some(r => r.text.includes('Rotate the staging credentials')),
+    'run queue: the rows are the delegated tasks, with the issue\'s own title', JSON.stringify(queueRows.map(r => r.text)));
+  ok(queueRows.every(r => r.ident.startsWith(team.key)),
+    'run queue: a row keeps the issue identifier', queueRows.map(r => r.ident).join(','));
+  /* The reason is written beside the chip on a wide viewport and into the chip's title on a phone,
+   * which is the issue row's own responsive rule: either way it is a rendered reading, not state. */
+  ok(queueRows.some(r => r.text.includes('Regenerate the SDK types') && /capacity/i.test(`${r.text} ${r.chipTitle}`)),
+    'run queue: a queued run shows the schedule check\'s queue_reason',
+    JSON.stringify(queueRows.find(r => r.text.includes('Regenerate'))));
+  ok(queueRows.some(r => r.text.includes('Triage agent')), 'run queue: the session chip names the agent the server filed the run under');
+
+  await page.goto(`${base}/workspace/agents/${encodeURIComponent(triage.id)}`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-surface="agent-detail"] .lin-detail-main', { timeout: 15000 });
+  await page.waitForTimeout(500);
+  const timeline = await page.evaluate(() => [...document.querySelectorAll('[data-surface="agent-detail"] .lin-event[data-kind]')]
+    .map(e => e.innerText.replace(/\s+/g, ' ')));
+  const runs = await page.evaluate(() => [...document.querySelectorAll('[data-surface="agent-detail"] [data-session-id]')]
+    .map(e => ({ id: e.getAttribute('data-session-id'), state: e.getAttribute('data-session-state'), status: e.getAttribute('data-session-status') })));
+  ok(runs.length >= 3, 'agent page: lists the agent\'s sessions from the server', String(runs.length));
+  ok(timeline.length >= 3, 'agent page: the timeline is the activities the server stored (WP06), not a placeholder', String(timeline.length));
+  ok(timeline.some(t => /Starting now|Waiting/.test(t)), 'agent page: the delegation acknowledgement is on the timeline', timeline.join(' | ').slice(0, 160));
+  ok(timeline.some(t => /capacity/i.test(t)), 'agent page: the queued run\'s timeline says why it waits', timeline.join(' | ').slice(0, 160));
+  ok(await page.evaluate(() => /\d+ running/.test(document.querySelector('[data-surface="agent-detail"] .lin-detail-desc')?.textContent || '')),
+    'agent page: the run count is a reading of the session rows, not "not reported"');
+
+  /* Stop, through the mutation: the control names the run it stops, so the test follows that
+   * name rather than assuming which row the page chose. */
+  const stopButton = page.locator('[data-surface="agent-detail"] .lin-activity button.lin-subscribe-btn').first();
+  ok(await stopButton.count() === 1, 'agent page: a non-terminal run offers its Stop control');
+  const stopTarget = await page.evaluate(() => {
+    const btn = document.querySelector('[data-surface="agent-detail"] .lin-activity button.lin-subscribe-btn');
+    const ident = (btn?.textContent || '').replace(/^Stop\s+/, '').trim();
+    const row = [...document.querySelectorAll('[data-surface="agent-detail"] [data-session-id]')]
+      .find(r => (r.textContent || '').includes(ident));
+    return { id: row ? row.getAttribute('data-session-id') : null, ident };
+  });
+  ok(Boolean(stopTarget.id), 'agent page: the Stop control names a run the session list also shows', JSON.stringify(stopTarget));
+  await stopButton.click();
+  await page.waitForSelector('[role="dialog"]', { timeout: 5000 });
+  ok(await page.locator('[role="dialog"] button.danger').count() === 1, 'agent page: stopping is two-step, with a danger confirmation');
+  await page.click('[role="dialog"] button.danger');
+  await page.waitForTimeout(900);
+  const stoppedState = await apiSession(stopTarget.id);
+  ok(stoppedState.state === 'cancelled',
+    'agent page: Stop wrote agentSessionStop, and the server state is cancelled',
+    JSON.stringify({ state: stoppedState.state, status: stoppedState.status }));
+  const stoppedRow = await page.evaluate(id => {
+    const row = document.querySelector(`[data-surface="agent-detail"] [data-session-id="${id}"]`);
+    return row ? { id, status: row.getAttribute('data-session-status') } : null;
+  }, stopTarget.id);
+  ok(Boolean(stoppedRow) && stoppedRow.status === 'done',
+    'agent page: the stopped run is drawn as done, in the same page, without a reload', JSON.stringify(stoppedRow));
+  ok(await page.getByText(/agent\.session\.stop/).count() > 0,
+    'agent page: the notice names the audit event the server wrote, instead of inventing one');
+  await page.screenshot({ path: path.join(shots, `agent-detail-stopped-${W}.png`) });
+
+  /* The audit ledger: paged, filtered, and the stop is on the newest page. */
+  await page.goto(`${base}/workspace/agents/audit`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-surface="audit-log"] .lin-row', { timeout: 15000 });
+  await page.waitForTimeout(400);
+  const firstPage = await page.evaluate(() => document.querySelectorAll('[data-surface="audit-log"] .lin-row').length);
+  ok(firstPage === 25, 'audit log: the first page is one bounded page of the ledger, not the whole ledger', String(firstPage));
+  const loadNewer = page.locator('[data-surface="audit-log"] [data-action="load-more"]');
+  ok(await loadNewer.count() === 1, 'audit log: a ledger longer than one page offers the next page');
+  await loadNewer.click();
+  await page.waitForFunction(() => !document.querySelector('[data-surface="audit-log"] [data-action="load-more"]'), null, { timeout: 15000 });
+  const ledger = await page.evaluate(() => ({
+    rows: document.querySelectorAll('[data-surface="audit-log"] .lin-row').length,
+    stops: [...document.querySelectorAll('[data-surface="audit-log"] [data-action="agent.session.stop"]')]
+      .map(r => r.innerText.replace(/\s+/g, ' ')),
+  }));
+  ok(ledger.rows === 31, 'audit log: the second page appends the newest rows (30 seeded + the stop)', String(ledger.rows));
+  ok(ledger.stops.length === 1, 'audit log: the stop is in the server\'s ledger', JSON.stringify(ledger.stops));
+  ok(await page.locator(`[data-surface="audit-log"] [data-action="agent.session.stop"][data-target="${stopTarget.id}"]`).count() === 1,
+    'audit log: the row names the session it stopped', JSON.stringify(ledger.stops[0] || ''));
+  ok(await page.locator('[data-surface="audit-log"] [data-action="agent.session.stop"] [data-actor-kind="human"]').count() === 1,
+    'audit log: the row names the actor kind the credential carried');
+  await page.screenshot({ path: path.join(shots, `audit-log-paged-${W}.png`) });
+
+  /* A server-side filter, not a pass over the loaded rows: the resolver takes action and actorId. */
+  await page.selectOption('[data-surface="audit-log"] select[aria-label="Filter by action"]', 'agent.session.stop');
+  await page.waitForTimeout(700);
+  const filtered = await page.evaluate(() => ({
+    rows: document.querySelectorAll('[data-surface="audit-log"] .lin-row').length,
+    actions: [...new Set([...document.querySelectorAll('[data-surface="audit-log"] .lin-row')].map(r => r.getAttribute('data-action')))],
+    more: Boolean(document.querySelector('[data-surface="audit-log"] [data-action="load-more"]')),
+  }));
+  ok(filtered.rows === 1 && filtered.actions.length === 1 && filtered.actions[0] === 'agent.session.stop',
+    'audit log: the action filter is the resolver\'s, and it re-pages the filtered ledger', JSON.stringify(filtered));
+  ok(filtered.more === false, 'audit log: a filtered page that fits reports no further page');
+
+  /* The ledger is admin-only, and a refused read is stated as a refusal. */
+  const auditCtx = await browser.newContext({ viewport: { width: W, height: H } });
+  await auditCtx.addInitScript(t => { localStorage.setItem('hoja_token', t); localStorage.setItem('hoja_agents_surface', 'on'); }, memberToken);
+  const auditMember = await auditCtx.newPage();
+  await auditMember.goto(`${base}/workspace/agents/audit`, { waitUntil: 'networkidle' });
+  const auditRefusal = await auditMember.waitForSelector('[data-surface="audit-log"] [data-refusal="forbidden"]', { timeout: 15000 }).catch(() => null);
+  ok(Boolean(auditRefusal), 'audit log: a non-admin gets a stated refusal, not an empty ledger');
+  ok(await auditMember.evaluate(() => !document.querySelector('[data-surface="audit-log"] .lin-row')),
+    'audit log: a refused read draws no rows');
+  ok(await auditMember.evaluate(() => !document.querySelector('[data-surface="audit-log"] [data-state="empty"]')),
+    'audit log: the refusal is not the empty-ledger state');
+  ok(/admin/i.test(await auditMember.evaluate(() => document.querySelector('[data-surface="audit-log"]')?.innerText || '')),
+    'audit log: the refusal says who can read the ledger');
+  await auditMember.screenshot({ path: path.join(shots, `audit-forbidden-${W}.png`) });
+  /* The run queue is the same admin-gated read, so it refuses the same way. */
+  await auditMember.goto(`${base}/workspace/agents/queue`, { waitUntil: 'networkidle' });
+  const queueRefusal = await auditMember.waitForSelector('[data-surface="run-queue"] .lin-error', { timeout: 15000 }).catch(() => null);
+  ok(Boolean(queueRefusal), 'run queue: a non-admin gets a stated refusal, not an empty queue');
+  ok(/admin/i.test(await auditMember.evaluate(() => document.querySelector('[data-surface="run-queue"]')?.innerText || '')),
+    'run queue: the refusal says who can read every agent\'s runs');
+  await auditCtx.close();
+
+  /* ---- 9. the production build ships the surface off by default ---- */
   const offCtx = await browser.newContext({ viewport: { width: W, height: H } });
   await offCtx.addInitScript(t => { localStorage.setItem('hoja_token', t); }, token);
   const offPage = await offCtx.newPage();
@@ -590,14 +766,18 @@ const focusStop = page => page.evaluate(() => {
   await offPage.screenshot({ path: path.join(shots, `agents-disabled-${W}.png`) });
   await offCtx.close();
 
-  /* ---- 9. a 401 is never an empty list ---- */
+  /* ---- 10. a 401 is never an empty list ---- */
   /* The shell answers a refused session before the surface renders (sign-in gate), so this asserts
    * the whole path: no agents list, and no empty-workspace state claiming the workspace has none. */
   const anonCtx = await browser.newContext({ viewport: { width: W, height: H } });
   await anonCtx.addInitScript(() => { localStorage.setItem('hoja_token', 'expired-token'); localStorage.setItem('hoja_agents_surface', 'on'); });
   const anonPage = await anonCtx.newPage();
   await anonPage.goto(`${base}/workspace/agents`, { waitUntil: 'networkidle' });
-  await anonPage.waitForTimeout(700);
+  /* Wait for the gate to answer, not for a fixed delay: the shell renders the sign-in screen once
+   * `viewer` comes back refused, and a fixed wait raced that answer on a loaded machine. */
+  await anonPage.getByText(/sign in|welcome back|authentication required/i).first()
+    .waitFor({ state: 'visible', timeout: 15000 })
+    .catch(() => undefined);
   ok(await anonPage.evaluate(() => !document.querySelector('[data-surface="agents-list"]')), 'signed-out: no agent list is drawn');
   ok(await anonPage.evaluate(() => !document.querySelector('[data-surface="agents-list"] [data-state="empty"]')), 'signed-out: the workspace is not reported as having no agents');
   ok(await anonPage.evaluate(() => /sign in|welcome back|authentication required/i.test(document.body.innerText)), 'signed-out: the page asks the reader to sign in');

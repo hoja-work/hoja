@@ -5,9 +5,10 @@
  * editable rows are the exported `PropDropdown` and the sidebar's own input shape, so a property row
  * here is the same height and has the same keyboard behaviour as an issue property.
  *
- * Everything on this page is a server fact (WP04 `agentMember`) except the two things the server
- * does not store yet: session rows and their events (WP06). Those sections say so in place instead of
- * showing the run queue's fixture rows under a real agent's name.
+ * Everything on this page is a server fact: the identity and policy are WP04's `agentMember`, and
+ * the sessions and their transcript are WP06's session rows, read through the workspace session
+ * connection filtered to this agent. Stop calls `agentSessionStop`; the audit event it writes is
+ * read back on the audit screen, not invented here.
  *
  * The screen never edits its own copy of a value: it renders the policy the adapter returned, so what
  * you see is what the server stored. `updatePolicy` reports the audit row the server produced, or
@@ -26,6 +27,7 @@ import type {AgentDetail, AgentEvent, AgentPolicy, AgentSession} from './types';
 
 const EVENT_LABELS: Record<AgentEvent['kind'], string> = {
   thought: 'Thought', action: 'Action', elicitation: 'Needs input', response: 'Response', error: 'Error',
+  prompt: 'Prompt',
 };
 
 function relTime(iso?: string | null): string {
@@ -90,7 +92,11 @@ export function AgentDetailPage({agentKey, workspaceName, viewerName, onBack, on
 
   useEffect(() => { load(); }, [load]);
 
-  const active = useMemo(() => detail?.sessions.find(s => s.status === 'active' || s.status === 'awaiting-input') || null, [detail]);
+  /* Any run that has not reached a terminal state can be stopped — a *queued* run included, which
+   * is the case a person most often wants to cancel. The server's machine allows cancel from every
+   * non-terminal state (agent_sessions.transition), so the screen offers exactly that.
+   */
+  const live = useMemo(() => detail?.sessions.find(s => s.status !== 'done' && s.status !== 'failed') || null, [detail]);
   const events = useMemo(() => [...(detail?.events || [])].sort((a, b) => a.at < b.at ? -1 : 1), [detail]);
 
   const applyPolicy = (policy: AgentPolicy, auditNotice: string) => {
@@ -106,7 +112,7 @@ export function AgentDetailPage({agentKey, workspaceName, viewerName, onBack, on
       const {policy, audit} = await getAgentsAdapter().updatePolicy(agentKey, patch, viewerName);
       applyPolicy(policy, audit
         ? `Saved. The server recorded ${audit.action} by ${audit.actor}.`
-        : 'Saved. This server does not record an audit row for the change yet (WP05).');
+        : 'Saved. Agent edits land in the workspace change log; the audit ledger records session stops and the other actions it names.');
       load();
     } catch (e) {
       const message = (e as Error).message;
@@ -118,12 +124,17 @@ export function AgentDetailPage({agentKey, workspaceName, viewerName, onBack, on
   };
 
   const stop = async (session: AgentSession) => {
-    if (!(await confirmDialog(`Stop the session on ${session.issueIdentifier}?`))) return;
+    /* Two steps and a danger tone, exactly as the runner revoke is: cancel is authoritative and
+       nothing revives the run, so the confirmation has to look like what it is. */
+    if (!(await confirmDialog(`Stop the session on ${session.issueIdentifier}?`, {danger: true}))) return;
     setBusy('stop');
     try {
-      const {session: next, audit} = await getAgentsAdapter().stopSession(session.id, viewerName);
+      const {session: next} = await getAgentsAdapter().stopSession(session.id);
       setDetail(d => d ? {...d, sessions: d.sessions.map(s => s.id === next.id ? next : s)} : d);
-      setNotice(`Session stopped: ${audit.action}.`);
+      /* The server writes `agent.session.stop` into the ledger; this page says so and points at the
+       * screen that can prove it, instead of claiming a row it never received. */
+      setNotice(`Session on ${next.issueIdentifier} stopped. The server recorded agent.session.stop for it — see the audit log.`);
+      load();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -157,8 +168,9 @@ export function AgentDetailPage({agentKey, workspaceName, viewerName, onBack, on
 
   const {agent, policy, sessions} = detail;
   const status = agentStatus(agent.status);
-  /* No run count: the server stores no session row yet (WP06), so "0 running" would be a claim
-   * about the workspace, not a reading of it. Capacity is a stored column and is shown as one. */
+  /* The run count is a reading of the session rows, not a column: it counts the runs that hold one
+   * of this agent's slots right now. Capacity is a stored column and is shown as one. */
+  const running = sessions.filter(s => s.status === 'active').length;
   const caps = `${agent.capacity} ${agent.capacity === 1 ? 'slot' : 'slots'}`;
 
   return (
@@ -196,7 +208,7 @@ export function AgentDetailPage({agentKey, workspaceName, viewerName, onBack, on
             {statusGlyph(agent.status)} {agent.name}
           </h1>
           <p className="lin-detail-desc">
-            {status.name} · {agent.model || 'no model set'} · {caps} · run count not reported ·{' '}
+            {status.name} · {agent.model || 'no model set'} · {running} running · {caps} ·{' '}
             {agent.monthlyBudgetCredits === null ? 'workspace budget default' : `${agent.monthlyBudgetCredits} credits/month`} ·{' '}
             {agent.runnerPool || 'any runner pool'} · created {stamp(agent.createdAt)}
           </p>
@@ -205,12 +217,10 @@ export function AgentDetailPage({agentKey, workspaceName, viewerName, onBack, on
             <header>
               <b>Session activity</b>
               <span className="grow" />
-              {active
+              {live
                 ? <button type="button" className="lin-subscribe-btn" disabled={busy === 'stop'}
-                    onClick={() => void stop(active)}>{busy === 'stop' ? 'Stopping…' : `Stop ${active.issueIdentifier}`}</button>
-                /* Not "no session is running": the server reports no run state at all yet, and
-                 * the difference matters to a reader deciding whether to delegate to this agent. */
-                : <span className="lin-note">No run state is reported.</span>}
+                    onClick={() => void stop(live)}>{busy === 'stop' ? 'Stopping…' : `Stop ${live.issueIdentifier}`}</button>
+                : <span className="lin-note">No run is active right now.</span>}
             </header>
             {events.map(e => (
               <div key={e.id} className="lin-event" data-kind={e.kind}>
@@ -224,8 +234,8 @@ export function AgentDetailPage({agentKey, workspaceName, viewerName, onBack, on
             ))}
             {!events.length && (
               <p className="lin-note">
-                This server stores no agent events yet: session traces arrive with WP06, so there is
-                nothing here rather than a placeholder timeline.
+                No run has posted an activity for this agent yet. A delegation acknowledges itself
+                within ten seconds, so an empty timeline means nothing was ever delegated here.
               </p>
             )}
           </section>
@@ -233,18 +243,17 @@ export function AgentDetailPage({agentKey, workspaceName, viewerName, onBack, on
           <section className="lin-activity" aria-label="Sessions">
             <header><b>Sessions</b></header>
             {sessions.map(s => (
-              <div key={s.id} className="lin-event" data-session-status={s.status}>
-                <span className="lin-chip">{sessionStatusName(s.status)}</span>
+              <div key={s.id} className="lin-event" data-session-status={s.status} data-session-state={s.state} data-session-id={s.id}>
+                <span className="lin-chip" title={`state: ${s.state}${s.admitted ? ' · admitted' : ''}`}>{sessionStatusName(s.status)}</span>
                 <span><b>{s.issueIdentifier}</b> {s.issueTitle}{s.reason ? <span className="lin-note"> — {s.reason}</span> : null}</span>
                 <time>{relTime(s.endedAt || s.startedAt)}</time>
               </div>
             ))}
             {!sessions.length && (
               <p className="lin-note">
-                No delegated run is stored for this agent. Delegation itself is server-side — the
-                Delegate field on a task writes the delegate column — while run sessions are WP06.
-                Open the <button type="button" className="lin-addrow" onClick={() => onOpenQueue(agent.id)}>run queue</button> to
-                see the queue as it stands.
+                No run is stored for this agent. Setting the Delegate field on a task opens one; the{' '}
+                <button type="button" className="lin-addrow" onClick={() => onOpenQueue(agent.id)}>run queue</button> shows
+                the workspace's runs as they stand.
               </p>
             )}
           </section>

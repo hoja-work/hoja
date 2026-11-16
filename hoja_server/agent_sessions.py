@@ -32,8 +32,9 @@ import json
 
 from ariadne import MutationType, ObjectType, QueryType, gql
 from graphql import GraphQLError
-from sqlalchemy import and_, desc, select
+from sqlalchemy import and_, desc, or_, select
 
+from hoja_server import audit
 from hoja_server.db import agent_activity, agent_session, new_id, now_iso
 
 query = QueryType()
@@ -122,6 +123,10 @@ SIGNALS = ("auth", "continue", "select", "stop")
 
 ACK_DEADLINE_SECONDS = 10
 STALE_AFTER_SECONDS = 30 * 60
+
+# A page of sessions is bounded: the run queue walks the queue, it never asks for
+# every run the workspace ever made (the same rule ``audit.MAX_PAGE`` states).
+MAX_PAGE = 200
 
 # §4.2. ``heartbeat`` is absent: it renews a lease and leaves the state alone.
 TRANSITIONS = {
@@ -557,6 +562,60 @@ def parse_claim(row: dict) -> dict | None:
     return parsed if isinstance(parsed, dict) else None
 
 
+def cursor_of(row: dict) -> str:
+    """The sort key of one row, as the opaque cursor a client hands back.
+
+    ``created_at|id`` and not the timestamp alone: two delegations in the same
+    millisecond are ordinary (a burst, a test fixture), and a cursor that only knows
+    the timestamp either repeats a row or skips one at the page boundary.
+    """
+    return f"{row['created_at']}|{row['id']}"
+
+
+def _split_cursor(cursor: str) -> tuple[str, str]:
+    created_at, _, row_id = str(cursor).partition("|")
+    if not created_at or not row_id:
+        raise GraphQLError("The cursor does not name a session in this workspace.",
+                           extensions={"code": "BAD_USER_INPUT", "field": "after"})
+    return created_at, row_id
+
+
+def read_page(conn, org_id: str, *, first: int = 50, after: str | None = None,
+              status: str | None = None, agent_id: str | None = None) -> dict:
+    """One bounded page of a workspace's sessions, newest first.
+
+    The ``organization_id`` filter is explicit *and* enforced by row-level security,
+    the same belt-and-braces ``audit.read_events`` uses: under the policies the
+    predicate is applied twice rather than trusted once.
+    """
+    first = max(1, min(int(first or 50), MAX_PAGE))
+    stmt = select(agent_session).where(agent_session.c.organization_id == org_id)
+    if status:
+        stmt = stmt.where(agent_session.c.status == status)
+    if agent_id:
+        stmt = stmt.where(agent_session.c.agent_user_id == agent_id)
+    if after:
+        created_at, row_id = _split_cursor(after)
+        stmt = stmt.where(or_(
+            agent_session.c.created_at < created_at,
+            and_(agent_session.c.created_at == created_at, agent_session.c.id < row_id),
+        ))
+    rows = [dict(row) for row in conn.execute(
+        stmt.order_by(desc(agent_session.c.created_at), desc(agent_session.c.id))
+        .limit(first + 1)).mappings().all()]
+    has_next = len(rows) > first
+    rows = rows[:first]
+    return {
+        "nodes": [serialize(conn, org_id, row) for row in rows],
+        "pageInfo": {
+            "hasNextPage": has_next,
+            "hasPreviousPage": bool(after),
+            "startCursor": cursor_of(rows[0]) if rows else None,
+            "endCursor": cursor_of(rows[-1]) if rows else None,
+        },
+    }
+
+
 SDL = gql(
     """
     "Linear's AgentSessionStatus, so a client written against Linear reads the same values."
@@ -583,6 +642,8 @@ SDL = gql(
     type AgentSession {
       id: ID!
       issueId: ID!
+      "The task this run belongs to: a queue row shows the issue's own identifier, title and priority."
+      issue: Issue
       agentUserId: ID!
       agent: User
       creatorId: ID
@@ -617,6 +678,8 @@ SDL = gql(
 
     type AgentSessionPayload { success: Boolean! agentSession: AgentSession }
 
+    type AgentSessionConnection { nodes: [AgentSession!]! pageInfo: PageInfo! }
+
     extend type Issue {
       "The most recent agent session on this issue, or null when it was never delegated."
       agentSession: AgentSession
@@ -637,6 +700,9 @@ SDL = gql(
       agentSession(id: String!): AgentSession
       "Sessions for one issue, newest first."
       agentSessions(issueId: String!, first: Int): [AgentSession!]!
+      "Every session in the workspace, newest first, admin only, paged. `after` is the connection's `endCursor`; `agentId` is the agent's `user.id` (what `AgentSession.agentUserId` reports), not the `AgentMember.id`."
+      workspaceAgentSessions(first: Int = 50, after: String, status: AgentSessionStatus,
+                             agentId: String): AgentSessionConnection!
     }
 
     extend type Mutation {
@@ -686,6 +752,26 @@ def r_agent_sessions(_obj, info, issueId, first=None):  # noqa: N803 - GraphQL a
         return [serialize(conn, org, dict(r)) for r in rows]
 
 
+@query.field("workspaceAgentSessions")
+def r_workspace_agent_sessions(_obj, info, first=None, after=None, status=None,
+                               agentId=None):  # noqa: N803 - GraphQL argument name
+    """The workspace's runs, newest first, admin only, paged.
+
+    Admin-gated exactly as ``auditEvents`` is, and for the same reason: every agent's
+    run queue is a workspace-wide view, and a non-admin is *refused* rather than
+    handed an empty connection, because an empty connection reads as "nothing is
+    running".
+    """
+    store, org, uid = _ctx(info)
+    actor = store.get_user(org, uid)
+    if not actor or not actor.get("admin"):
+        raise GraphQLError("Only workspace admins can read every agent session.",
+                           extensions={"code": "FORBIDDEN"})
+    with store.engine.connect() as conn:
+        return read_page(conn, org, first=first or 50, after=after,
+                         status=status, agent_id=agentId)
+
+
 @mutation.field("agentSessionStop")
 def m_agent_session_stop(_obj, info, id, reason=None):
     store, org, uid = _ctx(info)
@@ -696,6 +782,14 @@ def m_agent_session_stop(_obj, info, id, reason=None):
         except RefusedTransitionError as exc:
             raise GraphQLError(str(exc), extensions=exc.extensions) from exc
         payload = serialize(conn, org, row)
+        issue_id = row["issue_id"]
+    # After the commit, like every other audited action: an event written inside the
+    # transaction would vanish with a rollback, and one written first would claim a
+    # stop that never happened. A stop the machine refuses never reaches this line,
+    # so a rejected stop writes no event.
+    audit.record_request(store, info, user_id=uid, action="agent.session.stop",
+                         target_kind="agent_session", target_id=id,
+                         detail={"issueId": issue_id, "reason": reason})
     return {"success": True, "agentSession": payload}
 
 
@@ -749,11 +843,44 @@ def r_agent(obj, info):
     return store.ser_user(store.get_user(org, obj["agentUserId"]), uid)
 
 
+@agent_session_type.field("issue")
+def r_session_issue(obj, info):
+    """The task a run belongs to, in the issue page's own vocabulary.
+
+    The run queue is an issue list: a row keeps the issue's identifier, title and
+    priority and adds a session chip. Carrying the issue on the session is what lets
+    that happen in one read instead of a lookup per row from the browser.
+    """
+    store, org, uid = _ctx(info)
+    return store.issue_by_id_or_identifier(org, obj["issueId"], uid)
+
+
+def serialize_activity(row: dict) -> dict:
+    """One activity in its GraphQL shape.
+
+    The storage row is snake_case and the schema's fields are camelCase, and graphql-core's default
+    resolver looks the field name up verbatim. Without this mapping ``authorKind`` (non-nullable)
+    resolved to ``None`` and the whole read failed with INTERNAL_SERVER_ERROR — so the transcript
+    was only ever readable through the four fields whose names happen to match. ``payload`` is
+    already decoded by ``activities``.
+    """
+    return {
+        "id": row["id"],
+        "kind": row["kind"],
+        "authorKind": row.get("author_kind") or "agent",
+        "authorId": row.get("author_id"),
+        "body": row.get("body"),
+        "payload": row.get("payload"),
+        "signal": row.get("signal"),
+        "createdAt": row["created_at"],
+    }
+
+
 @agent_session_type.field("activities")
 def r_activities(obj, info, first=None):
     store, org, _uid = _ctx(info)
     with store.engine.connect() as conn:
-        return activities(conn, org, obj["id"], first or 50)
+        return [serialize_activity(row) for row in activities(conn, org, obj["id"], first or 50)]
 
 
 @agent_activity_type.field("payload")

@@ -1,28 +1,39 @@
 /* Screen 6 — Audit log (HOJA-602-A-16).
  *
- * `audit_event` rows in the issue list's layout, filtered by actor or action. Grouping is the
- * shared `DisplayPanel`, which is passed the two groupings this data has (actor, action) and the
- * three fields a row can show. The rows reuse `.lin-row` so an audit row sits on the same
- * 42 px rhythm as a task row.
+ * `auditEvents` rows (WP05) in the issue list's layout, filtered by actor or action and paged with
+ * the connection's own cursor. Grouping is the shared `DisplayPanel`, which is passed the two
+ * groupings this data has (actor, action) and the three fields a row can show. The rows reuse
+ * `.lin-row` so an audit row sits on the same 42 px rhythm as a task row.
+ *
+ * Two things this screen has to get right rather than smooth over:
+ *
+ *   - the ledger is admin-only, and a refusal is stated as a refusal. An empty connection would
+ *     read as "nothing has happened", which is the opposite of what a 403 means;
+ *   - `read_events` pages *oldest first*, so this list grows forward in time: `Load newer events`
+ *     asks for the next page after the cursor, and the display order defaults to ascending to
+ *     match. Sorting the loaded page newest-first instead would make every appended row jump to
+ *     the top, which looks like a different row set rather than one more page.
  */
 
 import {useEffect, useMemo, useState} from 'react';
 import {Circle, Play, Settings2, ShieldOff, SlidersHorizontal, Square} from 'lucide-react';
 import {Avatar, IconBtn, cx} from '../graph/shared';
 import {DisplayPanel, defaultDisplay, type LinDisplay} from '../graph/tasks';
-import {getAgentsAdapter} from './adapter';
-import {AGENTS_TABS, AgentsListShell, SampleDataNotice, SearchField} from './chrome';
+import {AgentApiError, getAgentsAdapter} from './adapter';
+import {AGENTS_TABS, AgentsListShell, SearchField} from './chrome';
 import type {AuditEvent} from './types';
 
-export const AUDIT_DISPLAY: LinDisplay = {...defaultDisplay, grouping: 'action', ordering: 'updated', direction: 'desc'};
+export const AUDIT_DISPLAY: LinDisplay = {...defaultDisplay, grouping: 'action', ordering: 'created', direction: 'asc'};
 
 /* One 14 px glyph per action family. It occupies the issue row's status column: an audit row has
  * no status, and a column of identical blanks would read as a rendering bug. */
 function actionGlyph(action: string) {
   if (action.startsWith('policy.')) return <Settings2 size={14} aria-hidden="true" />;
-  if (action.startsWith('session.start')) return <Play size={14} aria-hidden="true" />;
-  if (action.startsWith('session.stop')) return <Square size={14} aria-hidden="true" />;
-  if (action.startsWith('runner.')) return <ShieldOff size={14} aria-hidden="true" />;
+  if (action.endsWith('.start')) return <Play size={14} aria-hidden="true" />;
+  if (action.endsWith('.stop') || action.endsWith('.close') || action.endsWith('.revoke')) {
+    return <Square size={14} aria-hidden="true" />;
+  }
+  if (action.startsWith('runner.') || action.startsWith('connect.')) return <ShieldOff size={14} aria-hidden="true" />;
   return <Circle size={14} aria-hidden="true" />;
 }
 
@@ -33,7 +44,7 @@ function stamp(iso: string): string {
 
 function AuditRow({event, show, selected}: {event: AuditEvent; show: {actor: boolean; target: boolean; time: boolean}; selected: boolean}) {
   return (
-    <div className={cx('lin-row', selected && 'selected')} data-action={event.action}>
+    <div className={cx('lin-row', selected && 'selected')} data-action={event.action} data-target={event.target}>
       {actionGlyph(event.action)}
       {show.actor ? <Avatar name={event.actor} size={14} title={event.actor} /> : <span />}
       <span className="ident">{event.action}</span>
@@ -41,7 +52,8 @@ function AuditRow({event, show, selected}: {event: AuditEvent; show: {actor: boo
       <span className="title" title={event.detail}>{event.detail || 'No detail recorded'}</span>
       <span className="meta">
         {show.target && <span className="hidden md:inline-flex"><span className="lin-chip" title="Target">{event.target}</span></span>}
-        {show.actor && <span className="date hidden sm:inline">{event.actor}</span>}
+        {show.actor && <span className="date hidden sm:inline" data-actor-kind={event.actorKind || undefined}
+          title={event.actorKind ? `${event.actorKind} · ${event.actor}` : event.actor}>{event.actorKind === 'agent' ? 'agent ' : ''}{event.actor.slice(0, 8)}</span>}
         {show.time && <span className="date" title={event.at}>{stamp(event.at)}</span>}
       </span>
     </div>
@@ -52,6 +64,11 @@ export function AuditPane({workspaceName, tab, onTab}: {workspaceName: string; t
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  /* A refusal is not an error message over an empty list; it is the state of the screen. */
+  const [refused, setRefused] = useState(false);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [paging, setPaging] = useState(false);
   const [q, setQ] = useState('');
   const [actor, setActor] = useState('');
   const [action, setAction] = useState('');
@@ -59,14 +76,48 @@ export function AuditPane({workspaceName, tab, onTab}: {workspaceName: string; t
   const [display, setDisplay] = useState<LinDisplay>({...AUDIT_DISPLAY});
   const [show, setShow] = useState({actor: true, target: true, time: true});
 
+  /* One page, from the top, whenever the server-side filter changes: `actorId` and `action` are
+   * the resolver's arguments, so the filter has to be part of the request rather than a pass over
+   * whatever happens to be loaded. */
   useEffect(() => {
     let live = true;
-    getAgentsAdapter().listAuditEvents()
-      .then(rows => { if (live) { setEvents(rows); setError(''); } })
-      .catch((e: Error) => { if (live) setError(e.message); })
+    setLoading(true);
+    setRefused(false);
+    getAgentsAdapter().listAuditEvents({actor, action})
+      .then(page => {
+        if (!live) return;
+        setEvents(page.events);
+        setCursor(page.endCursor);
+        setHasMore(page.hasNextPage);
+        setError('');
+      })
+      .catch((e: Error) => {
+        if (!live) return;
+        const forbidden = e instanceof AgentApiError && e.code === 'FORBIDDEN';
+        setEvents([]);
+        setHasMore(false);
+        setRefused(forbidden);
+        setError(forbidden ? '' : e.message);
+      })
       .finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
-  }, []);
+  }, [actor, action]);
+
+  const loadMore = async () => {
+    if (!cursor || paging) return;
+    setPaging(true);
+    try {
+      const page = await getAgentsAdapter().listAuditEvents({actor, action, after: cursor});
+      setEvents(current => [...current, ...page.events]);
+      setCursor(page.endCursor);
+      setHasMore(page.hasNextPage);
+      setError('');
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setPaging(false);
+    }
+  };
 
   const actors = useMemo(() => [...new Set(events.map(e => e.actor))].sort(), [events]);
   const actions = useMemo(() => [...new Set(events.map(e => e.action))].sort(), [events]);
@@ -77,8 +128,12 @@ export function AuditPane({workspaceName, tab, onTab}: {workspaceName: string; t
       (!actor || e.actor === actor) &&
       (!action || e.action === action) &&
       (!needle || `${e.actor} ${e.action} ${e.target} ${e.detail}`.toLowerCase().includes(needle)));
-    const dir = display.direction === 'desc' ? -1 : 1;
-    return rows.sort((a, b) => a.at < b.at ? dir : -dir);
+    /* `asc` is oldest first, which is the order the ledger pages in (audit.read_events walks
+     * forward by `seq`), so the default view and the `Load newer events` control agree. The
+     * comparator used to be inverted — a row sorted by the direction's sign rather than by the
+     * date — so `asc` drew the newest event at the top and the footer's promise was false. */
+    const ascending = display.direction === 'asc';
+    return rows.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0) * (ascending ? 1 : -1));
   }, [events, actor, action, q, display.direction]);
 
   const groups = useMemo(() => {
@@ -151,10 +206,18 @@ export function AuditPane({workspaceName, tab, onTab}: {workspaceName: string; t
       </> : null}
     >
       {loading && <p className="lin-loading" role="status">Loading the audit log…</p>}
-      {error && <p className="lin-error" role="alert">{error}</p>}
-      {!loading && !error && (
+      {!loading && refused && (
+        <div className="lin-empty" data-state="error" data-refusal="forbidden" role="alert">
+          <h2>Only workspace admins can read the audit log</h2>
+          <p>
+            The ledger records who asked for every audited action, so this server refuses the read
+            rather than showing you an empty log. Ask a workspace admin for access.
+          </p>
+        </div>
+      )}
+      {!loading && !refused && error && <p className="lin-error" role="alert">{error}</p>}
+      {!loading && !refused && !error && (
         <div className="lin-list">
-          <SampleDataNotice surface="audit" />
           {groups.map(g => (
             <section key={g.key} className="lin-group">
               {g.name && <header className="lin-group-head"><b>{g.name}</b><span className="count">{g.items.length}</span><span className="grow" /></header>}
@@ -162,11 +225,23 @@ export function AuditPane({workspaceName, tab, onTab}: {workspaceName: string; t
             </section>
           ))}
           {!visible.length && (
-            <div className="lin-empty">
-              <h2>No audit events match</h2>
-              <p>Clear the filters to see every event in the fixture this screen currently reads.</p>
+            <div className="lin-empty" data-state="empty">
+              <h2>{events.length ? 'No audit events match' : 'Nothing recorded yet'}</h2>
+              <p>
+                {events.length
+                  ? 'The filters and the search box narrow the events loaded so far; clear them to see the whole page.'
+                  : 'No audited action has been recorded in this workspace yet.'}
+              </p>
             </div>
           )}
+          <div className="lin-note" style={{display: 'flex', gap: 8, alignItems: 'center', padding: '8px 0'}}>
+            <span>{events.length} event{events.length === 1 ? '' : 's'} loaded, oldest first</span>
+            {hasMore && (
+              <button type="button" className="lin-btn" data-action="load-more" disabled={paging} onClick={() => void loadMore()}>
+                {paging ? 'Loading…' : 'Load newer events'}
+              </button>
+            )}
+          </div>
         </div>
       )}
     </AgentsListShell>

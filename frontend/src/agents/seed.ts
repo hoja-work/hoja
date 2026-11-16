@@ -1,11 +1,10 @@
 /* Fixture data for the surfaces whose backend is not on main (HOJA-602-A-16).
  *
- * Scope, as of WP13 slice 3: the agent *identity* half (list, detail, create/edit, delegate) is
- * read from and written to GraphQL, so no agent row lives here any more. What is still a fixture is
- * exactly what has no server table on main:
+ * Scope, as of WP13 slice 4: agents, the issue page's delegate field, session runs and their
+ * transcript, and the audit ledger are all read from GraphQL, so nothing for them lives here any
+ * more — no session rows and no audit rows. What is still a fixture is exactly what has no server
+ * read on this branch:
  *
- *   - agent sessions and their events   (WP06 delegated sessions)          → seedSessions
- *   - audit rows                        (WP05 `auditEvents`, admin-only)    → seedAudit
  *   - runners, leases and Connect       (WP07/WP08 lease and tailcat)       → seedRunnerRecords…
  *
  * Every screen that renders one of these carries a visible `SampleDataNotice`
@@ -14,29 +13,7 @@
  * screenshots the same rows on every run.
  */
 
-import type {AgentSession, AuditEvent, RawExposure, RunnerRecord} from './types';
-
-/* The run queue's rows refer to an agent by the fixture's own key ("AGENT-1"), which is not a real
- * `agent_member` id: those are UUIDs, so a queue row can never be mistaken for a server record.
- */
-
-export const seedSessions: AgentSession[] = [
-  {id: 's-1', agentId: 'ag-1', agentKey: 'AGENT-1', status: 'active', issueId: 'i-1', issueIdentifier: 'HOJA-612', issueTitle: 'Resolve the failing RLS test on a fresh Postgres', priority: 2, startedAt: '2026-11-12T21:20:00Z'},
-  {id: 's-2', agentId: 'ag-1', agentKey: 'AGENT-1', status: 'active', issueId: 'i-2', issueIdentifier: 'HOJA-618', issueTitle: 'Split the writer into ordered migrations', priority: 3, startedAt: '2026-11-12T21:34:00Z'},
-  {id: 's-3', agentId: 'ag-3', agentKey: 'AGENT-3', status: 'awaiting-input', reason: 'Needs a decision: which branch is the base?', issueId: 'i-3', issueIdentifier: 'HOJA-620', issueTitle: 'Gate the review lane on a green check', priority: 1},
-  {id: 's-4', agentId: 'ag-2', agentKey: 'AGENT-2', status: 'queued', reason: 'Waiting for a linux-x64 slot (2 of 2 busy)', issueId: 'i-4', issueIdentifier: 'HOJA-621', issueTitle: 'Document the runner lease contract', priority: 4},
-  {id: 's-5', agentId: 'ag-6', agentKey: 'AGENT-6', status: 'awaiting-verification', reason: 'Evidence attached; a human must confirm', issueId: 'i-5', issueIdentifier: 'HOJA-623', issueTitle: 'Write the release notes for the agent surface', priority: 2, startedAt: '2026-11-12T20:02:00Z'},
-  {id: 's-6', agentId: 'ag-5', agentKey: 'AGENT-5', status: 'done', issueId: 'i-6', issueIdentifier: 'HOJA-611', issueTitle: 'Reproduce the flaky login test', priority: 3, startedAt: '2026-11-11T14:00:00Z', endedAt: '2026-11-11T15:12:00Z'},
-];
-
-export const seedAudit: AuditEvent[] = [
-  {id: 'a-1', at: '2026-11-12T22:03:00Z', actor: 'Ada Lovelace', action: 'policy.update', target: 'AGENT-1', detail: 'budget 30 → 40 USD'},
-  {id: 'a-2', at: '2026-11-12T21:58:00Z', actor: 'AGENT-6', action: 'session.start', target: 'HOJA-623', detail: 'session s-5 on linux-arm64'},
-  {id: 'a-3', at: '2026-11-12T21:40:00Z', actor: 'Kevin Sanchez', action: 'policy.update', target: 'AGENT-3', detail: 'tools + gh'},
-  {id: 'a-4', at: '2026-11-12T21:12:00Z', actor: 'AGENT-1', action: 'session.stop', target: 'HOJA-610', detail: 'stopped by the owner'},
-  {id: 'a-5', at: '2026-11-12T20:05:00Z', actor: 'Luis Rincon', action: 'runner.revoke', target: 'runner-3', detail: 'lease revoked, last seen 20:04'},
-  {id: 'a-6', at: '2026-11-11T09:30:00Z', actor: 'Ada Lovelace', action: 'agent.pause', target: 'AGENT-4', detail: 'budget at 93%'},
-];
+import type {RawExposure, RunnerRecord} from './types';
 
 /* ---------------- Runners and Connect (slice 2) ----------------
  *

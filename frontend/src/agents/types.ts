@@ -52,15 +52,26 @@ export type Agent = {
   owner: {id: string; name: string} | null;
 };
 
-export type SessionStatus = 'queued' | 'active' | 'awaiting-input' | 'awaiting-verification' | 'done';
+export type SessionStatus = 'queued' | 'active' | 'awaiting-input' | 'awaiting-verification' | 'done' | 'failed';
 
 export type AgentSession = {
   id: string;
+  /** The owning agent's `AgentMember.id`: the value the agent routes take. A session reports the
+   * agent's `user.id`, so the adapter resolves the member id rather than the screen guessing it. */
   agentId: string;
-  agentKey: string;
-  status: SessionStatus;
-  /** Why it is waiting, when it is: the run queue shows this inline instead of a bare badge. */
+  /** The agent's name, for the queue row's session chip. */
+  agentName: string;
+  /** `AgentSession.agentUserId`: the `user.id` the session is filed under. */
+  agentUserId: string;
+  /** The session's own `state`, verbatim from the server's ten-state machine. The chip's title
+   * says where the run really is, which "queued" alone would flatten away. */
+  state: string;
+  /** `AgentSession.queueReason`, in the schedule check's fixed order. Empty once admitted. */
+  queueReason: string[];
+  /** `queueReason` as one sentence, which is what the row shows inline. */
   reason?: string;
+  status: SessionStatus;
+  admitted: boolean;
   issueId: string;
   issueIdentifier: string;
   issueTitle: string;
@@ -69,7 +80,8 @@ export type AgentSession = {
   endedAt?: string;
 };
 
-export type AgentEventKind = 'thought' | 'action' | 'elicitation' | 'response' | 'error';
+/** `AgentActivityType`, including `prompt`, which only a human may author (agent_sessions.py). */
+export type AgentEventKind = 'thought' | 'action' | 'elicitation' | 'response' | 'error' | 'prompt';
 
 export type AgentEvent = {
   id: string;
@@ -105,12 +117,19 @@ export type AgentDetail = {
 };
 
 export type AuditEvent = {
+  /** `#seq`: the ledger's own ordering key, which is also the page cursor's raw form. */
   id: string;
   at: string;
+  /** `audit_event.actor_id`: the person, bot or agent the server named, never a display guess. */
   actor: string;
+  /** `human` | `bot` | `agent`, as the credential named it. */
+  actorKind?: string;
   action: string;
+  /** `target_id`, or the target kind when the action names nothing narrower. */
   target: string;
   detail: string;
+  /** For an agent turn: the human whose request the agent acted on. */
+  onBehalfOf?: string | null;
 };
 
 export const AGENT_STATUSES: {id: AgentStatus; name: string; color: string; type: 'started' | 'unstarted' | 'backlog' | 'canceled'}[] = [
@@ -124,6 +143,7 @@ export const SESSION_STATUSES: {id: SessionStatus; name: string}[] = [
   {id: 'awaiting-input', name: 'Awaiting input'},
   {id: 'awaiting-verification', name: 'Awaiting verification'},
   {id: 'done', name: 'Done'},
+  {id: 'failed', name: 'Failed'},
 ];
 
 export function agentStatus(id: AgentStatus) {
