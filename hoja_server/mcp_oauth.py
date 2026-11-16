@@ -590,6 +590,17 @@ def build_server(provider: HojaOAuthProvider, public_host: str | None = None) ->
             raise ToolError("OAuth identity is invalid. " + DENY_HINT) from exc
         if not provider.store.membership_for_profile(org_id, user_id):
             raise ToolError("Active organization membership is required. " + DENY_HINT)
+        # WP12 (finding F10): an agent authenticates with its own user row, and this
+        # is where the dispatcher learns that the caller is an agent rather than the
+        # human who delegated the work. A human has no member row and gets None.
+        from hoja_server import agent_policy, tenant_context
+
+        try:
+            with tenant_context.scoped(org_id), provider.store.engine.connect() as conn:
+                member = agent_policy.member_row_for_user(conn, org_id, user_id)
+        except Exception as exc:  # fail closed: an unresolvable principal is not a human
+            raise ToolError("The caller's identity could not be resolved. " + DENY_HINT) from exc
+        agent_member_id = member["id"] if member else None
         return {
             "store": provider.store,
             "writer": provider.writer,
@@ -597,6 +608,7 @@ def build_server(provider: HojaOAuthProvider, public_host: str | None = None) ->
             "user_id": user_id,
             "identity_id": None,
             "browser_session": False,
+            "agent_member_id": agent_member_id,
             # Read-only grants must not trigger resolver-side reconciliation writes.
             "read_only": WRITE_SCOPE not in granted,
         }

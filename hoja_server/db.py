@@ -35,7 +35,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 68
+CURRENT_SCHEMA_REVISION = 69
 
 log = logging.getLogger(__name__)
 
@@ -725,6 +725,82 @@ agent_verification = Table(
     Index("ix_agent_verification_session", "organization_id", "session_id", "created_at"),
 )
 
+# What one agent may touch (revision 69, HOJA-602-A-14 / WP12). One row per agent
+# member, and its absence is a refusal rather than an inheritance of the human's
+# whole surface (finding F10): every grant is a column here, and an empty column
+# with no row at all are the same answer.
+#
+# Every list column is JSON because a grant set is read whole and replaced whole;
+# normalizing eight little join tables would buy nothing and cost a join at the
+# one place that must stay fast — the MCP dispatcher. Secret VALUES are not here:
+# this row names them, ``agent_secret`` holds them sealed, and a name that no
+# longer resolves to a sealed value is a refusal at injection time.
+agent_policy = Table(
+    "agent_policy",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("agent_member_id", String, ForeignKey("agent_member.id"), nullable=False, index=True),
+    # Monotonic per member. A lease records the version it was granted under, so
+    # a policy edited mid-run is detectable instead of silently in force (T053).
+    Column("version", Integer, nullable=False, default=1),
+    # MCP tool names from mcp_tools.READ_TOOLS / WRITE_TOOLS. Anything absent is
+    # denied; a name the registry does not know is refused at write time.
+    Column("read_tools", Text),
+    Column("write_tools", Text),
+    # Tools that additionally need a human's approval (a floor: irreversible
+    # operations are always in it, whatever this column says).
+    Column("approval_tools", Text),
+    # Scope: team and project ids. Empty means "no team, no project".
+    Column("teams", Text),
+    Column("projects", Text),
+    # False only when an operator explicitly grants the whole workspace; true is
+    # the conservative default, so a task the agent was not delegated is refused.
+    Column("tasks_delegated_only", Boolean, nullable=False, default=True),
+    # JSON [{repo, branches}]. The repo's default branch is never grantable.
+    Column("repos", Text),
+    # Connector account ids the runner may mint a short-lived token for.
+    Column("connectors", Text),
+    # Secret NAMES injected into the runner environment per lease.
+    Column("secrets", Text),
+    # Network egress allowlist on the runner: host names, addresses or CIDRs.
+    Column("egress", Text),
+    # JSON [{host, port}]: the Hoja Connect endpoints that may be exposed.
+    Column("connect", Text),
+    # Compute and cost.
+    Column("max_concurrency", Integer, nullable=False, default=1),
+    # Run-minutes per calendar month; NULL means "the member's, unmetered".
+    Column("run_minute_limit", Integer),
+    # Credits per calendar month; NULL falls back to agent_member's value.
+    Column("monthly_credit_budget", Integer),
+    # queue | stop — what happens when a limit is reached.
+    Column("budget_action", String, nullable=False, default="queue"),
+    # People: who may delegate to this agent, and who may approve its work.
+    Column("delegators", Text),
+    Column("approvers", Text),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+    Column("updated_by", String, ForeignKey("user.id")),
+    UniqueConstraint("organization_id", "agent_member_id", name="uq_agent_policy_member"),
+)
+
+# A named secret an agent policy may grant (revision 69). The value is sealed
+# with the organization's key (``secrets_box``), so a row copied into another
+# workspace cannot be opened there. The policy row names the secret; only the
+# lease payload carries the value, and only for the length of the lease.
+agent_secret = Table(
+    "agent_secret",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("name", String, nullable=False),
+    Column("secret_sealed", Text, nullable=False),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+    Column("updated_by", String, ForeignKey("user.id")),
+    UniqueConstraint("organization_id", "name", name="uq_agent_secret_name"),
+)
+
 # The transcript. Append-only: an activity is never rewritten, because a
 # transcript that can be edited is not evidence.
 agent_activity = Table(
@@ -1086,6 +1162,10 @@ agent_lease = Table(
     Column("result", Text),
     # Highest activity seq accepted, so a re-delivered batch is a no-op.
     Column("last_event_seq", Integer, nullable=False, default=0),
+    # The policy version this lease was granted under (revision 69). The runner
+    # re-checks it on every heartbeat: a policy edited mid-run cancels the lease
+    # instead of leaving the old grants in force until the work ends.
+    Column("policy_version", Integer),
     Column("finished_at", String),
     Column("lost_at", String),
     Column("lost_reason", String),
@@ -2951,6 +3031,28 @@ DO $$ BEGIN
 END $$;""")
 
 
+def _apply_agent_policy(conn) -> None:
+    """What an agent may touch (revision 69, HOJA-602-A-14 / WP12).
+
+    Additive: two new tables plus one nullable column on ``agent_lease``. A
+    workspace that never writes a policy row creates nothing and reads exactly
+    what revision 68 left, and an existing lease keeps ``policy_version`` NULL —
+    which is the honest answer ("granted before this revision") rather than a
+    version nobody recorded.
+
+    ``agent_secret.secret_sealed`` is sealed per organization by ``secrets_box``
+    and is listed in ``SEALED_COLUMNS``, so the reseal path and the tests both
+    see it; a ciphertext copied into another workspace's row cannot be opened.
+    """
+    agent_policy.create(conn, checkfirst=True)
+    agent_secret.create(conn, checkfirst=True)
+    columns = {c["name"] for c in inspect(conn).get_columns("agent_lease")}
+    if "policy_version" not in columns:
+        # Nullable, so a lease awarded by an older image keeps working and says
+        # "no version recorded" instead of claiming a policy it never checked.
+        conn.exec_driver_sql("ALTER TABLE agent_lease ADD COLUMN policy_version INTEGER")
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -3139,6 +3241,10 @@ _MIGRATIONS = {
     # is the truth, and which is what makes an unverified claim unable to reach
     # Done rather than merely unlikely to.
     68: _apply_agent_verification,
+    # 69: what an agent may touch (HOJA-602-A-14, WP12) — one policy row per
+    # agent member, the named secrets it may be given, and the policy version a
+    # lease was granted under.
+    69: _apply_agent_policy,
 }
 
 

@@ -247,6 +247,14 @@ def append_activity(conn, org_id: str, session_id: str, kind: str, *, body: str 
         raise ValueError("prompt activities are authored by a human, never by an agent")
     if signal is not None and signal not in SIGNALS:
         raise ValueError(f"unknown signal {signal!r}")
+    # WP12 (FR-035): this is the single writer of the transcript, so it is the one
+    # place a secret value can be kept out of it. An agent that echoes its
+    # environment into a thought or an action body is scrubbed here, before the row
+    # exists - a transcript that had to be cleaned afterwards would already have
+    # stored the value.
+    from hoja_server import agent_policy
+
+    body, payload = agent_policy.scrub_activity(conn, org_id, session_id, body, payload)
     at = at or now_iso()
     aid = new_id()
     conn.execute(agent_activity.insert().values(

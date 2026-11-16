@@ -37,6 +37,7 @@ from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase, FuncMetad
 from mcp.types import ToolAnnotations
 from pydantic import ConfigDict
 
+from hoja_server import agent_policy
 from hoja_server.denials import DENY_HINT
 
 log = logging.getLogger("hoja.mcp")
@@ -595,6 +596,10 @@ def _error_text(op: str, errors: list[GraphQLError]) -> str:
 
 def build_tools(schema: GraphQLSchema, principal: Callable[[bool], dict]) -> list[Tool]:
     """principal(write) -> GraphQL context for the authenticated caller; raises ToolError."""
+    # Tell the policy layer which tool names exist, so a policy cannot grant a
+    # tool this build does not serve (and a new tool is denied by default because
+    # no policy names it).
+    agent_policy.register_tools(READ_TOOLS, WRITE_TOOLS)
     tools = []
     specs = [(op, False, d) for op, d in READ_TOOLS.items()] + [(op, True, d) for op, d in WRITE_TOOLS.items()]
     for op, write, description in specs:
@@ -606,6 +611,18 @@ def build_tools(schema: GraphQLSchema, principal: Callable[[bool], dict]) -> lis
 def _make_tool(schema: GraphQLSchema, spec: _Spec, principal: Callable[[bool], dict]) -> Tool:
     async def run(args: dict) -> str:
         context = principal(spec.write)
+        # WP12 (T052): an agent principal is checked against its policy before any
+        # resolver runs, so a refusal cannot be talked past by a tool argument and
+        # nothing is read or written first. A human caller returns None here and
+        # keeps exactly the surface it had.
+        store = context.get("store") if isinstance(context, dict) else None
+        if store is not None:
+            refused = agent_policy.dispatch_check(
+                store.engine, context, spec.op,
+                write=spec.write, irreversible=spec.op in DESTRUCTIVE,
+            )
+            if refused is not None and not refused.allowed:
+                raise ToolError(agent_policy.refusal_message(spec.op, refused) + " " + DENY_HINT)
 
         def internal(query: str, variables: dict | None) -> dict:
             result = execute(schema, parse(query), variable_values=variables or {}, context_value=context)

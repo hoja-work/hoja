@@ -25,7 +25,7 @@ from hoja_server import audit
 
 logger = logging.getLogger(__name__)
 from hoja_server import extensions
-from hoja_server import agent_members
+from hoja_server import agent_members, agent_policy
 from hoja_server import permissions
 from hoja_server import store as store_module
 from hoja_server.deployment import single_org_mode
@@ -1863,7 +1863,8 @@ def build_schema():
     return make_executable_schema(
         [sdl, PROVIDER_SDL, CONVERSATION_SDL, webhooks_api.SDL, extensions_api.SDL,
          views_api.SDL, decisions_api.SDL, project_settings.SDL, permissions.SDL,
-         task_templates.SDL, sla.SDL, agent_members.SDL, agent_sessions.SDL, tasks_sdl],
+         task_templates.SDL, sla.SDL, agent_members.SDL, agent_sessions.SDL,
+         agent_policy.SDL, tasks_sdl],
         query, mutation, *task_bindables,
         model_providers.query, model_providers.mutation,
         project_settings.query, project_settings.mutation,
@@ -1881,6 +1882,7 @@ def build_schema():
         sla.sla_policy_type, sla.sla_clock_type, agent_members.agent_member_type,
         agent_sessions.query, agent_sessions.mutation,
         agent_sessions.agent_session_type, agent_sessions.agent_activity_type,
+        agent_policy.query, agent_policy.mutation, agent_policy.agent_policy_type,
         Team, Initiative, InitiativeUpdate, Issue, IssueActivity, MyIssueActivity, Project, ProjectUpdate, Comment,
         permissions.workspace_permission_type, permissions.workspace_security_policy_type,
         WorkflowState, Cycle, Attachment, GithubLink,

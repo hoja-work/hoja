@@ -47,6 +47,7 @@ from starlette.testclient import TestClient
 from hoja_server import agent_sessions, agent_verify, runner_api
 from hoja_server.app import create_app
 from hoja_server.db import (
+    CURRENT_SCHEMA_REVISION,
     agent_lease,
     agent_session,
     agent_verification,
@@ -99,7 +100,21 @@ def _create_agent(client, token, *, name="Scout", model=WORKER_MODEL, capacity=2
           }}) {{ success agentMember {{ id userId model }} }}
         }}''')
     assert "errors" not in body, body
-    return body["data"]["agentMemberCreate"]["agentMember"]
+    agent = body["data"]["agentMemberCreate"]["agentMember"]
+    # WP12: an agent with no policy may not be granted a lease (deny by default),
+    # so a fixture that wants to run one has to write the policy an operator would
+    # write. These tests are about the verifier, not about the policy's shape.
+    teams = _post(client, token, "query { teams(first: 1) { nodes { id } } }")
+    team_id = teams["data"]["teams"]["nodes"][0]["id"]
+    grant = _post(client, token, f'''
+        mutation {{
+          agentPolicyUpdate(agentMemberId: "{agent["id"]}",
+                            input: {{ teams: ["{team_id}"], maxConcurrency: {capacity} }}) {{
+            success
+          }}
+        }}''')
+    assert "errors" not in grant, grant
+    return agent
 
 
 def _create_task(client, token, team_id, *, delegate_id, title="Delegated work",
@@ -545,7 +560,9 @@ def test_a_revision_67_database_gains_the_verification_rows(tmp_path):
     assert applied_schema_revision(engine) == 67
 
     migrate(engine)
-    assert applied_schema_revision(engine) == 68
+    # The point is that an existing 67 database reaches the head, not that the head
+    # is still 68: WP12 (revision 69) added tables without touching these ones.
+    assert applied_schema_revision(engine) == CURRENT_SCHEMA_REVISION
     with engine.connect() as conn:
         assert "agent_verification" in set(inspect(conn).get_table_names())
         columns = {c["name"] for c in inspect(conn).get_columns("agent_session")}

@@ -47,6 +47,10 @@ SEALED_COLUMNS: dict[str, tuple[str, ...]] = {
     "model_provider": ("encrypted_api_key",),
     "webhook": ("secret_sealed",),
     "extension": ("secret_sealed",),
+    # HOJA-602-A-14 / WP12: a named secret an agent policy may grant. Listed here
+    # or the reseal pass would report success while this column stayed sealed to
+    # nothing. It is a revision-69 table, so no stored row can be legacy.
+    "agent_secret": ("secret_sealed",),
 }
 
 

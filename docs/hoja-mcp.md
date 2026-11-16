@@ -32,6 +32,30 @@ revoked-token rejection, and wrong-host rejection. Administrative mutations
 remain subject to Hoja resolver role checks; OAuth scopes never grant admin
 status.
 
+## Agent policy
+
+An MCP caller whose identity is an agent (`user.kind = 'agent'`) is subject to
+that agent's policy in addition to OAuth scope and resolver authorization. There
+is one row per agent member and no row means no grant: an agent with no policy
+can call no tool. `readTools` and `writeTools` are separate allowlists, and a tool
+that is irreversible (deleting, archiving, changing team membership) additionally
+needs a human's approval, which is a refusal to the agent rather than an in-band
+prompt — a run cannot wait on an approver. The check runs in the dispatcher before
+any resolver executes, so a tool argument cannot bypass it, and a refusal names
+the missing grant and is recorded as `agent.tool.call`. Human callers are
+unchanged.
+
+Admins read and write the policy with `agentPolicy`, `agentPolicyUpdate`,
+`agentSecretSet`, `agentSecretDelete` and `agentSecretNames`; every write appends
+an `audit_event` containing the before and after (and, for a secret, its name and
+never its value). A policy also covers team and project scope, repo and branch
+grants (a default branch can never be granted), connector grants, named secrets,
+runner egress and Hoja Connect endpoints, concurrency and run-minute/credit
+ceilings with a queue-or-stop action, and who may delegate or approve. The runner
+receives the secrets it may use and its egress allowlist in the lease payload for
+that lease only — never in the prompt — and those values are redacted from the
+activity stream, the audit detail and the logs.
+
 ## Task hierarchies
 
 For multi-step work, create or reuse one parent task and create actionable sub-tasks with

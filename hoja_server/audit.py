@@ -64,7 +64,15 @@ ACTIONS = frozenset({
     "agent.session.stop",
     "agent.lease.grant",
     "agent.lease.expiry",
+    # A lease the runner may not take, because the agent's policy refused it
+    # (WP12). Distinct from ``expiry``: nothing was granted and nothing lapsed.
+    "agent.lease.refuse",
     "agent.tool.call",
+    # What an agent may touch (WP12). ``agent.policy.change`` carries the before
+    # and after of the policy document; ``agent.policy.secret`` names the secret
+    # and never its value, which is not readable here by construction.
+    "agent.policy.change",
+    "agent.policy.secret",
     # Credential and connector surfaces.
     "connector.token.use",
     "api_key.create",
@@ -131,6 +139,14 @@ def record(engine, *, organization_id: str, action: str, actor_kind: str | None 
         raise AuditActorMissingError(f"refusing to audit {action} with no actor")
     if isinstance(detail, (dict, list)):
         detail = json.dumps(detail, sort_keys=True, separators=(",", ":"), default=str)
+    if detail:
+        # Defence in depth for WP12: a secret value an agent lease was given must
+        # never become readable here, even if a call site quotes a payload it was
+        # handed. Only watched secret VALUES are scrubbed — an audit detail that
+        # names a person's email is expected to keep it.
+        from hoja_server import logging_setup
+
+        detail = logging_setup.scrub_secrets(detail)
     created_at = datetime.now(timezone.utc).isoformat()
     fields = {
         "organization_id": organization_id,

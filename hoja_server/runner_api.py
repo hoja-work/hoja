@@ -49,7 +49,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from hoja_server import audit, tenant_context
+from hoja_server import agent_policy, audit, tenant_context
 from hoja_server.db import (
     agent_lease,
     agent_session,
@@ -93,6 +93,8 @@ ERROR_UNAUTHORIZED = "unauthorized"
 ERROR_BAD_PARAMS = "bad_params"
 ERROR_FENCE_MISMATCH = "fence_mismatch"
 ERROR_HARNESS_NOT_ALLOWED = "harness_not_allowed"
+# WP12: the heartbeat cancel reason when a policy changed under a live lease.
+POLICY_CHANGED = "policy_changed"
 ERROR_CANCEL_NOT_REQUESTED = "cancel_not_requested"
 ERROR_ENROLLMENT_SPENT = "enrollment_spent"
 
@@ -463,6 +465,36 @@ def _refused(conn, org_id: str, harnesses: Sequence[str]) -> list[dict[str, Any]
             for row in rows]
 
 
+def _policy_refused(conn, org_id: str, harnesses: Sequence[str]) -> list[dict[str, Any]]:
+    """Queued attempts this runner declared a harness for but the agent's policy refused.
+
+    WP12: a lease the policy will not grant would otherwise be indistinguishable
+    from "no work", and an operator would see a permanent empty queue with nothing
+    to explain it. Reporting the policy's own reason code is what makes a
+    deny-by-default policy diagnosable from the runner's side.
+    """
+    if not harnesses:
+        return []
+
+    rows = conn.execute(select(agent_lease).where(and_(
+        agent_lease.c.organization_id == org_id,
+        agent_lease.c.state == LEASE_QUEUED,
+        agent_lease.c.harness.in_(list(harnesses)),
+    )).order_by(agent_lease.c.created_at).limit(10)).mappings().all()
+    refused: list[dict[str, Any]] = []
+    for row in rows:
+        verdict = agent_policy.check_lease(conn, org_id, dict(row))
+        if not verdict.allowed:
+            refused.append({
+                "task_id": row["task_id"],
+                "harness": row["harness"],
+                "reason": verdict.refusal_code(),
+                "detail": verdict.detail,
+                "action": verdict.action,
+            })
+    return refused
+
+
 def _lease_actor(conn, lease: Mapping[str, Any]) -> tuple[str, str]:
     """Who is acting when a runner does something: the task's agent, or the runner.
 
@@ -542,19 +574,64 @@ def _claim_under_verification(conn, org_id: str, lease: Mapping[str, Any]) -> di
 
 
 def claim_lease(engine, runner_row: Mapping[str, Any]) -> dict[str, Any] | None:
-    """One non-blocking attempt at granting a lease to ``runner_row``."""
+    """One non-blocking attempt at granting a lease to ``runner_row``.
+
+    WP12 (T053) inserts the agent's policy between "there is work" and "here is a
+    lease": scope, concurrency and budget are checked against the policy row before
+    the lease is awarded, and the version granted under is recorded on the lease so
+    a later edit is detectable (see ``heartbeat_lease``). The refusal is audited
+    after the transaction commits, and nothing is granted when it happens.
+    """
+
+    granted, refusal = _claim_locked(engine, runner_row)
+    if refusal is not None:
+        agent_policy.record_refusal(
+            engine,
+            organization_id=runner_row["organization_id"],
+            actor_kind="bot",
+            actor_id=str(runner_row.get("id") or "runner"),
+            reason=str(refusal["reason"]),
+            detail={**dict(refusal.get("detail") or {}),
+                    "lease_id": refusal.get("lease_id"),
+                    "task_id": refusal.get("task_id"),
+                    "policy_action": refusal.get("action")},
+            target_id=str(refusal.get("lease_id") or ""),
+        )
+    return granted
+
+
+def _claim_locked(engine, runner_row: Mapping[str, Any]) -> tuple[dict[str, Any] | None, dict | None]:
+    """The transaction half of ``claim_lease``: (lease payload, refusal or None)."""
+
     org_id = runner_row["organization_id"]
     harnesses = _json_list(runner_row.get("harnesses"))
     stamp = _now()
     with tenant_context.scoped(org_id), engine.begin() as conn:
         if not harnesses:
-            return None
+            return None, None
         candidate = _grantable(conn, org_id, harnesses)
         if not candidate:
-            return None
+            return None, None
+        verdict = agent_policy.check_lease(conn, org_id, candidate)
+        if not verdict.allowed:
+            if verdict.action == agent_policy.STOP:
+                # 'stop' is recorded on the lease, not only refused: otherwise the
+                # same exhausted attempt is re-examined on every poll forever.
+                conn.execute(agent_lease.update().where(and_(
+                    agent_lease.c.id == candidate["id"],
+                    agent_lease.c.state == LEASE_QUEUED,
+                    agent_lease.c.fence == candidate["fence"],
+                )).values(state=LEASE_CANCELED, cancel_requested_at=now_iso(),
+                          cancel_reason=verdict.refusal_code(),
+                          lost_reason=verdict.refusal_code(), updated_at=now_iso()))
+            return None, {
+                "lease_id": candidate["id"], "task_id": candidate["task_id"],
+                "fence": candidate["fence"], "reason": verdict.refusal_code(),
+                "action": verdict.action, "detail": verdict.detail,
+            }
         lease_token = gen_token()
         until = _iso(stamp + timedelta(seconds=int(candidate["ttl_seconds"])))
-        granted = conn.execute(agent_lease.update().where(and_(
+        awarded = conn.execute(agent_lease.update().where(and_(
             agent_lease.c.id == candidate["id"],
             agent_lease.c.state == LEASE_QUEUED,
             agent_lease.c.fence == candidate["fence"],
@@ -564,22 +641,31 @@ def claim_lease(engine, runner_row: Mapping[str, Any]) -> dict[str, Any] | None:
             lease_token_hash=token_hash(lease_token),
             lease_until=until,
             granted_at=now_iso(),
+            policy_version=verdict.policy_version,
             updated_at=now_iso(),
         ))
-        if granted.rowcount != 1:
+        if awarded.rowcount != 1:
             # Another runner won the same row between our read and our write.
-            return None
+            return None, None
         lease = _row(conn, select(agent_lease).where(agent_lease.c.id == candidate["id"]))
         if lease is None:  # pragma: no cover - the row we just updated
-            return None
+            return None, None
         lease["token"] = lease_token
         org_key = conn.execute(select(organization.c.url_key).where(
             organization.c.id == org_id)).scalar()
         # The session a delegated task opened follows the lease it was queued for.
         _bind_session_to_lease(conn, org_id, lease)
+        policy = None
+        if verdict.agent_member_id:
+            view = agent_policy.view_for_member(conn, org_id, verdict.agent_member_id)
+            if view is not None:
+                # Secrets and egress travel here, in the lease payload, and never in
+                # the prompt: the prompt is the task text and lands in the transcript.
+                policy = agent_policy.lease_payload(conn, org_id, view)
     _audit_lease(engine, "agent.lease.grant", lease, runner_row,
                  detail={"fence": lease["fence"], "attempt": lease["attempt"],
-                         "harness": lease["harness"], "ttl_s": lease["ttl_seconds"]})
+                         "harness": lease["harness"], "ttl_s": lease["ttl_seconds"],
+                         "policy_version": lease.get("policy_version")})
     return {
         "lease_id": lease["id"],
         "run_id": lease["run_id"],
@@ -594,7 +680,11 @@ def claim_lease(engine, runner_row: Mapping[str, Any]) -> dict[str, Any] | None:
         "model": None,
         "labels": _json_dict(runner_row.get("labels")),
         "heartbeat_interval_s": HEARTBEAT_INTERVAL_S,
-    }
+        # WP12: what this agent may touch, and the values it may use, for this
+        # lease only.
+        "policy": policy,
+    }, None
+
 
 def _audit_lease(engine, action: str, lease: Mapping[str, Any], runner_row: Mapping[str, Any],
                  *, detail: Mapping[str, Any] | None = None,
@@ -701,6 +791,10 @@ def heartbeat_lease(engine, runner_row: Mapping[str, Any], body: Mapping[str, An
     with tenant_context.scoped(org_id):
         with engine.connect() as conn:
             lease = _resolve_lease(conn, runner_row, lease_id, fence, lease_token)
+            # WP12 (T053): a lease is granted under one policy version. If the
+            # policy changed while the work was running, the runner is told to stop
+            # rather than left holding grants a human has already withdrawn.
+            policy_drift = _policy_drift(conn, org_id, lease)
         deadline = _parse_iso(lease["lease_until"])
         if deadline is not None and deadline < _now():
             raise LeaseRequestError(409, ERROR_EXPIRED,
@@ -708,26 +802,56 @@ def heartbeat_lease(engine, runner_row: Mapping[str, Any], body: Mapping[str, An
         stamp = _iso(_now())
         ttl = int(lease["ttl_seconds"] or LEASE_TTL_S)
         extends_to = _iso(_now() + timedelta(seconds=ttl))
+        changed = {}
+        if policy_drift:
+            changed = {"cancel_requested_at": stamp, "cancel_reason": POLICY_CHANGED}
         with engine.begin() as conn:
             updated = conn.execute(agent_lease.update().where(and_(
                 agent_lease.c.id == lease["id"],
                 agent_lease.c.fence == lease["fence"],
                 agent_lease.c.state == LEASE_ACTIVE,
-            )).values(lease_until=extends_to, last_heartbeat_at=stamp, updated_at=stamp))
+            )).values(lease_until=extends_to, last_heartbeat_at=stamp, updated_at=stamp,
+                      **changed))
             if updated.rowcount != 1:
                 raise LeaseRequestError(409, ERROR_STALE_FENCE,
                                         "the lease was re-granted while this heartbeat was in flight")
     _touch_runner(engine, runner_row, stamp)
-    cancel = bool(lease.get("cancel_requested_at"))
+    cancel = bool(lease.get("cancel_requested_at")) or policy_drift
+    reason = POLICY_CHANGED if policy_drift else (
+        lease.get("cancel_reason") if cancel else None)
     return {
         "fence": lease["fence"],
         "cancel": cancel,
-        "cancel_reason": lease.get("cancel_reason") if cancel else None,
+        "cancel_reason": reason,
+        # The cancel is the instruction; the version is the evidence for why it
+        # arrived, so a runner can log which policy it was stopped by.
+        "policy_version": lease.get("policy_version"),
+        "policy_changed": policy_drift,
         "ttl_s": ttl,
         "lease_state": LEASE_ACTIVE,
         "lease_until": extends_to,
         "heartbeat_interval_s": HEARTBEAT_INTERVAL_S,
     }
+
+
+def _policy_drift(conn, org_id: str, lease: Mapping[str, Any]) -> bool:
+    """True when the agent policy changed since this lease was granted (WP12).
+
+    A lease with no recorded version predates the policy surface entirely, so it
+    cannot have drifted from a version it never had.
+    """
+
+    granted_under = lease.get("policy_version")
+    if granted_under is None:
+        return False
+    agent_user_id = agent_policy.agent_user_for_task(conn, org_id, str(lease.get("task_id") or ""))
+    if not agent_user_id:
+        return False
+    _, view = agent_policy.view_for_user(conn, org_id, agent_user_id)
+    if view is None:
+        # The policy was deleted mid-run: the grants are gone, so stop.
+        return True
+    return int(view.version) != int(granted_under)
 
 
 def _touch_runner(engine, runner_row: Mapping[str, Any], stamp: str) -> None:
@@ -771,6 +895,10 @@ def post_events(engine, runner_row: Mapping[str, Any], body: Mapping[str, Any],
                 encoded = json.dumps(payload, sort_keys=True, default=str)
                 if len(encoded.encode("utf-8")) > MAX_EVENT_BYTES:
                     continue
+                # WP12: a runner that echoes its environment must not be able to
+                # write an injected secret into the activity stream. Scrubbed before
+                # the row exists, so the value is never stored to be redacted later.
+                encoded = agent_policy.scrub_lease_text(conn, org_id, lease, encoded)
                 conn.execute(issue_activity_insert(org_id, lease["task_id"], kind, encoded))
                 accepted = max(accepted, seq)
             if accepted:
@@ -1348,4 +1476,5 @@ def runner_routes(engine) -> list[Route]:
 def _refused_for(engine, runner_row: Mapping[str, Any]) -> list[dict[str, Any]]:
     harnesses = _json_list(runner_row.get("harnesses"))
     with tenant_context.scoped(runner_row["organization_id"]), engine.connect() as conn:
-        return _refused(conn, runner_row["organization_id"], harnesses)
+        return _refused(conn, runner_row["organization_id"], harnesses) + \
+            _policy_refused(conn, runner_row["organization_id"], harnesses)
