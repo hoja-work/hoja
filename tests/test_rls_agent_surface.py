@@ -1,9 +1,14 @@
 """The agent surface under row-level security: conversations, messages, providers, keys.
 
-Two organizations and one planted key with no tenant at all, read and written
-through a restricted NOSUPERUSER NOBYPASSRLS role. A regressed bind shows up here
-as an empty result rather than as an error, which is exactly why these tables need
-to be in the RLS gate.
+Two organizations and one planted key belonging to neither of them, read and
+written through a restricted NOSUPERUSER NOBYPASSRLS role. A regressed bind shows
+up here as an empty result rather than as an error, which is exactly why these
+tables need to be in the RLS gate.
+
+The third key used to have no tenant at all. Revision 62 makes
+``api_key.organization_id`` NOT NULL (F8: a key with no organization authenticates
+nobody, so it must not exist), so the row is now a third organization's key —
+which is what the assertions were about: a tenant that is not the current one.
 """
 from __future__ import annotations
 
@@ -21,6 +26,7 @@ from hoja_server.db import (
     make_engine,
     model_provider,
     now_iso,
+    organization,
     seed_tenant,
 )
 from tests import rls_mode
@@ -51,10 +57,12 @@ def two_orgs(tmp_path):
                 provider="openai", model_id="gpt-4o-mini", base_url="https://api.example.test",
                 encrypted_api_key=f"v2:{key}-ciphertext", enabled=True, created_at=ts, updated_at=ts))
             conv[key] = cid
-        # a legacy key with no tenant at all
+        # a key of a third organization, which neither test org may see
+        conn.execute(organization.insert().values(
+            id="other-org", name="Other", url_key="other", created_at=ts, updated_at=ts))
         conn.execute(api_key.insert().values(
-            id="legacy-key", token_hash="deadbeef" + uuid.uuid4().hex, label="legacy",
-            access="read_write", user_id=None, organization_id=None, created_at=ts))
+            id="other-org-key", token_hash="deadbeef" + uuid.uuid4().hex, label="other",
+            access="read_write", user_id=None, organization_id="other-org", created_at=ts))
     restricted = make_engine(kwargs["database_url"])
     yield owner, restricted, a, b, conv
     restricted.dispose()
@@ -80,8 +88,8 @@ def test_org_a_cannot_read_org_b_agent_model_or_key_rows(two_orgs):
             model_provider.c.id == "prov-b")).first() is None
         assert conn.execute(select(api_key.c.id).where(
             api_key.c.organization_id == b["org_id"])).first() is None
-        # legacy NULL-tenant key is invisible to a bound tenant
-        assert conn.execute(select(api_key.c.id).where(api_key.c.id == "legacy-key")).first() is None
+        # another organization's key is invisible to a bound tenant
+        assert conn.execute(select(api_key.c.id).where(api_key.c.id == "other-org-key")).first() is None
 
 
 def test_empty_and_unbound_contexts_see_nothing(two_orgs):
@@ -92,12 +100,12 @@ def test_empty_and_unbound_contexts_see_nothing(two_orgs):
                 assert conn.execute(select(func.count()).select_from(table)).scalar() == 0, table.name
 
 
-def test_system_context_sees_every_tenant_and_the_legacy_row(two_orgs):
+def test_system_context_sees_every_tenant_and_the_third_org_row(two_orgs):
     _owner, restricted, a, b, _conv = two_orgs
     with tc.system(), restricted.connect() as conn:
         assert _count(conn, model_provider, a["org_id"]) == 1
         assert _count(conn, model_provider, b["org_id"]) == 1
-        assert conn.execute(select(api_key.c.id).where(api_key.c.id == "legacy-key")).first() is not None
+        assert conn.execute(select(api_key.c.id).where(api_key.c.id == "other-org-key")).first() is not None
 
 
 def test_org_a_cannot_write_into_org_b(two_orgs):

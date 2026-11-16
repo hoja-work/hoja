@@ -3161,8 +3161,12 @@ def schema_is_current(engine: Engine) -> bool:
     return applied_schema_revision(engine) == CURRENT_SCHEMA_REVISION
 
 
-def migrate(engine: Engine) -> None:
-    """Create a fresh schema and apply every outstanding ordered revision."""
+def migrate(engine: Engine) -> dict | None:
+    """Create a fresh schema, apply every outstanding ordered revision, bind RLS.
+
+    Returns the row-level-security summary (``rls_policy.heal``) on PostgreSQL and
+    None elsewhere, so the caller can report which tables this run bound.
+    """
     current = applied_schema_revision(engine)
     if current == 0:
         metadata.create_all(engine)
@@ -3175,6 +3179,52 @@ def migrate(engine: Engine) -> None:
         with engine.begin() as conn:
             _MIGRATIONS[revision](conn)
             conn.execute(schema_revision.insert().values(revision=revision, applied_at=now_iso()))
+    return bind_rls(engine)
+
+
+def bind_rls(engine: Engine) -> dict | None:
+    """Install RLS on every tenant table, including tables a revision just added.
+
+    A revision that creates a table creates it unbound, and enabling RLS on it
+    needs the table's owner; ``infra/scripts/hoja-rls apply`` has always been able
+    to do this, but it is an operator command nobody ran *after* a deploy, so a
+    shared-tier database accumulated tables with no policy and ``/ready`` refused
+    the whole deployment. The migration container holds the owner credential and
+    runs before the app that depends on it starts (``docker-compose.yml``), so it
+    is the one place in a deployed stack that can close that window for good.
+
+    Idempotent, and it never decides the schema: it reads the same classification
+    ``hoja-rls`` reads from the catalog (see ``rls_policy``). A table this role
+    does not own is reported, not altered; the readiness gate is what refuses the
+    deployment in that case.
+    """
+    if engine.dialect.name != "postgresql":
+        return None
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from hoja_server import rls_policy
+
+    try:
+        with engine.begin() as conn:
+            summary = rls_policy.heal(conn)
+    except SQLAlchemyError as exc:
+        # Stop the deploy here instead of starting an app that /ready will refuse
+        # ninety seconds later: a lock timeout or a missing privilege is
+        # retryable, and the previous release is still serving while it is fixed.
+        raise RuntimeError(
+            "row-level security could not be installed on this database, so the "
+            f"app would refuse to become ready: {getattr(exc, 'orig', exc)}"
+        ) from exc
+    if summary["unresolved"]:
+        log.warning(
+            "row-level security: %s table(s) have no tenant classification and are "
+            "left unbound: %s (classify them in infra/rls/global-tables.txt or give "
+            "them an organization_id)", len(summary["unresolved"]), ", ".join(summary["unresolved"]))
+    if summary["skipped"]:
+        log.warning(
+            "row-level security: %s table(s) are not owned by this role, so their "
+            "policies were not installed: %s", len(summary["skipped"]), ", ".join(summary["skipped"]))
+    return summary
 
 
 def seed_states_for_team(conn, org_id: str, team_id: str) -> str:

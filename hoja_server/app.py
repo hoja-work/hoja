@@ -2866,9 +2866,13 @@ def create_app(
                     {"status": "unavailable", "reason": "schema_outdated"},
                     status_code=503,
                 )
-            failure = tenant_context.probe(engine)
-            if failure:
-                return JSONResponse({"status": "unavailable", "reason": failure}, status_code=503)
+            # A report names the reason (a stable token) and the detail (the role
+            # or every table that made it fail), so a deployment that is not bound
+            # fails closed here instead of serving traffic with inert policies —
+            # and says why, which is what a rolling deploy needs in its logs.
+            report = tenant_context.probe_report(engine)
+            if report:
+                return JSONResponse({"status": "unavailable", **report}, status_code=503)
         except Exception:
             return JSONResponse({"status": "unavailable"}, status_code=503)
         return JSONResponse({"status": "ready"})

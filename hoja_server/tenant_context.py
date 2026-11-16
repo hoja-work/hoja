@@ -32,6 +32,7 @@ policies (see tests/rls_mode.py).
 """
 from __future__ import annotations
 
+import os
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, Awaitable, Iterator, TypeVar
@@ -152,18 +153,58 @@ def scoped(org: str | None) -> Iterator[None]:
         _org.reset(org_token)
 
 
-def probe(engine: Engine) -> str | None:
-    """Prove tenant isolation is working; return the failure reason, or None.
+def _strict_report(engine: Engine) -> dict[str, Any] | None:
+    """The deployment-side verdict: is row-level security binding this connection?
+
+    Only consulted when ``HOJA_REQUIRE_RLS`` is set, which the production compose
+    file does and local development does not. Reads the same catalog and role
+    facts as ``infra/scripts/hoja-rls check``, but with the app's own credentials,
+    so a deployment that skipped — or predates — the operator command cannot
+    report itself ready.
+    """
+    from hoja_server import rls_policy
+
+    if engine.dialect.name != "postgresql":
+        return {
+            "reason": rls_policy.RLS_UNSUPPORTED,
+            "detail": "HOJA_REQUIRE_RLS is set but this deployment is not PostgreSQL; "
+                      "row-level security only exists on PostgreSQL",
+        }
+    with system(), engine.connect() as conn:
+        report = rls_policy.report(conn)
+    if report["bound"]:
+        return None
+    # Every failing table, with its own reason, in the body: a 503 that only said
+    # "rls_disabled" is what turned a deploy into a 90-second timeout with the
+    # reason lost in a recreated container's logs.
+    return {
+        "reason": report["reason"],
+        "detail": report["detail"],
+        "gaps": report["gaps"],
+        "role": report["role"],
+        "tables": [row for row in report["tables"] if row["reason"]],
+    }
+
+
+def probe_report(engine: Engine) -> dict[str, Any] | None:
+    """Prove tenant isolation is working; return a report to serve, or None.
 
     A tenant-bound read must see its own organization. Under row-level security
     it must see no other organization, and a read with no context must see
-    nothing. With HOJA_REQUIRE_RLS set, row-level security must be enabled.
+    nothing. With HOJA_REQUIRE_RLS set it must also be *bound*: the role must not
+    bypass policies (superuser / BYPASSRLS), must own no table (owners skip
+    unforced policies), and every tenant table must carry both RLS and its
+    policy — not only ``organization``.
     """
-    import os
-
     from sqlalchemy import func, select, text
 
     from hoja_server.db import organization
+
+    strict = bool(os.environ.get("HOJA_REQUIRE_RLS"))
+    if strict:
+        report = _strict_report(engine)
+        if report:
+            return report
 
     count = select(func.count()).select_from(organization)
     with system(), engine.connect() as conn:
@@ -173,20 +214,29 @@ def probe(engine: Engine) -> str | None:
         with system(), engine.connect() as conn:
             rls = bool(conn.execute(text(
                 "SELECT relrowsecurity FROM pg_class WHERE oid = 'organization'::regclass")).scalar())
-    if os.environ.get("HOJA_REQUIRE_RLS") and not rls:
-        return "rls_disabled"
+    if strict and not rls:
+        return {"reason": "rls_disabled", "detail": "row-level security is off on organization"}
     if org_id is None:
         return None
     with scoped(org_id), engine.connect() as conn:
         if conn.execute(count.where(organization.c.id == org_id)).scalar_one() != 1:
-            return "tenant_read_failed"
+            return {"reason": "tenant_read_failed",
+                    "detail": "a tenant-bound read could not see its own organization"}
         if rls and conn.execute(count.where(organization.c.id != org_id)).scalar_one() != 0:
-            return "tenant_isolation_failed"
+            return {"reason": "tenant_isolation_failed",
+                    "detail": "a tenant-bound read saw another organization"}
     if rls:
         with scoped(None), engine.connect() as conn:
             if conn.execute(count).scalar_one() != 0:
-                return "fail_open"
+                return {"reason": "fail_open",
+                        "detail": "an unbound read saw rows, so the policies fail open"}
     return None
+
+
+def probe(engine: Engine) -> str | None:
+    """The failure reason ``/ready`` reports, or None. ``probe_report`` for detail."""
+    report = probe_report(engine)
+    return report["reason"] if report else None
 
 
 async def as_system(awaitable: Awaitable[T]) -> T:

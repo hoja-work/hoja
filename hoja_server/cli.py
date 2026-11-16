@@ -4,11 +4,14 @@ Subcommands:
   serve   Start the GraphQL backend.
   seed    Create an organization, user, team, states, and token.
   token   Mint a token for an existing organization user.
+  rls-report  Print the per-table row-level-security verdict /ready enforces.
   connector-mcp  Serve the connector MCP tools (Google Workspace, Notion and Slack) on HOJA_CONNECTOR_MCP_URL.
 """
 from __future__ import annotations
 
 import argparse
+import json
+import logging
 import sys
 
 from sqlalchemy.exc import IntegrityError
@@ -61,6 +64,7 @@ def _cmd_serve(args):
     # access log (which would print ?code= and ?t= from the request line).
     configure_logging(args.security_log_level)
     target = _database_target(args)
+    _warn_if_unbound(target)
     print(f"hoja-serve v{__version__}")
     print(f"  tenant : {args.tenant}")
     print(f"  db     : {display_database_target(target)}")
@@ -83,13 +87,97 @@ def _cmd_migrate(args):
     target = _database_target(args)
     engine = make_engine(target)
     try:
-        migrate(engine)
+        summary = migrate(engine)
     except (RuntimeError, IntegrityError) as exc:
         print(f"Migration failed: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
     finally:
         engine.dispose()
     print(f"Migrated database at {display_database_target(target)}")
+    if summary:
+        print(f"  rls    : {summary['bound']} tenant table(s) bound by hoja_tenant in "
+              f"{', '.join(summary['schemas']) or 'no schema'}, {len(summary['skipped'])} skipped "
+              f"(not owned by this role), {len(summary['unresolved'])} unclassified")
+        for name in summary["skipped"]:
+            print(f"  skipped: {name} (owned by another role; /ready will refuse it)")
+        for name in summary["unresolved"]:
+            print(f"  unclassified: {name} (no organization_id and no tenant foreign key; "
+                  f"classify it in rls/global-tables.txt or /ready will refuse it)",
+                  file=sys.stderr)
+
+
+def _warn_if_unbound(target: str) -> None:
+    """Say in this container's log why /ready is about to refuse the deployment.
+
+    A readiness probe answers 503 and whatever runs the deploy may not keep the
+    body (a recreated container took the logs with it once), so the reason is also
+    emitted here, once, before the server starts serving.
+    """
+    import os
+
+    if not os.environ.get("HOJA_REQUIRE_RLS"):
+        return
+    from hoja_server import rls_policy
+
+    log = logging.getLogger("hoja_server.rls")
+    engine = None
+    try:
+        engine = make_engine(target)
+        if engine.dialect.name != "postgresql":
+            log.warning("rls: HOJA_REQUIRE_RLS is set but this deployment is not PostgreSQL; "
+                        "/ready will answer 503 %s", rls_policy.RLS_UNSUPPORTED)
+            return
+        with engine.connect() as conn:
+            report = rls_policy.report(conn)
+    except Exception as exc:  # never stop the server from starting over a diagnostic
+        log.warning("rls: could not read the catalog before startup: %s", type(exc).__name__)
+        return
+    finally:
+        if engine is not None:
+            engine.dispose()
+    if report["bound"]:
+        log.info("rls: every tenant table is bound by %s", rls_policy.RLS_POLICY)
+        return
+    log.error("rls: /ready will answer 503 %s: %s", report["reason"], report["detail"])
+    for gap in report["gaps"][1:]:
+        log.error("rls: also %s", gap)
+
+
+def _cmd_rls_report(args):
+    """One-shot, read-only: print the per-table verdict ``/ready`` enforces.
+
+    Only catalog SELECTs are issued, so this is safe against a production database
+    with the app's own credentials. Exit 0 when bound, 1 when not, 2 when the
+    deployment has no row-level security at all (not PostgreSQL).
+    """
+    from hoja_server import rls_policy
+
+    target = _database_target(args)
+    engine = make_engine(target)
+    try:
+        if engine.dialect.name != "postgresql":
+            print(f"{rls_policy.RLS_UNSUPPORTED}: row-level security only exists on "
+                  f"PostgreSQL ({display_database_target(target)})", file=sys.stderr)
+            raise SystemExit(2)
+        with engine.connect() as conn:
+            report = rls_policy.report(conn)
+    finally:
+        engine.dispose()
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        role = report["role"]
+        print(f"database: {display_database_target(target)}")
+        print(f"role    : {role['name']} superuser={role['superuser']} bypassrls={role['bypassrls']}")
+        print("verdict : " + ("BOUND" if report["bound"] else f"NOT BOUND ({report['reason']})"))
+        for gap in report["gaps"]:
+            print(f"  gap   : {gap}")
+        print()
+        print(f"{'table':<32} {'kind':<13} {'rls':<5} {'policy':<6} {'owner':<16} reason")
+        for row in report["tables"]:
+            print(f"{row['table']:<32} {row['kind']:<13} {row['rls']!s:<5} "
+                  f"{row['policy']!s:<6} {row['owner']:<16} {row['reason'] or ''}")
+    raise SystemExit(0 if report["bound"] else 1)
 
 
 def _cmd_seed(args):
@@ -333,6 +421,16 @@ def main(argv=None):
     rs.add_argument("--dry-run", action="store_true",
                     help="open and count what would be rewritten, without writing")
     rs.set_defaults(func=_cmd_reseal_secrets)
+
+    rr = sub.add_parser(
+        "rls-report",
+        help="print the per-table row-level-security verdict /ready enforces (read-only)",
+    )
+    rr.add_argument("--tenant", default="default")
+    rr.add_argument("--database-url", default=None, help="explicit SQLAlchemy database URL")
+    rr.add_argument("--db", default=None)
+    rr.add_argument("--json", action="store_true", help="print the report as JSON")
+    rr.set_defaults(func=_cmd_rls_report)
 
     mt = sub.add_parser("merge-tenant", help="copy a dedicated tenant database into the shared database")
     mt.add_argument("--source-url", default=None, help="tenant database, superuser (or HOJA_MERGE_SOURCE_URL)")
