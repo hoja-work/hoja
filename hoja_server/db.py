@@ -35,7 +35,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 69
+CURRENT_SCHEMA_REVISION = 70
 
 log = logging.getLogger(__name__)
 
@@ -799,6 +799,66 @@ agent_secret = Table(
     Column("updated_at", String, nullable=False),
     Column("updated_by", String, ForeignKey("user.id")),
     UniqueConstraint("organization_id", "name", name="uq_agent_secret_name"),
+)
+
+# What a run cost (revision 70, HOJA-602-A-12 / WP14). Append-only: there is no
+# UPDATE and no DELETE path anywhere, because a ledger a later write can rewrite is
+# not a ledger. A correction is a new row that says so in ``source``, and every read
+# sums rows rather than trusting a mutable total.
+#
+# One row is a *delta* for one run, not a running total: a runner reports cumulative
+# counters (events as it goes, then a finish), and the writer stores the difference
+# from what the ledger already holds for that run. Summing the rows of a run
+# therefore returns the runner's own last cumulative report, which is what makes the
+# reconciliation test in ``tests/agent/test_usage_ledger.py`` meaningful rather than
+# self-referential.
+#
+# Money is a decimal STRING, never a float: ``NUMERIC`` in PostgreSQL and a
+# canonical decimal in SQLite, parsed with ``Decimal`` at both ends. The token and
+# credit columns are integers because they are counts.
+usage_event = Table(
+    "usage_event",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    # The agent's user row. Kept even when the member is later archived, so a month's
+    # spend never disappears from the total because somebody left.
+    Column("agent_user_id", String, ForeignKey("user.id"), nullable=False, index=True),
+    Column("session_id", String, ForeignKey("agent_session.id"), index=True),
+    Column("lease_id", String, ForeignKey("agent_lease.id"), index=True),
+    # The WP07 run identity: it is what the delta is computed against, so it is a
+    # column rather than something inferred from the lease.
+    Column("run_id", String, index=True),
+    Column("model", String, nullable=False, default="unknown"),
+    Column("input_tokens", BigInteger, nullable=False, default=0),
+    Column("output_tokens", BigInteger, nullable=False, default=0),
+    # Fresh input + cache read + output is the "processed tokens" the credit is
+    # defined against; cache reads are counted, and priced differently.
+    Column("cache_read_tokens", BigInteger, nullable=False, default=0),
+    # 1 credit = 1,000 processed tokens (the pricing decision's unit). Not money.
+    Column("credits", BigInteger, nullable=False, default=0),
+    # Wall minutes the run held compute, already floored for managed compute.
+    Column("run_minutes", Integer, nullable=False, default=0),
+    Column("cost_usd", String, nullable=False, default="0"),
+    Column("compute_cost_usd", String, nullable=False, default="0"),
+    # finish | events | correction — where the number came from. A correction is a
+    # new row, never an edit of the row it corrects.
+    Column("source", String, nullable=False, default="finish"),
+    # byo-key | managed-key. A bring-your-own key records its credits and costs nothing.
+    Column("auth_mode", String, nullable=False, default="byo-key"),
+    # customer | managed — whose machine paid for the minutes.
+    Column("compute", String, nullable=False, default="customer"),
+    # The version of the price card the money was computed with, so a later card
+    # reprice cannot silently rewrite what an old row was charged.
+    Column("price_card", String, nullable=False),
+    # The run's cumulative counter this row leaves the ledger at, so a reader can
+    # tell a delta row from a total and an out-of-order report is detectable:
+    # one cumulative counter across the three token columns.
+    Column("cumulative_tokens", BigInteger, nullable=False, default=0),
+    Column("recorded_at", String, nullable=False),
+    Index("ix_usage_event_month", "organization_id", "recorded_at"),
+    Index("ix_usage_event_agent_month", "organization_id", "agent_user_id", "recorded_at"),
+    Index("ix_usage_event_run", "organization_id", "run_id", "recorded_at"),
 )
 
 # The transcript. Append-only: an activity is never rewritten, because a
@@ -3053,6 +3113,23 @@ def _apply_agent_policy(conn) -> None:
         conn.exec_driver_sql("ALTER TABLE agent_lease ADD COLUMN policy_version INTEGER")
 
 
+def _apply_usage_ledger(conn) -> None:
+    """The append-only usage ledger (revision 70, HOJA-602-A-12 / WP14).
+
+    Additive: one new table, no column on an existing table changes, so the
+    previous image keeps serving a database that has already run this revision.
+    A workspace that has never delegated a run creates no row here, and the
+    budget check reads an empty ledger as "nothing spent yet" — which is the
+    truth for that workspace, not a permissive default.
+
+    The table carries ``organization_id`` directly, so ``rls_policy`` classifies
+    it ``direct`` from the catalog and ``db.migrate`` binds it with the same
+    ``hoja_tenant`` policy as every other tenant table. A table with no policy
+    makes ``/ready`` answer 503, so nothing here is left to an operator step.
+    """
+    usage_event.create(conn, checkfirst=True)
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -3245,6 +3322,11 @@ _MIGRATIONS = {
     # agent member, the named secrets it may be given, and the policy version a
     # lease was granted under.
     69: _apply_agent_policy,
+    # 70: what a run cost (HOJA-602-A-12, WP14) — the append-only usage ledger.
+    # Additive; the budget check (WP06's schedule and WP12's lease gate) reads it
+    # and treats an empty ledger as no spend, so an existing workspace's behavior
+    # is unchanged until a runner reports a number.
+    70: _apply_usage_ledger,
 }
 
 

@@ -56,10 +56,12 @@ export const emptyFilters: LinFilters = {
 };
 
 export type LinDisplay = {
-  /** The agent surface groups by `runner`, and the audit log by `actor` or `action`
-   * (HOJA-602-A-16). The issue list never sets those; `groupLinIssues` treats any grouping it
-   * does not implement as one ungrouped list, so a stored value cannot hide rows. */
-  grouping: 'none' | 'status' | 'priority' | 'assignee' | 'labels' | 'project' | 'runner' | 'actor' | 'action';
+  /** The agent surface groups by `runner`, the audit log by `actor` or `action`
+   * (HOJA-602-A-16), and the usage ledger by `agent`, `model` or `month` (WP14). The issue
+   * list never sets those; `groupLinIssues` treats any grouping it does not implement as one
+   * ungrouped list, so a stored value cannot hide rows. */
+  grouping: 'none' | 'status' | 'priority' | 'assignee' | 'labels' | 'project' | 'runner' | 'actor' | 'action'
+    | 'agent' | 'model' | 'month';
   ordering: 'created' | 'updated' | 'priority';
   direction: 'desc' | 'asc';
   hideCompleted: boolean;

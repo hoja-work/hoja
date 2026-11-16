@@ -56,6 +56,32 @@ receives the secrets it may use and its egress allowlist in the lease payload fo
 that lease only — never in the prompt — and those values are redacted from the
 activity stream, the audit detail and the logs.
 
+## Usage and budgets
+
+A run's usage is recorded in `usage_event`, an append-only ledger: there is no
+update path and no delete path, so a correction is a new row whose `source` is
+`correction` and the original figure stays visible beside it. Runners report
+cumulative token counts on `/runner/events` while a run goes and on
+`/runner/finish` at the end; the ledger stores the difference from what it already
+holds for that run, so a run that streamed to the end is counted once and the sum
+of a run's rows equals the runner's last report.
+
+One credit is 1,000 processed tokens — fresh input, cache reads and output. Money
+is never a float and never taken from the harness: it is computed from those token
+counts at a versioned price card, and each row records the card version it was
+priced with, so a new card prices future rows without rewriting a past one. Managed
+compute is charged per run-minute with a fifteen-minute floor applied to the run
+rather than to each report; a run on a bring-your-own key records its credits and
+costs nothing.
+
+A credit ceiling set on an agent policy (or on the agent member's own budget) is
+compared against that month's ledger rows for the same agent: the schedule check
+reports the `budget` reason and queues the delegation, and a policy set to `stop`
+refuses the lease. Admins read the ledger with `usageSummary(month, groupBy)` —
+grouped by `agent`, `model` or `month` — `usageEvents` for the newest rows and
+`usageBudget(agentUserId, month)` for one agent's ceiling; members are refused. The
+same data appears under Settings → Billing.
+
 ## Task hierarchies
 
 For multi-step work, create or reuse one parent task and create actionable sub-tasks with

@@ -16,9 +16,12 @@ model for a fact the gap is named rather than papered over:
 ``capacity``
     Live sessions in a slot-holding state against ``agent_member.capacity``.
 ``budget``
-    ``agent_member.monthly_budget_credits``; null means the workspace default, which
-    nothing meters yet (the usage ledger is WP14), so null is treated as available
-    and 0 as exhausted. No spend is inferred from activity counts.
+    The agent's monthly credit budget (WP12's policy, else
+    ``agent_member.monthly_budget_credits``) against what the usage ledger says the
+    agent has actually spent this month (WP14). Null means the workspace stated no
+    ceiling, which is treated as available; 0 is exhausted at once. Spend is never
+    inferred from an activity count — it is summed from ``usage_event`` rows, and a
+    workspace with no reports therefore has no spend rather than a guess.
 ``window``
     ``agent_member.working_hours`` (``[{start, end, days}]``, days 0=Monday) in the
     member's timezone, evaluated on the local wall clock so a DST boundary moves the
@@ -46,6 +49,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import and_, select
 
 from hoja_server import agent_sessions as sessions
+from hoja_server import usage_ledger
 from hoja_server.db import (
     agent_member,
     agent_session,
@@ -200,10 +204,13 @@ def gather(conn, org_id: str, member: dict, issue_row: dict, session_row: dict,
     live = sessions.live_sessions(conn, org_id, member["user_id"])
     holding = [s for s in live
                if sessions.reserves_capacity(s) and s["id"] != session_row["id"]]
-    budget = member.get("monthly_budget_credits")
+    # WP14: the budget fact is the ledger's, not a configuration value. A member whose
+    # budget has been spent this month is not runnable, however the member row was
+    # configured, and the reason the card reports is the same "budget" code either way.
+    budget = usage_ledger.budget_status(conn, org_id, member["user_id"])
     return Facts(
         capacity_free=len(holding) < int(member.get("capacity") or 1),
-        budget_remaining=(budget is None) or int(budget) > 0,
+        budget_remaining=not budget["exhausted"],
         in_window=working_window(member.get("working_hours"), member.get("timezone"), at),
         dependencies_clear=_dependencies_clear(conn, org_id, issue_row["id"]),
         approved=_approved_for(conn, org_id, session_row),

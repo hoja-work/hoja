@@ -41,6 +41,8 @@ const tokensCss = read(join(frontend, 'src/design/tokens.css'));
 const designCss = read(join(frontend, 'src/design/design.css'));
 const mobileCss = read(join(frontend, 'src/mobile-touch.css'));
 const stylesCss = read(join(frontend, 'src/styles.css'));
+/* The Billing pane composes the issue list's classes, so its geometry is measured here. */
+const graphCss = read(join(frontend, 'src/graph/styles.css'));
 
 /* ------------------------------------------------------------------- 1. spec ---- */
 const specPath = join(repo, 'reference', 'linear', 'SETTINGS-SPEC.md');
@@ -185,6 +187,7 @@ const PANE_CONTRACTS = {
   'project-templates': /^\s*projectTemplates\s*:/m,
   'permissions': /^\s*workspacePermissions\s*:/m,
   'security': /^\s*workspaceSecurityPolicy\s*:/m,
+  'billing': /^\s*usageSummary\s*[(:]/m,
   'cycles': /^\s*cycles\s*[(:]/m,
   'extensions': /^\s*extensions\s*[(:]/m,
 };
@@ -269,6 +272,7 @@ ${tokensCss}
 ${designCss}
 ${mobileCss}
 ${stylesCss}
+${graphCss}
 ${settingsCss}
 </style></head><body>
 <div class="app"><div class="app-body">
@@ -292,6 +296,20 @@ ${settingsCss}
     <div class="setting-row"><div><b>Theme</b><p>Choose the appearance used in this browser.</p></div><div class="setting-control"><button type="button">Light</button></div></div>
     <div class="setting-row"><div><b>Font size</b><p>Adjust interface text size.</p></div><div class="setting-control"><button type="button">Default</button></div></div>
   </div>
+</section>
+<section class="settings-page" data-settings-pane="billing">
+  <header class="settings-page-heading"><span class="eyebrow">Administration</span><h1>Billing</h1><p>What agents spent, at the issue list's proportions.</p></header>
+  <div class="settings-group">
+    <div class="lin-list" aria-label="Usage by agent">
+      <section class="lin-group">
+        <header class="lin-group-head"><b>1 agent</b><span class="count">12 credits</span><span class="grow"></span><span class="count">15 min</span></header>
+        <div class="lin-row" data-usage-row="scout">
+          <span class="title">Scout</span>
+          <span class="meta"><span class="lin-chip">12 / 55 credits</span><span class="lin-chip">15 min</span><span class="date">$0.140000</span><span class="date">1 run</span></span>
+        </div>
+      </section>
+    </div>
+  </div>
 </section></main></div>
 </div></div></body></html>`;
 const fixtureFile = join(outDir, 'settings.html');
@@ -311,6 +329,8 @@ return {
   column: rect('.settings-page'),
   row: rect('.setting-row'),
   unavailable: rect('[data-availability="unavailable"]'),
+  usageRow: rect('[data-usage-row]'),
+  usageHead: rect('.lin-group-head'),
   tokens: {nav:token('--ds-settings-nav-width'), drawer:token('--ds-settings-nav-drawer-width'), row:token('--ds-settings-nav-row-height'), back:token('--ds-settings-back-height'), column:token('--ds-settings-column-width'), title:token('--ds-settings-title-size'), section:token('--ds-settings-section-size'), rowH:token('--ds-settings-row-height')},
   scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth,
   overflow: document.documentElement.scrollWidth > window.innerWidth,
@@ -340,10 +360,16 @@ for (const vp of ['390x844', '1024x768', '1440x900']) {
   if (!(v.column.w <= wantColumn + 0.5)) fail.push(`geometry ${vp}: content column ${v.column.w} exceeds the measured cap ${v.tokens.column}`);
   if (vp === '1440x900' && v.column.w !== px(v.tokens.column)) fail.push(`geometry 1440: content column ${v.column.w} != ${v.tokens.column}`);
   if (!v.unavailable) fail.push(`geometry ${vp}: the unavailable nav entry did not render`);
+  // WP14's usage pane is the issue list's own markup, so it must keep the issue list's
+  // rhythm rather than a proportion of its own: 42 px rows and a 36 px group header.
+  if (!v.usageRow) fail.push(`geometry ${vp}: the usage row did not render`);
+  else if (v.usageRow.h < 42) fail.push(`geometry ${vp}: usage row ${v.usageRow.h} < the issue list's 42px`);
+  if (!v.usageHead) fail.push(`geometry ${vp}: the usage group header did not render`);
+  else if (v.usageHead.h < 36) fail.push(`geometry ${vp}: usage group header ${v.usageHead.h} < 36px`);
   writeFileSync(join(outDir, `settings-${vp}.json`), JSON.stringify({ viewport: vp, value: v, capturedAt: new Date().toISOString() }, null, 2) + '\n');
 }
 report();
 if (!fail.some((f) => f.startsWith('geometry'))) {
-  ok('geometry: nav 244/330 by breakpoint, row 28 (44 touch), title 24px, section 15px, column cap 640, zero overflow');
+  ok('geometry: nav 244/330 by breakpoint, row 28 (44 touch), title 24px, section 15px, column cap 640, usage rows on the issue list rhythm, zero overflow');
 }
 console.log('settings gate ok');

@@ -49,7 +49,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from hoja_server import agent_policy, audit, tenant_context
+from hoja_server import agent_policy, audit, tenant_context, usage_ledger
 from hoja_server.db import (
     agent_lease,
     agent_session,
@@ -892,6 +892,15 @@ def post_events(engine, runner_row: Mapping[str, Any], body: Mapping[str, Any],
                     continue  # already recorded: the stream is monotonic per lease
                 kind = str(event.get("kind") or "event")[:80]
                 payload = event.get("payload") or {}
+                if kind == "usage":
+                    # WP14: a usage report is metered, not narrated. It advances the
+                    # stream's sequence like any other event, but writing billing
+                    # counters into the transcript would put them in front of a person
+                    # reading the run.
+                    record_usage_report(conn, org_id, lease, payload,
+                                        source=usage_ledger.SOURCE_EVENTS)
+                    accepted = max(accepted, seq)
+                    continue
                 encoded = json.dumps(payload, sort_keys=True, default=str)
                 if len(encoded.encode("utf-8")) > MAX_EVENT_BYTES:
                     continue
@@ -919,6 +928,65 @@ def issue_activity_insert(org_id: str, task_id: str, kind: str, payload: str):
         changes=payload,
         created_at=now_iso(),
     )
+
+
+# ---------------------------------------------------------------------------
+# Usage metering (WP14)
+# ---------------------------------------------------------------------------
+
+
+def _usage_agent(conn, org_id: str, lease: Mapping[str, Any]) -> tuple[str | None, str | None]:
+    """Who a run's usage belongs to: (agent user id, session id).
+
+    The session is the authority when the lease has one, because the session row is
+    what the usage screen links a run back to. A lease on a task nobody delegated has
+    no agent, and a usage row with no agent would be a number the screen could never
+    explain — so the caller logs and stores nothing rather than inventing an owner.
+    """
+    from hoja_server import agent_verify
+
+    session = agent_verify.session_for_lease(conn, org_id, dict(lease))
+    agent_user_id = (session or {}).get("agent_user_id") or agent_policy.agent_user_for_task(
+        conn, org_id, str(lease.get("task_id") or ""))
+    return (str(agent_user_id) if agent_user_id else None,
+            str(session["id"]) if session else None)
+
+
+def record_usage_report(conn, org_id: str, lease: Mapping[str, Any], document: Any, *,
+                        source: str) -> dict[str, Any] | None:
+    """Meter one report from a runner. Never raises for a malformed report.
+
+    Metering is downstream of the run: a run whose token counts arrive in a shape this
+    server cannot read is still a run the runner did, and failing the finish over it
+    would throw the claim away to punish the meter. A bad report is logged and
+    dropped; whatever already arrived stays in the ledger.
+    """
+    try:
+        usage = usage_ledger.usage_report({"usage": document})
+    except usage_ledger.ReportError as exc:
+        LOG.warning("lease %s reported usage this server cannot read: %s", lease.get("id"), exc)
+        return None
+    if usage is None:
+        return None
+    agent_user_id, session_id = _usage_agent(conn, org_id, lease)
+    if not agent_user_id:
+        LOG.warning("lease %s reported usage for a task with no delegated agent; "
+                    "nothing recorded", lease.get("id"))
+        return None
+    try:
+        return usage_ledger.record_report(
+            conn,
+            organization_id=org_id,
+            run_id=str(lease.get("run_id") or lease.get("id") or ""),
+            agent_user_id=agent_user_id,
+            session_id=session_id,
+            lease_id=str(lease.get("id") or "") or None,
+            usage=usage,
+            source=source,
+        )
+    except usage_ledger.ReportError as exc:
+        LOG.warning("lease %s reported usage that was refused: %s", lease.get("id"), exc)
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -1138,6 +1206,11 @@ def finish_lease(engine, runner_row: Mapping[str, Any], body: Mapping[str, Any],
                 # The machine's answer, not the design's hope: a refused transition
                 # reports the state that is actually true.
                 session_state = session_row["state"]
+            # WP14: the finish carries the run's cumulative token counts and elapsed
+            # compute. The ledger stores the difference from what the event stream
+            # already reported, so a run that streamed to the end is not counted twice.
+            record_usage_report(conn, org_id, lease, body.get("usage"),
+                                source=usage_ledger.SOURCE_FINISH)
             updated = conn.execute(agent_lease.update().where(and_(
                 agent_lease.c.id == lease["id"],
                 agent_lease.c.fence == lease["fence"],

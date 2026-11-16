@@ -809,7 +809,8 @@ def test_revision_69_applies_to_a_68_database_twice(tmp_path):
     )
     from tests import legacy_schema
 
-    assert CURRENT_SCHEMA_REVISION == 69
+    # WP14 took revision 70, so this suite's upgrade path lands one revision later.
+    assert CURRENT_SCHEMA_REVISION >= 69
     engine = make_engine(tmp_path / "policy-upgrade.db")
     legacy_schema.create_schema(engine, 68)
     with engine.begin() as conn:
@@ -818,7 +819,7 @@ def test_revision_69_applies_to_a_68_database_twice(tmp_path):
     assert applied_schema_revision(engine) == 68
 
     migrate(engine)
-    assert applied_schema_revision(engine) == 69
+    assert applied_schema_revision(engine) == CURRENT_SCHEMA_REVISION
     with engine.connect() as conn:
         tables = set(inspect(conn).get_table_names())
         lease_columns = {c["name"] for c in inspect(conn).get_columns("agent_lease")}
@@ -827,7 +828,7 @@ def test_revision_69_applies_to_a_68_database_twice(tmp_path):
 
     # Second run: idempotent, and the revision does not move.
     migrate(engine)
-    assert applied_schema_revision(engine) == 69
+    assert applied_schema_revision(engine) == CURRENT_SCHEMA_REVISION
     with engine.connect() as conn:
         assert "policy_version" in {c["name"] for c in inspect(conn).get_columns("agent_lease")}
 

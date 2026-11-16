@@ -51,7 +51,7 @@ from ariadne import MutationType, ObjectType, QueryType, gql
 from graphql import GraphQLError
 from sqlalchemy import and_, select
 
-from hoja_server import abac, audit, logging_setup, secrets_box
+from hoja_server import abac, audit, logging_setup, secrets_box, usage_ledger
 from hoja_server.db import (
     agent_lease,
     agent_member,
@@ -720,9 +720,12 @@ def run_minutes_this_month(conn, org_id: str, agent_user_id: str,
                            now: datetime | None = None) -> float:
     """Minutes already run this calendar month by this agent's leases.
 
-    The usage ledger is WP14; until it lands these are the minutes Hoja can
-    actually prove, measured from the lease it granted to the moment it closed (or
-    to now, for one still running). A lease with no grant time is not counted:
+    This is the *lease* clock, which is what refuses a run before it starts: it
+    measures every attempt Hoja granted, including one a runner abandoned without
+    reporting. The ledger (WP14) is the other side of the same question — the
+    minutes a run actually billed, floored for managed compute — and the two are
+    deliberately not the same number: a ceiling on what may be spent cannot wait for
+    a report that may never arrive. A lease with no grant time is not counted:
     inventing one would overstate spend and stop work that never happened.
     """
     now = now or datetime.now(timezone.utc)
@@ -798,15 +801,20 @@ def check_lease(conn, org_id: str, lease: Mapping[str, Any], *,
     budget = view.monthly_credit_budget
     if budget is None:
         budget = member.get("monthly_budget_credits")
-    if budget is not None and int(budget) <= 0:
-        # Nothing meters credits until WP14, so the only honest reading of a zero
-        # budget is "exhausted"; NULL means the workspace default (not unlimited)
-        # and is treated as available, exactly as the schedule check does.
-        return LeaseVerdict(
-            False, action=view.budget_action, reason=BUDGET,
-            detail={"agent": agent_user_id, "member": member["id"],
-                    "monthly_credit_budget": int(budget)},
-            agent_member_id=member["id"], policy_version=view.version)
+    if budget is not None:
+        # WP14 meters it: the spend is the sum of this month's ledger rows for this
+        # agent, so the ceiling is compared against work that actually happened rather
+        # than against a configuration value. A zero budget is therefore exhausted
+        # before the first run (0 credits spent >= 0 credited), and NULL still means
+        # "the workspace stated no ceiling", exactly as the schedule check reads it.
+        spent = usage_ledger.budget_status(conn, org_id, agent_user_id)
+        if int(budget) <= spent["used"]:
+            return LeaseVerdict(
+                False, action=view.budget_action, reason=BUDGET,
+                detail={"agent": agent_user_id, "member": member["id"],
+                        "monthly_credit_budget": int(budget),
+                        "credits_used": spent["used"], "month": spent["month"]},
+                agent_member_id=member["id"], policy_version=view.version)
     return LeaseVerdict(True, detail={"agent": agent_user_id, "member": member["id"]},
                         agent_member_id=member["id"], policy_version=view.version)
 

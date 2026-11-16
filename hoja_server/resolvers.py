@@ -1839,7 +1839,7 @@ def _get_comment(store, org, cid):
 def build_schema():
     from pathlib import Path
     sdl = (Path(__file__).parent / "schema.graphql").read_text()
-    from hoja_server import decisions_api, extensions_api, model_providers, permissions, project_settings, sla, task_templates, views_api, webhooks_api
+    from hoja_server import decisions_api, extensions_api, model_providers, permissions, project_settings, sla, task_templates, usage_ledger, views_api, webhooks_api
     # HOJA-602-A-16 slice 5: the read-only runner/lease and claim/verdict surfaces the
     # review screens need. Both are admin-gated and org-scoped, and neither adds a table.
     from hoja_server import agent_claims, agent_runners
@@ -1867,7 +1867,7 @@ def build_schema():
         [sdl, PROVIDER_SDL, CONVERSATION_SDL, webhooks_api.SDL, extensions_api.SDL,
          views_api.SDL, decisions_api.SDL, project_settings.SDL, permissions.SDL,
          task_templates.SDL, sla.SDL, agent_members.SDL, agent_sessions.SDL,
-         agent_policy.SDL, agent_runners.SDL, agent_claims.SDL, tasks_sdl],
+         agent_policy.SDL, agent_runners.SDL, agent_claims.SDL, usage_ledger.SDL, tasks_sdl],
         query, mutation, *task_bindables,
         model_providers.query, model_providers.mutation,
         project_settings.query, project_settings.mutation,
@@ -1889,6 +1889,8 @@ def build_schema():
         agent_runners.query, agent_runners.runner_type, agent_runners.agent_lease_type,
         agent_claims.query, agent_claims.verifier_claim_type,
         agent_claims.agent_verification_type,
+        usage_ledger.query, usage_ledger.usage_summary_type,
+        usage_ledger.usage_row_type, usage_ledger.usage_event_type,
         Team, Initiative, InitiativeUpdate, Issue, IssueActivity, MyIssueActivity, Project, ProjectUpdate, Comment,
         permissions.workspace_permission_type, permissions.workspace_security_policy_type,
         WorkflowState, Cycle, Attachment, GithubLink,
