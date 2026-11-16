@@ -571,6 +571,129 @@ const focusStop = page => page.evaluate(() => {
   ok(runnerKb.second.isTitle && runnerKb.second.inRow, 'runner list: the next Tab reaches the row title', runnerKb.second.label || runnerKb.second.tag);
   ok(runnerKb.after < runnerKb.before && /^Expand /.test(runnerKb.afterLabel || ''), 'runner list: the group chevron collapses from the keyboard', `${runnerKb.before} → ${runnerKb.after} rows`);
 
+  /* ---- 6b. Enroll (HOJA-635): the token is shown once, and the command is the real one ----
+   *
+   * The only control on this surface that hands out a credential. What is asserted, in order:
+   *
+   *   1. the panel opens from the toolbar and mints through `runnerEnrollmentCreate`;
+   *   2. the plaintext is on screen once, together with the exact `hoja-runnerd --enroll`
+   *      command that spends it;
+   *   3. the `runnerEnrollments` query never carries the token or its hash — the server's SDL
+   *      has no column that could;
+   *   4. closing the panel discards it: reopening shows the enrollment row as `pending`, with no
+   *      token anywhere in the page;
+   *   5. Withdraw is two-step and closes /runner/enroll for that token (asserted against the real
+   *      route, not against a chip that changed colour).
+   */
+  await page.goto(`${base}${RUNNERS}`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-surface="runners-list"]', { timeout: 15000 });
+  ok(await page.evaluate(() => !document.querySelector('[data-enroll-panel]')),
+    'enroll: the panel starts closed, so a credential is never minted by accident');
+  await page.click('[data-surface="runners-list"] [data-action="enroll-runner"]');
+  await page.waitForSelector('[data-enroll-panel]', { timeout: 5000 });
+  const rowsBeforeEnroll = await page.evaluate(() =>
+    document.querySelectorAll('[data-surface="runners-list"] .lin-row').length);
+  ok(rowsBeforeEnroll === 2, 'enroll: opening the panel adds no runner row (the row count stays the server count)', String(rowsBeforeEnroll));
+
+  await page.fill('[data-enroll-panel] input[aria-label="Runner name"]', 'e2e-enrolled-machine');
+  await page.fill('[data-enroll-panel] input[aria-label="Token lifetime in minutes"]', '90');
+  await page.click('[data-enroll-panel] button.lin-btn.primary');
+  await page.waitForSelector('[data-enroll-token]', { timeout: 10000 });
+  const shownToken = await page.evaluate(() =>
+    document.querySelector('[data-enroll-secret]')?.textContent?.trim() || '');
+  const shownCommand = await page.evaluate(() =>
+    document.querySelector('[data-enroll-command]')?.textContent?.trim() || '');
+  ok(shownToken.length >= 20, 'enroll: the response shows the plaintext token once', `${shownToken.length} chars`);
+  ok(shownCommand.startsWith(`HOJA_ENROLLMENT_TOKEN=${shownToken} hoja-runnerd --enroll `),
+    'enroll: the exact hoja-runnerd enroll command is shown, carrying this token', shownCommand);
+  ok(shownCommand.includes('--name e2e-enrolled-machine') && /--base-url https?:\/\//.test(shownCommand),
+    'enroll: the command names the machine and this deployment URL', shownCommand);
+
+  /* The token is a secret that exists in exactly one place: not in the read side. */
+  const apiEnrollments = async () => (await gql(
+    `{runnerEnrollments{id label status usable expiresAt usedAt usedByRunner createdAt}}`)).runnerEnrollments;
+  const enrollmentsNow = await apiEnrollments();
+  ok(enrollmentsNow.some(e => e.label === 'e2e-enrolled-machine' && e.status === 'pending' && e.usable === true),
+    'enroll: the enrollment is a server row, pending and usable', JSON.stringify(enrollmentsNow.map(e => [e.label, e.status])));
+  ok(!JSON.stringify(enrollmentsNow).includes(shownToken),
+    'enroll: runnerEnrollments never carries the token — only its hash is stored');
+  ok(!Object.keys(enrollmentsNow[0]).some(k => /token|hash|hint/i.test(k)),
+    'enroll: the enrollment shape has no credential column at all', Object.keys(enrollmentsNow[0]).join(','));
+  await page.screenshot({ path: path.join(shots, `runners-enroll-token-${W}.png`) });
+
+  /* Shown once: close, reopen, and the plaintext is gone from the DOM. */
+  await page.getByRole('button', { name: 'Done' }).click();
+  await page.waitForSelector('[data-enroll-token]', { state: 'detached', timeout: 5000 }).catch(() => undefined);
+  ok(!(await page.content()).includes(shownToken), 'enroll: closing the panel discards the plaintext');
+  await page.click('[data-surface="runners-list"] [data-action="enroll-runner"]');
+  await page.waitForSelector('[data-enroll-list]', { timeout: 5000 });
+  ok(!(await page.content()).includes(shownToken),
+    'enroll: reopening cannot show it again — the server kept only a hash');
+  const pendingRow = await page.evaluate(() => {
+    const row = [...document.querySelectorAll('[data-enroll-list] [data-enrollment]')]
+      .find(r => r.textContent.includes('e2e-enrolled-machine'));
+    return row ? { status: row.getAttribute('data-enrollment-status'), text: row.textContent } : null;
+  });
+  ok(pendingRow && pendingRow.status === 'pending', 'enroll: the list shows it as pending', JSON.stringify(pendingRow));
+
+  /* Withdraw: two steps, then the real route refuses the token. */
+  await page.click('[data-enroll-list] [data-enrollment-status="pending"] button.lin-btn');
+  await page.waitForSelector('[role="dialog"]', { timeout: 5000 });
+  ok((await apiEnrollments()).some(e => e.usable === true),
+    'enroll: withdraw is two-step — nothing is revoked until the dialog is confirmed');
+  await page.click('[role="dialog"] button.danger');
+  await page.waitForTimeout(600);
+  const afterWithdraw = await apiEnrollments();
+  ok(afterWithdraw.some(e => e.label === 'e2e-enrolled-machine' && e.usable === false),
+    'enroll: the withdrawn token is no longer usable', JSON.stringify(afterWithdraw.map(e => [e.label, e.status])));
+  ok(await page.evaluate(() => {
+    const row = [...document.querySelectorAll('[data-enroll-list] [data-enrollment]')]
+      .find(r => r.textContent.includes('e2e-enrolled-machine'));
+    return Boolean(row) && !row.querySelector('button');
+  }), 'enroll: a withdrawn token offers no second Withdraw');
+  await page.screenshot({ path: path.join(shots, `runners-enroll-withdrawn-${W}.png`) });
+
+  /* The route, not the chip: /runner/enroll is a different endpoint from /runner/register, so the
+   * receipt is the registration that the revoked token can no longer buy. */
+  const revokedEnroll = await fetch(`${base}/runner/register`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'should-be-refused', enrollment_token: shownToken,
+      harnesses: ['generic'], labels: {} }),
+  });
+  ok(revokedEnroll.status === 401, 'enroll: a withdrawn token is refused at /runner/register', String(revokedEnroll.status));
+  ok((await revokedEnroll.json()).code === 'unauthorized',
+    'enroll: the refusal is the enroll route\'s own unauthorized, not a lease error');
+
+  /* Closing returns the list to exactly what it was. */
+  await page.getByRole('button', { name: 'Close' }).click();
+  await page.waitForTimeout(200);
+  ok(await page.evaluate(() => document.querySelectorAll('[data-surface="runners-list"] .lin-row').length) === 2,
+    'enroll: closing leaves the runner list unchanged — minting a token enrolls no machine');
+
+  /* ---- 6c. Revoke runner (HOJA-635): the machine is turned off, not deleted ---- */
+  await page.goto(`${base}${RUNNERS}/${encodeURIComponent(idleRunner.runner_id)}`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-surface="runner-detail"] .lin-props', { timeout: 15000 });
+  ok(await page.evaluate(() => Boolean(document.querySelector('[data-action="revoke-runner"]'))),
+    'revoke runner: the detail page offers it while the machine is live');
+  await page.click('[data-action="revoke-runner"]');
+  await page.waitForSelector('[role="dialog"]', { timeout: 5000 });
+  ok((await apiRunners()).find(r => r.id === idleRunner.runner_id)?.enabled === true,
+    'revoke runner: two-step — the row is untouched until the dialog is confirmed');
+  await page.click('[role="dialog"] button.danger');
+  await page.waitForTimeout(700);
+  const revokedRow = (await apiRunners()).find(r => r.id === idleRunner.runner_id);
+  ok(revokedRow && revokedRow.enabled === false && Boolean(revokedRow.revokedAt),
+    'revoke runner: the server turned the machine off and recorded when', JSON.stringify(revokedRow && {enabled: revokedRow.enabled, revokedAt: revokedRow.revokedAt}));
+  ok(await page.getByText(/revoked\. Its token no longer authenticates/).count() > 0,
+    'revoke runner: the page reports what it did to /runner/claim');
+  /* And the machine really cannot claim: its own bearer token is refused. */
+  const refusedClaim = await fetch(`${base}/runner/lease`, {
+    method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${idleRunner.token}` },
+    body: JSON.stringify({ runner_id: idleRunner.runner_id, poll_timeout_ms: 0 }),
+  });
+  ok(refusedClaim.status === 401, 'revoke runner: the revoked machine is refused at /runner/claim', String(refusedClaim.status));
+  await page.screenshot({ path: path.join(shots, `runner-detail-revoked-token-${W}.png`) });
+
   /* The tab strip reaches it. */
   await page.goto(`${base}/workspace/agents`, { waitUntil: 'networkidle' });
   await page.getByRole('tab', { name: 'Runners' }).click();

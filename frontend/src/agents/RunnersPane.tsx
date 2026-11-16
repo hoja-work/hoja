@@ -13,6 +13,14 @@
  * lease rides the row (the issue row's `trailing` slot, exactly as the run queue's session chip
  * does) because "what is this machine holding?" is the question the list answers.
  *
+ * Since HOJA-635 the list also *writes*: the toolbar's "Enroll runner" action mints a single-use
+ * enrollment token (`runnerEnrollmentCreate`) and shows it once, together with the exact
+ * `hoja-runnerd --enroll` command, because that response is the only place the plaintext exists —
+ * the server keeps a sha256 and cannot hand it back. Withdrawing an unspent token
+ * (`runnerEnrollmentRevoke`) and disabling an enrolled machine (`runnerRevoke`, on the detail
+ * page) are the two ways back. None of those controls is a `.lin-row`: the list's row count must
+ * stay equal to the server's runner count, which is what the geometry check asserts.
+ *
  * One surface here is still a fixture: **Connect**. No table stores an exposure and no route opens
  * or revokes one (WP08), so the exposures under the Connect heading are the labelled sample —
  * `SampleDataNotice surface="connect"` — and they belong to no real machine, which the block says
@@ -23,14 +31,16 @@
  */
 
 import {useCallback, useEffect, useMemo, useState} from 'react';
-import {Copy, Lock, LockOpen, SlidersHorizontal} from 'lucide-react';
+import {Copy, Lock, LockOpen, Plus, SlidersHorizontal} from 'lucide-react';
 import {confirmDialog} from '../dialogs';
 import {GraphStatusIcon, IconBtn, LabelChip, Tip} from '../graph/shared';
 import {DisplayPanel, IssueRow, PropDropdown, defaultDisplay, type IssueRowModel, type LinDisplay} from '../graph/tasks';
 import {getAgentsAdapter} from './adapter';
 import {AGENTS_TABS, AgentsListShell, SampleDataNotice, SearchField} from './chrome';
 import {RUNNER_STATUSES, runnerStatus, ttlLabel, ttlSecondsLeft} from './types';
-import type {ConnectExposure, Runner, RunnerLease, RunnerStatus} from './types';
+import type {
+  ConnectExposure, Runner, RunnerEnrollment, RunnerEnrollmentGrant, RunnerLease, RunnerStatus,
+} from './types';
 
 /* A runner row is an `IssueRowModel`: the runner's id is the identifier column, its name is the
  * title, online/offline is the status glyph and `lastSeenAt` is the age the glyph explains. A
@@ -80,6 +90,12 @@ function leaseChip(r: Runner) {
   );
 }
 
+/* A labelled action inside `.lin-toolbar`. The toolbar's height is its content — a 28 px
+ * `.lin-icon-btn` inside 8 px of padding — and both the issue list and the issue page are measured
+ * against it, so a `.lin-btn` at its default ~34 px would break that parity on this screen alone.
+ * Pinning the height keeps the shared `.lin-btn` styling and the shared toolbar geometry. */
+const TOOLBAR_ACTION = {height: 28, padding: '0 12px'} as const;
+
 const RUNNER_DISPLAY: LinDisplay = {
   ...defaultDisplay,
   grouping: 'status',
@@ -89,6 +105,182 @@ const RUNNER_DISPLAY: LinDisplay = {
     // dueDate/created have no runner counterpart.
     priority: false, assignee: false, project: false, cycle: false, dueDate: false, created: false},
 };
+
+/* Enroll (HOJA-635) — the one control on this screen that hands out a credential.
+ *
+ * Three states, and the middle one is the whole point:
+ *
+ *   form   → name + lifetime, then `runnerEnrollmentCreate`
+ *   token  → the plaintext, shown once, with the exact command that spends it
+ *   list   → every token in the workspace and whether it can still be used
+ *
+ * The plaintext lives in this component's state and nowhere else: it is not in a URL, not in
+ * localStorage and not refetched — the server stores only its sha256, so there is nothing to
+ * refetch. Closing the panel drops it, and the block says so instead of letting someone assume
+ * they can come back for it.
+ */
+function EnrollPanel({onClose}: {onClose: () => void}) {
+  const [name, setName] = useState('');
+  const [ttl, setTtl] = useState('1440');
+  const [grant, setGrant] = useState<RunnerEnrollmentGrant | null>(null);
+  const [enrollments, setEnrollments] = useState<RunnerEnrollment[]>([]);
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const [copied, setCopied] = useState('');
+
+  const refresh = useCallback(() => {
+    getAgentsAdapter().listRunnerEnrollments()
+      .then(setEnrollments)
+      .catch((e: Error) => setError(e.message));
+  }, []);
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const copy = (what: string, value: string) => {
+    void navigator.clipboard.writeText(value)
+      .then(() => { setCopied(what); window.setTimeout(() => setCopied(''), 1500); })
+      .catch(() => setCopied(''));
+  };
+
+  const create = async () => {
+    const label = name.trim();
+    if (!label || busy) return;
+    setBusy('create');
+    setError('');
+    try {
+      const minutes = ttl.trim() === '' ? undefined : Number(ttl);
+      const created = await getAgentsAdapter().createRunnerEnrollment(
+        label, Number.isFinite(minutes) ? minutes : undefined);
+      setGrant(created);
+      setName('');
+      refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const revoke = async (enrollment: RunnerEnrollment) => {
+    if (!(await confirmDialog(
+      `Withdraw the enrollment token "${enrollment.label || enrollment.id}"? A machine that has not `
+      + 'used it yet will be refused at /runner/enroll, and the token cannot be restored.',
+      {danger: true}))) return;
+    setBusy(enrollment.id);
+    setError('');
+    try {
+      await getAgentsAdapter().revokeRunnerEnrollment(enrollment.id);
+      refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  return (
+    <section className="lin-note" data-enroll-panel aria-label="Enroll a runner"
+      style={{display: 'block', padding: '14px 20px', borderBottom: '1px solid var(--line)'}}>
+      {!grant && (
+        <div style={{display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center'}}>
+          <b>Enroll a runner</b>
+          <input aria-label="Runner name" placeholder="Machine name, e.g. mac-mini-01"
+            value={name} onChange={e => setName(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') void create(); }}
+            style={{minWidth: 240, padding: '6px 10px', borderRadius: 7,
+              border: '1px solid var(--line)', background: 'var(--panel)', color: 'var(--text)'}} />
+          <label style={{display: 'inline-flex', alignItems: 'center', gap: 6}}>
+            Expires in
+            <input aria-label="Token lifetime in minutes" value={ttl} inputMode="numeric"
+              onChange={e => setTtl(e.target.value)} style={{width: 80, padding: '6px 8px',
+                borderRadius: 7, border: '1px solid var(--line)', background: 'var(--panel)',
+                color: 'var(--text)'}} />
+            min
+          </label>
+          <button type="button" className="lin-btn primary" disabled={!name.trim() || busy === 'create'}
+            onClick={() => void create()}>
+            {busy === 'create' ? 'Minting…' : 'Create token'}
+          </button>
+          <button type="button" className="lin-btn" onClick={onClose}>Close</button>
+        </div>
+      )}
+
+      {grant && (
+        <div data-enroll-token style={{display: 'block'}}>
+          <p style={{margin: '0 0 8px'}}>
+            <b>Copy this now.</b> Hoja keeps only a hash of the token, so this is the one and only
+            time it can be shown — closing this panel discards it for good.
+          </p>
+          <div style={{display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8}}>
+            <code data-enroll-secret style={{fontFamily: 'var(--mono, monospace)', fontSize: 12,
+              padding: '6px 10px', borderRadius: 6, border: '1px solid var(--line)',
+              background: 'var(--subtle)', wordBreak: 'break-all', maxWidth: '100%'}}>
+              {grant.token}
+            </code>
+            <button type="button" className="lin-btn" onClick={() => copy('token', grant.token)}>
+              {copied === 'token' ? 'Copied' : 'Copy token'}
+            </button>
+          </div>
+          <pre data-enroll-command style={{margin: '0 0 8px', padding: '10px 12px', borderRadius: 8,
+            border: '1px solid var(--line)', background: 'var(--subtle)', overflowX: 'auto',
+            fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all'}}>{grant.command}</pre>
+          <div style={{display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap'}}>
+            <button type="button" className="lin-btn" onClick={() => copy('command', grant.command)}>
+              {copied === 'command' ? 'Copied' : 'Copy command'}
+            </button>
+            <span className="lin-note">
+              The daemon heartbeats every {grant.heartbeatIntervalS} s and the token works once.
+            </span>
+            <span className="grow" />
+            <button type="button" className="lin-btn"
+              onClick={() => { setGrant(null); onClose(); }}>Done</button>
+          </div>
+        </div>
+      )}
+
+      {error && <p className="lin-error" role="alert" style={{margin: '8px 0 0'}}>{error}</p>}
+
+      {enrollments.length > 0 && (
+        <div data-enroll-list style={{marginTop: 12}}>
+          {enrollments.map(enrollment => (
+            <div key={enrollment.id} className="lin-event" data-enrollment={enrollment.id}
+              data-enrollment-status={enrollment.status}>
+              <span className="lin-chip" title={`status: ${enrollment.status}`}>
+                {enrollment.status}
+              </span>
+              <span>
+                <b>{enrollment.label || 'unnamed'}</b>
+                {' · '}{enrollmentExpiry(enrollment)}
+                {enrollment.usedByRunner ? ` · used by ${enrollment.usedByRunner.slice(0, 8)}` : ''}
+              </span>
+              <span style={{marginLeft: 'auto', display: 'inline-flex', gap: 8, alignItems: 'center'}}>
+                {enrollment.usable
+                  ? <button type="button" className="lin-btn" disabled={busy === enrollment.id}
+                      onClick={() => void revoke(enrollment)}>
+                      {busy === enrollment.id ? 'Withdrawing…' : 'Withdraw'}
+                    </button>
+                  : null}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* When a token stops working, said in the list's own vocabulary: an age for one that already
+ * expired, a deadline for one that still works, and "used" for one that did its job. */
+function enrollmentExpiry(enrollment: RunnerEnrollment): string {
+  if (enrollment.status === 'spent') return enrollment.usedAt ? `used ${lastSeen(enrollment.usedAt)}` : 'used';
+  if (!enrollment.expiresAt) return 'never expires';
+  if (enrollment.status === 'expired') return `expired ${lastSeen(enrollment.expiresAt)}`;
+  const ms = Date.parse(enrollment.expiresAt) - Date.now();
+  if (Number.isNaN(ms)) return enrollment.expiresAt;
+  const m = Math.round(ms / 60000);
+  if (m <= 0) return 'expires now';
+  if (m < 60) return `expires in ${m}m`;
+  return `expires in ${Math.round(m / 60)}h`;
+}
 
 type RunnerGrouping = 'status' | 'labels' | 'none';
 
@@ -110,6 +302,9 @@ export function RunnersPane({workspaceName, onOpen, tab, onTab}: {
   const [collapsed, setCollapsed] = useState<string[]>([]);
   const [displayOpen, setDisplayOpen] = useState(false);
   const [connectOn, setConnectOn] = useState(true);
+  /* Closed by default: the panel is the only thing on this screen that can mint a credential, and
+     a screen that opens with a secret-producing form is a screen that invites a stray click. */
+  const [enrollOpen, setEnrollOpen] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -197,6 +392,13 @@ export function RunnersPane({workspaceName, onOpen, tab, onTab}: {
               onClick={() => setLabels(cur => on ? cur.filter(x => x !== l) : [...cur, l])}>{l}</button>
           );
         })}
+        {/* HOJA-635: the toolbar, not a row — a runner row is one server runner, and this
+            action is not a machine. */}
+        <button type="button" className="lin-btn" data-action="enroll-runner"
+          aria-expanded={enrollOpen} onClick={() => setEnrollOpen(v => !v)}
+          style={TOOLBAR_ACTION}>
+          <Plus size={14} aria-hidden="true" /> Enroll runner
+        </button>
         <span style={{position: 'relative'}}>
           <IconBtn label="Display options" title="Display options" active={displayOpen}
             onClick={() => setDisplayOpen(v => !v)}>
@@ -221,6 +423,9 @@ export function RunnersPane({workspaceName, onOpen, tab, onTab}: {
         <button type="button" className="lin-addrow" onClick={() => setLabels([])}>Clear all</button>
       </> : null}
     >
+      {/* Minting a token enrolls no machine, so nothing about the list below changes and no
+          refetch is needed: the panel owns its own read of `runnerEnrollments`. */}
+      {enrollOpen && <EnrollPanel onClose={() => setEnrollOpen(false)} />}
       {loading && <p className="lin-loading" role="status">Loading runners…</p>}
       {error && <p className="lin-error" role="alert">{error}</p>}
       {!loading && !error && (
@@ -349,6 +554,7 @@ export function RunnerDetailPage({runnerId, workspaceName, viewerName, onBack}: 
   const [busy, setBusy] = useState('');
   const [copied, setCopied] = useState(false);
   const [connectOn, setConnectOn] = useState(true);
+  const [revoking, setRevoking] = useState(false);
   const [now, setNow] = useState(() => Date.now());
 
   const load = useCallback(() => {
@@ -368,6 +574,30 @@ export function RunnerDetailPage({runnerId, workspaceName, viewerName, onBack}: 
   }, [runnerId]);
 
   useEffect(() => { load(); }, [load]);
+
+  /* Revoke the machine itself, which is a different act from revoking one of its tunnels: this
+   * one turns the runner's bearer token off, so /runner/claim refuses it on its next poll. */
+  /* Takes the row as an argument rather than closing over `runner`: this hook list runs before the
+   * "not found" early return, so the component's `runner` is still nullable here, and the narrowed
+   * value at the button is the one that exists. */
+  const revokeRunner = async (target: Runner) => {
+    if (!(await confirmDialog(
+      `Revoke ${target.name}? Its lease token stops authenticating immediately, so it is refused at `
+      + '/runner/claim and any lease it holds is lost on the next heartbeat. Work is re-queued; the '
+      + 'machine is not deleted.', {danger: true}))) return;
+    setRevoking(true);
+    setNotice('');
+    setError('');
+    try {
+      await getAgentsAdapter().revokeRunner(target.id);
+      load();
+      setNotice(`${target.name} revoked. Its token no longer authenticates at /runner/claim.`);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setRevoking(false);
+    }
+  };
 
   /* A TTL that does not count down is a lie about a tunnel that will die on its own. */
   useEffect(() => {
@@ -442,6 +672,14 @@ export function RunnerDetailPage({runnerId, workspaceName, viewerName, onBack}: 
         </nav>
       </header>
       <div className="lin-toolbar" style={{justifyContent: 'flex-end'}}>
+        {/* HOJA-635: the way back for a machine. Two steps, then a state transition the server
+            owns (`runnerRevoke`) — the row only reads "Revoked" once the server says so. */}
+        {!runner.revoked && runner.enabled && (
+          <button type="button" className="lin-btn" data-action="revoke-runner"
+            disabled={revoking} onClick={() => void revokeRunner(runner)} style={TOOLBAR_ACTION}>
+            {revoking ? 'Revoking…' : 'Revoke runner'}
+          </button>
+        )}
         <Tip label={copied ? 'Copied' : `Copy ${runner.id}`}>
           <span>
             <IconBtn label="Copy runner id" title="Copy runner id" onClick={() => {

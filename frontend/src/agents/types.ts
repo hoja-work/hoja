@@ -257,6 +257,34 @@ export type Runner = {
   lease: RunnerLease | null;
 };
 
+/** One single-use enrollment token, as the Runners screen reads it (`RunnerEnrollment` in
+ * agent_runner_admin.py). The server never serves the token or its hash through this shape — only
+ * `runnerEnrollmentCreate` can return the plaintext, once. */
+export type RunnerEnrollment = {
+  id: string;
+  /** What the admin called it when minting it: usually the machine it is for. */
+  label: string | null;
+  /** pending (usable) | spent (a runner registered with it) | expired (aged out or withdrawn). */
+  status: 'pending' | 'spent' | 'expired';
+  /** True while /runner/enroll would still accept the token. */
+  usable: boolean;
+  expiresAt: string | null;
+  usedAt: string | null;
+  usedByRunner: string | null;
+  createdAt: string;
+};
+
+/** The one response that ever contains a token, plus the command that spends it. */
+export type RunnerEnrollmentGrant = {
+  enrollment: RunnerEnrollment;
+  /** The plaintext. Held in component state only, never persisted and never refetched. */
+  token: string;
+  /** The exact line an operator runs on the machine, built server-side from this request's URL. */
+  command: string;
+  /** The cadence the server asks the daemon to heartbeat at. */
+  heartbeatIntervalS: number;
+};
+
 /** A live Connect exposure, exactly the public row `Exposure.public_row()` returns. */
 export type ConnectExposure = {
   id: string;

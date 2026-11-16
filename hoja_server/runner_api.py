@@ -267,7 +267,12 @@ def register_runner(engine, body: Mapping[str, Any]) -> dict[str, Any]:
                                     "this enrollment token has already been used")
         expires = _parse_iso(enrollment["expires_at"])
         if expires is not None and expires < _now():
-            raise LeaseRequestError(401, ERROR_UNAUTHORIZED, "this enrollment token has expired")
+            # HOJA-635: a revoked enrollment is one whose ``expires_at`` was moved to
+            # the server's now (there is no ``revoked_at`` column, and this change
+            # adds none), so the two share this branch. Both answers are the same
+            # refusal; the audit ledger is what says which one it was.
+            raise LeaseRequestError(401, ERROR_UNAUTHORIZED,
+                                    "this enrollment token has expired or been revoked")
         org_id = enrollment["organization_id"]
 
     token = gen_token()
@@ -321,6 +326,51 @@ def revoke_runner(engine, *, organization_id: str, runner_id: str) -> bool:
             runner.c.revoked_at.is_(None),
         )).values(enabled=False, revoked_at=now_iso()))
         return bool(result.rowcount)
+
+
+def revoke_enrollment(engine, *, organization_id: str, enrollment_id: str) -> dict[str, Any] | None:
+    """Take back an enrollment token nobody has spent yet (HOJA-635).
+
+    ``runner_enrollment`` has no ``revoked_at`` column and HOJA-635 forbids a
+    migration, so a revocation is expressed with the column the enroll route
+    already refuses on: ``expires_at`` is moved to the server's now, which makes
+    the token expired rather than deleted. Nothing is removed from the table, so
+    the ledger of "this token existed and was withdrawn" survives, and the audit
+    row ``runner.enrollment.revoke`` is what distinguishes a withdrawal from a
+    token that simply aged out — the row itself cannot tell the two apart.
+
+    A spent enrollment is not revoked: its plaintext is already burnt (``used_at``),
+    so there is nothing left to take back and the runner it created is a separate
+    row with its own revocation (``revoke_runner``).
+
+    Returns the enrollment row, or ``None`` when this workspace has no such
+    enrollment. ``revoked`` in the result says whether this call changed anything:
+    revoking twice is a no-op, not an error.
+    """
+    with tenant_context.scoped(organization_id), engine.begin() as conn:
+        row = _row(conn, select(runner_enrollment).where(and_(
+            runner_enrollment.c.id == enrollment_id,
+            runner_enrollment.c.organization_id == organization_id,
+        )))
+        if row is None:
+            return None
+        revoked = False
+        # Only an enrollment that would still be accepted can be withdrawn. Without this
+        # guard a second revoke would rewrite ``expires_at`` to a later "now" and report a
+        # revocation that did not happen; the condition is what makes the call idempotent.
+        expires = _parse_iso(row.get("expires_at"))
+        still_usable = row.get("used_at") is None and (expires is None or expires > _now())
+        if still_usable:
+            stamp = _iso(_now())
+            changed = conn.execute(runner_enrollment.update().where(and_(
+                runner_enrollment.c.id == enrollment_id,
+                runner_enrollment.c.organization_id == organization_id,
+                runner_enrollment.c.used_at.is_(None),
+            )).values(expires_at=stamp))
+            revoked = bool(changed.rowcount)
+            if revoked:
+                row["expires_at"] = stamp
+    return {**row, "revoked": revoked}
 
 
 # ---------------------------------------------------------------------------

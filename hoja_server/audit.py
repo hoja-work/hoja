@@ -73,6 +73,14 @@ ACTIONS = frozenset({
     # and never its value, which is not readable here by construction.
     "agent.policy.change",
     "agent.policy.secret",
+    # The runner's own credentials (HOJA-635). Minting an enrollment token, revoking
+    # one before it is spent, and revoking an enrolled machine are three different
+    # facts: the first hands out a way in, the second takes that way back, and the
+    # third turns off a machine that already has one. The plaintext token is never
+    # in ``detail`` — the row names the enrollment, not its secret.
+    "runner.enrollment.create",
+    "runner.enrollment.revoke",
+    "runner.revoke",
     # Credential and connector surfaces.
     "connector.token.use",
     "api_key.create",

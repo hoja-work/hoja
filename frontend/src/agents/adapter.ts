@@ -25,7 +25,8 @@
 import {seedConnectEnabled, seedExposures} from './seed';
 import type {
   Agent, AgentDetail, AgentEvent, AgentPolicy, AgentSession, AuditEvent, Claim, ClaimVerdict,
-  ConnectExposure, RawExposure, Runner, RunnerLease, SessionStatus, VerificationCheck, Verdict,
+  ConnectExposure, RawExposure, Runner, RunnerEnrollment, RunnerEnrollmentGrant, RunnerLease,
+  SessionStatus, VerificationCheck, Verdict,
 } from './types';
 
 export type PolicyPatch = Partial<AgentPolicy>;
@@ -100,6 +101,19 @@ export type AgentsAdapter = {
   listClaims(options?: {agentId?: string; awaiting?: boolean; after?: string}): Promise<ClaimPage>;
   /** One claim's verdict ledger (`agentVerifications(sessionId)`), newest first. */
   listVerdicts(sessionId: string): Promise<ClaimVerdict[]>;
+
+  /* -- server-backed: GraphQL, HOJA-635 (the write half of the runner surface) ---------------- */
+  /** Every enrollment token in the workspace (`runnerEnrollments`), admin-gated. Never a secret:
+   *  the server's `RunnerEnrollment` shape has no token and no hash to serve. */
+  listRunnerEnrollments(): Promise<RunnerEnrollment[]>;
+  /** Mint a single-use token. This response is the only place the plaintext exists, so the caller
+   *  must hold it in component state and drop it when the panel closes. */
+  createRunnerEnrollment(name: string, ttlMinutes?: number): Promise<RunnerEnrollmentGrant>;
+  /** Withdraw an unspent token. `false` means it was already spent or already withdrawn —
+   *  `/runner/enroll` refuses it either way. */
+  revokeRunnerEnrollment(id: string): Promise<boolean>;
+  /** Disable an enrolled machine. Its bearer token stops authenticating at /runner/claim. */
+  revokeRunner(id: string): Promise<boolean>;
 
   /* -- still a fixture: Connect has no server record (WP08) ----------------------------------- */
   /** Live exposures only: the supervisor revokes on TTL, so an expired row is never served. */
@@ -408,6 +422,27 @@ const RUNNER_FIELDS = `id name organizationId status enabled revokedAt labels ha
                  issue { identifier } }`;
 const LEASE_FIELDS = `id taskId state harness fence leaseUntil grantedAt finishState finishedAt
   issue { identifier }`;
+/* HOJA-635: the enrollment's lifecycle columns only. `token_hash` and `hint` are not in the
+ * server's SDL at all, so there is nothing here to forget to exclude. */
+const ENROLLMENT_FIELDS = `id label status usable expiresAt usedAt usedByRunner createdAt`;
+
+type ServerEnrollment = {
+  id: string; label: string | null; status: 'pending' | 'spent' | 'expired'; usable: boolean;
+  expiresAt: string | null; usedAt: string | null; usedByRunner: string | null; createdAt: string;
+};
+
+function fromEnrollment(row: ServerEnrollment): RunnerEnrollment {
+  return {
+    id: row.id,
+    label: row.label,
+    status: row.status,
+    usable: row.usable,
+    expiresAt: row.expiresAt,
+    usedAt: row.usedAt,
+    usedByRunner: row.usedByRunner,
+    createdAt: row.createdAt,
+  };
+}
 
 type ServerLease = {
   id: string; taskId: string; state: string; harness: string; fence: number;
@@ -754,6 +789,47 @@ function createGraphqlAdapter(sample: AgentsAdapter): AgentsAdapter {
              checks { name outcome detail } } }`, {sessionId});
       return (data.agentVerifications || []).map(fromVerdict);
     },
+
+    /* -- HOJA-635: minting and taking back credentials ---------------------------------- */
+
+    async listRunnerEnrollments() {
+      const data = await request<{runnerEnrollments: ServerEnrollment[]}>(
+        `query Enrollments { runnerEnrollments { ${ENROLLMENT_FIELDS} } }`);
+      return (data.runnerEnrollments || []).map(fromEnrollment);
+    },
+
+    async createRunnerEnrollment(name: string, ttlMinutes?: number) {
+      /* The plaintext arrives here and nowhere else. It is returned to the caller, which keeps it
+       * in state until the panel closes; nothing in this module stores, logs or caches it. */
+      const data = await request<{
+        runnerEnrollmentCreate: {
+          enrollment: ServerEnrollment; token: string; command: string; heartbeatIntervalS: number;
+        };
+      }>(`mutation Enroll($name: String!, $ttlMinutes: Int) {
+            runnerEnrollmentCreate(name: $name, ttlMinutes: $ttlMinutes) {
+              enrollment { ${ENROLLMENT_FIELDS} }
+              token command heartbeatIntervalS } }`,
+         {name, ttlMinutes: ttlMinutes ?? null});
+      const created = data.runnerEnrollmentCreate;
+      return {
+        enrollment: fromEnrollment(created.enrollment),
+        token: created.token,
+        command: created.command,
+        heartbeatIntervalS: created.heartbeatIntervalS,
+      };
+    },
+
+    async revokeRunnerEnrollment(id: string) {
+      const data = await request<{runnerEnrollmentRevoke: boolean}>(
+        `mutation Unenroll($id: String!) { runnerEnrollmentRevoke(id: $id) }`, {id});
+      return Boolean(data.runnerEnrollmentRevoke);
+    },
+
+    async revokeRunner(id: string) {
+      const data = await request<{runnerRevoke: boolean}>(
+        `mutation RevokeRunner($id: String!) { runnerRevoke(id: $id) }`, {id});
+      return Boolean(data.runnerRevoke);
+    },
   };
 }
 
@@ -830,6 +906,13 @@ function createSampleAdapter(): AgentsAdapter {
     async listLeases() { return serverOnly('a runner\'s leases'); },
     async listClaims() { return serverOnly('the claims waiting on a verifier'); },
     async listVerdicts() { return serverOnly('a claim\'s verdicts'); },
+
+    /* HOJA-635 is a server surface end to end — a sample token would be a token that enrolls
+     * nothing, and drawing one would be worse than the loud failure below. */
+    async listRunnerEnrollments() { return serverOnly('enrollment tokens'); },
+    async createRunnerEnrollment() { return serverOnly('minting an enrollment token'); },
+    async revokeRunnerEnrollment() { return serverOnly('revoking an enrollment token'); },
+    async revokeRunner() { return serverOnly('revoking a runner'); },
 
     async listExposures(runnerId?: string) {
       /* The fixture belongs to no runner, so the filter is only ever "all of them". A caller that
