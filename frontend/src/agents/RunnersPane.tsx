@@ -1,4 +1,4 @@
-/* Screens 4 and 5 — Runners list and Runner detail (HOJA-602-A-16, WP13 T059).
+/* Screens 4 and 5 — Runners list and Runner detail (HOJA-602-A-16, WP13).
  *
  * Both screens are the issue list's and the issue page's own pieces:
  *
@@ -8,35 +8,35 @@
  *   - the detail is the `.lin-detail` + `.lin-props` split with the exported `PropDropdown` for
  *     property rows, the shape `AgentDetail.tsx` already proves.
  *
- * What this screen must never do, and how that is guaranteed rather than remembered:
+ * Since slice 5 the runners and their leases are server rows: `runners`, `runner(id)` and
+ * `agentLeases` in app/hoja_server/agent_runners.py, all admin-gated and org-scoped. The current
+ * lease rides the row (the issue row's `trailing` slot, exactly as the run queue's session chip
+ * does) because "what is this machine holding?" is the question the list answers.
  *
- *   - the tailcat address is a bearer secret (runner/hoja_runnerd/connect.py:8-12). The adapter
- *     drops it in `publicExposure` before anything reaches here, and the geometry script asserts
- *     the canary seeded in the fixture is absent from the rendered HTML;
- *   - the lease token hash is a credential column (FR-018). `publicRunner` maps it to `enrolled`,
- *     so this file has no field to leak;
- *   - the org kill switch (`ConnectSupervisor.set_org_enabled`) is a state, not an empty list: a
- *     disabled workspace says so and offers no revoke.
- *
- * Fields come from the two written authorities and nothing else — `Exposure.public_row()` for an
- * exposure, the spec glossary ("Runner — org, name, labels, lease token hash, last seen") for a
- * runner. `app/scripts/check-runner-contract.py` compares the two mappings in `types.ts` with
- * those sources, so a field invented here fails there.
+ * One surface here is still a fixture: **Connect**. No table stores an exposure and no route opens
+ * or revokes one (WP08), so the exposures under the Connect heading are the labelled sample —
+ * `SampleDataNotice surface="connect"` — and they belong to no real machine, which the block says
+ * in words rather than by association. Two secrets matter and both are structurally absent: the
+ * tailcat address is a bearer secret (runner/hoja_runnerd/connect.py:8-12) and is dropped by
+ * `publicExposure` before anything reaches here, and the lease token hash is a credential column
+ * (FR-018) that the server's SDL does not carry at all.
  */
 
 import {useCallback, useEffect, useMemo, useState} from 'react';
 import {Copy, Lock, LockOpen, SlidersHorizontal} from 'lucide-react';
 import {confirmDialog} from '../dialogs';
-import {GraphStatusIcon, IconBtn, LabelChip, StatusAgeIcon, Tip} from '../graph/shared';
+import {GraphStatusIcon, IconBtn, LabelChip, Tip} from '../graph/shared';
 import {DisplayPanel, IssueRow, PropDropdown, defaultDisplay, type IssueRowModel, type LinDisplay} from '../graph/tasks';
 import {getAgentsAdapter} from './adapter';
 import {AGENTS_TABS, AgentsListShell, SampleDataNotice, SearchField} from './chrome';
 import {RUNNER_STATUSES, runnerStatus, ttlLabel, ttlSecondsLeft} from './types';
-import type {ConnectExposure, Runner, RunnerStatus} from './types';
+import type {ConnectExposure, Runner, RunnerLease, RunnerStatus} from './types';
 
 /* A runner row is an `IssueRowModel`: the runner's id is the identifier column, its name is the
- * title, online/offline is the status glyph and `lastSeenAt` is the age the glyph explains. The
- * labels ride the model's own `labels`, so they render through the issue row's `LabelChip`. */
+ * title, online/offline is the status glyph and `lastSeenAt` is the age the glyph explains. A
+ * runner that has not heartbeated yet has no age to explain, so the glyph shows no time rather
+ * than a fabricated one. The labels ride the model's own `labels`, so they render through the
+ * issue row's `LabelChip`. */
 export function runnerRow(r: Runner): IssueRowModel {
   const tone = runnerStatus(r.status);
   return {
@@ -50,14 +50,32 @@ export function runnerRow(r: Runner): IssueRowModel {
   };
 }
 
-/* The row's second 14 px column is the one an issue spends on priority. A runner has no
- * priority; it has an enrollment, which is what FR-018 makes scarce. Filling the column keeps the
- * identifier where the issue list puts it instead of shifting it 23 px left. */
-function enrollmentGlyph(r: Runner) {
-  const label = r.enrolled ? 'Enrolled: the one-time lease token was accepted' : 'Not enrolled: no lease token has been presented';
+/* The row's second 14 px column is the one an issue spends on priority. A runner has no priority;
+ * it has a credential, and whether that credential still authenticates is what FR-018 makes
+ * scarce. Filling the column keeps the identifier where the issue list puts it instead of
+ * shifting it 23 px left. */
+function credentialGlyph(r: Runner) {
+  const label = r.revoked
+    ? `Revoked${r.revokedAt ? ` ${r.revokedAt.slice(0, 10)}` : ''}: this runner's token no longer authenticates`
+    : r.enabled
+      ? 'Enrolled: a one-time lease token was presented and accepted'
+      : 'Disabled: this runner is refused at the lease route';
   return (
-    <span className="lin-tip" data-tip={label} role="img" aria-label={label}>
-      {r.enrolled ? <Lock size={14} aria-hidden="true" /> : <LockOpen size={14} aria-hidden="true" />}
+    <span className="lin-tip" data-tip={label} role="img" aria-label={label} data-credential={r.revoked ? 'revoked' : 'enrolled'}>
+      {r.revoked || !r.enabled ? <LockOpen size={14} aria-hidden="true" /> : <Lock size={14} aria-hidden="true" />}
+    </span>
+  );
+}
+
+/* The lease a runner holds, as the row's trailing chip: the task it took and the harness it runs.
+ * A runner holding nothing says nothing — an empty chip would be a second status column. */
+function leaseChip(r: Runner) {
+  if (!r.lease) return null;
+  const task = r.lease.taskIdentifier || r.lease.taskId.slice(0, 8);
+  return (
+    <span className="lin-chip" data-lease={r.lease.id} data-lease-state={r.lease.state}
+      title={`Holding ${task} · ${r.lease.harness} · fence ${r.lease.fence}${r.lease.leaseUntil ? ` · until ${r.lease.leaseUntil}` : ''}`}>
+      <i style={{background: '#5e6ad2'}} />{task} · {r.lease.harness}
     </span>
   );
 }
@@ -67,7 +85,7 @@ const RUNNER_DISPLAY: LinDisplay = {
   grouping: 'status',
   ordering: 'updated',
   props: {...defaultDisplay.props,
-    // An issue row's priority column is spent on enrollment here, and assignee/project/cycle/
+    // An issue row's priority column is spent on the credential here, and assignee/project/cycle/
     // dueDate/created have no runner counterpart.
     priority: false, assignee: false, project: false, cycle: false, dueDate: false, created: false},
 };
@@ -83,6 +101,9 @@ export function RunnersPane({workspaceName, onOpen, tab, onTab}: {
   const [runners, setRunners] = useState<Runner[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [paging, setPaging] = useState(false);
   const [q, setQ] = useState('');
   const [grouping, setGrouping] = useState<RunnerGrouping>('status');
   const [labels, setLabels] = useState<string[]>([]);
@@ -92,19 +113,43 @@ export function RunnersPane({workspaceName, onOpen, tab, onTab}: {
 
   useEffect(() => {
     let live = true;
+    setLoading(true);
     Promise.all([getAgentsAdapter().listRunners(), getAgentsAdapter().connectEnabled()])
-      .then(([rows, enabled]) => { if (live) { setRunners(rows); setConnectOn(enabled); setError(''); } })
+      .then(([page, enabled]) => {
+        if (!live) return;
+        setRunners(page.runners);
+        setCursor(page.endCursor);
+        setHasMore(page.hasNextPage);
+        setConnectOn(enabled);
+        setError('');
+      })
       .catch((e: Error) => { if (live) setError(e.message); })
       .finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
   }, []);
+
+  const loadMore = useCallback(async () => {
+    if (!cursor || paging) return;
+    setPaging(true);
+    try {
+      const page = await getAgentsAdapter().listRunners({after: cursor});
+      setRunners(current => [...current, ...page.runners]);
+      setCursor(page.endCursor);
+      setHasMore(page.hasNextPage);
+      setError('');
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setPaging(false);
+    }
+  }, [cursor, paging]);
 
   const allLabels = useMemo(() => [...new Set(runners.flatMap(r => r.labels))].sort(), [runners]);
 
   const visible = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return runners.filter(r => {
-      if (needle && !`${r.id} ${r.name} ${r.labels.join(' ')}`.toLowerCase().includes(needle)) return false;
+      if (needle && !`${r.id} ${r.name} ${r.labels.join(' ')} ${r.harnesses.join(' ')}`.toLowerCase().includes(needle)) return false;
       if (labels.length && !labels.some(l => r.labels.includes(l))) return false;
       return true;
     });
@@ -180,7 +225,6 @@ export function RunnersPane({workspaceName, onOpen, tab, onTab}: {
       {error && <p className="lin-error" role="alert">{error}</p>}
       {!loading && !error && (
         <div className="lin-list">
-          <SampleDataNotice surface="runners" />
           {groups.map(g => {
             const isCollapsed = collapsedSet.has(g.key);
             return (
@@ -203,15 +247,29 @@ export function RunnersPane({workspaceName, onOpen, tab, onTab}: {
                 {!isCollapsed && g.items.map(r => (
                   <IssueRow key={r.id} issue={runnerRow(r)} display={RUNNER_DISPLAY} selected={false}
                     showCheckbox={false} onSelect={() => undefined} onOpen={() => onOpen(r)} childCount={0}
-                    leading={enrollmentGlyph(r)} />
+                    leading={credentialGlyph(r)} trailing={leaseChip(r)} />
                 ))}
               </section>
             );
           })}
           {!visible.length && (
-            <div className="lin-empty">
-              <h2>No runners match</h2>
-              <p>A runner appears here once <code>hoja-runnerd</code> has presented its one-time lease token.</p>
+            <div className="lin-empty" data-state="empty">
+              <h2>{runners.length ? 'No runner matches these filters' : 'No machine is enrolled'}</h2>
+              <p>
+                {runners.length
+                  ? 'The search box and the label chips narrow the runners loaded so far; clear them to see them all.'
+                  : 'A runner appears here once hoja-runnerd has presented its one-time lease token.'}
+              </p>
+            </div>
+          )}
+          {(hasMore || runners.length > 0) && (
+            <div className="lin-note" style={{display: 'flex', gap: 8, alignItems: 'center', padding: '8px 0'}}>
+              <span>{runners.length} machine{runners.length === 1 ? '' : 's'} loaded</span>
+              {hasMore && (
+                <button type="button" className="lin-btn" data-action="load-more" disabled={paging} onClick={() => void loadMore()}>
+                  {paging ? 'Loading…' : 'Load more runners'}
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -226,8 +284,10 @@ export function RunnersPane({workspaceName, onOpen, tab, onTab}: {
 }
 
 /* Last seen, in the shape the row's age glyph uses. Kept local so the detail page does not import
- * from AgentDetail (which owns a different vocabulary). */
-function lastSeen(iso: string): string {
+ * from AgentDetail (which owns a different vocabulary). A machine that has never heartbeated says
+ * so: `null` is "no heartbeat recorded", which is not the same sentence as "years ago". */
+function lastSeen(iso: string | null): string {
+  if (!iso) return 'no heartbeat yet';
   const ms = Date.now() - Date.parse(iso);
   if (Number.isNaN(ms)) return iso;
   const m = Math.round(ms / 60000);
@@ -235,6 +295,11 @@ function lastSeen(iso: string): string {
   if (m < 60) return `${m}m ago`;
   const h = Math.round(m / 60);
   return h < 24 ? `${h}h ago` : `${Math.round(h / 24)}d ago`;
+}
+
+function leaseLine(lease: RunnerLease): string {
+  const task = lease.taskIdentifier || lease.taskId.slice(0, 8);
+  return `${task} · ${lease.harness} · fence ${lease.fence} · ${lease.state}`;
 }
 
 function ExposureRow({exposure, connectOn, busy, onRevoke, now}: {
@@ -276,6 +341,7 @@ export function RunnerDetailPage({runnerId, workspaceName, viewerName, onBack}: 
   onBack: () => void;
 }) {
   const [runner, setRunner] = useState<Runner | null>(null);
+  const [leases, setLeases] = useState<RunnerLease[]>([]);
   const [exposures, setExposures] = useState<ConnectExposure[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -293,6 +359,9 @@ export function RunnerDetailPage({runnerId, workspaceName, viewerName, onBack}: 
         setRunner(d ? d.runner : null);
         setExposures(d ? d.exposures : []);
         setError(d ? '' : `Runner ${runnerId} was not found.`);
+        /* The machine's leases are a second read (`agentLeases`) because they are not part of the
+         * runner row: they are the history of what it took, which is what its page answers. */
+        setLeases(d ? await getAgentsAdapter().listLeases(runnerId) : []);
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
@@ -348,8 +417,11 @@ export function RunnerDetailPage({runnerId, workspaceName, viewerName, onBack}: 
             <span className="current">{runnerId}</span>
           </nav>
         </header>
-        <p className="lin-error" role="alert">{error || `Runner ${runnerId} was not found.`}{' '}
-          <button type="button" onClick={() => { setError(''); load(); }}>Retry</button></p>
+        <div className="lin-empty" role="alert" data-state="error">
+          <h2>This machine could not be opened</h2>
+          <p>{error || `Runner ${runnerId} was not found.`}</p>
+          <button type="button" className="lin-btn" onClick={() => { setError(''); load(); }}>Retry</button>
+        </div>
       </section>
     );
   }
@@ -358,7 +430,7 @@ export function RunnerDetailPage({runnerId, workspaceName, viewerName, onBack}: 
 
   return (
     <section className="lin-page" data-surface="runner-detail" data-connect={connectOn ? 'on' : 'off'}
-      aria-label={`${runner.id}: ${runner.name}`}>
+      data-runner-status={runner.status} aria-label={`${runner.id}: ${runner.name}`}>
       <header className="lin-head">
         <nav className="lin-crumb" aria-label="Breadcrumb">
           <button type="button" className="crumb-link" onClick={onBack}>← Runners</button>
@@ -387,24 +459,50 @@ export function RunnerDetailPage({runnerId, workspaceName, viewerName, onBack}: 
             <GraphStatusIcon state={{name: tone.name, type: tone.type, color: tone.color}} size={16} /> {runner.name}
           </h1>
           <p className="lin-detail-desc">
-            {tone.name} · last seen {lastSeen(runner.lastSeenAt)} · {runner.enrolled ? 'enrolled' : 'not enrolled'}
-            {' · '}{exposures.length} live {exposures.length === 1 ? 'exposure' : 'exposures'}
+            {tone.name} · last seen {lastSeen(runner.lastSeenAt)} ·{' '}
+            {runner.revoked ? 'revoked' : runner.enabled ? 'enrolled' : 'disabled'}
+            {runner.harnesses.length ? ` · ${runner.harnesses.join(', ')}` : ''}
             {runner.labels.length ? ` · ${runner.labels.join(', ')}` : ''}
           </p>
 
-          <SampleDataNotice surface="runners" />
+          <section className="lin-activity" aria-label="Leases">
+            <header>
+              <b>Leases</b>
+              <span className="grow" />
+              <span className="lin-note">{runner.lease ? `Holding ${leaseLine(runner.lease)}` : 'Holding no lease'}</span>
+            </header>
+            <div data-leases>
+              {leases.map(lease => (
+                <div key={lease.id} className="lin-event" data-lease-row={lease.id} data-lease-state={lease.state}>
+                  <span className="lin-chip" title={`state: ${lease.state}`}>{lease.state}</span>
+                  <span><b>{lease.taskIdentifier || lease.taskId.slice(0, 8)}</b> · {lease.harness} · fence {lease.fence}</span>
+                  <time>{relTime(lease.grantedAt || lease.finishedAt)}</time>
+                </div>
+              ))}
+            </div>
+            {!leases.length && (
+              <p className="lin-note">
+                This machine has never been granted work. A lease appears here when it long-polls for
+                one, and the task it took is on the row.
+              </p>
+            )}
+          </section>
+
           <section className="lin-activity" aria-label="Connect exposures">
             <header>
               <b>Connect exposures</b>
               <span className="grow" />
               <span className="lin-note">{connectOn ? 'Each tunnel is one process, one ephemeral key.' : 'Connect is disabled for this workspace.'}</span>
             </header>
+            {/* The machines above are server rows; this block is not. WP08 has no exposure store,
+                so these rows belong to no real runner, and the notice says so before the rows. */}
+            <SampleDataNotice surface="connect" />
             {!connectOn && (
               <p className="lin-note" data-connect-notice="off">
                 An admin turned Connect off for this workspace, so no exposure can be opened and none can be revoked. This is a switch, not an empty list.
               </p>
             )}
-            {/* `data-surface` on the wrapper is what the geometry probe measures: these rows are
+            {/* `data-exposures` on the wrapper is what the geometry probe looks for: these rows are
                 `.lin-row`s, the same 42 px rhythm as an issue. */}
             <div data-exposures>
               {exposures.map(e => (
@@ -412,7 +510,7 @@ export function RunnerDetailPage({runnerId, workspaceName, viewerName, onBack}: 
               ))}
             </div>
             {!exposures.length && connectOn && (
-              <p className="lin-note">This runner holds no live exposure. One opens per leased job that asks for a port.</p>
+              <p className="lin-note">Nothing is exposed. A tunnel opens per leased job that asks for a port.</p>
             )}
           </section>
 
@@ -422,15 +520,26 @@ export function RunnerDetailPage({runnerId, workspaceName, viewerName, onBack}: 
 
         <aside className="lin-props" aria-label="Runner details">
           <h3>Runner</h3>
-          <PropDropdown label="Enrollment" icon={<Lock size={13} aria-hidden="true" />}
-            value={runner.enrolled ? 'Enrolled' : 'Not enrolled'}
+          <PropDropdown label="Credential" icon={<Lock size={13} aria-hidden="true" />}
+            value={runner.revoked ? 'Revoked' : runner.enabled ? 'Enrolled' : 'Disabled'}
             disabled
             onPick={() => undefined}
-            options={[{id: 'enrolled', selected: runner.enrolled, label: 'Enrolled'},
-              {id: 'none', selected: !runner.enrolled, label: 'Not enrolled'}]} />
+            options={[{id: 'enrolled', selected: !runner.revoked && runner.enabled, label: 'Enrolled'},
+              {id: 'revoked', selected: runner.revoked, label: 'Revoked'}]} />
           <div className="lin-prop">
             <span className="k">◷ Last seen</span>
             <span className="v">{lastSeen(runner.lastSeenAt)}</span>
+          </div>
+          <div className="lin-prop">
+            <span className="k">▮ Current lease</span>
+            <span className="v" data-current-lease={runner.lease ? runner.lease.id : ''}>
+              {runner.lease ? leaseLine(runner.lease) : 'None'}
+            </span>
+          </div>
+          <div className="sec">Harnesses</div>
+          <div style={{display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6}}>
+            {runner.harnesses.map(name => <LabelChip key={name} label={{id: name, name}} />)}
+            {!runner.harnesses.length && <span className="lin-note">None declared</span>}
           </div>
           <div className="sec">Labels</div>
           <div style={{display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6}}>
@@ -450,4 +559,10 @@ export function RunnerDetailPage({runnerId, workspaceName, viewerName, onBack}: 
       </div>
     </section>
   );
+}
+
+/* The detail page's relative time, for a lease: the same arithmetic the row's age glyph uses. */
+function relTime(iso: string | null): string {
+  if (!iso) return '';
+  return lastSeen(iso);
 }

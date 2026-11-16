@@ -12,6 +12,12 @@
  * The row's leading glyph is the *session* status, not the issue status. On this screen the
  * question a reader asks of a row is "where is this run right now?", and the group header above
  * it answers the same question; the issue's own status is still one click away on the task.
+ *
+ * WP10's two halves ride the row as chips, because "awaiting verification" is a group and a
+ * verdict is a fact: a `verifying` run shows `Awaiting verifier`, and once a principal signs it the
+ * chip becomes the verdict — `met`, `not met` or `uncertain` — with the verifier's model in its
+ * title. Both come off the session row (`AgentSession.verdict`, `claimAt`), so a row with no claim
+ * carries no verification chip at all.
  */
 
 import {useCallback, useEffect, useMemo, useState} from 'react';
@@ -19,7 +25,7 @@ import {GraphStatusIcon} from '../graph/shared';
 import {IssueRow, defaultDisplay, type IssueRowModel, type LinDisplay} from '../graph/tasks';
 import {getAgentsAdapter} from './adapter';
 import {AGENTS_TABS, AgentsListShell, SearchField} from './chrome';
-import {SESSION_STATUSES, sessionStatusName} from './types';
+import {SESSION_STATUSES, sessionStatusName, verdictColor, verdictLabel} from './types';
 import type {AgentSession, SessionStatus} from './types';
 
 const SESSION_TYPE: Record<SessionStatus, {type: string; color: string}> = {
@@ -175,6 +181,17 @@ export function RunQueue({workspaceName, agentKey, onOpenRun, onOpenAgent, tab, 
                         title={`${s.agentName} · ${sessionStatusName(s.status)} · ${s.state}${s.reason ? ` · ${s.reason}` : ''}`}>
                         <i style={{background: SESSION_TYPE[s.status].color}} />{s.agentName}
                       </span>
+                      {s.verdict
+                        ? <span className="lin-chip" data-verdict={s.verdict}
+                            title={`${verdictLabel(s.verdict)} — recorded by a principal that did not do the work, on the claim submitted ${s.claimAt ? new Date(s.claimAt).toISOString().slice(0, 10) : 'earlier'}`}>
+                            <i style={{background: verdictColor(s.verdict)}} />{verdictLabel(s.verdict)}
+                          </span>
+                        : s.status === 'awaiting-verification' && s.claim
+                          ? <span className="lin-chip" data-claim="awaiting"
+                              title={`A claim submitted ${s.claimAt ? new Date(s.claimAt).toISOString() : 'unknown'}; no principal has signed it yet`}>
+                              <i style={{background: verdictColor(null)}} />Awaiting verifier
+                            </span>
+                          : null}
                       {s.reason && <span className="hidden md:inline-block max-w-56 overflow-hidden text-ellipsis whitespace-nowrap align-middle lin-note">{s.reason}</span>}
                     </>} />
                 ))}

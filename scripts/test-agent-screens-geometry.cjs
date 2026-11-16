@@ -43,6 +43,7 @@ const py = path.join(repo, '.venv/bin/python');
 const run = code => {
   const r = spawnSync(py, ['-c', code], { cwd: repo, env: { ...process.env, PYTHONPATH: repo }, encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
+  return r.stdout;
 };
 run(`from hoja_server.db import make_engine,migrate,seed_tenant
 e=make_engine(${JSON.stringify(db)}); migrate(e)
@@ -63,6 +64,26 @@ for n in range(30):
     audit.record(e, organization_id=info['org_id'], action='api_key.create', actor_kind='human',
                  actor_id=info['user_id'], target_kind='api_key', target_id='seeded-key-%d' % n)
 e.dispose()`);
+/* Two enrollment tokens, minted before the server starts because minting has no route of its own
+ * (`runner_api.mint_enrollment_token` is an operator action). The *registration* that spends them
+ * goes through the real REST route once the server is up, which is the part the screen must agree
+ * with. Each token is single use, so there is one per runner. */
+const enrollments = JSON.parse(run(`import json
+from sqlalchemy import select
+from hoja_server.db import make_engine, organization, user
+from hoja_server import runner_api
+e = make_engine(${JSON.stringify(db)})
+with e.connect() as c:
+    org_id = c.execute(select(organization.c.id)).scalars().first()
+    user_id = c.execute(select(user.c.id)).scalars().first()
+tokens = []
+for _n in range(2):
+    _row, token = runner_api.mint_enrollment_token(e, organization_id=org_id, created_by=user_id)
+    tokens.append(token)
+e.dispose()
+print(json.dumps(tokens))`));
+assert.equal(enrollments.length, 2, 'two enrollment tokens were minted');
+
 const port = 19400 + Math.floor(Math.random() * 90);
 const base = `http://127.0.0.1:${port}`;
 const server = spawn(path.join(repo, '.venv/bin/hoja-serve'), ['serve', '--db', db, '--host', '127.0.0.1', '--port', String(port)],
@@ -188,6 +209,15 @@ const focusStop = page => page.evaluate(() => {
   const triage = await createMember({name: 'Triage agent', capacity: 2, monthlyBudgetCredits: 500,
     model: 'claude-sonnet-4', runnerPool: 'linux-x64', timezone: 'UTC'});
   const docsAgent = await createMember({name: 'Docs agent', capacity: 1});
+  /* WP12 landed on main while this slice was in review: a delegated task is only leaseable under
+   * a policy that names its team (deny by default), so the machine below can only be granted work
+   * if the agent has one. This is the policy surface's own mutation, not a workaround: without it
+   * the correct answer to "claim a lease" is the policy's refusal. */
+  const policy = await gql(`mutation($id:String!,$input:AgentPolicyInput!){
+    agentPolicyUpdate(agentMemberId:$id, input:$input){success}}`,
+  {id: triage.id, input: {teams: [team.id], maxConcurrency: 2}});
+  assert.ok(policy.agentPolicyUpdate.success, 'the triage agent has the policy that lets it be leased');
+
   const cyclePath = `/workspace/team/${key}/cycle/active`;
   const referencePath = `/workspace/task/${encodeURIComponent(reference.identifier)}/issue`;
 
@@ -366,15 +396,39 @@ const focusStop = page => page.evaluate(() => {
     ok(new URL(page.url()).pathname === '/workspace/agents', 'flagged-on build: the sidebar entry opens the agent list', new URL(page.url()).pathname);
   }
 
-  /* ---- 6. the runner screens (slice 2): lists and details, measured against the same two
-   * reference pages, with a non-vacuity guard ----
+  /* ---- 6. the runner screens (slice 5): real machines, real leases, labelled Connect ----
    *
    * The guard matters: the loops above compare with `ok(a === b)`, which passes when a selector
-   * was missing and both sides are `null`. A new screen has no history to reassure us, so every
-   * key is first asserted to have been *measured* on both sides. */
+   * was missing and both sides are `null`. A new screen has no history to reassure us, so every key
+   * is first asserted to have been *measured* on both sides.
+   *
+   * The runners are now server rows, so this section registers them through the real REST route
+   * (`/runner/register`, the enrollment token minted by the seeding pass below) and then asserts
+   * the list draws exactly what the API stored. Connect is still a fixture (WP08 has no exposure
+   * store), so it is the *only* thing on these screens that carries a sample notice. */
   const RUNNERS = '/workspace/agents/runners';
   const canary = /\btc[A-Za-z0-9_-]{20,}\b/; // mirrors TAILCAT_ADDRESS_RE in runner/hoja_runnerd/connect.py;
   // app/scripts/check-runner-contract.py proves the fixture matches the Python regex itself.
+
+  /* Two machines: one that declared the harness Hoja's scheduler enqueues (`pi`), so it can take
+   * the lease this file finishes later, and one that never polls, so it reads offline. */
+  const registerRunner = async (enrollment, body) => {
+    const response = await fetch(`${base}/runner/register`, {
+      method: 'POST', headers: {'content-type': 'application/json'},
+      body: JSON.stringify({enrollment_token: enrollment, ...body}),
+    });
+    const payload = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(payload));
+    return payload;
+  };
+  const onlineRunner = await registerRunner(enrollments[0],
+    {name: 'mac-mini-01', harnesses: ['pi'], labels: {pool: 'default', host: 'office'}});
+  const idleRunner = await registerRunner(enrollments[1],
+    {name: 'laptop-adhoc', harnesses: ['generic'], labels: {pool: 'default'}});
+
+  const apiRunners = async () => (await gql(`{runners(first: 50) {nodes {
+    id name organizationId status enabled revokedAt labels harnesses lastHeartbeatAt
+    currentLease {id taskId state harness fence issue {identifier}}}}}`)).runners.nodes;
 
   await page.goto(`${base}${RUNNERS}`, { waitUntil: 'networkidle' });
   await page.waitForSelector('[data-surface="runners-list"] .lin-row', { timeout: 15000 });
@@ -390,6 +444,32 @@ const focusStop = page => page.evaluate(() => {
     else ok(a === b, `runner list ${k} matches the issue list exactly`, `${a} vs ${b}`);
   }
   ok(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1), 'runner list has no horizontal page scroll');
+
+  /* The rows are the machines the REST route registered — not a fixture, and not a count. */
+  const serverRunners = await apiRunners();
+  const listRows = await page.evaluate(() => [...document.querySelectorAll('[data-surface="runners-list"] .lin-row')]
+    .map(r => ({
+      ident: r.querySelector('.ident')?.textContent || '',
+      title: r.querySelector('.title')?.textContent || '',
+      credential: r.querySelector('[data-credential]')?.getAttribute('data-credential') || '',
+      lease: r.querySelector('[data-lease]')?.getAttribute('data-lease') || '',
+    })));
+  ok(serverRunners.length === 2, 'runner list: the workspace holds the two machines this file registered', String(serverRunners.length));
+  ok(listRows.length === serverRunners.length, 'runner list: one row per server runner (runners query)', String(listRows.length));
+  ok(listRows.some(r => r.ident === onlineRunner.runner_id && r.title === 'mac-mini-01'),
+    'runner list: a machine registered through /runner/register is a row, by its server id', JSON.stringify(listRows));
+  ok(listRows.every(r => r.credential === 'enrolled'),
+    'runner list: a fresh registration reads enrolled, never the token hash', JSON.stringify(listRows.map(r => r.credential)));
+  ok(!listRows.some(r => /^RUNNER-\d+$/.test(r.ident)), 'runner list: no fixture runner id is presented as a machine',
+    listRows.map(r => r.ident).join(','));
+  ok(await page.evaluate(() => !document.querySelector('[data-surface="runners-list"] [data-sample="on"]')),
+    'runner list: carries no sample-data notice, because every row on it is a server row');
+  /* The status is the server's derivation, drawn as the issue row's status glyph. */
+  const offlineRow = listRows.find(r => r.ident === idleRunner.runner_id);
+  ok(Boolean(offlineRow), 'runner list: the machine that never polled is a row too', JSON.stringify(listRows.map(r => r.ident)));
+  ok((await apiRunners()).find(r => r.id === idleRunner.runner_id)?.status === 'offline',
+    'runner list: a machine with no heartbeat is offline, as the server derives it');
+  ok(!listRows.some(r => r.lease), 'runner list: nothing is leased yet, so no row carries a lease chip');
 
   /* No new design language, mechanically: every class token on a runner row must already have a
    * rule in the stylesheets this app ships, and no token may be runner-specific. */
@@ -412,7 +492,7 @@ const focusStop = page => page.evaluate(() => {
   ok(unstyled.length === 0, 'every class on a runner row is styled by the app or emitted by a shared component', unstyled.join(', '));
   ok(!runnerTokens.some(t => /runner/i.test(t)), 'no runner-specific class token was invented', runnerTokens.filter(t => /runner/i.test(t)).join(', '));
 
-  await page.goto(`${base}${RUNNERS}/RUNNER-1`, { waitUntil: 'networkidle' });
+  await page.goto(`${base}${RUNNERS}/${encodeURIComponent(onlineRunner.runner_id)}`, { waitUntil: 'networkidle' });
   await page.waitForSelector('[data-surface="runner-detail"] .lin-props', { timeout: 15000 });
   await page.waitForTimeout(400);
   const runnerDetail = await page.evaluate(detailProbe);
@@ -427,16 +507,28 @@ const focusStop = page => page.evaluate(() => {
   if (W > 900) ok(runnerDetail.propsLeft > runnerDetail.mainLeft, 'wide viewport: the runner sidebar sits beside the main column');
   else ok(runnerDetail.propsTop > runnerDetail.mainTop, 'narrow viewport: the runner sidebar sits below the main column, as the issue page does');
 
+  /* The detail is the server's row: the harnesses it declared, its credential state, and no lease
+   * yet because it has not polled. */
+  const detailText = await page.evaluate(() => document.querySelector('[data-surface="runner-detail"]')?.innerText || '');
+  ok(/mac-mini-01/.test(detailText), 'runner detail: names the machine the row does', detailText.slice(0, 120).replace(/\n/g, ' '));
+  ok(/\bpi\b/.test(detailText), 'runner detail: shows the harness the runner declared at registration');
+  ok(/no heartbeat yet/i.test(detailText), 'runner detail: a machine that never polled says so instead of inventing an age');
+  ok(await page.evaluate(() => document.querySelector('[data-surface="runner-detail"] [data-current-lease]')?.getAttribute('data-current-lease') === ''),
+    'runner detail: no lease is claimed while the machine holds none');
+  ok(await page.evaluate(() => getComputedStyle(document.querySelector('[data-surface="runner-detail"] [data-sample="on"]') || document.createElement('i')).display !== 'none'),
+    'runner detail: the Connect block carries its sample notice');
+
   /* The address is a bearer secret. The fixture seeds one, the adapter drops it, and the page
    * must not contain it in any form. */
   ok(!canary.test(await page.content()), 'runner detail: no tailcat address anywhere in the rendered HTML');
   ok(await page.evaluate(() => !/nodekey:[0-9a-f]{64}/.test(document.body.innerText)),
     'runner detail: the pinned peer is shortened in the row, full only in a title attribute');
 
-  /* Revoke: two steps, then a state transition that is visible on a different screen. */
+  /* Revoke: two steps, then a state transition that is visible on a different screen. The exposure
+   * is a fixture, which the block above says out loud. */
   const exposureRows = () => page.evaluate(() => document.querySelectorAll('[data-surface="runner-detail"] [data-exposure]').length);
   const beforeRevoke = await exposureRows();
-  ok(beforeRevoke >= 1, 'runner detail shows its live exposure', String(beforeRevoke));
+  ok(beforeRevoke >= 1, 'runner detail shows the sample exposure rows the Connect block draws', String(beforeRevoke));
   await page.click('[data-exposure="exp-1"] button.lin-btn');
   await page.waitForSelector('[role="dialog"]', { timeout: 5000 });
   ok(await exposureRows() === beforeRevoke, 'revoke is two-step: the exposure stays until the dialog is confirmed');
@@ -446,9 +538,9 @@ const focusStop = page => page.evaluate(() => {
   ok(await page.getByText(/Revoked and audited/).count() > 0, 'revoke reports the audit row it wrote');
   await page.screenshot({ path: path.join(shots, `runner-detail-revoked-${W}.png`) });
 
-  /* Through the app, not a fresh load. Connect is still a fixture (WP08), and the audit screen now
-   * reads the server's ledger, so the fixture event this revoke reports on the detail screen must
-   * *not* appear there: a sample row may never be filed as a server record. */
+  /* Through the app, not a fresh load. Connect is a fixture (WP08), and the audit screen reads the
+   * server's ledger, so the fixture event this revoke reports on the detail screen must *not*
+   * appear there: a sample row may never be filed as a server record. */
   await page.click('[data-surface="runner-detail"] button.crumb-link');
   await page.waitForSelector('[data-surface="runners-list"]', { timeout: 15000 });
   await page.getByRole('tab', { name: 'Audit log' }).click();
@@ -464,7 +556,7 @@ const focusStop = page => page.evaluate(() => {
     localStorage.setItem('hoja_agents_connect', 'off');
   }, token);
   const offConnectPage = await offConnect.newPage();
-  await offConnectPage.goto(`${base}${RUNNERS}/RUNNER-2`, { waitUntil: 'networkidle' });
+  await offConnectPage.goto(`${base}${RUNNERS}/${encodeURIComponent(idleRunner.runner_id)}`, { waitUntil: 'networkidle' });
   await offConnectPage.waitForSelector('[data-surface="runner-detail"][data-connect="off"]', { timeout: 15000 });
   ok(await offConnectPage.evaluate(() => Boolean(document.querySelector('[data-connect-notice="off"]'))),
     'Connect disabled: the screen says so instead of showing an empty list');
@@ -594,12 +686,12 @@ const focusStop = page => page.evaluate(() => {
   ok(/admin/i.test(menuSays), 'non-admin: the Delegate menu states the refusal instead of offering nothing', menuSays.replace(/\n/g, ' '));
   await memberCtx.close();
 
-  /* The fixture surface says it is a fixture; the real ones do not. */
-  await page.goto(`${base}${RUNNERS}`, { waitUntil: 'networkidle' });
-  await page.waitForSelector('[data-surface="runners-list"]', { timeout: 15000 });
-  ok(await page.evaluate(() => Boolean(document.querySelector('[data-surface="runners-list"] [data-sample="on"]'))),
-    'runners-list: says out loud that its rows are sample data (WP08 is not on main)');
-  for (const [url, surface] of [['/workspace/agents/queue', 'run-queue'], ['/workspace/agents/audit', 'audit-log']]) {
+  /* The one remaining fixture (Connect) says it is one; every server-backed screen does not. */
+  await page.goto(`${base}${RUNNERS}/${encodeURIComponent(onlineRunner.runner_id)}`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-surface="runner-detail"]', { timeout: 15000 });
+  ok(await page.evaluate(() => Boolean(document.querySelector('[data-surface="runner-detail"] [data-sample="on"]'))),
+    'runner detail: the Connect block says out loud that its rows are sample data (WP08 has no store)');
+  for (const [url, surface] of [['/workspace/agents/runners', 'runners-list'], ['/workspace/agents/queue', 'run-queue'], ['/workspace/agents/audit', 'audit-log']]) {
     await page.goto(`${base}${url}`, { waitUntil: 'networkidle' });
     await page.waitForSelector(`[data-surface="${surface}"] .lin-row`, { timeout: 15000 });
     ok(!(await page.evaluate(s => Boolean(document.querySelector(`[data-surface="${s}"] [data-sample="on"]`)), surface)),
@@ -712,7 +804,24 @@ const focusStop = page => page.evaluate(() => {
     stops: [...document.querySelectorAll('[data-surface="audit-log"] [data-action="agent.session.stop"]')]
       .map(r => r.innerText.replace(/\s+/g, ' ')),
   }));
-  ok(ledger.rows === 31, 'audit log: the second page appends the newest rows (30 seeded + the stop)', String(ledger.rows));
+  /* The expected count is read from the ledger, not written down here: this run now writes more
+   * than the seed plus the stop (WP12 audits its own policy writes, and this file grants a policy
+   * so a lease can be granted at all). The invariant is that `Load newer events` reaches every row
+   * the server holds, which is what a pinned number was standing in for. */
+  const ledgerTotal = async () => {
+    let after = null, total = 0;
+    for (;;) {
+      const page = (await gql(`query($after:String){auditEvents(first:100, after:$after){
+        nodes{seq} pageInfo{hasNextPage endCursor}}}`, {after})).auditEvents;
+      total += page.nodes.length;
+      if (!page.pageInfo.hasNextPage) return total;
+      after = page.pageInfo.endCursor;
+    }
+  };
+  const total = await ledgerTotal();
+  ok(ledger.rows === total, 'audit log: Load more reaches every row the ledger holds',
+    `${ledger.rows} drawn vs ${total} stored`);
+  ok(ledger.rows > firstPage, 'audit log: the second page appends rows to the first', `${firstPage} → ${ledger.rows}`);
   ok(ledger.stops.length === 1, 'audit log: the stop is in the server\'s ledger', JSON.stringify(ledger.stops));
   ok(await page.locator(`[data-surface="audit-log"] [data-action="agent.session.stop"][data-target="${stopTarget.id}"]`).count() === 1,
     'audit log: the row names the session it stopped', JSON.stringify(ledger.stops[0] || ''));
@@ -754,6 +863,186 @@ const focusStop = page => page.evaluate(() => {
     'run queue: the refusal says who can read every agent\'s runs');
   await auditCtx.close();
 
+  /* ---- 8b. WP07's lease and WP10's verifier, over the real routes, and what the screens show ----
+   *
+   * The runners list, the run queue and the agent page each gained a half of this in slice 5:
+   * `runners`/`agentLeases` for the machines, and `verifierClaims`/`agentVerifications` for the
+   * claims. So this section drives the actual runner contract — claim the queued lease, finish with
+   * a claim that answers the task's acceptance item — and then reads the result back on each
+   * screen, signs it through `agentSessionVerify`, and reads the verdict and its checks back the
+   * same way. Nothing here asserts a fixture: Connect is the only sample left, and it is not
+   * touched below.
+   */
+  /* Which task the runner takes is the server's choice (`_grantable` takes the oldest queued
+   * attempt), and section 8 stopped one run, so this section reads the task off the grant instead
+   * of assuming which one it is. */
+  const runnerAuth = {authorization: `Bearer ${onlineRunner.token}`, 'content-type': 'application/json'};
+  const leaseResponse = await fetch(`${base}/runner/lease`, {
+    method: 'POST', headers: runnerAuth,
+    body: JSON.stringify({runner_id: onlineRunner.runner_id, poll_timeout_ms: 0}),
+  });
+  const lease = (await leaseResponse.json()).lease;
+  ok(Boolean(lease), 'runner lease: the machine registered above was granted the queued work');
+  ok(lease && lease.harness === 'pi', 'runner lease: the harness is the one Hoja enqueued and the runner declared', String(lease && lease.harness));
+
+  /* The task's acceptance list is what a verifier checks a claim against (agent_verify.py
+   * `acceptance_items`), so it is written before the claim that answers it. */
+  await gql(`mutation($id:String!,$input:IssueUpdateInput!){issueUpdate(id:$id,input:$input){success}}`,
+    {id: lease.task_id, input: {description: '## Acceptance\n\n- the widget spins\n'}});
+  const leasedTask = (await gql(`query($id:String!){issue(id:$id){identifier title agentSession{id state}}}`,
+    {id: lease.task_id})).issue;
+  ok(Boolean(leasedTask && leasedTask.agentSession), 'runner lease: the task it took has the session the delegation opened',
+    JSON.stringify(leasedTask && leasedTask.agentSession));
+  const runOneSession = leasedTask.agentSession.id;
+
+  /* The runner holding a lease is a fact the Runners screen must draw: the row's chip and the
+   * machine's own page, both read from `runners` and `agentLeases`. */
+  await page.goto(`${base}${RUNNERS}`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-surface="runners-list"] .lin-row', { timeout: 15000 });
+  await page.waitForTimeout(400);
+  const leasedRow = await page.evaluate(id => {
+    const row = [...document.querySelectorAll('[data-surface="runners-list"] .lin-row')]
+      .find(r => r.querySelector('.ident')?.textContent === id);
+    return row ? {lease: row.querySelector('[data-lease]')?.getAttribute('data-lease') || '',
+      state: row.querySelector('[data-lease]')?.getAttribute('data-lease-state') || '',
+      text: row.innerText.replace(/\s+/g, ' ')} : null;
+  }, onlineRunner.runner_id);
+  ok(Boolean(leasedRow) && leasedRow.lease === lease.lease_id,
+    'runner list: the row carries the lease the machine is holding (agentLeases)', JSON.stringify(leasedRow));
+  ok(Boolean(leasedRow) && leasedRow.state === 'active', 'runner list: the lease chip says the lease is active', String(leasedRow && leasedRow.state));
+  ok(Boolean(leasedRow) && leasedRow.text.includes('TREBOL'),
+    'runner list: the chip names the task the machine took, by its identifier', String(leasedRow && leasedRow.text));
+  ok((await apiRunners()).find(r => r.id === onlineRunner.runner_id)?.status === 'online',
+    `runner list: holding a lease is Hoja's own evidence of life, so the row reads online`);
+
+  await page.goto(`${base}${RUNNERS}/${encodeURIComponent(onlineRunner.runner_id)}`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-surface="runner-detail"] [data-current-lease]', { timeout: 15000 });
+  await page.waitForTimeout(300);
+  ok(await page.evaluate(() => document.querySelector('[data-surface="runner-detail"] [data-current-lease]')?.getAttribute('data-current-lease')) === lease.lease_id,
+    'runner detail: names the lease the machine holds right now');
+  ok(await page.locator(`[data-surface="runner-detail"] [data-lease-row="${lease.lease_id}"]`).count() === 1,
+    `runner detail: that lease is in the machine's lease list too (agentLeases(runnerId))`);
+
+  /* Finish with a claim that answers the acceptance item. */
+  const finishResponse = await fetch(`${base}/runner/finish`, {
+    method: 'POST', headers: runnerAuth,
+    body: JSON.stringify({
+      lease_id: lease.lease_id, run_id: lease.run_id, fence: lease.fence, token: lease.token,
+      state: 'completed', summary: 'the widget spins', model: 'e2e-worker',
+      idempotency_key: `${lease.run_id}:1`, evidence: {backend: 'e2e'},
+      acceptance: [{item: 'the widget spins', evidence: 'the e2e run'}],
+    }),
+  });
+  const ack = await finishResponse.json();
+  assert.equal(finishResponse.status, 200, JSON.stringify(ack));
+  ok(ack.session_state === 'verifying', 'runner finish: a claim leaves the session awaiting verification, never done', String(ack.session_state));
+
+  const claimedSession = async () => (await gql(
+    `query($id:String!){agentSession(id:$id){id state verdict claimAt claim}}`, {id: runOneSession})).agentSession;
+  const afterFinish = await claimedSession();
+  ok(afterFinish.state === 'verifying', 'the stored session is verifying', JSON.stringify(afterFinish.state));
+  ok(afterFinish.verdict === null, 'no verdict is recorded until a separate principal signs');
+  ok(Boolean(afterFinish.claimAt), 'the claim carries the time it was submitted');
+
+  /* The run queue groups it, and the row says a verifier is what it waits on. */
+  await page.goto(`${base}/workspace/agents/queue`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-surface="run-queue"] .lin-row', { timeout: 15000 });
+  await page.waitForTimeout(400);
+  const awaitingRow = await page.evaluate(title => {
+    const row = [...document.querySelectorAll('[data-surface="run-queue"] .lin-row')]
+      .find(r => (r.innerText || '').includes(title));
+    const group = row?.closest('.lin-group');
+    return row ? {
+      claim: row.querySelector('[data-claim]')?.getAttribute('data-claim') || '',
+      group: group?.querySelector('.lin-group-head b')?.textContent || '',
+      text: row.innerText.replace(/\s+/g, ' '),
+    } : null;
+  }, leasedTask.title);
+  ok(Boolean(awaitingRow), 'run queue: the finished run is a row', JSON.stringify(awaitingRow));
+  ok(Boolean(awaitingRow) && awaitingRow.group === 'Awaiting verification',
+    'run queue: it is in the awaiting-verification group, because the session is verifying', String(awaitingRow && awaitingRow.group));
+  ok(Boolean(awaitingRow) && awaitingRow.claim === 'awaiting',
+    'run queue: the row says a verifier has not signed it yet', String(awaitingRow && awaitingRow.claim));
+
+  /* The agent page's claim view: what was claimed, by which model, and that it waits. */
+  const claimsOnPage = () => page.evaluate(() => [...document.querySelectorAll('[data-surface="agent-detail"] [data-claim-row]')]
+    .map(r => ({
+      id: r.getAttribute('data-claim-row'),
+      verdict: r.getAttribute('data-verdict'),
+      chip: r.querySelector('[data-verdict-chip]')?.getAttribute('data-verdict-chip') || '',
+      text: r.innerText.replace(/\s+/g, ' '),
+    })));
+  await page.goto(`${base}/workspace/agents/${encodeURIComponent(triage.id)}`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-surface="agent-detail"] [data-claim-row]', { timeout: 15000 });
+  const waitingClaims = await claimsOnPage();
+  const mine = waitingClaims.find(c => c.id === runOneSession);
+  ok(Boolean(mine), `agent page: the run's claim is on the agent page (verifierClaims)`, JSON.stringify(waitingClaims.map(c => c.id)));
+  ok(Boolean(mine) && mine.verdict === 'awaiting', 'agent page: the claim has no verdict yet', String(mine && mine.verdict));
+  ok(Boolean(mine) && /the widget spins/.test(mine.text),
+    'agent page: the claim is the summary the runner submitted', String(mine && mine.text).slice(0, 160));
+  ok(Boolean(mine) && /TREBOL-\d+/.test(mine.text), 'agent page: the claim names the task it belongs to', String(mine && mine.text).slice(0, 160));
+  /* Scroll the claim into view before the artefact: it is the part of this page that is new, and a
+   * screenshot of the fold above it would show none of it. */
+  await page.locator(`[data-surface="agent-detail"] [data-claim-row="${runOneSession}"]`).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(shots, `agent-detail-claims-${W}.png`) });
+
+  /* Sign it, as a separate principal: the seeded admin did not do this work, so separation passes
+   * and the evidence is re-read. No pull request is linked, so `uncertain` is what may be recorded
+   * even though the verifier asks for `uncertain` anyway — a gap can never become a pass. */
+  const signed = await gql(`mutation($id:String!){agentSessionVerify(id:$id, verdict:"uncertain",
+    rationale:"no pull request is linked yet"){success agentSession{id state verdict}}}`, {id: runOneSession});
+  ok(signed.agentSessionVerify.success && signed.agentSessionVerify.agentSession.verdict === 'uncertain',
+    'verifier: agentSessionVerify recorded the verdict on the claim', JSON.stringify(signed));
+  ok(signed.agentSessionVerify.agentSession.state === 'verifying',
+    'verifier: an uncertain verdict leaves the claim awaiting evidence, not done');
+
+  /* The queue's chip becomes the verdict, and the agent page shows the checks it was recorded on. */
+  await page.goto(`${base}/workspace/agents/queue`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-surface="run-queue"] .lin-row', { timeout: 15000 });
+  await page.waitForTimeout(400);
+  ok(await page.evaluate(() => Boolean(document.querySelector('[data-surface="run-queue"] [data-verdict="uncertain"]'))),
+    'run queue: the row now carries the verdict a separate principal recorded');
+
+  await page.goto(`${base}/workspace/agents/${encodeURIComponent(triage.id)}`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-surface="agent-detail"] [data-claim-row]', { timeout: 15000 });
+  await page.waitForTimeout(300);
+  const settled = await claimsOnPage();
+  const settledMine = settled.find(c => c.id === runOneSession);
+  ok(Boolean(settledMine) && settledMine.verdict === 'uncertain',
+    'agent page: the claim row reports the verdict (met / not_met / uncertain)', JSON.stringify(settledMine));
+  const checks = await page.evaluate(id => {
+    const row = document.querySelector(`[data-surface="agent-detail"] [data-claim-row="${id}"]`);
+    return [...(row?.querySelectorAll('[data-check]') || [])]
+      .map(c => ({name: c.getAttribute('data-check'), outcome: c.getAttribute('data-outcome')}));
+  }, runOneSession);
+  ok(checks.length >= 3, 'agent page: the verdict is shown with the checks it was recorded on', JSON.stringify(checks));
+  ok(checks.some(c => c.name === 'acceptance_list' && c.outcome === 'passed'),
+    `agent page: the acceptance check passed, because the claim answers the task's acceptance item`, JSON.stringify(checks));
+  ok(checks.some(c => c.name === 'pull_request' && c.outcome !== 'passed'),
+    'agent page: the missing pull request is a gap, not a pass', JSON.stringify(checks));
+  /* `agent_verify.CHECK_ORDER` is the whole vocabulary, and none of the five reads a CI status:
+   * this project runs no CI, so a check that consulted one would be reading a signal that does not
+   * exist. Asserting membership catches both an invented check and a renamed one. */
+  const KNOWN_CHECKS = ['principal_separation', 'acceptance_list', 'pull_request', 'merged_on_main', 'deployed'];
+  ok(checks.every(c => KNOWN_CHECKS.includes(c.name)),
+    'agent page: every check is one agent_verify.py re-reads, and none reads CI',
+    JSON.stringify(checks.map(c => c.name)));
+  await page.locator(`[data-surface="agent-detail"] [data-claim-row="${runOneSession}"]`).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(shots, `agent-detail-verdict-${W}.png`) });
+
+  /* And the machine's own page: the lease it finished is history, not a current grant. */
+  await page.goto(`${base}${RUNNERS}/${encodeURIComponent(onlineRunner.runner_id)}`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-surface="runner-detail"] [data-leases]', { timeout: 15000 });
+  await page.waitForTimeout(300);
+  ok(await page.locator(`[data-surface="runner-detail"] [data-lease-row="${lease.lease_id}"][data-lease-state="finished"]`).count() === 1,
+    `runner detail: the finished lease is in the machine's history (agentLeases reads the state back)`);
+  ok(await page.evaluate(() => document.querySelector('[data-surface="runner-detail"] [data-current-lease]')?.getAttribute('data-current-lease') === ''),
+    'runner detail: a finished lease is no longer the current one');
+  await page.goto(`${base}${RUNNERS}`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-surface="runners-list"] .lin-row', { timeout: 15000 });
+  ok(await page.evaluate(() => !document.querySelector('[data-surface="runners-list"] [data-lease]')),
+    'runner list: with the lease finished, no row claims to be holding one');
+
   /* ---- 9. the production build ships the surface off by default ---- */
   const offCtx = await browser.newContext({ viewport: { width: W, height: H } });
   await offCtx.addInitScript(t => { localStorage.setItem('hoja_token', t); }, token);
@@ -773,11 +1062,16 @@ const focusStop = page => page.evaluate(() => {
   await anonCtx.addInitScript(() => { localStorage.setItem('hoja_token', 'expired-token'); localStorage.setItem('hoja_agents_surface', 'on'); });
   const anonPage = await anonCtx.newPage();
   await anonPage.goto(`${base}/workspace/agents`, { waitUntil: 'networkidle' });
-  /* Wait for the gate to answer, not for a fixed delay: the shell renders the sign-in screen once
-   * `viewer` comes back refused, and a fixed wait raced that answer on a loaded machine. */
-  await anonPage.getByText(/sign in|welcome back|authentication required/i).first()
-    .waitFor({ state: 'visible', timeout: 15000 })
-    .catch(() => undefined);
+  /* Wait for the gate to answer, deterministically, and fail loudly when it never does. The shell
+   * renders the sign-in screen once `viewer` comes back refused, and under load that answer can
+   * take seconds: the old wait swallowed its own timeout with `.catch(() => undefined)` and then
+   * asserted anyway, so a slow gate read as "the agent list is missing" — the flake this replaces.
+   * `.login-page` is the gate's own container, so this waits for the thing, not for a phrase. */
+  const gate = await anonPage.waitForSelector('.login-page', { timeout: 30000 })
+    .then(() => null).catch(e => e.message.split('\n')[0]);
+  ok(gate === null, 'signed-out: the sign-in gate answered before anything is asserted', gate || '');
+  ok(await anonPage.evaluate(() => Boolean(document.querySelector('.login-page'))),
+    'signed-out: the gate is the page that was rendered');
   ok(await anonPage.evaluate(() => !document.querySelector('[data-surface="agents-list"]')), 'signed-out: no agent list is drawn');
   ok(await anonPage.evaluate(() => !document.querySelector('[data-surface="agents-list"] [data-state="empty"]')), 'signed-out: the workspace is not reported as having no agents');
   ok(await anonPage.evaluate(() => /sign in|welcome back|authentication required/i.test(document.body.innerText)), 'signed-out: the page asks the reader to sign in');

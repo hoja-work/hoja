@@ -78,6 +78,20 @@ export type AgentSession = {
   priority: number;
   startedAt?: string;
   endedAt?: string;
+  /** `AgentSession.claim`: what the runner claimed at finish, or null while it runs. */
+  claim: ClaimSummary | null;
+  /** When the claim was recorded; the awaiting-verification row's age. */
+  claimAt?: string;
+  /** The model that produced the work, as the runner reported it. */
+  workerModel: string | null;
+  /** met | not_met | uncertain — null until a separate principal signs. Never set by the runner. */
+  verdict: Verdict | null;
+};
+
+/** The claim as a queue row needs it: the summary the runner wrote, and its acceptance answers. */
+export type ClaimSummary = {
+  summary: string;
+  acceptance: {item: string; evidence: string}[];
 };
 
 /** `AgentActivityType`, including `prompt`, which only a human may author (agent_sessions.py). */
@@ -154,19 +168,23 @@ export function sessionStatusName(status: SessionStatus): string {
   return SESSION_STATUSES.find(s => s.id === status)?.name || status;
 }
 
-/* ---------------- Runners and Connect (slice 2) ---------------- */
+/* ---------------- Runners, leases and Connect (slice 5) ---------------- */
 
-/* The two server sources this slice is allowed to read from, kept in the server's own
- * vocabulary so the contract check can compare them field for field:
+/* The server sources this slice reads, in the server's own vocabulary, so the contract check can
+ * compare them field for field:
  *
- *   runner/hoja_runnerd/connect.py  ->  Exposure.public_row()
- *   spec.md glossary            ->  "Runner — org, name, labels, lease token hash, last seen"
+ *   app/hoja_server/agent_runners.py  ->  Runner (id, name, organizationId, status, enabled,
+ *                                          revokedAt, labels, harnesses, lastHeartbeatAt,
+ *                                          createdAt, currentLease)
+ *   app/hoja_server/db.py             ->  runner: org, name, labels, lease_token_hash, last_seen
+ *   runner/hoja_runnerd/connect.py    ->  Exposure.public_row()
+ *   spec.md glossary                  ->  "Runner — org, name, labels, lease token hash, last seen"
  *
  * A mapping here is not documentation: app/scripts/check-runner-contract.py reads these objects
  * and fails when a server field has no local one, or a local one has no server field. The two
- * secrets are mapped to booleans on purpose — `lease_token_hash` becomes `enrolled` (FR-018: the
- * token is single-use and its hash is a server column) and the tailcat address is not mapped at
- * all, because it is a bearer secret (connect.py:8-12).
+ * secrets are mapped to facts about them on purpose — `lease_token_hash` becomes `revoked` (the
+ * credential is the column; the screen's question is whether it still authenticates) and the
+ * tailcat address is not mapped at all, because it is a bearer secret (connect.py:8-12).
  */
 export const EXPOSURE_SERVER_FIELDS = {
   exposure_id: 'id',
@@ -181,7 +199,7 @@ export const RUNNER_SERVER_FIELDS = {
   org: 'workspaceId',
   name: 'name',
   labels: 'labels',
-  'lease token hash': 'enrolled',
+  'lease token hash': 'revoked',
   'last seen': 'lastSeenAt',
 } as const;
 
@@ -196,25 +214,48 @@ export function runnerStatus(id: RunnerStatus) {
   return RUNNER_STATUSES.find(s => s.id === id) || RUNNER_STATUSES[1];
 }
 
-/** A runner as the screens render it. `enrolled` replaces the token hash; nothing else from the
- * registration is a credential. */
+/** The lease a runner is holding right now (`AgentLease` in agent_runners.py), as the screens draw
+ * it. The fence, the harness and the task are the three facts a person checks on a machine. */
+export type RunnerLease = {
+  id: string;
+  taskId: string;
+  /** The task's identifier, from `AgentLease.issue`. `null` when the task is not readable here. */
+  taskIdentifier: string | null;
+  /** queued | active | finished | released | canceled | lost */
+  state: string;
+  harness: string;
+  /** Monotonic per task; a stale fence is refused with 409 on every route (FR-018). */
+  fence: number;
+  /** Hoja's deadline for this grant, not the runner's. */
+  leaseUntil: string | null;
+  grantedAt: string | null;
+  finishState: string | null;
+  finishedAt: string | null;
+};
+
+/** A runner as the screens render it: the server's `Runner` plus the derived `revoked` flag. */
 export type Runner = {
   /** Stable server id. */
   id: string;
   /** Server name, e.g. "mac-mini-01". */
   name: string;
   workspaceId: string;
+  /** online | offline, derived server-side from the heartbeat and any lease it holds. */
   status: RunnerStatus;
+  /** False once an admin disabled it; a disabled runner is refused at the lease route. */
+  enabled: boolean;
+  /** True once the token no longer authenticates. Derived from `revokedAt`, which is the server's
+   * own column — never from the token hash itself. */
+  revoked: boolean;
+  revokedAt: string | null;
   labels: string[];
-  /** A single-use token was presented and accepted (FR-018); the hash itself never ships. */
-  enrolled: boolean;
-  /** The heartbeat the server uses to derive `status` (FR-020: our clock, not the runner's). */
-  lastSeenAt: string;
+  /** The harnesses this runner declared at registration: the lease route's allowlist. */
+  harnesses: string[];
+  /** The last heartbeat Hoja recorded; `null` before the first one. */
+  lastSeenAt: string | null;
+  /** The lease it holds right now, or `null`. */
+  lease: RunnerLease | null;
 };
-
-/** The raw registration the runner's own record holds. Present in the fixture so the projection
- * to `Runner` has a real secret to drop, and so the contract check can prove it is dropped. */
-export type RunnerRecord = Runner & {leaseTokenHash: string};
 
 /** A live Connect exposure, exactly the public row `Exposure.public_row()` returns. */
 export type ConnectExposure = {
@@ -231,6 +272,67 @@ export type ConnectExposure = {
 /** The lease channel's payload (connect.py `LeasePayload`): the bearer `address` lives here and
  * is projected away before anything reaches a screen. */
 export type RawExposure = ConnectExposure & {address: string};
+
+/* ---------------- Claims and verdicts (WP10) ---------------- */
+
+/** The three verdicts agent_verify.py records. `met` is the only one that moves a task on. */
+export type Verdict = 'met' | 'not_met' | 'uncertain';
+
+export const VERDICTS: {id: Verdict; name: string; color: string}[] = [
+  {id: 'met', name: 'Met', color: '#2f9e6f'},
+  {id: 'not_met', name: 'Not met', color: '#c0392b'},
+  {id: 'uncertain', name: 'Uncertain', color: '#c98a1b'},
+];
+
+export function verdictLabel(id: Verdict | string | null): string {
+  return VERDICTS.find(v => v.id === id)?.name || (id ? String(id) : 'Awaiting verifier');
+}
+
+export function verdictColor(id: Verdict | string | null): string {
+  return VERDICTS.find(v => v.id === id)?.color || '#c98a1b';
+}
+
+/** One check a verifier re-read: `passed` | `failed` | `uncertain`, never a CI conclusion. */
+export type VerificationCheck = {name: string; outcome: string; detail: string};
+
+/** One verdict row from `agent_verification` (`AgentVerification`): append-only evidence. */
+export type ClaimVerdict = {
+  id: string;
+  verdict: Verdict;
+  /** What the verifier asked for; it differs from `verdict` when the evidence was weaker. */
+  requestedVerdict: Verdict;
+  verifierKind: string;
+  verifierModel: string | null;
+  workerModel: string | null;
+  rationale: string | null;
+  at: string;
+  checks: VerificationCheck[];
+};
+
+/** One finish claim waiting on a verifier (`VerifierClaim` in agent_claims.py). */
+export type Claim = {
+  /** The session the claim belongs to: what `agentSessionVerify` takes. */
+  sessionId: string;
+  issueId: string;
+  issueIdentifier: string;
+  issueTitle: string;
+  priority: number;
+  /** The `AgentMember.id` and name of the agent that did the work, resolved by the adapter. */
+  agentId: string;
+  agentName: string;
+  /** The claim itself, as the runner submitted it. */
+  summary: string;
+  acceptance: {item: string; evidence: string}[];
+  claimAt: string;
+  workerModel: string | null;
+  verdict: Verdict | null;
+  verifiedAt: string | null;
+  verifierId: string | null;
+  verifierModel: string | null;
+  /** True until a separate principal settles it. `uncertain` keeps it true. */
+  awaiting: boolean;
+  verifications: ClaimVerdict[];
+};
 
 export function ttlSecondsLeft(expiresAt: number, at: number = Date.now()): number {
   return Math.max(0, Math.round(expiresAt - at / 1000));

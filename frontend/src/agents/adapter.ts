@@ -1,11 +1,14 @@
 /* The single data seam for the agent surface (HOJA-602-A-16).
  *
- * Every screen reads through `getAgentsAdapter()`. Since slice 4 every screen but the runners and
- * Connect pair reads the server: WP04 gave agents their identity (`agent_member`, `AgentMember`,
- * `Issue.delegate`), WP05 the audit ledger (`auditEvents`, admin-only, paged), WP06 the sessions and
- * their transcript, and slice 4 added the workspace-wide `workspaceAgentSessions` read the run queue
- * needs. What is still a fixture is listed once, in `SAMPLE_SURFACES`, and its screens render a
- * visible `SampleDataNotice`, so no sample row can be read as a server row.
+ * Every screen reads through `getAgentsAdapter()`. Since slice 5 every screen but Connect reads the
+ * server: WP04 gave agents their identity (`agent_member`, `AgentMember`, `Issue.delegate`), WP05
+ * the audit ledger (`auditEvents`, admin-only, paged), WP06 the sessions and their transcript,
+ * slice 4 the workspace-wide `workspaceAgentSessions` the run queue needs, and slice 5 the runner
+ * and lease reads (`runners`, `runner`, `agentLeases` in agent_runners.py) plus the claim and
+ * verdict reads (`verifierClaims`, `agentVerifications` in agent_claims.py).
+ *
+ * What is still a fixture is listed once, in `SAMPLE_SURFACES`, and its screen renders a visible
+ * `SampleDataNotice`, so no sample row can be read as a server row.
  *
  * The interface is the *screens'* vocabulary, not the wire vocabulary, so a resolver that names
  * things differently is a translation problem inside this file rather than an edit to six
@@ -19,10 +22,10 @@
  *     writes the `agent.session.stop` audit event, which is read back through `auditEvents`.
  */
 
-import {seedConnectEnabled, seedExposuresByRunner, seedRunnerRecords} from './seed';
+import {seedConnectEnabled, seedExposures} from './seed';
 import type {
-  Agent, AgentDetail, AgentEvent, AgentPolicy, AgentSession, AuditEvent, ConnectExposure,
-  RawExposure, Runner, RunnerRecord, SessionStatus,
+  Agent, AgentDetail, AgentEvent, AgentPolicy, AgentSession, AuditEvent, Claim, ClaimVerdict,
+  ConnectExposure, RawExposure, Runner, RunnerLease, SessionStatus, VerificationCheck, Verdict,
 } from './types';
 
 export type PolicyPatch = Partial<AgentPolicy>;
@@ -32,11 +35,15 @@ export type PolicyPatch = Partial<AgentPolicy>;
  * session is created between two reads. */
 export type SessionPage = {sessions: AgentSession[]; hasNextPage: boolean; endCursor: string | null};
 export type AuditPage = {events: AuditEvent[]; hasNextPage: boolean; endCursor: string | null};
+export type RunnerPage = {runners: Runner[]; hasNextPage: boolean; endCursor: string | null};
+export type ClaimPage = {claims: Claim[]; hasNextPage: boolean; endCursor: string | null};
 
 /** The run queue's page size. Small enough that a `Load more` control is reachable in a test,
  * large enough that a normal queue is one read. */
 export const SESSION_PAGE = 20;
 export const AUDIT_PAGE = 25;
+export const RUNNER_PAGE = 20;
+export const CLAIM_PAGE = 20;
 
 /** The create form's fields: `AgentMemberCreateInput` minus the ones the UI does not ask for. */
 export type AgentDraft = {
@@ -79,8 +86,22 @@ export type AgentsAdapter = {
    * refused with FORBIDDEN, which the pane states instead of drawing an empty list. */
   listAuditEvents(filter?: {actor?: string; action?: string; after?: string}): Promise<AuditPage>;
 
-  listRunners(): Promise<Runner[]>;
+  /* -- server-backed: GraphQL, slice 5 ------------------------------------------------------- */
+  /** One page of the workspace's runners, newest first (`runners`, admin-gated). */
+  listRunners(options?: {after?: string}): Promise<RunnerPage>;
+  /** One runner (`runner`), or `null` when this workspace has no such machine. Its Connect
+   * exposures come from the fixture below, and the screen says so. */
   getRunner(id: string): Promise<{runner: Runner; exposures: ConnectExposure[]} | null>;
+  /** That runner's leases, newest first (`agentLeases(runnerId)`): what it took and what it did
+   * with it, which is the question a machine's detail page answers. */
+  listLeases(runnerId: string): Promise<RunnerLease[]>;
+  /** One page of submitted claims, newest first (`verifierClaims`, admin-gated). `agentId` is an
+   * `AgentMember.id`; `awaiting` narrows to the claims still waiting on a verifier. */
+  listClaims(options?: {agentId?: string; awaiting?: boolean; after?: string}): Promise<ClaimPage>;
+  /** One claim's verdict ledger (`agentVerifications(sessionId)`), newest first. */
+  listVerdicts(sessionId: string): Promise<ClaimVerdict[]>;
+
+  /* -- still a fixture: Connect has no server record (WP08) ----------------------------------- */
   /** Live exposures only: the supervisor revokes on TTL, so an expired row is never served. */
   listExposures(runnerId?: string): Promise<ConnectExposure[]>;
   /** The cloud-side kill switch, `ConnectSupervisor.is_enabled(org)`. */
@@ -92,12 +113,14 @@ export type AgentsAdapter = {
 /* One line to grep, and the single justification for every fixture row that can reach a screen. A
  * surface leaves this list when its resolver lands, not when its screen looks finished.
  *
- * Slice 4 removed `sessions` and `audit`: WP06 stores sessions and activities, WP05 stores the
- * ledger, and slice 4 added the workspace-wide session read. What remains is the runner lease and
- * Connect (WP07 is REST-only today: runner_api.py), and the verifier (WP10) will join this list
- * when its screen lands. */
+ * Slice 5 removed `runners`: WP07 stores `runner` and `agent_lease`, and slice 5 added the
+ * read-only `runners`/`agentLeases` queries. What remains is Connect itself — the tailcat exposure
+ * store and the org kill switch (WP08). There is no table and no route for either: `audit.ACTIONS`
+ * names `connect.exposure.open`/`connect.exposure.close` and nothing writes them. So the runners
+ * list, the runner detail and every lease on them are server rows, and the exposures under the
+ * Connect heading are the labelled sample. */
 export const SAMPLE_SURFACES = {
-  runners: {what: 'Runners and Connect', pending: 'WP07/WP08 lease and tailcat storage'},
+  connect: {what: 'Connect exposures', pending: 'the WP08 tailcat exposure store'},
 } as const;
 
 /* ------------------------------------------------------------------ transport */
@@ -263,6 +286,7 @@ function createInput(draft: AgentDraft): Record<string, unknown> {
  * transcript, so it never asks for one. */
 const SESSION_FIELDS = `id issueId agentUserId status state queueReason admitted trigger
   ackedAt activatedAt endedAt createdAt updatedAt
+  claim claimAt workerModel verdict verifiedAt verifierId verifierModel
   issue { id identifier title priority }`;
 const ACTIVITY_FIELDS = `id kind authorKind authorId body payload signal createdAt`;
 
@@ -280,6 +304,11 @@ type ServerSession = {
   queueReason: string[]; admitted: boolean; trigger: string;
   ackedAt: string | null; activatedAt: string | null; endedAt: string | null; createdAt: string;
   updatedAt: string;
+  /** WP10: the claim and the verdict, straight off the session row. */
+  claim: {summary?: string; acceptance?: unknown} | null;
+  claimAt: string | null; workerModel: string | null;
+  verdict: Verdict | null; verifiedAt: string | null;
+  verifierId: string | null; verifierModel: string | null;
   issue: {id: string; identifier: string; title: string; priority: number | null} | null;
   activities?: ServerActivity[];
 };
@@ -330,6 +359,13 @@ function fromSession(row: ServerSession, agent?: {id: string; name: string}): Ag
     ...issueOf(row),
     startedAt: row.activatedAt || row.createdAt,
     endedAt: row.endedAt || undefined,
+    /* WP10's two halves, as the server stores them: the claim the runner submitted (immutable
+     * once written) and the verdict a separate principal recorded. `null` here means "no claim" or
+     * "nobody has signed", never "unknown". */
+    claim: row.claim ? {summary: String(row.claim.summary || ''), acceptance: acceptanceOf(row.claim.acceptance)} : null,
+    claimAt: row.claimAt ?? undefined,
+    workerModel: row.workerModel ?? null,
+    verdict: row.verdict ?? null,
   };
 }
 
@@ -359,6 +395,146 @@ function eventsOf(sessions: ServerSession[]): AgentEvent[] {
     }
   }
   return events.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+}
+
+/* ------------------------------------------------------------------ runners (WP07, slice 5) */
+
+/* `Runner` and `AgentLease` in agent_runners.py. The selection is the whole of what a screen may
+ * show: the credential columns (`lease_token_hash`, `token_hint`) are not in the SDL, so they
+ * cannot be asked for by accident. */
+const RUNNER_FIELDS = `id name organizationId status enabled revokedAt labels harnesses
+  lastHeartbeatAt createdAt
+  currentLease { id taskId state harness fence leaseUntil grantedAt finishState finishedAt
+                 issue { identifier } }`;
+const LEASE_FIELDS = `id taskId state harness fence leaseUntil grantedAt finishState finishedAt
+  issue { identifier }`;
+
+type ServerLease = {
+  id: string; taskId: string; state: string; harness: string; fence: number;
+  leaseUntil: string | null; grantedAt: string | null; finishState: string | null;
+  finishedAt: string | null; issue: { identifier: string } | null;
+};
+
+type ServerRunner = {
+  id: string; name: string; organizationId: string; status: string; enabled: boolean;
+  revokedAt: string | null; labels: string[]; harnesses: string[];
+  lastHeartbeatAt: string | null; createdAt: string; currentLease: ServerLease | null;
+};
+
+function fromLease(row: ServerLease): RunnerLease {
+  return {
+    id: row.id,
+    taskId: row.taskId,
+    taskIdentifier: row.issue?.identifier ?? null,
+    state: row.state,
+    harness: row.harness,
+    fence: row.fence,
+    leaseUntil: row.leaseUntil ?? null,
+    grantedAt: row.grantedAt ?? null,
+    finishState: row.finishState ?? null,
+    finishedAt: row.finishedAt ?? null,
+  };
+}
+
+function fromRunner(row: ServerRunner): Runner {
+  return {
+    id: row.id,
+    name: row.name,
+    workspaceId: row.organizationId,
+    /* Derived server-side from the heartbeat and any lease it holds; this file does not
+     * second-guess it with a clock of its own. */
+    status: row.status === 'online' ? 'online' : 'offline',
+    enabled: Boolean(row.enabled),
+    /* The token hash is the credential column (FR-018). `revokedAt` is the server's own fact about
+     * it: a revoked runner's token no longer authenticates. The hash itself never ships. */
+    revoked: Boolean(row.revokedAt),
+    revokedAt: row.revokedAt ?? null,
+    labels: row.labels || [],
+    harnesses: row.harnesses || [],
+    lastSeenAt: row.lastHeartbeatAt ?? null,
+    lease: row.currentLease ? fromLease(row.currentLease) : null,
+  };
+}
+
+/* ------------------------------------------------------------------ claims (WP10, slice 5) */
+
+/* `VerifierClaim`, `AgentVerification` and `VerificationCheck` in agent_claims.py. The verdict rows
+ * come nested on the claim because the server loads them with the page: one read, not one per row. */
+const CLAIM_FIELDS = `sessionId issueId agentUserId claim claimAt workerModel verdict verifiedAt
+  verifierId verifierModel awaiting
+  issue { identifier title priority }
+  verifications { id verdict requestedVerdict verifierKind verifierModel workerModel rationale
+                  createdAt checks { name outcome detail } }`;
+
+type ServerCheck = {name: string; outcome: string; detail: string};
+
+type ServerVerdict = {
+  id: string; verdict: Verdict; requestedVerdict: Verdict; verifierKind: string;
+  verifierModel: string | null; workerModel: string | null; rationale: string | null;
+  createdAt: string; checks: ServerCheck[];
+};
+
+type ServerClaim = {
+  sessionId: string; issueId: string; agentUserId: string;
+  claim: {summary?: string; acceptance?: unknown} | null;
+  claimAt: string; workerModel: string | null;
+  verdict: Verdict | null; verifiedAt: string | null;
+  verifierId: string | null; verifierModel: string | null; awaiting: boolean;
+  issue: { identifier: string; title: string; priority: number | null } | null;
+  verifications: ServerVerdict[];
+};
+
+/** The claim's acceptance answers, in the two shapes a runner may send (agent_verify.py
+ * `_claimed_items`): a list of strings, or a list of `{item, evidence}` objects. */
+function acceptanceOf(value: unknown): {item: string; evidence: string}[] {
+  if (!Array.isArray(value)) return [];
+  return value.map(entry => {
+    if (typeof entry === 'string') return {item: entry, evidence: ''};
+    if (entry && typeof entry === 'object') {
+      const row = entry as {item?: unknown; evidence?: unknown};
+      return {item: String(row.item ?? ''), evidence: String(row.evidence ?? '')};
+    }
+    return {item: '', evidence: ''};
+  }).filter(row => row.item);
+}
+
+function fromVerdict(row: ServerVerdict): ClaimVerdict {
+  return {
+    id: row.id,
+    verdict: row.verdict,
+    requestedVerdict: row.requestedVerdict,
+    verifierKind: row.verifierKind,
+    verifierModel: row.verifierModel ?? null,
+    workerModel: row.workerModel ?? null,
+    rationale: row.rationale ?? null,
+    at: row.createdAt,
+    checks: (row.checks || []).map((check: ServerCheck): VerificationCheck => ({
+      name: check.name, outcome: check.outcome, detail: check.detail,
+    })),
+  };
+}
+
+function fromClaim(row: ServerClaim, agent?: {id: string; name: string}): Claim {
+  const claim = row.claim || {};
+  return {
+    sessionId: row.sessionId,
+    issueId: row.issueId,
+    issueIdentifier: row.issue?.identifier || row.issueId.slice(0, 8),
+    issueTitle: row.issue?.title || 'This task',
+    priority: row.issue?.priority ?? 0,
+    agentId: agent?.id || '',
+    agentName: agent?.name || 'agent',
+    summary: String(claim.summary || ''),
+    acceptance: acceptanceOf(claim.acceptance),
+    claimAt: row.claimAt,
+    workerModel: row.workerModel ?? null,
+    verdict: row.verdict ?? null,
+    verifiedAt: row.verifiedAt ?? null,
+    verifierId: row.verifierId ?? null,
+    verifierModel: row.verifierModel ?? null,
+    awaiting: Boolean(row.awaiting),
+    verifications: (row.verifications || []).map(fromVerdict),
+  };
 }
 
 /* ------------------------------------------------------------------ audit (WP05) */
@@ -509,6 +685,75 @@ function createGraphqlAdapter(sample: AgentsAdapter): AgentsAdapter {
         endCursor: page?.pageInfo?.endCursor ?? null,
       };
     },
+
+    /* -- slice 5: runners and leases ---------------------------------------------------- */
+
+    async listRunners(options) {
+      const data = await request<{runners: {nodes: ServerRunner[]; pageInfo: {hasNextPage: boolean; endCursor: string | null}}}>(
+        `query Runners($first: Int!, $after: String) {
+           runners(first: $first, after: $after) {
+             nodes { ${RUNNER_FIELDS} }
+             pageInfo { hasNextPage endCursor } } }`,
+        {first: RUNNER_PAGE, after: options?.after ?? null});
+      const page = data.runners;
+      return {
+        runners: (page?.nodes || []).map(fromRunner),
+        hasNextPage: Boolean(page?.pageInfo?.hasNextPage),
+        endCursor: page?.pageInfo?.endCursor ?? null,
+      };
+    },
+
+    async getRunner(id: string) {
+      const data = await request<{runner: ServerRunner | null}>(
+        `query RunnerOne($id: String!) { runner(id: $id) { ${RUNNER_FIELDS} } }`, {id});
+      if (!data.runner) return null;
+      /* The machine is a server row; the exposures under the Connect heading are not. They belong
+       * to no real runner (WP08 has no store), and the detail screen says exactly that under its
+       * sample notice rather than passing them off as this machine's. */
+      const exposures = await sample.listExposures();
+      return {runner: fromRunner(data.runner), exposures};
+    },
+
+    async listLeases(runnerId: string) {
+      const data = await request<{agentLeases: {nodes: ServerLease[]}}>(
+        `query Leases($runnerId: String) {
+           agentLeases(first: 20, runnerId: $runnerId) { nodes { ${LEASE_FIELDS} } } }`,
+        {runnerId});
+      return (data.agentLeases?.nodes || []).map(fromLease);
+    },
+
+    /* -- slice 5: claims and verdicts --------------------------------------------------- */
+
+    async listClaims(options) {
+      /* `verifierClaims` filters by the agent's `user.id`, exactly as `workspaceAgentSessions`
+       * does, while every route carries the `AgentMember.id`. The translation happens here once. */
+      const [members, agentUserId] = await Promise.all([
+        membersByUserId(),
+        options?.agentId ? agentUserFor(options.agentId) : Promise.resolve(null),
+      ]);
+      const data = await request<{verifierClaims: {nodes: ServerClaim[]; pageInfo: {hasNextPage: boolean; endCursor: string | null}}}>(
+        `query Claims($first: Int!, $after: String, $agentId: String, $awaiting: Boolean) {
+           verifierClaims(first: $first, after: $after, agentId: $agentId, awaiting: $awaiting) {
+             nodes { ${CLAIM_FIELDS} }
+             pageInfo { hasNextPage endCursor } } }`,
+        {first: CLAIM_PAGE, after: options?.after ?? null,
+          agentId: agentUserId, awaiting: options?.awaiting ?? null});
+      const page = data.verifierClaims;
+      return {
+        claims: (page?.nodes || []).map(row => fromClaim(row, members.get(row.agentUserId))),
+        hasNextPage: Boolean(page?.pageInfo?.hasNextPage),
+        endCursor: page?.pageInfo?.endCursor ?? null,
+      };
+    },
+
+    async listVerdicts(sessionId: string) {
+      const data = await request<{agentVerifications: ServerVerdict[]}>(
+        `query Verdicts($sessionId: String) {
+           agentVerifications(sessionId: $sessionId) {
+             id verdict requestedVerdict verifierKind verifierModel workerModel rationale createdAt
+             checks { name outcome detail } } }`, {sessionId});
+      return (data.agentVerifications || []).map(fromVerdict);
+    },
   };
 }
 
@@ -530,25 +775,21 @@ function auditId(): string {
   return `a-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-/* The two projections. They exist for the same reason `Exposure.public_row()` does in
- * runner/hoja_runnerd/connect.py: the address is a bearer secret (connect.py:8-12) and the lease
- * token hash is a credential column (FR-018), so both are dropped by structural destructuring
- * rather than by remembering not to render them. */
+/* The projection exists for the same reason `Exposure.public_row()` does in
+ * runner/hoja_runnerd/connect.py: the tailcat address is a bearer secret (connect.py:8-12), so it
+ * is dropped by structural destructuring rather than by remembering not to render it. There is no
+ * runner credential to drop any more: the runner half is read from GraphQL, where the SDL does not
+ * carry `lease_token_hash` or `token_hint` at all. */
 export function publicExposure(row: RawExposure): ConnectExposure {
   const {address: _address, ...rest} = row;
   return rest;
 }
 
-export function publicRunner(record: RunnerRecord): Runner {
-  const {leaseTokenHash: _hash, ...rest} = record;
-  return rest;
-}
-
-/** The fixtures behind SAMPLE_SURFACES, and nothing else. Read-only for the agent screens: the
- * only writes here are the ones whose screen is itself a fixture. */
+/** The fixture behind `SAMPLE_SURFACES.connect`, and nothing else. Every other read on this
+ * interface is server-backed and replaced by `createGraphqlAdapter`; the stubs below exist so a
+ * missing override fails loudly instead of silently serving a fixture to a real screen. */
 function createSampleAdapter(): AgentsAdapter {
-  const runners: RunnerRecord[] = clone(seedRunnerRecords);
-  const exposuresByRunner: Record<string, RawExposure[]> = clone(seedExposuresByRunner);
+  let exposures: RawExposure[] = clone(seedExposures);
   /* The kill switch, sample-only. `ConnectSupervisor.set_org_enabled` is an admin action owned by
    * WP12's policy API, not by this screen, so nothing here toggles it: until the real adapter
    * lands, `localStorage.hoja_agents_connect = 'off'` reproduces the disabled org (the same
@@ -564,19 +805,16 @@ function createSampleAdapter(): AgentsAdapter {
 
   /* `_expire` revokes at TTL (connect.py:683-689); serving an expired row would claim a tunnel
    * that the supervisor has already killed. */
-  const liveExposures = (runnerId: string): RawExposure[] => {
+  const live = (): RawExposure[] => {
     const now = Date.now() / 1000;
-    return (exposuresByRunner[runnerId] || []).filter(e => e.live && e.expiresAt > now);
+    return exposures.filter(e => e.live && e.expiresAt > now);
   };
 
   const serverOnly = (what: string) => {
-    throw new Error(`No backend for ${what} on main — see SAMPLE_SURFACES in agents/adapter.ts.`);
+    throw new Error(`No backend for ${what} on this server — see SAMPLE_SURFACES in agents/adapter.ts.`);
   };
 
   return {
-    /* Server-backed methods are replaced by `createGraphqlAdapter`; these stubs exist so the
-     * interface has one implementation and a missing override fails loudly instead of silently
-     * serving a fixture to a real screen. */
     async listAgents() { return serverOnly('the agent list'); },
     async getAgent() { return serverOnly('an agent'); },
     async createAgent() { return serverOnly('agent create'); },
@@ -586,35 +824,34 @@ function createSampleAdapter(): AgentsAdapter {
     async listSessions() { return serverOnly('the run queue'); },
     async listAuditEvents() { return serverOnly('the audit log'); },
     async stopSession() { return serverOnly('stopping a session'); },
-    async listRunners() {
-      return clone(runners.map(publicRunner));
-    },
-    async getRunner(id: string) {
-      const record = runners.find(r => r.id.toLowerCase() === id.toLowerCase());
-      if (!record) return null;
-      const live = liveExposures(record.id).map(publicExposure);
-      return clone({runner: publicRunner(record), exposures: live});
-    },
+
+    async listRunners() { return serverOnly('the runner list'); },
+    async getRunner() { return serverOnly('a runner'); },
+    async listLeases() { return serverOnly('a runner\'s leases'); },
+    async listClaims() { return serverOnly('the claims waiting on a verifier'); },
+    async listVerdicts() { return serverOnly('a claim\'s verdicts'); },
+
     async listExposures(runnerId?: string) {
-      const ids = runnerId ? [runnerId] : Object.keys(exposuresByRunner);
-      return clone(ids.flatMap(id => liveExposures(id).map(publicExposure)));
+      /* The fixture belongs to no runner, so the filter is only ever "all of them". A caller that
+       * passes an id gets the sample rows, which the screen labels as a sample. */
+      void runnerId;
+      return clone(live().map(publicExposure));
     },
     async connectEnabled() {
       return connectOn();
     },
     async revokeExposure(exposureId: string, actor: string) {
       if (!connectOn()) throw new Error('Connect is disabled for this workspace.');
-      const owner = Object.keys(exposuresByRunner).find(id => exposuresByRunner[id].some(e => e.id === exposureId));
-      const row = owner ? exposuresByRunner[owner].find(e => e.id === exposureId) : undefined;
-      if (!owner || !row) throw new Error('That exposure is not live.');
-      exposuresByRunner[owner] = exposuresByRunner[owner].filter(e => e.id !== exposureId);
+      const row = exposures.find(e => e.id === exposureId);
+      if (!row) throw new Error('That exposure is not live.');
+      exposures = exposures.filter(e => e.id !== exposureId);
       const entry: AuditEvent = {
         id: auditId(), at: nowIso(), actor, action: 'connect.revoked', target: row.id,
         detail: `ports ${row.ports.join(',')} · peer ${row.pinnedPeer.slice(0, 15)}… · process gone`,
       };
       /* The returned row is what the detail screen reports. It is *not* written to the ledger:
-       * Connect is still a fixture (WP08), and `auditEvents` reads the server's table, so a fixture
-       * event could never appear there and must not pretend it would. */
+       * Connect is a fixture (WP08), and `auditEvents` reads the server's table, so a fixture event
+       * could never appear there and must not pretend it would. */
       return clone({exposure: publicExposure({...row, live: false}), audit: entry});
     },
   };

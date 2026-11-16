@@ -13,6 +13,11 @@
  * The screen never edits its own copy of a value: it renders the policy the adapter returned, so what
  * you see is what the server stored. `updatePolicy` reports the audit row the server produced, or
  * `null` when it keeps none, and the notice under the form follows that instead of promising a trail.
+ *
+ * The verifier half (WP10) is the *Claims* section: `verifierClaims` narrowed to this agent, so the
+ * page shows what each run claimed, whether it is still waiting, and the verdict rows with the
+ * checks a separate principal re-read. Signing is `agentSessionVerify` and belongs to that
+ * principal, not to this page: a Verify button here would let the worker's own session sign itself.
  */
 
 import {useCallback, useEffect, useMemo, useState} from 'react';
@@ -22,8 +27,8 @@ import {Avatar, IconBtn, Tip} from '../graph/shared';
 import {PropDropdown} from '../graph/tasks';
 import {getAgentsAdapter} from './adapter';
 import {statusGlyph} from './AgentsPane';
-import {sessionStatusName, agentStatus} from './types';
-import type {AgentDetail, AgentEvent, AgentPolicy, AgentSession} from './types';
+import {sessionStatusName, agentStatus, verdictColor, verdictLabel} from './types';
+import type {AgentDetail, AgentEvent, AgentPolicy, AgentSession, Claim} from './types';
 
 const EVENT_LABELS: Record<AgentEvent['kind'], string> = {
   thought: 'Thought', action: 'Action', elicitation: 'Needs input', response: 'Response', error: 'Error',
@@ -77,6 +82,8 @@ export function AgentDetailPage({agentKey, workspaceName, viewerName, onBack, on
   onOpenQueue: (agentKey: string) => void;
 }) {
   const [detail, setDetail] = useState<AgentDetail | null>(null);
+  const [claims, setClaims] = useState<Claim[]>([]);
+  const [claimsError, setClaimsError] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
   const [notice, setNotice] = useState('');
@@ -85,9 +92,22 @@ export function AgentDetailPage({agentKey, workspaceName, viewerName, onBack, on
   /* Returns the promise so a failed write can re-read the row and *then* state the refusal: the
    * other order lets the successful reload clear the error that explains what happened. */
   const load = useCallback(() => (
-    getAgentsAdapter().getAgent(agentKey)
-      .then(d => { setDetail(d); setError(d ? '' : `No agent member with the id ${agentKey} exists in this workspace.`); })
-      .catch((e: Error) => { setDetail(null); setError(e.message); })
+    Promise.all([getAgentsAdapter().getAgent(agentKey),
+      /* Claims are a separate read (`verifierClaims`), not a field of the member: the verdict rows
+       * are the evidence, and a page that showed a verdict without its checks would be asking to be
+       * trusted. A refusal here is the same admin gate the run queue has. */
+      getAgentsAdapter().listClaims({agentId: agentKey})
+        .then(page => ({rows: page.claims, error: ''}))
+        /* A refused read is stated where the rows would be, never drawn as "nothing was claimed":
+         * an empty list is a different sentence from "you may not read this". */
+        .catch((e: Error) => ({rows: [] as Claim[], error: e.message}))])
+      .then(([d, claimed]) => {
+        setDetail(d);
+        setClaims(claimed.rows);
+        setClaimsError(claimed.error);
+        setError(d ? '' : `No agent member with the id ${agentKey} exists in this workspace.`);
+      })
+      .catch((e: Error) => { setDetail(null); setClaims([]); setClaimsError(''); setError(e.message); })
   ), [agentKey]);
 
   useEffect(() => { load(); }, [load]);
@@ -254,6 +274,58 @@ export function AgentDetailPage({agentKey, workspaceName, viewerName, onBack, on
                 No run is stored for this agent. Setting the Delegate field on a task opens one; the{' '}
                 <button type="button" className="lin-addrow" onClick={() => onOpenQueue(agent.id)}>run queue</button> shows
                 the workspace's runs as they stand.
+              </p>
+            )}
+          </section>
+
+          <section className="lin-activity" aria-label="Claims">
+            <header>
+              <b>Claims</b>
+              <span className="grow" />
+              <span className="lin-note">
+                {claims.some(c => c.awaiting) ? 'A claim is waiting on a verifier' : 'Nothing is waiting on a verifier'}
+              </span>
+            </header>
+            {claimsError && <p className="lin-error" role="alert" data-claims-error>{claimsError}</p>}
+            {claims.map(claim => (
+              <div key={claim.sessionId} className="lin-event" data-claim-row={claim.sessionId}
+                data-verdict={claim.verdict || 'awaiting'}>
+                <Avatar name={agent.name} size={18} />
+                <span>
+                  <b>{claim.issueIdentifier}</b> {claim.issueTitle}
+                  {' — '}{claim.summary || 'no summary'}
+                  {' '}
+                  <span className="lin-chip" data-verdict-chip={claim.verdict || 'awaiting'}
+                    title={`claimer model ${claim.workerModel || 'unknown'} · claimed ${claim.claimAt}`}>
+                    <i style={{background: verdictColor(claim.verdict)}} />
+                    {claim.awaiting && !claim.verdict ? 'Awaiting verifier' : verdictLabel(claim.verdict)}
+                  </span>
+                  {claim.verifications.length > 0 && (
+                    <span data-verification-checks={claim.verifications[0].id} style={{display: 'block', marginTop: 4}}>
+                      {claim.verifications[0].checks.map(check => (
+                        <span key={check.name} className="lin-note" data-check={check.name}
+                          data-outcome={check.outcome} style={{display: 'block'}}>
+                          {check.name}: {check.outcome}
+                          {check.detail ? ` — ${check.detail}` : ''}
+                        </span>
+                      ))}
+                      {claim.verifications[0].rationale && (
+                        <span className="lin-note" style={{display: 'block'}}>
+                          “{claim.verifications[0].rationale}” — {claim.verifications[0].verifierKind} verifier
+                          {claim.verifications[0].verifierModel ? ` (${claim.verifications[0].verifierModel})` : ''}
+                        </span>
+                      )}
+                    </span>
+                  )}
+                </span>
+                <time>{relTime(claim.verifiedAt || claim.claimAt)}</time>
+              </div>
+            ))}
+            {!claims.length && !claimsError && (
+              <p className="lin-note">
+                No run of this agent has finished with a claim. A run submits one at finish
+                (<code>/runner/finish</code>), and until a separate principal signs it the session
+                stays awaiting verification.
               </p>
             )}
           </section>
