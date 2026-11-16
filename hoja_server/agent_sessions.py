@@ -63,6 +63,21 @@ SLOT_STATES = frozenset({LEASED, RUNNING})
 # States in which the task has a live claim on it, so a second session for the
 # same task is ``lease_held`` rather than admitted twice.
 CLAIM_STATES = frozenset({LEASED, RUNNING, AWAITING_INPUT, VERIFYING})
+# The two states a timer must never settle. ``verifying`` holds a finished claim
+# nobody has judged yet, so settling it deletes the claim before it can be
+# verified — that is the recorded failure (S12/S15) this file exists to close.
+# ``in_review`` is a person's decision; a clock may not take it either.
+SETTLE_EXEMPT = frozenset({VERIFYING, IN_REVIEW})
+
+
+def under_verification(row: dict) -> bool:
+    """True while a claim is waiting on a verifier. Names the state, not the timer."""
+    return row["state"] == VERIFYING
+
+
+def may_be_settled(row: dict) -> bool:
+    """May an idle sweep cancel, expire or mark this session stale?"""
+    return row["state"] not in SETTLE_EXEMPT
 
 
 def holds_slot(row: dict) -> bool:
@@ -122,6 +137,11 @@ TRANSITIONS = {
     # A crashed runner leaves the row claiming the lease; only the timer moves it.
     (LEASED, "tick"): QUEUED,
     (RUNNING, "tick"): QUEUED,
+    # A failed finish is the runner saying the attempt produced nothing (WP10).
+    # It is not a verdict on a claim: there is no claim to verify, so it fails
+    # where it stands and the schedule check decides whether to retry.
+    (LEASED, "fail"): FAILED,
+    (RUNNING, "fail"): FAILED,
 }
 # Events that are legal but leave the state where it is.
 STEADY_EVENTS = {
@@ -378,6 +398,67 @@ def transition(conn, session: dict, event: str, *, at: str | None = None,
     return _save(conn, session, at=at, **changes)
 
 
+CLAIM_IMMUTABLE = "a claim is submitted once and never rewritten"
+
+
+def submit_claim(conn, session: dict, claim: dict, *, worker_model: str | None = None,
+                 at: str | None = None) -> dict:
+    """Record the runner's claim and move the session to ``verifying`` (WP10).
+
+    This is the only function the finish route may use for a completed attempt, and
+    it structurally cannot produce ``done``: the machine's edge out of ``running``
+    for a finish is ``verifying``, and ``done`` is reachable only through
+    ``verify_pass`` (a verified claim) and then ``accept`` (a person). WP07's
+    finish route already refuses to touch the task; this closes the session half.
+
+    The claim is written once. A second finish under a *different* idempotency key
+    is refused rather than allowed to edit the evidence a verifier will read —
+    otherwise the last writer would decide what was claimed.
+    """
+    at = at or now_iso()
+    if session.get("claim"):
+        _refuse(session, "finish", CLAIM_IMMUTABLE)
+    if session["state"] in TERMINAL:
+        _refuse(session, "finish", f"{session['state']} is terminal; no claim is taken")
+    # Catch the machine up rather than jumping it: a granted lease and a started
+    # run are real events, and each one leaves its own line in the transcript. A
+    # skipped step here would make the transcript claim a start that never got a
+    # row, which is exactly the kind of quiet gap this work package is about.
+    if session["state"] == QUEUED:
+        session = transition(conn, session, "lease", at=at)
+    if session["state"] == LEASED:
+        session = transition(conn, session, "start", at=at)
+    if session["state"] != RUNNING:
+        _refuse(session, "finish", "only a running session submits a claim")
+    session = transition(conn, session, "finish", at=at)
+    if session["state"] != VERIFYING:  # pragma: no cover - the table says verifying
+        raise AssertionError(f"a finish left the session {session['state']}, not verifying")
+    return _save(conn, session, at=at,
+                 claim=json.dumps(claim, sort_keys=True, default=str),
+                 claim_at=at, worker_model=worker_model)
+
+
+def finish_session(conn, session: dict, finish_state: str, claim: dict | None = None, *,
+                   worker_model: str | None = None, reason: str | None = None,
+                   at: str | None = None) -> dict:
+    """Apply one of WP07's three finish states to the session bound to the lease.
+
+    ``completed`` is a *claim*, so it goes to ``verifying``. ``canceled`` and
+    ``failed`` are not claims and are applied directly: there is nothing to verify
+    about an attempt that produced nothing.
+    """
+    at = at or now_iso()
+    if finish_state == "completed":
+        return submit_claim(conn, session, claim or {}, worker_model=worker_model, at=at)
+    if finish_state == "canceled":
+        return transition(conn, session, "cancel", at=at,
+                          reason=reason or "the runner canceled the attempt")
+    if finish_state == "failed":
+        return transition(conn, session, "fail", at=at,
+                          reason=reason or "the attempt failed")
+    raise ValueError(f"unknown finish state {finish_state!r}")
+
+
 def _cancel(conn, session: dict, *, at: str, actor_id: str | None, reason: str | None) -> dict:
     """Stopping, then cancelled. The transient status exists so a client can show
     "stopping" while a runner settles; the state is cancelled immediately, because
@@ -407,6 +488,11 @@ def keepalive(conn, session: dict, *, at: str | None = None,
     prevents and clears ``stale`` without pretending work happened.
     """
     at = at or now_iso()
+    if not may_be_settled(session):
+        # Verifying and in_review are not "waiting on capacity": a keepalive would
+        # tell a reader the session is alive but idle, when it is waiting on a
+        # verdict or a person.
+        return session
     if session["state"] not in (DELEGATED, QUEUED):
         return session
     idle = idle_seconds if idle_seconds is not None else _seconds_between(session["updated_at"], at)
@@ -421,7 +507,8 @@ def keepalive(conn, session: dict, *, at: str | None = None,
 
 def mark_stale(session: dict, *, idle_seconds: float) -> str:
     """The status a waiting session has after a full window with no activity."""
-    if session["state"] in (DELEGATED, QUEUED) and idle_seconds >= STALE_AFTER_SECONDS:
+    if (may_be_settled(session) and session["state"] in (DELEGATED, QUEUED)
+            and idle_seconds >= STALE_AFTER_SECONDS):
         return "stale"
     return session["status"]
 
@@ -443,10 +530,31 @@ def serialize(conn, org_id: str, row: dict) -> dict:
         "ackedAt": row.get("acked_at"),
         "activatedAt": row.get("admitted_at"),
         "endedAt": row.get("ended_at"),
+        # WP10: what the runner claimed and who signed it. The claim is served as
+        # the object the runner sent, so a reader never has to parse a string.
+        "claim": parse_claim(row),
+        "claimAt": row.get("claim_at"),
+        "workerModel": row.get("worker_model"),
+        "verdict": row.get("verdict"),
+        "verifiedAt": row.get("verdict_at"),
+        "verifierId": row.get("verifier_id"),
+        "verifierModel": row.get("verifier_model"),
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
         "_row": row,
     }
+
+
+def parse_claim(row: dict) -> dict | None:
+    """The stored claim as a dict, or None when nobody claimed anything."""
+    raw = row.get("claim")
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 SDL = gql(
@@ -491,6 +599,17 @@ SDL = gql(
       ackedAt: DateTime
       activatedAt: DateTime
       endedAt: DateTime
+      "What the runner claimed at finish: the summary, the evidence and the references it points at. Immutable once submitted."
+      claim: JSON
+      claimAt: DateTime
+      "The model that produced the work, as the runner reported it."
+      workerModel: String
+      "met, not_met or uncertain — null until a separate verifier signs. Never set by the runner."
+      verdict: String
+      verifiedAt: DateTime
+      "The principal that recorded the verdict; never the session's own agent."
+      verifierId: ID
+      verifierModel: String
       createdAt: DateTime!
       updatedAt: DateTime!
       activities(first: Int): [AgentActivity!]!
@@ -525,6 +644,9 @@ SDL = gql(
       agentSessionStop(id: String!, reason: String): AgentSessionPayload!
       "A human prompt on a session that is waiting for one; it queues the work again."
       agentSessionPrompt(id: String!, body: String!): AgentSessionPayload!
+      "A separate verifier's verdict on a finished claim. Only met moves the task to In Review; not_met fails the session and uncertain leaves it awaiting evidence. A verifier sharing the worker's principal or model is refused, and no check reads CI status."
+      agentSessionVerify(id: String!, verdict: String!, rationale: String,
+                         model: String, liveRevision: String): AgentSessionPayload!
     }
     """
 )
@@ -594,6 +716,30 @@ def m_agent_session_prompt(_obj, info, id, body):
 
         row = agent_schedule.reevaluate(conn, row, at=now_iso())
         payload = serialize(conn, org, row)
+    return {"success": True, "agentSession": payload}
+
+
+@mutation.field("agentSessionVerify")
+def m_agent_session_verify(_obj, info, id, verdict, rationale=None, model=None,
+                           liveRevision=None):  # noqa: N803 - GraphQL argument name
+    """A separate principal signs the claim. The caller's identity is the verifier.
+
+    Nothing here writes the work product: the verifier re-reads it. That is what
+    makes the principal read-only in substance rather than by a permission claim.
+    """
+    from hoja_server import agent_verify
+
+    store, org, uid = _ctx(info)
+    with store.engine.begin() as conn:
+        row = _require_session(conn, org, id)
+        verifier = agent_verify.principal_for(conn, org, uid, model=model)
+        try:
+            result = agent_verify.record_verdict(
+                conn, row, verdict=verdict, verifier=verifier, rationale=rationale,
+                live_revision=liveRevision)
+        except agent_verify.VerificationRefusedError as exc:
+            raise GraphQLError(str(exc), extensions=exc.extensions) from exc
+        payload = serialize(conn, org, result["session"])
     return {"success": True, "agentSession": payload}
 
 

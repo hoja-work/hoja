@@ -35,7 +35,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 67
+CURRENT_SCHEMA_REVISION = 68
 
 log = logging.getLogger(__name__)
 
@@ -671,11 +671,58 @@ agent_session = Table(
     # may run on its own judgement.
     Column("approval_decision_id", String, ForeignKey("issue_decision.id")),
     Column("error_message", Text),
+    # The claim a runner submits at finish, and the verdict a separate principal
+    # records on it (revision 68). ``claim`` is written once: the finish route
+    # refuses a second claim rather than editing the first, so the evidence a
+    # verifier reads is the evidence the runner submitted.
+    Column("claim", Text),
+    Column("claim_at", String),
+    # Which model produced the work and which judged it. Independence is decided by
+    # comparing these two strings and the two principal ids, so both are stored
+    # rather than inferred from the agent member's current configuration.
+    Column("worker_model", String),
+    Column("verifier_model", String),
+    # met | not_met | uncertain. NULL until somebody signs; never set by the runner.
+    Column("verdict", String),
+    Column("verdict_at", String),
+    Column("verifier_id", String, ForeignKey("user.id")),
     Column("created_at", String, nullable=False),
     Column("updated_at", String, nullable=False),
     # Capacity, budget and the queue all read "live sessions for this agent".
     Index("ix_agent_session_live", "organization_id", "agent_user_id", "state"),
     Index("ix_agent_session_issue", "organization_id", "issue_id", "created_at"),
+)
+
+# One verdict row per check a verifier signs (revision 68, HOJA-602-A-13 / WP10).
+# Append-only for the same reason the transcript is: a verdict that can be edited
+# is not evidence. The session carries the latest verdict as a column so a reader
+# needs no second query; the ledger is what proves who said what, when, with which
+# model, and on which re-read evidence.
+agent_verification = Table(
+    "agent_verification",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("session_id", String, ForeignKey("agent_session.id"), nullable=False, index=True),
+    Column("issue_id", String, ForeignKey("issue.id"), nullable=False, index=True),
+    # met | not_met | uncertain — what was recorded.
+    Column("verdict", String, nullable=False),
+    # What the verifier asked for. It differs from ``verdict`` when a verifier
+    # claimed ``met`` on missing evidence: that records as uncertain instead, and
+    # the difference is kept rather than hidden.
+    Column("requested_verdict", String, nullable=False),
+    Column("verifier_id", String, ForeignKey("user.id"), nullable=False),
+    # human | agent | bot — a bot may not verify its own agent's work.
+    Column("verifier_kind", String, nullable=False),
+    Column("verifier_model", String),
+    Column("worker_principal_id", String, ForeignKey("user.id"), nullable=False),
+    Column("worker_model", String),
+    # JSON: one entry per check (name, outcome, detail), which is the evidence the
+    # verifier re-read — never a CI conclusion, which this project does not have.
+    Column("checks", Text, nullable=False),
+    Column("rationale", Text),
+    Column("created_at", String, nullable=False),
+    Index("ix_agent_verification_session", "organization_id", "session_id", "created_at"),
 )
 
 # The transcript. Append-only: an activity is never rewritten, because a
@@ -2865,6 +2912,45 @@ def _apply_agent_delegation(conn) -> None:
     agent_side_effect.create(conn, checkfirst=True)
 
 
+def _apply_agent_verification(conn) -> None:
+    """The claim and its verdict (HOJA-602-A-13, WP10).
+
+    Additive: one new table plus seven nullable columns on ``agent_session``. A
+    deployment whose runners never submit a claim has no verification row and
+    reads every session exactly as revision 67 left it — the columns are NULL,
+    not defaulted, so "nobody has signed" is distinguishable from "signed as
+    uncertain".
+
+    The verifier's identity is a foreign key to ``user`` on PostgreSQL as well as
+    on a fresh create, because a verdict that names a principal which does not
+    exist cannot be separation-checked later.
+    """
+    columns = {c["name"]: c for c in inspect(conn).get_columns("agent_session")}
+    additive = {
+        "claim": "TEXT",
+        "claim_at": "VARCHAR",
+        "worker_model": "VARCHAR",
+        "verifier_model": "VARCHAR",
+        "verdict": "VARCHAR",
+        "verdict_at": "VARCHAR",
+        "verifier_id": "VARCHAR",
+    }
+    for name, sql_type in additive.items():
+        if name not in columns:
+            conn.exec_driver_sql(f"ALTER TABLE agent_session ADD COLUMN {name} {sql_type}")
+    agent_verification.create(conn, checkfirst=True)
+    if conn.dialect.name == "postgresql":
+        # The column-only ALTER carries no constraint; add the one a fresh
+        # create_all gets, under the same name so both paths converge.
+        conn.exec_driver_sql("""
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_agent_session_verifier_id') THEN
+    ALTER TABLE agent_session ADD CONSTRAINT fk_agent_session_verifier_id
+      FOREIGN KEY (verifier_id) REFERENCES "user" (id);
+  END IF;
+END $$;""")
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -3047,6 +3133,12 @@ _MIGRATIONS = {
     # package's design sketched belongs to WP07 (66) and is used, not duplicated:
     # one idempotency witness per run, keyed run_id + seq.
     67: _apply_agent_delegation,
+    # 68: the claim and the verdict (HOJA-602-A-13, WP10). Additive: the columns
+    # on agent_session are nullable and the verdict ledger is a new table, so a
+    # session opened before this revision reads as "unclaimed, unverified" — which
+    # is the truth, and which is what makes an unverified claim unable to reach
+    # Done rather than merely unlikely to.
+    68: _apply_agent_verification,
 }
 
 

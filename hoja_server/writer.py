@@ -1927,3 +1927,48 @@ class Writer:
                 organization_id=org_id, view_id=view_id, user_id=viewer_id,
                 created_at=now_iso()))
         return True
+
+
+def move_issue_to_state(conn, org_id: str, issue_id: str, state_id: str,
+                        actor_id: str | None, ts: str) -> dict:
+    """Move one issue to one state on a caller's connection (WP10's In Review gate).
+
+    This lives in the writer, not in the verifier, because a state change carries
+    four things that must not have two implementations: the ``state_changed_at``
+    stamp, the cycle auto-add rule, the SLA clock, and the activity row plus
+    notifications a reader sees. ``issue_update`` batches all of an update's
+    fields into one activity; the verifier moves exactly one field, so it writes
+    its own row and reuses the same helpers.
+
+    Returns ``{"moved": bool, "stateId": ..., "from": ...}``. A no-op is not an
+    error: two verifiers reaching the same conclusion must not both create rows.
+    """
+    row = conn.execute(select(issue).where(and_(
+        issue.c.organization_id == org_id, issue.c.id == issue_id))).mappings().first()
+    if not row:
+        return {"moved": False, "stateId": None, "from": None}
+    issue_row = dict(row)
+    if issue_row.get("state_id") == state_id:
+        return {"moved": False, "stateId": state_id, "from": issue_row.get("state_id")}
+    writer = Writer(conn.engine)
+    values: dict = {"state_id": state_id, "state_changed_at": ts, "updated_at": ts}
+    team_row = conn.execute(select(team).where(and_(
+        team.c.organization_id == org_id,
+        team.c.id == issue_row["team_id"]))).mappings().first()
+    if team_row and not issue_row.get("cycle_id"):
+        auto_id = writer._auto_add_cycle_id(conn, org_id, dict(team_row), state_id)
+        if auto_id:
+            values["cycle_id"] = auto_id
+    conn.execute(issue.update().where(issue.c.id == issue_id).values(**values))
+    writer._apply_state_ts(conn, org_id, issue_id, state_id, ts)
+    # HOJA-491: pause / resume / stop the clock on the same commit as the
+    # transition, exactly as a hand-made move does.
+    from hoja_server import sla as sla_module
+
+    sla_module.on_state_change(conn, org_id, issue_id, state_id, ts)
+    writer._record_activity(conn, org_id, issue_id, actor_id, "issueUpdated",
+                            {"stateId": {"from": issue_row.get("state_id"), "to": state_id}}, ts)
+    writer._notify_issue_recipients(
+        conn, org_id, issue_id, actor_id,
+        [issue_row.get("assignee_id"), issue_row.get("creator_id")], "issueUpdated", ts)
+    return {"moved": True, "stateId": state_id, "from": issue_row.get("state_id")}

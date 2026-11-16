@@ -52,6 +52,7 @@ from starlette.routing import Route
 from hoja_server import audit, tenant_context
 from hoja_server.db import (
     agent_lease,
+    agent_session,
     agent_side_effect,
     gen_token,
     issue,
@@ -476,6 +477,70 @@ def _lease_actor(conn, lease: Mapping[str, Any]) -> tuple[str, str]:
     return "bot", str(lease.get("runner_id") or lease.get("id") or "runner")
 
 
+def _bind_session_to_lease(conn, org_id: str, lease: Mapping[str, Any]) -> dict | None:
+    """Mark the session this lease executes as leased — via the machine, not a write.
+
+    The lease is WP07's row and the session is WP06's; this is the one place they are
+    joined for real, so a session a runner is executing stops looking queued. A
+    session the schedule check never admitted is left where it is rather than forced
+    along the machine: a refused transition is a fact about the session, not a reason
+    to fail a lease the runner already holds.
+    """
+    from hoja_server import agent_sessions
+
+    row = conn.execute(select(agent_session).where(and_(
+        agent_session.c.organization_id == org_id,
+        agent_session.c.lease_id == lease["id"],
+    )).limit(1)).mappings().first()
+    if not row:
+        return None
+    session = dict(row)
+    if session["state"] != agent_sessions.QUEUED:
+        return session
+    try:
+        return agent_sessions.transition(conn, session, "lease")
+    except agent_sessions.RefusedTransitionError:
+        LOG.warning("lease %s could not move session %s from queued to leased",
+                    lease["id"], session["id"])
+        return session
+
+
+def _apply_finish_to_session(conn, org_id: str, lease: Mapping[str, Any], state: str, *,
+                             claim: Mapping[str, Any], worker_model: str | None,
+                             summary: str) -> dict | None:
+    """Hand the finish to the session machine, which is what decides what remains true.
+
+    A ``completed`` finish is a claim, and WP10 makes that move to ``verifying`` the
+    only reachable outcome: this function cannot produce ``done``, and nothing else on
+    the runner surface can either. A refused transition (a session a human already
+    stopped, say) is logged and left alone — the finish itself still stands, because
+    the runner's contract is with the lease, not with the session.
+    """
+    from hoja_server import agent_sessions, agent_verify
+
+    session = agent_verify.session_for_lease(conn, org_id, dict(lease))
+    if session is None:
+        return None
+    try:
+        return agent_sessions.finish_session(
+            conn, session, state, claim=dict(claim), worker_model=worker_model,
+            reason=summary or None)
+    except agent_sessions.RefusedTransitionError as exc:
+        LOG.warning("lease %s finished %s but session %s took no finish: %s",
+                    lease["id"], state, session["id"], exc)
+        return agent_sessions.get_session(conn, org_id, session["id"])
+
+
+def _claim_under_verification(conn, org_id: str, lease: Mapping[str, Any]) -> dict | None:
+    """The session whose claim is being verified for this lease's task, if any."""
+    from hoja_server import agent_sessions, agent_verify
+
+    session = agent_verify.session_for_lease(conn, org_id, dict(lease))
+    if session is not None and agent_sessions.under_verification(session):
+        return session
+    return None
+
+
 def claim_lease(engine, runner_row: Mapping[str, Any]) -> dict[str, Any] | None:
     """One non-blocking attempt at granting a lease to ``runner_row``."""
     org_id = runner_row["organization_id"]
@@ -510,6 +575,8 @@ def claim_lease(engine, runner_row: Mapping[str, Any]) -> dict[str, Any] | None:
         lease["token"] = lease_token
         org_key = conn.execute(select(organization.c.url_key).where(
             organization.c.id == org_id)).scalar()
+        # The session a delegated task opened follows the lease it was queued for.
+        _bind_session_to_lease(conn, org_id, lease)
     _audit_lease(engine, "agent.lease.grant", lease, runner_row,
                  detail={"fence": lease["fence"], "attempt": lease["attempt"],
                          "harness": lease["harness"], "ttl_s": lease["ttl_seconds"]})
@@ -909,7 +976,40 @@ def finish_lease(engine, runner_row: Mapping[str, Any], body: Mapping[str, Any],
         ack_effect = with_ref or primary
         session_state = SESSION_STATE[state]
         stamp = now_iso()
+        # WP10: the claim, as the verifier will re-read it. Immutable once stored —
+        # a later finish under a different key is refused rather than allowed to
+        # rewrite the evidence, so the last writer never decides what was claimed.
+        worker_model = str(body.get("model") or "").strip() or None
+        pr_claim = body.get("pull_request")
+        pr_claim = dict(pr_claim) if isinstance(pr_claim, Mapping) else {}
+        if not pr_claim and ack_effect.get("external_ref"):
+            # The ack already names the object the run produced; a runner that does
+            # not repeat it in the claim still has it recorded.
+            pr_claim = {"url": ack_effect["external_ref"]}
+        claim = {
+            "state": state,
+            "summary": summary,
+            "evidence": dict(evidence),
+            "model": worker_model,
+            "acceptance": body.get("acceptance") or [],
+            "pull_request": pr_claim,
+            "merged_sha": body.get("merged_sha"),
+            "deployed_revision": body.get("deployed_revision"),
+            "effects": [{"key": e.get("key"), "kind": e.get("kind")} for e in effects],
+            "idempotency_key": key,
+            "submitted_at": stamp,
+        }
         with tenant_context.scoped(org_id), engine.begin() as conn:
+            # The session moves first, inside this transaction: if the lease CAS
+            # below fails, the raise rolls both writes back, so a stale finish can
+            # never leave a session awaiting verification.
+            session_row = _apply_finish_to_session(
+                conn, org_id, lease, state, claim=claim,
+                worker_model=worker_model, summary=summary)
+            if session_row is not None:
+                # The machine's answer, not the design's hope: a refused transition
+                # reports the state that is actually true.
+                session_state = session_row["state"]
             updated = conn.execute(agent_lease.update().where(and_(
                 agent_lease.c.id == lease["id"],
                 agent_lease.c.fence == lease["fence"],
@@ -1034,6 +1134,15 @@ def reap_expired_leases(engine, *, now: datetime | None = None,
                 runner_row = _row(conn, select(runner).where(runner.c.id == lease["runner_id"])) \
                     if lease.get("runner_id") else None
                 actor = _lease_actor(conn, lease)
+                verifying = _claim_under_verification(conn, org_id, lease)
+            if verifying is not None:
+                # WP10 (I5b): a claim being verified is not a lost run. Expiring the
+                # lease here would re-queue the task underneath the verifier and
+                # dispatch a second attempt at work nobody has judged yet — the
+                # recorded failure (S15, class D2) in its other direction.
+                LOG.info("lease %s expired while session %s awaits verification: "
+                         "left alone, not requeued", lease["id"], verifying["id"])
+                continue
             with engine.begin() as conn:
                 updated = conn.execute(agent_lease.update().where(and_(
                     agent_lease.c.id == lease["id"],
