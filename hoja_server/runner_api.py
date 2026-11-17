@@ -54,14 +54,17 @@ from hoja_server.db import (
     agent_lease,
     agent_session,
     agent_side_effect,
+    comment,
     gen_token,
     issue,
+    issue_activity,
     new_id,
     now_iso,
     organization,
     runner,
     runner_enrollment,
     token_hash,
+    user,
 )
 
 LOG = logging.getLogger("hoja_server.runner")
@@ -1048,6 +1051,153 @@ def record_usage_report(conn, org_id: str, lease: Mapping[str, Any], document: A
 
 
 # ---------------------------------------------------------------------------
+# The agent's reply on the task (HOJA-602-A-17)
+# ---------------------------------------------------------------------------
+
+#: How much of the harness's answer becomes the comment. Comment bodies are read on a page, and a
+#: 4 KB answer is already the whole of what a persona wants; the run itself holds the rest.
+MAX_FINISH_COMMENT_CHARS = 4000
+
+#: Where the run can be read: the agent's own run queue, which is the page that lists its
+#: sessions. There is no per-session route yet (``AgentsSurface`` calls the task page's inline
+#: session view "a later slice"), so this is the page a run is actually findable on, and the
+#: comment names the session id beside it rather than promising a permalink that does not exist.
+AGENT_QUEUE_PATH = "/workspace/agents/{agent_id}/queue"
+
+
+def _origin_of(url: Any) -> str | None:
+    """``scheme://host`` from a stored absolute URL, or None when it is not one."""
+    text = str(url or "").strip()
+    if not text:
+        return None
+    scheme, sep, rest = text.partition("://")
+    if not sep or not rest:
+        return None
+    host = rest.split("/", 1)[0]
+    return f"{scheme}://{host}" if host else None
+
+
+def _answer_from_effects(effects: Sequence[Mapping[str, Any]]) -> str | None:
+    """The harness's final answer, as the daemon already sent it on the claim effect."""
+    for effect in effects:
+        if not isinstance(effect, Mapping):
+            continue
+        payload = effect.get("payload")
+        if not isinstance(payload, Mapping):
+            continue
+        answer = payload.get("answer")
+        if isinstance(answer, str) and answer.strip():
+            return answer.strip()
+    return None
+
+
+def finish_comment_body(*, state: str, summary: str, answer: str | None,
+                        agent_name: str, harness: str, model: str | None,
+                        session_id: str, link: str | None) -> str:
+    """What the person who delegated the task reads on it.
+
+    The answer when the harness produced one, otherwise the run's own summary -- and never a
+    comment that says nothing, because "the agent finished" with no words is the noise this
+    change exists to remove. The provenance line and the link are what make the reply an
+    account of a run rather than an unattributed opinion.
+    """
+    if answer:
+        body = answer[:MAX_FINISH_COMMENT_CHARS]
+    elif summary.strip():
+        body = summary.strip()[:MAX_FINISH_COMMENT_CHARS]
+    else:
+        body = f"The run finished with claim `{state}`."
+    provenance = f"Run by {agent_name} · harness {harness} · model {model or 'unknown'}"
+    footer = f"_{provenance} · session {session_id}_"
+    if link:
+        footer = f"{footer}\n\n[All runs for this agent]({link})"
+    return f"{body}\n\n{footer}"
+
+
+def post_finish_comment(conn, org_id: str, lease: Mapping[str, Any], *,
+                        session: Mapping[str, Any], state: str, summary: str,
+                        answer: str | None, model: str | None) -> str | None:
+    """Write the agent's one comment on the task this lease ran, and say its id.
+
+    Called inside the finish's own transaction, which is what makes it exactly-once: the lease
+    CAS and the comment commit together, so a re-delivered finish finds the lease already
+    finished under the same ``run_id + seq`` key and returns before reaching this code, while a
+    crash before the commit leaves neither behind. Nothing here re-reads or edits a comment; a
+    later finish under a different key is refused by the fence/claim rules above it.
+
+    The author is the agent user, the organization is the lease's, and the row is the same shape
+    ``writer.comment_create`` writes, so the task page renders it like any other comment.
+    """
+    issue_row = conn.execute(select(issue.c.id, issue.c.url).where(and_(
+        issue.c.organization_id == org_id,
+        issue.c.id == lease["task_id"],
+    )).limit(1)).mappings().first()
+    if issue_row is None:
+        LOG.warning("lease %s ran a task that no longer exists; no finish comment",
+                    lease.get("id"))
+        return None
+    agent_id = str(session.get("agent_user_id") or "")
+    if not agent_id:
+        # A lease on a task nobody delegated has no agent to speak for it.
+        return None
+    name = conn.execute(select(user.c.name).where(and_(
+        user.c.id == agent_id, user.c.organization_id == org_id))).scalar()
+    origin = _origin_of(issue_row["url"])
+    link = f"{origin}{AGENT_QUEUE_PATH.format(agent_id=agent_id)}" if origin else None
+    body = finish_comment_body(
+        state=state, summary=summary, answer=answer,
+        agent_name=str(name or "the agent"),
+        harness=str(lease.get("harness") or "unknown"),
+        model=model, session_id=str(session.get("id") or ""), link=link)
+    stamp = now_iso()
+    comment_id = new_id()
+    conn.execute(comment.insert().values(
+        id=comment_id,
+        organization_id=org_id,
+        issue_id=issue_row["id"],
+        body=body,
+        user_id=agent_id,
+        url=f"{issue_row['url']}#comment-{comment_id[:8]}" if issue_row["url"] else None,
+        created_at=stamp,
+        updated_at=stamp,
+    ))
+    # The task's own timeline says a comment arrived, exactly as a human's would.
+    conn.execute(issue_activity.insert().values(
+        id=new_id(), organization_id=org_id, issue_id=issue_row["id"],
+        actor_id=agent_id, event_type="commentCreated",
+        changes=json.dumps({"commentId": comment_id}, separators=(",", ":")),
+        created_at=stamp,
+    ))
+    return comment_id
+
+
+def _audit_finish_comment(engine, org_id: str, lease: Mapping[str, Any],
+                          runner_row: Mapping[str, Any], *, comment_id: str,
+                          session: Mapping[str, Any], model: str | None) -> None:
+    """One audit row for the agent's write. A failure to audit never fails the finish."""
+    try:
+        audit.record(
+            engine,
+            organization_id=org_id,
+            action="agent.session.comment",
+            actor_kind="agent",
+            actor_id=str(session.get("agent_user_id") or ""),
+            on_behalf_of=str(session.get("creator_id") or "") or None,
+            target_kind="comment",
+            target_id=comment_id,
+            runner=str(runner_row.get("name") or ""),
+            detail={"lease_id": str(lease.get("id") or ""),
+                    "issue_id": str(lease.get("task_id") or ""),
+                    "session_id": str(session.get("id") or ""),
+                    "model": model,
+                    "harness": str(lease.get("harness") or "")},
+        )
+    except Exception:
+        LOG.warning("could not audit the finish comment %s on lease %s",
+                    comment_id, lease.get("id"), exc_info=True)
+
+
+# ---------------------------------------------------------------------------
 # Per-effect idempotency (T032)
 # ---------------------------------------------------------------------------
 
@@ -1230,6 +1380,7 @@ def finish_lease(engine, runner_row: Mapping[str, Any], body: Mapping[str, Any],
         ack_effect = with_ref or primary
         session_state = SESSION_STATE[state]
         stamp = now_iso()
+        comment_id: str | None = None
         # WP10: the claim, as the verifier will re-read it. Immutable once stored —
         # a later finish under a different key is refused rather than allowed to
         # rewrite the evidence, so the last writer never decides what was claimed.
@@ -1264,6 +1415,24 @@ def finish_lease(engine, runner_row: Mapping[str, Any], body: Mapping[str, Any],
                 # The machine's answer, not the design's hope: a refused transition
                 # reports the state that is actually true.
                 session_state = session_row["state"]
+            # HOJA-602-A-17: the person who delegated this task gets an answer on the task,
+            # written by the agent, in the same transaction as the finish itself. Inside the
+            # transaction is what makes "exactly once" true: a re-delivered finish returns from
+            # the duplicate branch above without reaching this line, and a crash rolls the
+            # comment back with the lease change so the retry writes both again.
+            if session_row is not None:
+                try:
+                    # A savepoint, so a comment that cannot be written (a task deleted under a
+                    # running lease, say) cannot take the claim down with it: the runner's
+                    # contract is with the lease, and the claim is the record that matters.
+                    with conn.begin_nested():
+                        comment_id = post_finish_comment(
+                            conn, org_id, lease, session=session_row, state=state,
+                            summary=summary, answer=_answer_from_effects(effects),
+                            model=worker_model)
+                except Exception:
+                    LOG.warning("lease %s finished but its comment could not be written",
+                                lease.get("id"), exc_info=True)
             # WP14: the finish carries the run's cumulative token counts and elapsed
             # compute. The ledger stores the difference from what the event stream
             # already reported, so a run that streamed to the end is not counted twice.
@@ -1288,6 +1457,9 @@ def finish_lease(engine, runner_row: Mapping[str, Any], body: Mapping[str, Any],
             if updated.rowcount != 1:
                 raise LeaseRequestError(409, ERROR_STALE_FENCE,
                                         "the lease was re-granted while this finish was in flight")
+        if comment_id and session_row is not None:
+            _audit_finish_comment(engine, org_id, lease, runner_row, comment_id=comment_id,
+                                  session=session_row, model=worker_model)
         _audit_lease(engine, "agent.session.stop", lease, runner_row,
                      detail={"state": state, "key": key,
                              "external_ref": ack_effect.get("external_ref"),

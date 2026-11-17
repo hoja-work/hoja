@@ -62,6 +62,10 @@ ACTIONS = frozenset({
     # what exists today (a completion stream is the closest thing to a session).
     "agent.session.start",
     "agent.session.stop",
+    # What an agent said on a task when it finished (HOJA-602-A-17). Its own kind rather than
+    # another ``session.stop``: "the run ended" and "the agent wrote a comment on somebody's
+    # task" are different facts, and only the second is words a person will read as the agent's.
+    "agent.session.comment",
     "agent.lease.grant",
     "agent.lease.expiry",
     # A lease the runner may not take, because the agent's policy refused it
