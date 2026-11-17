@@ -1642,3 +1642,11 @@ body:has(.reviews-page) .main>.app-error{flex:none}
 .workspace-content:has(.mt-page){grid-row:1 / span 2;min-width:0}
 .topbar:has(+ .app-body .mt-page){display:none}
 @media(max-width:700px),(max-width:1000px) and (max-height:500px){.topbar:has(+ .app-body .mt-page){display:flex;height:60px;position:relative;z-index:40}.topbar:has(+ .app-body .mt-page) .brand{display:none}.topbar:has(+ .app-body .mt-page) .command{margin-left:0}}
+/* The sign-in card is a grid item, so its automatic minimum size is its content's
+ * min-content width; a text input keeps the UA's default intrinsic width and the
+ * credential-mode pair has to stay on one line, which pinned the card at ~349px.
+ * At 320 and 360 the page then scrolled sideways and the card's right edge was
+ * clipped. Letting the card and its fields shrink keeps the layout inside the
+ * viewport without touching the card's proportions at 390 and above. */
+.login-layout, .login-card { min-width: 0; }
+.login-card form > input, .login-card form > select { min-width: 0; }
