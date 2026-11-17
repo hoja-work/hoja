@@ -44,6 +44,10 @@ RESERVED_SLUGS = frozenset({
     "static",
     "traefik",
     "dashboard",
+    # Hoja Connect's own relay. A workspace called `derp` would claim
+    # derp.hoja.work, which Traefik already routes to the DERP relay and its
+    # map (infra/deploy/traefik/dynamic/20-derp-hoja-work.yml).
+    "derp",
 })
 
 #: Same expression as the provisioner: one DNS label, no leading/trailing hyphen.

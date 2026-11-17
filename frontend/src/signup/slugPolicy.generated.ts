@@ -25,6 +25,7 @@ export const RESERVED_SLUGS: readonly string[] = [
   "blog",
   "cdn",
   "dashboard",
+  "derp",
   "docs",
   "help",
   "imap",
