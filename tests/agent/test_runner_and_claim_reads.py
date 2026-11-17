@@ -28,7 +28,7 @@ import pytest
 from sqlalchemy import select
 from starlette.testclient import TestClient
 
-from hoja_server import runner_api
+from hoja_server import agent_runners, runner_api
 from hoja_server.app import create_app
 from hoja_server.db import seed_tenant
 from hoja_server.store import Store
@@ -242,11 +242,15 @@ def test_a_runner_row_carries_its_status_harnesses_and_current_lease(world):
     assert row["enabled"] is True and row["revokedAt"] is None
     assert row["harnesses"] == ["generic", "pi"]
     assert row["labels"] == ["pool"]  # a JSON object's keys, sorted
-    # A granted lease is Hoja's own evidence of life, so the row is online while
-    # holding one — even before the first heartbeat, which WP07 writes on the
-    # heartbeat route only.
-    assert row["lastHeartbeatAt"] is None, row
+    # A granted lease is Hoja's own evidence of life, so the row is online while holding one.
+    # Since HOJA-602-A-20 the poll that granted it is evidence too, so ``last_seen`` is no
+    # longer NULL here: this machine reached the lease by long-polling, which is exactly what
+    # an idle runner does, and that poll is now recorded. The lease-only branch below is
+    # still load-bearing for a row read before any poll landed, so it is asserted there.
+    assert row["lastHeartbeatAt"], row
     assert row["status"] == "online", row
+    assert agent_runners.runner_status({"enabled": True, "last_seen": None},
+                                       lease=lease) == agent_runners.ONLINE
     current = row["currentLease"]
     assert current and current["id"] == lease["lease_id"]
     assert current["state"] == "active" and current["harness"] == "pi"

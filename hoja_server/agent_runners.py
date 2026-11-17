@@ -154,11 +154,13 @@ def runner_status(row: dict, *, lease: dict | None = None,
     """``online`` iff Hoja has evidence of life inside ``ONLINE_WINDOW_S``.
 
     Two facts are evidence, and both are Hoja's own: the recorded heartbeat
-    (``last_seen``, written by the heartbeat route) and a lease the runner is
-    holding right now. The second one matters because WP07 writes ``last_seen`` on
-    heartbeat only, so a machine that has just been granted work has no heartbeat
-    yet — and a row that said "offline" while showing the lease it holds would be
-    contradicting itself. Both converge within one window.
+    (``last_seen``, written by the heartbeat route and — since HOJA-602-A-20 — by
+    the lease long-poll, rate limited to one write per heartbeat interval) and a
+    lease the runner is holding right now. The second one matters because a machine
+    that has just been granted work has no heartbeat yet — and a row that said
+    "offline" while showing the lease it holds would be contradicting itself. Both
+    converge within one window, and a runner with no work at all is kept fresh by
+    its polls, which is the only evidence an idle machine can give.
 
     A revoked or disabled runner is offline whatever either says: the lease route
     refuses its token (``_runner_from``), so drawing it as online would promise work

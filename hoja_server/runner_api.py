@@ -237,6 +237,27 @@ def mint_enrollment_token(
     return row, token
 
 
+def default_harness_for(harnesses: Sequence[str]) -> str | None:
+    """The one harness a runner falls back to when a host carries several (HOJA-602-A-20).
+
+    Enrolling registers an *allowlist*, not a launch command, so before this rule a
+    daemon on a host with more than one profile installed refused to start at all
+    ("no default harness: pass --default-harness") — even though the enroll command
+    the admin screen prints does not pass that flag, and every lease names its own
+    harness anyway.
+
+    The rule is the first harness of the enrolled allowlist, sorted, so it is
+    deterministic: the same allowlist always answers the same name, whatever order
+    the operator passed ``--allow-harness`` in, and the answer is a fact the control
+    plane states once (in the register response) rather than one the daemon guesses
+    locally on every start. ``None`` only when the allowlist is empty, which
+    ``register_runner`` already refuses.
+    """
+
+    resolved = sorted({str(item).strip().lower() for item in harnesses if str(item).strip()})
+    return resolved[0] if resolved else None
+
+
 def register_runner(engine, body: Mapping[str, Any]) -> dict[str, Any]:
     """Spend an enrollment token and mint the runner's bearer token (T029)."""
     enrollment_token = str(body.get("enrollment_token") or "").strip()
@@ -281,6 +302,7 @@ def register_runner(engine, body: Mapping[str, Any]) -> dict[str, Any]:
     token = gen_token()
     runner_id = new_id()
     created = now_iso()
+    allowlist = sorted(set(harnesses))
     with tenant_context.scoped(org_id), engine.begin() as conn:
         # Spend it first, conditionally: a second concurrent registration of
         # the same token finds used_at set and gets nothing.
@@ -297,7 +319,7 @@ def register_runner(engine, body: Mapping[str, Any]) -> dict[str, Any]:
                 organization_id=org_id,
                 name=name,
                 labels=json.dumps(dict(labels), sort_keys=True),
-                harnesses=json.dumps(sorted(set(harnesses))),
+                harnesses=json.dumps(allowlist),
                 lease_token_hash=token_hash(token),
                 token_hint=token[-4:],
                 enabled=True,
@@ -314,7 +336,11 @@ def register_runner(engine, body: Mapping[str, Any]) -> dict[str, Any]:
         "token": token,
         "name": name,
         "organization_id": org_id,
-        "harnesses": sorted(set(harnesses)),
+        "harnesses": allowlist,
+        # HOJA-602-A-20: named here, once, so the daemon that enrolls records the
+        # control plane's answer instead of guessing when a later start has several
+        # profiles to choose from.
+        "default_harness": default_harness_for(allowlist),
         "heartbeat_interval_s": HEARTBEAT_INTERVAL_S,
         "lease_ttl_s": LEASE_TTL_S,
     }
@@ -915,15 +941,56 @@ def _policy_drift(conn, org_id: str, lease: Mapping[str, Any]) -> bool:
     return int(view.version) != int(granted_under)
 
 
-def _touch_runner(engine, runner_row: Mapping[str, Any], stamp: str) -> None:
-    """Record liveness, but at most once per heartbeat window per runner."""
-    last = _parse_iso(runner_row.get("last_seen"))
+def _touch_runner(engine, runner_row: Mapping[str, Any], stamp: str | None = None) -> bool:
+    """Record liveness for one runner, at most once per heartbeat window.
+
+    Two callers mean "this machine is alive": the heartbeat route, which is the
+    original WP07 evidence, and — since HOJA-602-A-20 — the lease long-poll. The
+    second one matters because a daemon with no work holds no lease, so it never
+    heartbeats, and a runner that is demonstrably up (it holds a
+    connection open for the whole poll window) used to freeze at its last heartbeat
+    and be drawn as offline in Settings -> Runners. `agent_runners.ONLINE_WINDOW_S`
+    then never saw it come back until it was granted something.
+
+    Rate limiting is the point of the shape: the poll sleeps in 250 ms slices for up
+    to a minute, so an unconditional write would turn one idle machine into a write
+    every quarter second. The window is `HEARTBEAT_INTERVAL_S`, the same cadence the
+    server asks a beating runner for, and the guard is read *inside* the
+    transaction and re-stated as a predicate on the update, so two concurrent polls
+    of the same runner (and a heartbeat racing a poll) still produce one write per
+    window: the conditional update is what makes the limit hold across processes,
+    not just within one request.
+
+    Returns True when the row was written. Every statement is inside
+    `tenant_context.scoped(org)` and carries an explicit `organization_id`
+    predicate, like every other runner write: this is a tenant row, not a shared
+    counter.
+    """
+
+    org_id = runner_row["organization_id"]
+    stamp = stamp or now_iso()
     now = _parse_iso(stamp) or _now()
-    if last is not None and (now - last).total_seconds() < HEARTBEAT_INTERVAL_S:
-        return
-    with tenant_context.scoped(runner_row["organization_id"]), engine.begin() as conn:
-        conn.execute(runner.update().where(runner.c.id == runner_row["id"]).values(
-            last_seen=stamp))
+    cutoff = now - timedelta(seconds=HEARTBEAT_INTERVAL_S)
+    with tenant_context.scoped(org_id), engine.begin() as conn:
+        seen = conn.execute(select(runner.c.last_seen).where(and_(
+            runner.c.id == runner_row["id"],
+            runner.c.organization_id == org_id,
+        ))).scalar()
+        previous = _parse_iso(seen)
+        if previous is not None and previous.tzinfo is None:
+            previous = previous.replace(tzinfo=now.tzinfo)
+        if previous is not None and previous >= cutoff:
+            return False
+        # Conditional on the value just read: if anything moved it in between, this
+        # update matches nothing and the other writer's stamp stands.
+        unchanged = (runner.c.last_seen.is_(None) if seen is None
+                     else runner.c.last_seen == seen)
+        written = conn.execute(runner.update().where(and_(
+            runner.c.id == runner_row["id"],
+            runner.c.organization_id == org_id,
+            unchanged,
+        )).values(last_seen=stamp))
+        return bool(written.rowcount)
 
 
 # ---------------------------------------------------------------------------
@@ -1710,7 +1777,22 @@ def runner_routes(engine) -> list[Route]:
             return _error(400, ERROR_BAD_PARAMS, "poll_timeout_ms must be an integer")
         poll_ms = max(0, min(poll_ms, MAX_POLL_MS))
         deadline = time.monotonic() + poll_ms / 1000.0
+        # HOJA-602-A-20: a poll is liveness. `_touch_runner` is the rate limiter (one
+        # write per HEARTBEAT_INTERVAL_S per runner, enforced in SQL), and this is the
+        # cheaper half of it: with nothing to grant, the loop below runs four times a
+        # second, so it must not even try to write that often.
+        next_liveness = time.monotonic()
         while True:
+            if time.monotonic() >= next_liveness:
+                next_liveness = time.monotonic() + HEARTBEAT_INTERVAL_S
+                try:
+                    await run_in_threadpool(_touch_runner, engine, runner_row)
+                except Exception:  # liveness must never refuse work
+                    # The machine asked for work and is entitled to it; a failed stamp
+                    # costs it a wrong "offline" dot, not its lease. The next poll
+                    # (or the heartbeat of the lease it is granted) repairs the row.
+                    LOG.warning("could not record liveness for runner %s",
+                                runner_row.get("id"), exc_info=True)
             granted = await run_in_threadpool(claim_lease, engine, runner_row)
             if granted:
                 return JSONResponse({"lease": granted})
