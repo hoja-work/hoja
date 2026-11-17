@@ -74,6 +74,8 @@ SDL = gql(
       allowedSigninMethods: [String!]!
       "CIDR strings. Empty means no restriction."
       ipAllowlist: [String!]!
+      "Whether Hoja Connect may open tunnels for this workspace (WP09). True until an admin says otherwise."
+      connectEnabled: Boolean!
       updatedAt: DateTime
     }
 
@@ -81,6 +83,8 @@ SDL = gql(
       idleTimeoutMinutes: Int
       allowedSigninMethods: [String!]
       ipAllowlist: [String!]
+      "The workspace-wide Connect kill switch. Omit to leave it as it is."
+      connectEnabled: Boolean
     }
 
     extend type Query {
@@ -191,12 +195,16 @@ def security_policy(engine, org_id: str) -> dict:
             "idleTimeoutMinutes": None,
             "allowedSigninMethods": [],
             "ipAllowlist": [],
+            # Revision 71: "no row" and NULL both mean "never decided", which is enabled. A
+            # workspace that has not turned Connect off keeps it on.
+            "connectEnabled": True,
             "updatedAt": None,
         }
     return {
         "idleTimeoutMinutes": row["idle_timeout_minutes"],
         "allowedSigninMethods": json.loads(row["allowed_signin_methods"] or "[]"),
         "ipAllowlist": json.loads(row["ip_allowlist"] or "[]"),
+        "connectEnabled": row.get("connect_enabled") is not False,
         "updatedAt": row["updated_at"],
     }
 
@@ -357,6 +365,11 @@ def m_workspace_security_update(_, info, input):
         "updated_by": uid,
         "updated_at": ts,
     }
+    # WP09's kill switch is written only when the caller sends it, unlike the three fields above
+    # (whose omission has always meant "clear"). A client that predates this field must not turn
+    # Connect back on for a workspace whose admin turned it off.
+    if input.get("connectEnabled") is not None:
+        values["connect_enabled"] = bool(input["connectEnabled"])
     with store.engine.begin() as conn:
         updated = conn.execute(
             workspace_security_policy.update()

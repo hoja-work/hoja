@@ -149,6 +149,14 @@ def test_the_wire_contract_is_the_same_on_both_sides():
     assert runner_protocol.CP_ROUTE_FINISH == runner_api.ROUTE_FINISH
     assert runner_protocol.CP_ROUTE_EFFECT == runner_api.ROUTE_EFFECT
     assert runner_protocol.CP_ROUTE_RELEASE == runner_api.ROUTE_RELEASE
+    # WP09: the Connect routes are part of the same wire, and the runner client is the caller.
+    from hoja_server import connect_api
+    assert runner_protocol.CP_ROUTE_CONNECT_OPEN == connect_api.ROUTE_OPEN
+    assert runner_protocol.CP_ROUTE_CONNECT_CLOSE == connect_api.ROUTE_CLOSE
+    assert runner_protocol.CP_ERROR_CONNECT_DISABLED == connect_api.ERROR_DISABLED
+    assert runner_protocol.CP_ERROR_CONNECT_NOT_GRANTED == connect_api.ERROR_NOT_GRANTED
+    assert runner_protocol.CP_ERROR_CONNECT_PEER == connect_api.ERROR_PEER_INVALID
+    assert runner_protocol.CP_ERROR_CONNECT_PORT == connect_api.ERROR_PORT
     assert runner_protocol.CP_HEADER_RUNNER == runner_api.HEADER_RUNNER
     assert runner_protocol.CP_HEADER_LEASE == runner_api.HEADER_LEASE
     assert runner_protocol.CP_HEADER_FENCE == runner_api.HEADER_FENCE
@@ -264,3 +272,40 @@ def test_a_harness_outside_the_allowlist_is_never_leased_to_the_real_client(live
     client = _register(live)  # registered with generic only
     _enqueue(live, harness="codex", prompt="not for this runner")
     assert client.claim(poll_timeout_s=0.5) is None
+
+
+def test_the_runner_client_reports_exposures_and_is_refused_by_name(live):
+    """WP09's two routes, driven by the real client rather than asserted in prose.
+
+    The conformance tenant has no agent and no policy, so the honest answer to "publish port 3000"
+    is the policy's refusal — and getting *that* code back is what proves the client's body keys,
+    the fence headers and the server's route all line up. The happy path (a granted policy, the rows
+    it records, the close on lease end) is ``tests/agent/test_connect_endpoints.py``.
+    """
+    from hoja_runnerd.client import Unauthorized
+
+    client = _register(live)
+    _enqueue(live)
+    lease = client.claim(poll_timeout_s=5.0)
+    assert lease is not None
+
+    with pytest.raises(Unauthorized) as refused:
+        client.report_exposure(lease, exposure_id="exp-conf-1", ports=[3000],
+                               host="localhost", pinned_peer="nodekey:" + "c" * 64)
+    assert refused.value.code == "connect_not_granted", refused.value.body
+    # The address is not part of the payload the client sends, by construction.
+    assert "address" not in refused.value.body
+
+    # A malformed pin is refused before anything is stored, through the same client.
+    with pytest.raises(Exception) as bad_pin:
+        client.report_exposure(lease, exposure_id="exp-conf-2", ports=[3000],
+                               host="localhost", pinned_peer="all")
+    assert getattr(bad_pin.value, "code", "") == "connect_peer_invalid", bad_pin.value
+
+    # Closing an exposure the workspace never opened is a 404-shaped answer, not a silent success.
+    with pytest.raises(Exception) as unknown:
+        client.report_exposure_closed(lease, exposure_id="exp-conf-3")
+    assert getattr(unknown.value, "code", "") == "connect_exposure_unknown", unknown.value
+
+    # The heartbeat carries the revocation channel, empty when nothing was revoked.
+    assert client.heartbeat(lease).connect_revoke == ()

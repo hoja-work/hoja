@@ -869,6 +869,13 @@ def heartbeat_lease(engine, runner_row: Mapping[str, Any], body: Mapping[str, An
     cancel = bool(lease.get("cancel_requested_at")) or policy_drift
     reason = POLICY_CHANGED if policy_drift else (
         lease.get("cancel_reason") if cancel else None)
+    # WP09: an exposure an admin revoked is closed in the record already, so the process is the
+    # only thing left to kill. The heartbeat is where WP07 already delivers an instruction to a
+    # runner mid-lease, so it is where this one travels; a runner that predates the field ignores
+    # it, and the record still says the workspace stopped exposing the port.
+    from hoja_server import connect_api
+
+    revoke = connect_api.pending_revocations(engine, runner_row)
     return {
         "fence": lease["fence"],
         "cancel": cancel,
@@ -881,6 +888,7 @@ def heartbeat_lease(engine, runner_row: Mapping[str, Any], body: Mapping[str, An
         "lease_state": LEASE_ACTIVE,
         "lease_until": extends_to,
         "heartbeat_interval_s": HEARTBEAT_INTERVAL_S,
+        "connect_revoke": revoke,
     }
 
 
@@ -1285,6 +1293,14 @@ def finish_lease(engine, runner_row: Mapping[str, Any], body: Mapping[str, Any],
                              "external_ref": ack_effect.get("external_ref"),
                              "session_state": session_state},
                      actor=_lease_actor_of(engine, lease))
+    # WP09: an exposure cannot outlive the lease that opened it. Closed here, after the finish
+    # committed, with the reason that is actually true (a canceled finish and a completed one are
+    # different sentences about the same tunnel).
+    from hoja_server import connect_api
+
+    connect_api.close_for_lease(
+        engine, lease, reason=(connect_api.CLOSE_LEASE_CANCELED if state == "canceled"
+                              else connect_api.CLOSE_LEASE_FINISHED))
     return _finish_ack({**lease, "finish_state": state, "finish_key": key},
                        ack_effect, duplicate=False, key=key, session_state=session_state)
 
@@ -1347,6 +1363,12 @@ def release_lease(engine, runner_row: Mapping[str, Any], body: Mapping[str, Any]
             prompt=lease["prompt"],
             ttl_s=int(lease["ttl_seconds"]),
         )
+    # WP09: a released lease is over, so its exposures are too.
+    from hoja_server import connect_api
+
+    connect_api.close_for_lease(
+        engine, lease, reason=(connect_api.CLOSE_LEASE_CANCELED if terminal == LEASE_CANCELED
+                              else connect_api.CLOSE_LEASE_FINISHED))
     return {"released": True, "fence": lease["fence"], "state": terminal,
             "requeued": ({"lease_id": requeued["id"], "fence": requeued["fence"]}
                          if requeued else None)}
@@ -1418,6 +1440,13 @@ def reap_expired_leases(engine, *, now: datetime | None = None,
                              "reason": "cancel_requested" if canceled else "lease_expired",
                              "requeued_fence": requeued["fence"] if requeued else None},
                      actor=actor)
+        # WP09: a reaped lease is the strongest "this tunnel has no owner" signal there is, so its
+        # exposures are closed here rather than left for a screen to filter out.
+        from hoja_server import connect_api
+
+        connect_api.close_for_lease(
+            engine, lease, reason=(connect_api.CLOSE_LEASE_CANCELED if canceled
+                                  else connect_api.CLOSE_LEASE_EXPIRED))
         lost.append({"lease_id": lease["id"], "task_id": lease["task_id"],
                      "fence": lease["fence"], "state": terminal,
                      "requeued_fence": requeued["fence"] if requeued else None})

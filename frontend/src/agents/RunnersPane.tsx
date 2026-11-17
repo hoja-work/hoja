@@ -21,13 +21,13 @@
  * page) are the two ways back. None of those controls is a `.lin-row`: the list's row count must
  * stay equal to the server's runner count, which is what the geometry check asserts.
  *
- * One surface here is still a fixture: **Connect**. No table stores an exposure and no route opens
- * or revokes one (WP08), so the exposures under the Connect heading are the labelled sample —
- * `SampleDataNotice surface="connect"` — and they belong to no real machine, which the block says
- * in words rather than by association. Two secrets matter and both are structurally absent: the
- * tailcat address is a bearer secret (runner/hoja_runnerd/connect.py:8-12) and is dropped by
- * `publicExposure` before anything reaches here, and the lease token hash is a credential column
- * (FR-018) that the server's SDL does not carry at all.
+ * Since slice 6 the Connect block is a server read too: `connect_endpoint` (revision 71) records
+ * every published port the runner reports on `/runner/connect/open`, `connectEndpoints` serves the
+ * live rows for this machine, and `connectEndpointClose` withdraws one (audited, and delivered to
+ * the runner on its next heartbeat). Two secrets matter and both are structurally absent: the
+ * tailcat address is a bearer secret (runner/hoja_runnerd/connect.py:8-12) that never reaches the
+ * database, so it is not in the SDL and cannot be selected; and the lease token hash is a
+ * credential column (FR-018) the server's SDL does not carry at all.
  */
 
 import {useCallback, useEffect, useMemo, useState} from 'react';
@@ -36,7 +36,7 @@ import {confirmDialog} from '../dialogs';
 import {GraphStatusIcon, IconBtn, LabelChip, Tip} from '../graph/shared';
 import {DisplayPanel, IssueRow, PropDropdown, defaultDisplay, type IssueRowModel, type LinDisplay} from '../graph/tasks';
 import {getAgentsAdapter} from './adapter';
-import {AGENTS_TABS, AgentsListShell, SampleDataNotice, SearchField} from './chrome';
+import {AGENTS_TABS, AgentsListShell, SearchField} from './chrome';
 import {RUNNER_STATUSES, runnerStatus, ttlLabel, ttlSecondsLeft} from './types';
 import type {
   ConnectExposure, Runner, RunnerEnrollment, RunnerEnrollmentGrant, RunnerLease, RunnerStatus,
@@ -612,9 +612,11 @@ export function RunnerDetailPage({runnerId, workspaceName, viewerName, onBack}: 
     setBusy(exposure.id);
     setNotice('');
     try {
-      const {audit} = await getAgentsAdapter().revokeExposure(exposure.id, viewerName);
+      await getAgentsAdapter().revokeExposure(exposure.id, viewerName);
       setExposures(cur => cur.filter(e => e.id !== exposure.id));
-      setNotice(`Revoked and audited: ${audit.action} on ${audit.target}.`);
+      /* The audit row is the server's, read back through `auditEvents`; this sentence names the
+       * action instead of echoing a row the client cannot see. */
+      setNotice(`Revoked and audited: connect.exposure.close on ${exposure.id}.`);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -732,9 +734,6 @@ export function RunnerDetailPage({runnerId, workspaceName, viewerName, onBack}: 
               <span className="grow" />
               <span className="lin-note">{connectOn ? 'Each tunnel is one process, one ephemeral key.' : 'Connect is disabled for this workspace.'}</span>
             </header>
-            {/* The machines above are server rows; this block is not. WP08 has no exposure store,
-                so these rows belong to no real runner, and the notice says so before the rows. */}
-            <SampleDataNotice surface="connect" />
             {!connectOn && (
               <p className="lin-note" data-connect-notice="off">
                 An admin turned Connect off for this workspace, so no exposure can be opened and none can be revoked. This is a switch, not an empty list.

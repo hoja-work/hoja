@@ -186,13 +186,30 @@ export function sessionStatusName(status: SessionStatus): string {
  * credential is the column; the screen's question is whether it still authenticates) and the
  * tailcat address is not mapped at all, because it is a bearer secret (connect.py:8-12).
  */
+/* The Connect row, in the server's own vocabulary: `ConnectEndpoint` in
+ * app/hoja_server/connect_endpoints.py is the authority, and `check-runner-contract.py` reads that
+ * SDL and fails when a field here has no server counterpart. One row is one *port*; a screen row is
+ * one exposure, which `fromEndpoint` groups from these.
+ *
+ * `address` is absent by construction: the tailcat address is a bearer secret that never reaches the
+ * database (WP09's grep test), so there is no field to project away. */
 export const EXPOSURE_SERVER_FIELDS = {
-  exposure_id: 'id',
-  workspace_id: 'workspaceId',
-  ports: 'ports',
-  pinned_peer: 'pinnedPeer',
-  expires_at: 'expiresAt',
-  live: 'live',
+  id: 'id',
+  exposureId: 'exposureId',
+  runnerId: 'runnerId',
+  runnerName: 'runnerName',
+  leaseId: 'leaseId',
+  sessionId: 'sessionId',
+  agentId: 'agentId',
+  port: 'port',
+  host: 'host',
+  pinnedPeer: 'pinnedPeer',
+  state: 'state',
+  closeReason: 'closeReason',
+  openedAt: 'openedAt',
+  expiresAt: 'expiresAt',
+  closedAt: 'closedAt',
+  revokeRequestedAt: 'revokeRequestedAt',
 } as const;
 
 export const RUNNER_SERVER_FIELDS = {
@@ -285,21 +302,50 @@ export type RunnerEnrollmentGrant = {
   heartbeatIntervalS: number;
 };
 
-/** A live Connect exposure, exactly the public row `Exposure.public_row()` returns. */
+/** One row of the server's `connect_endpoint` (revision 71): one published port of one exposure. */
+export type ConnectEndpointRow = {
+  id: string;
+  exposureId: string;
+  runnerId: string;
+  runnerName: string | null;
+  leaseId: string | null;
+  sessionId: string | null;
+  agentId: string | null;
+  port: number;
+  host: string | null;
+  /** `nodekey:…`: the single pinned peer. Public key material, not a secret. */
+  pinnedPeer: string;
+  /** open | closed */
+  state: string;
+  /** lease_finished | lease_canceled | lease_expired | runner_close | revoked */
+  closeReason: string | null;
+  openedAt: string;
+  expiresAt: string | null;
+  closedAt: string | null;
+  revokeRequestedAt: string | null;
+};
+
+/** A Connect exposure as a screen row: the ports of one serve process, grouped from its rows.
+ *
+ * The screen's vocabulary is per *exposure* because that is the thing a person revokes; the
+ * database's is per *port* because that is the thing that is exposed. The grouping happens once, in
+ * `fromEndpoint`, so no component has to know the difference. */
 export type ConnectExposure = {
   id: string;
-  workspaceId: string;
+  /* No `workspaceId`: every row this screen can read is already the caller's own (the query is
+   * org-scoped and admin-gated), so the field would be a constant the screen would have to invent. */
   ports: number[];
   /** The worker node key this exposure is pinned to (`--allow=nodekey:…`). */
   pinnedPeer: string;
-  /** Unix seconds, as the server sends it. */
+  /** Unix seconds, as the server sends it: the TTL the serve process was given. */
   expiresAt: number;
   live: boolean;
+  /** The runner that published it, as the server names it. */
+  runnerName: string | null;
+  /** open | closed and why it closed, so a row can say more than "gone". */
+  state: string;
+  closeReason: string | null;
 };
-
-/** The lease channel's payload (connect.py `LeasePayload`): the bearer `address` lives here and
- * is projected away before anything reaches a screen. */
-export type RawExposure = ConnectExposure & {address: string};
 
 /* ---------------- Claims and verdicts (WP10) ---------------- */
 

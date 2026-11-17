@@ -215,7 +215,9 @@ const focusStop = page => page.evaluate(() => {
    * the correct answer to "claim a lease" is the policy's refusal. */
   const policy = await gql(`mutation($id:String!,$input:AgentPolicyInput!){
     agentPolicyUpdate(agentMemberId:$id, input:$input){success}}`,
-  {id: triage.id, input: {teams: [team.id], maxConcurrency: 2}});
+  {id: triage.id, input: {teams: [team.id], maxConcurrency: 2,
+    /* WP09: the port allowlist is the policy's, so this run can only publish what it names here. */
+    connect: [{host: 'localhost', port: 3000}, {host: 'localhost', port: 9229}]}});
   assert.ok(policy.agentPolicyUpdate.success, 'the triage agent has the policy that lets it be leased');
 
   const cyclePath = `/workspace/team/${key}/cycle/active`;
@@ -515,45 +517,28 @@ const focusStop = page => page.evaluate(() => {
   ok(/no heartbeat yet/i.test(detailText), 'runner detail: a machine that never polled says so instead of inventing an age');
   ok(await page.evaluate(() => document.querySelector('[data-surface="runner-detail"] [data-current-lease]')?.getAttribute('data-current-lease') === ''),
     'runner detail: no lease is claimed while the machine holds none');
-  ok(await page.evaluate(() => getComputedStyle(document.querySelector('[data-surface="runner-detail"] [data-sample="on"]') || document.createElement('i')).display !== 'none'),
-    'runner detail: the Connect block carries its sample notice');
+  ok(await page.evaluate(() => !document.querySelector('[data-surface="runner-detail"] [data-sample="on"]')),
+    'runner detail: carries no sample-data notice, because the Connect rows are server rows now (WP09)');
+  ok(await page.evaluate(() => Boolean(document.querySelector('[data-surface="runner-detail"] [data-exposures]'))),
+    'runner detail: the Connect block reads connectEndpoints instead of a fixture');
 
-  /* The address is a bearer secret. The fixture seeds one, the adapter drops it, and the page
-   * must not contain it in any form. */
+  /* The address is a bearer secret, and it is not in the database at all, so the page cannot
+   * contain it in any form. */
   ok(!canary.test(await page.content()), 'runner detail: no tailcat address anywhere in the rendered HTML');
-  ok(await page.evaluate(() => !/nodekey:[0-9a-f]{64}/.test(document.body.innerText)),
-    'runner detail: the pinned peer is shortened in the row, full only in a title attribute');
 
-  /* Revoke: two steps, then a state transition that is visible on a different screen. The exposure
-   * is a fixture, which the block above says out loud. */
-  const exposureRows = () => page.evaluate(() => document.querySelectorAll('[data-surface="runner-detail"] [data-exposure]').length);
-  const beforeRevoke = await exposureRows();
-  ok(beforeRevoke >= 1, 'runner detail shows the sample exposure rows the Connect block draws', String(beforeRevoke));
-  await page.click('[data-exposure="exp-1"] button.lin-btn');
-  await page.waitForSelector('[role="dialog"]', { timeout: 5000 });
-  ok(await exposureRows() === beforeRevoke, 'revoke is two-step: the exposure stays until the dialog is confirmed');
-  await page.click('[role="dialog"] button.danger');
-  await page.waitForTimeout(400);
-  ok(await exposureRows() === beforeRevoke - 1, 'revoke removes the exposure only after confirmation', `${beforeRevoke} → ${await exposureRows()}`);
-  ok(await page.getByText(/Revoked and audited/).count() > 0, 'revoke reports the audit row it wrote');
-  await page.screenshot({ path: path.join(shots, `runner-detail-revoked-${W}.png`) });
+  /* The machine holds no lease yet, so the block is a real empty state and not a fixture's rows. */
+  ok(await page.evaluate(() => document.querySelectorAll('[data-surface="runner-detail"] [data-exposure]').length === 0),
+    'runner detail: a machine that exposed nothing draws no exposure rows');
+  ok(/Nothing is exposed/.test(await page.evaluate(() => document.querySelector('[data-surface="runner-detail"]')?.innerText || '')),
+    'runner detail: the empty Connect block says so in words');
 
-  /* Through the app, not a fresh load. Connect is a fixture (WP08), and the audit screen reads the
-   * server's ledger, so the fixture event this revoke reports on the detail screen must *not*
-   * appear there: a sample row may never be filed as a server record. */
-  await page.click('[data-surface="runner-detail"] button.crumb-link');
-  await page.waitForSelector('[data-surface="runners-list"]', { timeout: 15000 });
-  await page.getByRole('tab', { name: 'Audit log' }).click();
-  await page.waitForSelector('[data-surface="audit-log"] .lin-row', { timeout: 15000 });
-  ok(!(await page.evaluate(() => Boolean(document.querySelector('[data-surface="audit-log"] [data-action="connect.revoked"]')))),
-    'audit log: reads the server ledger, so the sample Connect revoke is not filed in it');
-
-  /* The kill switch is a state, not an empty list. */
+  /* The kill switch is the workspace's own setting (WP09): turned off through the policy mutation,
+   * it is a state the screen reads back — not an empty list, and not a per-browser trick. */
+  await gql('mutation { workspaceSecurityUpdate(input: {connectEnabled: false}) { connectEnabled } }');
   const offConnect = await browser.newContext({ viewport: { width: W, height: H } });
   await offConnect.addInitScript(t => {
     localStorage.setItem('hoja_token', t);
     localStorage.setItem('hoja_agents_surface', 'on');
-    localStorage.setItem('hoja_agents_connect', 'off');
   }, token);
   const offConnectPage = await offConnect.newPage();
   await offConnectPage.goto(`${base}${RUNNERS}/${encodeURIComponent(idleRunner.runner_id)}`, { waitUntil: 'networkidle' });
@@ -564,6 +549,9 @@ const focusStop = page => page.evaluate(() => {
     'Connect disabled: no revoke control is offered');
   await offConnectPage.screenshot({ path: path.join(shots, `runner-detail-connect-off-${W}.png`) });
   await offConnect.close();
+  const switchedBack = await gql('mutation { workspaceSecurityUpdate(input: {connectEnabled: true}) { connectEnabled } }');
+  ok(switchedBack.workspaceSecurityUpdate.connectEnabled === true,
+    'Connect switched back on through the same server setting the screen reads');
 
   /* Keyboard parity with the issue list, on the new list. */
   const runnerKb = await rowKeyboard(RUNNERS);
@@ -809,11 +797,11 @@ const focusStop = page => page.evaluate(() => {
   ok(/admin/i.test(menuSays), 'non-admin: the Delegate menu states the refusal instead of offering nothing', menuSays.replace(/\n/g, ' '));
   await memberCtx.close();
 
-  /* The one remaining fixture (Connect) says it is one; every server-backed screen does not. */
+  /* There is no fixture left on any agent surface, so none of them carries a sample notice. */
   await page.goto(`${base}${RUNNERS}/${encodeURIComponent(onlineRunner.runner_id)}`, { waitUntil: 'networkidle' });
   await page.waitForSelector('[data-surface="runner-detail"]', { timeout: 15000 });
-  ok(await page.evaluate(() => Boolean(document.querySelector('[data-surface="runner-detail"] [data-sample="on"]'))),
-    'runner detail: the Connect block says out loud that its rows are sample data (WP08 has no store)');
+  ok(!(await page.evaluate(() => Boolean(document.querySelector('[data-surface="runner-detail"] [data-sample="on"]')))),
+    'runner detail: carries no sample-data notice, because every row on it is a server row');
   for (const [url, surface] of [['/workspace/agents/runners', 'runners-list'], ['/workspace/agents/queue', 'run-queue'], ['/workspace/agents/audit', 'audit-log']]) {
     await page.goto(`${base}${url}`, { waitUntil: 'networkidle' });
     await page.waitForSelector(`[data-surface="${surface}"] .lin-row`, { timeout: 15000 });
@@ -1018,6 +1006,93 @@ const focusStop = page => page.evaluate(() => {
     JSON.stringify(leasedTask && leasedTask.agentSession));
   const runOneSession = leasedTask.agentSession.id;
 
+  /* ---- 8c. Hoja Connect: the exposure rows are the ones the runner reported (WP09) ----
+   *
+   * The runner half (PR #215) opens a `tailcat serve` per exposure; this half is the record the
+   * screen reads. Two exposures are reported through the real `/runner/connect/open` route, with
+   * the lease the runner just took: one is revoked through the UI, the other is left to prove the
+   * lease's end closes it. The address never exists client-side — the server has no column for it.
+   */
+  const connectAuth = {authorization: `Bearer ${onlineRunner.token}`, 'content-type': 'application/json'};
+  const reportExposure = async (exposureId, ports) => {
+    const response = await fetch(`${base}/runner/connect/open`, {
+      method: 'POST', headers: connectAuth,
+      body: JSON.stringify({
+        lease_id: lease.lease_id, run_id: lease.run_id, fence: lease.fence, token: lease.token,
+        exposure_id: exposureId, ports, host: 'localhost',
+        pinned_peer: 'nodekey:' + 'b'.repeat(64),
+      }),
+    });
+    const payload = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(payload));
+    return payload;
+  };
+  const uiExposure = await reportExposure('exp-ui', [3000]);
+  const leaseExposure = await reportExposure('exp-lease', [9229]);
+  ok(uiExposure.state === 'open' && uiExposure.ports[0] === 3000,
+    'connect: the open is recorded through /runner/connect/open', JSON.stringify(uiExposure));
+  const apiEndpoints = async () => (await gql(`{connectEndpoints(live: true) {nodes {
+    id exposureId runnerId leaseId port host pinnedPeer state expiresAt}}}`)).connectEndpoints.nodes;
+  const liveRows = await apiEndpoints();
+  ok(liveRows.length === 2, 'connect: two endpoints are live in the workspace', JSON.stringify(liveRows.map(r => r.port)));
+  ok(liveRows.every(r => r.leaseId === lease.lease_id && r.state === 'open'),
+    'connect: both rows belong to the lease the runner holds, and both are open');
+
+  await page.goto(`${base}${RUNNERS}/${encodeURIComponent(onlineRunner.runner_id)}`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-surface="runner-detail"] [data-exposure]', { timeout: 15000 });
+  await page.waitForTimeout(300);
+  const exposureRows = () => page.evaluate(() => [...document.querySelectorAll('[data-surface="runner-detail"] [data-exposure]')]
+    .map(r => ({
+      id: r.getAttribute('data-exposure'),
+      ttl: r.querySelector('[data-ttl]')?.getAttribute('data-ttl') || '',
+      text: r.innerText.replace(/\s+/g, ' '),
+    })));
+  const drawn = await exposureRows();
+  ok(drawn.length === 2 && drawn.some(r => r.id === 'exp-ui') && drawn.some(r => r.id === 'exp-lease'),
+    'runner detail: the exposures the runner reported are the rows the screen draws', JSON.stringify(drawn));
+  ok(drawn.every(r => Number(r.ttl) > 0),
+    'runner detail: each row carries the TTL left, read from the exposure\'s own deadline', JSON.stringify(drawn.map(r => r.ttl)));
+  ok(drawn.some(r => /3000/.test(r.text)) && drawn.some(r => /9229/.test(r.text)),
+    'runner detail: the rows name the ports the allowlist published', JSON.stringify(drawn.map(r => r.text)));
+  ok(!canary.test(await page.content()),
+    'runner detail: the tailcat address is nowhere in the page, because no column stores it');
+  ok(await page.evaluate(() => !/nodekey:[0-9a-f]{64}/.test(document.body.innerText)),
+    'runner detail: the pinned peer is shortened in the row, full only in a title attribute');
+  await page.screenshot({ path: path.join(shots, `runner-detail-connect-${W}.png`) });
+
+  /* Revoke, two steps, and the ledger says so afterwards: the close is a server write now. */
+  await page.click('[data-exposure="exp-ui"] button.lin-btn');
+  await page.waitForSelector('[role="dialog"]', { timeout: 5000 });
+  ok(await exposureRows().then(r => r.length) === 2, 'connect: revoke is two-step, the row stays until confirmed');
+  await page.click('[role="dialog"] button.danger');
+  await page.waitForTimeout(600);
+  const afterRevoke = await exposureRows();
+  ok(afterRevoke.length === 1 && afterRevoke[0].id === 'exp-lease',
+    'connect: the revoke removes that exposure and only that one', JSON.stringify(afterRevoke.map(r => r.id)));
+  ok(await page.getByText(/Revoked and audited/).count() > 0, 'connect: the revoke reports the audit action it wrote');
+  await page.screenshot({ path: path.join(shots, `runner-detail-revoked-${W}.png`) });
+
+  /* Through the app, not a fresh load: the audit pane reads the same ledger the revoke wrote to.
+   * The ledger is oldest-first and paged, so the close is on the newest page — which is what the
+   * pane's own "Load newer events" control is for. */
+  await page.click('[data-surface="runner-detail"] button.crumb-link');
+  await page.waitForSelector('[data-surface="runners-list"]', { timeout: 15000 });
+  await page.getByRole('tab', { name: 'Audit log' }).click();
+  await page.waitForSelector('[data-surface="audit-log"] .lin-row', { timeout: 15000 });
+  const newer = page.locator('[data-surface="audit-log"] [data-action="load-more"]');
+  if (await newer.count()) {
+    await newer.click();
+    await page.waitForTimeout(600);
+  }
+  const closes = await page.evaluate(() => [...document.querySelectorAll('[data-surface="audit-log"] [data-action="connect.exposure.close"]')]
+    .map(r => ({target: r.getAttribute('data-target') || '', text: r.innerText.replace(/\s+/g, ' ')})));
+  ok(closes.some(r => r.target === 'exp-ui'),
+    'audit log: the revoke is a connect.exposure.close row in the server ledger', JSON.stringify(closes));
+  ok(closes.some(r => /exp-ui/.test(r.text) && /revoked/.test(r.text)),
+    'audit log: the close says which exposure it closed and why', JSON.stringify(closes.map(r => r.text)));
+  ok(!(await apiEndpoints()).some(r => r.exposureId === 'exp-ui'),
+    'connect: the revoked exposure is closed in the record, not merely hidden');
+
   /* The runner holding a lease is a fact the Runners screen must draw: the row's chip and the
    * machine's own page, both read from `runners` and `agentLeases`. */
   await page.goto(`${base}${RUNNERS}`, { waitUntil: 'networkidle' });
@@ -1059,6 +1134,15 @@ const focusStop = page => page.evaluate(() => {
   const ack = await finishResponse.json();
   assert.equal(finishResponse.status, 200, JSON.stringify(ack));
   ok(ack.session_state === 'verifying', 'runner finish: a claim leaves the session awaiting verification, never done', String(ack.session_state));
+
+  /* WP09: an exposure cannot outlive the lease that opened it. The finish closes the record. */
+  const closedRows = (await gql(`{connectEndpoints(leaseId: "${lease.lease_id}") {nodes {
+    exposureId port state closeReason closedAt}}}`)).connectEndpoints.nodes;
+  const left = closedRows.find(r => r.exposureId === 'exp-lease');
+  ok(Boolean(left) && left.state === 'closed' && left.closeReason === 'lease_finished',
+    'connect: finishing the lease closes the exposure it opened, with the reason', JSON.stringify(left));
+  ok(Boolean(left) && Boolean(left.closedAt), 'connect: the close carries the time it happened');
+  ok(!(await apiEndpoints()).length, 'connect: no exposure of this workspace is live after the lease ended');
 
   const claimedSession = async () => (await gql(
     `query($id:String!){agentSession(id:$id){id state verdict claimAt claim}}`, {id: runOneSession})).agentSession;

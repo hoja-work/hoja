@@ -1,14 +1,16 @@
 /* The single data seam for the agent surface (HOJA-602-A-16).
  *
- * Every screen reads through `getAgentsAdapter()`. Since slice 5 every screen but Connect reads the
- * server: WP04 gave agents their identity (`agent_member`, `AgentMember`, `Issue.delegate`), WP05
- * the audit ledger (`auditEvents`, admin-only, paged), WP06 the sessions and their transcript,
- * slice 4 the workspace-wide `workspaceAgentSessions` the run queue needs, and slice 5 the runner
- * and lease reads (`runners`, `runner`, `agentLeases` in agent_runners.py) plus the claim and
- * verdict reads (`verifierClaims`, `agentVerifications` in agent_claims.py).
+ * Every screen reads the server. WP04 gave agents their identity (`agent_member`, `AgentMember`,
+ * `Issue.delegate`), WP05 the audit ledger (`auditEvents`, admin-only, paged), WP06 the sessions and
+ * their transcript, slice 4 the workspace-wide `workspaceAgentSessions` the run queue needs, slice 5
+ * the runner and lease reads (`runners`, `runner`, `agentLeases` in agent_runners.py) plus the claim
+ * and verdict reads (`verifierClaims`, `agentVerifications` in agent_claims.py), and slice 6 the
+ * Connect surface: `connectEndpoints` and `connectEndpointClose` in connect_endpoints.py, over the
+ * `connect_endpoint` rows the runner reports on `/runner` (revision 71, WP09).
  *
- * What is still a fixture is listed once, in `SAMPLE_SURFACES`, and its screen renders a visible
- * `SampleDataNotice`, so no sample row can be read as a server row.
+ * There is no fixture left, so there is no `SAMPLE_SURFACES` list and no sample notice: a read with
+ * no server behind it fails loudly through `serverOnly`, which is the only honest thing a seam can
+ * do once every surface has a resolver.
  *
  * The interface is the *screens'* vocabulary, not the wire vocabulary, so a resolver that names
  * things differently is a translation problem inside this file rather than an edit to six
@@ -22,10 +24,9 @@
  *     writes the `agent.session.stop` audit event, which is read back through `auditEvents`.
  */
 
-import {seedConnectEnabled, seedExposures} from './seed';
 import type {
   Agent, AgentDetail, AgentEvent, AgentPolicy, AgentSession, AuditEvent, Claim, ClaimVerdict,
-  ConnectExposure, RawExposure, Runner, RunnerEnrollment, RunnerEnrollmentGrant, RunnerLease,
+  ConnectEndpointRow, ConnectExposure, Runner, RunnerEnrollment, RunnerEnrollmentGrant, RunnerLease,
   SessionStatus, VerificationCheck, Verdict,
 } from './types';
 
@@ -91,7 +92,7 @@ export type AgentsAdapter = {
   /** One page of the workspace's runners, newest first (`runners`, admin-gated). */
   listRunners(options?: {after?: string}): Promise<RunnerPage>;
   /** One runner (`runner`), or `null` when this workspace has no such machine. Its Connect
-   * exposures come from the fixture below, and the screen says so. */
+   * exposures are that machine's own `connect_endpoint` rows, read in the same call. */
   getRunner(id: string): Promise<{runner: Runner; exposures: ConnectExposure[]} | null>;
   /** That runner's leases, newest first (`agentLeases(runnerId)`): what it took and what it did
    * with it, which is the question a machine's detail page answers. */
@@ -115,27 +116,16 @@ export type AgentsAdapter = {
   /** Disable an enrolled machine. Its bearer token stops authenticating at /runner/claim. */
   revokeRunner(id: string): Promise<boolean>;
 
-  /* -- still a fixture: Connect has no server record (WP08) ----------------------------------- */
-  /** Live exposures only: the supervisor revokes on TTL, so an expired row is never served. */
+  /* -- server-backed: GraphQL, slice 6 (WP09) ------------------------------------------------- */
+  /** Live exposures, grouped per serve process (`connectEndpoints(live: true)`, admin-gated). */
   listExposures(runnerId?: string): Promise<ConnectExposure[]>;
-  /** The cloud-side kill switch, `ConnectSupervisor.is_enabled(org)`. */
+  /** The workspace kill switch (`workspaceSecurityPolicy.connectEnabled`): a state, not an empty list. */
   connectEnabled(): Promise<boolean>;
-  /** Two-step on the screen; here it is the transition that also writes the audit row. */
-  revokeExposure(exposureId: string, actor: string): Promise<{exposure: ConnectExposure; audit: AuditEvent}>;
+  /** `connectEndpointClose`: closes the rows, writes the audit event and tells the runner on its
+   * next heartbeat. `audit` is `null` on purpose — the ledger row is the server's, and this file
+   * does not fabricate one (the audit pane reads it back through `auditEvents`). */
+  revokeExposure(exposureId: string, actor: string): Promise<{exposure: ConnectExposure; audit: null}>;
 };
-
-/* One line to grep, and the single justification for every fixture row that can reach a screen. A
- * surface leaves this list when its resolver lands, not when its screen looks finished.
- *
- * Slice 5 removed `runners`: WP07 stores `runner` and `agent_lease`, and slice 5 added the
- * read-only `runners`/`agentLeases` queries. What remains is Connect itself — the tailcat exposure
- * store and the org kill switch (WP08). There is no table and no route for either: `audit.ACTIONS`
- * names `connect.exposure.open`/`connect.exposure.close` and nothing writes them. So the runners
- * list, the runner detail and every lease on them are server rows, and the exposures under the
- * Connect heading are the labelled sample. */
-export const SAMPLE_SURFACES = {
-  connect: {what: 'Connect exposures', pending: 'the WP08 tailcat exposure store'},
-} as const;
 
 /* ------------------------------------------------------------------ transport */
 
@@ -471,6 +461,46 @@ function fromLease(row: ServerLease): RunnerLease {
   };
 }
 
+const ENDPOINT_FIELDS = `id exposureId runnerId runnerName leaseId sessionId agentId port host
+  pinnedPeer state closeReason openedAt expiresAt closedAt revokeRequestedAt`;
+
+type ServerEndpoint = ConnectEndpointRow;
+
+/** One server row → the screen's per-port half. Straight through, because the server already
+ * speaks the vocabulary the type names (see `EXPOSURE_SERVER_FIELDS` in types.ts). */
+function fromEndpoint(row: ServerEndpoint): ConnectEndpointRow {
+  return {...row};
+}
+
+/** Group one serve process's ports into the exposure a person revokes.
+ *
+ * The grouping key is `exposureId`, which is the runner's own identifier for the process: its rows
+ * were opened together, carry one pin and one TTL, and close together. `live` is open *and* inside
+ * that TTL, the same rule the server's `live` filter uses — a row past its deadline describes a
+ * process its own timer has already killed.
+ */
+export function groupExposures(rows: ConnectEndpointRow[], now = Date.now()): ConnectExposure[] {
+  const byExposure = new Map<string, ConnectEndpointRow[]>();
+  for (const row of rows) {
+    const list = byExposure.get(row.exposureId);
+    if (list) list.push(row); else byExposure.set(row.exposureId, [row]);
+  }
+  return [...byExposure.entries()].map(([exposureId, group]) => {
+    const first = group[0];
+    const expiresAt = first.expiresAt ? Math.floor(Date.parse(first.expiresAt) / 1000) : 0;
+    return {
+      id: exposureId,
+      ports: group.map(row => row.port).sort((a, b) => a - b),
+      pinnedPeer: first.pinnedPeer,
+      expiresAt,
+      live: first.state === 'open' && expiresAt * 1000 > now,
+      runnerName: first.runnerName,
+      state: first.state,
+      closeReason: first.closeReason,
+    };
+  }).sort((a, b) => b.expiresAt - a.expiresAt);
+}
+
 function fromRunner(row: ServerRunner): Runner {
   return {
     id: row.id,
@@ -601,9 +631,9 @@ function fromAudit(row: ServerAudit): AuditEvent {
  * `agentMemberUpdate` writes. Both mutations are admin-gated server-side; the adapter does not
  * pre-check the role, because a client-side check is not an authorization boundary and a refused
  * write should surface the server's own FORBIDDEN. */
-function createGraphqlAdapter(sample: AgentsAdapter): AgentsAdapter {
+function createGraphqlAdapter(fallback: AgentsAdapter): AgentsAdapter {
   return {
-    ...sample,
+    ...fallback,
 
     async listAgents() {
       const data = await request<{agentMembers: ServerAgent[]}>(
@@ -742,10 +772,10 @@ function createGraphqlAdapter(sample: AgentsAdapter): AgentsAdapter {
       const data = await request<{runner: ServerRunner | null}>(
         `query RunnerOne($id: String!) { runner(id: $id) { ${RUNNER_FIELDS} } }`, {id});
       if (!data.runner) return null;
-      /* The machine is a server row; the exposures under the Connect heading are not. They belong
-       * to no real runner (WP08 has no store), and the detail screen says exactly that under its
-       * sample notice rather than passing them off as this machine's. */
-      const exposures = await sample.listExposures();
+      /* The exposures under the Connect heading are this machine's own rows: `connect_endpoint`
+       * keys them by `runner_id` (revision 71), so the detail page no longer has to explain whose
+       * they are. */
+      const exposures = await this.listExposures(id);
       return {runner: fromRunner(data.runner), exposures};
     },
 
@@ -830,6 +860,43 @@ function createGraphqlAdapter(sample: AgentsAdapter): AgentsAdapter {
         `mutation RevokeRunner($id: String!) { runnerRevoke(id: $id) }`, {id});
       return Boolean(data.runnerRevoke);
     },
+
+    /* -- slice 6: Connect (WP09) -------------------------------------------------------- */
+
+    async listExposures(runnerId?: string) {
+      /* `live: true` narrows to open rows in SQL and to rows inside their own TTL here, so an
+       * exposure the supervisor's timer has already killed is never drawn as a tunnel. */
+      const data = await request<{connectEndpoints: {nodes: ServerEndpoint[]}}>(
+        `query Endpoints($runnerId: String) {
+           connectEndpoints(first: 200, runnerId: $runnerId, live: true) {
+             nodes { ${ENDPOINT_FIELDS} } } }`,
+        {runnerId: runnerId ?? null});
+      return groupExposures((data.connectEndpoints?.nodes || []).map(fromEndpoint));
+    },
+
+    async connectEnabled() {
+      /* The kill switch is the workspace's own setting (`workspace_security_policy.connect_enabled`,
+       * read through the admin-gated security policy), so a disabled org is a state a person set —
+       * not this file's guess and not an empty list. */
+      const data = await request<{workspaceSecurityPolicy: {connectEnabled: boolean}}>(
+        `query ConnectSwitch { workspaceSecurityPolicy { connectEnabled } }`);
+      return data.workspaceSecurityPolicy?.connectEnabled !== false;
+    },
+
+    async revokeExposure(exposureId: string) {
+      /* `actor` is deliberately unused: the server records the actor from the authenticated
+       * request (audit.record), and inventing one here would claim a trail this file cannot see. */
+      const data = await request<{connectEndpointClose: {success: boolean; closed: number; endpoints: ServerEndpoint[]}}>(
+        `mutation Revoke($exposureId: String!) {
+           connectEndpointClose(exposureId: $exposureId) {
+             success closed endpoints { ${ENDPOINT_FIELDS} } } }`,
+        {exposureId});
+      if (!data.connectEndpointClose?.success) throw new AgentApiError('ERROR', 'The exposure was not revoked.');
+      const rows = (data.connectEndpointClose.endpoints || []).map(fromEndpoint);
+      const [exposure] = groupExposures(rows);
+      if (!exposure) throw new AgentApiError('NOT_FOUND', 'That exposure is not on this workspace.');
+      return {exposure: {...exposure, live: false}, audit: null};
+    },
   };
 }
 
@@ -839,55 +906,18 @@ async function agentUserFor(memberId: string): Promise<string | null> {
   return data.agentMember?.userId ?? null;
 }
 
-/* ------------------------------------------------------------------ the sample half */
+/* ------------------------------------------------------------------ the fallback half */
 
-const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
-
-function nowIso(): string {
-  return new Date().toISOString();
-}
-
-function auditId(): string {
-  return `a-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-/* The projection exists for the same reason `Exposure.public_row()` does in
- * runner/hoja_runnerd/connect.py: the tailcat address is a bearer secret (connect.py:8-12), so it
- * is dropped by structural destructuring rather than by remembering not to render it. There is no
- * runner credential to drop any more: the runner half is read from GraphQL, where the SDL does not
- * carry `lease_token_hash` or `token_hint` at all. */
-export function publicExposure(row: RawExposure): ConnectExposure {
-  const {address: _address, ...rest} = row;
-  return rest;
-}
-
-/** The fixture behind `SAMPLE_SURFACES.connect`, and nothing else. Every other read on this
- * interface is server-backed and replaced by `createGraphqlAdapter`; the stubs below exist so a
- * missing override fails loudly instead of silently serving a fixture to a real screen. */
-function createSampleAdapter(): AgentsAdapter {
-  let exposures: RawExposure[] = clone(seedExposures);
-  /* The kill switch, sample-only. `ConnectSupervisor.set_org_enabled` is an admin action owned by
-   * WP12's policy API, not by this screen, so nothing here toggles it: until the real adapter
-   * lands, `localStorage.hoja_agents_connect = 'off'` reproduces the disabled org (the same
-   * per-browser affordance flag.ts uses for the surface itself) and the geometry test uses it. */
-  const connectOn = (): boolean => {
-    try {
-      if ((localStorage.getItem('hoja_agents_connect') || '').trim().toLowerCase() === 'off') return false;
-    } catch {
-      /* no storage: fall through to the fixture's state */
-    }
-    return seedConnectEnabled;
-  };
-
-  /* `_expire` revokes at TTL (connect.py:683-689); serving an expired row would claim a tunnel
-   * that the supervisor has already killed. */
-  const live = (): RawExposure[] => {
-    const now = Date.now() / 1000;
-    return exposures.filter(e => e.live && e.expiresAt > now);
-  };
-
+/** Every read on this interface has a server behind it, so the fallback is loud on purpose.
+ *
+ * Slices 1–5 used this half to serve fixtures for the surfaces that had no resolver; slice 6 was
+ * the last one (Connect), and a fixture that no longer exists cannot be labelled honestly. What is
+ * left is the seam: `setAgentsAdapter` still exists for tests, `sampleAgentsAdapter` still returns
+ * this object (the name is kept so a test that swaps the seam keeps compiling), and every method
+ * refuses instead of pretending. */
+function createFallbackAdapter(): AgentsAdapter {
   const serverOnly = (what: string) => {
-    throw new Error(`No backend for ${what} on this server — see SAMPLE_SURFACES in agents/adapter.ts.`);
+    throw new Error(`No backend for ${what} on this server — every agent surface reads GraphQL now.`);
   };
 
   return {
@@ -914,33 +944,13 @@ function createSampleAdapter(): AgentsAdapter {
     async revokeRunnerEnrollment() { return serverOnly('revoking an enrollment token'); },
     async revokeRunner() { return serverOnly('revoking a runner'); },
 
-    async listExposures(runnerId?: string) {
-      /* The fixture belongs to no runner, so the filter is only ever "all of them". A caller that
-       * passes an id gets the sample rows, which the screen labels as a sample. */
-      void runnerId;
-      return clone(live().map(publicExposure));
-    },
-    async connectEnabled() {
-      return connectOn();
-    },
-    async revokeExposure(exposureId: string, actor: string) {
-      if (!connectOn()) throw new Error('Connect is disabled for this workspace.');
-      const row = exposures.find(e => e.id === exposureId);
-      if (!row) throw new Error('That exposure is not live.');
-      exposures = exposures.filter(e => e.id !== exposureId);
-      const entry: AuditEvent = {
-        id: auditId(), at: nowIso(), actor, action: 'connect.revoked', target: row.id,
-        detail: `ports ${row.ports.join(',')} · peer ${row.pinnedPeer.slice(0, 15)}… · process gone`,
-      };
-      /* The returned row is what the detail screen reports. It is *not* written to the ledger:
-       * Connect is a fixture (WP08), and `auditEvents` reads the server's table, so a fixture event
-       * could never appear there and must not pretend it would. */
-      return clone({exposure: publicExposure({...row, live: false}), audit: entry});
-    },
+    async listExposures() { return serverOnly('Connect exposures'); },
+    async connectEnabled() { return serverOnly('the Connect switch'); },
+    async revokeExposure() { return serverOnly('revoking a Connect exposure'); },
   };
 }
 
-let adapter: AgentsAdapter = createGraphqlAdapter(createSampleAdapter());
+let adapter: AgentsAdapter = createGraphqlAdapter(createFallbackAdapter());
 
 /** The seam WP06/WP05/WP07 use when their resolvers land: replace the whole adapter, or pass a
  * narrower one in a test. Nothing outside this file knows which halves are fixtures. */
@@ -955,5 +965,5 @@ export function getAgentsAdapter(): AgentsAdapter {
 /** The fixture implementation, complete with its loud server-only stubs, so a test can assert the
  * swap seam and that no screen is served a fixture for a server-backed read. */
 export function sampleAgentsAdapter(): AgentsAdapter {
-  return createSampleAdapter();
+  return createFallbackAdapter();
 }

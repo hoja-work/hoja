@@ -1842,7 +1842,7 @@ def build_schema():
     from hoja_server import decisions_api, extensions_api, model_providers, permissions, project_settings, sla, task_templates, usage_ledger, views_api, webhooks_api
     # HOJA-602-A-16 slice 5: the read-only runner/lease and claim/verdict surfaces the
     # review screens need. Both are admin-gated and org-scoped, and neither adds a table.
-    from hoja_server import agent_claims, agent_runners
+    from hoja_server import agent_claims, agent_runners, connect_endpoints
     # HOJA-635: the write half of the runner surface — mint and revoke enrollment
     # tokens, revoke a machine. Kept out of agent_runners.py so that module's
     # read-only invariant stays true.
@@ -1872,7 +1872,7 @@ def build_schema():
          views_api.SDL, decisions_api.SDL, project_settings.SDL, permissions.SDL,
          task_templates.SDL, sla.SDL, agent_members.SDL, agent_sessions.SDL,
          agent_policy.SDL, agent_runners.SDL, agent_runner_admin.SDL,
-         agent_claims.SDL, usage_ledger.SDL, tasks_sdl],
+         agent_claims.SDL, usage_ledger.SDL, connect_endpoints.SDL, tasks_sdl],
         query, mutation, *task_bindables,
         model_providers.query, model_providers.mutation,
         project_settings.query, project_settings.mutation,
@@ -1893,6 +1893,8 @@ def build_schema():
         agent_policy.query, agent_policy.mutation, agent_policy.agent_policy_type,
         agent_runners.query, agent_runners.runner_type, agent_runners.agent_lease_type,
         agent_runner_admin.query, agent_runner_admin.mutation,
+        connect_endpoints.query, connect_endpoints.mutation,
+        connect_endpoints.connect_endpoint_type,
         agent_claims.query, agent_claims.verifier_claim_type,
         agent_claims.agent_verification_type,
         usage_ledger.query, usage_ledger.usage_summary_type,

@@ -35,7 +35,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 70
+CURRENT_SCHEMA_REVISION = 71
 
 log = logging.getLogger(__name__)
 
@@ -861,6 +861,67 @@ usage_event = Table(
     Index("ix_usage_event_run", "organization_id", "run_id", "recorded_at"),
 )
 
+# One published port of one Hoja Connect exposure (revision 71, HOJA-602-A-10 / WP09).
+#
+# WP09 shipped the runner half in PR #215: `runner/hoja_runnerd/connect.py` opens one `tailcat
+# serve` per exposure and keeps the address in memory only. Nothing recorded that an exposure
+# existed, so the Connect screen (WP13) drew a fixture and an org admin had no way to see what
+# their workspace had exposed. This table is that record, and it holds no secret: the tailcat
+# address is a bearer secret and never reaches the database (WP09's grep test), the only identity
+# stored is the *pin* (``nodekey:<64 hex>``), which is public key material and is the whole ACL.
+#
+# A row is one *port*, not one process: an exposure publishes an explicit port allowlist, and a
+# per-port row is what lets the screen show "port 3000, port 9229" from the database without a JSON
+# column nothing can index. ``exposure_id`` is the runner's own identifier for the process, so the
+# rows of one exposure are grouped by it and closed together.
+#
+# ``state`` is ``open`` or ``closed`` and ``close_reason`` says why, because "it is not in the list"
+# is not an audit trail: a lease that ended, a TTL that elapsed and an admin who revoked are three
+# different sentences about the same port.
+connect_endpoint = Table(
+    "connect_endpoint",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    # The runner's identifier for the serve process. Opaque to this server beyond grouping.
+    Column("exposure_id", String, nullable=False),
+    Column("runner_id", String, ForeignKey("runner.id"), nullable=False, index=True),
+    # The lease or the session the exposure belongs to. The lease is the authority (the fence
+    # decides whether this is still the runner's work); the session is what the run screen groups
+    # by, and is null for a task nobody delegated — the same rule ``usage_event`` follows.
+    Column("lease_id", String, ForeignKey("agent_lease.id"), index=True),
+    Column("session_id", String, ForeignKey("agent_session.id"), index=True),
+    Column("agent_user_id", String, ForeignKey("user.id"), index=True),
+    Column("port", Integer, nullable=False),
+    # The host or label the exposure is published under. Nullable: a runner that only reports the
+    # port is not asked to invent a hostname.
+    Column("host", String),
+    # `nodekey:<64 hex>` — the pinned worker identity (``--allow=``). Public key material, and the
+    # reason a tunnel is reachable by exactly one peer.
+    Column("pinned_peer", String, nullable=False),
+    # open | closed
+    Column("state", String, nullable=False, default="open"),
+    # lease_finished | lease_canceled | lease_expired | runner_close | revoked
+    Column("close_reason", String),
+    Column("opened_at", String, nullable=False),
+    # The TTL the serve process was given: the lease's TTL at open time, capped at 1h by the
+    # supervisor. Stored rather than re-derived, because it is the deadline this row was opened
+    # with.
+    Column("expires_at", String),
+    Column("closed_at", String),
+    # Set when an admin asked for the close: the runner learns it on its next heartbeat and kills
+    # the process. The row is already closed here, so the screen never shows a tunnel the control
+    # plane has already withdrawn.
+    Column("revoke_requested_at", String),
+    # The policy version the exposure was granted under, so a later edit is detectable.
+    Column("policy_version", Integer),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+    UniqueConstraint("organization_id", "exposure_id", "port",
+                     name="uq_connect_endpoint_exposure_port"),
+    Index("ix_connect_endpoint_open", "organization_id", "state", "opened_at"),
+)
+
 # The transcript. Append-only: an activity is never rewritten, because a
 # transcript that can be edited is not evidence.
 agent_activity = Table(
@@ -1637,6 +1698,9 @@ workspace_security_policy = Table(
     Column("allowed_signin_methods", Text),
     # JSON array of CIDR strings. NULL or empty = no restriction.
     Column("ip_allowlist", Text),
+    # The workspace-wide Hoja Connect kill switch (revision 71, WP09). NULL reads as enabled, so a
+    # workspace that never made the choice keeps the behavior it had.
+    Column("connect_enabled", Boolean),
     Column("updated_by", String, ForeignKey("user.id")),
     Column("updated_at", String),
 )
@@ -3130,6 +3194,32 @@ def _apply_usage_ledger(conn) -> None:
     usage_event.create(conn, checkfirst=True)
 
 
+def _apply_connect_endpoints(conn) -> None:
+    """The Hoja Connect exposure record (revision 71, HOJA-602-A-10 / WP09).
+
+    Additive: one new table plus one nullable column on ``workspace_security_policy``, so the
+    previous image keeps serving a database that has already run this revision. A workspace that
+    never opened a tunnel creates no row here, and the Connect screen reads an empty list — which
+    is the truth for that workspace, not a permissive default.
+
+    ``connect_endpoint`` carries ``organization_id`` directly, so ``rls_policy`` classifies it
+    ``direct`` from the catalog and ``db.migrate`` binds it with the same ``hoja_tenant`` policy as
+    every other tenant table (``bind_rls`` runs after this revision). A table with no policy makes
+    ``/ready`` answer 503, so nothing here is left to an operator step.
+
+    ``workspace_security_policy.connect_enabled`` is the org kill switch WP09 requires ("an org
+    admin can turn Connect off"). It is NULL for every existing workspace, and NULL reads as
+    *enabled*: a workspace that never made the choice keeps the behaviour it had, which is what
+    keeps this migration from changing anyone's answer.
+    """
+    connect_endpoint.create(conn, checkfirst=True)
+    columns = {c["name"] for c in inspect(conn).get_columns("workspace_security_policy")}
+    if "connect_enabled" not in columns:
+        # Nullable with no server default: NULL means "never decided", i.e. enabled. A NOT NULL
+        # default would write a row nobody asked for on every workspace that has a policy row.
+        conn.exec_driver_sql("ALTER TABLE workspace_security_policy ADD COLUMN connect_enabled BOOLEAN")
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -3327,6 +3417,11 @@ _MIGRATIONS = {
     # and treats an empty ledger as no spend, so an existing workspace's behavior
     # is unchanged until a runner reports a number.
     70: _apply_usage_ledger,
+    # 71: the Hoja Connect exposure record (HOJA-602-A-10, WP09) — one row per published port of
+    # one `tailcat serve` process, plus the workspace's Connect kill switch. Additive, and it holds
+    # no secret: the address stays in the runner's memory (WP09's grep test) and only the pinned
+    # peer key is stored. Without it the Connect screen has no server record to read.
+    71: _apply_connect_endpoints,
 }
 
 

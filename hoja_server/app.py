@@ -61,6 +61,7 @@ from hoja_server import (
     uploads,
 )
 from hoja_server.cloudflare_realtime import CloudflareRealtime
+from hoja_server.connect_api import connect_routes
 from hoja_server.connectors_api import connector_binding_for, connector_routes
 from hoja_server.db import (
     _seed_demo_issues,
@@ -3072,6 +3073,10 @@ def create_app(
             # own runner bearer token, so it sits before the /api catch-all and
             # outside the browser session/cookie path.
             *runner_routes(engine),
+            # Hoja Connect exposures (HOJA-602-A-10, WP09). Same runner bearer
+            # token and the same lease fence as the routes above; a separate
+            # module only so the two work packages do not edit one file.
+            *connect_routes(engine),
             *meeting_routes(
                 engine, meeting_service, meeting_hub, auth=_auth,
                 csrf=lambda request: _cookie_csrf_error(request, json_only=True),

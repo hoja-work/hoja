@@ -82,6 +82,38 @@ grouped by `agent`, `model` or `month` — `usageEvents` for the newest rows and
 `usageBudget(agentUserId, month)` for one agent's ceiling; members are refused. The
 same data appears under Settings → Billing.
 
+## Hoja Connect
+
+Connect publishes one port of the machine a run is executing on, for as long as that
+lease lives. The runner opens a `tailcat serve` per exposure with a fresh key, an
+explicit port allowlist and exactly one pinned peer (the worker's node key), and
+keeps the resulting address in its own memory: the address is a bearer secret, it
+is never written to the database, to the activity stream, to the audit ledger or to
+a log line.
+
+The runner reports an exposure over the lease routes it already drives:
+`POST /runner/connect/open` with the lease id, fence and lease token, the exposure
+id, ports, host and pinned peer, and `POST /runner/connect/close` when the process
+is gone. Both are fenced like every other lease call — a superseded attempt gets
+`409 stale_fence` and cannot publish or close anything — and both are refused
+unless the agent policy that governs the lease's task names a `connect` grant for
+that `(host, port)`. A task nobody delegated has no policy, so it has no grant.
+
+`connect_endpoint` (revision 71) stores one row per published port: organization,
+runner, lease, session, agent, port, host, pinned peer, `opened_at`, `expires_at`,
+`closed_at` and a `state` of `open` or `closed`, with `close_reason` naming why it
+closed. An exposure cannot outlive its lease: finishing, releasing, cancelling or
+reaping the lease closes its rows, with the reason that is actually true.
+
+Admins read the rows with `connectEndpoints(first, after, runnerId, leaseId, live)`
+and `connectEndpoint(id)`; members are refused rather than shown an empty list.
+`connectEndpointClose(exposureId)` withdraws one — it closes the rows, appends a
+`connect.exposure.close` audit event and marks the exposure for revocation, which
+the runner receives on its next heartbeat (`connect_revoke`) and answers by killing
+the process. The workspace-wide switch is `workspaceSecurityPolicy.connectEnabled`
+(written through `workspaceSecurityUpdate`): off means no exposure can be opened,
+which is a state a person set rather than an empty screen.
+
 ## Task hierarchies
 
 For multi-step work, create or reuse one parent task and create actionable sub-tasks with

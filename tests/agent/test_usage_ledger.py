@@ -686,7 +686,9 @@ def test_revision_70_applies_to_a_69_database_twice(tmp_path):
     )
     from tests import legacy_schema
 
-    assert CURRENT_SCHEMA_REVISION == 70
+    # A floor, not an equality: later revisions move the head, and what this test pins is that
+    # revision 70 still applies to a 69 database and does so twice.
+    assert CURRENT_SCHEMA_REVISION >= 70
     engine = make_engine(tmp_path / "usage-upgrade.db")
     legacy_schema.create_schema(engine, 69)
     with engine.begin() as conn:
@@ -696,7 +698,7 @@ def test_revision_70_applies_to_a_69_database_twice(tmp_path):
     assert applied_schema_revision(engine) == 69
 
     migrate(engine)
-    assert applied_schema_revision(engine) == 70
+    assert applied_schema_revision(engine) == CURRENT_SCHEMA_REVISION
     with engine.connect() as conn:
         assert "usage_event" in set(inspect(conn).get_table_names())
         columns = {c["name"] for c in inspect(conn).get_columns("usage_event")}
@@ -705,7 +707,7 @@ def test_revision_70_applies_to_a_69_database_twice(tmp_path):
             "price_card"} <= columns, columns
 
     migrate(engine)
-    assert applied_schema_revision(engine) == 70
+    assert applied_schema_revision(engine) == CURRENT_SCHEMA_REVISION
 
 
 def test_a_migrated_database_binds_the_ledger_and_ready_answers_200(tmp_path):
