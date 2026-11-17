@@ -35,7 +35,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 71
+CURRENT_SCHEMA_REVISION = 72
 
 log = logging.getLogger(__name__)
 
@@ -778,6 +778,20 @@ agent_policy = Table(
     # People: who may delegate to this agent, and who may approve its work.
     Column("delegators", Text),
     Column("approvers", Text),
+    # The harness profile this agent's runs execute under (HOJA-602-A-22, revision
+    # 72). NULL means "nobody chose": the queue falls back to ``pi``, which is what
+    # every delegation did before this column existed. The name is one of the
+    # profiles the server knows (``agent_policy.KNOWN_HARNESSES``); a name it does
+    # not know is refused at write time and read as absent, because a lease for a
+    # harness no runner can advertise is a run that never starts.
+    Column("default_harness", String),
+    # JSON list of the harnesses this agent may run on. NULL or empty means "no
+    # allowlist", i.e. any known profile - the same shape every other list column
+    # here uses, except that an empty list is a wildcard here rather than "nothing":
+    # the allowlist restricts the choice, it does not make one, and treating "not
+    # configured" as "no harness at all" would stop every delegation on an existing
+    # workspace.
+    Column("harness_allowlist", Text),
     Column("created_at", String, nullable=False),
     Column("updated_at", String, nullable=False),
     Column("updated_by", String, ForeignKey("user.id")),
@@ -3220,6 +3234,33 @@ def _apply_connect_endpoints(conn) -> None:
         conn.exec_driver_sql("ALTER TABLE workspace_security_policy ADD COLUMN connect_enabled BOOLEAN")
 
 
+def _apply_agent_policy_harness(conn) -> None:
+    """Which harness an agent's runs execute under (revision 72, HOJA-602-A-22).
+
+    Additive and nullable, so the previous image keeps serving a database that has
+    already run this revision and every existing policy keeps its behaviour:
+    ``default_harness`` NULL means "nobody chose", which the queue reads as ``pi``
+    (what every delegation was queued for before this column existed), and
+    ``harness_allowlist`` NULL/empty means "no allowlist", i.e. any known profile.
+
+    No table is created here, so there is nothing new for ``rls_policy`` to
+    classify: both columns land on ``agent_policy``, which revision 69 already
+    created with ``organization_id`` and which the catalog therefore classifies
+    ``direct`` before ``bind_rls`` installs its ``hoja_tenant`` policy. A table with
+    no policy makes ``/ready`` answer 503; a column cannot, so this revision leaves
+    the readiness probe exactly as it found it.
+
+    Idempotent by construction: each column is added only when the catalog does not
+    already have it, so ``hoja-serve migrate`` run twice is a no-op the second time
+    (and so is a migrate that raced another owner to the same revision).
+    """
+    columns = {c["name"] for c in inspect(conn).get_columns("agent_policy")}
+    if "default_harness" not in columns:
+        conn.exec_driver_sql("ALTER TABLE agent_policy ADD COLUMN default_harness VARCHAR")
+    if "harness_allowlist" not in columns:
+        conn.exec_driver_sql("ALTER TABLE agent_policy ADD COLUMN harness_allowlist TEXT")
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -3422,6 +3463,11 @@ _MIGRATIONS = {
     # no secret: the address stays in the runner's memory (WP09's grep test) and only the pinned
     # peer key is stored. Without it the Connect screen has no server record to read.
     71: _apply_connect_endpoints,
+    # 72: which harness an agent's runs execute under (HOJA-602-A-22) — the policy's
+    # default profile and the allowlist that bounds it. Additive and nullable, so an
+    # existing policy reads as "nobody chose", which the queue resolves to `pi`: the
+    # value `agent_schedule.enqueue_admitted` hard-coded before this revision.
+    72: _apply_agent_policy_harness,
 }
 
 

@@ -42,6 +42,7 @@ model for a fact the gap is named rather than papered over:
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -66,6 +67,8 @@ REASON_ORDER = ("capacity", "budget", "window", "blocked", "approval", "lease_he
 
 APPROVE_OPTION = "approve"
 REJECT_OPTION = "reject"
+
+LOG = logging.getLogger("hoja.agent_schedule")
 
 
 @dataclass(frozen=True)
@@ -315,6 +318,14 @@ def enqueue_admitted(engine, session_row: dict, *, harness: str | None = None) -
     parallel — it records which lease the session is waiting on, so the two rows
     stay joinable.
 
+    The harness is no longer a constant (HOJA-602-A-22). It comes from the
+    delegation when one names it, else from the agent's policy, else ``pi`` -
+    ``agent_policy.resolve_harness`` holds the chain and every rule about it. A
+    delegated session therefore queues for the harness the agent's policy chose, and
+    the lease is only granted to a runner that advertised that name
+    (``runner_api._grantable``); a runner that did not leaves the lease ``queued``
+    and says so in the ``refused`` list of its poll.
+
     Called *after* the writer's transaction, deliberately: ``enqueue_task`` opens
     its own connection, and a second connection taken inside a SQLite write
     transaction waits on the lock that transaction already holds.
@@ -325,18 +336,40 @@ def enqueue_admitted(engine, session_row: dict, *, harness: str | None = None) -
         return session_row
     if not session_row.get("admitted_at") or session_row.get("lease_id"):
         return session_row
+    choice = _harness_for(engine, session_row, requested=harness)
     lease = runner_api.enqueue_task(
         engine,
         organization_id=session_row["organization_id"],
         task_id=session_row["issue_id"],
-        # The harness the runner will execute this with. WP11 owns harness
-        # profiles; until a member names one, the default is the first one Hoja
-        # ships a profile for.
-        harness=harness or "pi",
+        # The harness the runner will execute this with, and the rung that named it
+        # (delegation | policy | allowlist | default) for the log line below.
+        harness=choice.harness,
     )
+    LOG.info("session %s queued for harness %s (%s)", session_row["id"], choice.harness,
+             choice.source)
     with engine.begin() as conn:
         conn.execute(agent_session.update().where(
             agent_session.c.id == session_row["id"]).values(
             lease_id=lease["id"], updated_at=now_iso()))
     session_row["lease_id"] = lease["id"]
+    session_row["harness"] = choice.harness
     return session_row
+
+
+def _harness_for(engine, session_row: dict, *, requested: str | None = None):
+    """Resolve this session's harness from the agent's policy, in its own connection.
+
+    A missing policy is not a refusal here. The schedule check and WP12's lease gate
+    are what decide whether an agent may run at all, and both of them already refuse
+    an agent with no policy; this function only answers *which* harness, so an absent
+    policy simply leaves the chain at its last rung (``pi``) and the refusal that
+    matters keeps happening where it always did.
+    """
+    from hoja_server import agent_policy
+
+    org_id = session_row["organization_id"]
+    with engine.connect() as conn:
+        view = agent_policy.view_for_member
+        row = agent_policy.member_row_for_user(conn, org_id, session_row["agent_user_id"])
+        policy_view = view(conn, org_id, row["id"]) if row else None
+    return agent_policy.resolve_harness(policy_view, requested=requested)

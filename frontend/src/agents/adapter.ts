@@ -26,11 +26,16 @@
 
 import type {
   Agent, AgentDetail, AgentEvent, AgentPolicy, AgentSession, AuditEvent, Claim, ClaimVerdict,
+  HarnessPolicy,
   ConnectEndpointRow, ConnectExposure, Runner, RunnerEnrollment, RunnerEnrollmentGrant, RunnerLease,
   SessionStatus, VerificationCheck, Verdict,
 } from './types';
 
 export type PolicyPatch = Partial<AgentPolicy>;
+
+/** The two `agentPolicyUpdate` fields this screen edits. Absent means "leave it alone". */
+export type HarnessPatch = Partial<Pick<HarnessPolicy, 'defaultHarness' | 'harnessAllowlist'>>;
+
 
 /** One page of a connection, in the screens' vocabulary. The cursor is the server's own
  * `endCursor`, handed back verbatim: a client-side offset would silently skip a row whenever a
@@ -74,6 +79,10 @@ export type AgentsAdapter = {
   /** Writes the member row and reports the audit row the server returned, or `null` if it keeps
    * none. */
   updatePolicy(id: string, patch: PolicyPatch, actor: string): Promise<{policy: AgentPolicy; audit: AuditEvent | null}>;
+  /** The harness half of WP12's policy (HOJA-602-A-22), written through `agentPolicyUpdate`. The
+   * server validates the name against the profiles it knows and refuses a default the allowlist
+   * forbids, so the caller's refusal is the server's, not a local guess. */
+  updateHarnessPolicy(id: string, patch: HarnessPatch, actor: string): Promise<{harnesses: HarnessPolicy; audit: AuditEvent | null}>;
 
   /* -- server-backed: GraphQL, WP06 and slice 4 ---------------------------------------------- */
   /** One page of the workspace run queue, newest first. `agentId` is an `AgentMember.id`, so a
@@ -288,7 +297,7 @@ function createInput(draft: AgentDraft): Record<string, unknown> {
 /* `AgentSession` in agent_sessions.py plus the issue the queue row shows. `activities` is a
  * separate selection because it costs a query per session on the server: the queue never renders a
  * transcript, so it never asks for one. */
-const SESSION_FIELDS = `id issueId agentUserId status state queueReason admitted trigger
+const SESSION_FIELDS = `id issueId agentUserId status state queueReason admitted trigger harness
   ackedAt activatedAt endedAt createdAt updatedAt
   claim claimAt workerModel verdict verifiedAt verifierId verifierModel
   issue { id identifier title priority }`;
@@ -306,6 +315,8 @@ type ServerSession = {
   /** The ten-state assignment machine (agent_sessions.py `STATES`). */
   state: string;
   queueReason: string[]; admitted: boolean; trigger: string;
+  /** HOJA-602-A-22: the harness the lease names; null until a lease exists. */
+  harness: string | null;
   ackedAt: string | null; activatedAt: string | null; endedAt: string | null; createdAt: string;
   updatedAt: string;
   /** WP10: the claim and the verdict, straight off the session row. */
@@ -359,6 +370,7 @@ function fromSession(row: ServerSession, agent?: {id: string; name: string}): Ag
     state: row.state,
     queueReason: reasons,
     reason: reasons.length ? reasons.join(', ') : undefined,
+    harness: row.harness ?? null,
     admitted: Boolean(row.admitted),
     ...issueOf(row),
     startedAt: row.activatedAt || row.createdAt,
@@ -649,15 +661,23 @@ function createGraphqlAdapter(fallback: AgentsAdapter): AgentsAdapter {
       /* WP06 stores the runs and their transcript, so the page reads both through the workspace
        * session connection: the transcript is nested on the session, which is where the server
        * keeps it, so this is one read and not one per run. */
-      const runs = await request<{workspaceAgentSessions: {nodes: ServerSession[]}}>(
-        `query AgentRuns($agentId: String!) {
-           workspaceAgentSessions(agentId: $agentId, first: 50) {
-             nodes { ${SESSION_FIELDS} activities(first: 50) { ${ACTIVITY_FIELDS} } } } }`,
-        {agentId: agent.userId});
+      const [runs, harnesses] = await Promise.all([
+        request<{workspaceAgentSessions: {nodes: ServerSession[]}}>(
+          `query AgentRuns($agentId: String!) {
+             workspaceAgentSessions(agentId: $agentId, first: 50) {
+               nodes { ${SESSION_FIELDS} activities(first: 50) { ${ACTIVITY_FIELDS} } } } }`,
+          {agentId: agent.userId}),
+        /* HOJA-602-A-22: the harness half is WP12's row, not the member row, and the names it may
+         * hold come from the server (`agentHarnesses`) so the field cannot offer one it refuses.
+         * Null policy = deny by default, which reads here as "nobody chose" - the queue then
+         * falls back to `pi`, and the server says so. */
+        readHarnessPolicy(id),
+      ]);
       const rows = runs.workspaceAgentSessions?.nodes || [];
       return {
         agent,
         policy: policyOf(agent),
+        harnesses,
         sessions: rows.map(row => fromSession(row, {id: agent.id, name: agent.name})),
         events: eventsOf(rows),
       };
@@ -699,6 +719,35 @@ function createGraphqlAdapter(fallback: AgentsAdapter): AgentsAdapter {
        * trail that `auditEvents` (WP05) cannot read back. */
       void actor;
       return {policy: policyOf(fromServer(row)), audit: null};
+    },
+
+    async updateHarnessPolicy(id: string, patch: HarnessPatch, actor: string) {
+      const input: Record<string, unknown> = {};
+      if ('defaultHarness' in patch) input.defaultHarness = patch.defaultHarness || null;
+      if ('harnessAllowlist' in patch) input.harnessAllowlist = patch.harnessAllowlist || [];
+      if (!Object.keys(input).length) {
+        const current = await this.getAgent(id);
+        if (!current) throw new AgentApiError('NOT_FOUND', 'That agent no longer exists.');
+        return {harnesses: current.harnesses, audit: null};
+      }
+      const data = await request<{agentPolicyUpdate: {success: boolean; agentPolicy: ServerHarnessPolicy | null}}>(
+        `mutation AgentHarnessUpdate($id: String!, $input: AgentPolicyInput!) {
+           agentPolicyUpdate(agentMemberId: $id, input: $input) {
+             success agentPolicy { ${HARNESS_FIELDS} } } }`, {id, input});
+      const row = data.agentPolicyUpdate?.agentPolicy;
+      if (!data.agentPolicyUpdate?.success || !row) {
+        throw new AgentApiError('ERROR', 'The harness policy was not saved.');
+      }
+      /* The audit row the server wrote is `agent.policy.change`; `auditEvents` (WP05) is where it
+       * is read back, so this returns `null` rather than inventing a row the screen could show. */
+      void actor;
+      const current = await this.getAgent(id);
+      return {
+        harnesses: {defaultHarness: row.defaultHarness ?? null,
+          harnessAllowlist: row.harnessAllowlist || [],
+          known: current?.harnesses.known || []},
+        audit: null,
+      };
     },
 
     async listSessions(options) {
@@ -906,6 +955,31 @@ async function agentUserFor(memberId: string): Promise<string | null> {
   return data.agentMember?.userId ?? null;
 }
 
+/* ------------------------------------------------------------------ harness policy (A-22) */
+
+const HARNESS_FIELDS = `defaultHarness harnessAllowlist`;
+
+type ServerHarnessPolicy = {defaultHarness: string | null; harnessAllowlist: string[]};
+
+/** The agent's harness policy and the profile names the server knows, in one read.
+ *
+ * A null policy (the member has none) answers `{defaultHarness: null, harnessAllowlist: []}` -
+ * "nobody chose" - which is the same thing the queue reads, rather than an empty form that implies
+ * a policy exists. */
+async function readHarnessPolicy(memberId: string): Promise<HarnessPolicy> {
+  const data = await request<{
+    agentPolicy: ServerHarnessPolicy | null; agentHarnesses: string[];
+  }>(`query AgentHarnessPolicy($id: String!) {
+        agentPolicy(agentMemberId: $id) { ${HARNESS_FIELDS} }
+        agentHarnesses }`, {id: memberId});
+  const row = data.agentPolicy;
+  return {
+    defaultHarness: row?.defaultHarness ?? null,
+    harnessAllowlist: row?.harnessAllowlist || [],
+    known: data.agentHarnesses || [],
+  };
+}
+
 /* ------------------------------------------------------------------ the fallback half */
 
 /** Every read on this interface has a server behind it, so the fallback is loud on purpose.
@@ -926,6 +1000,7 @@ function createFallbackAdapter(): AgentsAdapter {
     async createAgent() { return serverOnly('agent create'); },
     async listAgentChoices() { return serverOnly('the delegate picker'); },
     async updatePolicy() { return serverOnly('agent edits'); },
+    async updateHarnessPolicy() { return serverOnly('an agent\'s harness policy'); },
 
     async listSessions() { return serverOnly('the run queue'); },
     async listAuditEvents() { return serverOnly('the audit log'); },

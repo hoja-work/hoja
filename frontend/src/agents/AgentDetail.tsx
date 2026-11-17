@@ -143,6 +143,30 @@ export function AgentDetailPage({agentKey, workspaceName, viewerName, onBack, on
     }
   };
 
+  /* HOJA-602-A-22: the harness half of WP12's policy is its own row and its own mutation, so a
+   * refusal is the server's sentence (unknown name, alias, default outside the allowlist) rather
+   * than a message this screen composes. A failed write re-reads the row first, so the field shows
+   * what the server actually stored. */
+  const saveHarness = async (patch: {defaultHarness?: string | null; harnessAllowlist?: string[]}) => {
+    setBusy('harness');
+    setNotice('');
+    setError('');
+    try {
+      const {harnesses} = await getAgentsAdapter().updateHarnessPolicy(agentKey, patch, viewerName);
+      setDetail(d => d ? {...d, harnesses} : d);
+      setNotice(harnesses.defaultHarness
+        ? `Saved. Runs delegated to this agent queue for ${harnesses.defaultHarness}.`
+        : 'Saved. No harness chosen, so runs queue for pi.');
+      load();
+    } catch (e) {
+      const message = (e as Error).message;
+      await load();
+      setError(message);
+    } finally {
+      setBusy('');
+    }
+  };
+
   const stop = async (session: AgentSession) => {
     /* Two steps and a danger tone, exactly as the runner revoke is: cancel is authoritative and
        nothing revives the run, so the confirmation has to look like what it is. */
@@ -369,11 +393,36 @@ export function AgentDetailPage({agentKey, workspaceName, viewerName, onBack, on
               {id: 'archived', selected: policy.archived, label: 'Archived'}]} />
 
           <div className="sec">Policy (WP12)</div>
+          <PolicyField label="Harness" icon={<span aria-hidden="true">⌬</span>}
+            value={detail.harnesses.defaultHarness || ''}
+            placeholder={`pi (default) — one of ${detail.harnesses.known.join(', ')}`}
+            disabled={busy === 'harness'}
+            onSave={next => void saveHarness({defaultHarness: next || null})} />
+          <PolicyField label="Allowed harnesses" icon={<span aria-hidden="true">⌸</span>}
+            value={detail.harnesses.harnessAllowlist.join(', ')}
+            placeholder="Any profile"
+            disabled={busy === 'harness'}
+            onSave={next => void saveHarness({
+              harnessAllowlist: next.split(',').map(name => name.trim()).filter(Boolean),
+            })} />
+          <div className="lin-prop">
+            <span className="k"><span aria-hidden="true">⌗</span>Runs on</span>
+            <span className="v lin-note" data-harness-effective={detail.harnesses.defaultHarness
+              || (detail.harnesses.harnessAllowlist[0] || 'pi')}>
+              {detail.harnesses.defaultHarness
+                ? `queues for ${detail.harnesses.defaultHarness}`
+                : detail.harnesses.harnessAllowlist.length
+                  ? `queues for the first allowed profile (${[...detail.harnesses.harnessAllowlist].sort()[0]})`
+                  : 'queues for pi until a policy chooses'}
+              {' '}· a run is only leased to a runner that declares it
+            </span>
+          </div>
           <p className="lin-note">
-            Tools, scope, repos, secrets, network and approvers have no column on this server yet, so
-            this page shows none of them rather than a placeholder policy. Their writes arrive with
-            WP12; until then the only limits the server enforces are capacity, the monthly credit
-            budget, working hours, the model and the runner pool above.
+            The harness decides which CLI a delegated run executes under, and the queue will not
+            hand it to a runner that did not declare it. An unknown profile, an alias (claude is
+            claude-code) and a default the allowlist forbids are all refused by the server, not
+            saved and corrected here. Tools, repos, secrets, network and approvers have their own
+            columns in the policy row and no control on this page yet.
           </p>
         </aside>
       </div>

@@ -29,13 +29,14 @@ why the transition set has no edge out of a terminal state.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 
 from ariadne import MutationType, ObjectType, QueryType, gql
 from graphql import GraphQLError
 from sqlalchemy import and_, desc, or_, select
 
 from hoja_server import audit
-from hoja_server.db import agent_activity, agent_session, new_id, now_iso
+from hoja_server.db import agent_activity, agent_lease, agent_session, new_id, now_iso
 
 query = QueryType()
 mutation = MutationType()
@@ -526,7 +527,26 @@ def mark_stale(session: dict, *, idle_seconds: float) -> str:
     return session["status"]
 
 
-def serialize(conn, org_id: str, row: dict) -> dict:
+def lease_harnesses(conn, org_id: str, lease_ids: Iterable[str | None]) -> dict[str, str]:
+    """The harness each of these leases names, in one query (HOJA-602-A-22).
+
+    A session's ``queue_reason`` says *why* it is queued; it cannot say *which runner*
+    it is queued for, and after A-22 that is a different question - a session waiting
+    on a codex runner and a session waiting on capacity are both "queued" and only
+    the lease knows which is which. Batched so a page of 50 sessions costs one query
+    rather than fifty, the same way the transcript is a separate selection.
+    """
+    wanted = sorted({str(i) for i in lease_ids if i})
+    if not wanted:
+        return {}
+    rows = conn.execute(select(agent_lease.c.id, agent_lease.c.harness).where(and_(
+        agent_lease.c.organization_id == org_id,
+        agent_lease.c.id.in_(wanted)))).all()
+    return {str(lease_id): harness for lease_id, harness in rows}
+
+
+def serialize(conn, org_id: str, row: dict, *,
+              harness: str | None = None) -> dict:
     """One session in its GraphQL shape."""
     reasons = parse_reasons(row.get("queue_reason"))
     return {
@@ -539,6 +559,12 @@ def serialize(conn, org_id: str, row: dict) -> dict:
         "queueReason": reasons,
         "admitted": bool(row.get("admitted_at")),
         "leaseId": row.get("lease_id"),
+        # Which harness the lease this session waits on names. None until the lease
+        # exists, which is the honest answer for a session the schedule check queued
+        # and which has not been handed to the runner queue yet.
+        "harness": harness if harness is not None else (
+            lease_harnesses(conn, org_id, [row.get("lease_id")]).get(
+                str(row.get("lease_id") or ""))),
         "trigger": row["trigger"],
         "ackedAt": row.get("acked_at"),
         "activatedAt": row.get("admitted_at"),
@@ -613,8 +639,11 @@ def read_page(conn, org_id: str, *, first: int = 50, after: str | None = None,
         .limit(first + 1)).mappings().all()]
     has_next = len(rows) > first
     rows = rows[:first]
+    harnesses = lease_harnesses(conn, org_id, [row.get("lease_id") for row in rows])
     return {
-        "nodes": [serialize(conn, org_id, row) for row in rows],
+        "nodes": [serialize(conn, org_id, row,
+                            harness=harnesses.get(str(row.get("lease_id") or "")))
+                  for row in rows],
         "pageInfo": {
             "hasNextPage": has_next,
             "hasPreviousPage": bool(after),
@@ -664,6 +693,8 @@ SDL = gql(
       admitted: Boolean!
       "The WP07 lease this session is waiting on, or null while queued."
       leaseId: ID
+      "The harness profile that lease names: which runner this run needs. Null until a lease exists."
+      harness: String
       trigger: String!
       ackedAt: DateTime
       activatedAt: DateTime

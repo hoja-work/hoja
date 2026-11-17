@@ -70,6 +70,10 @@ export type AgentSession = {
   queueReason: string[];
   /** `queueReason` as one sentence, which is what the row shows inline. */
   reason?: string;
+  /** `AgentSession.harness`: the profile the lease this run waits on names (HOJA-602-A-22). Null
+   * until a lease exists. A queued run with a harness is waiting for a runner that declares it,
+   * which is a different wait from one the schedule check is holding back. */
+  harness?: string | null;
   status: SessionStatus;
   admitted: boolean;
   issueId: string;
@@ -107,10 +111,10 @@ export type AgentEvent = {
   tool?: string;
 };
 
-/* Exactly the columns `agentMemberUpdate` accepts (agent_members.py `_clean`). Nothing else is
- * editable, and nothing here is a WP12 policy field: tools, scope, repos, secrets, network and
- * approvers have no column on main, so they are not in the type and the sidebar says so instead
- * of editing a fixture. */
+/* Exactly the columns `agentMemberUpdate` accepts (agent_members.py `_clean`). WP12's policy lives
+ * in its own row and its own type (`HarnessPolicy`, below, and `AgentPolicy` in agent_policy.py);
+ * the sidebar edits the harness half of it and says which other halves it does not edit rather
+ * than showing a placeholder. */
 export type AgentPolicy = {
   name: string;
   displayName: string | null;
@@ -123,9 +127,23 @@ export type AgentPolicy = {
   archived: boolean;
 };
 
+/* The harness half of WP12's policy (HOJA-602-A-22): which profile this agent's runs execute
+ * under, and the allowlist that bounds the choice. `known` is the server's own list of profile
+ * names (`agentHarnesses`), so the field cannot offer a name the server would refuse — the server
+ * stores the name a lease will carry, and a lease is only granted to a runner that declares it. */
+export type HarnessPolicy = {
+  /** `agentPolicy.defaultHarness`; `null` means nobody chose, so the queue falls back to `pi`. */
+  defaultHarness: string | null;
+  /** `agentPolicy.harnessAllowlist`; empty means no allowlist (any known profile). */
+  harnessAllowlist: string[];
+  /** `agentHarnesses`: the canonical profile names this server knows. */
+  known: string[];
+};
+
 export type AgentDetail = {
   agent: Agent;
   policy: AgentPolicy;
+  harnesses: HarnessPolicy;
   sessions: AgentSession[];
   events: AgentEvent[];
 };

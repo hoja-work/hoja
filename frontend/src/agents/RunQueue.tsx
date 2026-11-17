@@ -178,9 +178,18 @@ export function RunQueue({workspaceName, agentKey, onOpenRun, onOpenAgent, tab, 
                     showCheckbox={false} onSelect={() => undefined} onOpen={() => onOpenRun(s)} childCount={0}
                     trailing={<>
                       <span className="lin-chip" data-session-chip={s.status}
-                        title={`${s.agentName} · ${sessionStatusName(s.status)} · ${s.state}${s.reason ? ` · ${s.reason}` : ''}`}>
+                        title={`${s.agentName} · ${sessionStatusName(s.status)} · ${s.state}${s.reason ? ` · ${s.reason}` : ''}${s.harness ? ` · harness ${s.harness}` : ''}`}>
                         <i style={{background: SESSION_TYPE[s.status].color}} />{s.agentName}
                       </span>
+                      {/* HOJA-602-A-22: a queued run whose lease names a harness is waiting for a
+                          runner that declares it, which is a different wait from one the schedule is
+                          holding back. Shown on the queued rows only, where it is the answer. */}
+                      {s.status === 'queued' && s.harness && (
+                        <span className="lin-chip" data-harness-waiting={s.harness}
+                          title={`Queued for harness ${s.harness}: the lease goes to a runner that declared it, and no runner has taken it yet`}>
+                          <i style={{background: SESSION_TYPE[s.status].color}} />{s.harness}
+                        </span>
+                      )}
                       {s.verdict
                         ? <span className="lin-chip" data-verdict={s.verdict}
                             title={`${verdictLabel(s.verdict)} — recorded by a principal that did not do the work, on the claim submitted ${s.claimAt ? new Date(s.claimAt).toISOString().slice(0, 10) : 'earlier'}`}>

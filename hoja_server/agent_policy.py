@@ -77,6 +77,39 @@ QUEUE = "queue"
 STOP = "stop"
 BUDGET_ACTIONS = (QUEUE, STOP)
 
+#: The harness profiles the server knows, by the name each one calls itself
+#: (``runner/hoja_runnerd/profiles/*.toml`` ``name =``). This is the server's copy of
+#: a customer-side fact, and it is a copy on purpose: the profiles ship with the
+#: runner, not with the app image, so the control plane cannot import them. A test
+#: (``tests/agent/test_harness_selection.py``) reads the TOMLs in this repository and
+#: fails when the two lists drift, which is the same arrangement
+#: ``test_runner_conformance`` uses for the wire constants.
+#:
+#: Only canonical names are accepted. The runner resolves aliases itself
+#: (``claude`` -> ``claude-code``), but a *lease* names its harness and the server
+#: matches that name verbatim against the list each runner declared at enrollment -
+#: and the daemon declares ``ProfileSet.allowlist()``, which holds canonical names.
+#: Storing an alias would therefore produce a lease no normally-enrolled runner can
+#: take, so an alias is refused with the canonical name in the message instead.
+KNOWN_HARNESSES = ("claude-code", "codex", "gemini", "generic", "opencode", "pi")
+
+#: What a delegation runs on when nobody chose (HOJA-602-A-22). It is the value
+#: ``agent_schedule.enqueue_admitted`` hard-coded before this revision, so an
+#: existing workspace's delegations queue for exactly the harness they did
+#: yesterday and keep running on the runners that already exist.
+FALLBACK_HARNESS = "pi"
+
+#: Aliases, for the refusal message only - never stored. Kept in step with the
+#: ``aliases =`` line of each profile by the same test that checks KNOWN_HARNESSES.
+HARNESS_ALIASES = {
+    "claude": "claude-code",
+    "openai-codex": "codex",
+    "gemini-cli": "gemini",
+    "open-code": "opencode",
+    "cli": "generic",
+    "shell": "generic",
+}
+
 #: Names a repository's default branch actually goes by. Never grantable. A
 #: repository whose default branch is something else is protected by the ``repos``
 #: grant having to name branches explicitly and by the wildcard refusal below -
@@ -145,6 +178,113 @@ def _parse_iso(value: str | None) -> datetime | None:
 
 
 # ---------------------------------------------------------------------------
+# Harness profiles (HOJA-602-A-22)
+# ---------------------------------------------------------------------------
+
+
+class HarnessError(PolicyError):
+    """A harness an agent may not run on, naming the field and why."""
+
+
+def canonical_harness(value: Any, field_name: str = "harness") -> str | None:
+    """Normalise one harness name, or refuse it. None/empty means "nobody chose".
+
+    Refusing is the whole point: a lease names its harness and is only granted to a
+    runner that advertised that exact name, so a typo here is not a small mistake -
+    it is a delegation that sits queued forever with nothing to explain it.
+    """
+    name = str(value or "").strip().lower()
+    if not name:
+        return None
+    if name in KNOWN_HARNESSES:
+        return name
+    alias = HARNESS_ALIASES.get(name)
+    if alias:
+        raise HarnessError(
+            field_name,
+            f"{name} is an alias; use the profile's own name, {alias}, so the lease "
+            f"names a harness a runner declares at enrollment.",
+        )
+    raise HarnessError(
+        field_name,
+        f"{name} is not a harness profile this server knows ({', '.join(KNOWN_HARNESSES)}).",
+    )
+
+
+def _stored_harness(value: Any) -> str | None:
+    """Read-time normalisation: an unknown stored name reads as "not set", not as an
+    error. The write path (:func:`canonical_harness`) is what refuses it, so this
+    branch is only reachable for a row edited outside the API."""
+    try:
+        return canonical_harness(value)
+    except PolicyError:
+        LOG.warning("agent policy holds an unknown harness %r; treating it as not set", value)
+        return None
+
+
+@dataclass(frozen=True)
+class HarnessChoice:
+    """The harness a run will queue for, and which rung of the chain named it.
+
+    ``source`` is carried so the answer can be explained: ``delegation`` when the
+    caller named it, ``policy`` when the agent's policy did, ``allowlist`` when only
+    the allowlist could choose, and ``default`` when nothing chose and
+    :data:`FALLBACK_HARNESS` applies.
+    """
+
+    harness: str
+    source: str
+
+
+def resolve_harness(view: PolicyView | None, *,
+                    requested: str | None = None) -> HarnessChoice:
+    """Which harness this run executes under (HOJA-602-A-22).
+
+    Four answers, in this order, and each one is checked against the policy's
+    allowlist before it is accepted:
+
+    1. ``requested`` - the delegation named it. An unknown name, or one outside the
+       allowlist, is **refused**: a caller that asks for something the agent may not
+       run has made a mistake, and quietly running something else would be a
+       different run than the one it asked for.
+    2. ``view.default_harness`` - what the agent's policy says.
+    3. ``pi`` - the value every delegation used before this revision, so an existing
+       workspace keeps working.
+    4. the allowlist's own first entry, sorted - the only rung that can answer when
+       the policy allows a subset that excludes ``pi`` and names no default (an
+       agent that may *only* run on codex is exactly the case A-22 exists for).
+       Deterministic, and the same rule HOJA-602-A-20 used to name a runner's
+       enrolled default: first entry of the allowlist, sorted, so flag order cannot
+       change the answer.
+
+    Rungs 2-4 are policy-derived, so they never raise: a policy that cannot name a
+    harness at all still queues for :data:`FALLBACK_HARNESS`, which the runner side
+    reports as ``harness_not_allowed`` rather than the delegation failing silently.
+    """
+    allowlist = view.harness_allowlist if view is not None else frozenset()
+
+    def permitted(name: str | None) -> bool:
+        return bool(name) and (not allowlist or name in allowlist)
+
+    wanted = canonical_harness(requested) if requested else None
+    if wanted:
+        if not permitted(wanted):
+            raise HarnessError(
+                "harness",
+                f"{wanted} is outside this agent's harness allowlist "
+                f"({', '.join(sorted(allowlist))}).",
+            )
+        return HarnessChoice(wanted, "delegation")
+    if view is not None and permitted(view.default_harness):
+        return HarnessChoice(str(view.default_harness), "policy")
+    if permitted(FALLBACK_HARNESS):
+        return HarnessChoice(FALLBACK_HARNESS, "default")
+    if allowlist:
+        return HarnessChoice(sorted(allowlist)[0], "allowlist")
+    return HarnessChoice(FALLBACK_HARNESS, "default")
+
+
+# ---------------------------------------------------------------------------
 # The policy, as a value
 # ---------------------------------------------------------------------------
 
@@ -187,6 +327,12 @@ class PolicyView:
     budget_action: str = QUEUE
     delegators: frozenset[str] = frozenset()
     approvers: frozenset[str] = frozenset()
+    #: The harness this agent's runs execute under; None means "nobody chose", which
+    #: resolves to :data:`FALLBACK_HARNESS` (HOJA-602-A-22).
+    default_harness: str | None = None
+    #: The harnesses this agent may run on. Empty means "no allowlist": the list
+    #: bounds the choice, it does not make one.
+    harness_allowlist: frozenset[str] = frozenset()
 
     def as_document(self) -> dict[str, Any]:
         """The row as JSON, for an audit detail's before/after. Never a secret value."""
@@ -210,6 +356,8 @@ class PolicyView:
             "budgetAction": self.budget_action,
             "delegators": sorted(self.delegators),
             "approvers": sorted(self.approvers),
+            "defaultHarness": self.default_harness,
+            "harnessAllowlist": sorted(self.harness_allowlist),
         }
 
 
@@ -251,6 +399,14 @@ def view_from_row(row: Mapping[str, Any]) -> PolicyView:
         budget_action=budget_action if budget_action in BUDGET_ACTIONS else QUEUE,
         delegators=frozenset(str(d) for d in _json_list(row.get("delegators"))),
         approvers=frozenset(str(a) for a in _json_list(row.get("approvers"))),
+        # A hand-edited row is read the way ``_json_list`` reads every other list: an
+        # unknown or unreadable name is dropped rather than believed, because the
+        # lease it would produce is for a runner that cannot exist. The write path
+        # refuses such a name, so the only way here is a row edited outside the API.
+        default_harness=_stored_harness(row.get("default_harness")),
+        harness_allowlist=frozenset(
+            h for h in (_stored_harness(v) for v in _json_list(row.get("harness_allowlist")))
+            if h),
     )
 
 
@@ -1074,7 +1230,54 @@ def clean_input(document: Mapping[str, Any]) -> dict[str, Any]:
         if action not in BUDGET_ACTIONS:
             raise PolicyError("budgetAction", "budgetAction must be 'queue' or 'stop'.")
         values["budget_action"] = action
+    # Harness (HOJA-602-A-22). Validated together, because the two fields constrain
+    # each other: a default the allowlist forbids is a contradiction the queue would
+    # otherwise have to resolve at run time, when nobody is looking.
+    if "harnessAllowlist" in document:
+        values["harness_allowlist"] = _dump(
+            _clean_harness_list(document["harnessAllowlist"]))
+    if "defaultHarness" in document:
+        values["default_harness"] = canonical_harness(document["defaultHarness"],
+                                                      "defaultHarness")
+    if "default_harness" in values or "harness_allowlist" in values:
+        _check_harness_pair(values)
     return values
+
+
+def _clean_harness_list(values: Any) -> list[str]:
+    if values is None:
+        return []
+    if not isinstance(values, (list, tuple)):
+        raise PolicyError("harnessAllowlist", "harnessAllowlist must be a list of profile names.")
+    cleaned: list[str] = []
+    for value in values:
+        name = canonical_harness(value, "harnessAllowlist")
+        if name is None:
+            raise PolicyError("harnessAllowlist",
+                              "harnessAllowlist must not contain an empty name.")
+        if name not in cleaned:
+            cleaned.append(name)
+    return cleaned
+
+
+def _check_harness_pair(values: Mapping[str, Any]) -> None:
+    """Refuse a default the allowlist in the same write forbids.
+
+    Only the pair present in *this* document is checked; a merged check would read
+    the stored row, and a partial update (one field) must not be refused for a
+    contradiction it did not create. ``save_policy`` holds the same rule for the
+    merged row, where the two halves come from different writes.
+    """
+    default = values.get("default_harness")
+    allowlist = values.get("harness_allowlist")
+    if default is None or allowlist is None:
+        return
+    if _json_list(allowlist) and default not in _json_list(allowlist):
+        raise PolicyError(
+            "defaultHarness",
+            f"defaultHarness {default} is not in harnessAllowlist "
+            f"({', '.join(sorted(_json_list(allowlist)))}).",
+        )
 
 
 def save_policy(conn, org_id: str, member_id: str, document: Mapping[str, Any],
@@ -1088,6 +1291,17 @@ def save_policy(conn, org_id: str, member_id: str, document: Mapping[str, Any],
     values = clean_input(document)
     current = row_for_member(conn, org_id, member_id)
     before = dict(current) if current else {}
+    # The same contradiction can be created across two writes - a default set
+    # yesterday, an allowlist that excludes it today - so the merged row is checked
+    # here as well, before either half is stored. Reads the stored columns, never a
+    # guess, and only when one of the two fields is in this write.
+    if "default_harness" in values or "harness_allowlist" in values:
+        merged = {
+            "default_harness": values.get("default_harness", (current or {}).get("default_harness")),
+            "harness_allowlist": values.get("harness_allowlist",
+                                            (current or {}).get("harness_allowlist")),
+        }
+        _check_harness_pair(merged)
     if current is None:
         conn.execute(agent_policy.insert().values(
             id=new_id(), organization_id=org_id, agent_member_id=member_id, version=1,
@@ -1134,6 +1348,10 @@ SDL = gql(
       budgetAction: String!
       delegators: [String!]!
       approvers: [String!]!
+      "The harness profile this agent's runs queue for (HOJA-602-A-22). Null means nobody chose, so the queue falls back to pi."
+      defaultHarness: String
+      "Harnesses this agent may run on. Empty means no allowlist: any known profile."
+      harnessAllowlist: [String!]!
       updatedAt: DateTime!
       updatedBy: ID
     }
@@ -1159,6 +1377,9 @@ SDL = gql(
       budgetAction: String
       delegators: [String!]
       approvers: [String!]
+      "A profile name this server knows (see agentHarnesses). Unknown names and aliases are refused."
+      defaultHarness: String
+      harnessAllowlist: [String!]
     }
 
     extend type Query {
@@ -1166,6 +1387,8 @@ SDL = gql(
       agentPolicy(agentMemberId: String!): AgentPolicy
       "Secret names configured in this workspace. Never a value."
       agentSecretNames: [String!]!
+      "The harness profiles this server knows, canonical names, sorted. What defaultHarness may hold."
+      agentHarnesses: [String!]!
     }
 
     extend type Mutation {
@@ -1224,6 +1447,8 @@ def serialize(row: Mapping[str, Any]) -> dict[str, Any]:
         "budgetAction": view.budget_action,
         "delegators": sorted(view.delegators),
         "approvers": sorted(view.approvers),
+        "defaultHarness": view.default_harness,
+        "harnessAllowlist": sorted(view.harness_allowlist),
         "updatedAt": row.get("updated_at"),
         "updatedBy": row.get("updated_by"),
     }
@@ -1244,6 +1469,15 @@ def r_agent_secret_names(_, info):
     _require_admin(store, org, uid)
     with store.engine.connect() as conn:
         return [row["name"] for row in secret_rows(conn, org)]
+
+
+@query.field("agentHarnesses")
+def r_agent_harnesses(_, info):
+    """The names ``defaultHarness`` may hold. Static, but admin-gated like its siblings
+    so the surface has one rule rather than an exception to remember."""
+    store, org, uid = _ctx(info)
+    _require_admin(store, org, uid)
+    return sorted(KNOWN_HARNESSES)
 
 
 @mutation.field("agentPolicyUpdate")
