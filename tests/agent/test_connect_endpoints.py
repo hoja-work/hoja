@@ -25,7 +25,7 @@ from starlette.testclient import TestClient
 
 from hoja_server import connect_api, runner_api
 from hoja_server.app import create_app
-from hoja_server.db import audit_event, connect_endpoint, seed_tenant
+from hoja_server.db import agent_session, audit_event, connect_endpoint, seed_tenant
 from hoja_server.store import Store
 from tests import rls_mode
 
@@ -430,6 +430,24 @@ def test_the_open_is_idempotent_and_pins_exactly_one_peer(world):
                                json=_open_body(lease, exposure_id="exp-3", ports=[70000]),
                                headers=_auth(identity))
     assert out.status_code == 400 and out.json()["code"] == connect_api.ERROR_PORT, out.text
+
+
+def test_the_open_records_the_session_the_lease_executes(world, caplog):
+    """The row names the delegated session, and resolving it raises nothing on a closed conn."""
+    identity, _agent_row, lease = _leased_agent(world)
+    org_id = world["alpha"]["org_id"]
+    with world["engine"].connect() as conn:
+        session_ids = list(conn.execute(select(agent_session.c.id).where(
+            agent_session.c.organization_id == org_id,
+            agent_session.c.issue_id == lease["task_id"],
+        )).scalars().all())
+    assert session_ids, "delegating the task should have opened its session"
+    with caplog.at_level("WARNING", logger=connect_api.LOG.name):
+        response = world["client"].post("/runner/connect/open", json=_open_body(lease),
+                                        headers=_auth(identity))
+    assert response.status_code == 200, response.text
+    assert "could not resolve the session" not in caplog.text, caplog.text
+    assert [row["session_id"] for row in _rows(world)] == [session_ids[0]], _rows(world)
 
 
 # --------------------------------------------------------------------- migrations

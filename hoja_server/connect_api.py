@@ -227,6 +227,7 @@ def open_exposure(engine, runner_row: Mapping[str, Any], body: Mapping[str, Any]
                 connect_endpoint.c.exposure_id == exposure_id,
                 connect_endpoint.c.state == OPEN,
             ))).mappings().all()]
+            session = _session_for_lease(conn, org_id, lease)
         if existing:
             # A retry after a lost response is the same exposure, not a second one. A *different*
             # pin under the same id is a different tunnel and must not be silently merged.
@@ -240,7 +241,6 @@ def open_exposure(engine, runner_row: Mapping[str, Any], body: Mapping[str, Any]
         ttl = requested_ttl or int(lease.get("ttl_seconds") or runner_api.LEASE_TTL_S)
         ttl = max(1, min(ttl, MAX_TTL_S))
         expires_at = _iso(stamp + timedelta(seconds=ttl))
-        session = _session_for_lease(conn, org_id, lease)
         stamp_iso = _iso(stamp)
         rows = []
         for port in ports:
