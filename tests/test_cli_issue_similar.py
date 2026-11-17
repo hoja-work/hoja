@@ -157,7 +157,12 @@ def test_fetch_documents_reports_an_incomplete_scan() -> None:
 def _run(coro):
     import asyncio
 
-    return asyncio.get_event_loop().run_until_complete(coro)
+    # asyncio.run(), not get_event_loop(): the latter only works while no earlier
+    # test in this process has already closed or unset the main thread's loop,
+    # which made these two tests pass or fail depending on what ran before them.
+    # Ordering is not a property a test should depend on, and under pytest-xdist
+    # the order is a scheduling result.
+    return asyncio.run(coro)
 
 
 # ---- CLI against a real server --------------------------------------------
