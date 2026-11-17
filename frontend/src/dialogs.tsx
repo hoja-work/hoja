@@ -137,6 +137,7 @@ export function DialogHost() {
               ) : (
                 <button
                   type="button"
+                  data-style-hooks={req.danger ? "danger" : undefined}
                   className={
                     `inline-flex items-center justify-center hover:brightness-110 ${req.danger ? "text-white" : ""}` +
                     "shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11" +

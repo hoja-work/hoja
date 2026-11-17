@@ -2658,7 +2658,7 @@ function App() {
       setSwitching(false);
     }
   };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- route or session driven; the listed values are written by this effect or are recreated each render
+  /* eslint-disable react-hooks/exhaustive-deps -- route or session driven; the listed values are written by this effect or are recreated each render */
   useEffect(() => {
     if (!token || view !== "Issue detail") return;
     const ident = decodeURIComponent(
@@ -2727,12 +2727,13 @@ function App() {
       clearTimeout(issueTimeout);
     };
   }, [token, view, window.location.pathname, issueRetry]);
+  /* eslint-enable react-hooks/exhaustive-deps */
   const projectRouteId =
     view === "Project detail" || view === "Project view"
       ? window.location.pathname.split("/").filter(Boolean)[2]
       : undefined;
   const projectVersion = useEntityVersion(["project"], [projectRouteId]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- route or session driven; the listed values are written by this effect or are recreated each render
+  /* eslint-disable react-hooks/exhaustive-deps -- route or session driven; the listed values are written by this effect or are recreated each render */
   useEffect(() => {
     if (!token || (view !== "Project detail" && view !== "Project view"))
       return;
@@ -2776,6 +2777,7 @@ function App() {
       live = false;
     };
   }, [token, view, projectDetailRefresh, projectVersion, projects]);
+  /* eslint-enable react-hooks/exhaustive-deps */
   useEffect(() => {
     if (!token || view !== "Team cycle") return;
     const path = location.pathname;
@@ -5721,7 +5723,7 @@ function InboxPage({
     revalidating.current = run;
     return run;
   };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- route or session driven; the listed values are written by this effect or are recreated each render
+  /* eslint-disable react-hooks/exhaustive-deps -- route or session driven; the listed values are written by this effect or are recreated each render */
   useEffect(() => {
     if (!cached) {
       void load();
@@ -5731,11 +5733,13 @@ function InboxPage({
       requesting.current = false;
     };
   }, []);
+  /* eslint-enable react-hooks/exhaustive-deps */
   const firstVersion = useRef(notificationVersion);
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- route or session driven; the listed values are written by this effect or are recreated each render
+  /* eslint-disable react-hooks/exhaustive-deps -- route or session driven; the listed values are written by this effect or are recreated each render */
   useEffect(() => {
     if (notificationVersion !== firstVersion.current) void revalidate();
   }, [notificationVersion]);
+  /* eslint-enable react-hooks/exhaustive-deps */
   useEffect(() => {
     const onPop = () =>
       setTab(location.pathname.endsWith("/priority") ? "priority" : "other");
@@ -7868,8 +7872,8 @@ function KanbanCard({
       setBusy(false);
     }
   };
-  /* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- drag surface only; the keyboard path (alt+arrow) lives on the inner button */
   return (
+    /* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- drag surface only; the keyboard path (alt+arrow) lives on the inner button */
     <div
       className="border flex flex-col gap-2.25 text-left cursor-grab touch-none rounded-2xl border-line bg-panel p-3 hover:border-line active:cursor-grabbing focus-visible:relative focus-visible:z-1 data-dragging:opacity-45 [&[data-depth]:not([data-depth=0])]:relative [&[data-depth]:not([data-depth=0])::before]:absolute [&[data-depth]:not([data-depth=0])::before]:-left-2 [&[data-depth]:not([data-depth=0])::before]:top-1.5 [&[data-depth]:not([data-depth=0])::before]:bottom-1.5 [&[data-depth]:not([data-depth=0])::before]:w-0.5 [&[data-depth]:not([data-depth=0])::before]:rounded-sm [&[data-depth]:not([data-depth=0])::before]:bg-line focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 pointer-coarse:touch-pan-y pointer-coarse:cursor-auto [&[data-depth]:not([data-depth=0])]:before:content-['']"
       data-kanban-card=""
@@ -9124,7 +9128,6 @@ function Login({
     </div>
   );
 }
-// eslint-disable-next-line react-hooks/exhaustive-deps -- route or session driven; the listed values are written by this effect or are recreated each render
 function IssueDrawer({
   issue,
   teams,
@@ -9164,6 +9167,7 @@ function IssueDrawer({
   const [body, setBody] = useState("");
   const [pending, setPending] = useState<Comment[]>([]);
   const [error, setError] = useState("");
+  /* eslint-disable react-hooks/exhaustive-deps -- route or session driven; the listed values are written by this effect or are recreated each render */
   useEffect(() => {
     fetchIssueDetail(issue.identifier || issue.id, issue.id)
       .then((e) => {
@@ -9172,6 +9176,7 @@ function IssueDrawer({
       })
       .catch((e) => setError(e.message));
   }, [issue.id]);
+  /* eslint-enable react-hooks/exhaustive-deps */
   const update = async (input: Record<string, unknown>) => {
     setError("");
     const sync = getSync();
@@ -9533,7 +9538,7 @@ function NewIssue({
   const states = selectedTeam?.states.nodes || [];
   const members = selectedTeam?.members?.nodes || [];
   // The synced workspace metadata already carries projects, cycles and labels; only fetch them when sync is unavailable.
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- route or session driven; the listed values are written by this effect or are recreated each render
+  /* eslint-disable react-hooks/exhaustive-deps -- route or session driven; the listed values are written by this effect or are recreated each render */
   useEffect(() => {
     if (meta) return;
     let live = true;
@@ -9564,6 +9569,7 @@ function NewIssue({
       live = false;
     };
   }, []);
+  /* eslint-enable react-hooks/exhaustive-deps */
   const resetForMore = () => {
     setTitle("");
     setDescription("");
@@ -9672,7 +9678,6 @@ function NewIssue({
       } else void alertDialog(msg);
     }
   };
-  /* eslint-disable-next-line jsx-a11y/no-autofocus -- the title input mount-focus is captured at render (line 399); an effect would move focus after that snapshot */
   return (
     <div
       className="fixed inset-0 z-10 bg-[#0008] has-data-issue-create-modal:p-[clamp(60px,13vh,118px)_12px_12px] [&:has(>[data-issue-create-modal])]:animate-[issue-backdrop-in_var(--motion-overlay)_var(--ease-standard)_both] [&:has(>[data-issue-create-modal][data-is-closing])]:animate-[issue-backdrop-out_var(--motion-fast)_var(--ease-standard)_both] [@supports_(backdrop-filter:blur(2px))_or_(-webkit-backdrop-filter:blur(2px))]:[&:has(>[data-issue-create-modal])]:[background:rgba(9,9,11,.42)] [@supports_(backdrop-filter:blur(2px))_or_(-webkit-backdrop-filter:blur(2px))]:[&:has(>[data-issue-create-modal])]:[backdrop-filter:blur(2px)] [@supports_(backdrop-filter:blur(2px))_or_(-webkit-backdrop-filter:blur(2px))]:[&:has(>[data-issue-create-modal])]:[-webkit-backdrop-filter:blur(2px)]"
@@ -9737,6 +9742,7 @@ function NewIssue({
             data-issue-create-title=""
             value={title}
             onChange={(e) => setTitle(e.target.value)}
+            // eslint-disable-next-line jsx-a11y/no-autofocus -- the title input mount-focus is captured at render (line 399); an effect would move focus after that snapshot
             autoFocus
             placeholder="Task title"
             aria-label="Task title"
@@ -10794,8 +10800,8 @@ function ProjectDetails({
   };
   const currentLead = useMemo(
     () => leadIdOf(project),
-    [project.lead?.name, members],
-  ); // eslint-disable-line react-hooks/exhaustive-deps
+    [project.lead?.name, members], // eslint-disable-line react-hooks/exhaustive-deps -- leadIdOf is rebuilt each render
+  );
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description || "");
   const [state, setState] = useState(project.state || "backlog");

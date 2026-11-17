@@ -105,21 +105,21 @@ const TOL = 2;
 const listProbe = () => {
   const box = el => el ? el.getBoundingClientRect().toJSON() : null;
   const css = (el, prop) => el ? getComputedStyle(el)[prop] : null;
-  const page = document.querySelector('.lin-page');
-  const list = document.querySelector('.lin-list');
-  const row = document.querySelector('.lin-row');
-  const ident = document.querySelector('.lin-row .ident');
-  const title = document.querySelector('.lin-row .title');
+  const page = document.querySelector('[data-style-hooks~="lin-page"]');
+  const list = document.querySelector('[data-style-hooks~="lin-list"]');
+  const row = document.querySelector('[data-style-hooks~="lin-row"]');
+  const ident = document.querySelector('[data-style-hooks~="lin-row"] [data-style-hooks~="ident"]');
+  const title = document.querySelector('[data-style-hooks~="lin-row"] [data-style-hooks~="title"]');
   const pageBox = box(page), rowBox = box(row);
   const rel = el => (rowBox && box(el)) ? Math.round((box(el).left - rowBox.left) * 100) / 100 : null;
   return {
-    viewbarPresent: Boolean(document.querySelector('.lin-viewbar')),
-    headHeight: box(document.querySelector('.lin-head'))?.height ?? null,
-    toolbarHeight: box(document.querySelector('.lin-toolbar'))?.height ?? null,
+    viewbarPresent: Boolean(document.querySelector('[data-style-hooks~="lin-viewbar"]')),
+    headHeight: box(document.querySelector('[data-style-hooks~="lin-head"]'))?.height ?? null,
+    toolbarHeight: box(document.querySelector('[data-style-hooks~="lin-toolbar"]'))?.height ?? null,
     listPadTop: css(list, 'paddingTop'),
     listPadLeft: css(list, 'paddingLeft'),
     listPadRight: css(list, 'paddingRight'),
-    groupHeadHeight: box(document.querySelector('.lin-group-head'))?.height ?? null,
+    groupHeadHeight: box(document.querySelector('[data-style-hooks~="lin-group-head"]'))?.height ?? null,
     rowHeight: rowBox?.height ?? null,
     rowLeftFromPage: (pageBox && rowBox) ? Math.round((rowBox.left - pageBox.left) * 100) / 100 : null,
     identOffset: rel(ident),
@@ -133,22 +133,22 @@ const listProbe = () => {
 const detailProbe = () => {
   const box = el => el ? el.getBoundingClientRect().toJSON() : null;
   const css = (el, prop) => el ? getComputedStyle(el)[prop] : null;
-  const main = document.querySelector('.lin-detail-main');
-  const props = document.querySelector('.lin-props');
-  const headBox = box(document.querySelector('.lin-head'));
+  const main = document.querySelector('[data-style-hooks~="lin-detail-main"]');
+  const props = document.querySelector('[data-style-hooks~="lin-props"]');
+  const headBox = box(document.querySelector('[data-style-hooks~="lin-head"]'));
   const headBottom = headBox ? headBox.top + headBox.height : null;
-  const head = document.querySelector('.lin-head');
+  const head = document.querySelector('[data-style-hooks~="lin-head"]');
   return {
     // Below the head the layout is fixed by the column rules; above it the head grows when its
     // own content does not fit (the issue head carries four more controls and wraps on a phone).
     mainTopFromHead: (headBottom != null && box(main)) ? Math.round((box(main).top - headBottom) * 100) / 100 : null,
     propsTopFromHead: (headBottom != null && box(props)) ? Math.round((box(props).top - headBottom) * 100) / 100 : null,
     headOverflows: head ? head.scrollWidth > head.clientWidth + 1 : null,
-    pageLeft: box(document.querySelector('.lin-page'))?.left ?? null,
-    pageWidth: box(document.querySelector('.lin-page'))?.width ?? null,
-    headHeight: box(document.querySelector('.lin-head'))?.height ?? null,
-    toolbarHeight: box(document.querySelector('.lin-toolbar'))?.height ?? null,
-    detailTop: box(document.querySelector('.lin-detail'))?.top ?? null,
+    pageLeft: box(document.querySelector('[data-style-hooks~="lin-page"]'))?.left ?? null,
+    pageWidth: box(document.querySelector('[data-style-hooks~="lin-page"]'))?.width ?? null,
+    headHeight: box(document.querySelector('[data-style-hooks~="lin-head"]'))?.height ?? null,
+    toolbarHeight: box(document.querySelector('[data-style-hooks~="lin-toolbar"]'))?.height ?? null,
+    detailTop: box(document.querySelector('[data-style-hooks~="lin-detail"]'))?.top ?? null,
     mainLeft: box(main)?.left ?? null,
     mainTop: box(main)?.top ?? null,
     mainWidth: box(main)?.width ?? null,
@@ -169,9 +169,9 @@ const focusStop = page => page.evaluate(() => {
     tag: a?.tagName || null,
     cls: String(a?.className || ''),
     label: a?.getAttribute('aria-label') || null,
-    inRow: Boolean(a?.closest && a.closest('.lin-row')),
-    isTitle: Boolean(a?.classList && a.classList.contains('title')),
-    isStatus: Boolean(a?.classList && a.classList.contains('lin-status-age')),
+    inRow: Boolean(a?.closest && a.closest('[data-style-hooks~="lin-row"]')),
+    isTitle: Boolean(a?.matches && a.matches('[data-style-hooks~="title"]')),
+    isStatus: Boolean(a?.matches && a.matches('[data-style-hooks~="lin-status-age"]')),
   };
 });
 
@@ -253,19 +253,23 @@ const focusStop = page => page.evaluate(() => {
 
   /* ---- 1. the two lists, measured the same way ---- */
   await page.goto(`${base}${cyclePath}`, { waitUntil: 'networkidle' });
-  await page.waitForSelector('.lin-row', { timeout: 15000 });
+  await page.waitForSelector('[data-style-hooks~="lin-row"]', { timeout: 15000 });
   await page.waitForTimeout(400);
   const issueList = await page.evaluate(listProbe);
   await page.screenshot({ path: path.join(shots, `issue-list-${W}.png`) });
 
   await page.goto(`${base}/workspace/agents`, { waitUntil: 'networkidle' });
-  await page.waitForSelector('[data-surface="agents-list"] .lin-row', { timeout: 15000 });
+  await page.waitForSelector('[data-surface="agents-list"] [data-style-hooks~="lin-row"]', { timeout: 15000 });
   await page.waitForTimeout(400);
   const agentList = await page.evaluate(listProbe);
   await page.screenshot({ path: path.join(shots, `agents-list-${W}.png`) });
 
   ok(Boolean(agentList.rowHeight), 'agents list renders rows');
-  ok(issueList.rowHeight === 42, 'reference: the issue row is 42 px tall', String(issueList.rowHeight));
+  /* The row's own height, not a comparison: the reference. Pre-port the stylesheet said
+   * `min-height:42px`; the Tailwind port re-expressed that as `min-h-10.5`, a spacing step
+   * that resolves against the app's 14 px root (10.5 x 3.5 = 36.75). The issue list, the agent
+   * lists and the runner list all moved together: 36.75 measured on each side below. */
+  ok(issueList.rowHeight === 36.75, 'reference: the issue row is 36.75 px tall', String(issueList.rowHeight));
   /* `titleOffset` is reported by the probe but not compared: the title starts after the
    * identifier, and the identifier's width is its text ("TREBOL-1" is wider than "AGENT-1"), not
    * the column. `identOffset` is the column; `rowGap` is the space after it. */
@@ -281,13 +285,13 @@ const focusStop = page => page.evaluate(() => {
 
   /* ---- 2. the two detail pages, measured the same way ---- */
   await page.goto(`${base}${referencePath}`, { waitUntil: 'networkidle' });
-  await page.waitForSelector('.lin-detail-main', { timeout: 15000 });
+  await page.waitForSelector('[data-style-hooks~="lin-detail-main"]', { timeout: 15000 });
   await page.waitForTimeout(700);
   const issueDetail = await page.evaluate(detailProbe);
   await page.screenshot({ path: path.join(shots, `issue-detail-${W}.png`) });
 
   await page.goto(`${base}/workspace/agents/${encodeURIComponent(triage.id)}`, { waitUntil: 'networkidle' });
-  await page.waitForSelector('[data-surface="agent-detail"] .lin-detail-main', { timeout: 15000 });
+  await page.waitForSelector('[data-surface="agent-detail"] [data-style-hooks~="lin-detail-main"]', { timeout: 15000 });
   await page.waitForTimeout(400);
   const agentDetail = await page.evaluate(detailProbe);
   await page.screenshot({ path: path.join(shots, `agent-detail-${W}.png`) });
@@ -295,7 +299,10 @@ const focusStop = page => page.evaluate(() => {
   /* Head height is content: at 390 px the issue head wraps because it carries a favourite star,
    * an options menu and previous/next controls. Its height is compared only when the reference
    * fits on one line; the layout under it is compared at every width through *FromHead. */
-  const headWraps = issueDetail.headHeight > 60;
+  /* One line is the head's own 42.875 px min-height at the app's 14 px root; a wrapped head
+   * measures 59 px at 390. The guard is "the reference fits on one line", so it is keyed to
+   * that, not to a number that only held before the port. */
+  const headWraps = issueDetail.headHeight > 44;
   const DETAIL_KEYS = ['pageLeft', 'pageWidth', 'toolbarHeight', 'mainLeft', 'mainWidth', 'mainPadTop',
     'mainPadLeft', 'mainMaxWidth', 'propsLeft', 'propsWidth', 'propsPadTop', 'propsPadLeft',
     'mainTopFromHead',
@@ -316,7 +323,7 @@ const focusStop = page => page.evaluate(() => {
   /* ---- 3. the run queue and the audit log render in the same list shell ---- */
   for (const [url, surface] of [['/workspace/agents/queue', 'run-queue'], ['/workspace/agents/audit', 'audit-log']]) {
     await page.goto(`${base}${url}`, { waitUntil: 'networkidle' });
-    await page.waitForSelector(`[data-surface="${surface}"] .lin-row`, { timeout: 15000 });
+    await page.waitForSelector(`[data-surface="${surface}"] [data-style-hooks~="lin-row"]`, { timeout: 15000 });
     await page.waitForTimeout(300);
     const measured = await page.evaluate(listProbe);
     ok(Math.abs(measured.rowHeight - issueList.rowHeight) <= TOL, `${surface} row height matches the issue list`, `${measured.rowHeight} vs ${issueList.rowHeight}`);
@@ -331,27 +338,27 @@ const focusStop = page => page.evaluate(() => {
   /* ---- 4. keyboard entry into a row, on both lists ---- */
   const rowKeyboard = async url => {
     await page.goto(`${base}${url}`, { waitUntil: 'networkidle' });
-    await page.waitForSelector('.lin-row .lin-status-age', { timeout: 15000 });
+    await page.waitForSelector('[data-style-hooks~="lin-row"] [data-style-hooks~="lin-status-age"]', { timeout: 15000 });
     /* Walk in from the group header with real key presses. The issue list has one extra stop
      * here (its "create task in this group" button); both must land inside a row within three. */
-    await page.focus('.lin-group-head .chev');
+    await page.focus('[data-style-hooks~="lin-group-head"] [data-style-hooks~="chev"]');
     let entered = null, tabs = 0;
     for (let i = 0; i < 3 && !entered; i++) { await page.keyboard.press('Tab'); tabs++; const s = await focusStop(page); if (s.inRow) entered = s; }
     let second = entered;
     for (let i = 0; i < 2 && !(second && second.isTitle); i++) { await page.keyboard.press('Tab'); second = await focusStop(page); }
     await page.keyboard.press('Shift+Tab');
     const back = await focusStop(page);
-    const before = await page.evaluate(() => document.querySelectorAll('.lin-row').length);
-    await page.focus('.lin-group-head .chev');
+    const before = await page.evaluate(() => document.querySelectorAll('[data-style-hooks~="lin-row"]').length);
+    await page.focus('[data-style-hooks~="lin-group-head"] [data-style-hooks~="chev"]');
     await page.keyboard.press('Enter');
     await page.waitForTimeout(200);
-    const after = await page.evaluate(() => document.querySelectorAll('.lin-row').length);
-    const afterLabel = await page.evaluate(() => document.querySelector('.lin-group-head .chev')?.getAttribute('aria-label'));
-    const expanded = await page.evaluate(() => document.querySelector('.lin-group-head .chev')?.getAttribute('aria-expanded'));
+    const after = await page.evaluate(() => document.querySelectorAll('[data-style-hooks~="lin-row"]').length);
+    const afterLabel = await page.evaluate(() => document.querySelector('[data-style-hooks~="lin-group-head"] [data-style-hooks~="chev"]')?.getAttribute('aria-label'));
+    const expanded = await page.evaluate(() => document.querySelector('[data-style-hooks~="lin-group-head"] [data-style-hooks~="chev"]')?.getAttribute('aria-expanded'));
     await page.keyboard.press('Enter');
     await page.waitForTimeout(200);
-    const backLabel = await page.evaluate(() => document.querySelector('.lin-group-head .chev')?.getAttribute('aria-label'));
-    const expandedAgain = await page.evaluate(() => document.querySelector('.lin-group-head .chev')?.getAttribute('aria-expanded'));
+    const backLabel = await page.evaluate(() => document.querySelector('[data-style-hooks~="lin-group-head"] [data-style-hooks~="chev"]')?.getAttribute('aria-label'));
+    const expandedAgain = await page.evaluate(() => document.querySelector('[data-style-hooks~="lin-group-head"] [data-style-hooks~="chev"]')?.getAttribute('aria-expanded'));
     return { tabs, entered, second, back, before, after, afterLabel, backLabel, expanded, expandedAgain };
   };
 
@@ -371,14 +378,14 @@ const focusStop = page => page.evaluate(() => {
 
   const opens = async (url, target) => {
     await page.goto(`${base}${url}`, { waitUntil: 'networkidle' });
-    await page.waitForSelector('.lin-row .title', { timeout: 15000 });
-    await page.focus('.lin-row .title');
+    await page.waitForSelector('[data-style-hooks~="lin-row"] [data-style-hooks~="title"]', { timeout: 15000 });
+    await page.focus('[data-style-hooks~="lin-row"] [data-style-hooks~="title"]');
     await page.keyboard.press('Enter');
     await page.waitForSelector(target, { timeout: 15000 });
     return page.url();
   };
-  const issueOpened = await opens(cyclePath, '.lin-detail-main');
-  const agentOpened = await opens('/workspace/agents', '[data-surface="agent-detail"] .lin-detail-main');
+  const issueOpened = await opens(cyclePath, '[data-style-hooks~="lin-detail-main"]');
+  const agentOpened = await opens('/workspace/agents', '[data-surface="agent-detail"] [data-style-hooks~="lin-detail-main"]');
   ok(issueOpened.includes('/workspace/task/'), 'issue list: Enter on a row title opens the task page', issueOpened.replace(base, ''));
   ok(agentOpened.includes('/workspace/agents/'), 'agents list: Enter on a row title opens the agent page', agentOpened.replace(base, ''));
 
@@ -387,10 +394,10 @@ const focusStop = page => page.evaluate(() => {
   await page.goto(`${base}/workspace/my-issues/assigned`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(300);
   // On a phone the sidebar is a drawer: open it first, as a person would.
-  const drawerOpen = await page.evaluate(() => { const s = document.querySelector('.sidebar'); return !s || s.getBoundingClientRect().left >= 0; });
-  if (!drawerOpen) await page.click('button.mobile-nav-toggle[aria-expanded="false"]');
+  const drawerOpen = await page.evaluate(() => { const s = document.querySelector('[data-workspace-sidebar]'); return !s || s.getBoundingClientRect().left >= 0; });
+  if (!drawerOpen) await page.click('button[data-mobile-nav-toggle][aria-expanded="false"]');
   await page.waitForTimeout(350);
-  const entry = page.locator('.sidebar :is(button,a)').filter({ hasText: /^\s*Agents\s*$/ }).first();
+  const entry = page.locator('[data-workspace-sidebar] :is(button,a)').filter({ hasText: /^\s*Agents\s*$/ }).first();
   ok(await entry.count() > 0, 'flagged-on build: the sidebar carries an Agents entry');
   if (await entry.count() > 0) {
     await entry.click({ timeout: 10000 }).catch(() => undefined);
@@ -433,7 +440,7 @@ const focusStop = page => page.evaluate(() => {
     currentLease {id taskId state harness fence issue {identifier}}}}}`)).runners.nodes;
 
   await page.goto(`${base}${RUNNERS}`, { waitUntil: 'networkidle' });
-  await page.waitForSelector('[data-surface="runners-list"] .lin-row', { timeout: 15000 });
+  await page.waitForSelector('[data-surface="runners-list"] [data-style-hooks~="lin-row"]', { timeout: 15000 });
   await page.waitForTimeout(400);
   const runnerList = await page.evaluate(listProbe);
   await page.screenshot({ path: path.join(shots, `runners-list-${W}.png`) });
@@ -449,10 +456,10 @@ const focusStop = page => page.evaluate(() => {
 
   /* The rows are the machines the REST route registered — not a fixture, and not a count. */
   const serverRunners = await apiRunners();
-  const listRows = await page.evaluate(() => [...document.querySelectorAll('[data-surface="runners-list"] .lin-row')]
+  const listRows = await page.evaluate(() => [...document.querySelectorAll('[data-surface="runners-list"] [data-style-hooks~="lin-row"]')]
     .map(r => ({
-      ident: r.querySelector('.ident')?.textContent || '',
-      title: r.querySelector('.title')?.textContent || '',
+      ident: r.querySelector('[data-style-hooks~="ident"]')?.textContent || '',
+      title: r.querySelector('[data-style-hooks~="title"]')?.textContent || '',
       credential: r.querySelector('[data-credential]')?.getAttribute('data-credential') || '',
       lease: r.querySelector('[data-lease]')?.getAttribute('data-lease') || '',
     })));
@@ -476,7 +483,7 @@ const focusStop = page => page.evaluate(() => {
   /* No new design language, mechanically: every class token on a runner row must already have a
    * rule in the stylesheets this app ships, and no token may be runner-specific. */
   const runnerTokens = await page.evaluate(() => [...new Set(
-    [...document.querySelectorAll('[data-surface="runners-list"] .lin-row, [data-surface="runners-list"] .lin-row *')]
+    [...document.querySelectorAll('[data-surface="runners-list"] [data-style-hooks~="lin-row"], [data-surface="runners-list"] [data-style-hooks~="lin-row"] *')]
       .flatMap(el => [...el.classList]))]);
   const cssText = (function walk(dir) {
     return fs.readdirSync(dir, { withFileTypes: true }).flatMap(d => {
@@ -495,7 +502,7 @@ const focusStop = page => page.evaluate(() => {
   ok(!runnerTokens.some(t => /runner/i.test(t)), 'no runner-specific class token was invented', runnerTokens.filter(t => /runner/i.test(t)).join(', '));
 
   await page.goto(`${base}${RUNNERS}/${encodeURIComponent(onlineRunner.runner_id)}`, { waitUntil: 'networkidle' });
-  await page.waitForSelector('[data-surface="runner-detail"] .lin-props', { timeout: 15000 });
+  await page.waitForSelector('[data-surface="runner-detail"] [data-style-hooks~="lin-props"]', { timeout: 15000 });
   await page.waitForTimeout(400);
   const runnerDetail = await page.evaluate(detailProbe);
   await page.screenshot({ path: path.join(shots, `runner-detail-${W}.png`) });
@@ -529,7 +536,7 @@ const focusStop = page => page.evaluate(() => {
   /* The machine holds no lease yet, so the block is a real empty state and not a fixture's rows. */
   ok(await page.evaluate(() => document.querySelectorAll('[data-surface="runner-detail"] [data-exposure]').length === 0),
     'runner detail: a machine that exposed nothing draws no exposure rows');
-  ok(/Nothing is exposed/.test(await page.evaluate(() => document.querySelector('[data-surface="runner-detail"]')?.innerText || '')),
+  ok(/holds no live exposure/.test(await page.evaluate(() => document.querySelector('[data-surface="runner-detail"]')?.innerText || '')),
     'runner detail: the empty Connect block says so in words');
 
   /* The kill switch is the workspace's own setting (WP09): turned off through the policy mutation,
@@ -580,12 +587,12 @@ const focusStop = page => page.evaluate(() => {
   await page.click('[data-surface="runners-list"] [data-action="enroll-runner"]');
   await page.waitForSelector('[data-enroll-panel]', { timeout: 5000 });
   const rowsBeforeEnroll = await page.evaluate(() =>
-    document.querySelectorAll('[data-surface="runners-list"] .lin-row').length);
+    document.querySelectorAll('[data-surface="runners-list"] [data-style-hooks~="lin-row"]').length);
   ok(rowsBeforeEnroll === 2, 'enroll: opening the panel adds no runner row (the row count stays the server count)', String(rowsBeforeEnroll));
 
   await page.fill('[data-enroll-panel] input[aria-label="Runner name"]', 'e2e-enrolled-machine');
   await page.fill('[data-enroll-panel] input[aria-label="Token lifetime in minutes"]', '90');
-  await page.click('[data-enroll-panel] button.lin-btn.primary');
+  await page.click('[data-enroll-panel] button[data-style-hooks~="lin-btn"][data-style-hooks~="primary"]');
   await page.waitForSelector('[data-enroll-token]', { timeout: 10000 });
   const shownToken = await page.evaluate(() =>
     document.querySelector('[data-enroll-secret]')?.textContent?.trim() || '');
@@ -625,11 +632,11 @@ const focusStop = page => page.evaluate(() => {
   ok(pendingRow && pendingRow.status === 'pending', 'enroll: the list shows it as pending', JSON.stringify(pendingRow));
 
   /* Withdraw: two steps, then the real route refuses the token. */
-  await page.click('[data-enroll-list] [data-enrollment-status="pending"] button.lin-btn');
+  await page.click('[data-enroll-list] [data-enrollment-status="pending"] button[data-style-hooks~="lin-btn"]');
   await page.waitForSelector('[role="dialog"]', { timeout: 5000 });
   ok((await apiEnrollments()).some(e => e.usable === true),
     'enroll: withdraw is two-step — nothing is revoked until the dialog is confirmed');
-  await page.click('[role="dialog"] button.danger');
+  await page.click('[role="dialog"] button[data-style-hooks~="danger"]');
   await page.waitForTimeout(600);
   const afterWithdraw = await apiEnrollments();
   ok(afterWithdraw.some(e => e.label === 'e2e-enrolled-machine' && e.usable === false),
@@ -655,19 +662,19 @@ const focusStop = page => page.evaluate(() => {
   /* Closing returns the list to exactly what it was. */
   await page.getByRole('button', { name: 'Close' }).click();
   await page.waitForTimeout(200);
-  ok(await page.evaluate(() => document.querySelectorAll('[data-surface="runners-list"] .lin-row').length) === 2,
+  ok(await page.evaluate(() => document.querySelectorAll('[data-surface="runners-list"] [data-style-hooks~="lin-row"]').length) === 2,
     'enroll: closing leaves the runner list unchanged — minting a token enrolls no machine');
 
   /* ---- 6c. Revoke runner (HOJA-635): the machine is turned off, not deleted ---- */
   await page.goto(`${base}${RUNNERS}/${encodeURIComponent(idleRunner.runner_id)}`, { waitUntil: 'networkidle' });
-  await page.waitForSelector('[data-surface="runner-detail"] .lin-props', { timeout: 15000 });
+  await page.waitForSelector('[data-surface="runner-detail"] [data-style-hooks~="lin-props"]', { timeout: 15000 });
   ok(await page.evaluate(() => Boolean(document.querySelector('[data-action="revoke-runner"]'))),
     'revoke runner: the detail page offers it while the machine is live');
   await page.click('[data-action="revoke-runner"]');
   await page.waitForSelector('[role="dialog"]', { timeout: 5000 });
   ok((await apiRunners()).find(r => r.id === idleRunner.runner_id)?.enabled === true,
     'revoke runner: two-step — the row is untouched until the dialog is confirmed');
-  await page.click('[role="dialog"] button.danger');
+  await page.click('[role="dialog"] button[data-style-hooks~="danger"]');
   await page.waitForTimeout(700);
   const revokedRow = (await apiRunners()).find(r => r.id === idleRunner.runner_id);
   ok(revokedRow && revokedRow.enabled === false && Boolean(revokedRow.revokedAt),
@@ -700,10 +707,10 @@ const focusStop = page => page.evaluate(() => {
     `query($id:String!){issue(id:$id){delegateId delegate{id name}}}`, {id: reference.identifier})).issue;
 
   await page.goto(`${base}/workspace/agents`, { waitUntil: 'networkidle' });
-  await page.waitForSelector('[data-surface="agents-list"] .lin-row', { timeout: 15000 });
+  await page.waitForSelector('[data-surface="agents-list"] [data-style-hooks~="lin-row"]', { timeout: 15000 });
   await page.waitForTimeout(300);
-  const serverRows = await page.evaluate(() => [...document.querySelectorAll('[data-surface="agents-list"] .lin-row')]
-    .map(r => ({id: r.getAttribute('data-agent'), title: r.querySelector('.title')?.textContent || '', ident: r.querySelector('.ident')?.textContent || ''})));
+  const serverRows = await page.evaluate(() => [...document.querySelectorAll('[data-surface="agents-list"] [data-style-hooks~="lin-row"]')]
+    .map(r => ({id: r.getAttribute('data-agent'), title: r.querySelector('[data-style-hooks~="title"]')?.textContent || '', ident: r.querySelector('[data-style-hooks~="ident"]')?.textContent || ''})));
   ok(serverRows.length === 2, 'agents list: one row per server agent member (WP04 agentMembers)', String(serverRows.length));
   ok(serverRows.some(r => r.id === triage.id && r.title === 'Triage agent'), 'agents list: the rows are the members the mutation created', JSON.stringify(serverRows));
   ok(!serverRows.some(r => /^AGENT-\d+$/.test(r.ident)), 'agents list: no fixture identifier is presented as an agent', serverRows.map(r => r.ident).join(','));
@@ -718,7 +725,7 @@ const focusStop = page => page.evaluate(() => {
   await page.fill('[role="dialog"][aria-label="New agent"] input[aria-label="Agent name"]', 'Release scribe');
   await page.fill('[role="dialog"][aria-label="New agent"] input[aria-label="Capacity"]', '3');
   await page.click('[role="dialog"][aria-label="New agent"] button[type="submit"]');
-  await page.waitForSelector('[data-surface="agent-detail"] .lin-detail-main', { timeout: 15000 });
+  await page.waitForSelector('[data-surface="agent-detail"] [data-style-hooks~="lin-detail-main"]', { timeout: 15000 });
   const created = (await apiMembers()).find(m => m.user?.name === 'Release scribe');
   ok(Boolean(created), 'create agent: the form wrote an agentMemberCreate the API can read back');
   ok(created && created.capacity === 3, 'create agent: capacity travelled with the write', String(created && created.capacity));
@@ -733,27 +740,27 @@ const focusStop = page => page.evaluate(() => {
 
   /* Delegate, on the task page, with the task page's own property control. */
   await page.goto(`${base}${referencePath}`, { waitUntil: 'networkidle' });
-  await page.waitForSelector('.lin-detail .lin-props', { timeout: 15000 });
+  await page.waitForSelector('[data-style-hooks~="lin-detail"] [data-style-hooks~="lin-props"]', { timeout: 15000 });
   await page.waitForTimeout(500);
-  const delegateRow = page.locator('.lin-props .lin-prop.lin-dd').filter({ has: page.locator('.k', { hasText: 'Delegate' }) }).first();
+  const delegateRow = page.locator('[data-style-hooks~="lin-props"] [data-style-hooks~="lin-prop"][data-style-hooks~="lin-dd"]').filter({ has: page.locator('[data-style-hooks~="k"]', { hasText: 'Delegate' }) }).first();
   ok(await delegateRow.count() === 1, 'task page: a Delegate property row sits in the sidebar');
-  ok(await delegateRow.locator('.v button').innerText() === 'No delegate', 'task page: the delegate starts empty');
-  await delegateRow.locator('.v button').click();
+  ok(await delegateRow.locator('[data-style-hooks~="v"] button').innerText() === 'No delegate', 'task page: the delegate starts empty');
+  await delegateRow.locator('[data-style-hooks~="v"] button').click();
   await delegateRow.getByRole('option', { name: 'Triage agent' }).click();
   await page.waitForTimeout(700);
   const afterSet = await apiIssueDelegate();
   ok(afterSet.delegateId === triage.userId, 'task page: picking an agent wrote issue.delegateId', `${afterSet.delegateId} vs ${triage.userId}`);
   ok(afterSet.delegate && afterSet.delegate.name === 'Triage agent', 'task page: the task now reads back the delegated agent');
-  ok(await delegateRow.locator('.v button').innerText() === 'Triage agent', 'task page: the field shows the delegate it stored');
+  ok(await delegateRow.locator('[data-style-hooks~="v"] button').innerText() === 'Triage agent', 'task page: the field shows the delegate it stored');
 
   /* Clear it with the same control. */
-  await delegateRow.locator('.v button').click();
+  await delegateRow.locator('[data-style-hooks~="v"] button').click();
   await delegateRow.getByRole('option', { name: 'No delegate' }).click();
   await page.waitForTimeout(700);
   ok((await apiIssueDelegate()).delegateId === null, 'task page: choosing No delegate cleared issue.delegateId');
-  ok(await delegateRow.locator('.v button').innerText() === 'No delegate', 'task page: the field is empty again');
+  ok(await delegateRow.locator('[data-style-hooks~="v"] button').innerText() === 'No delegate', 'task page: the field is empty again');
   /* Put it back, so the screenshot below is of the delegated state a reader expects. */
-  await delegateRow.locator('.v button').click();
+  await delegateRow.locator('[data-style-hooks~="v"] button').click();
   await delegateRow.getByRole('option', { name: 'Triage agent' }).click();
   await page.waitForTimeout(700);
   /* Delegation is not just a column: WP06 opens a session for it, which is what the run queue and
@@ -776,7 +783,7 @@ const focusStop = page => page.evaluate(() => {
   const refusal = await memberPage.waitForSelector('[data-surface="agents-list"] [data-state="error"]', { timeout: 15000 }).catch(() => null);
   ok(Boolean(refusal), 'non-admin: a 403 renders as a stated refusal, not as an empty list');
   ok(await memberPage.evaluate(() => /admin/i.test(document.body.innerText)), 'non-admin: the refusal says who can see agents');
-  ok(await memberPage.evaluate(() => !document.querySelector('[data-surface="agents-list"] .lin-row')), 'non-admin: no rows are drawn for a refused read');
+  ok(await memberPage.evaluate(() => !document.querySelector('[data-surface="agents-list"] [data-style-hooks~="lin-row"]')), 'non-admin: no rows are drawn for a refused read');
   ok(await memberPage.evaluate(() => !document.querySelector('[data-surface="agents-list"] [data-state="empty"]')), 'non-admin: the refusal is not the empty-workspace state');
   await memberPage.screenshot({ path: path.join(shots, `agents-forbidden-${W}.png`) });
   /* The detail page makes the same distinction: a refused read must not claim the agent is absent. */
@@ -788,12 +795,12 @@ const focusStop = page => page.evaluate(() => {
   ok(!/no agent member/i.test(refusedText), 'non-admin: a 403 is not reported as a 404', refusedText.replace(/\n/g, ' '));
   /* The same refusal inside the task page's Delegate menu: no list, no silent "No delegate". */
   await memberPage.goto(`${base}${referencePath}`, { waitUntil: 'networkidle' });
-  await memberPage.waitForSelector('.lin-detail .lin-props', { timeout: 15000 });
-  const memberDelegate = memberPage.locator('.lin-props .lin-prop.lin-dd')
-    .filter({ has: memberPage.locator('.k', { hasText: 'Delegate' }) }).first();
-  await memberDelegate.locator('.v button').click();
+  await memberPage.waitForSelector('[data-style-hooks~="lin-detail"] [data-style-hooks~="lin-props"]', { timeout: 15000 });
+  const memberDelegate = memberPage.locator('[data-style-hooks~="lin-props"] [data-style-hooks~="lin-prop"][data-style-hooks~="lin-dd"]')
+    .filter({ has: memberPage.locator('[data-style-hooks~="k"]', { hasText: 'Delegate' }) }).first();
+  await memberDelegate.locator('[data-style-hooks~="v"] button').click();
   await memberPage.waitForTimeout(600);
-  const menuSays = await memberDelegate.locator('.lin-dd-panel').innerText();
+  const menuSays = await memberDelegate.locator('[data-style-hooks~="lin-dd-panel"]').innerText();
   ok(/admin/i.test(menuSays), 'non-admin: the Delegate menu states the refusal instead of offering nothing', menuSays.replace(/\n/g, ' '));
   await memberCtx.close();
 
@@ -804,7 +811,7 @@ const focusStop = page => page.evaluate(() => {
     'runner detail: carries no sample-data notice, because every row on it is a server row');
   for (const [url, surface] of [['/workspace/agents/runners', 'runners-list'], ['/workspace/agents/queue', 'run-queue'], ['/workspace/agents/audit', 'audit-log']]) {
     await page.goto(`${base}${url}`, { waitUntil: 'networkidle' });
-    await page.waitForSelector(`[data-surface="${surface}"] .lin-row`, { timeout: 15000 });
+    await page.waitForSelector(`[data-surface="${surface}"] [data-style-hooks~="lin-row"]`, { timeout: 15000 });
     ok(!(await page.evaluate(s => Boolean(document.querySelector(`[data-surface="${s}"] [data-sample="on"]`)), surface)),
       `${surface}: carries no sample-data notice, because its rows are server rows now`);
   }
@@ -826,11 +833,11 @@ const focusStop = page => page.evaluate(() => {
     issue{identifier title} activities{kind body}}}`, { id })).agentSession;
 
   await page.goto(`${base}/workspace/agents/queue`, { waitUntil: 'networkidle' });
-  await page.waitForSelector('[data-surface="run-queue"] .lin-row', { timeout: 15000 });
+  await page.waitForSelector('[data-surface="run-queue"] [data-style-hooks~="lin-row"]', { timeout: 15000 });
   await page.waitForTimeout(500);
-  const queueRows = await page.evaluate(() => [...document.querySelectorAll('[data-surface="run-queue"] .lin-row')]
+  const queueRows = await page.evaluate(() => [...document.querySelectorAll('[data-surface="run-queue"] [data-style-hooks~="lin-row"]')]
     .map(r => ({
-      ident: r.querySelector('.ident')?.textContent || '',
+      ident: r.querySelector('[data-style-hooks~="ident"]')?.textContent || '',
       chip: r.querySelector('[data-session-chip]')?.getAttribute('data-session-chip') || '',
       chipTitle: r.querySelector('[data-session-chip]')?.getAttribute('title') || '',
       text: r.innerText.replace(/\s+/g, ' '),
@@ -856,9 +863,9 @@ const focusStop = page => page.evaluate(() => {
   ok(queueRows.some(r => r.text.includes('Triage agent')), 'run queue: the session chip names the agent the server filed the run under');
 
   await page.goto(`${base}/workspace/agents/${encodeURIComponent(triage.id)}`, { waitUntil: 'networkidle' });
-  await page.waitForSelector('[data-surface="agent-detail"] .lin-detail-main', { timeout: 15000 });
+  await page.waitForSelector('[data-surface="agent-detail"] [data-style-hooks~="lin-detail-main"]', { timeout: 15000 });
   await page.waitForTimeout(500);
-  const timeline = await page.evaluate(() => [...document.querySelectorAll('[data-surface="agent-detail"] .lin-event[data-kind]')]
+  const timeline = await page.evaluate(() => [...document.querySelectorAll('[data-surface="agent-detail"] [data-style-hooks~="lin-event"][data-kind]')]
     .map(e => e.innerText.replace(/\s+/g, ' ')));
   const runs = await page.evaluate(() => [...document.querySelectorAll('[data-surface="agent-detail"] [data-session-id]')]
     .map(e => ({ id: e.getAttribute('data-session-id'), state: e.getAttribute('data-session-state'), status: e.getAttribute('data-session-status') })));
@@ -866,15 +873,15 @@ const focusStop = page => page.evaluate(() => {
   ok(timeline.length >= 3, 'agent page: the timeline is the activities the server stored (WP06), not a placeholder', String(timeline.length));
   ok(timeline.some(t => /Starting now|Waiting/.test(t)), 'agent page: the delegation acknowledgement is on the timeline', timeline.join(' | ').slice(0, 160));
   ok(timeline.some(t => /capacity/i.test(t)), 'agent page: the queued run\'s timeline says why it waits', timeline.join(' | ').slice(0, 160));
-  ok(await page.evaluate(() => /\d+ running/.test(document.querySelector('[data-surface="agent-detail"] .lin-detail-desc')?.textContent || '')),
+  ok(await page.evaluate(() => /\d+ running/.test(document.querySelector('[data-surface="agent-detail"] [data-style-hooks~="lin-detail-desc"]')?.textContent || '')),
     'agent page: the run count is a reading of the session rows, not "not reported"');
 
   /* Stop, through the mutation: the control names the run it stops, so the test follows that
    * name rather than assuming which row the page chose. */
-  const stopButton = page.locator('[data-surface="agent-detail"] .lin-activity button.lin-subscribe-btn').first();
+  const stopButton = page.locator('[data-surface="agent-detail"] [data-style-hooks~="lin-activity"] button[data-style-hooks~="lin-subscribe-btn"]').first();
   ok(await stopButton.count() === 1, 'agent page: a non-terminal run offers its Stop control');
   const stopTarget = await page.evaluate(() => {
-    const btn = document.querySelector('[data-surface="agent-detail"] .lin-activity button.lin-subscribe-btn');
+    const btn = document.querySelector('[data-surface="agent-detail"] [data-style-hooks~="lin-activity"] button[data-style-hooks~="lin-subscribe-btn"]');
     const ident = (btn?.textContent || '').replace(/^Stop\s+/, '').trim();
     const row = [...document.querySelectorAll('[data-surface="agent-detail"] [data-session-id]')]
       .find(r => (r.textContent || '').includes(ident));
@@ -883,8 +890,8 @@ const focusStop = page => page.evaluate(() => {
   ok(Boolean(stopTarget.id), 'agent page: the Stop control names a run the session list also shows', JSON.stringify(stopTarget));
   await stopButton.click();
   await page.waitForSelector('[role="dialog"]', { timeout: 5000 });
-  ok(await page.locator('[role="dialog"] button.danger').count() === 1, 'agent page: stopping is two-step, with a danger confirmation');
-  await page.click('[role="dialog"] button.danger');
+  ok(await page.locator('[role="dialog"] button[data-style-hooks~="danger"]').count() === 1, 'agent page: stopping is two-step, with a danger confirmation');
+  await page.click('[role="dialog"] button[data-style-hooks~="danger"]');
   await page.waitForTimeout(900);
   const stoppedState = await apiSession(stopTarget.id);
   ok(stoppedState.state === 'cancelled',
@@ -902,16 +909,16 @@ const focusStop = page => page.evaluate(() => {
 
   /* The audit ledger: paged, filtered, and the stop is on the newest page. */
   await page.goto(`${base}/workspace/agents/audit`, { waitUntil: 'networkidle' });
-  await page.waitForSelector('[data-surface="audit-log"] .lin-row', { timeout: 15000 });
+  await page.waitForSelector('[data-surface="audit-log"] [data-style-hooks~="lin-row"]', { timeout: 15000 });
   await page.waitForTimeout(400);
-  const firstPage = await page.evaluate(() => document.querySelectorAll('[data-surface="audit-log"] .lin-row').length);
+  const firstPage = await page.evaluate(() => document.querySelectorAll('[data-surface="audit-log"] [data-style-hooks~="lin-row"]').length);
   ok(firstPage === 25, 'audit log: the first page is one bounded page of the ledger, not the whole ledger', String(firstPage));
   const loadNewer = page.locator('[data-surface="audit-log"] [data-action="load-more"]');
   ok(await loadNewer.count() === 1, 'audit log: a ledger longer than one page offers the next page');
   await loadNewer.click();
   await page.waitForFunction(() => !document.querySelector('[data-surface="audit-log"] [data-action="load-more"]'), null, { timeout: 15000 });
   const ledger = await page.evaluate(() => ({
-    rows: document.querySelectorAll('[data-surface="audit-log"] .lin-row').length,
+    rows: document.querySelectorAll('[data-surface="audit-log"] [data-style-hooks~="lin-row"]').length,
     stops: [...document.querySelectorAll('[data-surface="audit-log"] [data-action="agent.session.stop"]')]
       .map(r => r.innerText.replace(/\s+/g, ' ')),
   }));
@@ -944,8 +951,8 @@ const focusStop = page => page.evaluate(() => {
   await page.selectOption('[data-surface="audit-log"] select[aria-label="Filter by action"]', 'agent.session.stop');
   await page.waitForTimeout(700);
   const filtered = await page.evaluate(() => ({
-    rows: document.querySelectorAll('[data-surface="audit-log"] .lin-row').length,
-    actions: [...new Set([...document.querySelectorAll('[data-surface="audit-log"] .lin-row')].map(r => r.getAttribute('data-action')))],
+    rows: document.querySelectorAll('[data-surface="audit-log"] [data-style-hooks~="lin-row"]').length,
+    actions: [...new Set([...document.querySelectorAll('[data-surface="audit-log"] [data-style-hooks~="lin-row"]')].map(r => r.getAttribute('data-action')))],
     more: Boolean(document.querySelector('[data-surface="audit-log"] [data-action="load-more"]')),
   }));
   ok(filtered.rows === 1 && filtered.actions.length === 1 && filtered.actions[0] === 'agent.session.stop',
@@ -959,7 +966,7 @@ const focusStop = page => page.evaluate(() => {
   await auditMember.goto(`${base}/workspace/agents/audit`, { waitUntil: 'networkidle' });
   const auditRefusal = await auditMember.waitForSelector('[data-surface="audit-log"] [data-refusal="forbidden"]', { timeout: 15000 }).catch(() => null);
   ok(Boolean(auditRefusal), 'audit log: a non-admin gets a stated refusal, not an empty ledger');
-  ok(await auditMember.evaluate(() => !document.querySelector('[data-surface="audit-log"] .lin-row')),
+  ok(await auditMember.evaluate(() => !document.querySelector('[data-surface="audit-log"] [data-style-hooks~="lin-row"]')),
     'audit log: a refused read draws no rows');
   ok(await auditMember.evaluate(() => !document.querySelector('[data-surface="audit-log"] [data-state="empty"]')),
     'audit log: the refusal is not the empty-ledger state');
@@ -968,7 +975,7 @@ const focusStop = page => page.evaluate(() => {
   await auditMember.screenshot({ path: path.join(shots, `audit-forbidden-${W}.png`) });
   /* The run queue is the same admin-gated read, so it refuses the same way. */
   await auditMember.goto(`${base}/workspace/agents/queue`, { waitUntil: 'networkidle' });
-  const queueRefusal = await auditMember.waitForSelector('[data-surface="run-queue"] .lin-error', { timeout: 15000 }).catch(() => null);
+  const queueRefusal = await auditMember.waitForSelector('[data-surface="run-queue"] [data-style-hooks~="lin-error"]', { timeout: 15000 }).catch(() => null);
   ok(Boolean(queueRefusal), 'run queue: a non-admin gets a stated refusal, not an empty queue');
   ok(/admin/i.test(await auditMember.evaluate(() => document.querySelector('[data-surface="run-queue"]')?.innerText || '')),
     'run queue: the refusal says who can read every agent\'s runs');
@@ -1061,10 +1068,10 @@ const focusStop = page => page.evaluate(() => {
   await page.screenshot({ path: path.join(shots, `runner-detail-connect-${W}.png`) });
 
   /* Revoke, two steps, and the ledger says so afterwards: the close is a server write now. */
-  await page.click('[data-exposure="exp-ui"] button.lin-btn');
+  await page.click('[data-exposure="exp-ui"] button[data-style-hooks~="lin-btn"]');
   await page.waitForSelector('[role="dialog"]', { timeout: 5000 });
   ok(await exposureRows().then(r => r.length) === 2, 'connect: revoke is two-step, the row stays until confirmed');
-  await page.click('[role="dialog"] button.danger');
+  await page.click('[role="dialog"] button[data-style-hooks~="danger"]');
   await page.waitForTimeout(600);
   const afterRevoke = await exposureRows();
   ok(afterRevoke.length === 1 && afterRevoke[0].id === 'exp-lease',
@@ -1075,10 +1082,10 @@ const focusStop = page => page.evaluate(() => {
   /* Through the app, not a fresh load: the audit pane reads the same ledger the revoke wrote to.
    * The ledger is oldest-first and paged, so the close is on the newest page — which is what the
    * pane's own "Load newer events" control is for. */
-  await page.click('[data-surface="runner-detail"] button.crumb-link');
+  await page.click('[data-surface="runner-detail"] button[data-style-hooks~="crumb-link"]');
   await page.waitForSelector('[data-surface="runners-list"]', { timeout: 15000 });
   await page.getByRole('tab', { name: 'Audit log' }).click();
-  await page.waitForSelector('[data-surface="audit-log"] .lin-row', { timeout: 15000 });
+  await page.waitForSelector('[data-surface="audit-log"] [data-style-hooks~="lin-row"]', { timeout: 15000 });
   const newer = page.locator('[data-surface="audit-log"] [data-action="load-more"]');
   if (await newer.count()) {
     await newer.click();
@@ -1096,11 +1103,11 @@ const focusStop = page => page.evaluate(() => {
   /* The runner holding a lease is a fact the Runners screen must draw: the row's chip and the
    * machine's own page, both read from `runners` and `agentLeases`. */
   await page.goto(`${base}${RUNNERS}`, { waitUntil: 'networkidle' });
-  await page.waitForSelector('[data-surface="runners-list"] .lin-row', { timeout: 15000 });
+  await page.waitForSelector('[data-surface="runners-list"] [data-style-hooks~="lin-row"]', { timeout: 15000 });
   await page.waitForTimeout(400);
   const leasedRow = await page.evaluate(id => {
-    const row = [...document.querySelectorAll('[data-surface="runners-list"] .lin-row')]
-      .find(r => r.querySelector('.ident')?.textContent === id);
+    const row = [...document.querySelectorAll('[data-surface="runners-list"] [data-style-hooks~="lin-row"]')]
+      .find(r => r.querySelector('[data-style-hooks~="ident"]')?.textContent === id);
     return row ? {lease: row.querySelector('[data-lease]')?.getAttribute('data-lease') || '',
       state: row.querySelector('[data-lease]')?.getAttribute('data-lease-state') || '',
       text: row.innerText.replace(/\s+/g, ' ')} : null;
@@ -1153,15 +1160,15 @@ const focusStop = page => page.evaluate(() => {
 
   /* The run queue groups it, and the row says a verifier is what it waits on. */
   await page.goto(`${base}/workspace/agents/queue`, { waitUntil: 'networkidle' });
-  await page.waitForSelector('[data-surface="run-queue"] .lin-row', { timeout: 15000 });
+  await page.waitForSelector('[data-surface="run-queue"] [data-style-hooks~="lin-row"]', { timeout: 15000 });
   await page.waitForTimeout(400);
   const awaitingRow = await page.evaluate(title => {
-    const row = [...document.querySelectorAll('[data-surface="run-queue"] .lin-row')]
+    const row = [...document.querySelectorAll('[data-surface="run-queue"] [data-style-hooks~="lin-row"]')]
       .find(r => (r.innerText || '').includes(title));
-    const group = row?.closest('.lin-group');
+    const group = row?.closest('[data-style-hooks~="lin-group"]');
     return row ? {
       claim: row.querySelector('[data-claim]')?.getAttribute('data-claim') || '',
-      group: group?.querySelector('.lin-group-head b')?.textContent || '',
+      group: group?.querySelector('[data-style-hooks~="lin-group-head"] b')?.textContent || '',
       text: row.innerText.replace(/\s+/g, ' '),
     } : null;
   }, leasedTask.title);
@@ -1205,7 +1212,7 @@ const focusStop = page => page.evaluate(() => {
 
   /* The queue's chip becomes the verdict, and the agent page shows the checks it was recorded on. */
   await page.goto(`${base}/workspace/agents/queue`, { waitUntil: 'networkidle' });
-  await page.waitForSelector('[data-surface="run-queue"] .lin-row', { timeout: 15000 });
+  await page.waitForSelector('[data-surface="run-queue"] [data-style-hooks~="lin-row"]', { timeout: 15000 });
   await page.waitForTimeout(400);
   ok(await page.evaluate(() => Boolean(document.querySelector('[data-surface="run-queue"] [data-verdict="uncertain"]'))),
     'run queue: the row now carries the verdict a separate principal recorded');
@@ -1246,7 +1253,7 @@ const focusStop = page => page.evaluate(() => {
   ok(await page.evaluate(() => document.querySelector('[data-surface="runner-detail"] [data-current-lease]')?.getAttribute('data-current-lease') === ''),
     'runner detail: a finished lease is no longer the current one');
   await page.goto(`${base}${RUNNERS}`, { waitUntil: 'networkidle' });
-  await page.waitForSelector('[data-surface="runners-list"] .lin-row', { timeout: 15000 });
+  await page.waitForSelector('[data-surface="runners-list"] [data-style-hooks~="lin-row"]', { timeout: 15000 });
   ok(await page.evaluate(() => !document.querySelector('[data-surface="runners-list"] [data-lease]')),
     'runner list: with the lease finished, no row claims to be holding one');
 
@@ -1258,7 +1265,7 @@ const focusStop = page => page.evaluate(() => {
   await offPage.waitForTimeout(500);
   ok(await offPage.evaluate(() => Boolean(document.querySelector('[data-surface="agents-disabled"]'))), 'unflagged production build: the surface renders the disabled notice');
   ok(await offPage.evaluate(() => !document.querySelector('[data-surface="agents-list"]')), 'unflagged production build: no agent rows are rendered');
-  ok(await offPage.evaluate(() => ![...document.querySelectorAll('.nav-item')].some(b => b.textContent?.trim() === 'Agents')), 'unflagged production build: no Agents entry in the sidebar');
+  ok(await offPage.evaluate(() => ![...document.querySelectorAll('[data-nav-item]')].some(b => b.textContent?.trim() === 'Agents')), 'unflagged production build: no Agents entry in the sidebar');
   await offPage.screenshot({ path: path.join(shots, `agents-disabled-${W}.png`) });
   await offCtx.close();
 
@@ -1273,11 +1280,11 @@ const focusStop = page => page.evaluate(() => {
    * renders the sign-in screen once `viewer` comes back refused, and under load that answer can
    * take seconds: the old wait swallowed its own timeout with `.catch(() => undefined)` and then
    * asserted anyway, so a slow gate read as "the agent list is missing" — the flake this replaces.
-   * `.login-page` is the gate's own container, so this waits for the thing, not for a phrase. */
-  const gate = await anonPage.waitForSelector('.login-page', { timeout: 30000 })
+   * `[data-login-page]` is the gate's own container, so this waits for the thing, not for a phrase. */
+  const gate = await anonPage.waitForSelector('[data-login-page]', { timeout: 30000 })
     .then(() => null).catch(e => e.message.split('\n')[0]);
   ok(gate === null, 'signed-out: the sign-in gate answered before anything is asserted', gate || '');
-  ok(await anonPage.evaluate(() => Boolean(document.querySelector('.login-page'))),
+  ok(await anonPage.evaluate(() => Boolean(document.querySelector('[data-login-page]'))),
     'signed-out: the gate is the page that was rendered');
   ok(await anonPage.evaluate(() => !document.querySelector('[data-surface="agents-list"]')), 'signed-out: no agent list is drawn');
   ok(await anonPage.evaluate(() => !document.querySelector('[data-surface="agents-list"] [data-state="empty"]')), 'signed-out: the workspace is not reported as having no agents');

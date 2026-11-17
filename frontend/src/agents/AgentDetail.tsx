@@ -90,7 +90,10 @@ function PolicyField({
   onSave: (next: string) => void;
 }) {
   return (
-    <div className="relative flex items-center gap-2.5 min-h-8.5 text-[13px]">
+    <div
+      className="relative flex items-center gap-2.5 min-h-8.5 text-[13px]"
+      data-style-hooks="lin-prop"
+    >
       <span className="flex flex-none items-center gap-2 text-muted w-24">
         {icon}
         {label}
@@ -362,9 +365,13 @@ export function AgentDetailPage({
     <section
       className="flex flex-col min-w-0 h-full bg-panel"
       data-surface="agent-detail"
+      data-style-hooks="lin-page"
       aria-label={`${agent.key}: ${agent.name}`}
     >
-      <header className="flex flex-none items-center border-b border-line gap-2 min-h-12.25 pt-0 pr-5 pb-0 pl-5 border-b-line shell-phone:flex-wrap shell-phone:gap-y-1">
+      <header
+        className="flex flex-none items-center border-b border-line gap-2 min-h-12.25 pt-0 pr-5 pb-0 pl-5 border-b-line shell-phone:flex-wrap shell-phone:gap-y-1"
+        data-style-hooks="lin-head"
+      >
         <nav
           className="flex flex-1 items-center gap-1.75 text-[13px] text-muted min-w-0 shell-phone:min-w-0 shell-phone:flex-wrap shell-phone:gap-y-0.5"
           aria-label="Breadcrumb"
@@ -404,7 +411,10 @@ export function AgentDetailPage({
           </IconBtn>
         </div>
       </header>
-      <div className="flex flex-none items-center border-b border-line justify-end gap-1.5 pt-2 pr-5 pb-2 pl-5 border-b-line">
+      <div
+        className="flex flex-none items-center border-b border-line justify-end gap-1.5 pt-2 pr-5 pb-2 pl-5 border-b-line"
+        data-style-hooks="lin-toolbar"
+      >
         <Tip label={copied ? "Copied" : `Copy ${agent.key}`}>
           <span>
             <IconBtn
@@ -426,12 +436,21 @@ export function AgentDetailPage({
         </Tip>
       </div>
 
-      <div className="flex flex-1 flex-col lg:flex-row min-h-0 [@media_(max-width:900px)]:flex-col">
-        <main className="flex-1 overflow-y-auto lg:max-w-4xl lg:px-10 lg:pt-6 lg:pb-20 min-w-0 pt-6.5 pr-10 pb-20 pl-10 max-w-205 [@media_(max-width:900px)]:max-w-none [@media_(max-width:900px)]:pt-5 [@media_(max-width:900px)]:pr-5 [@media_(max-width:900px)]:pb-5 [@media_(max-width:900px)]:pl-5">
+      <div
+        className="flex flex-1 flex-col lg:flex-row min-h-0 [@media_(max-width:900px)]:flex-col"
+        data-style-hooks="lin-detail"
+      >
+        <main
+          className="flex-1 overflow-y-auto min-w-0 pt-6.5 pr-10 pb-20 pl-10 max-w-205 [@media_(max-width:900px)]:max-w-none [@media_(max-width:900px)]:pt-5 [@media_(max-width:900px)]:pr-5 [@media_(max-width:900px)]:pb-5 [@media_(max-width:900px)]:pl-5"
+          data-style-hooks="lin-detail-main"
+        >
           <h1 className="overflow-hidden border-0 focus:outline-none flex items-center w-full bg-transparent text-foreground text-[21px] font-[650] tracking-[-.015em] leading-[1.3] pt-0 pr-0 pb-0 pl-0 mt-0 mr-0 mb-3.5 ml-0 resize-none font-[inherit] focus:[outline:none] gap-2.5">
             {statusGlyph(agent.status)} {agent.name}
           </h1>
-          <p className="relative wrap-break-word text-[14px] leading-[1.6] text-foreground [word-break:break-word] mt-0 mr-0 mb-2 ml-0 min-h-6">
+          <p
+            className="relative wrap-break-word text-[14px] leading-[1.6] text-foreground [word-break:break-word] mt-0 mr-0 mb-2 ml-0 min-h-6"
+            data-style-hooks="lin-detail-desc"
+          >
             {status.name} · {agent.model || "no model set"} · {caps} · {running}{" "}
             running ·{" "}
             {agent.monthlyBudgetCredits === null
@@ -443,6 +462,7 @@ export function AgentDetailPage({
 
           <section
             className="border-t border-line border-t-line pt-4 mt-1.5"
+            data-style-hooks="lin-activity"
             aria-label="Session activity"
           >
             <header className="flex items-center mb-3">
@@ -452,6 +472,7 @@ export function AgentDetailPage({
                 <button
                   type="button"
                   className="inline-flex items-center border-0 hover:bg-subtle hover:text-foreground shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 [background:none] text-muted text-[12px] font-medium gap-1.75 pt-1.25 pr-2 pb-1.25 pl-2 rounded-md"
+                  data-style-hooks="lin-subscribe-btn"
                   disabled={busy === "stop"}
                   onClick={() => void stop(active)}
                 >
@@ -471,6 +492,7 @@ export function AgentDetailPage({
               <div
                 key={e.id}
                 className="flex items-start gap-2.5 text-[13px] text-muted pt-1.75 pr-0 pb-1.75 pl-0"
+                data-style-hooks="lin-event"
                 data-kind={e.kind}
               >
                 <Avatar name={agent.name} size={18} />
@@ -663,6 +685,7 @@ export function AgentDetailPage({
 
         <aside
           className="flex-none overflow-y-auto border-t border-line lg:w-72 lg:border-t-0 lg:border-l w-72.5 border-l border-l-line pt-5.5 pr-5 pb-15 pl-5 [@media_(max-width:1100px)]:w-62.5 [@media_(max-width:900px)]:w-auto [@media_(max-width:900px)]:border-l-0 [@media_(max-width:900px)]:border-t [@media_(max-width:900px)]:border-t-line"
+          data-style-hooks="lin-props"
           aria-label="Agent settings"
         >
           <h3 className="text-[12px] font-semibold text-muted mt-0 mr-0 mb-2.5 ml-0">

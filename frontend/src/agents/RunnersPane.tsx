@@ -270,6 +270,7 @@ function EnrollPanel({ onClose }: { onClose: () => void }) {
           <button
             type="button"
             className="inline-flex items-center rounded-[7px] border border-line bg-accent px-3 py-1.5 text-[13px] text-foreground disabled:opacity-50"
+            data-style-hooks="lin-btn primary"
             disabled={!name.trim() || busy === "create"}
             onClick={() => void create()}
           >
@@ -419,6 +420,7 @@ function EnrollPanel({ onClose }: { onClose: () => void }) {
                   <button
                     type="button"
                     className="inline-flex items-center rounded-[7px] border border-line bg-panel px-3 py-1.5 text-[13px] text-foreground hover:bg-subtle disabled:opacity-50"
+                    data-style-hooks="lin-btn"
                     disabled={busy === enrollment.id}
                     onClick={() => void revoke(enrollment)}
                   >
@@ -602,7 +604,7 @@ export function RunnersPane({
               <button
                 key={l}
                 type="button"
-                className="inline-flex items-center border border-line hover:text-foreground hover:border-accent aria-pressed:bg-subtle aria-pressed:text-foreground aria-pressed:font-semibold gap-1.5 pt-1.25 pr-2.75 pb-1.25 pl-2.75 border-solid rounded-[99px] bg-panel text-[12px] text-muted font-medium aria-pressed:border-line shell-phone:min-w-11! shell-phone:min-h-11!"
+                className="inline-flex items-center border border-line hover:text-foreground hover:border-accent aria-pressed:bg-subtle aria-pressed:text-foreground aria-pressed:font-semibold gap-1.5 pt-1.25 pr-2.75 pb-1.25 pl-2.75 border-solid rounded-[99px] bg-panel text-[12px] text-muted font-medium aria-pressed:border-line"
                 aria-pressed={on}
                 onClick={() =>
                   setLabels((cur) =>
@@ -616,7 +618,7 @@ export function RunnersPane({
           })}
           <button
             type="button"
-            className="inline-flex items-center gap-1.5 rounded-[7px] border border-line bg-panel px-3 py-1.5 text-[13px] hover:bg-subtle shell-phone:min-h-11"
+            className="inline-flex items-center gap-1.5 rounded-[7px] border border-line bg-panel px-3 py-1.5 text-[13px] hover:bg-subtle whitespace-nowrap"
             data-action="enroll-runner"
             aria-expanded={enrollOpen}
             onClick={() => setEnrollOpen((v) => !v)}
@@ -700,16 +702,24 @@ export function RunnersPane({
         </p>
       )}
       {!loading && !error && (
-        <div className="pt-1.5 pr-3 pb-10 pl-3">
+        <div className="pt-1.5 pr-3 pb-10 pl-3" data-style-hooks="lin-list">
           {groups.map((g) => {
             const isCollapsed = collapsedSet.has(g.key);
             return (
-              <section key={g.key} className="mt-2 mr-2 mb-1 ml-2">
+              <section
+                key={g.key}
+                className="mt-2 mr-2 mb-1 ml-2"
+                data-style-hooks="lin-group"
+              >
                 {g.name && (
-                  <header className="flex items-center gap-2 bg-subtle rounded-[7px] min-h-9 pt-0 pr-2.5 pb-0 pl-2.5 text-[13px]">
+                  <header
+                    className="flex items-center gap-2 bg-subtle rounded-[7px] min-h-9 pt-0 pr-2.5 pb-0 pl-2.5 text-[13px]"
+                    data-style-hooks="lin-group-head"
+                  >
                     <button
                       type="button"
-                      className="grid place-items-center border-0 hover:text-foreground shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 [background:none] text-muted pt-1 pr-1 pb-1 pl-1 rounded-sm"
+                      className="grid place-items-center border-0 hover:text-foreground [background:none] text-muted pt-1 pr-1 pb-1 pl-1 rounded-sm"
+                      data-style-hooks="chev"
                       aria-expanded={!isCollapsed}
                       aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${g.name}`}
                       onClick={() =>
@@ -897,6 +907,7 @@ function ExposureRow({
         <button
           type="button"
           className="inline-flex items-center border border-line hover:bg-subtle disabled:cursor-default disabled:opacity-50 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 gap-2 border-solid bg-panel text-foreground rounded-[7px] pt-2 pr-3.5 pb-2 pl-3.5 text-[13px] font-[550] shell-phone:min-w-11! shell-phone:min-h-11!"
+          data-style-hooks="lin-btn"
           disabled={!connectOn || busy}
           title={
             connectOn
@@ -1105,11 +1116,15 @@ export function RunnerDetailPage({
     <section
       className="flex flex-col min-w-0 h-full bg-panel"
       data-surface="runner-detail"
+      data-style-hooks="lin-page"
       data-connect={connectOn ? "on" : "off"}
       data-runner-status={runner.status}
       aria-label={`${runner.id}: ${runner.name}`}
     >
-      <header className="flex flex-none items-center border-b border-line gap-2 min-h-12.25 pt-0 pr-5 pb-0 pl-5 border-b-line shell-phone:flex-wrap shell-phone:gap-y-1">
+      <header
+        className="flex flex-none items-center border-b border-line gap-2 min-h-12.25 pt-0 pr-5 pb-0 pl-5 border-b-line shell-phone:flex-wrap shell-phone:gap-y-1"
+        data-style-hooks="lin-head"
+      >
         <nav
           className="flex flex-1 items-center gap-1.75 text-[13px] text-muted min-w-0 shell-phone:min-w-0 shell-phone:flex-wrap shell-phone:gap-y-0.5"
           aria-label="Breadcrumb"
@@ -1117,6 +1132,7 @@ export function RunnerDetailPage({
           <button
             type="button"
             className="inline-flex cursor-pointer items-center whitespace-nowrap border-0 hover:text-foreground shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 [background:none] pt-0 pr-0 pb-0 pl-0 text-muted [font:inherit] gap-1.5 shell-phone:min-w-11! shell-phone:min-h-11! shell-phone:whitespace-normal shell-phone:max-w-full"
+            data-style-hooks="crumb-link"
             onClick={onBack}
           >
             ← Runners
@@ -1130,11 +1146,15 @@ export function RunnerDetailPage({
           </span>
         </nav>
       </header>
-      <div className="flex flex-none items-center border-b border-line justify-end gap-1.5 pt-2 pr-5 pb-2 pl-5 border-b-line">
+      <div
+        className="flex flex-none items-center border-b border-line justify-end gap-1.5 pt-2 pr-5 pb-2 pl-5 border-b-line"
+        data-style-hooks="lin-toolbar"
+      >
         {!runner.revoked && runner.enabled && (
           <button
             type="button"
             className="rounded-[7px] border border-line px-3 py-1.5 text-[13px] hover:bg-subtle disabled:opacity-50"
+            data-style-hooks="lin-btn"
             data-action="revoke-runner"
             disabled={revoking}
             onClick={() => void revokeRunner(runner)}
@@ -1163,8 +1183,14 @@ export function RunnerDetailPage({
         </Tip>
       </div>
 
-      <div className="flex flex-1 flex-col lg:flex-row min-h-0 [@media_(max-width:900px)]:flex-col">
-        <main className="flex-1 overflow-y-auto lg:max-w-4xl lg:px-10 lg:pt-6 lg:pb-20 min-w-0 pt-6.5 pr-10 pb-20 pl-10 max-w-205 [@media_(max-width:900px)]:max-w-none [@media_(max-width:900px)]:pt-5 [@media_(max-width:900px)]:pr-5 [@media_(max-width:900px)]:pb-5 [@media_(max-width:900px)]:pl-5">
+      <div
+        className="flex flex-1 flex-col lg:flex-row min-h-0 [@media_(max-width:900px)]:flex-col"
+        data-style-hooks="lin-detail"
+      >
+        <main
+          className="flex-1 overflow-y-auto min-w-0 pt-6.5 pr-10 pb-20 pl-10 max-w-205 [@media_(max-width:900px)]:max-w-none [@media_(max-width:900px)]:pt-5 [@media_(max-width:900px)]:pr-5 [@media_(max-width:900px)]:pb-5 [@media_(max-width:900px)]:pl-5"
+          data-style-hooks="lin-detail-main"
+        >
           <h1 className="overflow-hidden border-0 focus:outline-none flex items-center w-full bg-transparent text-foreground text-[21px] font-[650] tracking-[-.015em] leading-[1.3] pt-0 pr-0 pb-0 pl-0 mt-0 mr-0 mb-3.5 ml-0 resize-none font-[inherit] focus:[outline:none] gap-2.5">
             <GraphStatusIcon
               state={{ name: tone.name, type: tone.type, color: tone.color }}
@@ -1284,6 +1310,7 @@ export function RunnerDetailPage({
 
         <aside
           className="flex-none overflow-y-auto border-t border-line lg:w-72 lg:border-t-0 lg:border-l w-72.5 border-l border-l-line pt-5.5 pr-5 pb-15 pl-5 [@media_(max-width:1100px)]:w-62.5 [@media_(max-width:900px)]:w-auto [@media_(max-width:900px)]:border-l-0 [@media_(max-width:900px)]:border-t [@media_(max-width:900px)]:border-t-line"
+          data-style-hooks="lin-props"
           aria-label="Runner details"
         >
           <h3 className="text-[12px] font-semibold text-muted mt-0 mr-0 mb-2.5 ml-0">

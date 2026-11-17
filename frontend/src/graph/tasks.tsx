@@ -3238,7 +3238,7 @@ export function GraphTeamIssues({
     >
       <header
         className={styleClasses(
-          "flex items-center gap-2 min-h-12.25 py-0 px-5 border-b border-b-line flex-none",
+          "flex items-center gap-2 min-h-12.25 py-0 px-5 border-b border-b-line flex-none shell-phone:flex-wrap shell-phone:gap-y-1",
         )}
         data-style-hooks={styleHooks(
           "lin-head flex items-center gap-[8px] min-h-[49px] py-0 px-[20px] border-b border-b-line flex-none",
@@ -3246,7 +3246,7 @@ export function GraphTeamIssues({
       >
         <nav
           className={styleClasses(
-            "flex items-center gap-1.75 text-[13px] text-muted min-w-0 flex-1 [&_a]:[background:none] [&_a]:border-0 [&_a]:p-0 [&_a]:text-muted [&_a]:[font:inherit] [&_a]:cursor-pointer [&_a]:inline-flex [&_a]:items-center [&_a]:gap-1.5 [&_a]:whitespace-nowrap [&_a:hover]:text-foreground",
+            "flex items-center gap-1.75 text-[13px] text-muted min-w-0 flex-1 shell-phone:flex-wrap shell-phone:gap-y-0.5 [&_a]:[background:none] [&_a]:border-0 [&_a]:p-0 [&_a]:text-muted [&_a]:[font:inherit] [&_a]:cursor-pointer [&_a]:inline-flex [&_a]:items-center [&_a]:gap-1.5 [&_a]:whitespace-nowrap [&_a:hover]:text-foreground",
           )}
           data-style-hooks={styleHooks(
             "lin-crumb flex items-center gap-[7px] text-[13px] text-muted min-w-0 flex-1 [&_a]:[background:none] [&_a]:border-0 [&_a]:p-0 [&_a]:text-muted [&_a]:[font:inherit] [&_a]:cursor-pointer [&_a]:inline-flex [&_a]:items-center [&_a]:gap-[6px] [&_a]:whitespace-nowrap [&_a:hover]:text-foreground",
@@ -5143,7 +5143,7 @@ export function GraphIssueDetail({
     >
       <header
         className={styleClasses(
-          "flex items-center gap-2 min-h-12.25 py-0 px-5 border-b border-b-line flex-none",
+          "flex items-center gap-2 min-h-12.25 py-0 px-5 border-b border-b-line flex-none shell-phone:flex-wrap shell-phone:gap-y-1",
         )}
         data-style-hooks={styleHooks(
           "lin-head flex items-center gap-[8px] min-h-[49px] py-0 px-[20px] border-b border-b-line flex-none",
@@ -5151,7 +5151,7 @@ export function GraphIssueDetail({
       >
         <nav
           className={styleClasses(
-            "flex items-center gap-1.75 text-[13px] text-muted min-w-0 flex-1 [&_a]:[background:none] [&_a]:border-0 [&_a]:p-0 [&_a]:text-muted [&_a]:[font:inherit] [&_a]:cursor-pointer [&_a]:inline-flex [&_a]:items-center [&_a]:gap-1.5 [&_a]:whitespace-nowrap [&_a:hover]:text-foreground",
+            "flex items-center gap-1.75 text-[13px] text-muted min-w-0 flex-1 shell-phone:flex-wrap shell-phone:gap-y-0.5 [&_a]:[background:none] [&_a]:border-0 [&_a]:p-0 [&_a]:text-muted [&_a]:[font:inherit] [&_a]:cursor-pointer [&_a]:inline-flex [&_a]:items-center [&_a]:gap-1.5 [&_a]:whitespace-nowrap [&_a:hover]:text-foreground",
           )}
           data-style-hooks={styleHooks(
             "lin-crumb flex items-center gap-[7px] text-[13px] text-muted min-w-0 flex-1 [&_a]:[background:none] [&_a]:border-0 [&_a]:p-0 [&_a]:text-muted [&_a]:[font:inherit] [&_a]:cursor-pointer [&_a]:inline-flex [&_a]:items-center [&_a]:gap-[6px] [&_a]:whitespace-nowrap [&_a:hover]:text-foreground",

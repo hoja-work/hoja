@@ -107,6 +107,7 @@ function AgentRow({
   return (
     <div
       className="group relative flex items-center border-b border-line hover:bg-subtle gap-2.25 min-h-10.5 pt-1.25 pr-2.5 pb-1.25 pl-2.5 border-b-line text-[13px]"
+      data-style-hooks="lin-row"
       data-agent={agent.id}
       data-archived={agent.archivedAt ? "true" : undefined}
     >
@@ -137,19 +138,26 @@ function AgentRow({
         </span>
       )}
       {props.id && (
-        <span className="whitespace-nowrap font-semibold text-foreground">
+        <span
+          className="whitespace-nowrap font-semibold text-foreground"
+          data-style-hooks="ident"
+        >
           {agent.key}
         </span>
       )}
       <button
         type="button"
-        className="flex-1 cursor-pointer truncate border-0 text-left shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-foreground [background:none] [font:inherit] pt-0 pr-0 pb-0 pl-0"
+        className="flex-1 cursor-pointer truncate border-0 text-left min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-foreground [background:none] [font:inherit] pt-0 pr-0 pb-0 pl-0"
         onClick={() => onOpen(agent)}
         title={agent.name}
+        data-style-hooks="title"
       >
         {agent.name}
       </button>
-      <span className="flex flex-none items-center gap-2 ml-auto">
+      <span
+        className="flex flex-none items-center gap-2 ml-auto"
+        data-style-hooks="meta"
+      >
         {/* Narrow screens keep the row readable instead of clipping the identifier: the extra
             columns return as space allows, widest last. */}
         {props.model && (
@@ -705,16 +713,24 @@ export function AgentsPane({
         </div>
       )}
       {!loading && !refused && !nothingYet && (
-        <div className="pt-1.5 pr-3 pb-10 pl-3">
+        <div className="pt-1.5 pr-3 pb-10 pl-3" data-style-hooks="lin-list">
           {groups.map((g) => {
             const isCollapsed = collapsedSet.has(g.key);
             return (
-              <section key={g.key} className="mt-2 mr-2 mb-1 ml-2">
+              <section
+                key={g.key}
+                className="mt-2 mr-2 mb-1 ml-2"
+                data-style-hooks="lin-group"
+              >
                 {g.name && (
-                  <header className="flex items-center gap-2 bg-subtle rounded-[7px] min-h-9 pt-0 pr-2.5 pb-0 pl-2.5 text-[13px]">
+                  <header
+                    className="flex items-center gap-2 bg-subtle rounded-[7px] min-h-9 pt-0 pr-2.5 pb-0 pl-2.5 text-[13px]"
+                    data-style-hooks="lin-group-head"
+                  >
                     <button
                       type="button"
-                      className="grid place-items-center border-0 hover:text-foreground shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 [background:none] text-muted pt-1 pr-1 pb-1 pl-1 rounded-sm"
+                      className="grid place-items-center border-0 hover:text-foreground [background:none] text-muted pt-1 pr-1 pb-1 pl-1 rounded-sm"
+                      data-style-hooks="chev"
                       aria-expanded={!isCollapsed}
                       aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${g.name}`}
                       onClick={() =>

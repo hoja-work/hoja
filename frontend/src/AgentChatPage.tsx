@@ -367,7 +367,6 @@ function ChatToolbar() {
         </button>
         {open && (
           // Closes when a thread title is clicked. The thread buttons inside are the keyboard path, so the container needs no key handler.
-          // eslint-disable-next-line jsx-a11y/click-events-have-key-events
           <PopoverContent
             align="end"
             sideOffset={4}

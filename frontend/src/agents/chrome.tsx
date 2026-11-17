@@ -50,9 +50,13 @@ export function AgentsListShell({
     <section
       className="flex flex-col min-w-0 h-full bg-panel"
       data-surface={surface}
+      data-style-hooks="lin-page"
       aria-label={ariaLabel}
     >
-      <header className="flex flex-none items-center border-b border-line gap-2 min-h-12.25 pt-0 pr-5 pb-0 pl-5 border-b-line shell-phone:flex-wrap shell-phone:gap-y-1">
+      <header
+        className="flex flex-none items-center border-b border-line gap-2 min-h-12.25 pt-0 pr-5 pb-0 pl-5 border-b-line shell-phone:flex-wrap shell-phone:gap-y-1"
+        data-style-hooks="lin-head"
+      >
         <nav
           className="flex flex-1 items-center gap-1.75 text-[13px] text-muted min-w-0 shell-phone:min-w-0 shell-phone:flex-wrap shell-phone:gap-y-0.5"
           aria-label="Breadcrumb"
@@ -64,7 +68,10 @@ export function AgentsListShell({
           </span>
         </nav>
       </header>
-      <div className="flex flex-none flex-wrap items-center gap-2.5 pt-2.5 pr-5 pb-0 pl-5">
+      <div
+        className="flex flex-none flex-wrap items-center gap-2.5 pt-2.5 pr-5 pb-0 pl-5"
+        data-style-hooks="lin-viewbar"
+      >
         <div
           className="flex items-center gap-1"
           role="tablist"
@@ -84,13 +91,17 @@ export function AgentsListShell({
           ))}
         </div>
       </div>
-      <div className="flex flex-none items-center border-b border-line gap-1.5 pt-2 pr-5 pb-2 pl-5 border-b-line">
+      <div
+        className="flex flex-none items-center border-b border-line gap-1.5 pt-2 pr-5 pb-2 pl-5 border-b-line"
+        data-style-hooks="lin-toolbar"
+      >
         {toolbar}
       </div>
       {chips ? (
         <div
           className="flex flex-none flex-wrap items-center border-b border-line gap-1.5 pt-2 pr-5 pb-2 pl-5 border-b-line"
           aria-label="Active filters"
+          data-style-hooks="lin-filterbar"
         >
           {chips}
         </div>
@@ -99,6 +110,7 @@ export function AgentsListShell({
         className={
           cx("flex-1 overflow-y-auto") + " flex-1 min-h-0 overflow-y-auto"
         }
+        data-style-hooks="lin-scroll"
       >
         {children}
       </div>

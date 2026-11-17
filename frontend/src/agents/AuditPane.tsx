@@ -79,6 +79,7 @@ function AuditRow({
         ) +
         " flex items-center gap-2.25 min-h-10.5 pt-1.25 pr-2.5 pb-1.25 pl-2.5 border-b border-b-line text-[13px] relative hover:bg-subtle"
       }
+      data-style-hooks="lin-row"
       data-action={event.action}
       data-target={event.target}
     >
@@ -88,7 +89,10 @@ function AuditRow({
       ) : (
         <span />
       )}
-      <span className="whitespace-nowrap font-semibold text-foreground">
+      <span
+        className="whitespace-nowrap font-semibold text-foreground"
+        data-style-hooks="ident"
+      >
         {event.action}
       </span>
       {/* An audit row is a record, not a target: nothing opens from it, so it is not a button. */}
@@ -98,7 +102,10 @@ function AuditRow({
       >
         {event.detail || "No detail recorded"}
       </span>
-      <span className="flex flex-none items-center gap-2 ml-auto">
+      <span
+        className="flex flex-none items-center gap-2 ml-auto"
+        data-style-hooks="meta"
+      >
         {show.target && (
           <span className="hidden md:inline-flex">
             <span
@@ -400,6 +407,7 @@ export function AuditPane({
           className="text-center pt-15 pr-5 pb-15 pl-5 text-muted"
           data-state="error"
           data-refusal="forbidden"
+          data-style-hooks="lin-error"
           role="alert"
         >
           <h2 className="text-foreground text-base mt-3 mr-0 mb-1.5 ml-0">
@@ -421,11 +429,18 @@ export function AuditPane({
         </p>
       )}
       {!loading && !refused && !error && (
-        <div className="pt-1.5 pr-3 pb-10 pl-3">
+        <div className="pt-1.5 pr-3 pb-10 pl-3" data-style-hooks="lin-list">
           {groups.map((g) => (
-            <section key={g.key} className="mt-2 mr-2 mb-1 ml-2">
+            <section
+              key={g.key}
+              className="mt-2 mr-2 mb-1 ml-2"
+              data-style-hooks="lin-group"
+            >
               {g.name && (
-                <header className="flex items-center gap-2 bg-subtle rounded-md min-h-9 pt-0 pr-2.5 pb-0 pl-2.5 text-sm">
+                <header
+                  className="flex items-center gap-2 bg-subtle rounded-md min-h-9 pt-0 pr-2.5 pb-0 pl-2.5 text-sm"
+                  data-style-hooks="lin-group-head"
+                >
                   <b className="font-semibold">{g.name}</b>
                   <span className="text-muted font-medium text-xs">
                     {g.items.length}

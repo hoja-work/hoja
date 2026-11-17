@@ -385,12 +385,20 @@ def test_the_page_scripts_pass():
 
 def test_the_spa_routes_signup_to_the_page():
     main = (FRONTEND / "src" / "main.tsx").read_text(encoding="utf-8")
-    assert "import {SignupPage} from './signup/SignupPage'" in main
-    assert "location.pathname==='/signup'" in main, "the /signup route is not wired"
+    # The entrypoint is formatted by Prettier, so these are matched modulo
+    # whitespace, quote style and the parentheses around a returned element: the
+    # claim is that the route, the page import and their order exist, not that
+    # they are spaced one particular way.
+    imported = re.search(
+        r"import\s*\{\s*SignupPage\s*\}\s*from\s*['\"]\./signup/SignupPage['\"]", main,
+    )
+    assert imported, "SignupPage is not imported"
+    route = re.search(r"location\.pathname\s*===\s*['\"]/signup['\"]", main)
+    assert route, "the /signup route is not wired"
     # It must come before the auth gates, or an anonymous visitor is sent to /login.
-    route_at = main.index("location.pathname==='/signup'")
-    login_at = main.index("if(!token)return <Login")
-    assert route_at < login_at, "/signup is behind the login gate"
+    login = re.search(r"if\s*\(\s*!token\s*\)\s*return\s*\(?\s*<Login\b", main)
+    assert login, "the login gate is not found"
+    assert route.start() < login.start(), "/signup is behind the login gate"
 
 
 def test_the_page_is_accessible_by_construction():
@@ -411,9 +419,9 @@ def test_the_page_is_accessible_by_construction():
     assert "body.workspace" in page
     assert "window.location.replace" in page
     # The three modes are distinguished.
-    assert "mode === 'closed'" in page
+    assert re.search(r"""mode\s*===\s*['"]closed['"]""", page)
     assert "Sign-ups are invite-only" in page
-    assert "mode === 'invite'" in page
+    assert re.search(r"""mode\s*===\s*['"]invite['"]""", page)
     assert "Sign-up is unavailable" in page
 
 

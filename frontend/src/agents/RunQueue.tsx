@@ -240,22 +240,31 @@ export function RunQueue({
       {error && (
         <p
           className="border border-danger/40 mt-4 mr-6 mb-4 ml-6 pt-3 pr-4 pb-3 pl-4 border-solid border-[color-mix(in_srgb,var(--danger)_40%,var(--line))] rounded-lg text-danger text-[13px] bg-[color-mix(in_srgb,var(--danger)_6%,var(--panel))]"
+          data-style-hooks="lin-error"
           role="alert"
         >
           {error}
         </p>
       )}
       {!loading && !error && (
-        <div className="pt-1.5 pr-3 pb-10 pl-3">
+        <div className="pt-1.5 pr-3 pb-10 pl-3" data-style-hooks="lin-list">
           {groups.map((g) => {
             const isCollapsed = collapsedSet.has(g.key);
             const tone = SESSION_TYPE[g.key as SessionStatus];
             return (
-              <section key={g.key} className="mt-2 mr-2 mb-1 ml-2">
-                <header className="flex items-center gap-2 bg-subtle rounded-[7px] min-h-9 pt-0 pr-2.5 pb-0 pl-2.5 text-[13px]">
+              <section
+                key={g.key}
+                className="mt-2 mr-2 mb-1 ml-2"
+                data-style-hooks="lin-group"
+              >
+                <header
+                  className="flex items-center gap-2 bg-subtle rounded-[7px] min-h-9 pt-0 pr-2.5 pb-0 pl-2.5 text-[13px]"
+                  data-style-hooks="lin-group-head"
+                >
                   <button
                     type="button"
-                    className="grid place-items-center border-0 hover:text-foreground shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 [background:none] text-muted pt-1 pr-1 pb-1 pl-1 rounded-sm"
+                    className="grid place-items-center border-0 hover:text-foreground [background:none] text-muted pt-1 pr-1 pb-1 pl-1 rounded-sm"
+                    data-style-hooks="chev"
                     aria-expanded={!isCollapsed}
                     aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${g.name}`}
                     onClick={() =>
