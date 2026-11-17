@@ -2,6 +2,8 @@
 
 ## Core principles
 
+- After completing any task that modifies a `.tsx` file, run `npx prettier --write <modified-file-paths>` from `app/frontend` as the final step, passing only the files modified during that task (for example, `npx prettier --write src/main.tsx`). Do not format the whole codebase or unrelated files.
+
 - Prefer inline Tailwind utility classes in markup over writing styles in CSS stylesheets. Add or change stylesheet rules only when utilities cannot reasonably express the required styling.
 - Build responsive layouts that adapt naturally to the available space.
 - Prefer flex layouts for alignment and distribution. Center content with `flex justify-center`, adding `items-center` when vertical centering is needed.

@@ -11,10 +11,15 @@
  * "inside": the trigger, the panel, and any portal the panel renders into. A
  * press anywhere else, or Escape, dismisses.
  */
-import {useLayoutEffect, useRef, type ReactNode} from 'react';
+import { useLayoutEffect, useRef, type ReactNode } from "react";
+import {
+  Popover as UIPopover,
+  PopoverTrigger,
+  PopoverContent,
+} from "./components/ui/popover";
 
 /** A ref whose `current` is the element; `readonly` so a `RefObject<HTMLDivElement>` fits. */
-export type MenuElementRef = {readonly current: Element | null};
+export type MenuElementRef = { readonly current: Element | null };
 
 export type MenuDismissOptions = {
   /** Listeners are attached only while this is true. */
@@ -35,8 +40,13 @@ export type MenuDismissOptions = {
   onEscape?: (event: KeyboardEvent) => void;
 };
 
-function belongsToMenu(node: Node, within: readonly MenuElementRef[] | undefined, alsoWithin: ((node: Node) => boolean) | undefined): boolean {
-  if (within) for (const ref of within) if (ref.current?.contains(node)) return true;
+function belongsToMenu(
+  node: Node,
+  within: readonly MenuElementRef[] | undefined,
+  alsoWithin: ((node: Node) => boolean) | undefined,
+): boolean {
+  if (within)
+    for (const ref of within) if (ref.current?.contains(node)) return true;
   return Boolean(alsoWithin?.(node));
 }
 
@@ -58,7 +68,7 @@ export function useMenuDismiss(options: MenuDismissOptions): void {
     if (!options.open) return;
 
     const onPointerDown = (event: PointerEvent) => {
-      const {onDismiss, within, alsoWithin} = latest.current;
+      const { onDismiss, within, alsoWithin } = latest.current;
       const target = event.target;
       if (!(target instanceof Node)) {
         onDismiss();
@@ -68,17 +78,17 @@ export function useMenuDismiss(options: MenuDismissOptions): void {
       onDismiss();
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      const {onDismiss, onEscape} = latest.current;
+      if (event.key !== "Escape") return;
+      const { onDismiss, onEscape } = latest.current;
       if (onEscape) onEscape(event);
       else onDismiss();
     };
 
-    document.addEventListener('pointerdown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown, true);
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown, true);
     return () => {
-      document.removeEventListener('pointerdown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown, true);
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown, true);
     };
   }, [options.open]);
 }
@@ -89,13 +99,13 @@ type PopoverProps = {
   onOpenChange: (open: boolean) => void;
   panelClassName: string;
   panelId: string;
-  panelRole?: 'menu' | 'dialog' | 'listbox';
+  panelRole?: "menu" | "dialog" | "listbox";
   trigger: (open: boolean, toggle: () => void) => ReactNode;
   children: ReactNode;
 };
 
 /**
- * A trigger plus its panel, wired to `useMenuDismiss`.
+ * A compatibility adapter for the shared UI popover primitive.
  *
  * Use this for any menu, dropdown or inline panel: the trigger and panel share one
  * container, so a press on the trigger counts as inside and the panel dismisses on
@@ -111,18 +121,21 @@ export function Popover({
   trigger,
   children,
 }: PopoverProps) {
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  useMenuDismiss({open, onDismiss: () => onOpenChange(false), within: [rootRef]});
-
   return (
-    <div className={className} ref={rootRef}>
-      {trigger(open, () => onOpenChange(!open))}
-      {open && (
-        <div className={`popover-panel ${panelClassName}`} id={panelId} role={panelRole}>
+    <UIPopover open={open} onOpenChange={onOpenChange}>
+      <div className={className}>
+        <PopoverTrigger asChild>{trigger(open, () => {})}</PopoverTrigger>
+        <PopoverContent
+          align="start"
+          sideOffset={6}
+          data-popover-panel
+          className={`z-55 w-auto border border-solid border-line rounded-[10px] bg-panel p-1.5 shadow-(--shadow) ${panelClassName}`}
+          id={panelId}
+          role={panelRole}
+        >
           {children}
-        </div>
-      )}
-    </div>
+        </PopoverContent>
+      </div>
+    </UIPopover>
   );
 }

@@ -104,9 +104,9 @@ fi
 
 # Check exactly what will be committed, so unstaged fixes cannot mask slop in
 # the index and newly registered paths cannot bypass the repository policy.
-if ! python3 "$root/scripts/check_docs.py" --staged; then
+if ! python3 "$root/app/scripts/check_docs.py" --staged; then
     red "Commit refused: staged documentation failed the anti-slop policy."
-    yellow "Run: python3 scripts/check_docs.py --staged"
+    yellow "Run: python3 app/scripts/check_docs.py --staged"
     exit 1
 fi
 

@@ -1,319 +1,156 @@
 #!/usr/bin/env node
-/**
- * Design-token probe (HOJA-419).
- *
- * Three questions, each answered by something other than an opinion:
- *
- *  1. SOURCE — does tokens.css carry the measured numbers, and is styles.css free of a second
- *     copy of them? A literal length in a .reviews-* block for a value the design system owns
- *     fails here, because that is how the two copies drift.
- *  2. PARITY — does the refactor change rendering? The pre-refactor DOM captured from
- *     production (artifacts/reviews-dom-before.html) is loaded twice in a real browser: once
- *     with origin/main's stylesheet, once with the design layer. Every computed property of
- *     every element must match. This is a diff of ~50 elements x 41 properties, not a claim.
- *  3. LOAD-BEARING — do the tokens actually drive the DOM? A fixture of the primitives is
- *     measured, then --ds-row-height is mutated in the page and re-measured. If the row does
- *     not follow the token, the token is decoration.
- *
- *   node scripts/check-design-tokens.mjs              # all three
- *   node scripts/check-design-tokens.mjs --no-browser  # source checks only (no CDP on 9222)
- *   node scripts/check-design-tokens.mjs --self-test    # proves the probe fails when a token moves
+/** Tailwind rendering contract. Builds the CURRENT ReviewsShell and shared primitives
+ * through Vite's actual Tailwind plugin. CDP is required for the full check; a missing
+ * browser is an error, never a silently passing source-only test. Pixel measurements
+ * from the original stylesheet are the contract, independent of root font size.
  */
-import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import {readFileSync, writeFileSync, unlinkSync} from 'node:fs';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+const exec = promisify(execFile);
+import {dirname, join} from 'node:path';
+import {fileURLToPath, pathToFileURL} from 'node:url';
+const frontend = join(dirname(fileURLToPath(import.meta.url)), '..');
+const repo = join(frontend, '../..');
 
-const here = dirname(fileURLToPath(import.meta.url));
-const frontend = join(here, '..');
-const repo = join(frontend, '..', '..');
-const args = new Set(process.argv.slice(2));
-const browserEnabled = !args.has('--no-browser');
-const fail = [];
-const ok = (msg) => console.log('  ok  ' + msg);
-
-/* ------------------------------------------------------------------ source ---- */
-const read = (p) => readFileSync(p, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
-/* --tokens <path> lets the self-test run the same checks against a mutated copy. */
-const tokensArg = process.argv.indexOf('--tokens');
-const tokenPath = tokensArg === -1 ? join(frontend, 'src/design/tokens.css') : process.argv[tokensArg + 1];
-const designPath = join(frontend, 'src/design/design.css');
-const tokensCss = read(tokenPath);
-const designCss = read(designPath);
-const stylesCss = read(join(frontend, 'src/styles.css'));
-const tsx = readFileSync(join(frontend, 'src/main.tsx'), 'utf8');
-const tokens = {};
-for (const m of tokensCss.matchAll(/(--ds-[a-z0-9-]+)\s*:\s*([^;]+);/g)) tokens[m[1]] = m[2].trim();
-
-/** The measured numbers, each with the artifact field it came from. */
-const MEASURED = {
-  '--ds-ledger-width': ['482px', 'reviews-parity target .reviews-col rect.w'],
-  '--ds-row-height': ['40px', 'reviews-parity rows[].height (both sides)'],
-  '--ds-row-glyph-size': ['14px', 'reviews-parity rows[].glyph.size'],
-  '--ds-group-bar-height': ['28px', 'reviews-parity bands[].h (both sides)'],
-  '--ds-group-bar-padding': ['0 9px 0 10px', 'reviews-parity bands[].padding'],
-  '--ds-group-bar-margin': ['0 0 0 10px', 'reviews-residual bands[].margin (reference "0px 0px 0px 10px")'],
-  '--ds-row-padding': ['0', 'reviews-residual rows[].padding (reference "0px"; the 6px/4px inset was ours)'],
-  '--ds-row-main-padding': ['0 8px 0 18px', 'reviews-residual glyph inset 18 and timestamp inset 8'],
-  '--ds-list-inset-right': ['10px', 'reviews-residual row/band right 716 in a column ending at 726'],
-  '--ds-group-bar-radius': ['8px', 'reviews-parity bands[].radius'],
-  '--ds-pane-head-height': ['52px', 'measured pane breadcrumb band (HOJA-417)'],
-  '--ds-pane-tabs-height': ['44px', 'measured Overview/Diff tab row (HOJA-417)'],
-  '--ds-prop-label-width': ['96px', 'measured property label column (HOJA-417)'],
-  '--ds-tab-height': ['28px', 'measured ledger pill height'],
-  '--ds-composer-height': ['48px', 'measured composer height'],
-  '--ds-composer-height-narrow': ['44px', 'measured composer height below 600px'],
-  '--ds-scroll-detail-padding': ['18px 24px 28px', 'winning .reviews-detail-scroll padding'],
-  '--ds-empty-gap': ['10px', 'winning .reviews-pane-empty gap'],
-};
-for (const [name, [want, source]] of Object.entries(MEASURED)) {
-  if (tokens[name] !== want) fail.push(`tokens.css: ${name} is ${tokens[name] === undefined ? 'missing' : `"${tokens[name]}"`}, expected "${want}" (${source})`);
-}
-if (!fail.length) ok(`${Object.keys(MEASURED).length} measured tokens present with their artifact values`);
-
-/* design.css must reference the token, not restate the number. */
-const BOUND = {
-  '.ds-split-ledger': {'width': '--ds-ledger-width', 'max-width': '--ds-ledger-width'},
-  '.ds-list-row': {'height': '--ds-row-height'},
-  '.ds-list-row-main': {'padding': '--ds-row-main-padding'},
-  '.ds-group-bar': {'height': '--ds-group-bar-height', 'padding': '--ds-group-bar-padding'},
-  '.ds-tab': {'height': '--ds-tab-height'},
-  '.ds-prop-label': {'width': '--ds-prop-label-width'},
-  '.ds-composer': {'height': '--ds-composer-height'},
-};
-for (const [sel, props] of Object.entries(BOUND)) {
-  /* Primitive rules are :where(.ds-…) so a screen's override wins; accept either spelling. */
-  const plain = designCss.indexOf(sel + '{');
-  const wrapped = designCss.indexOf(':where(' + sel + '){');
-  const at = plain !== -1 ? plain : wrapped;
-  if (at === -1) { fail.push(`design.css: no ${sel} rule; the primitive has no styling`); continue; }
-  const head = at === wrapped ? `:where(${sel})`.length : sel.length;
-  const body = designCss.slice(at + head + 1, designCss.indexOf('}', at));
-  for (const [prop, token] of Object.entries(props)) {
-    if (!new RegExp(`(^|;)\\s*${prop}:var\\(${token}\\)`).test(body)) {
-      fail.push(`design.css: ${sel} { ${prop} } does not reference var(${token}); the primitive restates a number instead of reading the token`);
+export async function checkRenderedDesign({selfTest = false} = {}) {
+  const {createServer} = await import('vite');
+  const tsx = readFileSync(join(frontend, 'src/main.tsx'), 'utf8');
+  const from = tsx.indexOf('function ReviewGlyph(');
+  const to = tsx.indexOf('\nfunction App(', from);
+  if (from < 0 || to < 0) throw new Error('ReviewsShell fixture extraction failed');
+  const icons = tsx.match(/import \{[^\n]+\} from 'lucide-react';/)[0];
+  const id = `.reviews-check-${process.pid}`;
+  const entry = join(frontend, `${id}.tsx`), html = join(frontend, `${id}.html`);
+  // Only app-local services are replaced. The rendered shell, event handlers,
+  // glyphs, Markdown, CSS cascade and shared primitives are the actual source.
+  writeFileSync(entry, `import React,{useState} from 'react';
+import {createRoot} from 'react-dom/client';
+${icons}
+import {SplitPane,ScrollArea,TabStrip,Tab,GroupBar,ListRow,PropertyRow,EmptyState,Composer} from './src/design';
+import {reviewGroupsOf} from './src/reviews-gate';
+import {reviewGlyphPaths} from './src/reviews-glyphs';
+import {Markdown} from './src/markdown';
+import './src/tailwind.css'; import './src/styles.css';
+const ReviewActions=()=>null; const gql=()=>Promise.resolve({});
+${tsx.slice(from, to)}
+const base={kind:'pull_request',key:'TEST-1',externalId:'#123',url:'https://github.com/example/repo/pull/123',title:'Rendered review fixture',author:'fixture',createdAt:new Date().toISOString(),state:'open',mergeState:'clean',checksState:'passing',reviewDecision:'approved'};
+const links=[{...base,id:'one',additions:7,deletions:3,baseRef:'main',headRef:'feature',ahead:2,behind:1,reviewers:[{login:'reviewer',state:'approved'}],checksTotal:4,checksPassing:3,checksFailing:1,body:'Stored description',files:[{path:'long.ts',previousPath:'old.ts',status:'renamed',additions:1,deletions:1,patch:'@@ hunk @@\\n+'+'x'.repeat(400)+'\\n-deleted\\n context'},{path:'binary.bin',status:'added',additions:0,deletions:0,patch:null}]},{...base,id:'two',title:'Unknown review',state:'draft',files:[]}];
+createRoot(document.getElementById('root')!).render(<><div data-library-fixture="" style={{position:"fixed",bottom:0,right:0,width:300,zIndex:-1}}><Composer value="" placeholder="Comment" sendIcon={<span>Send</span>} onChange={()=>{}} onSend={()=>{}}/></div><div className="app"><div className="body" data-app-body=""><nav className="sidebar w-60 flex-none h-dvh route-review:relative route-review:top-auto route-review:self-stretch route-review:col-auto route-review:row-auto review-drawer:route-review:fixed! review-drawer:route-review:z-35! review-drawer:route-review:top-0! review-drawer:route-review:bottom-0! review-drawer:route-review:left-0! review-drawer:route-review:-translate-x-full! review-drawer:route-review:shadow-xl! review-drawer:route-review:[&.open]:translate-x-0!">Sidebar</nav><main className="main"><ReviewsShell links={links} onOpenNav={()=>document.querySelector('.sidebar')?.classList.toggle('open')}/></main></div></div></>);
+`);
+  writeFileSync(html, `<!doctype html><html><head><meta charset="utf-8"></head><body><div id="root"></div><script type="module" src="/${id}.tsx"></script></body></html>`);
+  let server;
+  try {
+    server = await createServer({root: frontend, configFile: join(frontend, 'vite.config.ts'), server:{port:0,host:'127.0.0.1'}});
+    await server.listen();
+    const port = server.httpServer.address().port;
+    const measure = async (width, expr) => {
+      let output;
+      try { output = await exec(process.execPath,[join(repo,'scripts/ui-probes/cdp-tab.mjs'),'--url',`http://127.0.0.1:${port}/${id}.html`,'--viewport',`${width}x900`,'--wait','[data-reviews-row-main]','--settle','500','--expr',expr],{encoding:'utf8',maxBuffer:8e6}); } catch (e) {
+        let detail; try { detail=JSON.parse(e.stdout).error; } catch {}
+        throw new Error(detail || 'CDP browser check failed: '+(e.stderr || e.message).slice(0,500));
+      }
+      const result = JSON.parse(output.stdout);
+      if (result.error || !result.value) throw new Error(result.error || 'No rendered result (check Vite/browser console)');
+      if (result.value.length) throw new Error(`Rendered Reviews (${width}px):\n${result.value.join('\n')}`);
+    };
+    const layoutFailures=[];
+    for (const width of [1440,1228,1227,1024,890,889,390]) {
+      try { await measure(width, probe(width, null)); } catch(e) { layoutFailures.push(e.message); }
     }
+    if(layoutFailures.length) throw new Error(layoutFailures.join('\n\n'));
+    if (selfTest) {
+      for (const [mutation, message] of [['row','row height'],['band','group height'],['margin','group left margin'],['glyph','glyph border'],['size','glyph SVG size']]) {
+        let rejected = false;
+        try { await measure(1440, probe(1440, mutation)); } catch (e) { if (String(e).includes(message)) rejected = true; else throw e; }
+        if (!rejected) throw new Error(`Mutation self-test: ${mutation} regression was not detected`);
+        console.log(`rendering mutation self-test ok: ${mutation} regression detected`);
+      }
+    }
+    console.log('Tailwind rendered checks ok: 7 viewport boundaries, local selection, tabs/keyboard, diff scrolling, empty states, drawer and overlay');
+  } finally {
+    await server?.close();
+    for (const p of [entry,html]) try { unlinkSync(p); } catch {}
   }
 }
 
-/* Primitive rules must be zero-specificity (:where). A .ds-* rule at full class specificity beats a
- * screen's media-query override loaded earlier — that is exactly how the detail pane stopped hiding
- * below 1227px after the first deploy, and only the live measurement caught it. */
-const bare = designCss.match(/(^|\})\s{0,4}((?:[^@{}]*)?\.ds-[a-z0-9-]+)(\.[a-z0-9-]+)*\{/);
-if (bare) fail.push(`design.css: "${bare[2].trim()}{…}" is not wrapped in :where(); a primitive at full specificity overrides the screen that adopts it`);
-else ok('every primitive rule is :where()-scoped, so a screen override always wins');
+function probe(width, mutate) { return `return (async()=>{
+const failures=[];
+const q=(s)=>document.querySelector(s), all=(s)=>[...document.querySelectorAll(s)];
+const hook=(name)=>q('[data-reviews-'+name+']');
+const check=(yes,msg)=>{if(!yes)failures.push(msg)};
+const near=(got,want,msg)=>check(Math.abs(got-want)<.6,msg+': '+got+' expected '+want);
+const cs=(el)=>getComputedStyle(el);
+const tick=()=>new Promise(r=>setTimeout(r,80));
+const row=hook('row'), pane=q('[data-split-detail]'), col=q('[data-split-ledger]');
+check(!!row && !!hook('page'),'primitive data hooks must reach rendered DOM');
+if(!row || !pane || !col)return failures.concat('missing split/list DOM');
+const composer=q('[data-library-fixture] form');
+near(composer.getBoundingClientRect().height,${width}>600?48:44,'exact responsive Composer height');
+check(!!composer.querySelector('input') && !!composer.querySelector('button[type=submit]'),'Composer input/send controls');
+const mutation=${JSON.stringify(mutate)};
+if(mutation==='row')row.style.height='1px';
+if(mutation==='band')hook('group-head').style.height='1px';
+if(mutation==='margin')hook('group-head').style.marginLeft='0px';
+if(mutation==='glyph')hook('glyph').style.border='2px solid red';
+if(mutation==='size')hook('glyph').querySelector('svg').style.width='12px';
+near(row.getBoundingClientRect().height,40,'original row height 40px');
+near(parseFloat(cs(row).fontSize),13,'original review row font size 13px');
+check(cs(row).borderTopWidth==='0px' && cs(row).marginBottom==='0px','rows flat, borderless, no card spacing');
+near(hook('group-head').getBoundingClientRect().height,28,'original group height 28px');
+check(cs(hook('group-head')).marginTop==='0px' && cs(hook('group-head')).marginBottom==='0px','group bands have no vertical card margin');
+near(parseFloat(cs(hook('group-head')).borderRadius),8,'original group radius 8px');
+near(parseFloat(cs(hook('group-head')).marginLeft),10,'original group left margin 10px');
+check(cs(hook('glyph')).borderTopWidth==='0px','glyph border must stay absent (filled vector)');
+near(hook('glyph').getBoundingClientRect().width,14,'original glyph width 14px');
+check(hook('glyph').querySelectorAll('path').length===4,'open glyph filled path set');
+near(hook('glyph').querySelector('svg').getBoundingClientRect().width,14,'glyph SVG size');
+check(hook('row-main').tagName==='BUTTON','local selection uses a button');
+check(hook('row-ext').tagName==='A' && hook('row-ext').target==='_blank','external sibling GitHub link');
+check(cs(pane).display===(${width}>1227?'flex':'none'),'empty detail breakpoint');
+check(!!hook('pane-empty'),'select-a-review empty state');
+if(${width}>1227){near(parseFloat(cs(col).maxWidth),482,'original ledger width cap 482px');check(col.getBoundingClientRect().width<=482.6,'ledger respects width cap');}
+else check(col.getBoundingClientRect().width>q('.main').getBoundingClientRect().width-3,'one-pane ledger fills available width');
+const sidebar=q('.sidebar');
+if(${width}<=889){check(cs(sidebar).position==='fixed' && sidebar.getBoundingClientRect().right<=0,'sidebar off-canvas drawer'); hook('nav-btn').click();await new Promise(r=>setTimeout(r,300));check(sidebar.getBoundingClientRect().left>=-1,'navigation button opens drawer'); sidebar.classList.remove('open');}
+hook('row-main').click();await tick();
+check(hook('row-main').getAttribute('aria-pressed')==='true','click selects locally');
+check(!!hook('detail') && cs(pane).display!=='none','selected detail visible');
+if(${width}<=1227){check(cs(pane).position==='absolute','detail overlay position');near(pane.getBoundingClientRect().width,hook('page').getBoundingClientRect().width,'overlay fills page');}
+near(hook('detail-head').getBoundingClientRect().height,${width}<=600?48:52,'original detail breadcrumb height');
+near(parseFloat(cs(hook('detail-title')).fontSize),${width}<=600?20:24,'original detail title font size');
+near(parseFloat(cs(hook('detail-title')).lineHeight),${width}<=600?28:32,'original detail title line height');
+near(hook('detail-tabs').getBoundingClientRect().height,44,'original pane tabs height 44px');
+near(hook('prop').querySelector('dt').getBoundingClientRect().width,96,'original property label width 96px');
+check(hook('detail').textContent.includes('Stored description'),'stored description rendered');
+for(const text of ['3 passing','1 failing','4 total','main','feature','reviewer'])check(hook('detail').textContent.includes(text),'stored detail '+text);
+const overview=q('#reviews-tab-overview'),diff=q('#reviews-tab-diff');
+overview.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}));await tick();
+check(diff.getAttribute('aria-selected')==='true' && document.activeElement===diff,'keyboard selects/focuses Diff');
+check(q('[role="tabpanel"]').getAttribute('aria-labelledby')===diff.id,'tabpanel labelled by selected tab');
+check(hook('diff-summary').textContent.includes('2 files changed'),'stored file summary');
+check(hook('diff-file-from').textContent.includes('old.ts'),'rename previous path');
+const patch=hook('diff-patch');
+check(cs(patch).overflowX==='auto' && patch.scrollWidth>patch.clientWidth,'long patch scrolls internally');
+const add=q('[data-kind="add"]'),del=q('[data-kind="del"]');
+check(cs(add).whiteSpace==='pre','patch indentation preserved');
+check(cs(add).color!==cs(del).color,'addition/deletion colors distinct');
+all('[data-reviews-diff-file-head]')[1].click();await tick();
+check(hook('diff-none').textContent.includes('Binary file or too large'),'null patch explicit state');
+const file=hook('diff-file-head');file.click();await tick();check(file.getAttribute('aria-expanded')==='false','file collapses');file.click();await tick();check(file.getAttribute('aria-expanded')==='true','file expands');
+diff.dispatchEvent(new KeyboardEvent('keydown',{key:'Home',bubbles:true}));await tick();check(overview.getAttribute('aria-selected')==='true','Home restores Overview');
+if(${width}<=1227){hook('pane-close').click();await tick();check(cs(pane).display==='none','back dismisses overlay');}
+else {hook('row-main').click();await tick();check(!!hook('pane-empty'),'selected row toggles empty state');}
+all('[data-reviews-row-main]')[1].click();await tick();
+check(hook('detail').textContent.includes('no checks recorded') && hook('detail').textContent.includes('No pull request description is stored'),'unknown data explicit states');
+q('#reviews-tab-diff').click();await tick();check(hook('diff-empty').textContent.includes('No file data stored'),'absent files explicit state');
+check(document.documentElement.scrollWidth<=innerWidth+1,'page must not overflow horizontally');
+check(hook('page').getBoundingClientRect().bottom<=innerHeight+1,'page height derives from viewport shell');
+return failures;
+})();`; }
 
-/* styles.css must not keep a second copy of a measured geometry value on a reviews class. */
-const DUPLICATED = [
-  [/\.reviews-col\{[^}]*\bwidth:482px/, '.reviews-col width:482px'],
-  [/\.reviews-row\{[^}]*\bheight:40px/, '.reviews-row height:40px'],
-  [/\.reviews-group-head\{[^}]*\bheight:28px/, '.reviews-group-head height:28px'],
-  [/\.reviews-prop dt\{[^}]*\bwidth:96px/, '.reviews-prop dt width:96px'],
-  [/\.reviews-detail-head\{[^}]*\bheight:52px/, '.reviews-detail-head height:52px'],
-  [/\.reviews-detail-tabs\{[^}]*\bheight:44px/, '.reviews-detail-tabs height:44px'],
-  [/\.reviews-composer\{[^}]*\bheight:48px/, '.reviews-composer height:48px'],
-];
-for (const [pattern, what] of DUPLICATED) {
-  if (pattern.test(stylesCss)) fail.push(`styles.css: ${what} is a literal again; the design system owns that number (use var(--ds-…))`);
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  if (process.argv.includes('--no-browser')) {
+    console.log('SKIPPED rendering checks (--no-browser); CDP on 9222 is required for test:design');
+  } else await checkRenderedDesign({selfTest:process.argv.includes('--self-test')});
 }
-if (!fail.some(f => f.startsWith('styles.css:'))) ok('no literal copy of a measured value survives in styles.css');
-
-/* Reviews must consume the primitives. */
-const CONSUMERS = [
-  [/from '\.\/design'/, "main.tsx does not import './design'"],
-  [/<SplitPane[^>]*ledgerClassName="reviews-col"/, 'SplitPane is not carrying the ledger'],
-  [/<ListRow[^>]*className="reviews-row"/, 'ListRow is not rendering the review rows'],
-  [/<GroupBar[^>]*className="reviews-group-head"/, 'GroupBar is not rendering the group bars'],
-  [/<PropertyRow[^>]*className="reviews-prop"/, 'PropertyRow is not rendering the property rows'],
-  [/<ScrollArea[^>]*className="reviews-(scroll|detail-scroll|diff-scroll)"/, 'ScrollArea is not rendering a scroll region'],
-  [/<TabStrip[^>]*className="reviews-detail-tabs"/, 'TabStrip is not rendering the pane tab row'],
-  [/<EmptyState[^>]*className="reviews-pane-empty"/, 'EmptyState is not rendering the pane empty state'],
-];
-for (const [pattern, why] of CONSUMERS) if (!pattern.test(tsx)) fail.push('main.tsx: ' + why);
-if (!fail.some(f => f.startsWith('main.tsx:'))) ok('Reviews consumes all 7 mounted primitives (Composer is library-only: no dead composer is mounted)');
-
-const report = (phase) => {
-  if (fail.length) {
-    console.error(`design tokens FAILED (${phase}):`);
-    for (const f of fail) console.error('  ✗ ' + f);
-    process.exit(1);
-  }
-};
-report('source');
-
-if (args.has('--self-test')) {
-  /* Both directions, proven: copy tokens.css, move one number, expect a non-zero exit. */
-  const tmp = join(repo, 'artifacts', 'tmp-tokens-mutated.css');
-  mkdirSync(dirname(tmp), { recursive: true });
-  writeFileSync(tmp, readFileSync(tokenPath, 'utf8').replace('--ds-row-height:40px', '--ds-row-height:41px'));
-  const run = (tokensFile) => {
-    try {
-      execFileSync(process.execPath, [process.argv[1], '--no-browser', '--tokens', tokensFile], {stdio: 'pipe'});
-      return 0;
-    } catch (e) { return e.status ?? 1; }
-  };
-  const real = run(tokenPath);
-  const mutated = run(tmp);
-  if (real !== 0) { console.error('self-test: the real token file does not pass, so the mutation test proves nothing'); process.exit(1); }
-  if (mutated === 0) { console.error('self-test: a mutated --ds-row-height still passed — the probe does not pin the value'); process.exit(1); }
-  console.log(`  ok  self-test: real tokens pass (exit 0), --ds-row-height:41px fails (exit ${mutated})`);
-  process.exit(0);
-}
-
-if (!browserEnabled) { console.log('browser checks skipped (--no-browser)'); process.exit(0); }
-
-/* ----------------------------------------------------------------- browser ---- */
-const cdp = join(repo, 'scripts/ui-probes/cdp-tab.mjs');
-const tmpDir = join(repo, 'artifacts', 'tmp-design');
-mkdirSync(tmpDir, { recursive: true });
-
-const PROPS = ['display','position','flex','flex-grow','flex-basis','flex-direction','align-items','justify-content','gap','height','min-height','max-height','width','min-width','max-width','padding-top','padding-right','padding-bottom','padding-left','margin-top','margin-right','margin-bottom','margin-left','border-top-width','border-radius','font-size','font-weight','line-height','color','background-color','overflow-x','overflow-y','white-space'];
-const SNAP = `
-const PROPS = ${JSON.stringify(PROPS)};
-const out = [];
-for (const el of document.querySelectorAll('[class]')) {
-  const cs = getComputedStyle(el); const props = {};
-  for (const p of PROPS) props[p] = cs.getPropertyValue(p);
-  out.push({tag: el.tagName, cls: el.getAttribute('class') || '', props});
-}
-return out;`;
-
-const measureFile = (file, expr = SNAP) => {
-  const raw = JSON.parse(execFileSync(process.execPath, [cdp, '--url', 'file://' + file, '--wait', '.reviews-page', '--settle', '400', '--expr', expr], {encoding: 'utf8', maxBuffer: 64 * 1024 * 1024}));
-  if (raw.error) throw new Error(raw.error);
-  return raw.value;
-};
-
-/* 2. PARITY: same DOM, old stylesheet vs the design layer. */
-const dom = readFileSync(join(repo, 'artifacts/reviews-dom-before.html'), 'utf8');
-/* The pre-refactor stylesheet is a FROZEN artifact, captured from origin/main at 1e14812 before
- * this refactor. Reading git here would silently compare the new file with itself once the change
- * is merged — that is how a parity check turns into a tautology. */
-const oldCssPath = join(repo, 'artifacts/styles-before.css');
-let oldCss;
-try { oldCss = readFileSync(oldCssPath, 'utf8'); }
-catch { console.error(`missing ${oldCssPath}: capture it with \`git show 1e14812:app/frontend/src/styles.css > artifacts/styles-before.css\``); process.exit(1); }
-const page = (css) => `<!doctype html><html><head><meta charset="utf-8"><style>
-:root{font-family:Inter,sans-serif}
-${css}
-</style></head><body>${dom}</body></html>`;
-const beforeFile = join(tmpDir, 'parity-before.html');
-const afterFile = join(tmpDir, 'parity-after.html');
-writeFileSync(beforeFile, page(oldCss));
-writeFileSync(afterFile, page(stylesCss + '\n' + tokensCss + '\n' + designCss));
-const before = measureFile(beforeFile);
-const after = measureFile(afterFile);
-/* HOJA-500 — the one intentional departure from "the refactor must not change rendering".
- *
- * The parity diff below exists to prove a token conversion is value-preserving. HOJA-500 is
- * not a refactor: it deliberately moves four cascade decisions onto the numbers the live
- * reference reports, and the rest of this list is their arithmetic consequence (a row 10px
- * narrower makes the title 10px narrower; two 2px band margins removed make the column 8px
- * shorter). Enumerating them keeps the check load-bearing in both directions: a value that
- * differs from this list still fails, and an entry here that stops occurring also fails.
- *
- * Cascade decisions (measured by scripts/ui-probes/reviews-residual.mjs):
- *   .reviews-row        padding-left 6px -> 0, padding-right 4px -> 0     (reference "0px")
- *   .reviews-row-main   padding 12px -> 18px left, 4px -> 8px right       (glyph inset 18, time inset 8)
- *   .reviews-group-head margin-top/bottom 2px -> 0                        (reference "0px 0px 0px 10px")
- *   .reviews-scroll     padding-right 0 -> 10px                           (rows end at 716, column at 726)
- */
-const ACCEPTED = new Map();
-for (const [el, prop, to] of [
-  ['SECTION.reviews-page', 'height', '342px'],
-  ['DIV.reviews-col', 'height', '342px'],
-  ['DIV.reviews-scroll', 'height', '254px'],
-  ['DIV.reviews-scroll', 'padding-right', '10px'],
-  ['SECTION.reviews-group', 'height', '70px'],
-  ['SECTION.reviews-group', 'width', '471px'],
-  ['H3.reviews-group-head', 'width', '461px'],
-  ['H3.reviews-group-head', 'margin-top', '0px'],
-  ['H3.reviews-group-head', 'margin-bottom', '0px'],
-  ['UL.reviews-rows', 'width', '471px'],
-  ['LI.reviews-row', 'width', '471px'],
-  ['LI.reviews-row', 'padding-right', '0px'],
-  ['LI.reviews-row', 'padding-left', '0px'],
-  ['BUTTON.reviews-row-main', 'padding-right', '8px'],
-  ['BUTTON.reviews-row-main', 'padding-left', '18px'],
-  ['SPAN.reviews-title', 'width', '371px'],
-  ['SECTION.reviews-group', 'height', '150px'],
-  ['P.reviews-note', 'width', '451px'],
-]) {
-  const key = `${el} ${prop}`;
-  ACCEPTED.set(key, [...(ACCEPTED.get(key) || []), to]);
-}
-const used = new Set();
-if (before.length !== after.length) fail.push(`parity: element count ${before.length} -> ${after.length}; the refactor changed the DOM shape`);
-let cells = 0;
-let accepted = 0;
-for (let i = 0; i < Math.min(before.length, after.length); i++) {
-  const a = before[i], b = after[i];
-  if (a.tag !== b.tag || a.cls !== b.cls) { fail.push(`parity: element ${i} is ${a.tag}.${a.cls} vs ${b.tag}.${b.cls}`); continue; }
-  for (const p of PROPS) {
-    cells++;
-    if (a.props[p] === b.props[p]) continue;
-    const sig = `${a.tag}.${a.cls} ${p}`;
-    const targets = ACCEPTED.get(sig) || [];
-    if (targets.includes(b.props[p])) { used.add(`${sig}=${b.props[p]}`); accepted++; continue; }
-    fail.push(`parity: ${a.tag}.${a.cls} ${p}: "${a.props[p]}" -> "${b.props[p]}"`);
-  }
-}
-for (const [sig, targets] of ACCEPTED) {
-  for (const t of targets) if (!used.has(`${sig}=${t}`)) fail.push(`parity: accepted delta "${sig} -> ${t}" no longer occurs; the manifest is stale or the change was reverted silently`);
-}
-if (!fail.some(f => f.startsWith('parity:'))) ok(`parity: ${before.length} elements x ${PROPS.length} computed properties identical before/after the refactor (${cells} cells) apart from ${used.size} declared HOJA-500 deltas... `);
-
-/* 3. LOAD-BEARING: the token drives the DOM, proven by mutating it in the page. */
-const fixture = `<!doctype html><html><head><meta charset="utf-8"><style>
-:root{--panel:#fff;--line:#e4e4e7;--muted:#71717a;--text:#18181b;--subtle:#f4f4f5;--hover:#0000000d;--background:#fafafa;--accent:#46464b}
-body{margin:0;font-family:Inter,sans-serif;font-size:14px}
-${tokensCss}
-${designCss}
-</style></head><body>
-<div class="ds-split"><div class="ds-split-ledger"><div class="ds-tabstrip"><button class="ds-tab">Created</button></div>
-<div class="ds-scroll ds-scroll--list"><h3 class="ds-group-bar">Open<b>2</b></h3><ul style="margin:0;padding:0;list-style:none">
-<li class="ds-list-row"><button class="ds-list-row-main"><span>row</span></button></li></ul></div></div>
-<div class="ds-split-detail"><div class="ds-scroll ds-scroll--detail"><div class="ds-prop"><dt class="ds-prop-label">Status</dt><dd class="ds-prop-value">Open</dd></div>
-<form class="ds-composer"><input class="ds-composer-input"><button class="ds-composer-action"></button></form></div></div></div>
-</body></html>`;
-const fixtureFile = join(tmpDir, 'primitives.html');
-writeFileSync(fixtureFile, fixture);
-const READ = `
-const read = (sel, props) => { const el = document.querySelector(sel); if (!el) return null; const cs = getComputedStyle(el); const o = {}; for (const p of props) o[p] = cs.getPropertyValue(p); return o; };
-const token = getComputedStyle(document.documentElement).getPropertyValue('--ds-row-height').trim();
-const row = read('.ds-list-row', ['height']);
-const bar = read('.ds-group-bar', ['height', 'padding', 'margin', 'border-radius']);
-const col = read('.ds-split-ledger', ['width', 'max-width']);
-const prop = read('.ds-prop-label', ['width']);
-const composer = read('.ds-composer', ['height']);
-if (window.__MUTATE) document.documentElement.style.setProperty('--ds-row-height', '41px');
-const mutated = read('.ds-list-row', ['height']);
-return {token, row, bar, col, prop, composer, mutated};`;
-const mutateExpr = `window.__MUTATE = true;\n${READ}`;
-const readFile = (expr) => {
-  const raw = JSON.parse(execFileSync(process.execPath, [cdp, '--url', 'file://' + fixtureFile, '--wait', '.ds-list-row', '--settle', '300', '--expr', expr], {encoding: 'utf8', maxBuffer: 64 * 1024 * 1024}));
-  if (raw.error) throw new Error(raw.error);
-  return raw.value;
-};
-const plain = readFile(READ);
-const EXPECT = [['row height', plain.row.height, '40px'], ['group bar height', plain.bar.height, '28px'],
-  ['group bar padding', plain.bar.padding, '0px 9px 0px 10px'], ['group bar margin', plain.bar.margin, '0px 0px 0px 10px'],
-  ['group bar radius', plain.bar['border-radius'], '8px'], ['ledger width', plain.col.width, '482px'],
-  ['ledger max-width', plain.col['max-width'], '482px'], ['property label width', plain.prop.width, '96px'],
-  ['composer height', plain.composer.height, '48px'], ['token readback', plain.token, '40px']];
-for (const [what, got, want] of EXPECT) if (got !== want) fail.push(`primitives: ${what} is "${got}", expected "${want}" (measured)`);
-/* The same document with 40px mutated to 41px in the page. A token that does not move the DOM is decoration. */
-const changed = readFile(mutateExpr);
-if (changed.mutated.height !== '41px') fail.push(`load-bearing: --ds-row-height:41px left the row at "${changed.mutated.height}"; the token does not drive the DOM`);
-if (changed.mutated.height === plain.row.height) fail.push('load-bearing: mutating the token did not change the row height');
-if (!fail.some(f => f.startsWith('primitives:') || f.startsWith('load-bearing:'))) {
-  ok(`primitives measure their tokens: row ${plain.row.height}, band ${plain.bar.height}, ledger ${plain.col.width}, label ${plain.prop.width}, composer ${plain.composer.height}`);
-  ok(`load-bearing: --ds-row-height 40px -> 41px moves the row ${plain.row.height} -> ${changed.mutated.height} in the same page`);
-}
-
-if (fail.length) {
-  console.error(`design tokens FAILED (browser):`);
-  for (const f of fail) console.error('  ✗ ' + f);
-  process.exit(1);
-}
-console.log('design tokens ok: measured values live in tokens.css, styles.css has no second copy, Reviews consumes the primitives, the refactor is rendering-identical on the captured production DOM, and mutating a token moves the DOM');

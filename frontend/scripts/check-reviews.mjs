@@ -1,286 +1,16 @@
 #!/usr/bin/env node
-/**
- * Reviews split-view invariants.
- *
- * The Reviews page mirrors Linear's two-pane reviews screen: a fixed 482px ledger
- * column on the left and the detail pane on the right. Those numbers are load-bearing
- * because the pane gets whatever is left of the viewport, and because styles.css
- * carries legacy rules for `.reviews-row` (a bordered 40px card with a 6px bottom
- * margin) that are still in the file; the split view overrides them later in the
- * cascade. A reordering or a "tidy up" of styles.css silently resurrects the card
- * styling and the rows stop being a flat 40px list.
- *
- * This check reads the LAST declaration block for each selector, i.e. the one that
- * actually wins the cascade here, and pins the numbers the layout depends on.
- *
- * HOJA-417: those numbers are measurements, not guesses. scripts/ui-probes/reviews-parity.mjs
- * measures linear.app/hoja/reviews and the target through one probe body at 1440x900 and
- * writes artifacts/reviews-parity-<ts>.json; the row is 40px, the group band 28px, the state
- * glyph 14px and filled (4 paths open / 5 draft, fill #43bc58 / #6b6f76), the glyph sits 18px
- * into the row and the timestamp ends 8px from its right edge. The axis is
- * Ready to merge / Open / Draft. Every one of those values was pinned here at the wrong
- * number before, so this file is re-derived from the artifact rather than edited to taste.
+/** Reviews data/behavior contracts plus real Tailwind-rendered layout checks.
+ * No assertion depends on a screen or design CSS selector existing. Browser checks
+ * compile the current ReviewsShell and primitives, not a frozen legacy DOM.
  */
-import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
-
+import {createHash} from 'node:crypto';
+import {readFileSync} from 'node:fs';
+import {fileURLToPath} from 'node:url';
+import {dirname, join} from 'node:path';
+import {checkRenderedDesign} from './check-design-tokens.mjs';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const tsx = readFileSync(join(root, 'src/main.tsx'), 'utf8');
-const css = readFileSync(join(root, 'src/styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
-
 const failures = [];
-
-/* HOJA-419: the measured numbers now live in src/design/tokens.css and every Reviews rule
- * references them (var(--ds-…)). The invariants in this file are unchanged — 482/40/28/96/52/44
- * still have to hold — but they are resolved THROUGH the token layer, because a literal in
- * styles.css would be a second source of truth for a number the design system owns. A rule
- * that stops resolving to the measured value still fails. */
-const designDir = join(root, 'src/design');
-const strip = (text) => text.replace(/\/\*[\s\S]*?\*\//g, '');
-const tokenCss = strip(readFileSync(join(designDir, 'tokens.css'), 'utf8'));
-const designCss = strip(readFileSync(join(designDir, 'design.css'), 'utf8'));
-const tokens = {};
-for (const m of tokenCss.matchAll(/(--ds-[a-z0-9-]+)\s*:\s*([^;]+);/g)) tokens[m[1]] = m[2].trim();
-/** Replace every var(--ds-…) with its token value (repeatedly, for aliases). */
-function resolveAll(value) {
-  if (value == null) return value;
-  let out = String(value);
-  for (let guard = 0; out.includes('var(') && guard < 10; guard++) {
-    out = out.replace(/var\((--ds-[a-z0-9-]+)(?:,\s*([^)]*))?\)/g, (_, name, fallback) => tokens[name] ?? (fallback || '').trim());
-  }
-  return out.replace(/\s+/g, ' ').trim();
-}
-/** The token itself must carry the measured number, cited in tokens.css. */
-function expectToken(name, want) {
-  const got = tokens[name];
-  if (got !== want) {
-    failures.push(`tokens.css: ${name} is ${got === undefined ? 'missing' : `"${got}"`}, expected "${want}" — the measured value must live in the token layer, cited to its measurement`);
-  }
-}
-
-/** The @-rule (or '') that contains the block starting at `index`. */
-function atRuleOf(index) {
-  const stack = [];
-  for (let i = 0; i < index; i++) {
-    const c = css[i];
-    if (c === '{') {
-      let end = i - 1;
-      while (end >= 0 && /\s/.test(css[end])) end--;
-      let start = end;
-      while (start >= 0 && !'{};'.includes(css[start])) start--;
-      const head = css.slice(start + 1, end + 1).trim();
-      stack.push(head.startsWith('@') ? head : null);
-    } else if (c === '}') {
-      stack.pop();
-    }
-  }
-  const atRules = stack.filter(Boolean);
-  return atRules.length ? atRules[atRules.length - 1].replace(/\s+/g, ' ') : '';
-}
-
-/** Every declaration block whose selector is exactly `sel`, in source order, with the
- *  @-rule it lives under ('' for the unconditional rules). */
-function blocks(sel) {
-  const out = [];
-  let i = 0;
-  while ((i = css.indexOf(sel + '{', i)) !== -1) {
-    const prev = i === 0 ? '' : css[i - 1];
-    if (prev && /[A-Za-z0-9_-]/.test(prev)) { i += sel.length; continue; }
-    const end = css.indexOf('}', i);
-    if (end === -1) break;
-    out.push({ body: css.slice(i + sel.length + 1, end), at: i, media: atRuleOf(i) });
-    i = end;
-  }
-  return out;
-}
-
-function parse(body) {
-  const map = {};
-  for (const part of body.split(';')) {
-    const at = part.indexOf(':');
-    if (at === -1) continue;
-    map[part.slice(0, at).trim()] = part.slice(at + 1).trim();
-  }
-  return map;
-}
-
-/** The unconditional ("base") winning block as a property map. Media-query blocks are
- *  responsive overrides, so the pinned base geometry must be read from these only. */
-function declared(sel) {
-  const found = blocks(sel).filter((b) => b.media === '');
-  if (!found.length) return null;
-  return parse(found[found.length - 1].body);
-}
-
-/** Every declaration of `sel` under an @media whose condition contains `frag`. */
-function mediaBlocks(sel, frag) {
-  return blocks(sel)
-    .filter((b) => b.media.includes('@media') && b.media.includes(frag))
-    .map((b) => ({ media: b.media, props: parse(b.body) }));
-}
-
-function expect(sel, prop, want, why = 'The split-view ledger geometry (482px column, flat 40px rows, 28px group bar) depends on it.') {
-  const map = declared(sel);
-  if (!map) return failures.push(`styles.css: no ${sel} rule found`);
-  const got = resolveAll(map[prop]);
-  if (got !== want) {
-    failures.push(
-      `styles.css: ${sel} { ${prop} } is ${got === undefined ? 'missing' : `"${got}"`}, expected "${want}". ` + why
-    );
-  }
-}
-
-/** 1. The ledger column is a pinned 482px pane on the left. */
-expect('.reviews-col', 'width', '482px');
-const col = declared('.reviews-col');
-if (col && !/482px/.test(resolveAll(col.flex) || '')) {
-  failures.push(`styles.css: .reviews-col { flex } is "${col.flex}", expected a 482px basis (e.g. "0 0 482px"); a shrinkable column resizes the pane`);
-}
-
-/** 2. Rows are a flat 40px list row (measured), not the legacy bordered card. Every base
- *     block that sets a height must agree: three generations of `.reviews-row` live in
- *     styles.css, and a stale one is exactly how 38px came back before. */
-expect('.reviews-row', 'height', '40px', 'Linear rows measure 40px at 1440x900 (artifacts/reviews-parity-*.json).');
-for (const b of blocks('.reviews-row').filter((x) => x.media === '')) {
-  const h = resolveAll(parse(b.body).height);
-  if (h !== undefined && h !== '40px') {
-    failures.push(`styles.css: an earlier .reviews-row block still sets height:"${h}"; every base block must say 40px or the cascade can resurrect the old value`);
-  }
-}
-/* HOJA-419: the numbers the design system owns must be tokens, and the tokens must carry the
- * measured value. Pinned here so a token edit cannot quietly move the layout. */
-for (const [name, want] of Object.entries({
-  '--ds-ledger-width': '482px',
-  '--ds-row-height': '40px',
-  '--ds-group-bar-height': '28px',
-  '--ds-group-bar-padding': '0 9px 0 10px',
-  '--ds-group-bar-margin': '0 0 0 10px',
-  '--ds-group-bar-radius': '8px',
-  '--ds-prop-label-width': '96px',
-  '--ds-pane-head-height': '52px',
-  '--ds-pane-tabs-height': '44px',
-  '--ds-row-glyph-size': '14px',
-})) expectToken(name, want);
-
-/* HOJA-500 — the four residual deltas, pinned to what the LIVE reference reports rather than
- * to the previous worker's report. Re-measured with scripts/ui-probes/reviews-residual.mjs
- * against linear.app/hoja/reviews at 390/1024/1440 (artifacts/reviews-residual-*.json);
- * three of the four numbers in that report were mis-stated, and "glyph shape unmeasurable"
- * was simply wrong: state-for-state path data is measurable and 9 of 10 paths already
- * matched byte for byte. */
-for (const [name, want] of Object.entries({
-  '--ds-row-padding': '0',                  // reference row padding is "0px", not our 0 4px 0 6px
-  '--ds-row-main-padding': '0 8px 0 18px',  // glyph inset 18, timestamp inset 8 @1440
-  '--ds-group-bar-margin': '0 0 0 10px',    // reference band margin is "0px 0px 0px 10px"
-  '--ds-list-inset-right': '10px',          // rows/bands end at 716 in a column ending at 726
-})) expectToken(name, want);
-
-/* The 1px of "row x: 244 vs 245". Linear's sidebar is 244 wide and the separator sits at
- * x=244, so its ledger content column starts at 245. We drew that separator on the ledger's
- * RIGHT edge instead, which started content at 244 and left every row 1px left of the
- * reference. The separator belongs on the left; one-pane mode must clear it. */
-{
-  const bases = blocks('.reviews-col').filter((b) => b.media === '').map((b) => parse(b.body));
-  if (!bases.some((r) => /^1px/.test(String(r['border-left'] || '')))) {
-    failures.push('styles.css: .reviews-col must draw the sidebar separator as border-left:1px — the reference ledger content column starts at 245 (sidebar 244 + separator), and without it every row measures 1px left');
-  }
-  if (bases.some((r) => r['border-right'] !== undefined && !/^0(px)?$/.test(String(r['border-right'])))) {
-    failures.push('styles.css: .reviews-col must not keep a right border — that is the rule that put the ledger content at 244 instead of 245');
-  }
-  if (!mediaBlocks('.reviews-col', '889').some((m) => /^0(px)?$/.test(String(m.props['border-left'] ?? '')))) {
-    failures.push('styles.css: drawer mode (<=889px, no sidebar column) must clear .reviews-col border-left, or a 1px separator is drawn at x=0 on phones');
-  }
-  if (mediaBlocks('.reviews-col', '1227').some((m) => /^0(px)?$/.test(String(m.props['border-left'] ?? '')))) {
-    failures.push('styles.css: the separator must SURVIVE one-pane mode (890-1227px): the sidebar is still a column there and the reference ledger content starts at 245, not 244');
-  }
-}
-
-/* The 10px hiding inside "row padding": the reference's rows and bands stop 10px short of
- * the ledger column's right edge (716 vs 726). Padding on the row cannot express that — it
- * shrinks the row's content box while its background stays full-bleed — so the inset belongs
- * on the scrolling list. */
-{
-  const sc = declared('.reviews-scroll') || {};
-  if (!/var\(--ds-list-inset-right\)/.test(String(sc.padding || ''))) {
-    failures.push('styles.css: .reviews-scroll must pad its right edge with var(--ds-list-inset-right); the reference rows and bands end 10px short of the column edge (716 vs 726)');
-  }
-}
-
-/* HOJA-419: Reviews must consume the primitives, not re-implement them. Each hook class has
- * to be bound to its primitive, and the primitive module has to be imported. */
-if (!/from '\.\/design'/.test(tsx)) {
-  failures.push("main.tsx: does not import './design'; Reviews is assembling its own primitives again");
-}
-for (const [primitive, hook, attr = 'className'] of [
-  ['SplitPane', 'reviews-col', 'ledgerClassName'], ['ScrollArea', 'reviews-scroll'], ['TabStrip', 'reviews-detail-tabs'],
-  ['GroupBar', 'reviews-group-head'], ['ListRow', 'reviews-row'], ['PropertyRow', 'reviews-prop'],
-  ['EmptyState', 'reviews-pane-empty'],
-]) {
-  if (!new RegExp(`<${primitive}[^>]*${attr}="${hook}"`).test(tsx)) {
-    failures.push(`main.tsx: ${primitive} is not bound to .${hook}; the design primitive is not what renders that element`);
-  }
-}
-
-const row = declared('.reviews-row') || {};
-const border = row.border;
-if (border !== undefined && !/^(0|0px|none)$/.test(border)) {
-  failures.push(`styles.css: .reviews-row { border } is "${border}"; rows must stay flat (no border) like Linear's review list`);
-}
-if (row['border-width'] !== undefined && !/^0(px)?$/.test(row['border-width'])) {
-  failures.push(`styles.css: .reviews-row { border-width } is "${row['border-width']}"; rows must stay flat (no border)`);
-}
-if (row['margin-bottom'] !== undefined && !/^0(px)?$/.test(row['margin-bottom'])) {
-  failures.push(`styles.css: .reviews-row { margin-bottom } is "${row['margin-bottom']}"; that is the legacy card spacing and it breaks the 40px rhythm`);
-}
-
-/** 3. The group bar is a 28px band with the reference's insets and no vertical margin.
- *  HOJA-500 re-measured this: the reference band margin is "0px 0px 0px 10px", so the "2px
- *  rhythm" this comment used to assert was our invention and pushed every band 2px off. */
-expect('.reviews-group-head', 'height', '28px', 'Linear group bars measure 28px at 1440x900 (artifacts/reviews-parity-*.json).');
-{
-  const band = declared('.reviews-group-head') || {};
-  const want = { padding: '0 9px 0 10px', margin: '0 0 0 10px', 'border-radius': '8px' };
-  for (const [prop, value] of Object.entries(want)) {
-    if (resolveAll(band[prop]) !== value) {
-      failures.push(`styles.css: .reviews-group-head { ${prop} } is "${resolveAll(band[prop]) ?? 'missing'}", expected "${value}" (measured from the reference band)`);
-    }
-  }
-}
-for (const b of blocks('.reviews-group-head').filter((x) => x.media === '')) {
-  const h = resolveAll(parse(b.body).height);
-  if (h !== undefined && h !== '28px') {
-    failures.push(`styles.css: an earlier .reviews-group-head block still sets height:"${h}"; every base block must say 28px`);
-  }
-}
-
-/** 4. The two-pane structure exists: .reviews-col + .reviews-pane, in JSX and CSS. */
-for (const cls of ['reviews-col', 'reviews-pane']) {
-  /* HOJA-419: the two panes are now SplitPane's ledger/detail slots, so the hook arrives as
-   * ledgerClassName/detailClassName. Either spelling proves the pane exists; the primitive
-   * import is asserted separately below so the hook cannot be orphaned. */
-  const hook = new RegExp(`(className|ledgerClassName|detailClassName)="${cls}"`).test(tsx);
-  if (!hook) {
-    failures.push(`main.tsx: no element with className="${cls}"; the reviews split view lost a pane`);
-  }
-  if (!declared('.' + cls)) {
-    failures.push(`styles.css: no .${cls} rule found; the reviews split view lost a pane`);
-  }
-}
-
-
-/** 5. The detail pane is real: breadcrumb band, tab row, property rows, activity, and the
- *     four write actions. The old disabled composer and merge button are deliberately gone:
- *     a visible control that says "not connected" is a lie once the action is wired. */
-for (const cls of ['reviews-detail', 'reviews-detail-head', 'reviews-detail-tabs', 'reviews-prop', 'reviews-activity']) {
-  if (!new RegExp(`className="${cls}"`).test(tsx)) {
-    failures.push(`main.tsx: no element with className="${cls}"; the review detail pane lost a section`);
-  }
-  if (!declared('.' + cls)) {
-    failures.push(`styles.css: no .${cls} rule found; the review detail pane lost a section`);
-  }
-}
 let actions = '';
 try {
   actions = readFileSync(join(root, 'src/reviews/ReviewActions.tsx'), 'utf8');
@@ -302,32 +32,6 @@ if (!/Confirm squash merge/.test(actions) || !/gate\.sha/.test(actions)) {
 if (/Merging from Hoja is not connected yet|Commenting on pull requests is not connected yet/.test(tsx)) {
   failures.push('main.tsx: a dead "not connected" control is back; the action is wired, so the placeholder must not render');
 }
-if (!/role="tab"/.test(tsx) || !/reviews-tab on/.test(tsx)) {
-  failures.push('main.tsx: the detail pane lost its Overview/Diff tab row (role="tab" + the selected tab)');
-}
-if (!declared('.reviews-pane-empty')) {
-  failures.push('styles.css: no .reviews-pane-empty rule found; the pane lost its "select a review" state');
-}
-
-/** 6. Pane geometry: 52px breadcrumb band, 44px tab row, 96px property label column. */
-expect('.reviews-detail-head', 'height', '52px', 'The pane breadcrumb band is 52px in the measured reference.');
-expect('.reviews-detail-tabs', 'height', '44px', 'The Overview/Diff tab row is 44px in the measured reference.');
-expect('.reviews-prop dt', 'width', '96px', 'The property label column is a fixed 96px in the measured reference.');
-
-/** 7. Rows select locally instead of navigating: the click target is a button, and the
- *     GitHub link is a sibling anchor so the row does not lose its external affordance. */
-for (const cls of ['reviews-row-main', 'reviews-row-ext']) {
-  if (!new RegExp(`className="${cls}"`).test(tsx)) {
-    failures.push(`main.tsx: no element with className="${cls}"; a review row must select in place and keep an explicit "open on GitHub" link`);
-  }
-}
-if (/<a className="reviews-row"/.test(tsx)) {
-  failures.push('main.tsx: the ledger row is an <a> again; clicking a row must select it instead of leaving Hoja');
-}
-if (row['height'] === undefined) {
-  failures.push('styles.css: .reviews-row lost its 40px height; only the click target inside it may change');
-}
-
 const gateFile = readFileSync(join(root, 'src/reviews-gate.ts'), 'utf8');
 const glyphFile = readFileSync(join(root, 'src/reviews-glyphs.ts'), 'utf8');
 
@@ -405,28 +109,6 @@ if (!/export function reviewGlyphPaths\(/.test(glyphFile)) {
   if (!/fillRule="evenodd"/.test(glyph)) failures.push('main.tsx: ReviewGlyph paths must carry fillRule="evenodd" like the reference vectors');
   if (!/width="14" height="14"/.test(glyph)) failures.push('main.tsx: ReviewGlyph must be 14x14 (measured glyph box)');
 }
-{
-  const g = declared('.reviews-glyph') || {};
-  const svgRule = declared('.reviews-glyph svg') || {};
-  if (g['border'] !== undefined && !/^0(px)?$/.test(g.border)) {
-    failures.push(`styles.css: .reviews-glyph { border } is "${g.border}"; the reference glyph has no outline`);
-  }
-  if (g.width !== '14px' || g.height !== '14px') {
-    failures.push(`styles.css: .reviews-glyph is ${g.width}x${g.height}; the measured glyph box is 14x14`);
-  }
-  if (svgRule.width !== '14px') {
-    failures.push(`styles.css: .reviews-glyph svg { width } is "${svgRule.width ?? 'missing'}"; the reference renders the icon at 14px`);
-  }
-  const draftGlyph = declared('.reviews-glyph[data-state="draft"],.reviews-glyph[data-state="merged"],.reviews-glyph[data-state="closed"]') || {};
-  if (!/^#[0-9a-f]{6}$/i.test(draftGlyph.color || '')) {
-    failures.push('styles.css: the draft/terminal glyph needs the measured muted colour (#5c5c5e)');
-  }
-  const openGlyph = declared('.reviews-glyph[data-state="open"]') || {};
-  if (!/^#[0-9a-f]{6}$/i.test(openGlyph.color || '')) {
-    failures.push('styles.css: .reviews-glyph[data-state="open"] needs the measured colour (#43bc58)');
-  }
-}
-
 /** 9. The detail pane only renders stored pull-request fields — so the ReviewsLinks query
  *     must ask for every one of them. A field the query omits silently arrives as
  *     undefined and the pane degrades to "no diffstat" / "no checks recorded" even
@@ -495,101 +177,11 @@ if (paneAt === -1) {
   need(/aheadBehind/, 'the Branch row must render "N ahead / M behind" when those counts are non-null');
   need(/reviewerList/, 'the Reviewers row must render the stored reviewers list');
   need(/no reviews upstream/, 'the Reviewers row must say "no reviews upstream" when the list is empty');
-  need(/\{bodyPreview\?<div className="reviews-desc">/, 'the description must render the stored body when present ({bodyPreview? <div className="reviews-desc">})');
+  need(/\{bodyPreview\?<div className="[^"]+">/, 'the description must render the stored body when present ({bodyPreview? <div className="reviews-desc">})');
   need(/reviewBodyPreview\(sel\?\.body\)/, 'the description preview must be derived from the stored body via reviewBodyPreview');
   need(/No pull request description is stored/, 'the description keeps its explicit empty state');
   need(/reviewStateLabel\(sel\.state\)/, 'Status must stay the primary value derived from the link state');
   need(/merge state: /, 'the GitHub merge state may only appear as a secondary tag next to the link state');
-}
-
-/** 12. The new diffstat/checks/refs styling exists and the diff colours are not the muted ink. */
-for (const sel of ['.reviews-diffstat-add', '.reviews-diffstat-del', '.reviews-check-dot', '.reviews-refs', '.reviews-aheadbehind']) {
-  if (!declared(sel)) failures.push(`styles.css: no ${sel} rule found; the rebuilt review detail row lost its styling`);
-}
-const add = declared('.reviews-diffstat-add') || {};
-const del = declared('.reviews-diffstat-del') || {};
-if (!/^#[0-9a-f]{6}$/i.test(add.color || '')) failures.push('styles.css: .reviews-diffstat-add needs an explicit green colour');
-if (!/^#[0-9a-f]{6}$/i.test(del.color || '')) failures.push('styles.css: .reviews-diffstat-del needs an explicit red colour');
-if ((add.color || '').toLowerCase() === (del.color || '').toLowerCase()) failures.push('styles.css: the additions and deletions colours must differ');
-
-/** 13. Responsive contract, measured from Linear (not guessed):
- *      - the ledger column is capped, never a bare fixed width: 482px is a max, and it
- *        must be able to grow to the full page when the detail pane is gone;
- *      - the detail pane is dropped at 1227px and below (Linear: pane present at 1228,
- *        absent at 1227), and a selected review opens over the ledger instead;
- *      - the workspace sidebar stops being a column at 889px (Linear: 244px at 890,
- *        off-canvas at 880) and becomes the off-canvas drawer that already exists;
- *      - the page height can never be a bare 100dvh, which ignores the header.
- */
-const colBase = declared('.reviews-col') || {};
-if (resolveAll(colBase['max-width']) !== '482px') {
-  failures.push(`styles.css: .reviews-col { max-width } is ${colBase['max-width'] === undefined ? 'missing' : `"${colBase['max-width']}"`}; 482px must be a max, not only a width, or the ledger cannot give space back`);
-}
-const colMedia = blocks('.reviews-col').filter((b) => b.media !== '');
-for (const b of colMedia) {
-  const props = parse(b.body);
-  if (props.width && props.width !== 'auto' && props.width !== '482px') {
-    failures.push(`styles.css: ${b.media} pins .reviews-col width="${props.width}"; responsive overrides must grow the column (flex/max-width), not pin a new fixed width`);
-  }
-}
-if (colBase['min-width'] !== '0') {
-  failures.push(`styles.css: .reviews-col needs min-width:0 so it can shrink below its 482px basis instead of overflowing`);
-}
-
-const onePane = mediaBlocks('.reviews-pane', 'max-width:1227px');
-if (!onePane.length) {
-  failures.push('styles.css: no @media (max-width:1227px) block for .reviews-pane; Linear drops the two-pane split at 1227px (pane present at 1228, absent at 1227)');
-} else {
-  const hide = onePane.find((b) => b.props.display === 'none');
-  if (!hide) failures.push('styles.css: the 1227px block must set .reviews-pane { display:none }; that is the one-pane breakpoint');
-  const overlay = mediaBlocks('.reviews-pane:has(.reviews-detail)', 'max-width:1227px');
-  if (!overlay.length) {
-    failures.push('styles.css: at one-pane widths a selected review must open over the ledger (.reviews-pane:has(.reviews-detail) inside the 1227px block)');
-  } else if (overlay[0].props.position !== 'absolute' || overlay[0].props.inset !== '0') {
-    failures.push('styles.css: the one-pane detail must be an absolute inset:0 overlay, not a column that squeezes the ledger');
-  }
-  const grow = mediaBlocks('.reviews-col', 'max-width:1227px')[0];
-  if (!grow || grow.props['max-width'] !== 'none') {
-    failures.push('styles.css: the 1227px block must release the ledger cap (.reviews-col { max-width:none }) so it becomes the full page');
-  }
-}
-
-const drawer = mediaBlocks('body:has(.reviews-page) .sidebar', 'max-width:889px');
-if (!drawer.length) {
-  failures.push('styles.css: no @media (max-width:889px) drawer rule for the workspace sidebar; Linear collapses it between 890px (244px column) and 880px (off-canvas)');
-} else {
-  if (drawer[0].props.position !== 'fixed') failures.push('styles.css: below 889px the reviews sidebar must be position:fixed (a drawer), not a column');
-  if (!/translateX\(-1/.test(drawer[0].props.transform || '')) {
-    failures.push(`styles.css: the 889px drawer must start off-canvas (translateX(-105%)); got "${drawer[0].props.transform || 'none'}"`);
-  }
-  const opened = mediaBlocks('body:has(.reviews-page) .sidebar.open', 'max-width:889px');
-  if (!opened.length || !/^(none|translateX\(0\)|translateX\(0px\))$/.test(opened[0].props.transform || '')) {
-    failures.push('styles.css: the 889px drawer needs a .sidebar.open rule that brings it back on screen');
-  }
-}
-
-const pageBase = declared('.reviews-page') || {};
-if (/100dvh|100vh/.test(pageBase.height || '')) {
-  failures.push(`styles.css: .reviews-page { height:"${pageBase.height}" } breaks as soon as the header is visible or collapses; take the height from the flex chain instead`);
-}
-if ((pageBase.flex || '') !== '1 1 auto') {
-  failures.push(`styles.css: .reviews-page { flex } is "${pageBase.flex}", expected "1 1 auto" so the page fills whatever the shell header and any error banner leave`);
-}
-const mainBase = declared('body:has(.reviews-page) .main') || {};
-if (mainBase['flex-direction'] !== 'column') {
-  failures.push(`styles.css: body:has(.reviews-page) .main { flex-direction } is "${mainBase['flex-direction']}"; it must be a column so an error banner stacks above the ledger instead of squeezing it`);
-}
-for (const [sel, prop] of [['body:has(.reviews-page) .app', 'display'], ['body:has(.reviews-page) .main', 'display']]) {
-  const d = declared(sel);
-  if (!d) { failures.push(`styles.css: no ${sel} rule found; the reviews page lost its full-bleed shell`); continue; }
-  if (prop === 'display' && d.display !== 'flex') failures.push(`styles.css: ${sel} { display } is "${d.display}", expected flex so the page height is derived from the shell`);
-}
-
-if (!/className="reviews-nav-btn"/.test(tsx)) {
-  failures.push('main.tsx: the reviews header lost its drawer button; below 889px there is no other way to open the sidebar (the page topbar is hidden)');
-}
-if (!/className="reviews-pane-close"/.test(tsx)) {
-  failures.push('main.tsx: the one-pane detail needs a back button (.reviews-pane-close); without it the overlay cannot be dismissed');
 }
 
 /** 14. The Diff tab renders the stored pull-request file list. It used to be a disabled
@@ -635,7 +227,9 @@ if (diffTabAt === -1) {
   let tagEnd = diffTabAt;
   while (tagEnd < tsx.length && !(tsx[tagEnd] === '>' && tsx[tagEnd - 1] !== '=')) tagEnd++;
   const tabTag = tsx.slice(tabStart, tagEnd + 1);
-  if (/\bdisabled\b/.test(tabTag)) {
+  // A disabled: Tailwind variant inside className is not a disabled attribute.
+  const tabAttributes = tabTag.replace(/className="[^"]*"/g, '');
+  if (/\sdisabled(?:\s|=|\/?>)/.test(tabAttributes)) {
     failures.push('main.tsx: the Diff tab is disabled again; it must render the stored file list (or an explicit empty state)');
   }
   if (!/role="tab"/.test(tabTag) || !/aria-selected=\{paneTab==='diff'\}/.test(tabTag)) {
@@ -666,7 +260,7 @@ diffNeed(/reviewStatusLabel\(f\.status\)/, 'each file needs a status badge');
 diffNeed(/reviews-diff-file-head[^]*aria-expanded=\{open\}/, 'each file must be collapsible (aria-expanded on its header button)');
 diffNeed(/reviewPatchLines\(f\.patch\)/, 'the patch body must come from the stored patch, split into lines');
 diffNeed(/reviewLineKind\(line\)/, 'each patch line must be classified before it is styled');
-diffNeed(/`reviews-diff-line reviews-diff-\$\{kind\}`/, 'each patch line must carry reviews-diff-<kind> so + / - lines are colour-coded');
+diffNeed(/data-kind=\{kind\}/, 'each patch line must carry reviews-diff-<kind> so + / - lines are colour-coded');
 diffNeed(/Binary file or too large to display/, 'a file with patch:null must carry an explicit "binary or too large" note');
 diffNeed(/No file data stored for this pull request/, 'an empty/absent file list must show an honest empty state instead of a fake diff');
 for (const [kind, prefix] of [['add', '+'], ['del', '-']]) {
@@ -677,36 +271,11 @@ for (const [kind, prefix] of [['add', '+'], ['del', '-']]) {
 if (!/if\(line\.startsWith\('@@'\)\)return 'hunk'/.test(tsx)) {
   failures.push("main.tsx: @@ hunk headers must classify as 'hunk' (muted), not as context");
 }
-for (const sel of ['.reviews-diff-add', '.reviews-diff-del', '.reviews-diff-hunk', '.reviews-diff-line', '.reviews-diff-patch']) {
-  if (!declared(sel)) failures.push(`styles.css: no ${sel} rule found; the diff renderer lost its styling`);
-}
-const diffAdd = declared('.reviews-diff-add') || {};
-const diffDel = declared('.reviews-diff-del') || {};
-if (!/^#[0-9a-f]{6}$/i.test(diffAdd.color || '')) failures.push('styles.css: .reviews-diff-add needs an explicit green colour');
-if (!/^#[0-9a-f]{6}$/i.test(diffDel.color || '')) failures.push('styles.css: .reviews-diff-del needs an explicit red colour');
-if ((diffAdd.color || '').toLowerCase() === (diffDel.color || '').toLowerCase()) {
-  failures.push('styles.css: + and - patch lines must not share a colour');
-}
-if ((declared('.reviews-diff-line') || {})['white-space'] !== 'pre') {
-  failures.push('styles.css: .reviews-diff-line must preserve indentation with white-space:pre');
-}
-
-/** 15. The diff must scroll inside itself: a long line may not widen the page, at any
- *     width, including inside the <=1227px overlay where the pane is the whole page. */
-const patchRule = declared('.reviews-diff-patch') || {};
-if (patchRule['overflow-x'] !== 'auto') {
-  failures.push(`styles.css: .reviews-diff-patch { overflow-x } is "${patchRule['overflow-x']}"; monospace lines must scroll in their own container`);
-}
-if ((declared('.reviews-diff') || {})['min-width'] !== '0' || (declared('.reviews-diff-scroll') || {})['min-width'] !== '0') {
-  failures.push('styles.css: .reviews-diff/.reviews-diff-scroll need min-width:0 so the patch cannot push the pane wider than the page');
-}
-if ((declared('.reviews-diff') || {}).overflow !== 'hidden') {
-  failures.push('styles.css: .reviews-diff must clip its own overflow; the pane never scrolls sideways');
-}
-
 
 if (failures.length) {
   console.error('reviews invariants failed:\n' + failures.map(f => '  ✗ ' + f).join('\n'));
   process.exit(1);
 }
-console.log('reviews invariants ok: 482px capped ledger, flat 40px rows, 28px group bar, filled 14px state glyphs, groups Ready to merge / Open / Draft from one gate, two panes above 1227px, one-pane overlay below it, 889px sidebar drawer, flex-derived page height, detail pane (52px breadcrumb, 44px tabs, 96px labels), ReviewsLinks reads pullRequests (not the newest N tasks) and selects all 17 pull-request detail fields and the pane renders them, and the Diff tab renders the stored file list (files{path,additions,deletions,status,patch,previousPath} in the query and the type, live tab, +green/-red patch lines inside their own horizontal scroller, patch:null note, honest empty state)');
+console.log('reviews data contracts ok: gate, filled reference glyphs, stored detail fields, write actions, accessible live Diff tabs and honest empty states');
+if (!process.argv.includes('--no-browser')) await checkRenderedDesign();
+else console.log('SKIPPED rendered layout/interaction checks (--no-browser); source checks alone are not a full pass');

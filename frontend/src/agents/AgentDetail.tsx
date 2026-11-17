@@ -20,34 +20,49 @@
  * principal, not to this page: a Verify button here would let the worker's own session sign itself.
  */
 
-import {useCallback, useEffect, useMemo, useState} from 'react';
-import {Copy} from 'lucide-react';
-import {confirmDialog} from '../dialogs';
-import {Avatar, IconBtn, Tip} from '../graph/shared';
-import {PropDropdown} from '../graph/tasks';
-import {getAgentsAdapter} from './adapter';
-import {statusGlyph} from './AgentsPane';
-import {sessionStatusName, agentStatus, verdictColor, verdictLabel} from './types';
-import type {AgentDetail, AgentEvent, AgentPolicy, AgentSession, Claim} from './types';
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Copy } from "lucide-react";
+import { confirmDialog } from "../dialogs";
+import { Avatar, IconBtn, Tip } from "../graph/shared";
+import { PropDropdown } from "../graph/tasks";
+import { getAgentsAdapter } from "./adapter";
+import { statusGlyph } from "./AgentsPane";
+import {
+  sessionStatusName,
+  agentStatus,
+  verdictColor,
+  verdictLabel,
+} from "./types";
+import type {
+  AgentDetail,
+  AgentEvent,
+  AgentPolicy,
+  AgentSession,
+  Claim,
+} from "./types";
 
-const EVENT_LABELS: Record<AgentEvent['kind'], string> = {
-  thought: 'Thought', action: 'Action', elicitation: 'Needs input', response: 'Response', error: 'Error',
-  prompt: 'Prompt',
+const EVENT_LABELS: Record<AgentEvent["kind"], string> = {
+  thought: "Thought",
+  action: "Action",
+  elicitation: "Needs input",
+  response: "Response",
+  error: "Error",
+  prompt: "Prompt",
 };
 
 function relTime(iso?: string | null): string {
-  if (!iso) return '';
+  if (!iso) return "";
   const ms = Date.now() - Date.parse(iso);
-  if (Number.isNaN(ms)) return '';
+  if (Number.isNaN(ms)) return "";
   const m = Math.round(ms / 60000);
-  if (m < 1) return 'just now';
+  if (m < 1) return "just now";
   if (m < 60) return `${m}m ago`;
   const h = Math.round(m / 60);
   return h < 24 ? `${h}h ago` : `${Math.round(h / 24)}d ago`;
 }
 
 function stamp(iso?: string | null): string {
-  if (!iso) return '—';
+  if (!iso) return "—";
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? iso : d.toISOString().slice(0, 10);
 }
@@ -55,25 +70,65 @@ function stamp(iso?: string | null): string {
 /* One editable sidebar row: the issue page's `.lin-prop` shape, saved on blur or Enter. Uncontrolled
  * inputs are re-keyed by the stored value, so a save redraws the field with what came back rather
  * than keeping the draft. */
-function PolicyField({label, icon, value, placeholder, type = 'text', min, disabled, onSave}: {
-  label: string; icon: React.ReactNode; value: string; placeholder?: string;
-  type?: 'text' | 'number'; min?: number; disabled?: boolean; onSave: (next: string) => void;
+function PolicyField({
+  label,
+  icon,
+  value,
+  placeholder,
+  type = "text",
+  min,
+  disabled,
+  onSave,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  value: string;
+  placeholder?: string;
+  type?: "text" | "number";
+  min?: number;
+  disabled?: boolean;
+  onSave: (next: string) => void;
 }) {
   return (
-    <div className="lin-prop">
-      <span className="k">{icon}{label}</span>
-      <span className="v">
-        <input key={value} type={type} min={min} step={type === 'number' ? 1 : undefined}
-          defaultValue={value} placeholder={placeholder} aria-label={label} disabled={disabled}
-          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLInputElement).blur(); } }}
-          onBlur={e => { const next = e.target.value.trim(); if (next !== value.trim()) onSave(next); }}
-          style={{width: '100%', minWidth: 0, border: '1px solid var(--line)', borderRadius: 6, padding: '5px 8px', fontSize: 13}} />
+    <div className="relative flex items-center gap-2.5 min-h-8.5 text-[13px]">
+      <span className="flex flex-none items-center gap-2 text-muted w-24">
+        {icon}
+        {label}
+      </span>
+      <span className="flex flex-1 items-center min-w-0 gap-1.75">
+        <input
+          key={value}
+          type={type}
+          min={min}
+          step={type === "number" ? 1 : undefined}
+          defaultValue={value}
+          placeholder={placeholder}
+          aria-label={label}
+          disabled={disabled}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              (e.target as HTMLInputElement).blur();
+            }
+          }}
+          onBlur={(e) => {
+            const next = e.target.value.trim();
+            if (next !== value.trim()) onSave(next);
+          }}
+          className="border border-line shell-phone:min-h-11 pointer-coarse:min-h-11 w-full min-w-0 border-solid rounded-md pt-1.25 pr-2 pb-1.25 pl-2 text-[13px]"
+        />
       </span>
     </div>
   );
 }
 
-export function AgentDetailPage({agentKey, workspaceName, viewerName, onBack, onOpenQueue}: {
+export function AgentDetailPage({
+  agentKey,
+  workspaceName,
+  viewerName,
+  onBack,
+  onOpenQueue,
+}: {
   /** `AgentMember.id`. */
   agentKey: string;
   workspaceName: string;
@@ -83,63 +138,87 @@ export function AgentDetailPage({agentKey, workspaceName, viewerName, onBack, on
 }) {
   const [detail, setDetail] = useState<AgentDetail | null>(null);
   const [claims, setClaims] = useState<Claim[]>([]);
-  const [claimsError, setClaimsError] = useState('');
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState('');
-  const [notice, setNotice] = useState('');
+  const [claimsError, setClaimsError] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState("");
+  const [notice, setNotice] = useState("");
   const [copied, setCopied] = useState(false);
 
   /* Returns the promise so a failed write can re-read the row and *then* state the refusal: the
    * other order lets the successful reload clear the error that explains what happened. */
-  const load = useCallback(() => (
-    Promise.all([getAgentsAdapter().getAgent(agentKey),
-      /* Claims are a separate read (`verifierClaims`), not a field of the member: the verdict rows
-       * are the evidence, and a page that showed a verdict without its checks would be asking to be
-       * trusted. A refusal here is the same admin gate the run queue has. */
-      getAgentsAdapter().listClaims({agentId: agentKey})
-        .then(page => ({rows: page.claims, error: ''}))
-        /* A refused read is stated where the rows would be, never drawn as "nothing was claimed":
-         * an empty list is a different sentence from "you may not read this". */
-        .catch((e: Error) => ({rows: [] as Claim[], error: e.message}))])
-      .then(([d, claimed]) => {
-        setDetail(d);
-        setClaims(claimed.rows);
-        setClaimsError(claimed.error);
-        setError(d ? '' : `No agent member with the id ${agentKey} exists in this workspace.`);
-      })
-      .catch((e: Error) => { setDetail(null); setClaims([]); setClaimsError(''); setError(e.message); })
-  ), [agentKey]);
+  const load = useCallback(
+    () =>
+      Promise.all([
+        getAgentsAdapter().getAgent(agentKey),
+        // A refused claims read is not an empty list; show the refusal beside the claims.
+        getAgentsAdapter()
+          .listClaims({ agentId: agentKey })
+          .then((page) => ({ rows: page.claims, error: "" }))
+          .catch((e: Error) => ({ rows: [] as Claim[], error: e.message })),
+      ])
+        .then(([d, claimed]) => {
+          setDetail(d);
+          setClaims(claimed.rows);
+          setClaimsError(claimed.error);
+          setError(
+            d
+              ? ""
+              : `No agent member with the id ${agentKey} exists in this workspace.`,
+          );
+        })
+        .catch((e: Error) => {
+          setDetail(null);
+          setClaims([]);
+          setClaimsError("");
+          setError(e.message);
+        }),
+    [agentKey],
+  );
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+  }, [load]);
 
-  /* Any run that has not reached a terminal state can be stopped — a *queued* run included, which
-   * is the case a person most often wants to cancel. The server's machine allows cancel from every
-   * non-terminal state (agent_sessions.transition), so the screen offers exactly that.
-   */
-  const live = useMemo(() => detail?.sessions.find(s => s.status !== 'done' && s.status !== 'failed') || null, [detail]);
-  const events = useMemo(() => [...(detail?.events || [])].sort((a, b) => a.at < b.at ? -1 : 1), [detail]);
+  const active = useMemo(
+    () =>
+      detail?.sessions.find(
+        (s) => s.status !== "done" && s.status !== "failed",
+      ) || null,
+    [detail],
+  );
+  const events = useMemo(
+    () => [...(detail?.events || [])].sort((a, b) => (a.at < b.at ? -1 : 1)),
+    [detail],
+  );
 
   const applyPolicy = (policy: AgentPolicy, auditNotice: string) => {
-    setDetail(d => d ? {...d, policy} : d);
+    setDetail((d) => (d ? { ...d, policy } : d));
     setNotice(auditNotice);
   };
 
   const savePolicy = async (patch: Partial<AgentPolicy>) => {
-    setBusy('policy');
-    setNotice('');
-    setError('');
+    setBusy("policy");
+    setNotice("");
+    setError("");
     try {
-      const {policy, audit} = await getAgentsAdapter().updatePolicy(agentKey, patch, viewerName);
-      applyPolicy(policy, audit
-        ? `Saved. The server recorded ${audit.action} by ${audit.actor}.`
-        : 'Saved. Agent edits land in the workspace change log; the audit ledger records session stops and the other actions it names.');
+      const { policy, audit } = await getAgentsAdapter().updatePolicy(
+        agentKey,
+        patch,
+        viewerName,
+      );
+      applyPolicy(
+        policy,
+        audit
+          ? `Saved. The server recorded ${audit.action} by ${audit.actor}.`
+          : "Saved. Agent edits land in the workspace change log; the audit ledger records session stops and the other actions it names.",
+      );
       load();
     } catch (e) {
       const message = (e as Error).message;
       await load();
       setError(message);
     } finally {
-      setBusy('');
+      setBusy("");
     }
   };
 
@@ -147,282 +226,597 @@ export function AgentDetailPage({agentKey, workspaceName, viewerName, onBack, on
    * refusal is the server's sentence (unknown name, alias, default outside the allowlist) rather
    * than a message this screen composes. A failed write re-reads the row first, so the field shows
    * what the server actually stored. */
-  const saveHarness = async (patch: {defaultHarness?: string | null; harnessAllowlist?: string[]}) => {
-    setBusy('harness');
-    setNotice('');
-    setError('');
+  const saveHarness = async (patch: {
+    defaultHarness?: string | null;
+    harnessAllowlist?: string[];
+  }) => {
+    setBusy("harness");
+    setNotice("");
+    setError("");
     try {
-      const {harnesses} = await getAgentsAdapter().updateHarnessPolicy(agentKey, patch, viewerName);
-      setDetail(d => d ? {...d, harnesses} : d);
-      setNotice(harnesses.defaultHarness
-        ? `Saved. Runs delegated to this agent queue for ${harnesses.defaultHarness}.`
-        : 'Saved. No harness chosen, so runs queue for pi.');
+      const { harnesses } = await getAgentsAdapter().updateHarnessPolicy(
+        agentKey,
+        patch,
+        viewerName,
+      );
+      setDetail((d) => (d ? { ...d, harnesses } : d));
+      setNotice(
+        harnesses.defaultHarness
+          ? `Saved. Runs delegated to this agent queue for ${harnesses.defaultHarness}.`
+          : "Saved. No harness chosen, so runs queue for pi.",
+      );
       load();
     } catch (e) {
       const message = (e as Error).message;
       await load();
       setError(message);
     } finally {
-      setBusy('');
+      setBusy("");
     }
   };
 
   const stop = async (session: AgentSession) => {
-    /* Two steps and a danger tone, exactly as the runner revoke is: cancel is authoritative and
-       nothing revives the run, so the confirmation has to look like what it is. */
-    if (!(await confirmDialog(`Stop the session on ${session.issueIdentifier}?`, {danger: true}))) return;
-    setBusy('stop');
+    if (
+      !(await confirmDialog(`Stop the session on ${session.issueIdentifier}?`, {
+        danger: true,
+      }))
+    )
+      return;
+    setBusy("stop");
     try {
-      const {session: next} = await getAgentsAdapter().stopSession(session.id);
-      setDetail(d => d ? {...d, sessions: d.sessions.map(s => s.id === next.id ? next : s)} : d);
-      /* The server writes `agent.session.stop` into the ledger; this page says so and points at the
-       * screen that can prove it, instead of claiming a row it never received. */
-      setNotice(`Session on ${next.issueIdentifier} stopped. The server recorded agent.session.stop for it — see the audit log.`);
-      load();
+      const { session: next } = await getAgentsAdapter().stopSession(
+        session.id,
+      );
+      setDetail((d) =>
+        d
+          ? {
+              ...d,
+              sessions: d.sessions.map((s) => (s.id === next.id ? next : s)),
+            }
+          : d,
+      );
+      setNotice(
+        `Session on ${next.issueIdentifier} stopped. The server recorded agent.session.stop for it — see the audit log.`,
+      );
+      void load();
     } catch (e) {
       setError((e as Error).message);
     } finally {
-      setBusy('');
+      setBusy("");
     }
   };
 
   if (!detail) {
     return (
-      <section className="lin-page" data-surface="agent-detail" aria-label={`${agentKey}: agent`}>
-        <header className="lin-head">
-          <nav className="lin-crumb" aria-label="Breadcrumb">
-            <button type="button" className="crumb-link" onClick={onBack}>← Agents</button>
-            <span className="sep">›</span>
-            <span className="current">{agentKey}</span>
+      <section
+        className="flex flex-col min-w-0 h-full bg-panel"
+        data-surface="agent-detail"
+        aria-label={`${agentKey}: agent`}
+      >
+        <header className="flex flex-none items-center border-b border-line gap-2 min-h-12.25 pt-0 pr-5 pb-0 pl-5 border-b-line shell-phone:flex-wrap shell-phone:gap-y-1">
+          <nav
+            className="flex flex-1 items-center gap-1.75 text-[13px] text-muted min-w-0 shell-phone:min-w-0 shell-phone:flex-wrap shell-phone:gap-y-0.5"
+            aria-label="Breadcrumb"
+          >
+            <button
+              type="button"
+              className="inline-flex cursor-pointer items-center whitespace-nowrap border-0 hover:text-foreground shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 [background:none] pt-0 pr-0 pb-0 pl-0 text-muted [font:inherit] gap-1.5 shell-phone:min-w-11! shell-phone:min-h-11! shell-phone:whitespace-normal shell-phone:max-w-full"
+              onClick={onBack}
+            >
+              ← Agents
+            </button>
+            <span className="text-muted opacity-70">›</span>
+            <span className="truncate text-foreground font-semibold overflow-hidden text-ellipsis whitespace-nowrap">
+              {agentKey}
+            </span>
           </nav>
         </header>
-        {error
-          ? <div className="lin-empty" role="alert" data-state="error">
-              <h2>This agent could not be opened</h2>
-              <p>{error}</p>
-              <div style={{display: 'flex', gap: 8, justifyContent: 'center'}}>
-                <button type="button" className="lin-btn" onClick={() => { setError(''); load(); }}>Retry</button>
-                <button type="button" className="lin-btn" onClick={onBack}>← Agents</button>
-              </div>
+        {error ? (
+          <div
+            className="text-center pt-15 pr-5 pb-15 pl-5 text-muted"
+            role="alert"
+            data-state="error"
+          >
+            <h2 className="text-foreground text-[15px] mt-3 mr-0 mb-1.5 ml-0">
+              This agent could not be opened
+            </h2>
+            <p>{error}</p>
+            <div className="flex justify-center gap-2">
+              <button
+                type="button"
+                className="inline-flex items-center border border-line hover:bg-subtle disabled:cursor-default disabled:opacity-50 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 gap-2 border-solid bg-panel text-foreground rounded-[7px] pt-2 pr-3.5 pb-2 pl-3.5 text-[13px] font-[550] shell-phone:min-w-11! shell-phone:min-h-11!"
+                onClick={() => {
+                  setError("");
+                  load();
+                }}
+              >
+                Retry
+              </button>
+              <button
+                type="button"
+                className="inline-flex items-center border border-line hover:bg-subtle disabled:cursor-default disabled:opacity-50 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 gap-2 border-solid bg-panel text-foreground rounded-[7px] pt-2 pr-3.5 pb-2 pl-3.5 text-[13px] font-[550] shell-phone:min-w-11! shell-phone:min-h-11!"
+                onClick={onBack}
+              >
+                ← Agents
+              </button>
             </div>
-          : <p className="lin-loading" role="status">Loading agent…</p>}
+          </div>
+        ) : (
+          <p
+            className="text-center pt-10 pr-10 pb-10 pl-10 text-muted"
+            role="status"
+          >
+            Loading agent…
+          </p>
+        )}
       </section>
     );
   }
 
-  const {agent, policy, sessions} = detail;
+  const { agent, policy, sessions } = detail;
   const status = agentStatus(agent.status);
-  /* The run count is a reading of the session rows, not a column: it counts the runs that hold one
-   * of this agent's slots right now. Capacity is a stored column and is shown as one. */
-  const running = sessions.filter(s => s.status === 'active').length;
-  const caps = `${agent.capacity} ${agent.capacity === 1 ? 'slot' : 'slots'}`;
+  const running = sessions.filter((s) => s.status === "active").length;
+  const caps = `${agent.capacity} ${agent.capacity === 1 ? "slot" : "slots"}`;
 
   return (
-    <section className="lin-page" data-surface="agent-detail" aria-label={`${agent.key}: ${agent.name}`}>
-      <header className="lin-head">
-        <nav className="lin-crumb" aria-label="Breadcrumb">
-          <button type="button" className="crumb-link" onClick={onBack}>← Agents</button>
-          <span className="sep">›</span>
+    <section
+      className="flex flex-col min-w-0 h-full bg-panel"
+      data-surface="agent-detail"
+      aria-label={`${agent.key}: ${agent.name}`}
+    >
+      <header className="flex flex-none items-center border-b border-line gap-2 min-h-12.25 pt-0 pr-5 pb-0 pl-5 border-b-line shell-phone:flex-wrap shell-phone:gap-y-1">
+        <nav
+          className="flex flex-1 items-center gap-1.75 text-[13px] text-muted min-w-0 shell-phone:min-w-0 shell-phone:flex-wrap shell-phone:gap-y-0.5"
+          aria-label="Breadcrumb"
+        >
+          <button
+            type="button"
+            className="inline-flex cursor-pointer items-center whitespace-nowrap border-0 hover:text-foreground shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 [background:none] pt-0 pr-0 pb-0 pl-0 text-muted [font:inherit] gap-1.5 shell-phone:min-w-11! shell-phone:min-h-11! shell-phone:whitespace-normal shell-phone:max-w-full"
+            onClick={onBack}
+          >
+            ← Agents
+          </button>
+          <span className="text-muted opacity-70">›</span>
           <span>{workspaceName}</span>
-          <span className="sep">›</span>
-          <span className="crumb-id">{agent.key}</span>
-          <span className="current">{agent.name}</span>
+          <span className="text-muted opacity-70">›</span>
+          <span className="font-semibold text-muted">{agent.key}</span>
+          <span className="truncate text-foreground font-semibold overflow-hidden text-ellipsis whitespace-nowrap">
+            {agent.name}
+          </span>
         </nav>
-        <div className="lin-head-actions">
-          <IconBtn label="Open run queue" title="Open run queue" onClick={() => onOpenQueue(agent.id)}>
-            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+        <div className="flex flex-none items-center gap-0.5 ml-auto">
+          <IconBtn
+            label="Open run queue"
+            title="Open run queue"
+            onClick={() => onOpenQueue(agent.id)}
+          >
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              aria-hidden="true"
+            >
               <path d="M2 4h12M2 8h12M2 12h8" strokeLinecap="round" />
             </svg>
           </IconBtn>
         </div>
       </header>
-      <div className="lin-toolbar" style={{justifyContent: 'flex-end'}}>
-        <Tip label={copied ? 'Copied' : `Copy ${agent.key}`}>
+      <div className="flex flex-none items-center border-b border-line justify-end gap-1.5 pt-2 pr-5 pb-2 pl-5 border-b-line">
+        <Tip label={copied ? "Copied" : `Copy ${agent.key}`}>
           <span>
-            <IconBtn label="Copy agent id" title="Copy agent id" onClick={() => {
-              void navigator.clipboard.writeText(agent.id).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1500); }).catch(() => setCopied(false));
-            }}><Copy size={15} /></IconBtn>
+            <IconBtn
+              label="Copy agent id"
+              title="Copy agent id"
+              onClick={() => {
+                void navigator.clipboard
+                  .writeText(agent.id)
+                  .then(() => {
+                    setCopied(true);
+                    window.setTimeout(() => setCopied(false), 1500);
+                  })
+                  .catch(() => setCopied(false));
+              }}
+            >
+              <Copy size={15} />
+            </IconBtn>
           </span>
         </Tip>
       </div>
 
-      <div className="lin-detail">
-        <main className="lin-detail-main">
-          <h1 className="lin-detail-title" style={{display: 'flex', alignItems: 'center', gap: 10}}>
+      <div className="flex flex-1 flex-col lg:flex-row min-h-0 [@media_(max-width:900px)]:flex-col">
+        <main className="flex-1 overflow-y-auto lg:max-w-4xl lg:px-10 lg:pt-6 lg:pb-20 min-w-0 pt-6.5 pr-10 pb-20 pl-10 max-w-205 [@media_(max-width:900px)]:max-w-none [@media_(max-width:900px)]:pt-5 [@media_(max-width:900px)]:pr-5 [@media_(max-width:900px)]:pb-5 [@media_(max-width:900px)]:pl-5">
+          <h1 className="overflow-hidden border-0 focus:outline-none flex items-center w-full bg-transparent text-foreground text-[21px] font-[650] tracking-[-.015em] leading-[1.3] pt-0 pr-0 pb-0 pl-0 mt-0 mr-0 mb-3.5 ml-0 resize-none font-[inherit] focus:[outline:none] gap-2.5">
             {statusGlyph(agent.status)} {agent.name}
           </h1>
-          <p className="lin-detail-desc">
-            {status.name} · {agent.model || 'no model set'} · {running} running · {caps} ·{' '}
-            {agent.monthlyBudgetCredits === null ? 'workspace budget default' : `${agent.monthlyBudgetCredits} credits/month`} ·{' '}
-            {agent.runnerPool || 'any runner pool'} · created {stamp(agent.createdAt)}
+          <p className="relative wrap-break-word text-[14px] leading-[1.6] text-foreground [word-break:break-word] mt-0 mr-0 mb-2 ml-0 min-h-6">
+            {status.name} · {agent.model || "no model set"} · {caps} · {running}{" "}
+            running ·{" "}
+            {agent.monthlyBudgetCredits === null
+              ? "workspace budget default"
+              : `${agent.monthlyBudgetCredits} credits/month`}{" "}
+            · {agent.runnerPool || "any runner pool"} · created{" "}
+            {stamp(agent.createdAt)}
           </p>
 
-          <section className="lin-activity" aria-label="Session activity">
-            <header>
-              <b>Session activity</b>
-              <span className="grow" />
-              {live
-                ? <button type="button" className="lin-subscribe-btn" disabled={busy === 'stop'}
-                    onClick={() => void stop(live)}>{busy === 'stop' ? 'Stopping…' : `Stop ${live.issueIdentifier}`}</button>
-                : <span className="lin-note">No run is active right now.</span>}
+          <section
+            className="border-t border-line border-t-line pt-4 mt-1.5"
+            aria-label="Session activity"
+          >
+            <header className="flex items-center mb-3">
+              <b className="text-[14px]">Session activity</b>
+              <span className="flex-1" />
+              {active ? (
+                <button
+                  type="button"
+                  className="inline-flex items-center border-0 hover:bg-subtle hover:text-foreground shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 [background:none] text-muted text-[12px] font-medium gap-1.75 pt-1.25 pr-2 pb-1.25 pl-2 rounded-md"
+                  disabled={busy === "stop"}
+                  onClick={() => void stop(active)}
+                >
+                  {busy === "stop"
+                    ? "Stopping…"
+                    : `Stop ${active.issueIdentifier}`}
+                </button>
+              ) : (
+                /* Not "no session is running": the server reports no run state at all yet, and
+                 * the difference matters to a reader deciding whether to delegate to this agent. */
+                <span className="text-[12px] text-muted">
+                  No run is active right now.
+                </span>
+              )}
             </header>
-            {events.map(e => (
-              <div key={e.id} className="lin-event" data-kind={e.kind}>
+            {events.map((e) => (
+              <div
+                key={e.id}
+                className="flex items-start gap-2.5 text-[13px] text-muted pt-1.75 pr-0 pb-1.75 pl-0"
+                data-kind={e.kind}
+              >
                 <Avatar name={agent.name} size={18} />
                 <span>
-                  <b className={e.kind === 'error' ? 'text-red-600' : undefined}>{EVENT_LABELS[e.kind]}</b>
-                  {e.tool ? <> <code>{e.tool}</code></> : null} — {e.text}
+                  <b
+                    className={
+                      (e.kind === "error" ? "text-danger" : "text-foreground") +
+                      " block mt-3 mr-0 mb-3 ml-0 font-semibold"
+                    }
+                  >
+                    {EVENT_LABELS[e.kind]}
+                  </b>
+                  {e.tool ? (
+                    <>
+                      {" "}
+                      <code>{e.tool}</code>
+                    </>
+                  ) : null}{" "}
+                  — {e.text}
                 </span>
-                <time>{relTime(e.at)}</time>
+                <time className="flex-none ml-auto text-[12px]">
+                  {relTime(e.at)}
+                </time>
               </div>
             ))}
             {!events.length && (
-              <p className="lin-note">
-                No run has posted an activity for this agent yet. A delegation acknowledges itself
-                within ten seconds, so an empty timeline means nothing was ever delegated here.
+              <p className="text-[12px] text-muted">
+                No run has posted an activity for this agent yet.
               </p>
             )}
           </section>
 
-          <section className="lin-activity" aria-label="Sessions">
-            <header><b>Sessions</b></header>
-            {sessions.map(s => (
-              <div key={s.id} className="lin-event" data-session-status={s.status} data-session-state={s.state} data-session-id={s.id}>
-                <span className="lin-chip" title={`state: ${s.state}${s.admitted ? ' · admitted' : ''}`}>{sessionStatusName(s.status)}</span>
-                <span><b>{s.issueIdentifier}</b> {s.issueTitle}{s.reason ? <span className="lin-note"> — {s.reason}</span> : null}</span>
-                <time>{relTime(s.endedAt || s.startedAt)}</time>
+          <section
+            className="border-t border-line border-t-line pt-4 mt-1.5"
+            aria-label="Sessions"
+          >
+            <header className="flex items-center mb-3">
+              <b className="text-[14px]">Sessions</b>
+            </header>
+            {sessions.map((s) => (
+              <div
+                key={s.id}
+                className="flex items-start gap-2.5 text-[13px] text-muted pt-1.75 pr-0 pb-1.75 pl-0"
+                data-session-status={s.status}
+                data-session-state={s.state}
+                data-session-id={s.id}
+              >
+                <span
+                  className="inline-flex items-center whitespace-nowrap border border-line gap-1 h-6 text-[12px] font-[450] border-solid border-(--card-line) rounded-[48px] pt-0 pr-2 pb-0 pl-2 text-(--card-meta) bg-panel"
+                  title={`state: ${s.state}${s.admitted ? " · admitted" : ""}`}
+                >
+                  {sessionStatusName(s.status)}
+                </span>
+                <span>
+                  <b className="text-foreground font-semibold">
+                    {s.issueIdentifier}
+                  </b>{" "}
+                  {s.issueTitle}
+                  {s.reason ? (
+                    <span className="text-[12px] text-muted">
+                      {" "}
+                      — {s.reason}
+                    </span>
+                  ) : null}
+                </span>
+                <time className="flex-none ml-auto text-[12px]">
+                  {relTime(s.endedAt || s.startedAt)}
+                </time>
               </div>
             ))}
             {!sessions.length && (
-              <p className="lin-note">
-                No run is stored for this agent. Setting the Delegate field on a task opens one; the{' '}
-                <button type="button" className="lin-addrow" onClick={() => onOpenQueue(agent.id)}>run queue</button> shows
-                the workspace's runs as they stand.
+              <p className="text-[12px] text-muted">
+                No run is stored for this agent. Setting the Delegate field on a
+                task opens one; the{" "}
+                <button
+                  type="button"
+                  className="inline-flex items-center border-0 hover:bg-subtle hover:text-foreground shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 gap-2 [background:none] text-muted text-[13px] pt-1.25 pr-1.5 pb-1.25 pl-1.5 rounded-md"
+                  onClick={() => onOpenQueue(agent.id)}
+                >
+                  run queue
+                </button>{" "}
+                to see the queue as it stands.
               </p>
             )}
           </section>
 
-          <section className="lin-activity" aria-label="Claims">
-            <header>
-              <b>Claims</b>
-              <span className="grow" />
-              <span className="lin-note">
-                {claims.some(c => c.awaiting) ? 'A claim is waiting on a verifier' : 'Nothing is waiting on a verifier'}
+          <section
+            className="border-t border-line border-t-line pt-4 mt-1.5"
+            aria-label="Claims"
+          >
+            <header className="flex items-center mb-3">
+              <b className="text-sm">Claims</b>
+              <span className="flex-1" />
+              <span className="text-xs text-muted">
+                {claims.some((c) => c.awaiting)
+                  ? "A claim is waiting on a verifier"
+                  : "Nothing is waiting on a verifier"}
               </span>
             </header>
-            {claimsError && <p className="lin-error" role="alert" data-claims-error>{claimsError}</p>}
-            {claims.map(claim => (
-              <div key={claim.sessionId} className="lin-event" data-claim-row={claim.sessionId}
-                data-verdict={claim.verdict || 'awaiting'}>
+            {claimsError && (
+              <p className="text-danger text-sm" role="alert" data-claims-error>
+                {claimsError}
+              </p>
+            )}
+            {claims.map((claim) => (
+              <div
+                key={claim.sessionId}
+                className="flex items-start gap-2.5 text-sm text-muted pt-1.75 pr-0 pb-1.75 pl-0"
+                data-claim-row={claim.sessionId}
+                data-verdict={claim.verdict || "awaiting"}
+              >
                 <Avatar name={agent.name} size={18} />
-                <span>
-                  <b>{claim.issueIdentifier}</b> {claim.issueTitle}
-                  {' — '}{claim.summary || 'no summary'}
-                  {' '}
-                  <span className="lin-chip" data-verdict-chip={claim.verdict || 'awaiting'}
-                    title={`claimer model ${claim.workerModel || 'unknown'} · claimed ${claim.claimAt}`}>
-                    <i style={{background: verdictColor(claim.verdict)}} />
-                    {claim.awaiting && !claim.verdict ? 'Awaiting verifier' : verdictLabel(claim.verdict)}
+                <span className="min-w-0 wrap-break-word">
+                  <b className="text-foreground font-semibold">
+                    {claim.issueIdentifier}
+                  </b>{" "}
+                  {claim.issueTitle}
+                  {" — "}
+                  {claim.summary || "no summary"}{" "}
+                  <span
+                    className="inline-flex items-center whitespace-nowrap border border-line gap-1 h-6 text-xs rounded-full pt-0 pr-2 pb-0 pl-2 text-muted bg-panel"
+                    data-verdict-chip={claim.verdict || "awaiting"}
+                    title={`claimer model ${claim.workerModel || "unknown"} · claimed ${claim.claimAt}`}
+                  >
+                    <i
+                      className="inline-block size-2 rounded-full"
+                      style={{ background: verdictColor(claim.verdict) }}
+                    />
+                    {claim.awaiting && !claim.verdict
+                      ? "Awaiting verifier"
+                      : verdictLabel(claim.verdict)}
                   </span>
                   {claim.verifications.length > 0 && (
-                    <span data-verification-checks={claim.verifications[0].id} style={{display: 'block', marginTop: 4}}>
-                      {claim.verifications[0].checks.map(check => (
-                        <span key={check.name} className="lin-note" data-check={check.name}
-                          data-outcome={check.outcome} style={{display: 'block'}}>
+                    <span
+                      data-verification-checks={claim.verifications[0].id}
+                      className="block mt-1"
+                    >
+                      {claim.verifications[0].checks.map((check) => (
+                        <span
+                          key={check.name}
+                          className="block text-xs text-muted"
+                          data-check={check.name}
+                          data-outcome={check.outcome}
+                        >
                           {check.name}: {check.outcome}
-                          {check.detail ? ` — ${check.detail}` : ''}
+                          {check.detail ? ` — ${check.detail}` : ""}
                         </span>
                       ))}
                       {claim.verifications[0].rationale && (
-                        <span className="lin-note" style={{display: 'block'}}>
-                          “{claim.verifications[0].rationale}” — {claim.verifications[0].verifierKind} verifier
-                          {claim.verifications[0].verifierModel ? ` (${claim.verifications[0].verifierModel})` : ''}
+                        <span className="block text-xs text-muted">
+                          “{claim.verifications[0].rationale}” —{" "}
+                          {claim.verifications[0].verifierKind} verifier
+                          {claim.verifications[0].verifierModel
+                            ? ` (${claim.verifications[0].verifierModel})`
+                            : ""}
                         </span>
                       )}
                     </span>
                   )}
                 </span>
-                <time>{relTime(claim.verifiedAt || claim.claimAt)}</time>
+                <time className="flex-none ml-auto text-xs">
+                  {relTime(claim.verifiedAt || claim.claimAt)}
+                </time>
               </div>
             ))}
             {!claims.length && !claimsError && (
-              <p className="lin-note">
-                No run of this agent has finished with a claim. A run submits one at finish
-                (<code>/runner/finish</code>), and until a separate principal signs it the session
-                stays awaiting verification.
+              <p className="text-xs text-muted">
+                No run of this agent has finished with a claim. A run submits
+                one at finish (<code>/runner/finish</code>), and until a
+                separate principal signs it the session stays awaiting
+                verification.
               </p>
             )}
           </section>
 
-          {notice && <p className="lin-note" role="status" style={{marginTop: 12}}>{notice}</p>}
-          {error && <p className="lin-error" role="alert">{error}</p>}
+          {notice && (
+            <p className="text-[12px] text-muted mt-3" role="status">
+              {notice}
+            </p>
+          )}
+          {error && (
+            <p
+              className="border border-danger/40 mt-4 mr-6 mb-4 ml-6 pt-3 pr-4 pb-3 pl-4 border-solid border-[color-mix(in_srgb,var(--danger)_40%,var(--line))] rounded-lg text-danger text-[13px] bg-[color-mix(in_srgb,var(--danger)_6%,var(--panel))]"
+              role="alert"
+            >
+              {error}
+            </p>
+          )}
         </main>
 
-        <aside className="lin-props" aria-label="Agent settings">
-          <h3>Agent</h3>
-          <PolicyField label="Name" icon={<span aria-hidden="true">◈</span>} value={policy.name}
-            disabled={busy === 'policy'} onSave={name => void savePolicy({name})} />
-          <PolicyField label="Display name" icon={<span aria-hidden="true">◍</span>} value={policy.displayName || ''}
-            placeholder="Same as the name" disabled={busy === 'policy'}
-            onSave={displayName => void savePolicy({displayName: displayName || null})} />
-          <PolicyField label="Capacity" icon={<span aria-hidden="true">▦</span>} type="number" min={1}
-            value={String(policy.capacity)} disabled={busy === 'policy'}
-            onSave={next => { const n = Number(next); if (Number.isFinite(n) && n >= 1) void savePolicy({capacity: n}); }} />
-          <PolicyField label="Budget" icon={<span aria-hidden="true">▮</span>} type="number" min={0}
-            value={policy.monthlyBudgetCredits === null ? '' : String(policy.monthlyBudgetCredits)}
-            placeholder="Workspace default" disabled={busy === 'policy'}
-            onSave={next => void savePolicy({monthlyBudgetCredits: next === '' ? null : Number(next)})} />
-          <PolicyField label="Model" icon={<span aria-hidden="true">◇</span>} value={policy.model || ''}
-            placeholder="Not set" disabled={busy === 'policy'}
-            onSave={next => void savePolicy({model: next || null})} />
-          <PolicyField label="Runner pool" icon={<span aria-hidden="true">▤</span>} value={policy.runnerPool || ''}
-            placeholder="Any pool" disabled={busy === 'policy'}
-            onSave={next => void savePolicy({runnerPool: next || null})} />
-          <PolicyField label="Timezone" icon={<span aria-hidden="true">◷</span>} value={policy.timezone || ''}
-            placeholder="UTC" disabled={busy === 'policy'}
-            onSave={next => void savePolicy({timezone: next || null})} />
-          <PolicyField label="Hours" icon={<span aria-hidden="true">◔</span>} value={policy.workingHours || ''}
+        <aside
+          className="flex-none overflow-y-auto border-t border-line lg:w-72 lg:border-t-0 lg:border-l w-72.5 border-l border-l-line pt-5.5 pr-5 pb-15 pl-5 [@media_(max-width:1100px)]:w-62.5 [@media_(max-width:900px)]:w-auto [@media_(max-width:900px)]:border-l-0 [@media_(max-width:900px)]:border-t [@media_(max-width:900px)]:border-t-line"
+          aria-label="Agent settings"
+        >
+          <h3 className="text-[12px] font-semibold text-muted mt-0 mr-0 mb-2.5 ml-0">
+            Agent
+          </h3>
+          <PolicyField
+            label="Name"
+            icon={<span aria-hidden="true">◈</span>}
+            value={policy.name}
+            disabled={busy === "policy"}
+            onSave={(name) => void savePolicy({ name })}
+          />
+          <PolicyField
+            label="Display name"
+            icon={<span aria-hidden="true">◍</span>}
+            value={policy.displayName || ""}
+            placeholder="Same as the name"
+            disabled={busy === "policy"}
+            onSave={(displayName) =>
+              void savePolicy({ displayName: displayName || null })
+            }
+          />
+          <PolicyField
+            label="Capacity"
+            icon={<span aria-hidden="true">▦</span>}
+            type="number"
+            min={1}
+            value={String(policy.capacity)}
+            disabled={busy === "policy"}
+            onSave={(next) => {
+              const n = Number(next);
+              if (Number.isFinite(n) && n >= 1)
+                void savePolicy({ capacity: n });
+            }}
+          />
+          <PolicyField
+            label="Budget"
+            icon={<span aria-hidden="true">▮</span>}
+            type="number"
+            min={0}
+            value={
+              policy.monthlyBudgetCredits === null
+                ? ""
+                : String(policy.monthlyBudgetCredits)
+            }
+            placeholder="Workspace default"
+            disabled={busy === "policy"}
+            onSave={(next) =>
+              void savePolicy({
+                monthlyBudgetCredits: next === "" ? null : Number(next),
+              })
+            }
+          />
+          <PolicyField
+            label="Model"
+            icon={<span aria-hidden="true">◇</span>}
+            value={policy.model || ""}
+            placeholder="Not set"
+            disabled={busy === "policy"}
+            onSave={(next) => void savePolicy({ model: next || null })}
+          />
+          <PolicyField
+            label="Runner pool"
+            icon={<span aria-hidden="true">▤</span>}
+            value={policy.runnerPool || ""}
+            placeholder="Any pool"
+            disabled={busy === "policy"}
+            onSave={(next) => void savePolicy({ runnerPool: next || null })}
+          />
+          <PolicyField
+            label="Timezone"
+            icon={<span aria-hidden="true">◷</span>}
+            value={policy.timezone || ""}
+            placeholder="UTC"
+            disabled={busy === "policy"}
+            onSave={(next) => void savePolicy({ timezone: next || null })}
+          />
+          <PolicyField
+            label="Hours"
+            icon={<span aria-hidden="true">◔</span>}
+            value={policy.workingHours || ""}
             placeholder='{"days":["mon","tue","wed","thu","fri"],"from":"08:00","to":"19:00"}'
-            disabled={busy === 'policy'}
-            onSave={next => void savePolicy({workingHours: next || null})} />
-          <PropDropdown label="State" icon={<span aria-hidden="true">◎</span>}
-            value={policy.archived ? 'Archived' : 'Active'}
-            onPick={id => { if (id) void savePolicy({archived: id === 'archived'}); }}
-            disabled={busy === 'policy'}
-            options={[{id: 'active', selected: !policy.archived, label: 'Active'},
-              {id: 'archived', selected: policy.archived, label: 'Archived'}]} />
+            disabled={busy === "policy"}
+            onSave={(next) => void savePolicy({ workingHours: next || null })}
+          />
+          <PropDropdown
+            label="State"
+            icon={<span aria-hidden="true">◎</span>}
+            value={policy.archived ? "Archived" : "Active"}
+            onPick={(id) => {
+              if (id) void savePolicy({ archived: id === "archived" });
+            }}
+            disabled={busy === "policy"}
+            options={[
+              { id: "active", selected: !policy.archived, label: "Active" },
+              { id: "archived", selected: policy.archived, label: "Archived" },
+            ]}
+          />
 
-          <div className="sec">Policy (WP12)</div>
-          <PolicyField label="Harness" icon={<span aria-hidden="true">⌬</span>}
-            value={detail.harnesses.defaultHarness || ''}
-            placeholder={`pi (default) — one of ${detail.harnesses.known.join(', ')}`}
-            disabled={busy === 'harness'}
-            onSave={next => void saveHarness({defaultHarness: next || null})} />
-          <PolicyField label="Allowed harnesses" icon={<span aria-hidden="true">⌸</span>}
-            value={detail.harnesses.harnessAllowlist.join(', ')}
+          <div className="mt-4 mb-1 text-xs font-semibold text-muted">
+            Policy (WP12)
+          </div>
+          <PolicyField
+            label="Harness"
+            icon={<span aria-hidden="true">⌬</span>}
+            value={detail.harnesses.defaultHarness || ""}
+            placeholder={`pi (default) — one of ${detail.harnesses.known.join(", ")}`}
+            disabled={busy === "harness"}
+            onSave={(next) =>
+              void saveHarness({ defaultHarness: next || null })
+            }
+          />
+          <PolicyField
+            label="Allowed harnesses"
+            icon={<span aria-hidden="true">⌸</span>}
+            value={detail.harnesses.harnessAllowlist.join(", ")}
             placeholder="Any profile"
-            disabled={busy === 'harness'}
-            onSave={next => void saveHarness({
-              harnessAllowlist: next.split(',').map(name => name.trim()).filter(Boolean),
-            })} />
-          <div className="lin-prop">
-            <span className="k"><span aria-hidden="true">⌗</span>Runs on</span>
-            <span className="v lin-note" data-harness-effective={detail.harnesses.defaultHarness
-              || (detail.harnesses.harnessAllowlist[0] || 'pi')}>
+            disabled={busy === "harness"}
+            onSave={(next) =>
+              void saveHarness({
+                harnessAllowlist: next
+                  .split(",")
+                  .map((name) => name.trim())
+                  .filter(Boolean),
+              })
+            }
+          />
+          <div className="relative flex items-start gap-2.5 min-h-8 text-sm">
+            <span className="flex flex-none items-center gap-2 text-muted w-24">
+              <span aria-hidden="true">⌗</span>Runs on
+            </span>
+            <span
+              className="flex-1 min-w-0 text-xs text-muted"
+              data-harness-effective={
+                detail.harnesses.defaultHarness ||
+                detail.harnesses.harnessAllowlist[0] ||
+                "pi"
+              }
+            >
               {detail.harnesses.defaultHarness
                 ? `queues for ${detail.harnesses.defaultHarness}`
                 : detail.harnesses.harnessAllowlist.length
                   ? `queues for the first allowed profile (${[...detail.harnesses.harnessAllowlist].sort()[0]})`
-                  : 'queues for pi until a policy chooses'}
-              {' '}· a run is only leased to a runner that declares it
+                  : "queues for pi until a policy chooses"}{" "}
+              · a run is only leased to a runner that declares it
             </span>
           </div>
-          <p className="lin-note">
-            The harness decides which CLI a delegated run executes under, and the queue will not
-            hand it to a runner that did not declare it. An unknown profile, an alias (claude is
-            claude-code) and a default the allowlist forbids are all refused by the server, not
-            saved and corrected here. Tools, repos, secrets, network and approvers have their own
-            columns in the policy row and no control on this page yet.
+          <p className="text-xs text-muted">
+            The harness decides which CLI a delegated run executes under, and
+            the queue will not hand it to a runner that did not declare it. An
+            unknown profile, an alias (claude is claude-code) and a default the
+            allowlist forbids are all refused by the server, not saved and
+            corrected here. Tools, repos, secrets, network and approvers have
+            their own columns in the policy row and no control on this page yet.
           </p>
         </aside>
       </div>

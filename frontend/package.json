@@ -33,7 +33,11 @@
     "test:pulse": "node scripts/check-pulse.mjs",
     "test:settings": "node scripts/check-settings.mjs",
     "test:agent-screens": "node ../scripts/test-agent-screens-geometry.cjs",
-    "test:runner-contract": "../.venv/bin/python ../scripts/check-runner-contract.py"
+    "test:runner-contract": "../.venv/bin/python ../scripts/check-runner-contract.py",
+    "lint:tailwind": "node scripts/canonicalize-tailwind.mjs",
+    "fix:tailwind-intellisense": "node scripts/fix-tailwind-intellisense.mjs",
+    "test:tailwind-intellisense": "node scripts/test-fix-tailwind-intellisense.mjs",
+    "test:tailwind": "node scripts/test-canonicalize-tailwind.mjs"
   },
   "dependencies": {
     "@fontsource-variable/inter": "5.3.0",
@@ -57,6 +61,7 @@
     "zustand": "^4.5.7"
   },
   "devDependencies": {
+    "@tailwindcss/language-server": "^0.16.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "eslint": "9.39.5",

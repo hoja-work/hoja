@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import {__unstable__loadDesignSystem as load} from 'tailwindcss';
+import {canonicalize,propertyUtility} from './canonicalize-tailwind.mjs';
+assert.equal(canonicalize('mt-0 mr-0 mb-[32px]'),'mt-0 mr-0 mb-[32px]');
+assert.equal(canonicalize('mb-8'),'mb-8');
+assert.equal(canonicalize('hover:p-[0_8px]'),'hover:py-0 hover:px-[8px]');
+assert.equal(canonicalize('[&:hover]:flex!'),'[&:hover]:flex!');
+assert.equal(canonicalize('data-active:[color:var(--muted)]'),'data-active:text-muted');
+assert.equal(propertyUtility('opacity','.58'),'opacity-58');
+assert.equal(propertyUtility('font-family','var(--hoja-font-ui)'),'font-(family-name:--hoja-font-ui)');
+assert.equal(propertyUtility('--settings-ink','#171717'),null);
+assert.equal(canonicalize('transform-[translateX(-50%)]'),'transform-[translateX(-50%)]');
+const design = await load(fs.readFileSync('src/tailwind.css','utf8'),{loadStylesheet:async id=>({path:id,base:process.cwd(),content:fs.readFileSync(id==='tailwindcss'?'node_modules/tailwindcss/index.css':id,'utf8')})});
+for(const candidate of ['mt-0','mb-[32px]','mb-8','font-(family-name:--hoja-font-ui)','text-(length:--size)','opacity-58','hover:px-[8px]'])assert.ok(design.candidatesToCss([candidate])[0],candidate+' must compile');
+assert.match(design.candidatesToCss(['font-(family-name:--hoja-font-ui)'])[0],/font-family: var\(--hoja-font-ui\)/);
+assert.match(design.candidatesToCss(['mb-[32px]'])[0],/margin-bottom: 32px/);
+console.log('Tailwind canonicalization tests passed');

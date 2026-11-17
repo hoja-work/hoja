@@ -1,4 +1,4 @@
-/* Screens 4 and 5 — Runners list and Runner detail (HOJA-602-A-16, WP13).
+/* Screens 4 and 5 — Runners list and Runner detail (HOJA-602-A-16, WP13 T059).
  *
  * Both screens are the issue list's and the issue page's own pieces:
  *
@@ -8,71 +8,78 @@
  *   - the detail is the `.lin-detail` + `.lin-props` split with the exported `PropDropdown` for
  *     property rows, the shape `AgentDetail.tsx` already proves.
  *
- * Since slice 5 the runners and their leases are server rows: `runners`, `runner(id)` and
- * `agentLeases` in app/hoja_server/agent_runners.py, all admin-gated and org-scoped. The current
- * lease rides the row (the issue row's `trailing` slot, exactly as the run queue's session chip
- * does) because "what is this machine holding?" is the question the list answers.
- *
- * Since HOJA-635 the list also *writes*: the toolbar's "Enroll runner" action mints a single-use
- * enrollment token (`runnerEnrollmentCreate`) and shows it once, together with the exact
- * `hoja-runnerd --enroll` command, because that response is the only place the plaintext exists —
- * the server keeps a sha256 and cannot hand it back. Withdrawing an unspent token
- * (`runnerEnrollmentRevoke`) and disabling an enrolled machine (`runnerRevoke`, on the detail
- * page) are the two ways back. None of those controls is a `.lin-row`: the list's row count must
- * stay equal to the server's runner count, which is what the geometry check asserts.
- *
- * Since slice 6 the Connect block is a server read too: `connect_endpoint` (revision 71) records
- * every published port the runner reports on `/runner/connect/open`, `connectEndpoints` serves the
- * live rows for this machine, and `connectEndpointClose` withdraws one (audited, and delivered to
- * the runner on its next heartbeat). Two secrets matter and both are structurally absent: the
- * tailcat address is a bearer secret (runner/hoja_runnerd/connect.py:8-12) that never reaches the
- * database, so it is not in the SDL and cannot be selected; and the lease token hash is a
- * credential column (FR-018) the server's SDL does not carry at all.
+ * Runners and their leases are server rows. Enrollment tokens are shown only once, and the
+ * runner detail offers distinct machine and Connect exposure revocation controls. The server
+ * omits bearer secrets from these reads; Connect-disabled workspaces cannot revoke exposures.
  */
 
-import {useCallback, useEffect, useMemo, useState} from 'react';
-import {Copy, Lock, LockOpen, Plus, SlidersHorizontal} from 'lucide-react';
-import {confirmDialog} from '../dialogs';
-import {GraphStatusIcon, IconBtn, LabelChip, Tip} from '../graph/shared';
-import {DisplayPanel, IssueRow, PropDropdown, defaultDisplay, type IssueRowModel, type LinDisplay} from '../graph/tasks';
-import {getAgentsAdapter} from './adapter';
-import {AGENTS_TABS, AgentsListShell, SearchField} from './chrome';
-import {RUNNER_STATUSES, runnerStatus, ttlLabel, ttlSecondsLeft} from './types';
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Copy, Lock, LockOpen, Plus, SlidersHorizontal } from "lucide-react";
+import { confirmDialog } from "../dialogs";
+import { GraphStatusIcon, IconBtn, LabelChip, Tip } from "../graph/shared";
+import {
+  DisplayPanel,
+  IssueRow,
+  PropDropdown,
+  defaultDisplay,
+  type IssueRowModel,
+  type LinDisplay,
+} from "../graph/tasks";
+import { getAgentsAdapter } from "./adapter";
+import { AGENTS_TABS, AgentsListShell, SearchField } from "./chrome";
+import {
+  RUNNER_STATUSES,
+  runnerStatus,
+  ttlLabel,
+  ttlSecondsLeft,
+} from "./types";
 import type {
-  ConnectExposure, Runner, RunnerEnrollment, RunnerEnrollmentGrant, RunnerLease, RunnerStatus,
-} from './types';
+  ConnectExposure,
+  Runner,
+  RunnerEnrollment,
+  RunnerEnrollmentGrant,
+  RunnerLease,
+  RunnerStatus,
+} from "./types";
 
 /* A runner row is an `IssueRowModel`: the runner's id is the identifier column, its name is the
- * title, online/offline is the status glyph and `lastSeenAt` is the age the glyph explains. A
- * runner that has not heartbeated yet has no age to explain, so the glyph shows no time rather
- * than a fabricated one. The labels ride the model's own `labels`, so they render through the
- * issue row's `LabelChip`. */
+ * title, online/offline is the status glyph and `lastSeenAt` is the age the glyph explains. The
+ * labels ride the model's own `labels`, so they render through the issue row's `LabelChip`. */
 export function runnerRow(r: Runner): IssueRowModel {
   const tone = runnerStatus(r.status);
   return {
     id: r.id,
     identifier: r.id,
     title: r.name,
-    state: {name: tone.name, type: tone.type, color: tone.color},
+    state: { name: tone.name, type: tone.type, color: tone.color },
     stateChangedAt: r.lastSeenAt,
     updatedAt: r.lastSeenAt,
-    labels: {nodes: r.labels.map(name => ({id: name, name}))},
+    labels: { nodes: r.labels.map((name) => ({ id: name, name })) },
   };
 }
 
-/* The row's second 14 px column is the one an issue spends on priority. A runner has no priority;
- * it has a credential, and whether that credential still authenticates is what FR-018 makes
- * scarce. Filling the column keeps the identifier where the issue list puts it instead of
- * shifting it 23 px left. */
+/* The row's second 14 px column is the one an issue spends on priority. A runner has no
+ * priority; it has an enrollment, which is what FR-018 makes scarce. Filling the column keeps the
+ * identifier where the issue list puts it instead of shifting it 23 px left. */
 function credentialGlyph(r: Runner) {
   const label = r.revoked
-    ? `Revoked${r.revokedAt ? ` ${r.revokedAt.slice(0, 10)}` : ''}: this runner's token no longer authenticates`
+    ? `Revoked${r.revokedAt ? ` ${r.revokedAt.slice(0, 10)}` : ""}: this runner's token no longer authenticates`
     : r.enabled
-      ? 'Enrolled: a one-time lease token was presented and accepted'
-      : 'Disabled: this runner is refused at the lease route';
+      ? "Enrolled: a one-time lease token was presented and accepted"
+      : "Disabled: this runner is refused at the lease route";
   return (
-    <span className="lin-tip" data-tip={label} role="img" aria-label={label} data-credential={r.revoked ? 'revoked' : 'enrolled'}>
-      {r.revoked || !r.enabled ? <LockOpen size={14} aria-hidden="true" /> : <Lock size={14} aria-hidden="true" />}
+    <span
+      className="relative inline-grid place-items-center"
+      data-tip={label}
+      role="img"
+      aria-label={label}
+      data-credential={r.revoked ? "revoked" : "enrolled"}
+    >
+      {r.revoked || !r.enabled ? (
+        <LockOpen size={14} aria-hidden="true" />
+      ) : (
+        <Lock size={14} aria-hidden="true" />
+      )}
     </span>
   );
 }
@@ -83,9 +90,14 @@ function leaseChip(r: Runner) {
   if (!r.lease) return null;
   const task = r.lease.taskIdentifier || r.lease.taskId.slice(0, 8);
   return (
-    <span className="lin-chip" data-lease={r.lease.id} data-lease-state={r.lease.state}
-      title={`Holding ${task} · ${r.lease.harness} · fence ${r.lease.fence}${r.lease.leaseUntil ? ` · until ${r.lease.leaseUntil}` : ''}`}>
-      <i style={{background: '#5e6ad2'}} />{task} · {r.lease.harness}
+    <span
+      className="inline-flex items-center whitespace-nowrap border border-line gap-1 h-6 text-[12px] rounded-[48px] px-2 text-muted bg-panel"
+      data-lease={r.lease.id}
+      data-lease-state={r.lease.state}
+      title={`Holding ${task} · ${r.lease.harness} · fence ${r.lease.fence}${r.lease.leaseUntil ? ` · until ${r.lease.leaseUntil}` : ""}`}
+    >
+      <i style={{ background: "#5e6ad2" }} />
+      {task} · {r.lease.harness}
     </span>
   );
 }
@@ -94,16 +106,23 @@ function leaseChip(r: Runner) {
  * `.lin-icon-btn` inside 8 px of padding — and both the issue list and the issue page are measured
  * against it, so a `.lin-btn` at its default ~34 px would break that parity on this screen alone.
  * Pinning the height keeps the shared `.lin-btn` styling and the shared toolbar geometry. */
-const TOOLBAR_ACTION = {height: 28, padding: '0 12px'} as const;
+const TOOLBAR_ACTION = { height: 28, padding: "0 12px" } as const;
 
 const RUNNER_DISPLAY: LinDisplay = {
   ...defaultDisplay,
-  grouping: 'status',
-  ordering: 'updated',
-  props: {...defaultDisplay.props,
-    // An issue row's priority column is spent on the credential here, and assignee/project/cycle/
+  grouping: "status",
+  ordering: "updated",
+  props: {
+    ...defaultDisplay.props,
+    // An issue row's priority column is spent on enrollment here, and assignee/project/cycle/
     // dueDate/created have no runner counterpart.
-    priority: false, assignee: false, project: false, cycle: false, dueDate: false, created: false},
+    priority: false,
+    assignee: false,
+    project: false,
+    cycle: false,
+    dueDate: false,
+    created: false,
+  },
 };
 
 /* Enroll (HOJA-635) — the one control on this screen that hands out a credential.
@@ -119,146 +138,293 @@ const RUNNER_DISPLAY: LinDisplay = {
  * refetch. Closing the panel drops it, and the block says so instead of letting someone assume
  * they can come back for it.
  */
-function EnrollPanel({onClose}: {onClose: () => void}) {
-  const [name, setName] = useState('');
-  const [ttl, setTtl] = useState('1440');
+function EnrollPanel({ onClose }: { onClose: () => void }) {
+  const [name, setName] = useState("");
+  const [ttl, setTtl] = useState("1440");
   const [grant, setGrant] = useState<RunnerEnrollmentGrant | null>(null);
   const [enrollments, setEnrollments] = useState<RunnerEnrollment[]>([]);
-  const [busy, setBusy] = useState('');
-  const [error, setError] = useState('');
-  const [copied, setCopied] = useState('');
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [copied, setCopied] = useState("");
 
   const refresh = useCallback(() => {
-    getAgentsAdapter().listRunnerEnrollments()
+    getAgentsAdapter()
+      .listRunnerEnrollments()
       .then(setEnrollments)
       .catch((e: Error) => setError(e.message));
   }, []);
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
 
   const copy = (what: string, value: string) => {
-    void navigator.clipboard.writeText(value)
-      .then(() => { setCopied(what); window.setTimeout(() => setCopied(''), 1500); })
-      .catch(() => setCopied(''));
+    void navigator.clipboard
+      .writeText(value)
+      .then(() => {
+        setCopied(what);
+        window.setTimeout(() => setCopied(""), 1500);
+      })
+      .catch(() => setCopied(""));
   };
 
   const create = async () => {
     const label = name.trim();
     if (!label || busy) return;
-    setBusy('create');
-    setError('');
+    setBusy("create");
+    setError("");
     try {
-      const minutes = ttl.trim() === '' ? undefined : Number(ttl);
+      const minutes = ttl.trim() === "" ? undefined : Number(ttl);
       const created = await getAgentsAdapter().createRunnerEnrollment(
-        label, Number.isFinite(minutes) ? minutes : undefined);
+        label,
+        Number.isFinite(minutes) ? minutes : undefined,
+      );
       setGrant(created);
-      setName('');
+      setName("");
       refresh();
     } catch (e) {
       setError((e as Error).message);
     } finally {
-      setBusy('');
+      setBusy("");
     }
   };
 
   const revoke = async (enrollment: RunnerEnrollment) => {
-    if (!(await confirmDialog(
-      `Withdraw the enrollment token "${enrollment.label || enrollment.id}"? A machine that has not `
-      + 'used it yet will be refused at /runner/enroll, and the token cannot be restored.',
-      {danger: true}))) return;
+    if (
+      !(await confirmDialog(
+        `Withdraw the enrollment token "${enrollment.label || enrollment.id}"? A machine that has not ` +
+          "used it yet will be refused at /runner/enroll, and the token cannot be restored.",
+        { danger: true },
+      ))
+    )
+      return;
     setBusy(enrollment.id);
-    setError('');
+    setError("");
     try {
       await getAgentsAdapter().revokeRunnerEnrollment(enrollment.id);
       refresh();
     } catch (e) {
       setError((e as Error).message);
     } finally {
-      setBusy('');
+      setBusy("");
     }
   };
 
   return (
-    <section className="lin-note" data-enroll-panel aria-label="Enroll a runner"
-      style={{display: 'block', padding: '14px 20px', borderBottom: '1px solid var(--line)'}}>
+    <section
+      className="text-[12px] text-muted"
+      data-enroll-panel
+      aria-label="Enroll a runner"
+      style={{
+        display: "block",
+        padding: "14px 20px",
+        borderBottom: "1px solid var(--line)",
+      }}
+    >
       {!grant && (
-        <div style={{display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center'}}>
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 8,
+            alignItems: "center",
+          }}
+        >
           <b>Enroll a runner</b>
-          <input aria-label="Runner name" placeholder="Machine name, e.g. mac-mini-01"
-            value={name} onChange={e => setName(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') void create(); }}
-            style={{minWidth: 240, padding: '6px 10px', borderRadius: 7,
-              border: '1px solid var(--line)', background: 'var(--panel)', color: 'var(--text)'}} />
-          <label style={{display: 'inline-flex', alignItems: 'center', gap: 6}}>
+          <input
+            aria-label="Runner name"
+            placeholder="Machine name, e.g. mac-mini-01"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void create();
+            }}
+            style={{
+              minWidth: 240,
+              padding: "6px 10px",
+              borderRadius: 7,
+              border: "1px solid var(--line)",
+              background: "var(--panel)",
+              color: "var(--text)",
+            }}
+          />
+          <label
+            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+          >
             Expires in
-            <input aria-label="Token lifetime in minutes" value={ttl} inputMode="numeric"
-              onChange={e => setTtl(e.target.value)} style={{width: 80, padding: '6px 8px',
-                borderRadius: 7, border: '1px solid var(--line)', background: 'var(--panel)',
-                color: 'var(--text)'}} />
+            <input
+              aria-label="Token lifetime in minutes"
+              value={ttl}
+              inputMode="numeric"
+              onChange={(e) => setTtl(e.target.value)}
+              style={{
+                width: 80,
+                padding: "6px 8px",
+                borderRadius: 7,
+                border: "1px solid var(--line)",
+                background: "var(--panel)",
+                color: "var(--text)",
+              }}
+            />
             min
           </label>
-          <button type="button" className="lin-btn primary" disabled={!name.trim() || busy === 'create'}
-            onClick={() => void create()}>
-            {busy === 'create' ? 'Minting…' : 'Create token'}
+          <button
+            type="button"
+            className="inline-flex items-center rounded-[7px] border border-line bg-accent px-3 py-1.5 text-[13px] text-foreground disabled:opacity-50"
+            disabled={!name.trim() || busy === "create"}
+            onClick={() => void create()}
+          >
+            {busy === "create" ? "Minting…" : "Create token"}
           </button>
-          <button type="button" className="lin-btn" onClick={onClose}>Close</button>
+          <button
+            type="button"
+            className="inline-flex items-center rounded-[7px] border border-line bg-panel px-3 py-1.5 text-[13px] text-foreground hover:bg-subtle disabled:opacity-50"
+            onClick={onClose}
+          >
+            Close
+          </button>
         </div>
       )}
 
       {grant && (
-        <div data-enroll-token style={{display: 'block'}}>
-          <p style={{margin: '0 0 8px'}}>
-            <b>Copy this now.</b> Hoja keeps only a hash of the token, so this is the one and only
-            time it can be shown — closing this panel discards it for good.
+        <div data-enroll-token style={{ display: "block" }}>
+          <p style={{ margin: "0 0 8px" }}>
+            <b>Copy this now.</b> Hoja keeps only a hash of the token, so this
+            is the one and only time it can be shown — closing this panel
+            discards it for good.
           </p>
-          <div style={{display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8}}>
-            <code data-enroll-secret style={{fontFamily: 'var(--mono, monospace)', fontSize: 12,
-              padding: '6px 10px', borderRadius: 6, border: '1px solid var(--line)',
-              background: 'var(--subtle)', wordBreak: 'break-all', maxWidth: '100%'}}>
+          <div
+            style={{
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+              flexWrap: "wrap",
+              marginBottom: 8,
+            }}
+          >
+            <code
+              data-enroll-secret
+              style={{
+                fontFamily: "var(--mono, monospace)",
+                fontSize: 12,
+                padding: "6px 10px",
+                borderRadius: 6,
+                border: "1px solid var(--line)",
+                background: "var(--subtle)",
+                wordBreak: "break-all",
+                maxWidth: "100%",
+              }}
+            >
               {grant.token}
             </code>
-            <button type="button" className="lin-btn" onClick={() => copy('token', grant.token)}>
-              {copied === 'token' ? 'Copied' : 'Copy token'}
+            <button
+              type="button"
+              className="inline-flex items-center rounded-[7px] border border-line bg-panel px-3 py-1.5 text-[13px] text-foreground hover:bg-subtle disabled:opacity-50"
+              onClick={() => copy("token", grant.token)}
+            >
+              {copied === "token" ? "Copied" : "Copy token"}
             </button>
           </div>
-          <pre data-enroll-command style={{margin: '0 0 8px', padding: '10px 12px', borderRadius: 8,
-            border: '1px solid var(--line)', background: 'var(--subtle)', overflowX: 'auto',
-            fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all'}}>{grant.command}</pre>
-          <div style={{display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap'}}>
-            <button type="button" className="lin-btn" onClick={() => copy('command', grant.command)}>
-              {copied === 'command' ? 'Copied' : 'Copy command'}
+          <pre
+            data-enroll-command
+            style={{
+              margin: "0 0 8px",
+              padding: "10px 12px",
+              borderRadius: 8,
+              border: "1px solid var(--line)",
+              background: "var(--subtle)",
+              overflowX: "auto",
+              fontSize: 12,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-all",
+            }}
+          >
+            {grant.command}
+          </pre>
+          <div
+            style={{
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+              flexWrap: "wrap",
+            }}
+          >
+            <button
+              type="button"
+              className="inline-flex items-center rounded-[7px] border border-line bg-panel px-3 py-1.5 text-[13px] text-foreground hover:bg-subtle disabled:opacity-50"
+              onClick={() => copy("command", grant.command)}
+            >
+              {copied === "command" ? "Copied" : "Copy command"}
             </button>
-            <span className="lin-note">
-              The daemon heartbeats every {grant.heartbeatIntervalS} s and the token works once.
+            <span className="text-[12px] text-muted">
+              The daemon heartbeats every {grant.heartbeatIntervalS} s and the
+              token works once.
             </span>
             <span className="grow" />
-            <button type="button" className="lin-btn"
-              onClick={() => { setGrant(null); onClose(); }}>Done</button>
+            <button
+              type="button"
+              className="inline-flex items-center rounded-[7px] border border-line bg-panel px-3 py-1.5 text-[13px] text-foreground hover:bg-subtle disabled:opacity-50"
+              onClick={() => {
+                setGrant(null);
+                onClose();
+              }}
+            >
+              Done
+            </button>
           </div>
         </div>
       )}
 
-      {error && <p className="lin-error" role="alert" style={{margin: '8px 0 0'}}>{error}</p>}
+      {error && (
+        <p
+          className="text-danger text-[13px]"
+          role="alert"
+          style={{ margin: "8px 0 0" }}
+        >
+          {error}
+        </p>
+      )}
 
       {enrollments.length > 0 && (
-        <div data-enroll-list style={{marginTop: 12}}>
-          {enrollments.map(enrollment => (
-            <div key={enrollment.id} className="lin-event" data-enrollment={enrollment.id}
-              data-enrollment-status={enrollment.status}>
-              <span className="lin-chip" title={`status: ${enrollment.status}`}>
+        <div data-enroll-list style={{ marginTop: 12 }}>
+          {enrollments.map((enrollment) => (
+            <div
+              key={enrollment.id}
+              className="flex flex-wrap items-center gap-2 border-b border-line py-2 text-[13px]"
+              data-enrollment={enrollment.id}
+              data-enrollment-status={enrollment.status}
+            >
+              <span
+                className="inline-flex items-center rounded-[48px] border border-line bg-panel px-2 py-1 text-[12px]"
+                title={`status: ${enrollment.status}`}
+              >
                 {enrollment.status}
               </span>
               <span>
-                <b>{enrollment.label || 'unnamed'}</b>
-                {' · '}{enrollmentExpiry(enrollment)}
-                {enrollment.usedByRunner ? ` · used by ${enrollment.usedByRunner.slice(0, 8)}` : ''}
+                <b>{enrollment.label || "unnamed"}</b>
+                {" · "}
+                {enrollmentExpiry(enrollment)}
+                {enrollment.usedByRunner
+                  ? ` · used by ${enrollment.usedByRunner.slice(0, 8)}`
+                  : ""}
               </span>
-              <span style={{marginLeft: 'auto', display: 'inline-flex', gap: 8, alignItems: 'center'}}>
-                {enrollment.usable
-                  ? <button type="button" className="lin-btn" disabled={busy === enrollment.id}
-                      onClick={() => void revoke(enrollment)}>
-                      {busy === enrollment.id ? 'Withdrawing…' : 'Withdraw'}
-                    </button>
-                  : null}
+              <span
+                style={{
+                  marginLeft: "auto",
+                  display: "inline-flex",
+                  gap: 8,
+                  alignItems: "center",
+                }}
+              >
+                {enrollment.usable ? (
+                  <button
+                    type="button"
+                    className="inline-flex items-center rounded-[7px] border border-line bg-panel px-3 py-1.5 text-[13px] text-foreground hover:bg-subtle disabled:opacity-50"
+                    disabled={busy === enrollment.id}
+                    onClick={() => void revoke(enrollment)}
+                  >
+                    {busy === enrollment.id ? "Withdrawing…" : "Withdraw"}
+                  </button>
+                ) : null}
               </span>
             </div>
           ))}
@@ -271,20 +437,27 @@ function EnrollPanel({onClose}: {onClose: () => void}) {
 /* When a token stops working, said in the list's own vocabulary: an age for one that already
  * expired, a deadline for one that still works, and "used" for one that did its job. */
 function enrollmentExpiry(enrollment: RunnerEnrollment): string {
-  if (enrollment.status === 'spent') return enrollment.usedAt ? `used ${lastSeen(enrollment.usedAt)}` : 'used';
-  if (!enrollment.expiresAt) return 'never expires';
-  if (enrollment.status === 'expired') return `expired ${lastSeen(enrollment.expiresAt)}`;
+  if (enrollment.status === "spent")
+    return enrollment.usedAt ? `used ${lastSeen(enrollment.usedAt)}` : "used";
+  if (!enrollment.expiresAt) return "never expires";
+  if (enrollment.status === "expired")
+    return `expired ${lastSeen(enrollment.expiresAt)}`;
   const ms = Date.parse(enrollment.expiresAt) - Date.now();
   if (Number.isNaN(ms)) return enrollment.expiresAt;
   const m = Math.round(ms / 60000);
-  if (m <= 0) return 'expires now';
+  if (m <= 0) return "expires now";
   if (m < 60) return `expires in ${m}m`;
   return `expires in ${Math.round(m / 60)}h`;
 }
 
-type RunnerGrouping = 'status' | 'labels' | 'none';
+type RunnerGrouping = "status" | "labels" | "none";
 
-export function RunnersPane({workspaceName, onOpen, tab, onTab}: {
+export function RunnersPane({
+  workspaceName,
+  onOpen,
+  tab,
+  onTab,
+}: {
   workspaceName: string;
   onOpen: (runner: Runner) => void;
   tab: string;
@@ -292,46 +465,53 @@ export function RunnersPane({workspaceName, onOpen, tab, onTab}: {
 }) {
   const [runners, setRunners] = useState<Runner[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
   const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [paging, setPaging] = useState(false);
-  const [q, setQ] = useState('');
-  const [grouping, setGrouping] = useState<RunnerGrouping>('status');
+  const [q, setQ] = useState("");
+  const [grouping, setGrouping] = useState<RunnerGrouping>("status");
   const [labels, setLabels] = useState<string[]>([]);
   const [collapsed, setCollapsed] = useState<string[]>([]);
   const [displayOpen, setDisplayOpen] = useState(false);
   const [connectOn, setConnectOn] = useState(true);
-  /* Closed by default: the panel is the only thing on this screen that can mint a credential, and
-     a screen that opens with a secret-producing form is a screen that invites a stray click. */
   const [enrollOpen, setEnrollOpen] = useState(false);
 
   useEffect(() => {
     let live = true;
     setLoading(true);
-    Promise.all([getAgentsAdapter().listRunners(), getAgentsAdapter().connectEnabled()])
+    Promise.all([
+      getAgentsAdapter().listRunners(),
+      getAgentsAdapter().connectEnabled(),
+    ])
       .then(([page, enabled]) => {
         if (!live) return;
         setRunners(page.runners);
         setCursor(page.endCursor);
         setHasMore(page.hasNextPage);
         setConnectOn(enabled);
-        setError('');
+        setError("");
       })
-      .catch((e: Error) => { if (live) setError(e.message); })
-      .finally(() => { if (live) setLoading(false); });
-    return () => { live = false; };
+      .catch((e: Error) => {
+        if (live) setError(e.message);
+      })
+      .finally(() => {
+        if (live) setLoading(false);
+      });
+    return () => {
+      live = false;
+    };
   }, []);
 
   const loadMore = useCallback(async () => {
     if (!cursor || paging) return;
     setPaging(true);
     try {
-      const page = await getAgentsAdapter().listRunners({after: cursor});
-      setRunners(current => [...current, ...page.runners]);
+      const page = await getAgentsAdapter().listRunners({ after: cursor });
+      setRunners((current) => [...current, ...page.runners]);
       setCursor(page.endCursor);
       setHasMore(page.hasNextPage);
-      setError('');
+      setError("");
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -339,33 +519,58 @@ export function RunnersPane({workspaceName, onOpen, tab, onTab}: {
     }
   }, [cursor, paging]);
 
-  const allLabels = useMemo(() => [...new Set(runners.flatMap(r => r.labels))].sort(), [runners]);
+  const allLabels = useMemo(
+    () => [...new Set(runners.flatMap((r) => r.labels))].sort(),
+    [runners],
+  );
 
   const visible = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return runners.filter(r => {
-      if (needle && !`${r.id} ${r.name} ${r.labels.join(' ')} ${r.harnesses.join(' ')}`.toLowerCase().includes(needle)) return false;
-      if (labels.length && !labels.some(l => r.labels.includes(l))) return false;
+    return runners.filter((r) => {
+      if (
+        needle &&
+        !`${r.id} ${r.name} ${r.labels.join(" ")} ${r.harnesses.join(" ")}`
+          .toLowerCase()
+          .includes(needle)
+      )
+        return false;
+      if (labels.length && !labels.some((l) => r.labels.includes(l)))
+        return false;
       return true;
     });
   }, [runners, q, labels]);
 
   const groups = useMemo(() => {
-    if (grouping === 'none') return [{key: 'all', name: '', status: undefined as RunnerStatus | undefined, items: visible}];
-    const map = new Map<string, {key: string; name: string; status?: RunnerStatus; items: Runner[]}>();
+    if (grouping === "none")
+      return [
+        {
+          key: "all",
+          name: "",
+          status: undefined as RunnerStatus | undefined,
+          items: visible,
+        },
+      ];
+    const map = new Map<
+      string,
+      { key: string; name: string; status?: RunnerStatus; items: Runner[] }
+    >();
     for (const r of visible) {
-      const key = grouping === 'status' ? r.status : (r.labels.join(' · ') || 'unlabelled');
-      if (!map.has(key)) map.set(key, {
-        key,
-        name: grouping === 'status' ? runnerStatus(r.status).name : key,
-        status: grouping === 'status' ? r.status : undefined,
-        items: [],
-      });
+      const key =
+        grouping === "status" ? r.status : r.labels.join(" · ") || "unlabelled";
+      if (!map.has(key))
+        map.set(key, {
+          key,
+          name: grouping === "status" ? runnerStatus(r.status).name : key,
+          status: grouping === "status" ? r.status : undefined,
+          items: [],
+        });
       map.get(key)!.items.push(r);
     }
     const out = [...map.values()];
-    if (grouping === 'status') {
-      const order = new Map<string, number>(RUNNER_STATUSES.map((s, i) => [s.id as string, i]));
+    if (grouping === "status") {
+      const order = new Map<string, number>(
+        RUNNER_STATUSES.map((s, i) => [s.id as string, i]),
+      );
       out.sort((a, b) => (order.get(a.key) ?? 999) - (order.get(b.key) ?? 999));
     } else out.sort((a, b) => a.name.localeCompare(b.name));
     return out;
@@ -382,97 +587,221 @@ export function RunnersPane({workspaceName, onOpen, tab, onTab}: {
       tabs={AGENTS_TABS}
       activeTab={tab}
       onTab={onTab}
-      toolbar={<>
-        <SearchField value={q} onChange={setQ} placeholder="Search runners…" label="Search runners" />
-        <span className="spacer" />
-        {allLabels.map(l => {
-          const on = labels.includes(l);
-          return (
-            <button key={l} type="button" className="lin-chipbtn" aria-pressed={on}
-              onClick={() => setLabels(cur => on ? cur.filter(x => x !== l) : [...cur, l])}>{l}</button>
-          );
-        })}
-        {/* HOJA-635: the toolbar, not a row — a runner row is one server runner, and this
-            action is not a machine. */}
-        <button type="button" className="lin-btn" data-action="enroll-runner"
-          aria-expanded={enrollOpen} onClick={() => setEnrollOpen(v => !v)}
-          style={TOOLBAR_ACTION}>
-          <Plus size={14} aria-hidden="true" /> Enroll runner
-        </button>
-        <span style={{position: 'relative'}}>
-          <IconBtn label="Display options" title="Display options" active={displayOpen}
-            onClick={() => setDisplayOpen(v => !v)}>
-            <SlidersHorizontal size={15} />
-          </IconBtn>
-          {displayOpen && <DisplayPanel
-            display={{...RUNNER_DISPLAY, grouping}}
-            setDisplay={d => { if (d.grouping) setGrouping(d.grouping as RunnerGrouping); }}
-            onClose={() => setDisplayOpen(false)}
-            groupingOptions={[['none', 'No grouping'], ['status', 'Online or offline'], ['labels', 'Label']]}
-            groupingLabel="Group runners by"
-            entityToggles={false}
-            propertyRows={[]} />}
-        </span>
-      </>}
-      chips={labels.length ? <>
-        {labels.map(l => (
-          <span key={l} className="lin-fchip">{l}
-            <button type="button" aria-label={`Remove filter ${l}`} onClick={() => setLabels(cur => cur.filter(x => x !== l))}>×</button>
+      toolbar={
+        <>
+          <SearchField
+            value={q}
+            onChange={setQ}
+            placeholder="Search runners…"
+            label="Search runners"
+          />
+          <span className="flex-1" />
+          {allLabels.map((l) => {
+            const on = labels.includes(l);
+            return (
+              <button
+                key={l}
+                type="button"
+                className="inline-flex items-center border border-line hover:text-foreground hover:border-accent aria-pressed:bg-subtle aria-pressed:text-foreground aria-pressed:font-semibold gap-1.5 pt-1.25 pr-2.75 pb-1.25 pl-2.75 border-solid rounded-[99px] bg-panel text-[12px] text-muted font-medium aria-pressed:border-line shell-phone:min-w-11! shell-phone:min-h-11!"
+                aria-pressed={on}
+                onClick={() =>
+                  setLabels((cur) =>
+                    on ? cur.filter((x) => x !== l) : [...cur, l],
+                  )
+                }
+              >
+                {l}
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 rounded-[7px] border border-line bg-panel px-3 py-1.5 text-[13px] hover:bg-subtle shell-phone:min-h-11"
+            data-action="enroll-runner"
+            aria-expanded={enrollOpen}
+            onClick={() => setEnrollOpen((v) => !v)}
+          >
+            <Plus size={14} aria-hidden="true" /> Enroll runner
+          </button>
+          <span className="relative">
+            <IconBtn
+              label="Display options"
+              title="Display options"
+              active={displayOpen}
+              onClick={() => setDisplayOpen((v) => !v)}
+            >
+              <SlidersHorizontal size={15} />
+            </IconBtn>
+            {displayOpen && (
+              <DisplayPanel
+                display={{ ...RUNNER_DISPLAY, grouping }}
+                setDisplay={(d) => {
+                  if (d.grouping) setGrouping(d.grouping as RunnerGrouping);
+                }}
+                onClose={() => setDisplayOpen(false)}
+                groupingOptions={[
+                  ["none", "No grouping"],
+                  ["status", "Online or offline"],
+                  ["labels", "Label"],
+                ]}
+                groupingLabel="Group runners by"
+                entityToggles={false}
+                propertyRows={[]}
+              />
+            )}
           </span>
-        ))}
-        <button type="button" className="lin-addrow" onClick={() => setLabels([])}>Clear all</button>
-      </> : null}
+        </>
+      }
+      chips={
+        labels.length ? (
+          <>
+            {labels.map((l) => (
+              <span
+                key={l}
+                className="inline-flex items-center border border-line gap-1.5 text-[12px] border-solid bg-subtle rounded-[99px] pt-0.75 pr-1.5 pb-0.75 pl-2.5 text-foreground"
+              >
+                {l}
+                <button
+                  className="border-0 hover:text-foreground [background:none] text-muted text-[13px] leading-none pt-0.5 pr-1 pb-0.5 pl-1 rounded-sm"
+                  type="button"
+                  aria-label={`Remove filter ${l}`}
+                  onClick={() => setLabels((cur) => cur.filter((x) => x !== l))}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+            <button
+              type="button"
+              className="inline-flex items-center border-0 hover:bg-subtle hover:text-foreground gap-2 [background:none] text-muted text-[13px] pt-1.25 pr-1.5 pb-1.25 pl-1.5 rounded-md"
+              onClick={() => setLabels([])}
+            >
+              Clear all
+            </button>
+          </>
+        ) : null
+      }
     >
-      {/* Minting a token enrolls no machine, so nothing about the list below changes and no
-          refetch is needed: the panel owns its own read of `runnerEnrollments`. */}
       {enrollOpen && <EnrollPanel onClose={() => setEnrollOpen(false)} />}
-      {loading && <p className="lin-loading" role="status">Loading runners…</p>}
-      {error && <p className="lin-error" role="alert">{error}</p>}
+      {loading && (
+        <p
+          className="text-center pt-10 pr-10 pb-10 pl-10 text-muted"
+          role="status"
+        >
+          Loading runners…
+        </p>
+      )}
+      {error && (
+        <p
+          className="border border-danger/40 mt-4 mr-6 mb-4 ml-6 pt-3 pr-4 pb-3 pl-4 border-solid border-[color-mix(in_srgb,var(--danger)_40%,var(--line))] rounded-lg text-danger text-[13px] bg-[color-mix(in_srgb,var(--danger)_6%,var(--panel))]"
+          role="alert"
+        >
+          {error}
+        </p>
+      )}
       {!loading && !error && (
-        <div className="lin-list">
-          {groups.map(g => {
+        <div className="pt-1.5 pr-3 pb-10 pl-3">
+          {groups.map((g) => {
             const isCollapsed = collapsedSet.has(g.key);
             return (
-              <section key={g.key} className="lin-group">
+              <section key={g.key} className="mt-2 mr-2 mb-1 ml-2">
                 {g.name && (
-                  <header className="lin-group-head">
-                    <button type="button" className="chev" aria-expanded={!isCollapsed}
-                      aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${g.name}`}
-                      onClick={() => setCollapsed(c => c.includes(g.key) ? c.filter(x => x !== g.key) : [...c, g.key])}>
-                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"
-                        style={{transform: isCollapsed ? 'rotate(-90deg)' : undefined}} aria-hidden="true">
-                        <path d="M4 6.5 8 10.5 12 6.5" strokeLinecap="round" strokeLinejoin="round" />
+                  <header className="flex items-center gap-2 bg-subtle rounded-[7px] min-h-9 pt-0 pr-2.5 pb-0 pl-2.5 text-[13px]">
+                    <button
+                      type="button"
+                      className="grid place-items-center border-0 hover:text-foreground shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 [background:none] text-muted pt-1 pr-1 pb-1 pl-1 rounded-sm"
+                      aria-expanded={!isCollapsed}
+                      aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${g.name}`}
+                      onClick={() =>
+                        setCollapsed((c) =>
+                          c.includes(g.key)
+                            ? c.filter((x) => x !== g.key)
+                            : [...c, g.key],
+                        )
+                      }
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.6"
+                        style={{
+                          transform: isCollapsed ? "rotate(-90deg)" : undefined,
+                        }}
+                        aria-hidden="true"
+                      >
+                        <path
+                          d="M4 6.5 8 10.5 12 6.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
                       </svg>
                     </button>
-                    {g.status && <GraphStatusIcon state={{name: runnerStatus(g.status).name, type: runnerStatus(g.status).type, color: runnerStatus(g.status).color}} size={13} />}
-                    <b>{g.name}</b><span className="count">{g.items.length}</span>
-                    <span className="grow" />
+                    {g.status && (
+                      <GraphStatusIcon
+                        state={{
+                          name: runnerStatus(g.status).name,
+                          type: runnerStatus(g.status).type,
+                          color: runnerStatus(g.status).color,
+                        }}
+                        size={13}
+                      />
+                    )}
+                    <b className="font-semibold">{g.name}</b>
+                    <span className="text-muted font-medium text-[12px]">
+                      {g.items.length}
+                    </span>
+                    <span className="flex-1" />
                   </header>
                 )}
-                {!isCollapsed && g.items.map(r => (
-                  <IssueRow key={r.id} issue={runnerRow(r)} display={RUNNER_DISPLAY} selected={false}
-                    showCheckbox={false} onSelect={() => undefined} onOpen={() => onOpen(r)} childCount={0}
-                    leading={credentialGlyph(r)} trailing={leaseChip(r)} />
-                ))}
+                {!isCollapsed &&
+                  g.items.map((r) => (
+                    <IssueRow
+                      key={r.id}
+                      issue={runnerRow(r)}
+                      display={RUNNER_DISPLAY}
+                      selected={false}
+                      showCheckbox={false}
+                      onSelect={() => undefined}
+                      onOpen={() => onOpen(r)}
+                      childCount={0}
+                      leading={credentialGlyph(r)}
+                      trailing={leaseChip(r)}
+                    />
+                  ))}
               </section>
             );
           })}
           {!visible.length && (
-            <div className="lin-empty" data-state="empty">
-              <h2>{runners.length ? 'No runner matches these filters' : 'No machine is enrolled'}</h2>
+            <div className="text-center pt-15 pr-5 pb-15 pl-5 text-muted">
+              <h2 className="text-foreground text-[15px] mt-3 mr-0 mb-1.5 ml-0">
+                {runners.length
+                  ? "No runner matches these filters"
+                  : "No machine is enrolled"}
+              </h2>
               <p>
                 {runners.length
-                  ? 'The search box and the label chips narrow the runners loaded so far; clear them to see them all.'
-                  : 'A runner appears here once hoja-runnerd has presented its one-time lease token.'}
+                  ? "The search and label chips narrow the runners loaded so far; clear them to see them all."
+                  : "A runner appears here once hoja-runnerd has presented its one-time lease token."}
               </p>
             </div>
           )}
           {(hasMore || runners.length > 0) && (
-            <div className="lin-note" style={{display: 'flex', gap: 8, alignItems: 'center', padding: '8px 0'}}>
-              <span>{runners.length} machine{runners.length === 1 ? '' : 's'} loaded</span>
+            <div className="flex items-center gap-2 py-2 text-[12px] text-muted">
+              <span>
+                {runners.length} machine{runners.length === 1 ? "" : "s"} loaded
+              </span>
               {hasMore && (
-                <button type="button" className="lin-btn" data-action="load-more" disabled={paging} onClick={() => void loadMore()}>
-                  {paging ? 'Loading…' : 'Load more runners'}
+                <button
+                  type="button"
+                  className="rounded-[7px] border border-line px-3 py-1.5 hover:bg-subtle disabled:opacity-50"
+                  data-action="load-more"
+                  disabled={paging}
+                  onClick={() => void loadMore()}
+                >
+                  {paging ? "Loading…" : "Load more runners"}
                 </button>
               )}
             </div>
@@ -480,8 +809,9 @@ export function RunnersPane({workspaceName, onOpen, tab, onTab}: {
         </div>
       )}
       {!connectOn && (
-        <p className="lin-note" role="status" style={{padding: '0 20px 24px'}}>
-          Connect is turned off for this workspace. Runners still lease work; no tunnel can be opened until an admin turns it back on.
+        <p className="text-[12px] text-muted pt-0 pr-5 pb-6 pl-5" role="status">
+          Connect is turned off for this workspace. Runners still lease work; no
+          tunnel can be opened until an admin turns it back on.
         </p>
       )}
     </AgentsListShell>
@@ -489,14 +819,13 @@ export function RunnersPane({workspaceName, onOpen, tab, onTab}: {
 }
 
 /* Last seen, in the shape the row's age glyph uses. Kept local so the detail page does not import
- * from AgentDetail (which owns a different vocabulary). A machine that has never heartbeated says
- * so: `null` is "no heartbeat recorded", which is not the same sentence as "years ago". */
+ * from AgentDetail (which owns a different vocabulary). */
 function lastSeen(iso: string | null): string {
-  if (!iso) return 'no heartbeat yet';
+  if (!iso) return "no heartbeat yet";
   const ms = Date.now() - Date.parse(iso);
   if (Number.isNaN(ms)) return iso;
   const m = Math.round(ms / 60000);
-  if (m < 1) return 'just now';
+  if (m < 1) return "just now";
   if (m < 60) return `${m}m ago`;
   const h = Math.round(m / 60);
   return h < 24 ? `${h}h ago` : `${Math.round(h / 24)}d ago`;
@@ -507,39 +836,88 @@ function leaseLine(lease: RunnerLease): string {
   return `${task} · ${lease.harness} · fence ${lease.fence} · ${lease.state}`;
 }
 
-function ExposureRow({exposure, connectOn, busy, onRevoke, now}: {
-  exposure: ConnectExposure; connectOn: boolean; busy: boolean; onRevoke: (e: ConnectExposure) => void; now: number;
+function ExposureRow({
+  exposure,
+  connectOn,
+  busy,
+  onRevoke,
+  now,
+}: {
+  exposure: ConnectExposure;
+  connectOn: boolean;
+  busy: boolean;
+  onRevoke: (e: ConnectExposure) => void;
+  now: number;
 }) {
   const left = ttlSecondsLeft(exposure.expiresAt, now);
-  const tone = left > 300 ? {name: 'Live', type: 'started', color: '#2f9e6f'}
-    : left > 0 ? {name: 'Expiring', type: 'unstarted', color: '#c98a1b'}
-      : {name: 'Expired', type: 'completed', color: '#95a2b3'};
+  const tone =
+    left > 300
+      ? { name: "Live", type: "started", color: "#2f9e6f" }
+      : left > 0
+        ? { name: "Expiring", type: "unstarted", color: "#c98a1b" }
+        : { name: "Expired", type: "completed", color: "#95a2b3" };
   return (
-    <div className="lin-row" data-exposure={exposure.id}>
+    <div
+      className="group relative flex items-center border-b border-line hover:bg-subtle gap-2.25 min-h-10.5 pt-1.25 pr-2.5 pb-1.25 pl-2.5 border-b-line text-[13px]"
+      data-exposure={exposure.id}
+    >
       <GraphStatusIcon state={tone} size={14} />
       {/* The second 14 px slot: an exposure has no priority, and the TTL column below carries the
           number that matters, so the slot stays a fixed spacer rather than a blank glyph. */}
-      <span aria-hidden="true" style={{width: 14, height: 14, display: 'inline-block'}} />
-      <span className="ident">{exposure.id}</span>
-      <span className="title" title={`Ports ${exposure.ports.join(', ')}`}>
-        {exposure.ports.length === 1 ? `port ${exposure.ports[0]}` : `ports ${exposure.ports.join(', ')}`}
+      <span aria-hidden="true" className="inline-block w-3.5 h-3.5" />
+      <span className="whitespace-nowrap font-semibold text-foreground">
+        {exposure.id}
       </span>
-      <span className="meta">
+      <span
+        className="flex-1 cursor-pointer truncate border-0 text-left min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-foreground [background:none] [font:inherit] pt-0 pr-0 pb-0 pl-0"
+        title={`Ports ${exposure.ports.join(", ")}`}
+      >
+        {exposure.ports.length === 1
+          ? `port ${exposure.ports[0]}`
+          : `ports ${exposure.ports.join(", ")}`}
+      </span>
+      <span className="flex flex-none items-center gap-2 ml-auto">
         {/* The pinned peer is the whole ACL (`--allow=nodekey:…`), so it is shown shortened and
             in full on hover: it is an identifier, not a secret. */}
         <span className="hidden md:inline-flex">
-          <span className="lin-chip" title={`Pinned peer ${exposure.pinnedPeer}`}>{exposure.pinnedPeer.slice(0, 15)}…</span>
+          <span
+            className="inline-flex items-center whitespace-nowrap border border-line gap-1 h-6 text-[12px] font-[450] border-solid border-(--card-line) rounded-[48px] pt-0 pr-2 pb-0 pl-2 text-(--card-meta) bg-panel"
+            title={`Pinned peer ${exposure.pinnedPeer}`}
+          >
+            {exposure.pinnedPeer.slice(0, 15)}…
+          </span>
         </span>
-        <span className="date" title={`Expires in ${left}s`} data-ttl={left}>{ttlLabel(exposure.expiresAt, now)}</span>
-        <button type="button" className="lin-btn" disabled={!connectOn || busy}
-          title={connectOn ? 'Revoke this exposure' : 'Connect is disabled for this workspace'}
-          onClick={() => onRevoke(exposure)}>{busy ? 'Revoking…' : 'Revoke'}</button>
+        <span
+          className="whitespace-nowrap text-muted text-[12px]"
+          title={`Expires in ${left}s`}
+          data-ttl={left}
+        >
+          {ttlLabel(exposure.expiresAt, now)}
+        </span>
+        <button
+          type="button"
+          className="inline-flex items-center border border-line hover:bg-subtle disabled:cursor-default disabled:opacity-50 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 gap-2 border-solid bg-panel text-foreground rounded-[7px] pt-2 pr-3.5 pb-2 pl-3.5 text-[13px] font-[550] shell-phone:min-w-11! shell-phone:min-h-11!"
+          disabled={!connectOn || busy}
+          title={
+            connectOn
+              ? "Revoke this exposure"
+              : "Connect is disabled for this workspace"
+          }
+          onClick={() => onRevoke(exposure)}
+        >
+          {busy ? "Revoking…" : "Revoke"}
+        </button>
       </span>
     </div>
   );
 }
 
-export function RunnerDetailPage({runnerId, workspaceName, viewerName, onBack}: {
+export function RunnerDetailPage({
+  runnerId,
+  workspaceName,
+  viewerName,
+  onBack,
+}: {
   runnerId: string;
   workspaceName: string;
   viewerName: string;
@@ -549,31 +927,35 @@ export function RunnerDetailPage({runnerId, workspaceName, viewerName, onBack}: 
   const [leases, setLeases] = useState<RunnerLease[]>([]);
   const [exposures, setExposures] = useState<ConnectExposure[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
-  const [busy, setBusy] = useState('');
+  const [error, setError] = useState("");
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [paging, setPaging] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState("");
   const [copied, setCopied] = useState(false);
   const [connectOn, setConnectOn] = useState(true);
   const [revoking, setRevoking] = useState(false);
   const [now, setNow] = useState(() => Date.now());
 
   const load = useCallback(() => {
-    getAgentsAdapter().getRunner(runnerId)
-      .then(async d => {
+    getAgentsAdapter()
+      .getRunner(runnerId)
+      .then(async (d) => {
         const enabled = await getAgentsAdapter().connectEnabled();
         setConnectOn(enabled);
         setRunner(d ? d.runner : null);
         setExposures(d ? d.exposures : []);
-        setError(d ? '' : `Runner ${runnerId} was not found.`);
-        /* The machine's leases are a second read (`agentLeases`) because they are not part of the
-         * runner row: they are the history of what it took, which is what its page answers. */
+        setError(d ? "" : `Runner ${runnerId} was not found.`);
         setLeases(d ? await getAgentsAdapter().listLeases(runnerId) : []);
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
   }, [runnerId]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+  }, [load]);
 
   /* Revoke the machine itself, which is a different act from revoking one of its tunnels: this
    * one turns the runner's bearer token off, so /runner/claim refuses it on its next poll. */
@@ -581,17 +963,24 @@ export function RunnerDetailPage({runnerId, workspaceName, viewerName, onBack}: 
    * "not found" early return, so the component's `runner` is still nullable here, and the narrowed
    * value at the button is the one that exists. */
   const revokeRunner = async (target: Runner) => {
-    if (!(await confirmDialog(
-      `Revoke ${target.name}? Its lease token stops authenticating immediately, so it is refused at `
-      + '/runner/claim and any lease it holds is lost on the next heartbeat. Work is re-queued; the '
-      + 'machine is not deleted.', {danger: true}))) return;
+    if (
+      !(await confirmDialog(
+        `Revoke ${target.name}? Its lease token stops authenticating immediately, so it is refused at ` +
+          "/runner/claim and any lease it holds is lost on the next heartbeat. Work is re-queued; the " +
+          "machine is not deleted.",
+        { danger: true },
+      ))
+    )
+      return;
     setRevoking(true);
-    setNotice('');
-    setError('');
+    setNotice("");
+    setError("");
     try {
       await getAgentsAdapter().revokeRunner(target.id);
       load();
-      setNotice(`${target.name} revoked. Its token no longer authenticates at /runner/claim.`);
+      setNotice(
+        `${target.name} revoked. Its token no longer authenticates at /runner/claim.`,
+      );
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -608,52 +997,104 @@ export function RunnerDetailPage({runnerId, workspaceName, viewerName, onBack}: 
   /* Two steps: the shared `confirmDialog` (never `window.confirm`), then a state transition that
    * also writes the audit row. The row only disappears when the adapter says it is gone. */
   const revoke = async (exposure: ConnectExposure) => {
-    if (!(await confirmDialog(`Revoke the Connect exposure ${exposure.id} on ${exposure.ports.join(', ')}? The tunnel is killed, not hidden.`, {danger: true}))) return;
+    if (
+      !(await confirmDialog(
+        `Revoke the Connect exposure ${exposure.id} on ${exposure.ports.join(", ")}? The tunnel is killed, not hidden.`,
+        { danger: true },
+      ))
+    )
+      return;
     setBusy(exposure.id);
-    setNotice('');
+    setNotice("");
     try {
       await getAgentsAdapter().revokeExposure(exposure.id, viewerName);
-      setExposures(cur => cur.filter(e => e.id !== exposure.id));
-      /* The audit row is the server's, read back through `auditEvents`; this sentence names the
-       * action instead of echoing a row the client cannot see. */
-      setNotice(`Revoked and audited: connect.exposure.close on ${exposure.id}.`);
+      setExposures((cur) => cur.filter((e) => e.id !== exposure.id));
+      setNotice(
+        `Revoked and audited: connect.exposure.close on ${exposure.id}.`,
+      );
     } catch (e) {
       setError((e as Error).message);
     } finally {
-      setBusy('');
+      setBusy("");
     }
   };
 
   if (loading) {
     return (
-      <section className="lin-page" data-surface="runner-detail" aria-label={`${runnerId}: runner`}>
-        <header className="lin-head">
-          <nav className="lin-crumb" aria-label="Breadcrumb">
-            <button type="button" className="crumb-link" onClick={onBack}>← Runners</button>
-            <span className="sep">›</span>
-            <span className="current">{runnerId}</span>
+      <section
+        className="flex flex-col min-w-0 h-full bg-panel"
+        data-surface="runner-detail"
+        aria-label={`${runnerId}: runner`}
+      >
+        <header className="flex flex-none items-center border-b border-line gap-2 min-h-12.25 pt-0 pr-5 pb-0 pl-5 border-b-line shell-phone:flex-wrap shell-phone:gap-y-1">
+          <nav
+            className="flex flex-1 items-center gap-1.75 text-[13px] text-muted min-w-0 shell-phone:min-w-0 shell-phone:flex-wrap shell-phone:gap-y-0.5"
+            aria-label="Breadcrumb"
+          >
+            <button
+              type="button"
+              className="inline-flex cursor-pointer items-center whitespace-nowrap border-0 hover:text-foreground shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 [background:none] pt-0 pr-0 pb-0 pl-0 text-muted [font:inherit] gap-1.5 shell-phone:min-w-11! shell-phone:min-h-11! shell-phone:whitespace-normal shell-phone:max-w-full"
+              onClick={onBack}
+            >
+              ← Runners
+            </button>
+            <span className="text-muted opacity-70">›</span>
+            <span className="truncate text-foreground font-semibold overflow-hidden text-ellipsis whitespace-nowrap">
+              {runnerId}
+            </span>
           </nav>
         </header>
-        <p className="lin-loading" role="status">Loading runner…</p>
+        <p
+          className="text-center pt-10 pr-10 pb-10 pl-10 text-muted"
+          role="status"
+        >
+          Loading runner…
+        </p>
       </section>
     );
   }
 
   if (!runner) {
     return (
-      <section className="lin-page" data-surface="runner-detail" aria-label={`${runnerId}: runner`}>
-        <header className="lin-head">
-          <nav className="lin-crumb" aria-label="Breadcrumb">
-            <button type="button" className="crumb-link" onClick={onBack}>← Runners</button>
-            <span className="sep">›</span>
-            <span className="current">{runnerId}</span>
+      <section
+        className="flex flex-col min-w-0 h-full bg-panel"
+        data-surface="runner-detail"
+        aria-label={`${runnerId}: runner`}
+      >
+        <header className="flex flex-none items-center border-b border-line gap-2 min-h-12.25 pt-0 pr-5 pb-0 pl-5 border-b-line shell-phone:flex-wrap shell-phone:gap-y-1">
+          <nav
+            className="flex flex-1 items-center gap-1.75 text-[13px] text-muted min-w-0 shell-phone:min-w-0 shell-phone:flex-wrap shell-phone:gap-y-0.5"
+            aria-label="Breadcrumb"
+          >
+            <button
+              type="button"
+              className="inline-flex cursor-pointer items-center whitespace-nowrap border-0 hover:text-foreground shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 [background:none] pt-0 pr-0 pb-0 pl-0 text-muted [font:inherit] gap-1.5 shell-phone:min-w-11! shell-phone:min-h-11! shell-phone:whitespace-normal shell-phone:max-w-full"
+              onClick={onBack}
+            >
+              ← Runners
+            </button>
+            <span className="text-muted opacity-70">›</span>
+            <span className="truncate text-foreground font-semibold overflow-hidden text-ellipsis whitespace-nowrap">
+              {runnerId}
+            </span>
           </nav>
         </header>
-        <div className="lin-empty" role="alert" data-state="error">
-          <h2>This machine could not be opened</h2>
-          <p>{error || `Runner ${runnerId} was not found.`}</p>
-          <button type="button" className="lin-btn" onClick={() => { setError(''); load(); }}>Retry</button>
-        </div>
+        <p
+          className="border border-danger/40 mt-4 mr-6 mb-4 ml-6 pt-3 pr-4 pb-3 pl-4 border-solid border-[color-mix(in_srgb,var(--danger)_40%,var(--line))] rounded-lg text-danger text-[13px] bg-[color-mix(in_srgb,var(--danger)_6%,var(--panel))]"
+          role="alert"
+        >
+          {error || `Runner ${runnerId} was not found.`}{" "}
+          <button
+            type="button"
+            onClick={() => {
+              setError("");
+              load();
+            }}
+            className="shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+          >
+            Retry
+          </button>
+        </p>
       </section>
     );
   }
@@ -661,145 +1102,281 @@ export function RunnerDetailPage({runnerId, workspaceName, viewerName, onBack}: 
   const tone = runnerStatus(runner.status);
 
   return (
-    <section className="lin-page" data-surface="runner-detail" data-connect={connectOn ? 'on' : 'off'}
-      data-runner-status={runner.status} aria-label={`${runner.id}: ${runner.name}`}>
-      <header className="lin-head">
-        <nav className="lin-crumb" aria-label="Breadcrumb">
-          <button type="button" className="crumb-link" onClick={onBack}>← Runners</button>
-          <span className="sep">›</span>
+    <section
+      className="flex flex-col min-w-0 h-full bg-panel"
+      data-surface="runner-detail"
+      data-connect={connectOn ? "on" : "off"}
+      data-runner-status={runner.status}
+      aria-label={`${runner.id}: ${runner.name}`}
+    >
+      <header className="flex flex-none items-center border-b border-line gap-2 min-h-12.25 pt-0 pr-5 pb-0 pl-5 border-b-line shell-phone:flex-wrap shell-phone:gap-y-1">
+        <nav
+          className="flex flex-1 items-center gap-1.75 text-[13px] text-muted min-w-0 shell-phone:min-w-0 shell-phone:flex-wrap shell-phone:gap-y-0.5"
+          aria-label="Breadcrumb"
+        >
+          <button
+            type="button"
+            className="inline-flex cursor-pointer items-center whitespace-nowrap border-0 hover:text-foreground shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 [background:none] pt-0 pr-0 pb-0 pl-0 text-muted [font:inherit] gap-1.5 shell-phone:min-w-11! shell-phone:min-h-11! shell-phone:whitespace-normal shell-phone:max-w-full"
+            onClick={onBack}
+          >
+            ← Runners
+          </button>
+          <span className="text-muted opacity-70">›</span>
           <span>{workspaceName}</span>
-          <span className="sep">›</span>
-          <span className="crumb-id">{runner.id}</span>
-          <span className="current">{runner.name}</span>
+          <span className="text-muted opacity-70">›</span>
+          <span className="font-semibold text-muted">{runner.id}</span>
+          <span className="truncate text-foreground font-semibold overflow-hidden text-ellipsis whitespace-nowrap">
+            {runner.name}
+          </span>
         </nav>
       </header>
-      <div className="lin-toolbar" style={{justifyContent: 'flex-end'}}>
-        {/* HOJA-635: the way back for a machine. Two steps, then a state transition the server
-            owns (`runnerRevoke`) — the row only reads "Revoked" once the server says so. */}
+      <div className="flex flex-none items-center border-b border-line justify-end gap-1.5 pt-2 pr-5 pb-2 pl-5 border-b-line">
         {!runner.revoked && runner.enabled && (
-          <button type="button" className="lin-btn" data-action="revoke-runner"
-            disabled={revoking} onClick={() => void revokeRunner(runner)} style={TOOLBAR_ACTION}>
-            {revoking ? 'Revoking…' : 'Revoke runner'}
+          <button
+            type="button"
+            className="rounded-[7px] border border-line px-3 py-1.5 text-[13px] hover:bg-subtle disabled:opacity-50"
+            data-action="revoke-runner"
+            disabled={revoking}
+            onClick={() => void revokeRunner(runner)}
+          >
+            {revoking ? "Revoking…" : "Revoke runner"}
           </button>
         )}
-        <Tip label={copied ? 'Copied' : `Copy ${runner.id}`}>
+        <Tip label={copied ? "Copied" : `Copy ${runner.id}`}>
           <span>
-            <IconBtn label="Copy runner id" title="Copy runner id" onClick={() => {
-              void navigator.clipboard.writeText(runner.id)
-                .then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1500); })
-                .catch(() => setCopied(false));
-            }}><Copy size={15} /></IconBtn>
+            <IconBtn
+              label="Copy runner id"
+              title="Copy runner id"
+              onClick={() => {
+                void navigator.clipboard
+                  .writeText(runner.id)
+                  .then(() => {
+                    setCopied(true);
+                    window.setTimeout(() => setCopied(false), 1500);
+                  })
+                  .catch(() => setCopied(false));
+              }}
+            >
+              <Copy size={15} />
+            </IconBtn>
           </span>
         </Tip>
       </div>
 
-      <div className="lin-detail">
-        <main className="lin-detail-main">
-          <h1 className="lin-detail-title" style={{display: 'flex', alignItems: 'center', gap: 10}}>
-            <GraphStatusIcon state={{name: tone.name, type: tone.type, color: tone.color}} size={16} /> {runner.name}
+      <div className="flex flex-1 flex-col lg:flex-row min-h-0 [@media_(max-width:900px)]:flex-col">
+        <main className="flex-1 overflow-y-auto lg:max-w-4xl lg:px-10 lg:pt-6 lg:pb-20 min-w-0 pt-6.5 pr-10 pb-20 pl-10 max-w-205 [@media_(max-width:900px)]:max-w-none [@media_(max-width:900px)]:pt-5 [@media_(max-width:900px)]:pr-5 [@media_(max-width:900px)]:pb-5 [@media_(max-width:900px)]:pl-5">
+          <h1 className="overflow-hidden border-0 focus:outline-none flex items-center w-full bg-transparent text-foreground text-[21px] font-[650] tracking-[-.015em] leading-[1.3] pt-0 pr-0 pb-0 pl-0 mt-0 mr-0 mb-3.5 ml-0 resize-none font-[inherit] focus:[outline:none] gap-2.5">
+            <GraphStatusIcon
+              state={{ name: tone.name, type: tone.type, color: tone.color }}
+              size={16}
+            />{" "}
+            {runner.name}
           </h1>
-          <p className="lin-detail-desc">
-            {tone.name} · last seen {lastSeen(runner.lastSeenAt)} ·{' '}
-            {runner.revoked ? 'revoked' : runner.enabled ? 'enrolled' : 'disabled'}
-            {runner.harnesses.length ? ` · ${runner.harnesses.join(', ')}` : ''}
-            {runner.labels.length ? ` · ${runner.labels.join(', ')}` : ''}
+          <p className="relative wrap-break-word text-[14px] leading-[1.6] text-foreground [word-break:break-word] mt-0 mr-0 mb-2 ml-0 min-h-6">
+            {tone.name} · last seen {lastSeen(runner.lastSeenAt)} ·{" "}
+            {runner.revoked
+              ? "revoked"
+              : runner.enabled
+                ? "enrolled"
+                : "disabled"}
+            {runner.harnesses.length ? ` · ${runner.harnesses.join(", ")}` : ""}
+            {runner.labels.length ? ` · ${runner.labels.join(", ")}` : ""}
           </p>
 
-          <section className="lin-activity" aria-label="Leases">
-            <header>
-              <b>Leases</b>
-              <span className="grow" />
-              <span className="lin-note">{runner.lease ? `Holding ${leaseLine(runner.lease)}` : 'Holding no lease'}</span>
+          <section
+            className="border-t border-line pt-4 mt-1.5"
+            aria-label="Leases"
+          >
+            <header className="flex items-center gap-2 mb-3">
+              <b className="text-[14px]">Leases</b>
+              <span className="flex-1" />
+              <span className="text-[12px] text-muted">
+                {runner.lease
+                  ? `Holding ${leaseLine(runner.lease)}`
+                  : "Holding no lease"}
+              </span>
             </header>
             <div data-leases>
-              {leases.map(lease => (
-                <div key={lease.id} className="lin-event" data-lease-row={lease.id} data-lease-state={lease.state}>
-                  <span className="lin-chip" title={`state: ${lease.state}`}>{lease.state}</span>
-                  <span><b>{lease.taskIdentifier || lease.taskId.slice(0, 8)}</b> · {lease.harness} · fence {lease.fence}</span>
-                  <time>{relTime(lease.grantedAt || lease.finishedAt)}</time>
+              {leases.map((lease) => (
+                <div
+                  key={lease.id}
+                  className="flex flex-wrap items-center gap-2 border-b border-line py-2 text-[13px]"
+                  data-lease-row={lease.id}
+                  data-lease-state={lease.state}
+                >
+                  <span
+                    className="rounded-[48px] border border-line px-2 py-1 text-[12px]"
+                    title={`state: ${lease.state}`}
+                  >
+                    {lease.state}
+                  </span>
+                  <span>
+                    <b>{lease.taskIdentifier || lease.taskId.slice(0, 8)}</b> ·{" "}
+                    {lease.harness} · fence {lease.fence}
+                  </span>
+                  <time className="ml-auto text-muted">
+                    {lastSeen(lease.grantedAt || lease.finishedAt)}
+                  </time>
                 </div>
               ))}
             </div>
             {!leases.length && (
-              <p className="lin-note">
-                This machine has never been granted work. A lease appears here when it long-polls for
-                one, and the task it took is on the row.
+              <p className="text-[12px] text-muted">
+                This machine has never been granted work.
               </p>
             )}
           </section>
-
-          <section className="lin-activity" aria-label="Connect exposures">
-            <header>
-              <b>Connect exposures</b>
-              <span className="grow" />
-              <span className="lin-note">{connectOn ? 'Each tunnel is one process, one ephemeral key.' : 'Connect is disabled for this workspace.'}</span>
+          <section
+            className="border-t border-line border-t-line pt-4 mt-1.5"
+            aria-label="Connect exposures"
+          >
+            <header className="flex items-center mb-3">
+              <b className="text-[14px]">Connect exposures</b>
+              <span className="flex-1" />
+              <span className="text-[12px] text-muted">
+                {connectOn
+                  ? "Each tunnel is one process, one ephemeral key."
+                  : "Connect is disabled for this workspace."}
+              </span>
             </header>
             {!connectOn && (
-              <p className="lin-note" data-connect-notice="off">
-                An admin turned Connect off for this workspace, so no exposure can be opened and none can be revoked. This is a switch, not an empty list.
+              <p className="text-[12px] text-muted" data-connect-notice="off">
+                An admin turned Connect off for this workspace, so no exposure
+                can be opened and none can be revoked. This is a switch, not an
+                empty list.
               </p>
             )}
-            {/* `data-exposures` on the wrapper is what the geometry probe looks for: these rows are
-                `.lin-row`s, the same 42 px rhythm as an issue. */}
+            {/* `data-exposures` identifies this list for geometry and behavior probes. */}
             <div data-exposures>
-              {exposures.map(e => (
-                <ExposureRow key={e.id} exposure={e} connectOn={connectOn} busy={busy === e.id} onRevoke={revoke} now={now} />
+              {exposures.map((e) => (
+                <ExposureRow
+                  key={e.id}
+                  exposure={e}
+                  connectOn={connectOn}
+                  busy={busy === e.id}
+                  onRevoke={revoke}
+                  now={now}
+                />
               ))}
             </div>
             {!exposures.length && connectOn && (
-              <p className="lin-note">Nothing is exposed. A tunnel opens per leased job that asks for a port.</p>
+              <p className="text-[12px] text-muted">
+                This runner holds no live exposure. One opens per leased job
+                that asks for a port.
+              </p>
             )}
           </section>
 
-          {notice && <p className="lin-note" role="status" style={{marginTop: 12}}>{notice}</p>}
-          {error && <p className="lin-error" role="alert">{error}</p>}
+          {notice && (
+            <p className="text-[12px] text-muted mt-3" role="status">
+              {notice}
+            </p>
+          )}
+          {error && (
+            <p
+              className="border border-danger/40 mt-4 mr-6 mb-4 ml-6 pt-3 pr-4 pb-3 pl-4 border-solid border-[color-mix(in_srgb,var(--danger)_40%,var(--line))] rounded-lg text-danger text-[13px] bg-[color-mix(in_srgb,var(--danger)_6%,var(--panel))]"
+              role="alert"
+            >
+              {error}
+            </p>
+          )}
         </main>
 
-        <aside className="lin-props" aria-label="Runner details">
-          <h3>Runner</h3>
-          <PropDropdown label="Credential" icon={<Lock size={13} aria-hidden="true" />}
-            value={runner.revoked ? 'Revoked' : runner.enabled ? 'Enrolled' : 'Disabled'}
+        <aside
+          className="flex-none overflow-y-auto border-t border-line lg:w-72 lg:border-t-0 lg:border-l w-72.5 border-l border-l-line pt-5.5 pr-5 pb-15 pl-5 [@media_(max-width:1100px)]:w-62.5 [@media_(max-width:900px)]:w-auto [@media_(max-width:900px)]:border-l-0 [@media_(max-width:900px)]:border-t [@media_(max-width:900px)]:border-t-line"
+          aria-label="Runner details"
+        >
+          <h3 className="text-[12px] font-semibold text-muted mt-0 mr-0 mb-2.5 ml-0">
+            Runner
+          </h3>
+          <PropDropdown
+            label="Credential"
+            icon={<Lock size={13} aria-hidden="true" />}
+            value={
+              runner.revoked
+                ? "Revoked"
+                : runner.enabled
+                  ? "Enrolled"
+                  : "Disabled"
+            }
             disabled
             onPick={() => undefined}
-            options={[{id: 'enrolled', selected: !runner.revoked && runner.enabled, label: 'Enrolled'},
-              {id: 'revoked', selected: runner.revoked, label: 'Revoked'}]} />
-          <div className="lin-prop">
-            <span className="k">◷ Last seen</span>
-            <span className="v">{lastSeen(runner.lastSeenAt)}</span>
-          </div>
-          <div className="lin-prop">
-            <span className="k">▮ Current lease</span>
-            <span className="v" data-current-lease={runner.lease ? runner.lease.id : ''}>
-              {runner.lease ? leaseLine(runner.lease) : 'None'}
+            options={[
+              {
+                id: "enrolled",
+                selected: !runner.revoked && runner.enabled,
+                label: "Enrolled",
+              },
+              { id: "revoked", selected: runner.revoked, label: "Revoked" },
+              {
+                id: "disabled",
+                selected: !runner.revoked && !runner.enabled,
+                label: "Disabled",
+              },
+            ]}
+          />
+          <div className="relative flex items-center gap-2.5 min-h-8.5 text-[13px]">
+            <span className="flex flex-none items-center gap-2 text-muted w-24">
+              ◷ Last seen
+            </span>
+            <span className="flex flex-1 items-center min-w-0 gap-1.75">
+              {lastSeen(runner.lastSeenAt)}
             </span>
           </div>
-          <div className="sec">Harnesses</div>
-          <div style={{display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6}}>
-            {runner.harnesses.map(name => <LabelChip key={name} label={{id: name, name}} />)}
-            {!runner.harnesses.length && <span className="lin-note">None declared</span>}
+          <div className="relative flex items-center gap-2.5 min-h-8.5 text-[13px]">
+            <span className="flex flex-none items-center gap-2 text-muted w-24">
+              ▮ Current lease
+            </span>
+            <span
+              className="flex flex-1 items-center min-w-0 gap-1.75"
+              data-current-lease={runner.lease?.id || ""}
+            >
+              {runner.lease ? leaseLine(runner.lease) : "None"}
+            </span>
           </div>
-          <div className="sec">Labels</div>
-          <div style={{display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6}}>
-            {runner.labels.map(name => <LabelChip key={name} label={{id: name, name}} />)}
-            {!runner.labels.length && <span className="lin-note">None</span>}
+          <div className="mt-4.5 mr-0 mb-1 ml-0 text-[12px] font-semibold text-muted">
+            Harnesses
           </div>
-          <div className="sec">Connect</div>
-          <div className="lin-prop">
-            <span className="k">▮ Workspace</span>
-            <span className="v" data-connect-state={connectOn ? 'on' : 'off'}>{connectOn ? 'Enabled' : 'Disabled by an admin'}</span>
+          <div className="flex flex-wrap gap-1.5 mb-1.5">
+            {runner.harnesses.map((name) => (
+              <LabelChip key={name} label={{ id: name, name }} />
+            ))}
+            {!runner.harnesses.length && (
+              <span className="text-[12px] text-muted">None declared</span>
+            )}
           </div>
-          <p className="lin-note" style={{marginTop: 16}}>
-            A runner leases work outbound-only. Revoking an exposure kills the tunnel process, so its key
-            and its address die with it; the revoke is written to the audit log with your name.
+          <div className="mt-4.5 mr-0 mb-1 ml-0 text-[12px] font-semibold text-muted">
+            Labels
+          </div>
+          <div className="flex flex-wrap gap-1.5 mb-1.5">
+            {runner.labels.map((name) => (
+              <LabelChip key={name} label={{ id: name, name }} />
+            ))}
+            {!runner.labels.length && (
+              <span className="text-[12px] text-muted">None</span>
+            )}
+          </div>
+          <div className="mt-4.5 mr-0 mb-1 ml-0 text-[12px] font-semibold text-muted">
+            Connect
+          </div>
+          <div className="relative flex items-center gap-2.5 min-h-8.5 text-[13px]">
+            <span className="flex flex-none items-center gap-2 text-muted w-24">
+              ▮ Workspace
+            </span>
+            <span
+              className="flex flex-1 items-center min-w-0 gap-1.75"
+              data-connect-state={connectOn ? "on" : "off"}
+            >
+              {connectOn ? "Enabled" : "Disabled by an admin"}
+            </span>
+          </div>
+          <p className="text-[12px] text-muted mt-4">
+            A runner leases work outbound-only. Revoking an exposure kills the
+            tunnel process, so its key and its address die with it; the revoke
+            is written to the audit log with your name.
           </p>
         </aside>
       </div>
     </section>
   );
-}
-
-/* The detail page's relative time, for a lease: the same arithmetic the row's age glyph uses. */
-function relTime(iso: string | null): string {
-  if (!iso) return '';
-  return lastSeen(iso);
 }

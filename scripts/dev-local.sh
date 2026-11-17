@@ -94,8 +94,19 @@ umask 077
 if [[ ! -x "$PY" ]] || ! "$PY" -c 'import ariadne, mcp, openai, sqlalchemy, uvicorn, hoja_server' >/dev/null 2>&1; then
   echo "Installing backend dependencies into .venv/ ..."
   [[ -x "$PY" ]] || python3 -m venv "$ROOT/.venv"
-  # The connector is a local package, so it is installed before the extra that names it.
-  (cd "$ROOT" && "$PY" -m pip install -q -e './connectors/google_workspace' -e '.[server,mcp,agent]')
+  # uv-created virtual environments intentionally omit pip. Prefer uv when
+  # available; otherwise bootstrap pip into this venv (never the system Python).
+  if command -v uv >/dev/null 2>&1; then
+    (cd "$ROOT" && uv pip install --python "$PY" -q \
+      -e './connectors/google_workspace' -e '.[server,mcp,agent]')
+  else
+    if ! "$PY" -m pip --version >/dev/null 2>&1; then
+      "$PY" -m ensurepip --upgrade ||
+        fail "The development venv has no pip. Install uv or enable Python ensurepip, then rerun."
+    fi
+    (cd "$ROOT" && "$PY" -m pip install -q \
+      -e './connectors/google_workspace' -e '.[server,mcp,agent]')
+  fi
 fi
 
 if [[ ! -x "$ROOT/frontend/node_modules/.bin/vite" ]]; then

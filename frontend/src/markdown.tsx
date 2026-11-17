@@ -1,6 +1,9 @@
-import React, {memo, useEffect, useState} from 'react';
-import ReactMarkdown, {defaultUrlTransform, type Components} from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import React, { memo, useEffect, useState } from "react";
+import ReactMarkdown, {
+  defaultUrlTransform,
+  type Components,
+} from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 /* One Markdown renderer for every user-authored body in Hoja.
  *
@@ -16,7 +19,7 @@ import remarkGfm from 'remark-gfm';
  * rehype-raw), so `<img onerror=…>` stays inert text. Do not add rehype-raw here.
  */
 
-export type MarkdownDensity = 'compact' | 'block';
+export type MarkdownDensity = "compact" | "block";
 
 // Bodies longer than this are shown verbatim: parsing a megabyte of markdown inside a list is
 // worse than losing formatting, and the cap keeps a single bad paste from stalling the UI.
@@ -28,42 +31,81 @@ const ISSUE_ID = /\b([A-Z][A-Z0-9]{1,9}-\d+)\b/g;
 export function linkIssueIds(markdown: string): string {
   return markdown
     .split(/(```[\s\S]*?```|`[^`\n]*`|\[[^\]]*\]\([^)]*\))/)
-    .map((part, i) => (i % 2 === 1 ? part : part.replace(ISSUE_ID, (id) => `[${id}](hoja-issue:${id})`)))
-    .join('');
+    .map((part, i) =>
+      i % 2 === 1
+        ? part
+        : part.replace(ISSUE_ID, (id) => `[${id}](hoja-issue:${id})`),
+    )
+    .join("");
 }
 
 function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem('hoja_token');
-  return token && token !== 'session' ? {authorization: `Bearer ${token}`} : {};
+  const token = localStorage.getItem("hoja_token");
+  return token && token !== "session"
+    ? { authorization: `Bearer ${token}` }
+    : {};
 }
 
-type IssueSummary = {identifier: string; title: string; state?: {name?: string; type?: string; color?: string} | null};
-const ISSUE_CHIP_QUERY = 'query AgentIssueChip($id:String!){issue(id:$id){identifier title state{name type color}}}';
+type IssueSummary = {
+  identifier: string;
+  title: string;
+  state?: { name?: string; type?: string; color?: string } | null;
+};
+const ISSUE_CHIP_QUERY =
+  "query AgentIssueChip($id:String!){issue(id:$id){identifier title state{name type color}}}";
 
-export function IssueChip({identifier}: {identifier: string}) {
+export function IssueChip({ identifier }: { identifier: string }) {
   const [issue, setIssue] = useState<IssueSummary | null>(null);
   useEffect(() => {
     let cancelled = false;
-    fetch('/graphql', {
-      method: 'POST',
-      credentials: 'include',
-      headers: {'content-type': 'application/json', ...authHeaders()},
-      body: JSON.stringify({query: ISSUE_CHIP_QUERY, variables: {id: identifier}}),
+    fetch("/graphql", {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        query: ISSUE_CHIP_QUERY,
+        variables: { id: identifier },
+      }),
     })
       .then((r) => r.json())
-      .then((d) => { if (!cancelled && d?.data?.issue) setIssue(d.data.issue as IssueSummary); })
+      .then((d) => {
+        if (!cancelled && d?.data?.issue)
+          setIssue(d.data.issue as IssueSummary);
+      })
       .catch(() => {});
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [identifier]);
-  const color = issue?.state?.color || '#a1a1aa';
+  const color = issue?.state?.color || "#a1a1aa";
   return (
-    <a className="agent-issue-chip" href={`/workspace/issue/${identifier}`} title={issue?.title ?? identifier}>
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke={color} strokeWidth="1.5" aria-hidden="true">
+    <a
+      className="inline-flex items-center border border-line no-underline whitespace-nowrap gap-1.5 max-w-full align-middle pt-0.5 pr-2.5 pb-0.5 pl-2 mt-0 mr-0.5 mb-0 ml-0.5 border-solid rounded-[999px] bg-panel text-foreground text-[13px] leading-normal hover:bg-subtle"
+      data-agent-issue-chip=""
+      href={`/workspace/issue/${identifier}`}
+      title={issue?.title ?? identifier}
+    >
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke={color}
+        strokeWidth="1.5"
+        aria-hidden="true"
+        className="flex-none"
+      >
         <circle cx="8" cy="8" r="6" />
-        {issue?.state?.type === 'completed' && <path d="M5 8.2l2 2 4-4.4" stroke={color} />}
+        {issue?.state?.type === "completed" && (
+          <path d="M5 8.2l2 2 4-4.4" stroke={color} />
+        )}
       </svg>
-      <span className="agent-issue-chip-id">{identifier}</span>
-      {issue && <span className="agent-issue-chip-title">{issue.title}</span>}
+      <span className="tabular-nums text-muted">{identifier}</span>
+      {issue && (
+        <span className="overflow-hidden text-ellipsis min-w-0">
+          {issue.title}
+        </span>
+      )}
     </a>
   );
 }
@@ -76,22 +118,35 @@ export function demoteHeading(tag: string): string {
   return `h${Math.min(6, (Number.isFinite(level) ? level : 6) + 2)}`;
 }
 
-const link: NonNullable<Components['a']> = ({href, children}) => {
-  if (href && href.startsWith('hoja-issue:')) return <IssueChip identifier={href.slice('hoja-issue:'.length)} />;
-  const issue = href?.match(/^\/workspace\/issue\/([A-Z][A-Z0-9]{1,9}-\d+)(?:\/|$)/);
+const link: NonNullable<Components["a"]> = ({ href, children }) => {
+  if (href && href.startsWith("hoja-issue:"))
+    return <IssueChip identifier={href.slice("hoja-issue:".length)} />;
+  const issue = href?.match(
+    /^\/workspace\/issue\/([A-Z][A-Z0-9]{1,9}-\d+)(?:\/|$)/,
+  );
   if (issue) return <IssueChip identifier={issue[1]} />;
-  const external = !!href && !href.startsWith('/') && !href.startsWith('#');
+  const external = !!href && !href.startsWith("/") && !href.startsWith("#");
   return (
-    <a href={href} {...(external ? {target: '_blank', rel: 'noopener noreferrer nofollow'} : {})}>
+    <a
+      className="text-foreground underline underline-offset-[3px] decoration-line hover:decoration-foreground"
+      href={href}
+      {...(external
+        ? { target: "_blank", rel: "noopener noreferrer nofollow" }
+        : {})}
+    >
       {children}
     </a>
   );
 };
 
-function heading(tag: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6') {
-  const Tag = demoteHeading(tag) as 'h3';
-  return function MdHeading({children}: {children?: React.ReactNode}) {
-    return <Tag className="md-h">{children}</Tag>;
+function heading(tag: "h1" | "h2" | "h3" | "h4" | "h5" | "h6") {
+  const Tag = demoteHeading(tag) as "h3";
+  return function MdHeading({ children }: { children?: React.ReactNode }) {
+    return (
+      <Tag className="mt-[.9em] mb-[.35em] text-[1em] font-[650] leading-[1.35] tracking-[-.005em]">
+        {children}
+      </Tag>
+    );
   };
 }
 
@@ -99,47 +154,114 @@ function heading(tag: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6') {
 // remount its subtree on every keystroke in a composer that previews while typing).
 const COMPONENTS: Components = {
   a: link,
-  h1: heading('h1'),
-  h2: heading('h2'),
-  h3: heading('h3'),
-  h4: heading('h4'),
-  h5: heading('h5'),
-  h6: heading('h6'),
+  h1: heading("h1"),
+  h2: heading("h2"),
+  h3: heading("h3"),
+  h4: heading("h4"),
+  h5: heading("h5"),
+  h6: heading("h6"),
   // Tables scroll inside their own box: a 5-column GFM table in a 320px comment must not
   // widen the page.
-  table: ({children}) => <div className="md-table"><table>{children}</table></div>,
-  img: ({src, alt, title}) => (
-    <img className="md-img" src={src} alt={alt ?? ''} title={title} loading="lazy" decoding="async" />
+  p: ({ children }) => <p className="mt-0 mb-[.7em] last:mb-0">{children}</p>,
+  ul: ({ children }) => (
+    <ul className="mt-[.3em] mb-[.7em] list-disc pl-[1.3em] [li>&]:mt-[.25em] [li>&]:mb-[.3em]">
+      {children}
+    </ul>
   ),
-  input: ({type, checked}) => type === 'checkbox'
-    ? <input className="md-check" type="checkbox" checked={!!checked} disabled readOnly aria-label={checked ? 'Completed task' : 'Open task'} />
-    : null,
+  ol: ({ children }) => (
+    <ol className="mt-[.3em] mb-[.7em] list-decimal pl-[1.3em] [li>&]:mt-[.25em] [li>&]:mb-[.3em]">
+      {children}
+    </ol>
+  ),
+  li: ({ children, className }) => (
+    <li
+      className={`[li+&]:mt-[.2em] ${className === "task-list-item" ? "list-none" : ""}`}
+    >
+      {children}
+    </li>
+  ),
+  code: ({ children }) => (
+    <code className="rounded-md bg-subtle px-[.35em] py-[.1em] font-[ui-monospace,SFMono-Regular,Menlo,monospace] text-[.88em] in-[pre]:p-0 in-[pre]:bg-transparent in-[pre]:text-[.85em] in-[pre]:leading-normal">
+      {children}
+    </code>
+  ),
+  pre: ({ children }) => (
+    <pre className="my-[.5em] overflow-x-auto rounded-xl border border-line bg-subtle px-3.5 py-3">
+      {children}
+    </pre>
+  ),
+  blockquote: ({ children }) => (
+    <blockquote className="my-[.5em] border-l-2 border-line pl-3 text-muted">
+      {children}
+    </blockquote>
+  ),
+  hr: () => <hr className="my-[.9em] border-0 border-t border-line" />,
+  th: ({ children }) => (
+    <th className="border border-line bg-subtle px-2.5 py-1.5 text-left font-semibold">
+      {children}
+    </th>
+  ),
+  td: ({ children }) => (
+    <td className="border border-line px-2.5 py-1.5 text-left">{children}</td>
+  ),
+  table: ({ children }) => (
+    <div data-md-table className="my-[.5em] max-w-full overflow-x-auto">
+      <table className="my-[.5em] border-collapse text-[.94em]">
+        {children}
+      </table>
+    </div>
+  ),
+  img: ({ src, alt, title }) => (
+    <img
+      className="my-[.4em] h-auto max-w-full rounded-lg border border-line"
+      src={src}
+      alt={alt ?? ""}
+      title={title}
+      loading="lazy"
+      decoding="async"
+    />
+  ),
+  input: ({ type, checked }) =>
+    type === "checkbox" ? (
+      <input
+        className="mt-0 mr-[.45em] mb-0 ml-[-1.2em] accent-accent align-[-1px]"
+        type="checkbox"
+        checked={!!checked}
+        disabled
+        readOnly
+        aria-label={checked ? "Completed task" : "Open task"}
+      />
+    ) : null,
 };
 
 /* react-markdown blanks any protocol outside http(s)/mailto/xmpp/irc, which also blanked the
  * `hoja-issue:` scheme the chips rely on (they rendered as `href=""`). Keep that one scheme and
  * defer everything else to the stock transform, so `javascript:` and `data:` stay stripped. */
-const ISSUE_SCHEME = 'hoja-issue:';
+const ISSUE_SCHEME = "hoja-issue:";
 function urlTransform(url: string): string {
   return url.startsWith(ISSUE_SCHEME) ? url : defaultUrlTransform(url);
 }
 
 const GFM = [remarkGfm];
 
-type Stats = {parses: number; hits: number};
-const stats: Stats = {parses: 0, hits: 0};
+type Stats = { parses: number; hits: number };
+const stats: Stats = { parses: 0, hits: 0 };
 const cache = new Map<string, React.ReactNode>();
 
 /** Parse counters, read by the browser tests to prove identical bodies are parsed once. */
 export function markdownStats(): Stats {
-  return {...stats};
+  return { ...stats };
 }
 export function resetMarkdownStats(): void {
   stats.parses = 0;
   stats.hits = 0;
 }
-if (typeof window !== 'undefined') {
-  (window as unknown as {__hojaMarkdown?: {stats: Stats; reset: () => void}}).__hojaMarkdown = {
+if (typeof window !== "undefined") {
+  (
+    window as unknown as {
+      __hojaMarkdown?: { stats: Stats; reset: () => void };
+    }
+  ).__hojaMarkdown = {
     stats,
     reset: resetMarkdownStats,
   };
@@ -147,9 +269,24 @@ if (typeof window !== 'undefined') {
 
 function parse(text: string): React.ReactNode {
   if (text.length > MAX_PARSE_CHARS) {
-    return <pre className="md-plain" data-md-plain="true">{text}</pre>;
+    return (
+      <pre
+        className="m-0 whitespace-pre-wrap wrap-break-word"
+        data-md-plain="true"
+      >
+        {text}
+      </pre>
+    );
   }
-  return <ReactMarkdown remarkPlugins={GFM} components={COMPONENTS} urlTransform={urlTransform}>{linkIssueIds(text)}</ReactMarkdown>;
+  return (
+    <ReactMarkdown
+      remarkPlugins={GFM}
+      components={COMPONENTS}
+      urlTransform={urlTransform}
+    >
+      {linkIssueIds(text)}
+    </ReactMarkdown>
+  );
 }
 
 function render(text: string, key: string): React.ReactNode {
@@ -177,13 +314,24 @@ export type MarkdownProps = {
 };
 
 /** Renders untrusted Markdown. Safe by construction: no raw HTML, sanitised URLs, no h1/h2. */
-export const Markdown = memo(function Markdown({text, density = 'compact', issueLinks = true, className}: MarkdownProps) {
-  const value = text ?? '';
-  const key = `${issueLinks ? 'l' : 'n'}\u0000${value}`;
+export const Markdown = memo(function Markdown({
+  text,
+  density = "compact",
+  issueLinks = true,
+  className,
+}: MarkdownProps) {
+  const value = text ?? "";
+  const key = `${issueLinks ? "l" : "n"}\u0000${value}`;
   // issueLinks changes the source, not the output shape, so encode it in the key only.
   const node = issueLinks ? render(value, key) : renderPlain(value, key);
   return (
-    <div className={className ? `md md--${density} ${className}` : `md md--${density}`} data-md={density}>
+    <div
+      className={
+        `md md--${density}  ${density === "block" ? "text-[14px] leading-[1.65]" : "text-[13px] leading-[1.6]"}  ${className || ""}` +
+        " min-w-0 text-foreground wrap-anywhere"
+      }
+      data-md={density}
+    >
       {node}
     </div>
   );
@@ -196,9 +344,23 @@ function renderPlain(text: string, key: string): React.ReactNode {
     return hit;
   }
   stats.parses++;
-  const node = text.length > MAX_PARSE_CHARS
-    ? <pre className="md-plain" data-md-plain="true">{text}</pre>
-    : <ReactMarkdown remarkPlugins={GFM} components={COMPONENTS} urlTransform={urlTransform}>{text}</ReactMarkdown>;
+  const node =
+    text.length > MAX_PARSE_CHARS ? (
+      <pre
+        className="m-0 whitespace-pre-wrap wrap-break-word"
+        data-md-plain="true"
+      >
+        {text}
+      </pre>
+    ) : (
+      <ReactMarkdown
+        remarkPlugins={GFM}
+        components={COMPONENTS}
+        urlTransform={urlTransform}
+      >
+        {text}
+      </ReactMarkdown>
+    );
   if (cache.size >= CACHE_LIMIT) {
     const oldest = cache.keys().next();
     if (!oldest.done) cache.delete(oldest.value);

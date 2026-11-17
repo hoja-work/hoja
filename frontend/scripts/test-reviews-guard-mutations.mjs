@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 /**
- * Mutation matrix for the reviews guards (HOJA-417).
+ * Mutation matrix for the reviews guards.
+ * Layout mutations run in compiled browser DOM, without editing application source.
+ * Glyph/gate mutations retain the semantic checks and restore source in finally.
  *
  * A green check proves nothing until it has been shown to go red for the right reason. The
  * previous guard pinned 38px rows and 22px group bars — it was a passing test of the wrong
@@ -19,55 +21,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const cssPath = join(root, 'src/styles.css');
-/* HOJA-419: the three geometry numbers moved into the design tokens, so the mutation proves the
- * token is what the guard reads — mutating the token must turn check-reviews red, and moving a
- * token back must turn it green again. A guard that only watched styles.css would stay green. */
-const tokenPath = join(root, 'src/design/tokens.css');
 const gatePath = join(root, 'src/reviews-gate.ts');
 const glyphPath = join(root, 'src/reviews-glyphs.ts');
 
 const mutations = [
-  {
-    name: 'row height token 40px -> 38px',
-    file: tokenPath,
-    from: '--ds-row-height:40px;',
-    to: '--ds-row-height:38px;',
-    runner: ['scripts/check-reviews.mjs'],
-    expect: '.reviews-row { height } is "38px", expected "40px"',
-  },
-  {
-    name: 'group bar token 28px -> 22px',
-    file: tokenPath,
-    from: '--ds-group-bar-height:28px;',
-    to: '--ds-group-bar-height:22px;',
-    runner: ['scripts/check-reviews.mjs'],
-    expect: '.reviews-group-head { height } is "22px", expected "28px"',
-  },
-  {
-    name: 'band rhythm token 0 -> 8px (HOJA-500: the measured margin is 0 vertical)',
-    file: tokenPath,
-    from: '--ds-group-bar-margin:0 0 0 10px;',
-    to: '--ds-group-bar-margin:8px 0 0 10px;',
-    runner: ['scripts/check-reviews.mjs'],
-    expect: '.reviews-group-head { margin } is "8px 0 0 10px", expected "0 0 0 10px"',
-  },
-  {
-    name: 'glyph 14px -> 12px',
-    file: cssPath,
-    from: '.reviews-glyph svg{width:14px;height:14px;display:block}',
-    to: '.reviews-glyph svg{width:12px;height:12px;display:block}',
-    runner: ['scripts/check-reviews.mjs'],
-    expect: '.reviews-glyph svg { width } is "12px"',
-  },
-  {
-    name: 'glyph filled -> stroked',
-    file: cssPath,
-    from: '.reviews-glyph{width:14px;height:14px;flex:0 0 14px;border:0;border-radius:0;',
-    to: '.reviews-glyph{width:14px;height:14px;flex:0 0 14px;border:1.5px solid currentColor;border-radius:0;',
-    runner: ['scripts/check-reviews.mjs'],
-    expect: '.reviews-glyph { border }',
-  },
   {
     /* HOJA-500: the glyph is pinned as PATH DATA. Reverting the one-character transcription
      * slip must be caught — a path-count assertion cannot see it, which is why the old guard
@@ -76,7 +33,7 @@ const mutations = [
     file: glyphPath,
     from: 'C2.75018 14.6631 3.0859',
     to: 'C2.75018 14.663 3.0859',
-    runner: ['scripts/check-reviews.mjs'],
+    runner: ['scripts/check-reviews.mjs', '--no-browser'],
     expect: 'REVIEW_GLYPH_DRAFT path data is not the reference vector set',
   },
   {
@@ -105,10 +62,13 @@ const run = (args) => {
   }
 };
 
-const originals = new Map([[cssPath, readFileSync(cssPath, 'utf8')], [gatePath, readFileSync(gatePath, 'utf8')], [tokenPath, readFileSync(tokenPath, 'utf8')], [glyphPath, readFileSync(glyphPath, 'utf8')]]);
+const originals = new Map([[gatePath, readFileSync(gatePath, 'utf8')], [glyphPath, readFileSync(glyphPath, 'utf8')]]);
 let failures = 0;
 
-const baseline = run(['scripts/check-reviews.mjs']);
+const rendered = run(['scripts/check-design-tokens.mjs', '--self-test']);
+if (rendered.code !== 0) { console.error(rendered.out); process.exit(1); }
+console.log(rendered.out.trim());
+const baseline = run(['scripts/check-reviews.mjs', '--no-browser']);
 const baselineGate = run(['--experimental-strip-types', 'scripts/test-reviews-gate.mjs']);
 if (baseline.code !== 0 || baselineGate.code !== 0) {
   console.error('refusing to mutate: the guards are not green to begin with');

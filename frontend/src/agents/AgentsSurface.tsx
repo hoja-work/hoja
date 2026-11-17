@@ -19,48 +19,61 @@
  * own read through the adapter.
  */
 
-import {useEffect, useState} from 'react';
-import {agentsSurfaceEnabled} from './flag';
-import {AgentDetailPage} from './AgentDetail';
-import {AgentsPane} from './AgentsPane';
-import {AuditPane} from './AuditPane';
-import {RunQueue} from './RunQueue';
-import {RunnerDetailPage, RunnersPane} from './RunnersPane';
+import { useEffect, useState } from "react";
+import { agentsSurfaceEnabled } from "./flag";
+import { AgentDetailPage } from "./AgentDetail";
+import { AgentsPane } from "./AgentsPane";
+import { AuditPane } from "./AuditPane";
+import { RunQueue } from "./RunQueue";
+import { RunnerDetailPage, RunnersPane } from "./RunnersPane";
 
-export const AGENTS_ROOT = '/workspace/agents';
+export const AGENTS_ROOT = "/workspace/agents";
 
 export type AgentsRoute =
-  | {kind: 'list'}
-  | {kind: 'queue'; agentKey?: string}
-  | {kind: 'audit'}
-  | {kind: 'runners'}
-  | {kind: 'runner'; runnerId: string}
-  | {kind: 'detail'; agentKey: string};
+  | { kind: "list" }
+  | { kind: "queue"; agentKey?: string }
+  | { kind: "audit" }
+  | { kind: "runners" }
+  | { kind: "runner"; runnerId: string }
+  | { kind: "detail"; agentKey: string };
 
 export function parseAgentsRoute(pathname: string): AgentsRoute {
-  const rest = pathname.replace(/^\/workspace\/agents\/?/i, '').split('/').filter(Boolean);
-  if (!rest.length) return {kind: 'list'};
-  if (rest[0].toLowerCase() === 'audit') return {kind: 'audit'};
-  if (rest[0].toLowerCase() === 'queue') return {kind: 'queue'};
-  if (rest[0].toLowerCase() === 'runners') {
-    return rest[1] ? {kind: 'runner', runnerId: decodeURIComponent(rest[1])} : {kind: 'runners'};
+  const rest = pathname
+    .replace(/^\/workspace\/agents\/?/i, "")
+    .split("/")
+    .filter(Boolean);
+  if (!rest.length) return { kind: "list" };
+  if (rest[0].toLowerCase() === "audit") return { kind: "audit" };
+  if (rest[0].toLowerCase() === "queue") return { kind: "queue" };
+  if (rest[0].toLowerCase() === "runners") {
+    return rest[1]
+      ? { kind: "runner", runnerId: decodeURIComponent(rest[1]) }
+      : { kind: "runners" };
   }
   const agentKey = decodeURIComponent(rest[0]);
-  if (rest[1] && rest[1].toLowerCase() === 'queue') return {kind: 'queue', agentKey};
-  return {kind: 'detail', agentKey};
+  if (rest[1] && rest[1].toLowerCase() === "queue")
+    return { kind: "queue", agentKey };
+  return { kind: "detail", agentKey };
 }
 
-export function AgentsSurface({workspaceName, viewerName}: {workspaceName: string; viewerName: string}) {
+export function AgentsSurface({
+  workspaceName,
+  viewerName,
+}: {
+  workspaceName: string;
+  viewerName: string;
+}) {
   const [path, setPath] = useState(() => window.location.pathname);
 
   useEffect(() => {
     const onPop = () => setPath(window.location.pathname);
-    window.addEventListener('popstate', onPop);
-    return () => window.removeEventListener('popstate', onPop);
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
   }, []);
 
   const go = (next: string) => {
-    if (next !== window.location.pathname) window.history.pushState({}, '', next);
+    if (next !== window.location.pathname)
+      window.history.pushState({}, "", next);
     setPath(next);
   };
 
@@ -68,16 +81,32 @@ export function AgentsSurface({workspaceName, viewerName}: {workspaceName: strin
    * localStorage write, but the default is off and the page says so rather than 404ing. */
   if (!agentsSurfaceEnabled()) {
     return (
-      <section className="lin-page" data-surface="agents-disabled" aria-label="Agents">
-        <header className="lin-head">
-          <nav className="lin-crumb" aria-label="Breadcrumb">
-            <span>{workspaceName}</span><span className="sep">›</span><span className="current">Agents</span>
+      <section
+        className="flex flex-col min-w-0 h-full bg-panel"
+        data-surface="agents-disabled"
+        aria-label="Agents"
+      >
+        <header className="flex flex-none items-center border-b border-line gap-2 min-h-12.25 pt-0 pr-5 pb-0 pl-5 border-b-line shell-phone:flex-wrap shell-phone:gap-y-1">
+          <nav
+            className="flex flex-1 items-center gap-1.75 text-[13px] text-muted min-w-0 shell-phone:min-w-0 shell-phone:flex-wrap shell-phone:gap-y-0.5"
+            aria-label="Breadcrumb"
+          >
+            <span>{workspaceName}</span>
+            <span className="text-muted opacity-70">›</span>
+            <span className="truncate text-foreground font-semibold overflow-hidden text-ellipsis whitespace-nowrap">
+              Agents
+            </span>
           </nav>
         </header>
-        <div className="lin-scroll">
-          <div className="lin-empty">
-            <h2>Agents are not enabled</h2>
-            <p>This workspace has not turned the agent surface on. Nothing here reads or writes until it is enabled.</p>
+        <div className="flex-1 overflow-y-auto min-h-0">
+          <div className="text-center pt-15 pr-5 pb-15 pl-5 text-muted">
+            <h2 className="text-foreground text-[15px] mt-3 mr-0 mb-1.5 ml-0">
+              Agents are not enabled
+            </h2>
+            <p>
+              This workspace has not turned the agent surface on. Nothing here
+              reads or writes until it is enabled.
+            </p>
           </div>
         </div>
       </section>
@@ -85,44 +114,59 @@ export function AgentsSurface({workspaceName, viewerName}: {workspaceName: strin
   }
 
   const route = parseAgentsRoute(path);
-  const tab = route.kind === 'queue' ? 'queue'
-    : route.kind === 'audit' ? 'audit'
-      : route.kind === 'runners' || route.kind === 'runner' ? 'runners' : 'agents';
-  const onTab = (id: string) => go(id === 'queue' ? `${AGENTS_ROOT}/queue`
-    : id === 'audit' ? `${AGENTS_ROOT}/audit`
-      : id === 'runners' ? `${AGENTS_ROOT}/runners` : AGENTS_ROOT);
+  const tab =
+    route.kind === "queue"
+      ? "queue"
+      : route.kind === "audit"
+        ? "audit"
+        : route.kind === "runners" || route.kind === "runner"
+          ? "runners"
+          : "agents";
+  const onTab = (id: string) =>
+    go(
+      id === "queue"
+        ? `${AGENTS_ROOT}/queue`
+        : id === "audit"
+          ? `${AGENTS_ROOT}/audit`
+          : id === "runners"
+            ? `${AGENTS_ROOT}/runners`
+            : AGENTS_ROOT,
+    );
 
-  if (route.kind === 'detail') {
+  if (route.kind === "detail") {
     return (
       <AgentDetailPage
         agentKey={route.agentKey}
         workspaceName={workspaceName}
         viewerName={viewerName}
         onBack={() => go(AGENTS_ROOT)}
-        onOpenQueue={key => go(`${AGENTS_ROOT}/${encodeURIComponent(key)}/queue`)}
+        onOpenQueue={(key) =>
+          go(`${AGENTS_ROOT}/${encodeURIComponent(key)}/queue`)
+        }
       />
     );
   }
 
-  if (route.kind === 'queue') {
+  if (route.kind === "queue") {
     return (
       <RunQueue
         workspaceName={workspaceName}
         agentKey={route.agentKey}
         tab={tab}
         onTab={onTab}
-        onOpenAgent={key => go(`${AGENTS_ROOT}/${encodeURIComponent(key)}`)}
-        /* A queue row opens that agent's queue: the run's own transcript lives on the agent page,
-           and the task page's inline session view is a later slice. `agentId` is the agent member
-           the adapter resolved from the session's agent user id, so the route is a real one. */
-        onOpenRun={run => go(`${AGENTS_ROOT}/${encodeURIComponent(run.agentId)}/queue`)}
+        onOpenAgent={(key) => go(`${AGENTS_ROOT}/${encodeURIComponent(key)}`)}
+        /* The adapter resolves a session's agent user id to its routable member id. */
+        onOpenRun={(run) =>
+          go(`${AGENTS_ROOT}/${encodeURIComponent(run.agentId)}/queue`)
+        }
       />
     );
   }
 
-  if (route.kind === 'audit') return <AuditPane workspaceName={workspaceName} tab={tab} onTab={onTab} />;
+  if (route.kind === "audit")
+    return <AuditPane workspaceName={workspaceName} tab={tab} onTab={onTab} />;
 
-  if (route.kind === 'runner') {
+  if (route.kind === "runner") {
     return (
       <RunnerDetailPage
         runnerId={route.runnerId}
@@ -133,13 +177,15 @@ export function AgentsSurface({workspaceName, viewerName}: {workspaceName: strin
     );
   }
 
-  if (route.kind === 'runners') {
+  if (route.kind === "runners") {
     return (
       <RunnersPane
         workspaceName={workspaceName}
         tab={tab}
         onTab={onTab}
-        onOpen={runner => go(`${AGENTS_ROOT}/runners/${encodeURIComponent(runner.id)}`)}
+        onOpen={(runner) =>
+          go(`${AGENTS_ROOT}/runners/${encodeURIComponent(runner.id)}`)
+        }
       />
     );
   }
@@ -149,7 +195,7 @@ export function AgentsSurface({workspaceName, viewerName}: {workspaceName: strin
       workspaceName={workspaceName}
       tab={tab}
       onTab={onTab}
-      onOpen={agent => go(`${AGENTS_ROOT}/${encodeURIComponent(agent.id)}`)}
+      onOpen={(agent) => go(`${AGENTS_ROOT}/${encodeURIComponent(agent.id)}`)}
     />
   );
 }

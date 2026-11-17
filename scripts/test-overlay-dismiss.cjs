@@ -50,23 +50,22 @@ const ok = (cond, label, detail = '') => { cond ? pass++ : fail++; console.log(`
     await ctx.addInitScript(t => localStorage.setItem('hoja_token', t), token);
     const page = await ctx.newPage();
     await page.goto(`${base}/workspace/my-issues/assigned`, { waitUntil: 'networkidle' });
-    await page.waitForSelector('.my-issue-row');
+    await page.waitForSelector('[data-my-issue-row]');
 
     const moreMenu = page.locator('#workspace-more-menu');
     const moreTrigger = page.getByRole('button', { name: 'Workspace More' });
-    const filterPanel = page.locator('.my-issue-popover[aria-label="Task filters"]');
-    const displayPanel = page.locator('.my-issue-popover[aria-label="Display options"]');
+    const filterPanel = page.locator('[data-my-issue-popover][aria-label="Task filters"]');
+    const displayPanel = page.locator('[data-my-issue-popover][aria-label="Display options"]');
     const filterTrigger = page.getByRole('button', { name: 'Add filter' });
     const displayTrigger = page.getByRole('button', { name: 'Display options' });
     // A heading is inert: pressing it proves dismissal without also navigating. Narrow
     // viewports fold the page head away, so fall back to a press on the inert body.
     const pressElsewhere = async () => {
-      for (const selector of ['.my-issues-head h1', '.settings-page-heading h1']) {
+      for (const selector of ['[data-my-issues-head] h1', '[data-settings-page] h1']) {
         const heading = page.locator(selector).first();
         try { await heading.click({ timeout: 1500 }); return; } catch { /* folded or covered on narrow screens */ }
       }
-      await page.evaluate(() => document.body.dispatchEvent(
-        new PointerEvent('pointerdown', { bubbles: true, cancelable: true })));
+      await page.mouse.click(Number(process.env.WIDTH || 1440) - 3, 3);
     };
 
     if (await page.getByRole('button', { name: 'Open navigation' }).isVisible().catch(() => false)) {
@@ -78,6 +77,7 @@ const ok = (cond, label, detail = '') => { cond ? pass++ : fail++; console.log(`
     await moreTrigger.click();
     await wait(150);
     ok(await moreMenu.count() === 1, 'More menu opens');
+    ok(await moreMenu.getAttribute('data-slot') === 'popover-content', 'More menu uses ui/popover');
     await page.keyboard.press('Escape'); await wait(150);
     ok(await moreMenu.count() === 0, 'More menu closes on Escape');
 
@@ -93,7 +93,7 @@ const ok = (cond, label, detail = '') => { cond ? pass++ : fail++; console.log(`
 
     // The mobile navigation drawer is an overlay of its own: close it before pressing on
     // the page, otherwise it intercepts the press the panel checks rely on.
-    if (await page.locator('#workspace-sidebar.open').count()) {
+    if (await page.locator('#workspace-sidebar[data-open]').count()) {
       await page.getByRole('button', { name: 'Open navigation' }).click();
       await wait(300);
     }
@@ -110,6 +110,8 @@ const ok = (cond, label, detail = '') => { cond ? pass++ : fail++; console.log(`
     await closePanels();
     await filterTrigger.click(); await wait(150);
     ok(await filterPanel.count() === 1, 'filter panel opens');
+    ok(await filterPanel.getAttribute('data-slot') === 'popover-content', 'filter uses ui/popover');
+    ok(await filterPanel.getAttribute('data-side') === 'bottom', 'filter opens downward');
     await page.keyboard.press('Escape'); await wait(150);
     ok(await filterPanel.count() === 0, 'filter panel closes on Escape');
 
@@ -127,6 +129,7 @@ const ok = (cond, label, detail = '') => { cond ? pass++ : fail++; console.log(`
     await closePanels();
     await displayTrigger.click(); await wait(150);
     ok(await displayPanel.count() === 1, 'display panel opens');
+    ok(await displayPanel.getAttribute('data-slot') === 'popover-content', 'display uses ui/popover');
     await pressElsewhere(); await wait(200);
     ok(await displayPanel.count() === 0, 'display panel closes on an outside press');
 
@@ -146,13 +149,24 @@ const ok = (cond, label, detail = '') => { cond ? pass++ : fail++; console.log(`
     await displayPanel.locator('small').first().click(); await wait(150);
     ok(await displayPanel.count() === 1, 'display panel survives a press on non-interactive text inside it');
 
+    // --- meetings call popover ---
+    await page.goto(`${base}/workspace/meetings`, { waitUntil: 'networkidle' });
+    const callTrigger = page.getByRole('button', { name: 'Call someone', exact: true });
+    await callTrigger.click(); await wait(150);
+    const callPanel = page.locator('[data-slot="popover-content"][aria-label="Call someone"]');
+    ok(await callPanel.count() === 1, 'meeting call uses ui/popover');
+    await page.keyboard.press('Escape'); await wait(200);
+    ok(await callPanel.count() === 0, 'meeting call closes on Escape');
+    ok(await callTrigger.evaluate(el => el === document.activeElement), 'meeting call restores trigger focus');
+
     // --- settings dropdown (SettingsSelect), whose panel is a portal on document.body ---
     await page.goto(`${base}/workspace/settings/preferences`, { waitUntil: 'networkidle' });
     const combo = page.getByRole('combobox', { name: 'Font size' });
-    const listbox = page.locator('.settings-select-panel');
+    const listbox = page.locator('[role=listbox][aria-label="Font size"]');
     await combo.click(); await wait(200);
     ok(await listbox.count() === 1, 'settings dropdown opens');
-    await listbox.locator('.settings-select-menu-label').click(); await wait(150);
+    ok(await listbox.getAttribute('data-slot') === 'popover-content', 'settings uses ui/popover');
+    await listbox.locator('div').first().click(); await wait(150);
     ok(await listbox.count() === 1, 'settings dropdown stays open for a press inside its portal');
     await pressElsewhere(); await wait(200);
     ok(await listbox.count() === 0, 'settings dropdown closes on an outside press');

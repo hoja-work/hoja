@@ -277,7 +277,7 @@ const skips = new Map();
   check('issue identifiers inside code stay literal', !fenced.includes('/workspace/issue/TREBOL-12') && !fenced.includes('/workspace/issue/TREBOL-13'), fenced);
 
   const table = render('| a | b |\n| - | - |\n| 1 | 2 |');
-  check('tables get their own scroll box', table.includes('class="md-table"') && table.includes('<table>'), table);
+  check('tables get their own scroll box', table.includes('data-md-table') && /<table(?:\s|>)/.test(table), table);
 
   const tasks = render('- [x] done\n- [ ] todo');
   check('task list checkboxes are read-only', (tasks.match(/disabled/g) || []).length === 2 && /aria-label="Completed task"/.test(tasks) && /aria-label="Open task"/.test(tasks), tasks);

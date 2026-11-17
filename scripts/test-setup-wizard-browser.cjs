@@ -151,7 +151,7 @@ async function main() {
     const pageErrors = [];
     page.on('pageerror', (error) => pageErrors.push(String(error)));
 
-    const heading = () => page.locator('.setup-form-panel h1');
+    const heading = () => page.locator('[data-setup-form-panel]').getByRole('heading', {level: 1});
     let inviteLink = '';
     const waitHeading = async (text) => {
       await heading().filter({hasText: text}).waitFor({timeout: 15000});
@@ -161,7 +161,7 @@ async function main() {
     await step('a fresh instance opens the wizard, not the sign-in page', async () => {
       await page.goto(stackA.appUrl);
       await waitHeading('Let’s make this yours.');
-      assert.match((await page.locator('.setup-progress-label').innerText()).toLowerCase(), /^step 1 of 6$/);
+      assert.match((await page.locator('[data-setup-progress]').innerText()).toLowerCase(), /^step 1 of 6$/);
       assert.equal(await page.locator('#setup-workspace-name').count(), 0);
     });
 
@@ -185,7 +185,7 @@ async function main() {
       await page.fill('#setup-workspace-address', 'acme-eu');
       await page.fill('#setup-workspace-name', 'Acme Studio EU');
       assert.equal(await page.inputValue('#setup-workspace-address'), 'acme-eu', 'manual address survives a rename');
-      assert.match(await page.locator('.setup-preview-address').innerText(), /acme-eu/);
+      assert.match(await page.locator('[data-setup-preview-address]').innerText(), /acme-eu/);
     });
 
     await step('creating the workspace is one write and shows real ids afterwards', async () => {
@@ -208,14 +208,14 @@ async function main() {
       await page.fill('#setup-project-name', 'Launch');
       const restore = await loseNextMutation(page, 'projectCreate');
       await page.getByRole('button', {name: 'Create project'}).click();
-      await page.locator('.setup-error').waitFor();
-      assert.match(await page.locator('.setup-error').innerText(), /did not finish/i);
+      await page.locator('[data-setup-error]').waitFor();
+      assert.match(await page.locator('[data-setup-error]').innerText(), /did not finish/i);
       await restore();
       await page.getByRole('button', {name: 'Create project'}).click();
       await waitHeading('Bring your teammates in.');
       // Going back shows the server-confirmed project instead of an editable form.
       await page.getByRole('button', {name: 'Back'}).click();
-      await page.locator('.setup-created').filter({hasText: 'Launch'}).waitFor();
+      await page.locator('[data-setup-created]').filter({hasText: 'Launch'}).waitFor();
       assert.equal(await page.locator('#setup-project-name').count(), 0);
       await page.getByRole('button', {name: 'Continue'}).click();
       await waitHeading('Bring your teammates in.');
@@ -231,19 +231,19 @@ async function main() {
       await page.fill('#setup-invite-email', 'sam@example.com');
       const restore = await loseNextMutation(page, 'membershipInvitationCreate');
       await page.getByRole('button', {name: 'Add invitation'}).click();
-      await page.locator('.setup-error').waitFor();
+      await page.locator('[data-setup-error]').waitFor();
       await restore();
       await page.getByRole('button', {name: 'Add invitation'}).click();
-      await page.locator('.setup-result-head').filter({hasText: 'Invite link ready'}).waitFor();
+      await page.locator('[data-setup-invite-result]').filter({hasText: 'Invite link ready'}).waitFor();
       inviteLink = await page.locator('input[aria-label="Invite link"]').inputValue();
       assert.match(inviteLink, /#invite=/);
-      assert.match(await page.locator('.setup-hint').first().innerText(), /share this single-use link/i);
+      assert.match(await page.locator('[data-setup-hint]').first().innerText(), /share this single-use link/i);
     });
 
     await step('reloading mid-flow resumes the same step instead of starting over', async () => {
       await page.reload();
       await waitHeading('Bring your teammates in.');
-      await page.locator('.setup-created').filter({hasText: 'pending'}).waitFor();
+      await page.locator('[data-setup-created]').filter({hasText: 'pending'}).waitFor();
       assert.equal(await page.locator('#setup-workspace-name').count(), 0);
     });
 
@@ -251,24 +251,24 @@ async function main() {
       await page.emulateMedia({reducedMotion: 'reduce'});
       await page.getByRole('button', {name: 'Back'}).click();
       await waitHeading('Start with a project?');
-      assert.equal(await page.locator('.setup-step').evaluate((node) => getComputedStyle(node).animationName), 'none');
+      assert.equal(await page.locator('[data-setup-step]').evaluate((node) => getComputedStyle(node).animationName), 'none');
       await page.emulateMedia({reducedMotion: 'no-preference'});
     });
 
     await step('the step transition is short and does not shift layout', async () => {
       const measured = await page.evaluate(async () => {
-        const shell = document.querySelector('.setup-shell');
+        const shell = document.querySelector('[data-setup-shell]');
         const before = shell.getBoundingClientRect().top;
         let shift = 0;
         const observer = new PerformanceObserver((list) => {
           for (const entry of list.getEntries()) if (!entry.hadRecentInput) shift += entry.value;
         });
         observer.observe({type: 'layout-shift', buffered: true});
-        const primary = [...document.querySelectorAll('.setup-step button')]
+        const primary = [...document.querySelectorAll('[data-setup-step] button')]
           .filter((button) => button.textContent?.includes('Continue')).pop();
         primary?.click();
         await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-        const fresh = document.querySelector('.setup-step');
+        const fresh = document.querySelector('[data-setup-step]');
         const duration = fresh ? getComputedStyle(fresh).animationDuration : '0s';
         await new Promise((resolve) => setTimeout(resolve, 300));
         observer.disconnect();
@@ -282,7 +282,7 @@ async function main() {
 
     await step('dark theme and a narrow viewport keep the layout intact', async () => {
       await page.evaluate(() => { document.documentElement.dataset.theme = 'dark' });
-      const dark = await page.evaluate(() => getComputedStyle(document.querySelector('.setup-page')).backgroundColor);
+      const dark = await page.evaluate(() => getComputedStyle(document.querySelector('[data-setup-page]')).backgroundColor);
       assert.equal(dark, 'rgb(23, 23, 25)');
       const darkShot = path.join('/tmp', 'setup-dark.png');
       await page.screenshot({path: darkShot, fullPage: true});
@@ -295,8 +295,8 @@ async function main() {
       await page.screenshot({path: path.join('/tmp', 'setup-mobile.png'), fullPage: true});
 
       await page.setViewportSize({width: 1280, height: 600});
-      await page.locator('.setup-form-panel .primary').first().scrollIntoViewIfNeeded();
-      const box = await page.locator('.setup-form-panel .primary').first().boundingBox();
+      await page.locator('[data-setup-form-panel] [data-control-primary]').first().scrollIntoViewIfNeeded();
+      const box = await page.locator('[data-setup-form-panel] [data-control-primary]').first().boundingBox();
       assert.ok(box && box.y >= 0 && box.y + box.height <= 600, 'the primary action fits a short viewport');
       await page.setViewportSize({width: 1440, height: 900});
     });
@@ -308,12 +308,12 @@ async function main() {
         if (title.includes('teammates')) {
           await page.getByRole('button', {name: 'Skip this step'}).click();
         } else {
-          await page.locator('.setup-step button.primary').last().click();
+          await page.locator('[data-setup-step] button[data-control-primary]').last().click();
         }
         await page.waitForTimeout(250);
       }
       await waitHeading('You’re all set.');
-      const summary = await page.locator('.setup-summary li').allInnerTexts();
+      const summary = await page.locator('[data-setup-summary] li').allInnerTexts();
       assert.ok(summary.some((row) => row.includes('acme-eu')));
       assert.ok(summary.some((row) => row.includes('Launch')));
       assert.ok(summary.some((row) => row.includes('sent') || row.includes('pending')));
@@ -353,7 +353,7 @@ async function main() {
       await page2.fill('input[type=password]', 'sam-password-long-enough');
       await page2.getByRole('button', {name: 'Accept invitation →'}).click();
       try {
-        await page2.locator('.onboarding-card h1').filter({hasText: /You’re in\.|Your invite is ready\./}).waitFor({timeout: 8000});
+        await page2.getByRole('heading', {level: 1, name: /You['’]re in(?:, [^.]+)?\.|Your invite is ready\./}).waitFor({timeout: 8000});
       } catch (error) {
         console.error('  invite page body:', (await page2.locator('body').innerText()).slice(0, 500));
         throw error;
@@ -362,8 +362,8 @@ async function main() {
       // Accepting lands in the workspace; the route is normalised in place, so
       // assert the authenticated app rather than one exact URL.
       await page2.locator('.app').waitFor({timeout: 15000});
-      assert.equal(await page2.locator('.setup-page').count(), 0, 'the invitee is not pushed into owner setup');
-      assert.match(await page2.locator('body').innerText(), /My issues/);
+      assert.equal(await page2.locator('[data-setup-page]').count(), 0, 'the invitee is not pushed into owner setup');
+      assert.match(await page2.locator('body').innerText(), /My tasks/);
       const identity = await page2.evaluate(async () => {
         const response = await fetch('/graphql', {method: 'POST', credentials: 'include', headers: {'content-type': 'application/json'}, body: JSON.stringify({query: '{ viewer { email } }'})});
         return (await response.json()).data.viewer;
@@ -373,13 +373,14 @@ async function main() {
     });
 
     await step('a returning member signs in without being pushed into setup', async () => {
-      await page.locator('.logout-button').click();
-      await page.locator('.login-card').waitFor();
+      await page.getByRole('button', {name: 'Switch workspace', exact: true}).click();
+      await page.getByRole('menuitem', {name: 'Log out', exact: true}).click();
+      await page.locator('[data-login-card]').waitFor();
       await page.fill('#email', 'alex@example.com');
       await page.fill('#password', 'a-sufficiently-long-password');
-      await page.locator('.login-card button.primary').click();
+      await page.locator('[data-login-card]').getByRole('button', {name: 'Continue', exact: false}).click();
       await page.waitForURL(/\/workspace\/my-issues\/assigned/, {timeout: 15000});
-      assert.equal(await page.locator('.setup-form-panel h1').count(), 0);
+      assert.equal(await page.locator('[data-setup-form-panel]').getByRole('heading', {level: 1}).count(), 0);
     });
 
     await step('another workspace reuses the steps but not the account step', async () => {
@@ -432,7 +433,7 @@ async function main() {
         await route.abort('failed'); // the browser never sees the response
       });
       await pageB.goto(stackB.appUrl);
-      await pageB.locator('.setup-form-panel h1').filter({hasText: 'Let’s make this yours.'}).waitFor();
+      await pageB.locator('[data-setup-form-panel]').getByRole('heading', {level: 1}).filter({hasText: 'Let’s make this yours.'}).waitFor();
       await pageB.fill('#setup-name', 'Robin Lee');
       await pageB.fill('#setup-email', 'robin@example.com');
       await pageB.fill('#setup-password', 'another-long-password');
@@ -442,8 +443,8 @@ async function main() {
       await pageB.getByRole('button', {name: 'Create workspace'}).click();
 
       await step('a lost create response is reported, not retried, and the account still works', async () => {
-        await pageB.locator('.setup-error').waitFor({timeout: 15000});
-        assert.match(await pageB.locator('.setup-error').innerText(), /already set up/i);
+        await pageB.locator('[data-setup-error]').waitFor({timeout: 15000});
+        assert.match(await pageB.locator('[data-setup-error]').innerText(), /already set up/i);
         await pageB.getByRole('button', {name: 'Reload Hoja'}).waitFor();
         const status = await (await pageB.request.get(`${stackB.backendUrl}/onboarding/status`)).json();
         assert.equal(status.initialized, true);
