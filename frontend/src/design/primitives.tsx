@@ -137,6 +137,10 @@ export function Tab(
       type="button"
       className={cx(
         "[:where(&)]:inline-flex [:where(&)]:items-center [:where(&)]:gap-(--ds-tabstrip-gap) [:where(&)]:h-(--ds-tab-height) [:where(&)]:p-(--ds-tab-padding) [:where(&)]:rounded-(--ds-tab-radius) [:where(&)]:bg-transparent [:where(&)]:text-(length:--ds-tab-font-size) [:where(&)]:font-medium",
+        // A selected tab used to be pixel-identical to an unselected one: nothing in
+        // design.css or styles.css ever read aria-selected. These are the component's
+        // own state styles, so they stay out of :where() and win over the base above.
+        "aria-selected:bg-subtle aria-selected:font-semibold",
         className,
       )}
       {...rest}
