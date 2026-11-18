@@ -20,7 +20,7 @@
  * principal, not to this page: a Verify button here would let the worker's own session sign itself.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Copy } from "lucide-react";
 import { confirmDialog } from "../dialogs";
 import { Avatar, IconBtn, Tip } from "../graph/shared";
@@ -69,7 +69,13 @@ function stamp(iso?: string | null): string {
 
 /* One editable sidebar row: the issue page's `.lin-prop` shape, saved on blur or Enter. Uncontrolled
  * inputs are re-keyed by the stored value, so a save redraws the field with what came back rather
- * than keeping the draft. */
+ * than keeping the draft.
+ *
+ * The field states its own outcome. A policy save is a round trip, and the page's notice line sits
+ * at the bottom of the main column — below the fold of a long agent page and in a different column
+ * from the control that was just edited. So the row that was edited says "Saving…", "Saved" or
+ * "Not saved" itself, in `aria-live="polite"` text, and the page notice stays for the longer story
+ * (which audit row the server wrote). Nothing here claims a save the promise refused. */
 function PolicyField({
   label,
   icon,
@@ -87,41 +93,87 @@ function PolicyField({
   type?: "text" | "number";
   min?: number;
   disabled?: boolean;
-  onSave: (next: string) => void;
+  onSave: (next: string) => void | Promise<void>;
 }) {
+  const [state, setState] = useState<"idle" | "saving" | "saved" | "failed">(
+    "idle",
+  );
+  const timer = useRef<number | undefined>(undefined);
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(
+    () => () => {
+      if (timer.current) window.clearTimeout(timer.current);
+    },
+    [],
+  );
+  const commit = async (next: string) => {
+    /* A "Saved" from the previous edit may still be ticking on this row; clear it first, or it
+     * fires mid-save and paints the new outcome away — including a refusal. */
+    if (timer.current) {
+      window.clearTimeout(timer.current);
+      timer.current = undefined;
+    }
+    setState("saving");
+    try {
+      await onSave(next);
+      setState("saved");
+      timer.current = window.setTimeout(() => setState("idle"), 1600);
+    } catch {
+      setState("failed");
+      /* The server kept its value, so the field shows it again: a draft that was refused must not
+         sit there looking saved. */
+      if (inputRef.current) inputRef.current.value = value;
+    }
+  };
   return (
-    <div
-      className="relative flex items-center gap-2.5 min-h-8.5 text-[13px]"
-      data-style-hooks="lin-prop"
-    >
-      <span className="flex flex-none items-center gap-2 text-muted w-24">
-        {icon}
-        {label}
-      </span>
-      <span className="flex flex-1 items-center min-w-0 gap-1.75">
-        <input
-          key={value}
-          type={type}
-          min={min}
-          step={type === "number" ? 1 : undefined}
-          defaultValue={value}
-          placeholder={placeholder}
-          aria-label={label}
-          disabled={disabled}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              (e.target as HTMLInputElement).blur();
-            }
-          }}
-          onBlur={(e) => {
-            const next = e.target.value.trim();
-            if (next !== value.trim()) onSave(next);
-          }}
-          className="border border-line shell-phone:min-h-11 pointer-coarse:min-h-11 w-full min-w-0 border-solid rounded-md pt-1.25 pr-2 pb-1.25 pl-2 text-[13px]"
-        />
-      </span>
-    </div>
+    <>
+      <div
+        className="relative flex items-center gap-2.5 min-h-8.5 text-[13px]"
+        data-style-hooks="lin-prop"
+      >
+        <span className="flex flex-none items-center gap-2 text-muted w-24">
+          {icon}
+          {label}
+        </span>
+        <span className="flex flex-1 items-center min-w-0 gap-1.75">
+          <input
+            ref={inputRef}
+            key={value}
+            type={type}
+            min={min}
+            step={type === "number" ? 1 : undefined}
+            defaultValue={value}
+            placeholder={placeholder}
+            aria-label={label}
+            disabled={disabled}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                (e.target as HTMLInputElement).blur();
+              }
+            }}
+            onBlur={(e) => {
+              const next = e.target.value.trim();
+              if (next !== value.trim()) void commit(next);
+            }}
+            className="border border-line shell-phone:min-h-11 pointer-coarse:min-h-11 w-full min-w-0 border-solid rounded-md pt-1.25 pr-2 pb-1.25 pl-2 text-[13px]"
+          />
+        </span>
+      </div>
+      {/* The outcome sits under the row it belongs to, in the value column (the label column is
+          6rem plus the row's 0.625rem gap), and disappears on its own; it adds no permanent gap to
+          the sidebar. */}
+      {state !== "idle" && (
+        <p
+          className="text-[12px] text-muted mt-0 mr-0 mb-1.5 pl-[calc(6rem+0.625rem)]"
+          role="status"
+          aria-live="polite"
+          data-field-state={state}
+        >
+          {state === "saving" ? "Saving…" : state === "saved" ? "Saved" : "Not saved"}
+        </p>
+      )}
+    </>
   );
 }
 
@@ -220,6 +272,9 @@ export function AgentDetailPage({
       const message = (e as Error).message;
       await load();
       setError(message);
+      /* Re-thrown so the field that was edited can say "Not saved": the page error carries the
+       * server's sentence, the field confirms which row it belongs to. */
+      throw e;
     } finally {
       setBusy("");
     }
@@ -253,6 +308,7 @@ export function AgentDetailPage({
       const message = (e as Error).message;
       await load();
       setError(message);
+      throw e;
     } finally {
       setBusy("");
     }
@@ -696,7 +752,7 @@ export function AgentDetailPage({
             icon={<span aria-hidden="true">◈</span>}
             value={policy.name}
             disabled={busy === "policy"}
-            onSave={(name) => void savePolicy({ name })}
+            onSave={(name) => savePolicy({ name })}
           />
           <PolicyField
             label="Display name"
@@ -705,7 +761,7 @@ export function AgentDetailPage({
             placeholder="Same as the name"
             disabled={busy === "policy"}
             onSave={(displayName) =>
-              void savePolicy({ displayName: displayName || null })
+              savePolicy({ displayName: displayName || null })
             }
           />
           <PolicyField
@@ -717,8 +773,13 @@ export function AgentDetailPage({
             disabled={busy === "policy"}
             onSave={(next) => {
               const n = Number(next);
-              if (Number.isFinite(n) && n >= 1)
-                void savePolicy({ capacity: n });
+              /* A value the policy cannot hold is refused here, before the round trip, and the
+                 field says "Not saved" like any other refusal rather than reporting a save. */
+              if (!Number.isFinite(n) || n < 1)
+                return Promise.reject(
+                  new Error("Capacity must be at least 1"),
+                );
+              return savePolicy({ capacity: n });
             }}
           />
           <PolicyField
@@ -734,7 +795,7 @@ export function AgentDetailPage({
             placeholder="Workspace default"
             disabled={busy === "policy"}
             onSave={(next) =>
-              void savePolicy({
+              savePolicy({
                 monthlyBudgetCredits: next === "" ? null : Number(next),
               })
             }
@@ -745,7 +806,7 @@ export function AgentDetailPage({
             value={policy.model || ""}
             placeholder="Not set"
             disabled={busy === "policy"}
-            onSave={(next) => void savePolicy({ model: next || null })}
+            onSave={(next) => savePolicy({ model: next || null })}
           />
           <PolicyField
             label="Runner pool"
@@ -753,7 +814,7 @@ export function AgentDetailPage({
             value={policy.runnerPool || ""}
             placeholder="Any pool"
             disabled={busy === "policy"}
-            onSave={(next) => void savePolicy({ runnerPool: next || null })}
+            onSave={(next) => savePolicy({ runnerPool: next || null })}
           />
           <PolicyField
             label="Timezone"
@@ -761,7 +822,7 @@ export function AgentDetailPage({
             value={policy.timezone || ""}
             placeholder="UTC"
             disabled={busy === "policy"}
-            onSave={(next) => void savePolicy({ timezone: next || null })}
+            onSave={(next) => savePolicy({ timezone: next || null })}
           />
           <PolicyField
             label="Hours"
@@ -769,14 +830,30 @@ export function AgentDetailPage({
             value={policy.workingHours || ""}
             placeholder='{"days":["mon","tue","wed","thu","fri"],"from":"08:00","to":"19:00"}'
             disabled={busy === "policy"}
-            onSave={(next) => void savePolicy({ workingHours: next || null })}
+            onSave={(next) => savePolicy({ workingHours: next || null })}
           />
           <PropDropdown
             label="State"
             icon={<span aria-hidden="true">◎</span>}
             value={policy.archived ? "Archived" : "Active"}
             onPick={(id) => {
-              if (id) void savePolicy({ archived: id === "archived" });
+              if (!id || id === (policy.archived ? "archived" : "active"))
+                return;
+              if (id !== "archived") {
+                void savePolicy({ archived: false });
+                return;
+              }
+              /* Archiving is one click away from Active and nothing on this page undoes it by
+                 accident: the agent drops out of the Delegate picker and stops being offered work.
+                 So the pick asks first, in the same two-step this surface uses for stopping a run
+                 and revoking a runner. Restoring stays one step. */
+              void confirmDialog(
+                `Archive ${agent.name}? It stops being offered delegated work and leaves the Delegate picker. ` +
+                  "Existing runs and their history stay, and State can set it back to Active.",
+                { danger: true },
+              ).then((ok) => {
+                if (ok) void savePolicy({ archived: true });
+              });
             }}
             disabled={busy === "policy"}
             options={[
@@ -786,7 +863,9 @@ export function AgentDetailPage({
           />
 
           <div className="mt-4 mb-1 text-xs font-semibold text-muted">
-            Policy (WP12)
+            {/* "Run policy", not "Policy (WP12)": the work-package number is our bookkeeping, not
+                something a workspace admin can act on. */}
+            Run policy
           </div>
           <PolicyField
             label="Harness"
@@ -794,9 +873,7 @@ export function AgentDetailPage({
             value={detail.harnesses.defaultHarness || ""}
             placeholder={`pi (default) — one of ${detail.harnesses.known.join(", ")}`}
             disabled={busy === "harness"}
-            onSave={(next) =>
-              void saveHarness({ defaultHarness: next || null })
-            }
+            onSave={(next) => saveHarness({ defaultHarness: next || null })}
           />
           <PolicyField
             label="Allowed harnesses"
@@ -805,7 +882,7 @@ export function AgentDetailPage({
             placeholder="Any profile"
             disabled={busy === "harness"}
             onSave={(next) =>
-              void saveHarness({
+              saveHarness({
                 harnessAllowlist: next
                   .split(",")
                   .map((name) => name.trim())
@@ -830,7 +907,7 @@ export function AgentDetailPage({
                 : detail.harnesses.harnessAllowlist.length
                   ? `queues for the first allowed profile (${[...detail.harnesses.harnessAllowlist].sort()[0]})`
                   : "queues for pi until a policy chooses"}{" "}
-              · a run is only leased to a runner that declares it
+              · a run is only handed to a runner that declares it
             </span>
           </div>
           <p className="text-xs text-muted">
