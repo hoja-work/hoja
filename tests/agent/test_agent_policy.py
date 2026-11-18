@@ -578,6 +578,67 @@ def test_egress_connect_and_people_are_allowlists(world):
     assert agent_policy.decide_approve(view, world["alpha"]["user_id"]).allowed
 
 
+@pytest.mark.parametrize("bad, sentence", [
+    ([{"host": "dev.example", "port": 0}], "between 1 and 65535"),
+    ([{"host": "dev.example", "port": 70000}], "between 1 and 65535"),
+    ([{"host": "dev.example", "port": "not-a-port"}], "must be an integer"),
+    ([{"host": "   ", "port": 5432}], "must be named explicitly"),
+    # The wildcard is the whole internet, not an allowlist, so it is refused at the policy row
+    # rather than silently filtered at exposure time.
+    ([{"host": "*", "port": 5432}], "must be named explicitly"),
+])
+def test_connect_grants_round_trip_through_the_admin_mutation_and_a_bad_one_is_refused(
+        world, bad, sentence):
+    """The Connect field on the agent page writes ``connect`` through ``agentPolicyUpdate``.
+
+    What that field is allowed to rely on, one assertion each: the list persists as the pairs the
+    server stores, it comes back through ``agentPolicy`` unchanged, ``clean_connect`` refuses a
+    malformed entry with a sentence about the field, a refused write leaves the stored list and the
+    version alone and adds no audit row, and an accepted write is in the ledger with before/after.
+    """
+    agent = _agent(world)
+    first = [{"host": "dev.example", "port": 5432}, {"host": "localhost", "port": 3000}]
+    written = _set_policy(world, agent["id"], {"connect": first})
+    assert "errors" not in written, written
+    assert written["data"]["agentPolicyUpdate"]["success"] is True
+    read = _post(world["client"], world["alpha"]["token"],
+                 f'query {{ agentPolicy(agentMemberId: "{agent["id"]}") '
+                 f'{{ connect version }} }}')
+    assert "errors" not in read, read
+    assert read["data"]["agentPolicy"]["connect"] == first, (
+        "connect must round-trip as the list the editor sent, in the order it sent it")
+
+    # A refusal is the server's: the field shows this sentence, and nothing is stored.
+    refused = _set_policy(world, agent["id"], {"connect": bad})
+    assert "errors" in refused, f"{bad} was accepted"
+    error = refused["errors"][0]
+    assert sentence in error["message"], error
+    assert error.get("extensions", {}).get("code") == "BAD_USER_INPUT", error
+    assert error.get("extensions", {}).get("field") == "connect", error
+    after_refusal = _post(world["client"], world["alpha"]["token"],
+                          f'query {{ agentPolicy(agentMemberId: "{agent["id"]}") '
+                          f'{{ connect version }} }}')["data"]["agentPolicy"]
+    assert after_refusal["connect"] == first, "a refused write changed the stored grants"
+    assert after_refusal["version"] == read["data"]["agentPolicy"]["version"], (
+        "a refused write moved the policy version")
+
+    # The empty list is a write, not an omission: that is how the editor removes the last grant.
+    cleared = _set_policy(world, agent["id"], {"connect": []})
+    assert "errors" not in cleared, cleared
+    assert _post(world["client"], world["alpha"]["token"],
+                 f'query {{ agentPolicy(agentMemberId: "{agent["id"]}") {{ connect }} }}'
+                 )["data"]["agentPolicy"]["connect"] == []
+
+    with world["engine"].connect() as conn:
+        rows = conn.execute(select(audit_event.c.detail).where(and_(
+            audit_event.c.action == "agent.policy.change",
+            audit_event.c.target_id == agent["id"]))).scalars().all()
+    assert len(rows) == 2, "two accepted writes, and neither refusal is a ledger row"
+    details = [json.loads(row) for row in rows]
+    assert details[0]["before"] is None and details[0]["after"]["connect"] == first
+    assert details[1]["before"]["connect"] == first and details[1]["after"]["connect"] == []
+
+
 def test_scope_refuses_a_task_the_agent_may_not_touch(world):
     agent = _agent(world)
     _set_policy(world, agent["id"], {"teams": [world["alpha"]["team_id"]],

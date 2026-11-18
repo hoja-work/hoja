@@ -40,7 +40,7 @@ export function linkIssueIds(markdown: string): string {
     .join("");
 }
 
-function authHeaders(): Record<string, string> {
+export function authHeaders(): Record<string, string> {
   const token = localStorage.getItem("hoja_token");
   return token && token !== "session"
     ? { authorization: `Bearer ${token}` }

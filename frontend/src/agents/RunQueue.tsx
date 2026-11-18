@@ -23,20 +23,12 @@ import { getAgentsAdapter } from "./adapter";
 import { AGENTS_TABS, AgentsListShell, SearchField } from "./chrome";
 import {
   SESSION_STATUSES,
+  SESSION_TYPE,
   sessionStatusName,
   verdictColor,
   verdictLabel,
 } from "./types";
 import type { AgentSession, SessionStatus } from "./types";
-
-const SESSION_TYPE: Record<SessionStatus, { type: string; color: string }> = {
-  queued: { type: "backlog", color: "#e2a03f" },
-  active: { type: "started", color: "#5e6ad2" },
-  "awaiting-input": { type: "unstarted", color: "#c98a1b" },
-  "awaiting-verification": { type: "unstarted", color: "#2f9e6f" },
-  done: { type: "completed", color: "#95a2b3" },
-  failed: { type: "canceled", color: "#c0392b" },
-};
 
 export function sessionRow(s: AgentSession): IssueRowModel {
   const tone = SESSION_TYPE[s.status];

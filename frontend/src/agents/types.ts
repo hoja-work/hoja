@@ -140,10 +140,21 @@ export type HarnessPolicy = {
   known: string[];
 };
 
+/* One Hoja Connect grant, exactly the object `agent_policy.clean_connect` accepts and stores: a
+ * named host and a port in 1..65535. The wildcard host is not a grant - the server refuses it ("a
+ * Connect host must be named explicitly"), because a tunnel to every host is not an allowlist.
+ * Nothing here is browsable: a grant says *what* a run may expose, never a tunnel address. */
+export type ConnectGrant = {
+  host: string;
+  port: number;
+};
+
 export type AgentDetail = {
   agent: Agent;
   policy: AgentPolicy;
   harnesses: HarnessPolicy;
+  /** `agentPolicy.connect`: the ports this agent's runs may expose (WP09's grant list). */
+  connectGrants: ConnectGrant[];
   sessions: AgentSession[];
   events: AgentEvent[];
 };
@@ -181,6 +192,17 @@ export const SESSION_STATUSES: {id: SessionStatus; name: string}[] = [
 export function agentStatus(id: AgentStatus) {
   return AGENT_STATUSES.find(s => s.id === id) || AGENT_STATUSES[0];
 }
+
+/* The run queue's group for each status, and the dot colour every session chip draws (the queue
+ * and the chat's delegation card), so the two screens never disagree about a colour. */
+export const SESSION_TYPE: Record<SessionStatus, {type: string; color: string}> = {
+  queued: {type: 'backlog', color: '#e2a03f'},
+  active: {type: 'started', color: '#5e6ad2'},
+  'awaiting-input': {type: 'unstarted', color: '#c98a1b'},
+  'awaiting-verification': {type: 'unstarted', color: '#2f9e6f'},
+  done: {type: 'completed', color: '#95a2b3'},
+  failed: {type: 'canceled', color: '#c0392b'},
+};
 
 export function sessionStatusName(status: SessionStatus): string {
   return SESSION_STATUSES.find(s => s.id === status)?.name || status;

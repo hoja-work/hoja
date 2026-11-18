@@ -21,7 +21,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Copy } from "lucide-react";
+import { Copy, X } from "lucide-react";
 import { confirmDialog } from "../dialogs";
 import { Avatar, IconBtn, Tip } from "../graph/shared";
 import { PropDropdown } from "../graph/tasks";
@@ -39,6 +39,7 @@ import type {
   AgentPolicy,
   AgentSession,
   Claim,
+  ConnectGrant,
 } from "./types";
 
 const EVENT_LABELS: Record<AgentEvent["kind"], string> = {
@@ -177,6 +178,225 @@ function PolicyField({
   );
 }
 
+/* The Connect half of the policy row: the host:port pairs this agent's runs may expose through
+ * Hoja Connect (WP09). Until now the grants existed only in the API, so an admin who wanted one
+ * had to call `agentPolicyUpdate` by hand; this is that mutation behind a field.
+ *
+ * The list is edited as a list, not as JSON, and every write replaces the whole list, because a
+ * removed grant is expressed by its absence. The checks below mirror `clean_connect` in
+ * `hoja_server/agent_policy.py` so an obvious mistake is refused before a round trip; the server
+ * stays the authority, and its `BAD_USER_INPUT` sentence is what the field shows when it is the
+ * one that refused. Nothing is kept locally: the rows are the list the server returned. */
+function ConnectField({
+  grants,
+  disabled,
+  connectOn,
+  onSave,
+}: {
+  grants: ConnectGrant[];
+  disabled: boolean;
+  /** `agentPolicy.connect`; `false` only when the workspace kill switch was read and is off. */
+  connectOn: boolean | null;
+  onSave: (next: ConnectGrant[]) => Promise<void>;
+}) {
+  const [host, setHost] = useState("");
+  const [port, setPort] = useState("");
+  const [state, setState] = useState<"idle" | "saving" | "saved" | "failed">(
+    "idle",
+  );
+  /* The sentence under the field, and who said it: "local" is one of the mirrored rules below,
+   * "server" is the resolver's own refusal, passed through untouched. */
+  const [message, setMessage] = useState("");
+  const [source, setSource] = useState<"local" | "server">("local");
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(
+    () => () => {
+      if (timer.current) window.clearTimeout(timer.current);
+    },
+    [],
+  );
+
+  const refuse = (text: string) => {
+    setSource("local");
+    setMessage(text);
+    setState("failed");
+  };
+
+  const commit = async (next: ConnectGrant[]) => {
+    if (timer.current) {
+      window.clearTimeout(timer.current);
+      timer.current = undefined;
+    }
+    setState("saving");
+    setMessage("");
+    try {
+      await onSave(next);
+      setState("saved");
+      timer.current = window.setTimeout(() => setState("idle"), 1600);
+    } catch (e) {
+      /* The server refused, so it kept what it had: the rows below are re-read from the policy
+       * row, and this line carries the server's sentence rather than a guess at it. */
+      setSource("server");
+      setMessage((e as Error).message);
+      setState("failed");
+    }
+  };
+
+  /* `agent_policy.clean_connect`, in the same order: a host must be named (the wildcard is the
+   * whole internet, not a grant), the port must be an integer in 1..65535. A pair already in the
+   * list is not a second grant; saying so beats a row that vanishes into a deduplicated list. */
+  const add = () => {
+    const name = host.trim();
+    const digits = port.trim();
+    if (!name || name === "*") {
+      refuse("A Connect host must be named explicitly.");
+      return;
+    }
+    if (!/^\d+$/.test(digits)) {
+      refuse("A Connect port must be an integer.");
+      return;
+    }
+    const number = Number(digits);
+    if (number < 1 || number > 65535) {
+      refuse("A Connect port must be between 1 and 65535.");
+      return;
+    }
+    if (grants.some((g) => g.host === name && g.port === number)) {
+      refuse(`${name}:${number} is already granted.`);
+      return;
+    }
+    setHost("");
+    setPort("");
+    void commit([...grants, { host: name, port: number }]);
+  };
+
+  const remove = (grant: ConnectGrant) =>
+    void commit(
+      grants.filter((g) => !(g.host === grant.host && g.port === grant.port)),
+    );
+
+  const inputClass =
+    "border border-line border-solid bg-panel text-foreground rounded-md min-h-8 pt-1 pr-2 pb-1 pl-2 text-[12px] min-w-0 shell-phone:min-h-11 pointer-coarse:min-h-11";
+
+  /* The label keeps the sidebar's property-row shape and height, so the field reads as one of the
+   * properties above it. The list, the two inputs and the outcome sit *under* it at the sidebar's
+   * full width: at 1440 the sidebar is 18rem, and a grant plus a Remove button does not fit beside
+   * a 6rem label - it would truncate "localhost:3000" to "loca…". */
+  return (
+    <div className="text-[13px]" data-connect-field>
+      <div
+        className="flex items-center gap-2.5 min-h-8.5"
+        data-style-hooks="lin-prop"
+      >
+        <span className="flex flex-none items-center gap-2 text-muted w-24">
+          <span aria-hidden="true">⇄</span>
+          Connect
+        </span>
+        <span className="flex-1 min-w-0 text-[12px] text-muted" data-connect-count={grants.length}>
+          {grants.length
+            ? `${grants.length} ${grants.length === 1 ? "grant" : "grants"}`
+            : "No grant"}
+        </span>
+      </div>
+      {/* The kill switch is the workspace's, and this field cannot override it: a grant that is
+          stored while Connect is off opens nothing. Said here rather than left to look like a
+          working control. */}
+      {connectOn === false && (
+        <p className="text-[12px] text-muted mt-1 mb-0" data-connect-notice="off">
+          An admin turned Connect off for this workspace. A grant can still
+          be stored, but no tunnel opens until it is back on.
+        </p>
+      )}
+      <div className="flex flex-col gap-1 mt-1">
+        {grants.map((grant) => {
+          const pair = `${grant.host}:${grant.port}`;
+          return (
+            <span
+              key={pair}
+              className="flex items-center gap-1.5 min-w-0"
+              data-connect-grant={pair}
+            >
+              <code className="min-w-0 truncate">{pair}</code>
+              <button
+                type="button"
+                aria-label={`Remove ${pair}`}
+                className="ml-auto inline-flex flex-none items-center border border-line border-solid bg-panel text-muted hover:bg-subtle hover:text-foreground disabled:cursor-default disabled:opacity-50 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 gap-1 rounded-md text-[12px] pt-0.5 pr-1.5 pb-0.5 pl-1.5"
+                disabled={disabled}
+                onClick={() => remove(grant)}
+              >
+                <X size={12} aria-hidden="true" />
+                Remove
+              </button>
+            </span>
+          );
+        })}
+        {!grants.length && (
+          <span className="text-[12px] text-muted">
+            No port is granted, so a run of this agent cannot expose one.
+          </span>
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+        <input
+          aria-label="Connect host"
+          className={`flex-1 basis-24 ${inputClass}`}
+          placeholder="host"
+          value={host}
+          disabled={disabled}
+          onChange={(e) => setHost(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              add();
+            }
+          }}
+        />
+        <input
+          aria-label="Connect port"
+          className={`flex-1 basis-16 ${inputClass}`}
+          placeholder="port"
+          inputMode="numeric"
+          value={port}
+          disabled={disabled}
+          onChange={(e) => setPort(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              add();
+            }
+          }}
+        />
+        <button
+          type="button"
+          aria-label="Add Connect grant"
+          className="ml-auto inline-flex flex-none items-center border border-line border-solid bg-panel text-foreground hover:bg-subtle disabled:cursor-default disabled:opacity-50 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 gap-1 rounded-md min-h-8 pt-1 pr-2.5 pb-1 pl-2.5 text-[12px] font-[550]"
+          disabled={disabled}
+          onClick={add}
+        >
+          Add
+        </button>
+      </div>
+      {/* Same three outcomes as a single-value policy row: the field that was edited says what
+          happened, and a refusal carries the sentence that refused it. */}
+      {state !== "idle" && (
+        <p
+          className={`text-[12px] mt-1.5 mb-0 ${state === "failed" ? "text-danger" : "text-muted"}`}
+          role="status"
+          aria-live="polite"
+          data-field-state={state}
+          data-connect-source={state === "failed" ? source : undefined}
+        >
+          {state === "saving"
+            ? "Saving…"
+            : state === "saved"
+              ? "Saved"
+              : message || "Not saved"}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function AgentDetailPage({
   agentKey,
   workspaceName,
@@ -198,6 +418,24 @@ export function AgentDetailPage({
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
   const [copied, setCopied] = useState(false);
+  /* The workspace kill switch, read through the same admin-gated query the runners screen uses.
+   * `null` is "not read": a refused read is not an off switch and is not drawn as one. */
+  const [connectOn, setConnectOn] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    getAgentsAdapter()
+      .connectEnabled()
+      .then((on) => {
+        if (live) setConnectOn(on);
+      })
+      /* A refusal here costs the field one sentence, not the page: the grants themselves come from
+       * the admin-gated policy read, which would have refused first if this viewer may not see them. */
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [agentKey]);
 
   /* Returns the promise so a failed write can re-read the row and *then* state the refusal: the
    * other order lets the successful reload clear the error that explains what happened. */
@@ -302,6 +540,37 @@ export function AgentDetailPage({
         harnesses.defaultHarness
           ? `Saved. Runs delegated to this agent queue for ${harnesses.defaultHarness}.`
           : "Saved. No harness chosen, so runs queue for pi.",
+      );
+      load();
+    } catch (e) {
+      const message = (e as Error).message;
+      await load();
+      setError(message);
+      throw e;
+    } finally {
+      setBusy("");
+    }
+  };
+
+  /* WP09's grant list, through the policy row's own mutation. The whole list travels, so removing
+   * a grant is a write rather than a missing key; the response is the policy row after the write,
+   * and that is what the field draws. A refusal is re-thrown so the field that was edited can carry
+   * it, after `load()` has put the server's stored list back. */
+  const saveConnect = async (grants: ConnectGrant[]) => {
+    setBusy("connect");
+    setNotice("");
+    setError("");
+    try {
+      const { connect } = await getAgentsAdapter().updateConnectPolicy(
+        agentKey,
+        grants,
+        viewerName,
+      );
+      setDetail((d) => (d ? { ...d, connectGrants: connect } : d));
+      setNotice(
+        connect.length
+          ? `Saved. The policy row now grants ${connect.length} ${connect.length === 1 ? "port" : "ports"}, and the ledger records agent.policy.change for it.`
+          : "Saved. The policy row grants no Connect port, so a run cannot expose one. The ledger records agent.policy.change for the change.",
       );
       load();
     } catch (e) {
@@ -915,8 +1184,26 @@ export function AgentDetailPage({
             the queue will not hand it to a runner that did not declare it. An
             unknown profile, an alias (claude is claude-code) and a default the
             allowlist forbids are all refused by the server, not saved and
-            corrected here. Tools, repos, secrets, network and approvers have
-            their own columns in the policy row and no control on this page yet.
+            corrected here.
+          </p>
+
+          <div className="mt-4 mb-1 text-xs font-semibold text-muted">
+            Connect
+          </div>
+          <ConnectField
+            grants={detail.connectGrants}
+            disabled={busy === "connect"}
+            connectOn={connectOn}
+            onSave={saveConnect}
+          />
+          <p className="text-xs text-muted">
+            A run of this agent can expose only a host and port granted here.
+            The server checks every exposure against this list when the runner
+            opens it, so one outside it is refused there, not hidden here. The
+            grants are the policy row&rsquo;s, so a change applies to the next
+            lease and to nothing already running. Tools, repos, secrets, network
+            and approvers have their own columns in the policy row and no
+            control on this page yet.
           </p>
         </aside>
       </div>

@@ -1188,6 +1188,19 @@ def p_lead(obj, info):
     return store.ser_user(_user_row(info, obj["_lead_id"]), uid) if obj.get("_lead_id") else None
 
 
+@ProjectUpdate.field("comments")
+def p_comments(obj, info, first=50):
+    store, _w, org, _uid = _ctx(info)
+    first = _page_size(first)
+    def load():
+        # The newest window, reversed: the badge is a count of recent replies, and the
+        # list still reads oldest-first like every other thread in the app.
+        comments = store.comments_for_update(org, obj["id"], limit=first, newest_first=True)
+        _prime(info, "user_row", [c.get("_user_id") for c in comments])
+        return _conn(comments)
+    return _memo(info, "project_update_comments", (org, obj["id"], first), load)
+
+
 @ProjectUpdate.field("project")
 def pu_project(obj, info):
     store, _w, org, _uid = _ctx(info)

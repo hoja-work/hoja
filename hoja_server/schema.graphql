@@ -353,6 +353,8 @@ type ProjectUpdate {
   actor: User
   progress: Float
   health: String
+  "Replies to this update. Pulse comments hang off the update, not an issue."
+  comments(first: Int = 50): CommentConnection
 }
 type ProjectUpdatePayload { success: Boolean! projectUpdate: ProjectUpdate }
 
@@ -682,7 +684,7 @@ input IssueUpdateInput {
   dueDate: DateTime
   labelIds: [String!]
 }
-input CommentCreateInput { issueId: String! body: String! }
+input CommentCreateInput { issueId: String projectUpdateId: String body: String! }
 input CommentUpdateInput { body: String }
 input IssueLabelUpdateInput { name: String color: String description: String }
 input IssueLabelCreateInput { name: String! teamId: String color: String description: String }
