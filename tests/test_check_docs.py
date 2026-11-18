@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -70,6 +75,80 @@ class DocumentationPolicyTests(unittest.TestCase):
             lambda _path: "# Contributor operations\n\nDo not commit plans or context reports.\n",
         )
         self.assertEqual(errors, [])
+
+
+class GitLayoutTests(unittest.TestCase):
+    """Run the real script against a real index, the way the pre-commit hook does.
+
+    Two layouts: Hoja Cloud keeps the policy root at ``app/`` inside the repository, Hoja OSS at
+    the repository root. The hook exports ``GIT_DIR`` and runs from the policy root, which used to
+    make every path repository-relative and therefore unregistered.
+    """
+
+    def _repo(self, prefix: str) -> tuple[Path, Path]:
+        top = Path(tempfile.mkdtemp(prefix="check-docs-"))
+        self.addCleanup(shutil.rmtree, top, True)
+        root = top / prefix if prefix else top
+        (root / "scripts").mkdir(parents=True)
+        (root / "docs").mkdir()
+        shutil.copy(SCRIPT, root / "scripts" / "check_docs.py")
+        (root / "README.md").write_text("# Hoja\n")
+        (root / "docs" / "sla.md").write_text("# SLA\n")
+        self._git(top, "init", "-q")
+        self._git(top, "add", "-A")
+        return top, root
+
+    @staticmethod
+    def _git(top: Path, *args: str) -> None:
+        subprocess.run(["git", *args], cwd=top, check=True, capture_output=True)
+
+    def _check(self, top: Path, root: Path, *, hook_env: bool) -> subprocess.CompletedProcess[str]:
+        env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+        if hook_env:
+            env["GIT_DIR"] = str(top / ".git")
+        return subprocess.run(
+            [sys.executable, str(root / "scripts" / "check_docs.py"), "--staged"],
+            cwd=root, env=env, capture_output=True, text=True,
+        )
+
+    def test_clean_index_passes_in_both_layouts_with_and_without_hook_env(self) -> None:
+        for prefix in ("app", ""):
+            for hook_env in (False, True):
+                with self.subTest(prefix=prefix or "<root>", hook_env=hook_env):
+                    top, root = self._repo(prefix)
+                    result = self._check(top, root, hook_env=hook_env)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_new_unregistered_document_is_reported_relative_to_the_policy_root(self) -> None:
+        for prefix in ("app", ""):
+            for hook_env in (False, True):
+                with self.subTest(prefix=prefix or "<root>", hook_env=hook_env):
+                    top, root = self._repo(prefix)
+                    (root / "docs" / "new-thing.md").write_text("# New thing\n")
+                    self._git(top, "add", "-A")
+                    result = self._check(top, root, hook_env=hook_env)
+                    self.assertEqual(result.returncode, 1)
+                    self.assertIn("  - docs/new-thing.md:", result.stderr)
+                    self.assertNotIn("docs/sla.md", result.stderr)
+
+    def test_documents_outside_the_policy_root_are_not_its_concern(self) -> None:
+        top, root = self._repo("app")
+        (top / "infra").mkdir()
+        (top / "infra" / "runbook.md").write_text("# Runbook\n")
+        self._git(top, "add", "-A")
+        result = self._check(top, root, hook_env=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_staged_content_is_read_from_the_index_not_the_worktree(self) -> None:
+        for prefix in ("app", ""):
+            with self.subTest(prefix=prefix or "<root>"):
+                top, root = self._repo(prefix)
+                (root / "docs" / "sla.md").write_text("# SLA\n\nStatus: Draft\n")
+                self._git(top, "add", "-A")
+                (root / "docs" / "sla.md").write_text("# SLA\n")
+                result = self._check(top, root, hook_env=True)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("docs/sla.md: draft/proposal status", result.stderr)
 
 
 if __name__ == "__main__":

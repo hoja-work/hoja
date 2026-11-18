@@ -1,6 +1,6 @@
 """The real runner client against the real runner routes, on Postgres (WP07).
 
-PR #218 shipped ``runner/hoja_runnerd/client.py`` with a typed ``ControlPlane``
+PR #218 shipped the runner client (now ``runner/hoja_client/client.py``) with a typed ``ControlPlane``
 and tested it against ``runner/tests/fake_control_plane.py``. A fake proves the
 daemon; it cannot prove the server, because the fake *is* the server's opinions
 written down twice. This file closes that gap: the unmodified runner client,
@@ -44,8 +44,8 @@ RUNNER_ROOT = Path(__file__).resolve().parents[3] / "runner"
 if str(RUNNER_ROOT) not in sys.path:
     sys.path.insert(0, str(RUNNER_ROOT))
 
-from hoja_runnerd import protocol as runner_protocol  # noqa: E402
-from hoja_runnerd.client import (  # noqa: E402
+from hoja_client import wire as runner_protocol  # noqa: E402
+from hoja_client.client import (  # noqa: E402
     ActivityEvent,
     Claim,
     ControlPlane,
@@ -282,7 +282,7 @@ def test_the_runner_client_reports_exposures_and_is_refused_by_name(live):
     the fence headers and the server's route all line up. The happy path (a granted policy, the rows
     it records, the close on lease end) is ``tests/agent/test_connect_endpoints.py``.
     """
-    from hoja_runnerd.client import Unauthorized
+    from hoja_client.client import Unauthorized
 
     client = _register(live)
     _enqueue(live)

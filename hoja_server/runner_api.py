@@ -3,8 +3,8 @@
 The customer's machine is the data plane and nothing dials into it (plan.md §1).
 A runner enrolls once, then long-polls for work, heartbeats while it holds a
 lease, streams activity, and finishes with a claim. This module is the server
-half of that contract; ``runner/hoja_runnerd/protocol.py`` is the shared,
-contract-first definition of the wire and ``runner/hoja_runnerd/client.py`` is
+half of that contract; ``runner/hoja_client/wire.py`` is the shared,
+contract-first definition of the wire and ``runner/hoja_client/client.py`` is
 the real client the conformance test drives against these routes.
 
 Three decisions shape every route:

@@ -45,7 +45,7 @@ if str(RUNNER_ROOT) not in sys.path:
     sys.path.insert(0, str(RUNNER_ROOT))
 
 from hoja_runnerd import connect as connect_mod  # noqa: E402
-from hoja_runnerd.client import (  # noqa: E402
+from hoja_client.client import (  # noqa: E402
     ConnectGrant,
     ControlPlane,
     ControlPlaneError as ClientError,
