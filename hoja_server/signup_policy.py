@@ -46,7 +46,7 @@ RESERVED_SLUGS = frozenset({
     "dashboard",
     # Hoja Connect's own relay. A workspace called `derp` would claim
     # derp.hoja.work, which Traefik already routes to the DERP relay and its
-    # map (infra/deploy/traefik/dynamic/20-derp-hoja-work.yml).
+    # map (infra/prod/traefik/dynamic/20-derp-hoja-work.yml).
     "derp",
 })
 
