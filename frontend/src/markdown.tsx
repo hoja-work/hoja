@@ -1,4 +1,5 @@
-import React, { memo, useEffect, useState } from "react";
+import { Popover } from "radix-ui";
+import React, { memo, useEffect, useRef, useState } from "react";
 import ReactMarkdown, {
   defaultUrlTransform,
   type Components,
@@ -55,6 +56,14 @@ const ISSUE_CHIP_QUERY =
   "query AgentIssueChip($id:String!){issue(id:$id){identifier title state{name type color}}}";
 
 export function IssueChip({ identifier }: { identifier: string }) {
+  const [open, setOpen] = useState(false);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const cancelClose = () => clearTimeout(closeTimer.current);
+  const scheduleClose = () => {
+    cancelClose();
+    closeTimer.current = setTimeout(() => setOpen(false), 180);
+  };
+  useEffect(() => () => clearTimeout(closeTimer.current), []);
   const [issue, setIssue] = useState<IssueSummary | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -79,11 +88,14 @@ export function IssueChip({ identifier }: { identifier: string }) {
   }, [identifier]);
   const color = issue?.state?.color || "#a1a1aa";
   return (
-    <a
-      className="inline-flex items-center border border-line no-underline whitespace-nowrap gap-1.5 max-w-full align-middle pt-0.5 pr-2.5 pb-0.5 pl-2 mt-0 mr-0.5 mb-0 ml-0.5 border-solid rounded-[999px] bg-panel text-foreground text-[13px] leading-normal hover:bg-subtle"
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild>
+    <button type="button"
+      onPointerEnter={(event) => { if (event.pointerType === "mouse") { cancelClose(); setOpen(true); } }}
+      onPointerLeave={(event) => { if (event.pointerType === "mouse") scheduleClose(); }}
+      className="inline-flex items-center border border-line no-underline whitespace-nowrap gap-1.5 max-w-[min(320px,100%)] align-middle pt-0.5 pr-2.5 pb-0.5 pl-2 mt-0 mr-0.5 mb-0 ml-0.5 border-solid rounded-[999px] bg-panel text-foreground text-[13px] leading-normal hover:bg-subtle"
       data-agent-issue-chip=""
-      href={`/workspace/issue/${identifier}`}
-      title={issue?.title ?? identifier}
+      aria-label={`Preview ${identifier}`}
     >
       <svg
         width="14"
@@ -100,13 +112,30 @@ export function IssueChip({ identifier }: { identifier: string }) {
           <path d="M5 8.2l2 2 4-4.4" stroke={color} />
         )}
       </svg>
-      <span className="tabular-nums text-muted">{identifier}</span>
+      <span className="shrink-0 tabular-nums text-muted">{identifier}</span>
       {issue && (
         <span className="overflow-hidden text-ellipsis min-w-0">
           {issue.title}
         </span>
       )}
-    </a>
+    </button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content side="top" align="start" sideOffset={8} onOpenAutoFocus={(event) => event.preventDefault()} onPointerEnter={cancelClose} onPointerLeave={(event) => { if (event.pointerType === "mouse") scheduleClose(); }} className="z-150 w-80 max-w-[calc(100vw-24px)] rounded-xl border border-line bg-panel p-3 text-foreground shadow-(--shadow)" aria-label={`Issue preview: ${identifier}`}>
+          <p className="m-0 text-[11px] text-muted">{identifier}</p>
+          {issue?.state?.name && (
+            <span className="mt-1.5 inline-flex items-center gap-1.5 rounded-full border border-line bg-subtle px-2 py-0.5 text-[11px] text-foreground">
+              <span aria-hidden="true" className="size-2 shrink-0 rounded-full" style={{ backgroundColor: color }} />
+              {issue.state.name}
+            </span>
+          )}
+          <p className="mt-1 mb-3 whitespace-normal break-words text-[13px] font-medium">{issue?.title || identifier}</p>
+<div className="flex justify-end items-center">
+          <a href={`/workspace/issue/${identifier}`} className="inline-flex items-center  rounded-full border border-line shadow-xs hover:bg-neutral-100 px-2.5 py-1.5 text-[12px] text-foreground no-underline ">Open issue</a>
+</div>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
 
