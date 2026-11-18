@@ -37,7 +37,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 74
+CURRENT_SCHEMA_REVISION = 75
 
 log = logging.getLogger(__name__)
 
@@ -1146,6 +1146,9 @@ comment = Table(
     Column("id", String, primary_key=True),
     Column("organization_id", String, ForeignKey("organization.id"), index=True),
     Column("issue_id", String, ForeignKey("issue.id"), index=True),
+    # Pulse: a comment may hang off a project update instead of an issue. Both
+    # parents are nullable and the writer sets exactly one; see revision 75.
+    Column("project_update_id", String, ForeignKey("project_update.id"), index=True),
     Column("body", Text, nullable=False),
     Column("user_id", String, ForeignKey("user.id")),
     Column("url", String),
@@ -3341,6 +3344,29 @@ def _apply_entity_url_hosts(conn) -> None:
         log.warning("revision 73 moved %s entity link(s) onto their workspace host", moved)
 
 
+def _apply_project_update_comments(conn):
+    """Schema half of Pulse comments: a comment may hang off a project update.
+
+    One nullable column rather than a second table: the body, the author, the
+    archive flag and the comment policy are identical for both parents, and a
+    second table would duplicate ``comment_policy``'s matrix. ``issue_id`` is
+    equally nullable, so a row carries exactly one parent and the writer refuses
+    a call that names both or neither.
+
+    No CHECK constraint: SQLite has no ADD CONSTRAINT, so it would need a table
+    rebuild, and the writer already enforces the invariant at the only entry
+    point. No backfill either — an existing comment simply keeps ``issue_id``.
+
+    The column probe keeps this a no-op on a fresh database (create_all already
+    made the column) and on one altered by hand.
+    """
+    existing = {column["name"] for column in inspect(conn).get_columns("comment")}
+    if "project_update_id" not in existing:
+        conn.exec_driver_sql("ALTER TABLE comment ADD COLUMN project_update_id VARCHAR")
+    conn.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_comment_project_update_id ON comment (project_update_id)")
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -3560,6 +3586,9 @@ _MIGRATIONS = {
     # the policy, retargeted_at / detached_at on the clock. No table is created,
     # so the RLS classification and the readiness probe do not change.
     74: _apply_sla_options,
+    # 75: Pulse comments. A project update is a thing people reply to, and until
+    # now the comment table could only point at an issue.
+    75: _apply_project_update_comments,
 }
 
 

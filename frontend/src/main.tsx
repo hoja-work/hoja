@@ -62,6 +62,7 @@ import {
   BarChart3,
   MoreVertical,
   MessageCircle,
+  Send,
   Layers3,
   List as ListIcon,
   PanelLeftClose,
@@ -124,6 +125,7 @@ import {
   ListRow,
   PropertyRow,
   EmptyState,
+  Composer,
 } from "./design";
 import "./graph/styles.css";
 import "./settings.css";
@@ -312,6 +314,13 @@ export type InboxNotification = {
   issue?: Issue;
   actor?: { name?: string };
 };
+export type PulseComment = {
+  id: string;
+  body: string;
+  createdAt?: string;
+  user?: { id?: string; name?: string };
+};
+
 export type PulsePost = {
   id: string;
   status?: string;
@@ -328,6 +337,7 @@ export type PulsePost = {
     targetDate?: string;
     lead?: { name?: string };
   };
+  comments?: { nodes: PulseComment[] };
 };
 export const issueFields = `{ id identifier title description createdAt updatedAt stateChangedAt dueDate priority priorityLabel state { id name color type } team { id key name } githubLinks { id kind externalId url title state author } project{id name} assignee { id name } delegate { id name } delegateId creator { id name } subscribers { nodes { id } } cycle { id name number } parent { id identifier title } labels { nodes { id name color } } }`;
 const query = `query Dashboard { viewer { id name email admin } teams { nodes { id name key description states { nodes { id name color type } } members { nodes { id name email } } activeCycle { id name number startsAt endsAt progress } } } issues(first:100, orderBy:createdAt) { nodes ${issueFields} pageInfo { hasNextPage endCursor } } }`;
@@ -4943,7 +4953,7 @@ import {
 import "./mobile-touch.css";
 const PROJECT_FIELDS = `id name description state progress startDate targetDate health lead{name} teams{nodes{id name key}}`;
 const INITIATIVE_FIELDS = `id name summary status priority targetDate createdAt owner{id name} creator{id} projects{nodes{id name}}`;
-const PULSE_FIELDS = `id status body createdAt progress health actor{id name} project{id name health progress targetDate lead{name}}`;
+const PULSE_FIELDS = `id status body createdAt progress health actor{id name} project{id name health progress targetDate lead{name}} comments(first:20){nodes{id body createdAt user{id name}}}`;
 const pulseKey = (meta: SyncMeta | null) =>
   meta ? `pulse:${meta.workspace.id}:${meta.viewer.id || ""}` : null;
 const upsertFirst = <T extends { id: string }>(rows: T[], row: T) =>
@@ -6186,6 +6196,41 @@ function PulsePage({
             ? "Popular"
             : "Recent",
     );
+  // Pulse comments. The list is seeded from the query and extended locally on send, so a
+  // reply appears without refetching the feed; count reads from the same list.
+  const [commentBodies, setCommentBodies] = useState<Record<string, string>>({});
+  const [commentExtra, setCommentExtra] = useState<
+    Record<string, PulseComment[]>
+  >({});
+  const [commentStatus, setCommentStatus] = useState<
+    Record<string, { pending?: boolean; error?: string }>
+  >({});
+  const sendComment = async (post: PulsePost) => {
+    const body = (commentBodies[post.id] || "").trim();
+    if (!body) return;
+    setCommentStatus((s) => ({ ...s, [post.id]: { pending: true } }));
+    try {
+      const d = await gql(
+        `mutation($input:CommentCreateInput!){commentCreate(input:$input){success comment{id body createdAt user{id name}}}}`,
+        { input: { projectUpdateId: post.id, body } },
+      );
+      if (!d.commentCreate?.success || !d.commentCreate.comment)
+        throw Error("The reply was rejected");
+      setCommentExtra((s) => ({
+        ...s,
+        [post.id]: [...(s[post.id] || []), d.commentCreate.comment],
+      }));
+      setCommentBodies((s) => ({ ...s, [post.id]: "" }));
+      setCommentStatus((s) => ({ ...s, [post.id]: {} }));
+    } catch (e) {
+      setCommentStatus((s) => ({
+        ...s,
+        [post.id]: {
+          error: e instanceof Error ? e.message : "Could not post the reply",
+        },
+      }));
+    }
+  };
   const tab = selectedTab;
   useEffect(() => {
     const onPop = () =>
@@ -6225,12 +6270,12 @@ function PulsePage({
   };
   return (
     <section
-      className="flex p-4 flex-col text-foreground overflow-hidden min-h-[calc(100dvh-16px)] min-w-0"
+      className="flex p-4 flex-col text-foreground overflow-hidden flex-1 min-h-0 min-w-0"
       data-pulse-page=""
       aria-label="Pulse"
     >
       <header
-        className="border-b border-line flex flex-none items-center justify-between h-(--ds-tabstrip-height) "
+        className="border-b border-line flex flex-none items-center justify-between h-(--ds-tabstrip-height) w-[min(100%,var(--ds-feed-width))] mt-0 mr-auto mb-0 ml-auto pr-10.5 pl-10.5 shell-phone:pr-4 shell-phone:pl-4"
         data-pulse-heading=""
       >
         <h1 className="mt-0 mr-0 mb-0 ml-0 text-(length:--hoja-title-size) font-(--hoja-title-weight) tracking-normal leading-[normal] ">
@@ -6248,7 +6293,7 @@ function PulsePage({
         </button>
       </header>
       <TabStrip
-        className="flex-none h-(--ds-tabstrip-height) gap-(--ds-tabstrip-gap) "
+        className="flex-none h-(--ds-tabstrip-height) gap-(--ds-tabstrip-gap) w-[min(100%,var(--ds-feed-width))] mt-0 mr-auto mb-0 ml-auto pr-10.5 pl-10.5 shell-phone:pr-4 shell-phone:pl-4"
         data-pulse-tabs=""
         role="tablist"
         label="Pulse views"
@@ -6294,7 +6339,13 @@ function PulsePage({
               updates.
             </p>
           )}
-          {posts.map((post, index) => (
+          {posts.map((post, index) => {
+            const replies = [
+              ...(post.comments?.nodes || []),
+              ...(commentExtra[post.id] || []),
+            ];
+            const status = commentStatus[post.id] || {};
+            return (
             <React.Fragment key={post.id}>
               {(index === 0 ||
                 eraOf(post.createdAt) !==
@@ -6396,29 +6447,85 @@ function PulsePage({
                 )}
                 <div className="flex items-center gap-2" data-pulse-actions="">
                   <button
-                    className="pt-1.25 pr-2.25 pb-1.25 pl-2.25 border border-line bg-panel text-muted hover:bg-subtle rounded-(--ds-feed-tab-radius) focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 group"
+                    className="flex items-center gap-1.5 pt-1.25 pr-2.25 pb-1.25 pl-2.25 border border-line bg-panel text-muted hover:bg-subtle aria-expanded:bg-subtle aria-expanded:text-foreground rounded-(--ds-feed-tab-radius) focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
                     type="button"
                     aria-expanded={openComments === post.id}
-                    aria-label={`${openComments === post.id ? "Close" : "Open"} comments for ${post.project.name}`}
+                    aria-controls={`pulse-comments-${post.id}`}
+                    aria-label={`${openComments === post.id ? "Hide" : "Show"} ${replies.length} ${
+                      replies.length === 1 ? "reply" : "replies"
+                    } to ${post.project.name}`}
                     onClick={() =>
                       setOpenComments((v) => (v === post.id ? null : post.id))
                     }
                   >
                     <MessageCircle size={15} aria-hidden="true" />
+                    {replies.length > 0 && (
+                      <span data-pulse-comment-count="">
+                        {replies.length}
+                      </span>
+                    )}
                   </button>
                 </div>
                 {openComments === post.id && (
-                  <p
-                    className="mt-3 mr-0 mb-0 ml-0 text-muted text-[12px]"
-                    role="status"
+                  <div
+                    className="mt-3 mr-0 mb-0 ml-0 flex flex-col gap-3"
+                    id={`pulse-comments-${post.id}`}
+                    data-pulse-comments=""
                   >
-                    Comments on project updates are not available in this
-                    workspace.
-                  </p>
+                    {replies.length ? (
+                      <ul className="flex flex-col gap-3 mt-0 mr-0 mb-0 ml-0 pt-0 pr-0 pb-0 pl-0 list-none">
+                        {replies.map((reply) => (
+                          <li key={reply.id} className="flex items-start gap-2">
+                            <span
+                              className="inline-grid place-items-center leading-none flex-none rounded-[50%] bg-accent-soft text-accent w-(--ds-feed-avatar-size) h-(--ds-feed-avatar-size)"
+                              aria-hidden="true"
+                            >
+                              {(reply.user?.name || "?").slice(0, 1).toUpperCase()}
+                            </span>
+                            <div className="min-w-0">
+                              <p className="mt-0 mr-0 mb-0.5 ml-0 text-(length:--ds-feed-meta-size) text-muted">
+                                {reply.user?.name || "Someone"}
+                                {reply.createdAt ? ` · ${time(reply.createdAt)}` : ""}
+                              </p>
+                              <p className="mt-0 mr-0 mb-0 ml-0 whitespace-pre-wrap wrap-break-word">
+                                {reply.body}
+                              </p>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="mt-0 mr-0 mb-0 ml-0 text-muted text-[12px]">
+                        No replies yet. Reply to ask a question or leave
+                        context for whoever reads this next.
+                      </p>
+                    )}
+                    <Composer
+                      value={commentBodies[post.id] || ""}
+                      placeholder={`Reply to ${post.project.name}…`}
+                      disabled={Boolean(status.pending)}
+                      sendIcon={<Send size={15} aria-hidden="true" />}
+                      sendLabel="Post reply"
+                      onChange={(v) =>
+                        setCommentBodies((s) => ({ ...s, [post.id]: v }))
+                      }
+                      onSend={() => void sendComment(post)}
+                      data-pulse-comment-composer=""
+                    />
+                    {status.error && (
+                      <p
+                        className="mt-0 mr-0 mb-0 ml-0 text-[12px] text-[var(--health-risk)]"
+                        role="alert"
+                      >
+                        {status.error}
+                      </p>
+                    )}
+                  </div>
                 )}
               </article>
             </React.Fragment>
-          ))}
+            );
+          })}
           {!feed.hasData && !error && (
             <p
               className="max-w-180 mt-15 mr-auto mb-15 ml-auto pt-7 pr-7 pb-7 pl-7 text-center text-muted text-[13px] gap-(--ds-empty-gap)"

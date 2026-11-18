@@ -1223,7 +1223,32 @@ class Writer:
 
     # -------------------------------------------------------------- comments
     def comment_create(self, org_id: str, viewer_id: str, inp: dict) -> str | None:
+        """A comment on an issue or on a project update — exactly one parent.
+
+        ``issueId`` keeps the old path untouched, including the activity row and the
+        first-response hook. ``projectUpdateId`` is the Pulse path: an update has no
+        team, no identifier and no activity stream of its own, so it records only
+        the comment row.
+        """
+        issue_ref = inp.get("issueId")
+        update_ref = inp.get("projectUpdateId")
+        if bool(issue_ref) == bool(update_ref):
+            # Two parents would leave the reply with no single owner; none would
+            # leave it unreachable once the mutation returns.
+            raise GraphQLError(
+                "A comment needs exactly one parent: pass issueId or projectUpdateId.",
+                extensions={"code": "BAD_USER_INPUT", "field": "issueId"})
         with self.engine.begin() as conn:
+            if update_ref:
+                urow = self._pulse_update_row(conn, project_update, org_id, update_ref)
+                if not urow:
+                    return None
+                ts = now_iso()
+                cid = new_id()
+                conn.execute(comment.insert().values(
+                    id=cid, organization_id=org_id, project_update_id=urow["id"],
+                    body=inp["body"], user_id=viewer_id, created_at=ts, updated_at=ts))
+                return cid
             irow = conn.execute(select(issue).where(and_(
                 issue.c.organization_id == org_id,
                 identifiers.issue_ref_clause(org_id, inp["issueId"])))).first()
@@ -1254,7 +1279,11 @@ class Writer:
             if "body" in inp:
                 vals["body"] = inp["body"]
             conn.execute(comment.update().where(comment.c.id == cid).values(**vals))
-            self._record_activity(conn, org_id, row.issue_id, viewer_id, "commentUpdated", {"commentId": cid}, vals["updated_at"])
+            # issue_activity.issue_id is NOT NULL, and a Pulse reply has no issue: the
+            # activity row is issue-only, so it is written only when there is an issue
+            # to hang it on. An update's own editedAt is the edit trail there.
+            if row.issue_id:
+                self._record_activity(conn, org_id, row.issue_id, viewer_id, "commentUpdated", {"commentId": cid}, vals["updated_at"])
             return cid
 
     def comment_delete(self, org_id: str, viewer_id: str, cid: str) -> bool:
@@ -1266,9 +1295,13 @@ class Writer:
 
     def _authorize_comment(self, conn, org_id: str, viewer_id: str, cid: str, action: str):
         """The comment row if the policy permits ``action``; None when it is absent or must look absent."""
+        # An outer join, because a Pulse comment has project_update_id set and
+        # issue_id NULL: the inner join used to drop it, so its own author could
+        # neither edit nor delete it. team_id stays None for those, which
+        # comment_policy.resource reads as "visible to the whole workspace".
         row = conn.execute(
             select(comment.c.user_id, comment.c.issue_id, comment.c.archived_at, issue.c.team_id)
-            .select_from(comment.join(issue, issue.c.id == comment.c.issue_id))
+            .select_from(comment.outerjoin(issue, issue.c.id == comment.c.issue_id))
             .where(and_(comment.c.organization_id == org_id, comment.c.id == cid))
         ).first()
         if not row:

@@ -2260,6 +2260,16 @@ class Store:
                 stmt = stmt.limit(limit)
             return [self.ser_comment(r) for r in _conn_rows(conn, stmt)]
 
+    def comments_for_update(self, org_id: str, update_id: str, limit: int | None = None) -> list[dict]:
+        """Pulse: the comments on one project update, oldest first (same order as issues)."""
+        with self.engine.connect() as conn:
+            stmt = select(comment).where(and_(
+                comment.c.organization_id == org_id, comment.c.project_update_id == update_id,
+                comment.c.archived_at.is_(None))).order_by(comment.c.created_at)
+            if limit:
+                stmt = stmt.limit(limit)
+            return [self.ser_comment(r) for r in _conn_rows(conn, stmt)]
+
     def issue_attachments_for(self, org_id: str, issue_id: str, limit: int | None = None) -> list[dict]:
         with self.engine.connect() as conn:
             stmt = select(attachment).where(and_(
