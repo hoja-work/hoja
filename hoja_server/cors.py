@@ -22,9 +22,11 @@ from starlette.middleware.cors import CORSMiddleware
 CORS_ORIGINS_ENV = "HOJA_CORS_ORIGINS"
 
 #: Headers the Expo client sends; If-None-Match carries the sync ETag.
-ALLOWED_HEADERS = ["Authorization", "Content-Type", "Accept", "If-None-Match"]
+#: X-Request-Id is both sent (opt-in correlation) and exposed, so a cross-origin
+#: client can report the id of a request it wants investigated.
+ALLOWED_HEADERS = ["Authorization", "Content-Type", "Accept", "If-None-Match", "X-Request-Id"]
 #: ETag is read by the sync client to make conditional bootstrap requests.
-EXPOSED_HEADERS = ["ETag"]
+EXPOSED_HEADERS = ["ETag", "X-Request-Id"]
 ALLOWED_METHODS = ["GET", "POST", "OPTIONS"]
 
 

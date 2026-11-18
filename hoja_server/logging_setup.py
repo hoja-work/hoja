@@ -23,6 +23,13 @@ from typing import IO
 
 _HANDLER_MARKER = "_hoja_security_handler"
 
+# Loggers that are noisy at INFO and say nothing an operator can act on. The MCP
+# SDK logs "Terminating session: <id>" — and, over stateless HTTP, one per request
+# with the id ``None`` — every time a response stream ends. During an incident
+# those lines were most of the log without answering what any client did, which is
+# what ``hoja_server.ops`` exists to answer instead.
+_QUIET_LOGGERS = ("mcp.server.streamable_http", "mcp.server.streamable_http_manager")
+
 #: Query-style credentials that can reach a log line through an exception message
 #: or a hand-built string. ``t`` is the identity-handoff ticket, ``code``/``state``
 #: are OAuth parameters, the cookie names are session identifiers.
@@ -146,6 +153,10 @@ def configure_logging(
     """
     logger = logging.getLogger("hoja_server")
     logger.setLevel(logging.getLevelName(level.upper()))
+    for name in _QUIET_LOGGERS:
+        # Only the level is raised: the handlers a deployment installed stay where
+        # they are, so a genuine warning from the SDK is still delivered.
+        logging.getLogger(name).setLevel(logging.WARNING)
     # Do not hand records to the root logger: it has no handlers, and the last
     # resort handler only emits WARNING and above.
     logger.propagate = False

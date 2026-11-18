@@ -52,6 +52,7 @@ from hoja_server import (
     identity_transfer,
     mail_events,
     membership_announce,
+    observability,
     org_limits,
     realtime,
     signin_pages,
@@ -420,8 +421,11 @@ class _SecurityHeaders:
                 if headers.get("content-type", "").startswith("text/html"):
                     headers["Content-Security-Policy"] = _CSP_HTML
                 if message["status"] in (401, 403, 429):
-                    _security_log.warning("denied status=%s method=%s path=%s",
-                                          message["status"], scope.get("method"), scope.get("path"))
+                    # The request id is what lets a denial be tied to the
+                    # operations line for the same request.
+                    _security_log.warning("denied status=%s method=%s path=%s request_id=%s",
+                                          message["status"], scope.get("method"), scope.get("path"),
+                                          observability.current_request_id() or "-")
                     if headers.get("content-type", "").startswith("application/json"):
                         denied_start = message
                         return
@@ -913,6 +917,11 @@ def create_app(
     )
 
     async def mcp_endpoint(scope, receive, send):
+        # MCP operations are logged by the tool dispatcher, which is the only
+        # place that knows the tool name: the SDK runs a call in its own task, so
+        # anything it records there does not come back to this scope.
+        observability.annotate(scope, transport="mcp")
+        observability.suppress(scope)
         request = Request(scope)
         auth_context = _mcp_oauth_auth(request)
         trusted_peer = _request_from_trusted_proxy(request)
@@ -1139,10 +1148,19 @@ def create_app(
         return JSONResponse({"success": True})
 
     async def graphql_server(request: Request):
+        # What this request is, for the one operations line the edge writes. The
+        # transport is known before auth; the actor and the operation are added
+        # as soon as they are known, so a rejected request is still identifiable.
+        observability.annotate(request.scope, transport="graphql")
         uid, org, identity_id, is_browser_session = await run_in_threadpool(_auth, request)
         if uid:  # resolved in a worker thread: its context copy is gone, bind here
             tenant_context.enter(org, uid, getattr(request.state, "actor_kind", "human"))
+            observability.annotate(
+                request.scope, org=org,
+                actor_kind=getattr(request.state, "actor_kind", "human"), actor_id=uid,
+            )
         if not uid:
+            observability.annotate(request.scope, operation="unauthenticated", outcome="error:UNAUTHENTICATED")
             return JSONResponse(
                 {
                     "errors": [
@@ -1166,6 +1184,10 @@ def create_app(
             return _bad_request("query must be a string.")
         if variables is not None and not isinstance(variables, dict):
             return _bad_request("variables must be an object.")
+        if isinstance(query, str):
+            # Shape only: operation type, name and top-level field names. The
+            # arguments and variables are never read here.
+            observability.annotate(request.scope, operation=observability.describe_graphql(query))
         access = getattr(request.state, "api_key_access", "read_write")
         if isinstance(query, str):
             problem = _query_problem(query)
@@ -1200,6 +1222,14 @@ def create_app(
                 logger=_ARIADNE_LOGGER,
                 debug=(os.environ.get("HOJA_SERVER_DEBUG", "0") == "1"),
             )
+        # GraphQL answers 200 even when it failed, so the outcome is read from the
+        # result rather than from the HTTP status. Only the first error's code is
+        # used: a log line that names a code, not a specification of failures.
+        errors = result.get("errors") if isinstance(result, dict) else None
+        if errors:
+            first = errors[0] if isinstance(errors[0], dict) else {}
+            code = (first.get("extensions") or {}).get("code")
+            observability.annotate(request.scope, outcome=f"error:{code or 'GRAPHQL'}")
         if isinstance(query, str) and "mutation" in query:
             hub.kick()
         target = context.get("switch_target")
@@ -3152,5 +3182,10 @@ def create_app(
     # Outermost of all when configured: preflight OPTIONS and error responses
     # must carry CORS headers even when no tenant has been bound yet.
     cors.install_cors(app)
+    # Outermost, installed after every other middleware: the request id must exist
+    # before any of them runs, and the response header must be stamped on the
+    # responses they generate. It wraps ``send`` rather than the body, so streamed
+    # responses (MCP SSE, long GraphQL reads) are not buffered.
+    app.add_middleware(observability.RequestIdMiddleware)
     app.add_exception_handler(json.JSONDecodeError, _malformed_json_handler)
     return app

@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -37,7 +38,7 @@ from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase, FuncMetad
 from mcp.types import ToolAnnotations
 from pydantic import ConfigDict
 
-from hoja_server import agent_policy
+from hoja_server import agent_policy, observability, tenant_context
 from hoja_server.denials import DENY_HINT
 
 log = logging.getLogger("hoja.mcp")
@@ -608,43 +609,90 @@ def build_tools(schema: GraphQLSchema, principal: Callable[[bool], dict]) -> lis
     return tools
 
 
+def _ops_actor(context: dict | None) -> tuple[str | None, str | None]:
+    """Who an MCP call acts as, in the operations vocabulary.
+
+    ``agent`` and ``api_key`` are the two non-human credentials the MCP endpoint
+    accepts; an OAuth access token placed by a person is ``human``. The id is the
+    identity the credential named — never an email, never a token.
+    """
+    if not isinstance(context, dict):
+        return None, None
+    member = context.get("agent_member_id")
+    if member:
+        # An agent row is its own principal; the human who delegated is not in
+        # this request, so no ``on_behalf_of`` is invented here.
+        return "agent", member
+    kind, who, _behalf = tenant_context.current_actor()
+    actor_id = who or context.get("user_id")
+    if context.get("credential_kind") == "api_key":
+        return "api_key", actor_id
+    if kind in ("bot", "agent"):
+        return kind, actor_id
+    return "human", actor_id
+
+
 def _make_tool(schema: GraphQLSchema, spec: _Spec, principal: Callable[[bool], dict]) -> Tool:
     async def run(args: dict) -> str:
-        context = principal(spec.write)
-        # WP12 (T052): an agent principal is checked against its policy before any
-        # resolver runs, so a refusal cannot be talked past by a tool argument and
-        # nothing is read or written first. A human caller returns None here and
-        # keeps exactly the surface it had.
-        store = context.get("store") if isinstance(context, dict) else None
-        if store is not None:
-            refused = agent_policy.dispatch_check(
-                store.engine, context, spec.op,
-                write=spec.write, irreversible=spec.op in DESTRUCTIVE,
-            )
-            if refused is not None and not refused.allowed:
-                raise ToolError(agent_policy.refusal_message(spec.op, refused) + " " + DENY_HINT)
+        # One operations line per ``tools/call``, written here because this is the
+        # only place that knows the tool name. The MCP SDK runs a call in its own
+        # task, so nothing recorded here can be picked up by the HTTP middleware,
+        # which is why the endpoint suppresses its own line for /mcp.
+        started = time.perf_counter()
+        outcome = "ok"
+        context: dict | None = None
+        try:
+            context = principal(spec.write)
+            # WP12 (T052): an agent principal is checked against its policy before any
+            # resolver runs, so a refusal cannot be talked past by a tool argument and
+            # nothing is read or written first. A human caller returns None here and
+            # keeps exactly the surface it had.
+            store = context.get("store") if isinstance(context, dict) else None
+            if store is not None:
+                refused = agent_policy.dispatch_check(
+                    store.engine, context, spec.op,
+                    write=spec.write, irreversible=spec.op in DESTRUCTIVE,
+                )
+                if refused is not None and not refused.allowed:
+                    raise ToolError(agent_policy.refusal_message(spec.op, refused) + " " + DENY_HINT)
 
-        def internal(query: str, variables: dict | None) -> dict:
-            result = execute(schema, parse(query), variable_values=variables or {}, context_value=context)
-            return result.data or {}
+            def internal(query: str, variables: dict | None) -> dict:
+                result = execute(schema, parse(query), variable_values=variables or {}, context_value=context)
+                return result.data or {}
 
-        flat = spec.assemble(args)
-        flat = _Resolver(internal, context["user_id"]).apply(spec.op, flat)
-        result = execute(schema, spec.document, variable_values=spec.variables(flat), context_value=context)
-        if result.errors:
-            raise ToolError(_error_text(spec.op, result.errors))
-        value = (result.data or {}).get(spec.op)
-        target = flat.get("id") or flat.get("issueId") or flat.get("teamId")
-        if value is None and spec.field.args:
-            subject = f" '{args.get('id', target)}'" if (args.get("id") or target) else ""
-            raise ToolError(f"hoja_{spec.op}: nothing found for{subject}. It may not exist or may not be visible to you.")
-        if value is False or (isinstance(value, dict) and value.get("success") is False):
-            subject = f" for '{args.get('id', target)}'" if (args.get("id") or target) else ""
-            raise ToolError(
-                f"hoja_{spec.op} did not apply{subject}: the target was not found or you are not allowed to change it. "
-                "Nothing was modified."
+            flat = spec.assemble(args)
+            flat = _Resolver(internal, context["user_id"]).apply(spec.op, flat)
+            result = execute(schema, spec.document, variable_values=spec.variables(flat), context_value=context)
+            if result.errors:
+                raise ToolError(_error_text(spec.op, result.errors))
+            value = (result.data or {}).get(spec.op)
+            target = flat.get("id") or flat.get("issueId") or flat.get("teamId")
+            if value is None and spec.field.args:
+                subject = f" '{args.get('id', target)}'" if (args.get("id") or target) else ""
+                raise ToolError(f"hoja_{spec.op}: nothing found for{subject}. It may not exist or may not be visible to you.")
+            if value is False or (isinstance(value, dict) and value.get("success") is False):
+                subject = f" for '{args.get('id', target)}'" if (args.get("id") or target) else ""
+                raise ToolError(
+                    f"hoja_{spec.op} did not apply{subject}: the target was not found or you are not allowed to change it. "
+                    "Nothing was modified."
+                )
+            return json.dumps(result.data, ensure_ascii=False, default=str)
+        except BaseException:
+            # Includes a policy refusal and a cancelled call: either way the
+            # operation did not complete, and the arguments are never logged.
+            outcome = "error"
+            raise
+        finally:
+            actor_kind, actor_id = _ops_actor(context)
+            observability.log_operation(
+                transport="mcp",
+                operation=f"tools/call hoja_{spec.op}",
+                outcome=outcome,
+                started=started,
+                org=context.get("org_id") if isinstance(context, dict) else None,
+                actor_kind=actor_kind,
+                actor_id=actor_id,
             )
-        return json.dumps(result.data, ensure_ascii=False, default=str)
 
     run.__name__ = "hoja_" + spec.op
     destructive = spec.op in DESTRUCTIVE

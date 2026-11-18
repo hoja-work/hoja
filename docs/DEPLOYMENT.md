@@ -192,6 +192,38 @@ application instances. The server process does not alter schema on startup, so
 `/health` remains available during a database outage and `/ready` rejects
 traffic until both connectivity and schema currency are confirmed.
 
+## Request correlation and operation logs
+
+Every HTTP response carries `X-Request-Id`. A client may send its own; the value
+is adopted only when it is 1–128 characters drawn from `[A-Za-z0-9._:-]`, and a
+fresh uuid4 is minted otherwise, so a hostile header cannot shape a log line.
+The id is echoed back in `X-Request-Id` and appears on every line written about
+that request, including the `denied ...` warnings for rejected credentials.
+
+`hoja_server.ops` writes exactly one line per operation:
+
+```text
+op request_id=req-1 host=app.example.com org=<org id> actor=human:<user id> transport=graphql operation="mutation CreateIssue [issueCreate]" status=200 outcome=ok duration_ms=41.7
+```
+
+- `transport` is `graphql`, `mcp` or `rest`. For REST, `operation` is
+  `METHOD /path` with no query string, because OAuth and handoff callbacks carry
+  one-shot credentials in the query.
+- `operation` names the GraphQL operation type, its name and its top-level
+  fields, or the MCP JSON-RPC method plus the tool
+  (`tools/call hoja_issueCreate`).
+- `outcome` is `ok` or `error:<code>`. GraphQL answers HTTP 200 when it fails,
+  so the code is read from the first error rather than from the status.
+- `audit_event.request_id` records the same id, which ties an audit row to the
+  operation that produced it. A row written by a system path — a runner loop or
+  a durable agent turn — has no id, because no request caused it.
+- No values are logged: no variables, arguments, bodies, `Authorization` headers
+  or tokens. A field that is not known for the operation prints `-`.
+
+`hoja_server.logging_setup` raises the MCP SDK's session logger to WARNING: its
+`Terminating session: <id>` line is one line per response stream, and over
+stateless HTTP the id is always `None`.
+
 ## Verification
 
 SQLite requires no external service:

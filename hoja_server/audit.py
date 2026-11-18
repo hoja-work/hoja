@@ -146,6 +146,15 @@ def record(engine, *, organization_id: str, action: str, actor_kind: str | None 
     """
     if action not in ACTIONS:
         raise UnknownActionError(f"{action!r} is not an audited action")
+    if request_id is None:
+        # The id the edge minted for the request this action happened in. Unlike
+        # the actor, this may be read from the ambient context: the middleware
+        # resets it when the request ends, so one request cannot inherit another's
+        # id. A row with no id is a system path (runner loop, durable turn) that
+        # no client request caused, and stays NULL rather than borrowing one.
+        from hoja_server import observability
+
+        request_id = observability.current_request_id()
     kind, who, behalf = actor_kind, actor_id, on_behalf_of
     if not who or not kind:
         raise AuditActorMissingError(f"refusing to audit {action} with no actor")
@@ -202,7 +211,12 @@ def _request_meta(info) -> tuple[str | None, str | None]:
     if not ip:
         client = getattr(request, "client", None)
         ip = getattr(client, "host", None) if client else None
-    return ip, headers.get("x-request-id")
+    # The edge's id first: the caller's own header may be absent, and when both
+    # exist the echoed one is the value that appears in the response and the
+    # operations line for the same request.
+    from hoja_server import observability
+
+    return ip, observability.current_request_id() or headers.get("x-request-id")
 
 
 def actor_for(info, fallback_user_id: str) -> tuple[str, str, str | None]:

@@ -609,6 +609,11 @@ def build_server(provider: HojaOAuthProvider, public_host: str | None = None) ->
             "identity_id": None,
             "browser_session": False,
             "agent_member_id": agent_member_id,
+            # Which credential the caller presented, for the operations line: a
+            # raw Hoja API key is reported as ``api_key``, an OAuth access token
+            # placed by a person as ``human``. The distinguisher is the client id
+            # ``_load_api_key`` assigns, not anything in the token's subject.
+            "credential_kind": "api_key" if access.client_id == "api-key" else "oauth",
             # Read-only grants must not trigger resolver-side reconciliation writes.
             "read_only": WRITE_SCOPE not in granted,
         }
