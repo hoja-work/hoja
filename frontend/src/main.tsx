@@ -624,12 +624,29 @@ function StatusPicker({
               </button>
             </PopoverTrigger>
             {open && (
-              <PopoverContent asChild align="start" sideOffset={6}>
+              <PopoverContent
+                asChild
+                align="start"
+                sideOffset={6}
+                /* Radix focuses the first child control; a status list has to open on the
+                 * status the task is in, or Enter on the opened list silently moves it. */
+                onOpenAutoFocus={(event) => {
+                  event.preventDefault();
+                  const list = event.currentTarget as HTMLElement;
+                  const current = list.querySelector<HTMLElement>(
+                    '[role="option"][aria-selected="true"]',
+                  );
+                  (
+                    current || list.querySelector<HTMLElement>('[role="option"]')
+                  )?.focus();
+                }}
+              >
                 <ul
                   className="border shadow-[0_8px_24px_#0002] w-auto z-40 min-w-45 mt-0 mr-0 mb-0 ml-0 pt-1 pr-1 pb-1 pl-1 list-none border-line rounded-lg bg-panel"
                   data-status-menu=""
                   role="listbox"
                   aria-label="Choose status"
+                  onKeyDown={menuArrowKeys}
                 >
                   {states.map((st) => (
                     <li key={st.id}>
@@ -12815,15 +12832,37 @@ function CommandPalette({
   ];
   useEffect(() => setActive(0), [deferred]);
   const listRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  /* Captured during the first render, before the input takes focus, so closing the palette
+   * can put the keyboard back where it was. */
+  const openerRef = useRef<HTMLElement | null>(
+    document.activeElement instanceof HTMLElement ? document.activeElement : null,
+  );
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+  /* Escape closes from anywhere inside the palette and hands focus back to the opener.
+   * Entries that navigate keep focus at the destination, which is why this is not an
+   * unmount effect. */
+  const closeAndRestore = () => {
+    onClose();
+    const back = openerRef.current;
+    if (back && document.contains(back)) back.focus();
+  };
   useEffect(() => {
     listRef.current
       ?.querySelector('[data-active="true"]')
       ?.scrollIntoView({ block: "nearest" });
   }, [active]);
   const at = Math.min(active, Math.max(0, entries.length - 1));
+  const optionId = (key: string) =>
+    `command-option-${key.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
   const row = (key: string) => {
     const selected = entries[at]?.key === key;
     return {
+      id: optionId(key),
+      role: "option" as const,
+      "aria-selected": selected,
       "data-active": selected ? "true" : undefined,
       style: selected ? { background: "var(--subtle)" } : undefined,
       onMouseEnter: () => {
@@ -12833,8 +12872,10 @@ function CommandPalette({
     };
   };
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Escape") onClose();
-    else if (e.key === "ArrowDown") {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeAndRestore();
+    } else if (e.key === "ArrowDown") {
       e.preventDefault();
       setActive(Math.min(at + 1, entries.length - 1));
     } else if (e.key === "ArrowUp") {
@@ -12842,7 +12883,7 @@ function CommandPalette({
       setActive(Math.max(at - 1, 0));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      if (terms.length || active > 0) entries[at]?.run();
+      entries[at]?.run();
     }
   };
   return bodyLayer(
@@ -12851,16 +12892,18 @@ function CommandPalette({
       data-command-backdrop=""
       role="presentation"
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget) closeAndRestore();
       }}
     >
       <section
         className="border shadow-(--shadow) overflow-hidden border-line rounded-[10px] bg-panel w-[min(570px,100%)] max-w-xl"
         data-command-palette=""
         role="dialog"
+        aria-modal="true"
         aria-label="Command palette"
         data-results-for={deferred}
         onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={onKeyDown}
       >
         <div
           className="border-b border-line flex items-center gap-2.5 pt-3.5 pr-3.5 pb-3.5 pl-3.5 text-muted"
@@ -12868,25 +12911,43 @@ function CommandPalette({
         >
           <Search size={17} />
           <input
+            ref={inputRef}
             className="flex-1 border-0 bg-transparent text-foreground text-[14px] max-md:text-base outline-none placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search tasks or navigate..."
             aria-label="Search tasks or navigate"
+            role="combobox"
+            aria-expanded="true"
+            aria-controls="command-palette-list"
+            aria-autocomplete="list"
+            aria-activedescendant={
+              entries[at] ? optionId(entries[at].key) : undefined
+            }
             onKeyDown={onKeyDown}
           />
           <kbd className="text-[10px] text-muted">ESC</kbd>
         </div>
         <div
           ref={listRef}
+          id="command-palette-list"
+          role="listbox"
+          aria-label="Search results"
           style={{ maxHeight: "min(60vh,520px)", overflowY: "auto" }}
         >
           {terms.length > 0 && results.length > 0 && (
             <div
               className="pt-1.75 pr-1.75 pb-1.75 pl-1.75"
               data-command-results=""
+              role="group"
             >
-              <p className="pt-1.25 pr-2 pb-1.25 pl-2 text-muted text-[10px] normal-case tracking-widest">
+              <p
+
+                role="presentation"
+
+                className="pt-1.25 pr-2 pb-1.25 pl-2 text-muted text-[10px] normal-case tracking-widest"
+
+              >
                 Tasks
               </p>
               {results.map((i) => (
@@ -12912,8 +12973,15 @@ function CommandPalette({
             <div
               className="pt-1.75 pr-1.75 pb-1.75 pl-1.75"
               data-command-results=""
+              role="group"
             >
-              <p className="pt-1.25 pr-2 pb-1.25 pl-2 text-muted text-[10px] normal-case tracking-widest">
+              <p
+
+                role="presentation"
+
+                className="pt-1.25 pr-2 pb-1.25 pl-2 text-muted text-[10px] normal-case tracking-widest"
+
+              >
                 Older tasks
               </p>
               {remote.map((i) => (
@@ -12939,8 +13007,15 @@ function CommandPalette({
             <div
               className="pt-1.75 pr-1.75 pb-1.75 pl-1.75"
               data-command-results=""
+              role="group"
             >
-              <p className="pt-1.25 pr-2 pb-1.25 pl-2 text-muted text-[10px] normal-case tracking-widest">
+              <p
+
+                role="presentation"
+
+                className="pt-1.25 pr-2 pb-1.25 pl-2 text-muted text-[10px] normal-case tracking-widest"
+
+              >
                 Projects
               </p>
               {projects.map((p) => (
@@ -12962,8 +13037,15 @@ function CommandPalette({
             <div
               className="pt-1.75 pr-1.75 pb-1.75 pl-1.75"
               data-command-results=""
+              role="group"
             >
-              <p className="pt-1.25 pr-2 pb-1.25 pl-2 text-muted text-[10px] normal-case tracking-widest">
+              <p
+
+                role="presentation"
+
+                className="pt-1.25 pr-2 pb-1.25 pl-2 text-muted text-[10px] normal-case tracking-widest"
+
+              >
                 Teams
               </p>
               {teams.map((t) => (
@@ -12987,8 +13069,15 @@ function CommandPalette({
           <div
             className="pt-1.75 pr-1.75 pb-1.75 pl-1.75"
             data-command-results=""
+            role="group"
           >
-            <p className="pt-1.25 pr-2 pb-1.25 pl-2 text-muted text-[10px] normal-case tracking-widest">
+            <p
+
+              role="presentation"
+
+              className="pt-1.25 pr-2 pb-1.25 pl-2 text-muted text-[10px] normal-case tracking-widest"
+
+            >
               Navigate
             </p>
             {pages.map((x) => (
