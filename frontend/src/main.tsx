@@ -6289,15 +6289,20 @@ function PulsePage({
           Pulse
         </h1>
         <button
-          className="flex items-center pt-1.25 pr-1.75 pb-1.25 pl-1.75 bg-transparent text-muted hover:bg-subtle disabled:cursor-not-allowed disabled:opacity-50 gap-(--ds-group-bar-gap) rounded-(--ds-tab-radius) focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5] text-(length:--ds-feed-meta-size)"
+          className="flex items-center pt-1.25 pr-1.75 pb-1.25 pl-1.75 bg-transparent text-muted hover:bg-subtle cursor-not-allowed opacity-50 gap-(--ds-group-bar-gap) rounded-(--ds-tab-radius) focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 text-(length:--ds-feed-meta-size)"
           data-pulse-subscription=""
           type="button"
-          disabled
+          aria-disabled="true"
+          aria-describedby="pulse-subscription-unavailable"
           title="Pulse email subscriptions are not available on this server"
           aria-label="Subscription unavailable"
         >
           <Bell size={15} aria-hidden="true" />
         </button>
+        <span id="pulse-subscription-unavailable" className="sr-only">
+          Email subscriptions to Pulse are not available on this server, so there
+          is nothing to turn on here.
+        </span>
       </header>
       <TabStrip
         className="flex-none h-(--ds-tabstrip-height) gap-(--ds-tabstrip-gap)"
@@ -6322,15 +6327,20 @@ function PulsePage({
           </Tab>
         ))}
         <button
-          className="grid place-items-center ml-0.5 bg-transparent text-muted hover:bg-subtle disabled:cursor-not-allowed disabled:opacity-50 rounded-(--ds-tab-radius) w-(--ds-tab-height) h-(--ds-tab-height) focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5]"
+          className="grid place-items-center ml-0.5 bg-transparent text-muted hover:bg-subtle cursor-not-allowed opacity-50 rounded-(--ds-tab-radius) w-(--ds-tab-height) h-(--ds-tab-height) focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
           data-pulse-add-view=""
           type="button"
-          disabled
+          aria-disabled="true"
+          aria-describedby="pulse-views-unavailable"
           title="Custom Pulse views are not available"
           aria-label="Add new view unavailable"
         >
           <Plus size={15} aria-hidden="true" />
         </button>
+        <span id="pulse-views-unavailable" className="sr-only">
+          Custom Pulse views are not available yet; For me, Popular and Recent are
+          the views this server supports.
+        </span>
       </TabStrip>
       <ScrollArea className="min-h-0" variant="list">
         <div
