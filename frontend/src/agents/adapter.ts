@@ -26,7 +26,7 @@
 
 import type {
   Agent, AgentDetail, AgentEvent, AgentPolicy, AgentSession, AuditEvent, Claim, ClaimVerdict,
-  HarnessPolicy,
+  ConnectGrant, HarnessPolicy,
   ConnectEndpointRow, ConnectExposure, Runner, RunnerEnrollment, RunnerEnrollmentGrant, RunnerLease,
   SessionStatus, VerificationCheck, Verdict,
 } from './types';
@@ -83,6 +83,10 @@ export type AgentsAdapter = {
    * server validates the name against the profiles it knows and refuses a default the allowlist
    * forbids, so the caller's refusal is the server's, not a local guess. */
   updateHarnessPolicy(id: string, patch: HarnessPatch, actor: string): Promise<{harnesses: HarnessPolicy; audit: AuditEvent | null}>;
+  /** The Connect half of the same policy row: the host:port pairs this agent's runs may expose.
+   * The whole list is sent, because a removed grant is expressed by its absence - an absent field
+   * would mean "leave the stored list alone" (`agent_policy.clean_input`). */
+  updateConnectPolicy(id: string, grants: ConnectGrant[], actor: string): Promise<{connect: ConnectGrant[]; audit: AuditEvent | null}>;
 
   /* -- server-backed: GraphQL, WP06 and slice 4 ---------------------------------------------- */
   /** One page of the workspace run queue, newest first. `agentId` is an `AgentMember.id`, so a
@@ -661,7 +665,7 @@ function createGraphqlAdapter(fallback: AgentsAdapter): AgentsAdapter {
       /* WP06 stores the runs and their transcript, so the page reads both through the workspace
        * session connection: the transcript is nested on the session, which is where the server
        * keeps it, so this is one read and not one per run. */
-      const [runs, harnesses] = await Promise.all([
+      const [runs, policyRow] = await Promise.all([
         request<{workspaceAgentSessions: {nodes: ServerSession[]}}>(
           `query AgentRuns($agentId: String!) {
              workspaceAgentSessions(agentId: $agentId, first: 50) {
@@ -671,13 +675,14 @@ function createGraphqlAdapter(fallback: AgentsAdapter): AgentsAdapter {
          * hold come from the server (`agentHarnesses`) so the field cannot offer one it refuses.
          * Null policy = deny by default, which reads here as "nobody chose" - the queue then
          * falls back to `pi`, and the server says so. */
-        readHarnessPolicy(id),
+        readPolicyRow(id),
       ]);
       const rows = runs.workspaceAgentSessions?.nodes || [];
       return {
         agent,
         policy: policyOf(agent),
-        harnesses,
+        harnesses: policyRow.harnesses,
+        connectGrants: policyRow.connect,
         sessions: rows.map(row => fromSession(row, {id: agent.id, name: agent.name})),
         events: eventsOf(rows),
       };
@@ -748,6 +753,28 @@ function createGraphqlAdapter(fallback: AgentsAdapter): AgentsAdapter {
           known: current?.harnesses.known || []},
         audit: null,
       };
+    },
+
+    async updateConnectPolicy(id: string, grants: ConnectGrant[], actor: string) {
+      /* `connect` is JSON on `AgentPolicyInput`, so the list travels as it will be stored. The
+       * server's `clean_connect` is the authority on every entry (a named host, an integer port in
+       * 1..65535, duplicates collapsed); its refusal is a `BAD_USER_INPUT` GraphQL error, which
+       * `request` rethrows with the server's own sentence. The screen shows that sentence and
+       * re-reads the policy row, so a refused list never sits in the field looking stored. */
+      const data = await request<{agentPolicyUpdate: {success: boolean;
+        agentPolicy: {connect: ServerConnect} | null}}>(
+        `mutation AgentConnectUpdate($id: String!, $input: AgentPolicyInput!) {
+           agentPolicyUpdate(agentMemberId: $id, input: $input) {
+             success agentPolicy { connect } } }`,
+        {id, input: {connect: grants.map(grant => ({host: grant.host, port: grant.port}))}});
+      const row = data.agentPolicyUpdate?.agentPolicy;
+      if (!data.agentPolicyUpdate?.success || !row) {
+        throw new AgentApiError('ERROR', 'The Connect grants were not saved.');
+      }
+      /* The resolver writes `agent.policy.change` for this mutation too, and `auditEvents` (WP05)
+       * is where it is read back: this returns `null` rather than a row it cannot see. */
+      void actor;
+      return {connect: readGrants(row.connect), audit: null};
     },
 
     async listSessions(options) {
@@ -961,22 +988,38 @@ const HARNESS_FIELDS = `defaultHarness harnessAllowlist`;
 
 type ServerHarnessPolicy = {defaultHarness: string | null; harnessAllowlist: string[]};
 
-/** The agent's harness policy and the profile names the server knows, in one read.
+/* `AgentPolicy.connect` is the SDL's `JSON`: a list of `{host, port}`, or null when the policy row
+ * was never written. Anything else would be a server bug, and it reads here as "no grant" rather
+ * than as a row the screen draws a control for. */
+type ServerConnect = {host?: unknown; port?: unknown}[] | null;
+
+function readGrants(value: ServerConnect | undefined): ConnectGrant[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map(entry => ({host: String(entry?.host ?? ''), port: Number(entry?.port)}))
+    .filter(grant => grant.host !== '' && Number.isInteger(grant.port));
+}
+
+/** The two halves of the policy row this page reads, in one request: the harness the queue will
+ *  use (with the profile names the server knows) and the Connect grants it may expose.
  *
  * A null policy (the member has none) answers `{defaultHarness: null, harnessAllowlist: []}` -
  * "nobody chose" - which is the same thing the queue reads, rather than an empty form that implies
- * a policy exists. */
-async function readHarnessPolicy(memberId: string): Promise<HarnessPolicy> {
+ * a policy exists. The same read answers no Connect grant, which is deny-by-default too. */
+async function readPolicyRow(memberId: string): Promise<{harnesses: HarnessPolicy; connect: ConnectGrant[]}> {
   const data = await request<{
-    agentPolicy: ServerHarnessPolicy | null; agentHarnesses: string[];
+    agentPolicy: (ServerHarnessPolicy & {connect: ServerConnect}) | null; agentHarnesses: string[];
   }>(`query AgentHarnessPolicy($id: String!) {
-        agentPolicy(agentMemberId: $id) { ${HARNESS_FIELDS} }
+        agentPolicy(agentMemberId: $id) { ${HARNESS_FIELDS} connect }
         agentHarnesses }`, {id: memberId});
   const row = data.agentPolicy;
   return {
-    defaultHarness: row?.defaultHarness ?? null,
-    harnessAllowlist: row?.harnessAllowlist || [],
-    known: data.agentHarnesses || [],
+    harnesses: {
+      defaultHarness: row?.defaultHarness ?? null,
+      harnessAllowlist: row?.harnessAllowlist || [],
+      known: data.agentHarnesses || [],
+    },
+    connect: readGrants(row?.connect),
   };
 }
 
@@ -1001,6 +1044,7 @@ function createFallbackAdapter(): AgentsAdapter {
     async listAgentChoices() { return serverOnly('the delegate picker'); },
     async updatePolicy() { return serverOnly('agent edits'); },
     async updateHarnessPolicy() { return serverOnly('an agent\'s harness policy'); },
+    async updateConnectPolicy() { return serverOnly('an agent\'s Connect grants'); },
 
     async listSessions() { return serverOnly('the run queue'); },
     async listAuditEvents() { return serverOnly('the audit log'); },

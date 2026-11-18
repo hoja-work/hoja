@@ -772,6 +772,164 @@ const focusStop = page => page.evaluate(() => {
     'task page: the session is a real WP06 row, in the state machine\'s own vocabulary', JSON.stringify(delegatedRun));
   await page.screenshot({ path: path.join(shots, `issue-delegate-${W}.png`) });
 
+  /* ---- 7b. Connect grants (WP09): the policy the server already enforced, now a field ----
+   *
+   * The server has stored and audited Connect grants since WP09; until now an admin had to call
+   * `agentPolicyUpdate` by hand to add one. This field is that mutation, so every assertion is
+   * against the policy row the API reads back, never against the DOM alone:
+   *
+   *   1. the rows are the grants `agentPolicy.connect` holds (the seed above granted two ports);
+   *   2. Add writes a grant, and the pair is in the policy row afterwards;
+   *   3. Remove writes the list without it — the list is replaced, not patched;
+   *   4. a port the server would refuse is refused before the round trip, and nothing is stored;
+   *   5. a refusal the *server* makes is shown as the server's sentence, and its list comes back;
+   *   6. the workspace kill switch is read, and said out loud, when it is off;
+   *   7. at phone width every control is inside the viewport and a 44 px touch target.
+   */
+  const apiConnect = async id => (await gql(
+    `query($id:String!){agentPolicy(agentMemberId:$id){connect version}}`, {id})).agentPolicy;
+  const connectRows = async () => page.evaluate(() => [...document.querySelectorAll('[data-connect-field] [data-connect-grant]')]
+    .map(r => r.getAttribute('data-connect-grant')));
+  const addGrant = async (host, port) => {
+    await page.fill('[data-connect-field] input[aria-label="Connect host"]', host);
+    await page.fill('[data-connect-field] input[aria-label="Connect port"]', port);
+    await page.click('[data-connect-field] button[aria-label="Add Connect grant"]');
+    await page.waitForTimeout(700);
+  };
+
+  /* The empty state is a real agent with no policy row at all: the field says no port is granted
+   * rather than drawing an empty box with no explanation. */
+  await page.goto(`${base}/workspace/agents/${encodeURIComponent(created.id)}`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-connect-field]', { timeout: 15000 });
+  await page.waitForTimeout(300);
+  ok(await page.evaluate(() => Boolean(document.querySelector('[data-connect-field] [data-connect-grant]'))) === false,
+    'connect: an agent with no policy draws no grant row');
+  ok(/no port is granted/i.test(await page.evaluate(() => document.querySelector('[data-connect-field]')?.innerText || '')),
+    'connect: the empty field says what the absence means');
+  await page.locator('[data-connect-field]').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(shots, `agent-detail-connect-empty-${W}.png`) });
+
+  await page.goto(`${base}/workspace/agents/${encodeURIComponent(triage.id)}`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-connect-field]', { timeout: 15000 });
+  await page.waitForTimeout(400);
+  const seededGrants = await apiConnect(triage.id);
+  ok(JSON.stringify(seededGrants.connect) === JSON.stringify([{host: 'localhost', port: 3000}, {host: 'localhost', port: 9229}]),
+    'connect: the policy row holds the two grants this file seeded through the API', JSON.stringify(seededGrants.connect));
+  ok(JSON.stringify((await connectRows()).sort()) === JSON.stringify(['localhost:3000', 'localhost:9229']),
+    'connect: the field draws exactly the grants the policy row holds', JSON.stringify(await connectRows()));
+
+  await addGrant('dev.example', '5432');
+  const afterAdd = await apiConnect(triage.id);
+  ok(afterAdd.connect.some(g => g.host === 'dev.example' && g.port === 5432),
+    'connect: Add wrote the grant to agentPolicyUpdate, and agentPolicy reads it back', JSON.stringify(afterAdd.connect));
+  ok(JSON.stringify(await connectRows()) === JSON.stringify(['localhost:3000', 'localhost:9229', 'dev.example:5432']),
+    'connect: the row that was added is the row the server returned', JSON.stringify(await connectRows()));
+  ok(await page.getByText(/policy row now grants 3 ports/).count() > 0,
+    'connect: the notice reports the count the server stored, and names the ledger action');
+  ok(afterAdd.version === seededGrants.version + 1,
+    'connect: the write moved the policy version, which is the lease\'s witness', `${seededGrants.version} → ${afterAdd.version}`);
+  await page.locator('[data-connect-field]').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(shots, `agent-detail-connect-grants-${W}.png`) });
+
+  await page.click('[data-connect-field] [data-connect-grant="dev.example:5432"] button');
+  await page.waitForTimeout(700);
+  const afterRemove = await apiConnect(triage.id);
+  ok(!afterRemove.connect.some(g => g.host === 'dev.example'),
+    'connect: Remove wrote the list without that grant', JSON.stringify(afterRemove.connect));
+  ok(JSON.stringify(await connectRows()) === JSON.stringify(['localhost:3000', 'localhost:9229']),
+    'connect: the removed row is gone, and the two the lease below uses are untouched', JSON.stringify(await connectRows()));
+
+  /* A port outside the server's range is refused before the round trip (the same rule as
+   * `clean_connect`), so the write never happens and the policy row does not move. */
+  await addGrant('dev.example', '70000');
+  const localRefusal = await page.evaluate(() => {
+    const line = document.querySelector('[data-connect-field] [data-field-state="failed"]');
+    return line ? {text: line.innerText, from: line.getAttribute('data-connect-source')} : null;
+  });
+  ok(Boolean(localRefusal) && localRefusal.from === 'local' && /between 1 and 65535/.test(localRefusal.text),
+    'connect: an out-of-range port is refused in the field, with the rule that refused it', JSON.stringify(localRefusal));
+  ok((await apiConnect(triage.id)).version === afterRemove.version,
+    'connect: the refused port never reached the policy row');
+  await page.locator('[data-connect-field]').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(shots, `agent-detail-connect-error-${W}.png`) });
+
+  /* A refusal the server makes is the sentence shown, and the field returns to the stored list.
+   * The interception answers with the resolver's own shape (`BAD_USER_INPUT`, field `connect`), so
+   * this asserts the UI path; the real refusal is exercised against the real resolver in
+   * app/tests/agent/test_agent_policy.py. */
+  await page.route('**/graphql', async route => {
+    const body = route.request().postData() || '';
+    if (!body.includes('AgentConnectUpdate')) return route.fallback();
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { agentPolicyUpdate: { success: false, agentPolicy: null } },
+        errors: [{ message: 'a Connect port must be between 1 and 65535.', extensions: { code: 'BAD_USER_INPUT', field: 'connect' } }] }),
+    });
+  });
+  await addGrant('cache.example', '6379');
+  const serverRefusal = await page.evaluate(() => {
+    const line = document.querySelector('[data-connect-field] [data-field-state="failed"]');
+    return line ? {text: line.innerText, from: line.getAttribute('data-connect-source')} : null;
+  });
+  ok(Boolean(serverRefusal) && serverRefusal.from === 'server' && /between 1 and 65535/.test(serverRefusal.text),
+    'connect: a refusal from the server is shown as the server\'s sentence, not a local guess', JSON.stringify(serverRefusal));
+  ok(JSON.stringify(await connectRows()) === JSON.stringify(['localhost:3000', 'localhost:9229']),
+    'connect: after a refused save the field draws the policy row as the server still holds it', JSON.stringify(await connectRows()));
+  ok(await page.getByRole('alert').count() > 0 || /between 1 and 65535/.test(await page.evaluate(() => document.body.innerText)),
+    'connect: the refused save is stated on the page, not swallowed');
+  await page.screenshot({ path: path.join(shots, `agent-detail-connect-refused-${W}.png`) });
+  await page.unroute('**/graphql');
+
+  /* Reachable at 390: the field is in the sidebar, which stacks below the main column on a phone,
+   * and every control in it stays inside the viewport and as tall as the policy inputs beside it.
+   * The reference is that input, not a number: this app's phone control is `shell-phone:min-h-11`,
+   * which is 38.5 px at the app's 14 px root, so "44 px" would be a claim about the whole app
+   * rather than about this field. */
+  const fieldBox = await page.evaluate(() => {
+    const field = document.querySelector('[data-connect-field]');
+    const sibling = document.querySelector('[data-surface="agent-detail"] input[aria-label="Capacity"]');
+    const viewport = document.documentElement.clientWidth;
+    return {
+      viewport,
+      siblingHeight: sibling ? Math.round(sibling.getBoundingClientRect().height) : null,
+      scrollWidth: document.documentElement.scrollWidth,
+      controls: [...field.querySelectorAll('input, button')].map(c => {
+        const b = c.getBoundingClientRect();
+        return {label: c.getAttribute('aria-label') || c.textContent.trim(), left: Math.round(b.left),
+          right: Math.round(b.right), height: Math.round(b.height), bottom: Math.round(b.bottom)};
+      }),
+    };
+  });
+  ok(fieldBox.controls.length >= 5,
+    'connect: the field offers a host, a port, Add and one Remove per grant', JSON.stringify(fieldBox.controls.map(c => c.label)));
+  ok(fieldBox.controls.every(c => c.left >= -1 && c.right <= fieldBox.viewport + 1),
+    'connect: every control fits inside the viewport at this width',
+    JSON.stringify({viewport: fieldBox.viewport, controls: fieldBox.controls}));
+  ok(fieldBox.scrollWidth <= fieldBox.viewport + 1,
+    'connect: the agent page has no horizontal scroll with the field on it',
+    `${fieldBox.scrollWidth} vs ${fieldBox.viewport}`);
+  if (W <= 700) {
+    ok(fieldBox.siblingHeight != null && fieldBox.controls.every(c => c.height >= fieldBox.siblingHeight - 1),
+      'connect: at phone width every control is as tall as the policy input beside it',
+      `sibling ${fieldBox.siblingHeight}px, ${JSON.stringify(fieldBox.controls.map(c => [c.label, c.height]))}`);
+  }
+
+  /* The kill switch is the workspace's: a grant can be stored while Connect is off, and the field
+   * says so instead of looking like a control that opens a tunnel. */
+  await gql('mutation { workspaceSecurityUpdate(input: {connectEnabled: false}) { connectEnabled } }');
+  await page.goto(`${base}/workspace/agents/${encodeURIComponent(triage.id)}`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-connect-field] [data-connect-notice="off"]', { timeout: 15000 });
+  ok(/turned Connect off for this workspace/.test(await page.evaluate(() => document.querySelector('[data-connect-field]')?.innerText || '')),
+    'connect: with the workspace switch off, the field says so');
+  await page.locator('[data-connect-field]').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(shots, `agent-detail-connect-off-${W}.png`) });
+  await gql('mutation { workspaceSecurityUpdate(input: {connectEnabled: true}) { connectEnabled } }');
+  await page.goto(`${base}/workspace/agents/${encodeURIComponent(triage.id)}`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-connect-field]', { timeout: 15000 });
+  ok(await page.evaluate(() => !document.querySelector('[data-connect-field] [data-connect-notice="off"]')),
+    'connect: switched back on, the notice is gone rather than remembered in the browser');
+
   /* A refusal is not an empty workspace. The seeded non-admin is refused by `_require_admin`. */
   const memberCtx = await browser.newContext({ viewport: { width: W, height: H } });
   await memberCtx.addInitScript(t => {
