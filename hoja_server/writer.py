@@ -1637,6 +1637,12 @@ class Writer:
                 user.c.organization_id == org_id, user.c.id == viewer_id))).scalar()
             if row["actor_id"] != viewer_id and not actor:
                 return False
+            # Replies hang off the update, so they go with it. Hard delete, not archive:
+            # an archived reply would keep pointing at a row that no longer exists, and a
+            # database created by create_all carries a real FK that refuses that.
+            conn.execute(comment.delete().where(and_(
+                comment.c.organization_id == org_id,
+                comment.c.project_update_id == update_id)))
             conn.execute(project_update.delete().where(and_(
                 project_update.c.organization_id == org_id, project_update.c.id == update_id)))
             return True

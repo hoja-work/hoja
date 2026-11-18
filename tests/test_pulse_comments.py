@@ -139,3 +139,39 @@ def test_revision_75_upgrades_an_existing_database(tmp_path) -> None:
 
     assert "project_update_id" in {c["name"] for c in inspect(engine).get_columns("comment")}
     assert "ix_comment_project_update_id" in {i["name"] for i in inspect(engine).get_indexes("comment")}
+
+
+DELETE_UPDATE = 'mutation($id: String!){ projectUpdateDelete(id:$id){ success } }'
+
+
+def test_deleting_an_update_takes_its_replies_with_it(tmp_path) -> None:
+    """A reply must not outlive its update: with the FK in place the delete would fail,
+    and without it the reply would be orphaned. Both are covered here by counting rows."""
+    from sqlalchemy import func, select
+
+    from hoja_server.db import comment as comment_table
+    from hoja_server.store import Store
+
+    app, admin = _setup(tmp_path)
+    with TestClient(app) as client:
+        _project, update = _post(client, admin)
+        _gql(client, admin["token"], CREATE_COMMENT,
+             {"i": {"projectUpdateId": update["id"], "body": "reply that must not orphan"}})
+        assert _gql(client, admin["token"], DELETE_UPDATE, {"id": update["id"]})["projectUpdateDelete"]["success"] is True
+        remaining = Store(make_engine(tmp_path / "pulse.db")).engine.connect().execute(
+            select(func.count()).select_from(comment_table)).scalar()
+        assert remaining == 0
+
+
+def test_a_busy_update_reports_its_newest_replies_oldest_first(tmp_path) -> None:
+    from hoja_server.store import Store
+
+    app, admin = _setup(tmp_path)
+    with TestClient(app) as client:
+        _project, update = _post(client, admin)
+        for i in range(3):
+            _gql(client, admin["token"], CREATE_COMMENT,
+                 {"i": {"projectUpdateId": update["id"], "body": f"reply {i}"}})
+        store = Store(make_engine(tmp_path / "pulse.db"))
+        window = store.comments_for_update(admin["org_id"], update["id"], limit=2, newest_first=True)
+        assert [c["body"] for c in window] == ["reply 1", "reply 2"]

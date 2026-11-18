@@ -124,7 +124,8 @@ WRITE_TOOLS: dict[str, str] = {
     ),
     "issueArchive": "Archive an issue (reversible; prefer this over delete)." + " Deprecated: prefer the task* equivalent; this name stays as a wire-compatible alias.",
     "issueDelete": "Permanently delete an issue. Confirm with the user first." + " Deprecated: prefer the task* equivalent; this name stays as a wire-compatible alias.",
-    "commentCreate": "Add a comment to an issue.",
+    "commentCreate": "Add a comment to an issue or to a project update. Pass exactly one "
+                    "parent: issueId, or projectUpdateId (the id of a Pulse update).",
     "commentUpdate": "Edit a comment.",
     "commentDelete": "Delete a comment.",
     "issueLabelCreate": "Create a label, optionally scoped to a team." + " Deprecated: prefer the task* equivalent; this name stays as a wire-compatible alias.",

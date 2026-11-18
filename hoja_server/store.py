@@ -2260,15 +2260,23 @@ class Store:
                 stmt = stmt.limit(limit)
             return [self.ser_comment(r) for r in _conn_rows(conn, stmt)]
 
-    def comments_for_update(self, org_id: str, update_id: str, limit: int | None = None) -> list[dict]:
-        """Pulse: the comments on one project update, oldest first (same order as issues)."""
+    def comments_for_update(self, org_id: str, update_id: str, limit: int | None = None,
+                            newest_first: bool = False) -> list[dict]:
+        """Pulse: the comments on one project update, listed oldest first.
+
+        ``newest_first`` picks the most recent ``limit`` rows and reverses them, so a
+        busy update reports its newest replies in the feed badge instead of its first
+        twenty and nothing after that.
+        """
         with self.engine.connect() as conn:
+            order = comment.c.created_at.desc() if newest_first else comment.c.created_at
             stmt = select(comment).where(and_(
                 comment.c.organization_id == org_id, comment.c.project_update_id == update_id,
-                comment.c.archived_at.is_(None))).order_by(comment.c.created_at)
+                comment.c.archived_at.is_(None))).order_by(order)
             if limit:
                 stmt = stmt.limit(limit)
-            return [self.ser_comment(r) for r in _conn_rows(conn, stmt)]
+            rows = [self.ser_comment(r) for r in _conn_rows(conn, stmt)]
+            return list(reversed(rows)) if newest_first else rows
 
     def issue_attachments_for(self, org_id: str, issue_id: str, limit: int | None = None) -> list[dict]:
         with self.engine.connect() as conn:

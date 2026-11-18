@@ -94,7 +94,14 @@
      padding, the update meta line is 12px/16.8px, the avatar is 24px, and the page
      heading is 13px/500. No horizontal overflow at any of the 7 viewports.
      --ds-feed-title-size is the existing PulsePage h2 size (existing_code), not measured. */
-  --ds-feed-width:776px;
+  /* The feed's width is derived, not chosen: a reading measure in ch (so it scales with
+     the reader's font size instead of pinning a pixel count) plus a gutter that grows
+     with the viewport. The column's content box IS the measure, so rules, margins and
+     text share one right edge at every size. At 3440px wide the measure stops at 72ch
+     rather than turning lines into a mail-merge paragraph; the column simply centres. */
+  --ds-feed-measure:clamp(48ch,44vw,72ch);
+  --ds-feed-gutter:clamp(1rem,2.2vw,2.625rem);
+  --ds-feed-width:calc(var(--ds-feed-measure) + 2 * var(--ds-feed-gutter));
   --ds-feed-tab-height:24px;
   --ds-feed-tab-radius:9999px;
   --ds-feed-tab-padding:0 8px;

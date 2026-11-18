@@ -6226,11 +6226,13 @@ function PulsePage({
     Record<string, PulseComment[]>
   >({});
   const [commentStatus, setCommentStatus] = useState<
-    Record<string, { pending?: boolean; error?: string }>
+    Record<string, { pending?: boolean; error?: string; posted?: boolean }>
   >({});
+  const inFlight = useRef(new Set<string>());
   const sendComment = async (post: PulsePost) => {
     const body = (commentBodies[post.id] || "").trim();
-    if (!body) return;
+    if (!body || inFlight.current.has(post.id)) return;
+    inFlight.current.add(post.id);
     setCommentStatus((s) => ({ ...s, [post.id]: { pending: true } }));
     try {
       const d = await gql(
@@ -6244,7 +6246,7 @@ function PulsePage({
         [post.id]: [...(s[post.id] || []), d.commentCreate.comment],
       }));
       setCommentBodies((s) => ({ ...s, [post.id]: "" }));
-      setCommentStatus((s) => ({ ...s, [post.id]: {} }));
+      setCommentStatus((s) => ({ ...s, [post.id]: { posted: true } }));
     } catch (e) {
       setCommentStatus((s) => ({
         ...s,
@@ -6252,6 +6254,8 @@ function PulsePage({
           error: e instanceof Error ? e.message : "Could not post the reply",
         },
       }));
+    } finally {
+      inFlight.current.delete(post.id);
     }
   };
   const tab = selectedTab;
@@ -6301,7 +6305,7 @@ function PulsePage({
           box. Centring the chrome and the posts separately put them 5px apart,
           because the posts' scroller is narrower by its own scrollbar. */}
       <div
-        className="flex flex-1 min-h-0 flex-col w-[min(100%,var(--ds-feed-width))] mt-0 mr-auto mb-0 ml-auto pt-0 pr-10.5 pb-0 pl-10.5 shell-phone:pr-4 shell-phone:pl-4"
+        className="flex flex-1 min-h-0 flex-col w-[min(100%,var(--ds-feed-width))] mt-0 mr-auto mb-0 ml-auto pt-0 pr-(--ds-feed-gutter) pb-0 pl-(--ds-feed-gutter)"
         data-pulse-column=""
       >
       <header
@@ -6360,11 +6364,11 @@ function PulsePage({
         >
           <Plus size={15} aria-hidden="true" />
         </button>
-        <span id="pulse-views-unavailable" className="sr-only">
-          Custom Pulse views are not available yet; For me, Popular and Recent are
-          the views this server supports.
-        </span>
       </TabStrip>
+      <span id="pulse-views-unavailable" className="sr-only">
+        Custom Pulse views are not available yet; For me, Popular and Recent are the
+        views this server supports.
+      </span>
       <ScrollArea className="min-h-0" variant="list">
         <div
           className="mt-5.5 mr-0 mb-0 ml-0 pt-0 pr-0 pb-15 pl-0 shell-phone:mt-5.5 shell-phone:pt-0 shell-phone:pb-10"
@@ -6380,9 +6384,16 @@ function PulsePage({
             </p>
           )}
           {posts.map((post, index) => {
+            // A refetch moves a locally-appended reply into post.comments.nodes while it
+            // is still in commentExtra; keyed by id, the later copy wins and nothing is
+            // rendered twice.
             const replies = [
-              ...(post.comments?.nodes || []),
-              ...(commentExtra[post.id] || []),
+              ...new Map(
+                [
+                  ...(post.comments?.nodes || []),
+                  ...(commentExtra[post.id] || []),
+                ].map((c) => [c.id, c] as const),
+              ).values(),
             ];
             const status = commentStatus[post.id] || {};
             return (
@@ -6456,7 +6467,7 @@ function PulsePage({
                   </div>
                 </header>
                 <div
-                  className="mt-4.5 mr-0 mb-7 ml-0 wrap-break-word leading-[1.6] max-w-[56ch]"
+                  className="mt-4.5 mr-0 mb-7 ml-0 wrap-break-word leading-[1.6]"
                   data-pulse-post-body=""
                 >
                   <Markdown text={post.body} density="block" />
@@ -6490,7 +6501,11 @@ function PulsePage({
                     className="flex items-center gap-1.5 pt-1.25 pr-2.25 pb-1.25 pl-2.25 border border-line bg-panel text-muted hover:bg-subtle aria-expanded:bg-subtle aria-expanded:text-foreground rounded-(--ds-feed-tab-radius) focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
                     type="button"
                     aria-expanded={openComments === post.id}
-                    aria-controls={`pulse-comments-${post.id}`}
+                    aria-controls={
+                      openComments === post.id
+                        ? `pulse-comments-${post.id}`
+                        : undefined
+                    }
                     aria-label={`${openComments === post.id ? "Hide" : "Show"} ${replies.length} ${
                       replies.length === 1 ? "reply" : "replies"
                     } to ${post.project.name}`}
@@ -6531,9 +6546,9 @@ function PulsePage({
                                   </time>
                                 )}
                               </p>
-                              <p className="mt-0 mr-0 mb-0 ml-0 whitespace-pre-wrap wrap-break-word">
-                                {reply.body}
-                              </p>
+                              <div className="mt-0 mr-0 mb-0 ml-0 wrap-break-word">
+                                <Markdown text={reply.body} />
+                              </div>
                             </div>
                           </li>
                         ))}
@@ -6548,7 +6563,6 @@ function PulsePage({
                       className="mt-0 border border-line bg-panel focus-within:border-accent"
                       value={commentBodies[post.id] || ""}
                       placeholder={`Reply to ${post.project.name}…`}
-                      disabled={Boolean(status.pending)}
                       sendIcon={<Send size={15} aria-hidden="true" />}
                       sendLabel="Post reply"
                       onChange={(v) =>
@@ -6557,6 +6571,14 @@ function PulsePage({
                       onSend={() => void sendComment(post)}
                       data-pulse-comment-composer=""
                     />
+                    <span className="sr-only" role="status">
+                      {status.posted ? "Reply posted" : ""}
+                    </span>
+                    {status.pending && (
+                      <p className="mt-0 mr-0 mb-0 ml-0 text-[12px] text-muted">
+                        Posting…
+                      </p>
+                    )}
                     {status.error && (
                       <p
                         className="mt-0 mr-0 mb-0 ml-0 text-[12px] text-[var(--health-risk)]"
