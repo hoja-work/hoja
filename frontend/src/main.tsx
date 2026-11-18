@@ -6274,8 +6274,15 @@ function PulsePage({
       data-pulse-page=""
       aria-label="Pulse"
     >
+      {/* One column for the whole page: the title, the tabs and the posts share this
+          box. Centring the chrome and the posts separately put them 5px apart,
+          because the posts' scroller is narrower by its own scrollbar. */}
+      <div
+        className="flex flex-1 min-h-0 flex-col w-[min(100%,var(--ds-feed-width))] mt-0 mr-auto mb-0 ml-auto pt-0 pr-10.5 pb-0 pl-10.5 shell-phone:pr-4 shell-phone:pl-4"
+        data-pulse-column=""
+      >
       <header
-        className="border-b border-line flex flex-none items-center justify-between h-(--ds-tabstrip-height) w-[min(100%,var(--ds-feed-width))] mt-0 mr-auto mb-0 ml-auto pr-10.5 pl-10.5 shell-phone:pr-4 shell-phone:pl-4"
+        className="border-b border-line flex flex-none items-center justify-between h-(--ds-tabstrip-height)"
         data-pulse-heading=""
       >
         <h1 className="mt-0 mr-0 mb-0 ml-0 text-(length:--hoja-title-size) font-(--hoja-title-weight) tracking-normal leading-[normal] ">
@@ -6293,7 +6300,7 @@ function PulsePage({
         </button>
       </header>
       <TabStrip
-        className="flex-none h-(--ds-tabstrip-height) gap-(--ds-tabstrip-gap) w-[min(100%,var(--ds-feed-width))] mt-0 mr-auto mb-0 ml-auto pr-10.5 pl-10.5 shell-phone:pr-4 shell-phone:pl-4"
+        className="flex-none h-(--ds-tabstrip-height) gap-(--ds-tabstrip-gap)"
         data-pulse-tabs=""
         role="tablist"
         label="Pulse views"
@@ -6327,7 +6334,7 @@ function PulsePage({
       </TabStrip>
       <ScrollArea className="min-h-0" variant="list">
         <div
-          className="mt-5.5 mr-auto mb-0 ml-auto pt-0 pr-10.5 pb-15 pl-10.5 shell-phone:mt-5.5 shell-phone:pt-0 shell-phone:pr-4 shell-phone:pb-10 shell-phone:pl-4 w-[min(100%,var(--ds-feed-width))]"
+          className="mt-5.5 mr-0 mb-0 ml-0 pt-0 pr-0 pb-15 pl-0 shell-phone:mt-5.5 shell-phone:pt-0 shell-phone:pb-10"
           data-pulse-content=""
         >
           {tab !== "Recent" && (
@@ -6582,6 +6589,7 @@ function PulsePage({
           )}
         </div>
       </ScrollArea>
+      </div>
     </section>
   );
 }
