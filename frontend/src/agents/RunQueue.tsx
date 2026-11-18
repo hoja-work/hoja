@@ -75,17 +75,29 @@ export function RunQueue({
   const [sessions, setSessions] = useState<AgentSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [moreError, setMoreError] = useState("");
   const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [paging, setPaging] = useState(false);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<SessionStatus[]>([]);
   const [collapsed, setCollapsed] = useState<string[]>([]);
+  const [reloadKey, setReloadKey] = useState(0);
+  /* The row's date and assignee columns are off. A queue row answers "where is this run now", which
+   * its group header and status chip already say; the creation date is the issue's, not the run's,
+   * and on a phone it was the tail that pushed the agent and verdict chips past the shell's edge.
+   * The runners list turns the same columns off for the same reason. `assignee` is off because a
+   * session row has no assignee, and the column would render only its "—" placeholder. */
   const display: LinDisplay = useMemo(
     () => ({
       ...defaultDisplay,
       grouping: "none",
-      props: { ...defaultDisplay.props, updated: false },
+      props: {
+        ...defaultDisplay.props,
+        created: false,
+        updated: false,
+        assignee: false,
+      },
     }),
     [],
   );
@@ -111,11 +123,19 @@ export function RunQueue({
     return () => {
       live = false;
     };
-  }, [agentKey]);
+  }, [agentKey, reloadKey]);
+
+  /* The queue is admin-gated, and a refusal used to be a one-line red paragraph with no way back —
+   * a dead end on the page an operator most needs. It is now the same three-state split the audit
+   * log and the agents list use: a refusal names the reason and offers no retry it cannot honour,
+   * any other failure offers one. */
+  const refused = error !== "";
+  const forbidden = error !== "" && /admin|forbidden|permission/i.test(error);
 
   const loadMore = useCallback(async () => {
     if (!cursor || paging) return;
     setPaging(true);
+    setMoreError("");
     try {
       const page = await getAgentsAdapter().listSessions({
         agentId: agentKey,
@@ -126,7 +146,9 @@ export function RunQueue({
       setHasMore(page.hasNextPage);
       setError("");
     } catch (e) {
-      setError((e as Error).message);
+      /* A failed page is not a failed screen: the runs already loaded stay, and the footer says
+       * which request failed so the next press of the same button is an informed one. */
+      setMoreError((e as Error).message);
     } finally {
       setPaging(false);
     }
@@ -237,14 +259,30 @@ export function RunQueue({
           Loading the queue…
         </p>
       )}
-      {error && (
-        <p
-          className="border border-danger/40 mt-4 mr-6 mb-4 ml-6 pt-3 pr-4 pb-3 pl-4 border-solid border-[color-mix(in_srgb,var(--danger)_40%,var(--line))] rounded-lg text-danger text-[13px] bg-[color-mix(in_srgb,var(--danger)_6%,var(--panel))]"
+      {!loading && refused && (
+        <div
+          className="text-center pt-15 pr-5 pb-15 pl-5 text-muted"
+          data-state="error"
+          data-refusal={forbidden ? "forbidden" : "failed"}
           data-style-hooks="lin-error"
           role="alert"
         >
-          {error}
-        </p>
+          <h2 className="text-foreground text-base mt-3 mr-0 mb-1.5 ml-0">
+            {forbidden
+              ? "Only workspace admins can read every agent’s runs"
+              : "The run queue could not be loaded"}
+          </h2>
+          <p>{error}</p>
+          {!forbidden && (
+            <button
+              type="button"
+              className="inline-flex items-center gap-2 rounded-[7px] border border-line bg-panel px-3.5 py-2 text-[13px] font-[550] text-foreground border-solid hover:bg-subtle shell-phone:min-h-11 pointer-coarse:min-h-11"
+              onClick={() => setReloadKey((k) => k + 1)}
+            >
+              Retry
+            </button>
+          )}
+        </div>
       )}
       {!loading && !error && (
         <div className="pt-1.5 pr-3 pb-10 pl-3" data-style-hooks="lin-list">
@@ -413,6 +451,11 @@ export function RunQueue({
               >
                 {paging ? "Loading…" : "Load more runs"}
               </button>
+            )}
+            {moreError && (
+              <span className="text-danger" role="alert">
+                {moreError}
+              </span>
             )}
           </div>
         </div>

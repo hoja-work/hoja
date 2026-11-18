@@ -468,6 +468,7 @@ export function RunnersPane({
   const [runners, setRunners] = useState<Runner[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [moreError, setMoreError] = useState("");
   const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [paging, setPaging] = useState(false);
@@ -478,6 +479,7 @@ export function RunnersPane({
   const [displayOpen, setDisplayOpen] = useState(false);
   const [connectOn, setConnectOn] = useState(true);
   const [enrollOpen, setEnrollOpen] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let live = true;
@@ -503,11 +505,19 @@ export function RunnersPane({
     return () => {
       live = false;
     };
-  }, []);
+  }, [reloadKey]);
+
+  /* A refused read is the state of the screen, not a red banner above an empty list — the same
+   * three-state split AgentsPane and AuditPane use. A member cannot retry a permission refusal into
+   * success, so that state names the reason and offers no button; every other failure does offer
+   * one, because a dropped request can be repeated. */
+  const refused = error !== "";
+  const forbidden = error !== "" && /admin|forbidden|permission/i.test(error);
 
   const loadMore = useCallback(async () => {
     if (!cursor || paging) return;
     setPaging(true);
+    setMoreError("");
     try {
       const page = await getAgentsAdapter().listRunners({ after: cursor });
       setRunners((current) => [...current, ...page.runners]);
@@ -515,7 +525,7 @@ export function RunnersPane({
       setHasMore(page.hasNextPage);
       setError("");
     } catch (e) {
-      setError((e as Error).message);
+      setMoreError((e as Error).message);
     } finally {
       setPaging(false);
     }
@@ -616,15 +626,23 @@ export function RunnersPane({
               </button>
             );
           })}
-          <button
-            type="button"
-            className="inline-flex items-center gap-1.5 rounded-[7px] border border-line bg-panel px-3 py-1.5 text-[13px] hover:bg-subtle whitespace-nowrap"
-            data-action="enroll-runner"
-            aria-expanded={enrollOpen}
-            onClick={() => setEnrollOpen((v) => !v)}
-          >
-            <Plus size={14} aria-hidden="true" /> Enroll runner
-          </button>
+          {/* A refused read does not offer a credential-minting action: the button could only
+              produce a 403. On a phone the same control is one icon, so the strip still fits the
+              shell instead of ending in a cut-off word. */}
+          {!forbidden && (
+            <button
+              type="button"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-[7px] border border-line bg-panel px-3 py-1.5 text-[13px] hover:bg-subtle whitespace-nowrap"
+              data-action="enroll-runner"
+              aria-label="Enroll runner"
+              title="Enroll runner"
+              aria-expanded={enrollOpen}
+              onClick={() => setEnrollOpen((v) => !v)}
+            >
+              <Plus size={14} aria-hidden="true" />
+              <span className="shell-phone:hidden">Enroll runner</span>
+            </button>
+          )}
           <span className="relative">
             <IconBtn
               label="Display options"
@@ -693,13 +711,30 @@ export function RunnersPane({
           Loading runners…
         </p>
       )}
-      {error && (
-        <p
-          className="border border-danger/40 mt-4 mr-6 mb-4 ml-6 pt-3 pr-4 pb-3 pl-4 border-solid border-[color-mix(in_srgb,var(--danger)_40%,var(--line))] rounded-lg text-danger text-[13px] bg-[color-mix(in_srgb,var(--danger)_6%,var(--panel))]"
+      {!loading && refused && (
+        <div
+          className="text-center pt-15 pr-5 pb-15 pl-5 text-muted"
+          data-state="error"
+          data-refusal={forbidden ? "forbidden" : "failed"}
+          data-style-hooks="lin-error"
           role="alert"
         >
-          {error}
-        </p>
+          <h2 className="text-foreground text-base mt-3 mr-0 mb-1.5 ml-0">
+            {forbidden
+              ? "Only workspace admins can see this workspace’s runners"
+              : "Runners could not be loaded"}
+          </h2>
+          <p>{error}</p>
+          {!forbidden && (
+            <button
+              type="button"
+              className="inline-flex items-center gap-2 rounded-[7px] border border-line bg-panel px-3.5 py-2 text-[13px] font-[550] text-foreground border-solid hover:bg-subtle shell-phone:min-h-11 pointer-coarse:min-h-11"
+              onClick={() => setReloadKey((k) => k + 1)}
+            >
+              Retry
+            </button>
+          )}
+        </div>
       )}
       {!loading && !error && (
         <div className="pt-1.5 pr-3 pb-10 pl-3" data-style-hooks="lin-list">
@@ -813,6 +848,11 @@ export function RunnersPane({
                 >
                   {paging ? "Loading…" : "Load more runners"}
                 </button>
+              )}
+              {moreError && (
+                <span className="text-danger" role="alert">
+                  {moreError}
+                </span>
               )}
             </div>
           )}

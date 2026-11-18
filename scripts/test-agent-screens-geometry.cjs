@@ -979,6 +979,27 @@ const focusStop = page => page.evaluate(() => {
   ok(Boolean(queueRefusal), 'run queue: a non-admin gets a stated refusal, not an empty queue');
   ok(/admin/i.test(await auditMember.evaluate(() => document.querySelector('[data-surface="run-queue"]')?.innerText || '')),
     'run queue: the refusal says who can read every agent\'s runs');
+  /* The refusal is a state with its own name (`data-refusal="forbidden"`), not a red banner over an
+   * empty list, and it offers no retry that a permission cannot change. */
+  ok(Boolean(await auditMember.$('[data-surface="run-queue"] [data-refusal="forbidden"]')),
+    'run queue: the refusal is named as a permission refusal');
+  ok(await auditMember.evaluate(() => !document.querySelector('[data-surface="run-queue"] [data-state="empty"]')),
+    'run queue: the refusal is not the empty-queue state');
+  ok(await auditMember.evaluate(() => !document.querySelector('[data-surface="run-queue"] [data-style-hooks~="lin-row"]')),
+    'run queue: a refused read draws no rows');
+  ok(await auditMember.evaluate(() => !/\\bRetry\\b/.test(document.querySelector('[data-surface="run-queue"]')?.innerText || '')),
+    'run queue: a permission refusal does not offer a retry it cannot honour');
+  /* The runners list is the same admin-gated read, and it used to answer with a red banner over a
+   * blank screen plus an Enroll button that could only produce a 403. */
+  await auditMember.goto(`${base}/workspace/agents/runners`, { waitUntil: 'networkidle' });
+  const runnersRefusal = await auditMember.waitForSelector('[data-surface="runners-list"] [data-refusal="forbidden"]', { timeout: 15000 }).catch(() => null);
+  ok(Boolean(runnersRefusal), 'runners list: a non-admin gets a stated refusal, not an empty list');
+  ok(/admin/i.test(await auditMember.evaluate(() => document.querySelector('[data-surface="runners-list"]')?.innerText || '')),
+    'runners list: the refusal says who can see the machines');
+  ok(await auditMember.evaluate(() => !document.querySelector('[data-surface="runners-list"] [data-action="enroll-runner"]')),
+    'runners list: a refused read does not offer a credential-minting action');
+  ok(await auditMember.evaluate(() => !document.querySelector('[data-surface="runners-list"] [data-style-hooks~="lin-row"]')),
+    'runners list: a refused read draws no rows');
   await auditCtx.close();
 
   /* ---- 8b. WP07's lease and WP10's verifier, over the real routes, and what the screens show ----

@@ -91,8 +91,14 @@ export function AgentsListShell({
           ))}
         </div>
       </div>
+      {/* A list toolbar is one strip of controls, and the agent screens carry more of them than the
+          issue list does (status chips, label chips, an action). At phone width the strip scrolls
+          instead of painting the last control past the shell's clipped edge; the hidden scrollbar
+          keeps the strip the same height as the issue list's, so the screens still line up row for
+          row. The utilities sit on the element rather than in a stylesheet: an unlayered rule would
+          outrank `overflow-visible` from a caller and could not be undone. */}
       <div
-        className="flex flex-none items-center border-b border-line gap-1.5 pt-2 pr-5 pb-2 pl-5 border-b-line"
+        className="flex flex-none items-center border-b border-line gap-1.5 pt-2 pr-5 pb-2 pl-5 border-b-line shell-phone:overflow-x-auto shell-phone:overflow-y-hidden shell-phone:[scrollbar-width:none] shell-phone:[&::-webkit-scrollbar]:hidden"
         data-style-hooks="lin-toolbar"
       >
         {toolbar}

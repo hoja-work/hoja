@@ -504,7 +504,9 @@ export function AgentsPane({
       const order = new Map<string, number>(
         AGENT_STATUSES.map((s, i) => [s.id as string, i]),
       );
-      out.sort((a, b) => (order.get(a.key) || 999) - (order.get(b.key) || 999));
+      /* `??`, not `||`: Active's order is 0, and `0 || 999` sorted the live agents into the fallback
+       * bucket, which put Archived above Active on every workspace that had one. */
+      out.sort((a, b) => (order.get(a.key) ?? 999) - (order.get(b.key) ?? 999));
     } else out.sort((a, b) => a.name.localeCompare(b.name));
     return out;
   }, [visible, display.grouping]);
@@ -556,13 +558,17 @@ export function AgentsPane({
           {/* The issue list's toolbar vocabulary is icon buttons at 28 px, which is what keeps this
             strip the same height as the issue list's. The primary, labelled button lives in the
             empty state, where there is room for it. */}
-          <IconBtn
-            label="New agent"
-            title="New agent"
-            onClick={() => setCreating(true)}
-          >
-            <Plus size={15} />
-          </IconBtn>
+          {/* A member is refused this write, so the control is not offered: a button that can only
+              produce a 403 is a dead end dressed as an action. */}
+          {!forbidden && (
+            <IconBtn
+              label="New agent"
+              title="New agent"
+              onClick={() => setCreating(true)}
+            >
+              <Plus size={15} />
+            </IconBtn>
+          )}
           <span className="relative">
             <IconBtn
               label="Add filter"
@@ -675,6 +681,7 @@ export function AgentsPane({
           className="text-center pt-15 pr-5 pb-15 pl-5 text-muted"
           role="alert"
           data-state="error"
+          data-refusal={forbidden ? "forbidden" : "failed"}
         >
           <h2 className="text-foreground text-[15px] mt-3 mr-0 mb-1.5 ml-0">
             {forbidden
@@ -682,13 +689,16 @@ export function AgentsPane({
               : "Agents could not be loaded"}
           </h2>
           <p>{error}</p>
-          <button
-            type="button"
-            className="inline-flex items-center border border-line hover:bg-subtle disabled:cursor-default disabled:opacity-50 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 gap-2 border-solid bg-panel text-foreground rounded-[7px] pt-2 pr-3.5 pb-2 pl-3.5 text-[13px] font-[550] shell-phone:min-w-11! shell-phone:min-h-11!"
-            onClick={() => setReloadKey((k) => k + 1)}
-          >
-            Retry
-          </button>
+          {/* A permission refusal does not become a success on retry; a dropped request does. */}
+          {!forbidden && (
+            <button
+              type="button"
+              className="inline-flex items-center border border-line hover:bg-subtle disabled:cursor-default disabled:opacity-50 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 gap-2 border-solid bg-panel text-foreground rounded-[7px] pt-2 pr-3.5 pb-2 pl-3.5 text-[13px] font-[550] shell-phone:min-w-11! shell-phone:min-h-11!"
+              onClick={() => setReloadKey((k) => k + 1)}
+            >
+              Retry
+            </button>
+          )}
         </div>
       )}
       {nothingYet && (

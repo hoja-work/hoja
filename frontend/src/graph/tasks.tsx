@@ -1622,14 +1622,16 @@ export const IssueRow = memo(function IssueRow({
           down the left edge; priority and identifier follow. */}
       {p.status && <StatusAgeIcon issue={issue} />}
       {leading ?? (p.priority && <PriorityIcon priority={issue.priority} />)}
+      {/* A long identifier — a runner's column is a full UUID — may shrink and ellipsize on a phone
+          rather than push the title and chips off the row. The cap is 14ch, wider than any issue
+          identifier this app issues (`HOJA-667-A-34` is 14), so the issue list renders identically;
+          the geometry suite asserts the identifier column is the same on both. */}
       {p.id && (
         <span
           className={styleClasses(
-            "in-data-[style-hooks~='lin-row']:font-semibold in-data-[style-hooks~='lin-row']:whitespace-nowrap in-data-[style-hooks~='lin-row']:text-foreground [[data-style-hooks~='lin-bcard']_[data-style-hooks~='top']_&]:font-[450] [[data-style-hooks~='lin-bcard']_[data-style-hooks~='top']_&]:text-muted",
+            "in-data-[style-hooks~='lin-row']:font-semibold in-data-[style-hooks~='lin-row']:whitespace-nowrap in-data-[style-hooks~='lin-row']:text-foreground [[data-style-hooks~='lin-bcard']_[data-style-hooks~='top']_&]:font-[450] [[data-style-hooks~='lin-bcard']_[data-style-hooks~='top']_&]:text-muted shell-phone:flex-none shell-phone:max-w-[14ch] shell-phone:overflow-hidden shell-phone:text-ellipsis",
           )}
-          data-style-hooks={styleHooks(
-            "ident in-data-[style-hooks~='lin-row']:font-semibold in-data-[style-hooks~='lin-row']:whitespace-nowrap in-data-[style-hooks~='lin-row']:text-foreground [[data-style-hooks~='lin-bcard']_[data-style-hooks~='top']_&]:font-[450] [[data-style-hooks~='lin-bcard']_[data-style-hooks~='top']_&]:text-muted",
-          )}
+          data-style-hooks={styleHooks("ident")}
         >
           {issue.identifier}
         </span>
