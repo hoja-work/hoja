@@ -1,3 +1,4 @@
+import { motion, useReducedMotion } from "framer-motion";
 import "@fontsource-variable/inter/wght.css";
 import "./tailwind.css";
 import React, {
@@ -9,6 +10,7 @@ import React, {
   useState,
 } from "react";
 import { createRoot } from "react-dom/client";
+import { Dialog as StackDialog } from "radix-ui";
 import { ReactGrabDev } from "./dev/ReactGrabDev";
 import {
   Popover as UIPopover,
@@ -124,6 +126,7 @@ import {
   ListRow,
   PropertyRow,
   EmptyState,
+  CircularOptionButton,
 } from "./design";
 import "./graph/styles.css";
 import "./settings.css";
@@ -656,7 +659,8 @@ function StatusPicker({
                     '[role="option"][aria-selected="true"]',
                   );
                   (
-                    current || list.querySelector<HTMLElement>('[role="option"]')
+                    current ||
+                    list.querySelector<HTMLElement>('[role="option"]')
                   )?.focus();
                 }}
               >
@@ -1305,9 +1309,21 @@ function ReviewsShell({
             <h1 className="mt-0 mr-0 mb-0 ml-0 text-[13px] font-medium leading-5 tracking-normal review-drawer:ml-0.5">
               Reviews
             </h1>
-            <span className="ml-auto flex gap-3 text-muted text-[13px]">
-              <i>⇅</i>
-              <i>⚙</i>
+            <span className="ml-auto flex gap-1.5">
+              <CircularOptionButton
+                aria-label="Sort reviews"
+                title="Sort reviews"
+              >
+                <span aria-hidden="true" className="text-base leading-none">
+                  ⇅
+                </span>
+              </CircularOptionButton>
+              <CircularOptionButton
+                aria-label="Review settings"
+                title="Review settings"
+              >
+                <Settings size={16} aria-hidden="true" />
+              </CircularOptionButton>
             </span>
           </div>
           <TabStrip
@@ -4501,7 +4517,7 @@ function App() {
                                   data-team-nav-links=""
                                 >
                                   <button
-                                    className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-subtle hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                    className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
                                     type="button"
                                     onClick={() => {
                                       navigate(
@@ -4520,7 +4536,7 @@ function App() {
                                     Home
                                   </button>
                                   <button
-                                    className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-subtle hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                    className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
                                     type="button"
                                     onClick={() => {
                                       navigate(
@@ -4538,7 +4554,7 @@ function App() {
                                     Tasks
                                   </button>
                                   <button
-                                    className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-subtle hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                    className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
                                     type="button"
                                     onClick={() => {
                                       navigate(
@@ -4560,7 +4576,7 @@ function App() {
                                     data-team-cycle-links=""
                                   >
                                     <button
-                                      className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-1.75 pr-1.75 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-subtle hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                      className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-1.75 pr-1.75 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
                                       type="button"
                                       aria-current={
                                         view === "Team cycle" &&
@@ -4584,7 +4600,7 @@ function App() {
                                       Current
                                     </button>
                                     <button
-                                      className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-1.75 pr-1.75 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-subtle hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                      className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-1.75 pr-1.75 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
                                       type="button"
                                       aria-current={
                                         view === "Team cycle" &&
@@ -4609,7 +4625,7 @@ function App() {
                                     </button>
                                   </div>
                                   <button
-                                    className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-subtle hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                    className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
                                     type="button"
                                     onClick={() => {
                                       navigate(
@@ -4627,7 +4643,7 @@ function App() {
                                     Projects
                                   </button>
                                   <button
-                                    className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-subtle hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                    className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
                                     type="button"
                                     onClick={() => {
                                       navigate(
@@ -4657,7 +4673,7 @@ function App() {
                         ].map(([label, Icon]) => (
                           <button
                             type="button"
-                            className="flex w-full items-center gap-2 overflow-hidden rounded-lg bg-transparent px-2.5 py-1 hover:bg-neutral-200  text-left text-[13px] font-normal text-muted whitespace-nowrap text-ellipsis hover:bg-subtle hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 pointer-coarse:min-h-11 shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:px-0 hover:bg-[#e5e5e5] hover:text-muted aria-[current=page]:bg-subtle aria-[current=page]:font-medium"
+                            className="flex w-full  items-center gap-2 overflow-hidden rounded-lg bg-transparent px-2.5 py-1 hover:bg-neutral-200  text-left text-[13px] font-normal text-muted whitespace-nowrap text-ellipsis aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 pointer-coarse:min-h-11 shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:px-0  aria-[current=page]:bg-subtle aria-[current=page]:font-medium"
                             data-nav-item=""
                             key={label}
                             onClick={() => {
@@ -7844,7 +7860,7 @@ function KanbanPriority({
             aria-controls={`kanban-priority-${issue.id}`}
             disabled={busy}
           >
-            <span className="grid shrink-0">
+            <span className="grid size-4 shrink-0 place-items-center">
               <span
                 className="inline-block w-2 h-2 shrink-0 rounded-[50%] bg-room-muted data-[p=1]:bg-red-500 data-[p=2]:bg-orange-500 data-[p=3]:bg-yellow-500 data-[p=4]:bg-blue-400 data-[p=1]:bg-subtle data-[p=2]:bg-subtle data-[p=3]:bg-subtle data-[p=4]:bg-subtle"
                 data-p={current}
@@ -7873,7 +7889,7 @@ function KanbanPriority({
               className="flex min-h-9 w-full items-center gap-2 rounded-lg px-2 text-left transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
               onClick={() => pick(priority)}
             >
-              <span className="grid shrink-0">
+              <span className="grid size-4 shrink-0 place-items-center">
                 <span
                   className="inline-block w-2 h-2 shrink-0 rounded-[50%] bg-room-muted data-[p=1]:bg-red-500 data-[p=2]:bg-orange-500 data-[p=3]:bg-yellow-500 data-[p=4]:bg-blue-400 data-[p=1]:bg-subtle data-[p=2]:bg-subtle data-[p=3]:bg-subtle data-[p=4]:bg-subtle"
                   data-p={priority}
@@ -7904,15 +7920,16 @@ function KanbanCard({
   depth = 0,
   parentIdent,
   rollup,
+  subtasks = [],
 }: {
   issue: Issue;
   teams: Team[];
   dragged: boolean;
-  onDragStart: (e: React.DragEvent) => void;
+  onDragStart: (e: React.DragEvent, task?: Issue) => void;
   onDragEnd: () => void;
   onSelect: (issue: Issue) => void;
   onUpdate: (issueId: string, input: Record<string, unknown>) => Promise<void>;
-  onMoveNext: () => void;
+  onMoveNext: (task?: Issue) => void;
   canMoveNext: boolean;
   /* Board hierarchy (HOJA-33): depth 0 for a root, 1+ for a sub-task whose parent is in this
    * column; parentIdent is set only when the parent is elsewhere, so the card is not mistaken
@@ -7920,7 +7937,55 @@ function KanbanCard({
   depth?: number;
   parentIdent?: string;
   rollup?: { done: number; total: number };
+  subtasks?: Issue[];
 }) {
+  const [subtasksOpen, setSubtasksOpen] = useState(false);
+  const [stackMounted, setStackMounted] = useState(false);
+  const reduceMotion = useReducedMotion();
+  const stackRef = useRef<HTMLDivElement>(null);
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const [stackPosition, setStackPosition] = useState({ top: 16, left: 16, width: 280 });
+  // An expanded parent opens its own task page; collapsed, it expands the stack.
+  const openOrSelect = () => {
+    if (subtasks.length && !stackMounted) toggleStack();
+    else onSelect(issue);
+  };
+  const closeStack = () => {
+    // Return to the current anchor, even if the underlying board moved.
+    const rect = anchorRef.current?.getBoundingClientRect();
+    if (rect) setStackPosition({ top: rect.top, left: rect.left, width: Math.min(rect.width, window.innerWidth - 32) });
+    setSubtasksOpen(false);
+  };
+  const toggleStack = () => {
+    if (stackMounted) { closeStack(); return; }
+    const rect = anchorRef.current?.getBoundingClientRect();
+    if (rect) setStackPosition({ top: rect.top, left: rect.left, width: Math.min(rect.width, window.innerWidth - 32) });
+    setStackMounted(true);
+    setSubtasksOpen(true);
+  };
+  const [cardHeights, setCardHeights] = useState<number[]>([]);
+  useLayoutEffect(() => {
+    const root = stackRef.current;
+    if (!root || !subtasks.length) return;
+    const cards = Array.from(root.children).filter((el) => el.hasAttribute("data-stack-layer"));
+    const measure = () => setCardHeights((previous) => {
+      const next = cards.map((el) => ((el.hasAttribute("data-kanban-card") ? el : el.firstElementChild) as HTMLElement).offsetHeight);
+      return next.length === previous.length && next.every((h, i) => h === previous[i]) ? previous : next;
+    });
+    const observer = new ResizeObserver(measure);
+    cards.forEach((card) => observer.observe(card.hasAttribute("data-kanban-card") ? card : card.firstElementChild!));
+    measure();
+    return () => observer.disconnect();
+  }, [subtasks, stackMounted]);
+  const spring = reduceMotion ? { duration: 0 } : { type: "spring" as const, stiffness: 200, damping: 30 };
+  const parentHeight = cardHeights[0] || 210;
+  const collapsedStackOffset = 5;
+  const startsStatusGroup = (index: number) => index === 0 || (subtasks[index].state?.id || subtasks[index].state?.name) !== (subtasks[index - 1].state?.id || subtasks[index - 1].state?.name);
+  const dividerHeight = 40;
+  const stackHeight = subtasksOpen
+    ? parentHeight + subtasks.reduce((sum, _, index) => sum + (cardHeights[index + 1] || parentHeight) + 8 + (startsStatusGroup(index) ? dividerHeight : 0), 0)
+    : parentHeight + Math.min(3, subtasks.length) * collapsedStackOffset;
+
   const members =
     teams.find((t) => t.id === issue.team?.id)?.members?.nodes || [];
   const due = (issue.dueDate || "").slice(0, 10);
@@ -7939,10 +8004,12 @@ function KanbanCard({
       setBusy(false);
     }
   };
-  return (
-    /* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- drag surface only; the keyboard path (alt+arrow) lives on the inner button */
+  const stack = (
+    <motion.div ref={stackRef} className="relative isolate min-w-0" style={{ perspective: "1000px", overflow: stackMounted ? "visible" : "clip" }} animate={subtasks.length ? { height: stackHeight } : undefined} transition={spring} data-kanban-stack={subtasks.length ? (subtasksOpen ? "open" : "closed") : undefined}>
+    {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- drag surface only; the keyboard path (alt+arrow) lives on the inner button */}
     <div
-      className="border flex flex-col gap-2.25 text-left cursor-grab touch-none rounded-2xl border-line bg-panel p-3 hover:border-line active:cursor-grabbing focus-visible:relative focus-visible:z-1 data-dragging:opacity-45 [&[data-depth]:not([data-depth=0])]:relative [&[data-depth]:not([data-depth=0])::before]:absolute [&[data-depth]:not([data-depth=0])::before]:-left-2 [&[data-depth]:not([data-depth=0])::before]:top-1.5 [&[data-depth]:not([data-depth=0])::before]:bottom-1.5 [&[data-depth]:not([data-depth=0])::before]:w-0.5 [&[data-depth]:not([data-depth=0])::before]:rounded-sm [&[data-depth]:not([data-depth=0])::before]:bg-line focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 pointer-coarse:touch-pan-y pointer-coarse:cursor-auto [&[data-depth]:not([data-depth=0])]:before:content-['']"
+      className="relative z-10 border flex flex-col gap-2.25 text-left cursor-grab touch-none rounded-2xl border-line bg-panel p-3 hover:border-line active:cursor-grabbing focus-visible:relative focus-visible:z-1 data-dragging:opacity-45 [&[data-depth]:not([data-depth=0])]:relative [&[data-depth]:not([data-depth=0])::before]:absolute [&[data-depth]:not([data-depth=0])::before]:-left-2 [&[data-depth]:not([data-depth=0])::before]:top-1.5 [&[data-depth]:not([data-depth=0])::before]:bottom-1.5 [&[data-depth]:not([data-depth=0])::before]:w-0.5 [&[data-depth]:not([data-depth=0])::before]:rounded-sm [&[data-depth]:not([data-depth=0])::before]:bg-line focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 pointer-coarse:touch-pan-y pointer-coarse:cursor-auto [&[data-depth]:not([data-depth=0])]:before:content-['']"
+      data-stack-layer=""
       data-kanban-card=""
       data-issue-id={issue.id}
       data-depth={depth}
@@ -7958,22 +8025,20 @@ function KanbanCard({
         onDragStart(e);
       }}
       onDragEnd={onDragEnd}
+      onClick={(event) => {
+        if (subtasks.length && !(event.target as HTMLElement).closest("button,input,label,select,a,[data-kanban-card-props]")) {
+          openOrSelect();
+        }
+      }}
     >
-      <div className="flex items-start justify-between gap-2">
+      <div className="flex items-center justify-between gap-2">
         <button
           type="button"
-          className="flex flex-col gap-1.5 w-full pt-0 pr-0 pb-0 pl-0 bg-transparent text-inherit text-left min-w-0 flex-1 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-          data-kanban-card-open=""
-          onClick={() => onSelect(issue)}
-          onKeyDown={(e) => {
-            if (e.altKey && e.key === "ArrowRight") {
-              e.preventDefault();
-              onMoveNext();
-            }
-          }}
-          aria-label={`Open ${issue.identifier}: ${issue.title}`}
+          className="flex min-w-0 text-left focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11"
+          onClick={openOrSelect}
+          aria-label={`Open ${issue.identifier}`}
         >
-          <small className="text-muted text-[11px]">
+          <small className="flex min-w-0 items-center gap-1 text-muted text-xs">
             {parentIdent ? (
               <span
                 className="border text-[10px] text-muted border-line rounded-sm pt-0 pr-1 pb-0 pl-1 mr-1.25"
@@ -7981,12 +8046,6 @@ function KanbanCard({
               >{`↳${parentIdent}`}</span>
             ) : null}
             {issue.identifier}
-            {rollup ? (
-              <span
-                className="border ml-1.25 text-[10px] text-muted tabular-nums border-line rounded-[9px] pt-0 pr-1.25 pb-0 pl-1.25"
-                aria-label={`${rollup.done} of ${rollup.total} sub-tasks complete`}
-              >{`${rollup.done}/${rollup.total}`}</span>
-            ) : null}
             {issue.decisionNeeded ? (
               <span
                 className="inline-grid place-items-center w-3.75 h-3.75 ml-1.5 rounded-[50%] text-[10px] font-bold leading-none cursor-default bg-[#fdf3cf] text-[#5b4a0f] align-middle border border-amber-400"
@@ -7999,17 +8058,42 @@ function KanbanCard({
               </span>
             ) : null}
           </small>
-          <strong className="text-[13px] leading-[1.4] font-[550]">
-            {issue.title}
-          </strong>
         </button>
-        <KanbanAssignee
-          issue={issue}
-          members={members}
-          busy={busy}
-          onChange={(assigneeId) => void edit({ assigneeId })}
-        />
+        <div className="flex shrink-0 items-center gap-2">
+          {rollup && rollup.total > 0 && (
+            <span className="flex shrink-0 items-center gap-1.5" title={`${rollup.done} of ${rollup.total} subtasks completed`}>
+              <span role="progressbar" aria-label="Subtask completion" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(rollup.done / rollup.total * 100)} className="h-1.5 w-16 overflow-hidden rounded-full bg-neutral-100">
+                <span className="block h-full rounded-full bg-[#10B981] transition-[width] motion-reduce:transition-none" style={{ width: `${rollup.done / rollup.total * 100}%` }} />
+              </span>
+              <span className="border text-xs bg-neutral-100 text-neutral-500 border border-neutral-200 tabular-nums border-line rounded-full px-1.25" aria-label={`${rollup.done} of ${rollup.total} sub-tasks complete`}>{`${rollup.done}/${rollup.total}`}</span>
+            </span>
+          )}
+          <KanbanAssignee
+            issue={issue}
+            members={members}
+            busy={busy}
+            onChange={(assigneeId) => void edit({ assigneeId })}
+          />
+        </div>
       </div>
+      <button
+        type="button"
+        className="flex w-full flex-col gap-1.5 pt-0 pr-0 pb-0 pl-0 bg-transparent text-inherit text-left min-w-0 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+        data-kanban-card-open=""
+        onClick={openOrSelect}
+        onKeyDown={(e) => {
+          if (e.altKey && e.key === "ArrowRight") {
+            e.preventDefault();
+            onMoveNext();
+          }
+        }}
+        aria-expanded={subtasks.length ? subtasksOpen : undefined}
+        aria-label={subtasks.length ? `${subtasksOpen ? "Collapse" : "Expand"} ${issue.identifier}: ${subtasks.length} subtasks` : `Open ${issue.identifier}: ${issue.title}`}
+      >
+        <strong className="text-sm font-medium">
+          {issue.title}
+        </strong>
+      </button>
       <div
         className="flex flex-col min-w-0 mt-1 text-[12px] text-muted [&>label]:gap-2 [&>div]:gap-2 [&>label]:h-7 [&>div]:h-7 [&>label]:px-2.25 [&>div]:px-2.25 [&>label]:rounded-lg [&>div]:rounded-lg **:data-status-picker:min-w-0 **:data-status-picker:self-center **:data-status-picker-trigger:w-auto **:data-status-picker-trigger:max-w-full **:data-status-picker-trigger:h-auto **:data-status-picker-trigger:p-0 **:data-status-picker-trigger:border-0 **:data-status-picker-trigger:bg-transparent **:data-status-picker-trigger:text-inherit **:data-status-picker-trigger:gap-2 [&>label:hover]:[transition:none] [&>div:hover]:[transition:none] [&>label:focus-within]:[transition:none]"
         data-kanban-card-props=""
@@ -8030,7 +8114,7 @@ function KanbanCard({
           <StatusPicker
             compact
             showLabel
-            iconClassName="size-4"
+            iconClassName="size-4 shrink-0"
             issue={issue}
             teams={teams}
             disabled={busy}
@@ -8052,7 +8136,7 @@ function KanbanCard({
           }
           title={due ? `Due ${due}` : "Set due date"}
         >
-          <CalendarDays aria-hidden="true" className="shrink-0" />
+          <CalendarDays aria-hidden="true" size={16} className="size-4 shrink-0" />
           <span className="truncate">
             {due
               ? new Date(due).toLocaleDateString(undefined, {
@@ -8095,16 +8179,98 @@ function KanbanCard({
         </div>
       </div>
     </div>
+      {subtasks.map((child, index) => {
+        const beforeDivider = parentHeight + 8 + subtasks.slice(0, index).reduce((sum, _, i) => sum + (cardHeights[i + 1] || parentHeight) + 8 + (startsStatusGroup(i) ? dividerHeight : 0), 0);
+        const offset = beforeDivider + (startsStatusGroup(index) ? dividerHeight : 0);
+        return <React.Fragment key={child.id}>
+          {startsStatusGroup(index) && <motion.div className="absolute top-0 flex h-8 items-center" data-subtask-status-divider="" style={{ left: "50%", width: "max(100%, 33.333vw)", x: "-50%", pointerEvents: "none" }} initial={{ opacity: 0 }} animate={{ y: subtasksOpen ? beforeDivider : 0, opacity: subtasksOpen ? 1 : 0 }} transition={spring} aria-hidden={!subtasksOpen}>
+            <span className={`relative isolate inline-flex h-7 w-36 shrink-0 items-center pl-3 pr-8 text-[11px] font-medium ${child.state?.type === "completed" ? "text-[#5151C1]" : child.state?.type === "started" ? "text-yellow-950" : "text-muted"}`}>
+              <svg aria-hidden="true" className={`absolute inset-0 -z-1 h-full w-full ${child.state?.type === "completed" ? "text-[#ECEEFF]" : child.state?.type === "started" ? "text-yellow-300" : "text-neutral-100"}`} viewBox="0 0 144 28">
+                <path d="M5 1 H138 Q143 1 140 5 L120 25 Q118 27 115 27 H5 Q1 27 1 23 V5 Q1 1 5 1 Z" fill="currentColor" stroke={child.state?.type === "completed" ? "#5151C1" : "var(--line)"} strokeWidth="1" strokeLinejoin="round" />
+              </svg>
+              {child.state?.name || "No status"}
+            </span>
+            <span aria-hidden="true" className={`flex-1 border-t-2 border-dashed ${child.state?.type === "completed" ? "border-[#ECEEFF]" : "border-line"}`} />
+          </motion.div>}
+          <motion.div data-stack-layer="" className="absolute inset-x-0 top-0 rounded-2xl" style={{ zIndex: subtasksOpen ? 1 : -index - 1, pointerEvents: subtasksOpen ? "auto" : "none", height: subtasksOpen ? undefined : parentHeight, overflow: subtasksOpen ? "visible" : "hidden", background: subtasksOpen ? "transparent" : "var(--panel)", boxShadow: subtasksOpen ? undefined : "inset 0 0 0 1px var(--line)" }} inert={!subtasksOpen} aria-hidden={!subtasksOpen} initial={subtasksOpen && !reduceMotion ? { y: Math.min(index + 1, 3) * collapsedStackOffset, scaleX: 1 - Math.min(index + 1, 3) * 0.04, opacity: index < 3 ? 1 : 0 } : false} animate={{ y: subtasksOpen ? offset : Math.min(index + 1, 3) * collapsedStackOffset, z: 0, scaleX: subtasksOpen ? 1 : 1 - Math.min(index + 1, 3) * 0.04, opacity: subtasksOpen || index < 3 ? 1 : 0 }} transition={spring}>
+          <div style={{ visibility: subtasksOpen ? "visible" : "hidden" }}>
+            <KanbanCard issue={child} teams={teams} dragged={false} onDragStart={(e) => onDragStart(e, child)} onDragEnd={onDragEnd} onSelect={onSelect} onUpdate={onUpdate} onMoveNext={() => onMoveNext(child)} canMoveNext={canMoveNext} /></div>
+        </motion.div></React.Fragment>;
+      })}
+    </motion.div>
+  );
+  return (
+    <div ref={anchorRef} className="relative min-w-0 shrink-0" style={stackMounted ? { paddingBottom: Math.min(3, subtasks.length) * collapsedStackOffset } : undefined}>
+      {stackMounted && <div aria-hidden="true" data-kanban-stack-placeholder="" className="rounded-2xl border-2 border-dashed border-line bg-neutral-100" style={{ height: parentHeight }} />}
+      {!stackMounted && stack}
+      <StackDialog.Root open={stackMounted} onOpenChange={(open) => { if (!open) closeStack(); }}>
+        <StackDialog.Portal>
+          <StackDialog.Overlay asChild><motion.div className="fixed inset-0 z-100 bg-black/30" initial={{ opacity: 0 }} animate={{ opacity: subtasksOpen ? 1 : 0 }} transition={{ duration: reduceMotion ? 0 : 0.25 }} /></StackDialog.Overlay>
+          <StackDialog.Content aria-describedby={undefined} className="fixed inset-0 z-101 overflow-y-auto overscroll-contain outline-none pointer-events-none" onPointerDown={(event) => { if (event.target === event.currentTarget) closeStack(); }}>
+            <StackDialog.Title className="sr-only">{issue.identifier} subtasks</StackDialog.Title>
+            <motion.div className="absolute pointer-events-auto pb-6" style={{ width: stackPosition.width }} initial={{ top: stackPosition.top, left: stackPosition.left }} animate={subtasksOpen ? { top: window.innerHeight / 4, left: (window.innerWidth - stackPosition.width) / 2 } : { top: stackPosition.top, left: stackPosition.left }} transition={spring} onAnimationComplete={() => { if (!subtasksOpen) setStackMounted(false); }}>
+              <StackDialog.Close asChild>
+                <motion.button type="button" aria-label="Collapse subtask stack" className="absolute -top-9 right-0 rounded-lg border border-line bg-panel px-3 py-1 text-[12px] text-muted focus-visible:outline-2 focus-visible:outline-accent" initial={{ opacity: 0, y: 4 }} animate={{ opacity: subtasksOpen ? 1 : 0, y: subtasksOpen ? 0 : 4 }} transition={{ duration: reduceMotion ? 0 : 0.2 }} style={{ pointerEvents: subtasksOpen ? "auto" : "none" }}>Collapse subtasks ×</motion.button>
+              </StackDialog.Close>
+              {stack}
+            </motion.div>
+          </StackDialog.Content>
+        </StackDialog.Portal>
+      </StackDialog.Root>
+    </div>
   );
 }
+function KanbanScrollFade({ children }: { children: React.ReactNode }) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ top: 0, bottom: 0 });
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    const viewport = root?.querySelector<HTMLElement>("[data-kanban-cards]");
+    if (!viewport) return;
+    const strength = (distance: number) => {
+      const t = Math.max(0, Math.min(distance / 32, 1));
+      return t * t * (3 - 2 * t);
+    };
+    const update = () => {
+      const max = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+      const offset = Math.max(0, Math.min(viewport.scrollTop, max));
+      const top = strength(offset), bottom = strength(max - offset);
+      setEdges((previous) => previous.top === top && previous.bottom === bottom ? previous : { top, bottom });
+    };
+    const resize = new ResizeObserver(update);
+    const observe = () => {
+      resize.disconnect();
+      resize.observe(viewport);
+      Array.from(viewport.children).forEach((child) => resize.observe(child));
+      update();
+    };
+    const mutations = new MutationObserver(observe);
+    mutations.observe(viewport, { childList: true, subtree: true });
+    viewport.addEventListener("scroll", update, { passive: true });
+    observe();
+    return () => {
+      viewport.removeEventListener("scroll", update);
+      resize.disconnect();
+      mutations.disconnect();
+    };
+  }, []);
+  return <div ref={rootRef} className="relative isolate flex min-h-0 flex-1 flex-col overflow-hidden">
+    {children}
+    <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 z-20 h-8" style={{ opacity: edges.top, background: "radial-gradient(ellipse at 50% 0%, var(--panel) 0%, transparent 100%)" }} />
+    <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-8" style={{ opacity: edges.bottom, background: "radial-gradient(ellipse at 50% 100%, var(--panel) 0%, transparent 100%)" }} />
+  </div>;
+}
+
 function Kanban({
   grouped,
+  allIssues,
   onSelect,
   onNew,
   onMoved,
   onUpdate,
   teams = [],
 }: {
+  allIssues: Issue[];
   grouped: {
     state: { id: string; name: string; color: string; type: string };
     items: Issue[];
@@ -8203,22 +8369,44 @@ function Kanban({
       throw err;
     }
   };
-  /* A card's rollup spans every column, not only its own: a done sub-task lives under Done even
-   * when its parent is in Todo, so counting per column would report 0 of N for a finished tree.
-   * Like the list, this counts the children this board has loaded, not a server aggregate. */
-  const rollups = useMemo(() => {
-    const m = new Map<string, { done: number; total: number }>();
-    for (const g of grouped)
-      for (const i of g.items) {
-        const pid = i.parent?.id;
-        if (!pid) continue;
-        const r = m.get(pid) || { done: 0, total: 0 };
-        r.total += 1;
-        if (i.state?.type === "completed") r.done += 1;
-        m.set(pid, r);
+  // Progress and stack contents must include completed children hidden by board filters.
+  const subtasksByParent = useMemo(() => {
+    const m = new Map<string, Issue[]>();
+    for (const child of allIssues) {
+      const parentId = child.parent?.id;
+      if (!parentId || parentId === child.id) continue;
+      const children = m.get(parentId) || [];
+      children.push(child);
+      m.set(parentId, children);
+    }
+    const statusRank = (child: Issue) => {
+      if (child.state?.name.toLowerCase() === "todo") return 0;
+      switch (child.state?.type) {
+        case "unstarted": return 0;
+        case "backlog": return 1;
+        case "started": return 2;
+        case "canceled": return 4;
+        case "completed": return 5;
+        default: return 3;
       }
+    };
+    // Creation uses <parent>-<letter slot>-<sibling ordinal> at each depth.
+    // Compare the final ordinal numerically (2 before 10), not the slot letters.
+    const siblingOrdinal = (child: Issue) => Number(child.identifier.match(/(?:-|\/)(\d+)$/)?.[1] ?? Number.MAX_SAFE_INTEGER);
+    for (const children of m.values()) children.sort((a, b) =>
+      statusRank(a) - statusRank(b)
+      || (a.state?.name || "").localeCompare(b.state?.name || "")
+      || siblingOrdinal(a) - siblingOrdinal(b)
+      || a.identifier.localeCompare(b.identifier, undefined, { numeric: true }),
+    );
     return m;
-  }, [grouped]);
+  }, [allIssues]);
+  const rollups = useMemo(() => new Map(
+    Array.from(subtasksByParent, ([id, children]) => [id, {
+      total: children.length,
+      done: children.filter((child) => child.state?.type === "completed").length,
+    }]),
+  ), [subtasksByParent]);
   return (
     <div className="kanban flex min-h-0 min-w-0 flex-1 flex-col w-full">
       <div
@@ -8284,6 +8472,7 @@ function Kanban({
                 <Plus size={15} />
               </button>
             </header>
+            <KanbanScrollFade>
             <div
               className="flex flex-col gap-2 pt-1 pr-2.5 pb-2 pl-2.5 overflow-y-auto flex-auto min-h-0 overscroll-contain [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-subtle [&::-webkit-scrollbar-thumb]:rounded-lg [&::-webkit-scrollbar-thumb]:bg-muted max-h-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 scrollbar-thin [&::-webkit-scrollbar-thumb]:border-[2px_solid_var(--subtle)]"
               data-kanban-cards=""
@@ -8309,6 +8498,7 @@ function Kanban({
                 </p>
               )}
               {treeOrder(group.items, {})
+                .filter(({ i }) => !i.parent?.id || !grouped.some((g) => g.items.some((parent) => parent.id === i.parent?.id && parent.id !== i.id)))
                 .slice(0, limits[group.state.id] || KANBAN_PAGE)
                 .map(({ i: issue, depth, parentInGroup }) => (
                   <KanbanCard
@@ -8321,11 +8511,12 @@ function Kanban({
                       parentInGroup ? undefined : issue.parent?.identifier
                     }
                     rollup={rollups.get(issue.id)}
-                    onDragStart={(e) => {
-                      setDragged(issue.id);
+                    subtasks={subtasksByParent.get(issue.id)}
+                    onDragStart={(e, task = issue) => {
+                      setDragged(task.id);
                       setDropLine(null);
                       e.dataTransfer.effectAllowed = "move";
-                      e.dataTransfer.setData("text/hoja-issue", issue.id);
+                      e.dataTransfer.setData("text/hoja-issue", task.id);
                     }}
                     onDragEnd={() => {
                       setDragged("");
@@ -8333,7 +8524,7 @@ function Kanban({
                     }}
                     onSelect={onSelect}
                     onUpdate={update}
-                    onMoveNext={() => void moveNext(issue, group.state.id)}
+                    onMoveNext={(task = issue) => void moveNext(task, task.state?.id || group.state.id)}
                     canMoveNext={Boolean(
                       grouped[
                         grouped.findIndex(
@@ -8360,6 +8551,7 @@ function Kanban({
                 </button>
               )}
             </div>
+            </KanbanScrollFade>
           </section>
         ))}
       </div>
@@ -9585,7 +9777,8 @@ function NewIssue({
           Boolean(initialStateId) &&
           t.states.nodes.some((s) => s.id === initialStateId),
       )?.id ||
-        teams.find((t) => Boolean(initialTeamId) && t.id === initialTeamId)?.id ||
+        teams.find((t) => Boolean(initialTeamId) && t.id === initialTeamId)
+          ?.id ||
         teams[0]?.id ||
         "",
     ),
@@ -11407,7 +11600,7 @@ function ProjectDetails({
               aria-valuenow={summary.pct}
             >
               <i
-                className="block h-full bg-accent rounded-[inherit]"
+                className="block h-full bg-accent rounded-[inherit] "
                 style={{ width: `${summary.pct}%` }}
               />
             </div>
@@ -11926,16 +12119,25 @@ function IssueBoard({
   onUpdate: (issueId: string, input: Record<string, unknown>) => Promise<void>;
   onNew: (stateId?: string) => void;
 }) {
+  const syncedIssues = useSyncIssues() as Issue[];
+  const allIssues = useMemo(() => [...new Map(
+    [...syncedIssues, ...issues].map((issue) => [issue.id, issue]),
+  ).values()], [syncedIssues, issues]);
   const grouped = useMemo(() => {
+    // Canceled work stays in the list; the board hides its column until it has a design.
+    const boardStates = states.filter((s) => s.type !== "canceled");
     const unique = [...new Map(issues.map((i) => [i.id, i])).values()];
-    const by = new Map<string, Issue[]>(states.map((s) => [stateKey(s), []]));
+    const by = new Map<string, Issue[]>(
+      boardStates.map((s) => [stateKey(s), []]),
+    );
     const unknown: Issue[] = [];
     for (const i of unique) {
+      if (i.state?.type === "canceled") continue;
       const list = i.state ? by.get(stateKey(i.state)) : undefined;
       if (list) list.push(i);
       else unknown.push(i);
     }
-    const known = states.map((state) => ({
+    const known = boardStates.map((state) => ({
       state,
       items: by.get(stateKey(state)) || [],
     }));
@@ -11965,6 +12167,7 @@ function IssueBoard({
         <Kanban
           teams={teams}
           grouped={grouped}
+          allIssues={allIssues}
           onSelect={onSelect}
           onNew={onNew}
           onMoved={onMoved}
@@ -12891,7 +13094,9 @@ function CommandPalette({
   /* Captured during the first render, before the input takes focus, so closing the palette
    * can put the keyboard back where it was. */
   const openerRef = useRef<HTMLElement | null>(
-    document.activeElement instanceof HTMLElement ? document.activeElement : null,
+    document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null,
   );
   useEffect(() => {
     inputRef.current?.focus();
@@ -12997,11 +13202,9 @@ function CommandPalette({
               role="group"
             >
               <p
-
                 role="presentation"
 
                 className="pt-1.25 pr-2 pb-1.25 pl-2 text-muted text-[10px] normal-case tracking-widest"
-
               >
                 Tasks
               </p>
@@ -13031,11 +13234,9 @@ function CommandPalette({
               role="group"
             >
               <p
-
                 role="presentation"
 
                 className="pt-1.25 pr-2 pb-1.25 pl-2 text-muted text-[10px] normal-case tracking-widest"
-
               >
                 Older tasks
               </p>
@@ -13065,11 +13266,9 @@ function CommandPalette({
               role="group"
             >
               <p
-
                 role="presentation"
 
                 className="pt-1.25 pr-2 pb-1.25 pl-2 text-muted text-[10px] normal-case tracking-widest"
-
               >
                 Projects
               </p>
@@ -13095,11 +13294,9 @@ function CommandPalette({
               role="group"
             >
               <p
-
                 role="presentation"
 
                 className="pt-1.25 pr-2 pb-1.25 pl-2 text-muted text-[10px] normal-case tracking-widest"
-
               >
                 Teams
               </p>
@@ -13127,11 +13324,9 @@ function CommandPalette({
             role="group"
           >
             <p
-
               role="presentation"
 
               className="pt-1.25 pr-2 pb-1.25 pl-2 text-muted text-[10px] normal-case tracking-widest"
-
             >
               Navigate
             </p>
