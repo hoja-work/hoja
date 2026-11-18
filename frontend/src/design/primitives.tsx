@@ -274,6 +274,7 @@ export function Composer({
   value,
   placeholder,
   disabled,
+  sendDisabled,
   icon,
   sendIcon,
   sendLabel = "Send",
@@ -286,6 +287,9 @@ export function Composer({
   value: string;
   placeholder?: string;
   disabled?: boolean;
+  /* Disables the send button only. `disabled` also disables the input, which drops
+     focus mid-request and leaves it nowhere when the request fails. */
+  sendDisabled?: boolean;
   icon?: React.ReactNode;
   sendIcon: React.ReactNode;
   sendLabel?: string;
@@ -327,10 +331,10 @@ export function Composer({
       <button
         type="submit"
         className={
-          "[:where(&)]:grid [:where(&)]:place-items-center [:where(&)]:w-(--ds-composer-action) [:where(&)]:h-(--ds-composer-action) [:where(&)]:flex-none [:where(&)]:rounded-[5px] [:where(&)]:bg-transparent"
+          "[:where(&)]:grid [:where(&)]:place-items-center [:where(&)]:w-(--ds-composer-action) [:where(&)]:h-(--ds-composer-action) [:where(&)]:flex-none [:where(&)]:rounded-[5px] [:where(&)]:bg-transparent [:where(&)]:transition-colors hover:bg-accent-soft disabled:opacity-40 disabled:hover:bg-transparent"
         }
         aria-label={sendLabel}
-        disabled={disabled}
+        disabled={disabled || sendDisabled}
       >
         {sendIcon}
       </button>

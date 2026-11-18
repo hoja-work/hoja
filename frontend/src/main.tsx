@@ -6409,7 +6409,7 @@ function PulsePage({
                 />
               )}
               <article
-                className="pt-6 pr-0 pb-6 pl-0 mt-0 mr-0 mb-0 ml-0 border-t border-line first:border-t-0"
+                className="pt-6 pr-0 pb-6 pl-0 mt-0 mr-0 mb-0 ml-0 border-t border-line"
                 aria-labelledby={`pulse-post-${post.id}`}
               >
                 <header
@@ -6467,7 +6467,7 @@ function PulsePage({
                   </div>
                 </header>
                 <div
-                  className="mt-4.5 mr-0 mb-7 ml-0 wrap-break-word leading-[1.6]"
+                  className="mt-4.5 mr-0 mb-6 ml-0 wrap-break-word leading-[1.6]"
                   data-pulse-post-body=""
                 >
                   <Markdown text={post.body} density="block" />
@@ -6476,7 +6476,7 @@ function PulsePage({
                   post.project.targetDate ||
                   post.project.lead?.name) && (
                   <dl
-                    className="grid gap-1.75 mt-0 mr-0 mb-6.75 ml-0 pl-3 text-(length:--ds-feed-meta-size) border-l-2 border-line"
+                    className="grid gap-1.75 mt-0 mr-0 mb-6 ml-0 pl-3 text-(length:--ds-feed-meta-size) border-l-2 border-line"
                     data-pulse-changes=""
                   >
                     {post.project.lead?.name && (
@@ -6528,7 +6528,7 @@ function PulsePage({
                     data-pulse-comments=""
                   >
                     {replies.length ? (
-                      <ul className="flex flex-col gap-3 mt-0 mr-0 mb-0 ml-0 pt-1 pr-0 pb-0 pl-3 list-none border-l-2 border-line">
+                      <ul className="flex flex-col gap-3 mt-0 mr-0 mb-0 ml-0 pt-1 pr-0 pb-0 pl-0 list-none">
                         {replies.map((reply) => (
                           <li key={reply.id} className="flex items-start gap-2">
                             <span
@@ -6538,7 +6538,7 @@ function PulsePage({
                               {(reply.user?.name || "?").slice(0, 1).toUpperCase()}
                             </span>
                             <div className="min-w-0">
-                              <p className="flex items-center gap-(--ds-group-bar-gap) mt-0 mr-0 mb-0.5 ml-0 text-(length:--ds-feed-meta-size) text-muted">
+                              <p className="flex items-center gap-(--ds-group-bar-gap) mt-0 mr-0 mb-1 ml-0 text-(length:--ds-feed-meta-size) text-muted">
                                 <span>{reply.user?.name || "Someone"}</span>
                                 {reply.createdAt && (
                                   <time dateTime={reply.createdAt}>
@@ -6560,9 +6560,10 @@ function PulsePage({
                       </p>
                     )}
                     <Composer
-                      className="mt-0 border border-line bg-panel focus-within:border-accent"
+                      className="mt-0 max-w-none bg-subtle rounded-(--ds-composer-radius) focus-within:outline-2 focus-within:outline-accent focus-within:outline-offset-2 [&_input]:text-[14px] [&_input::placeholder]:text-muted [&_button]:rounded-(--ds-composer-radius)"
                       value={commentBodies[post.id] || ""}
                       placeholder={`Reply to ${post.project.name}…`}
+                      sendDisabled={!(commentBodies[post.id] || "").trim()}
                       sendIcon={<Send size={15} aria-hidden="true" />}
                       sendLabel="Post reply"
                       onChange={(v) =>
