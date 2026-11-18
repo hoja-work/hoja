@@ -1,3 +1,4 @@
+import { Accordion, AccordionTrigger, AccordionContent } from "../components/motion-primitives/accordion";
 import { styleClasses, styleHooks } from "./shared";
 import React, {
   memo,
@@ -3374,7 +3375,7 @@ export function GraphTeamIssues({
       >
         <nav
           className={styleClasses(
-            "flex items-center gap-1.75 text-[13px] text-muted min-w-0 flex-1 shell-phone:flex-wrap shell-phone:gap-y-0.5 [&_a]:[background:none] [&_a]:border-0 [&_a]:p-0 [&_a]:text-muted [&_a]:[font:inherit] [&_a]:cursor-pointer [&_a]:inline-flex [&_a]:items-center [&_a]:gap-1.5 [&_a]:whitespace-nowrap [&_a:hover]:text-foreground",
+            "flex items-center gap-1.75 text-[13px] text-muted min-w-0 flex-1 flex-nowrap overflow-hidden [&_a]:[background:none] [&_a]:border-0 [&_a]:p-0 [&_a]:text-muted [&_a]:[font:inherit] [&_a]:cursor-pointer [&_a]:inline-flex [&_a]:items-center [&_a]:gap-1.5 [&_a]:whitespace-nowrap [&_a:hover]:text-foreground",
           )}
           data-style-hooks={styleHooks(
             "lin-crumb flex items-center gap-[7px] text-[13px] text-muted min-w-0 flex-1 [&_a]:[background:none] [&_a]:border-0 [&_a]:p-0 [&_a]:text-muted [&_a]:[font:inherit] [&_a]:cursor-pointer [&_a]:inline-flex [&_a]:items-center [&_a]:gap-[6px] [&_a]:whitespace-nowrap [&_a:hover]:text-foreground",
@@ -5322,9 +5323,9 @@ export function GraphIssueDetail({
 
   return (
     <section
-      className={styleClasses("min-w-0 flex flex-col h-full bg-panel")}
+      className={styleClasses("min-w-0 flex flex-col flex-1 min-h-0 bg-panel rounded-xl")}
       data-style-hooks={styleHooks(
-        "lin-page min-w-0 flex flex-col h-full bg-panel",
+        "lin-page min-w-0 flex flex-col flex-1 min-h-0 bg-panel",
       )}
       data-surface="issue-detail"
       aria-label={`${detail.identifier}: ${detail.title}`}
@@ -5414,24 +5415,16 @@ export function GraphIssueDetail({
           )}
           <span
             className={styleClasses(
-              "in-data-[style-hooks~='lin-crumb']:font-semibold in-data-[style-hooks~='lin-crumb']:text-muted",
+              "min-w-0 truncate in-data-[style-hooks~='lin-crumb']:font-semibold in-data-[style-hooks~='lin-crumb']:text-muted",
             )}
             data-style-hooks={styleHooks(
-              "crumb-id in-data-[style-hooks~='lin-crumb']:font-semibold in-data-[style-hooks~='lin-crumb']:text-muted",
+              "crumb-id min-w-0 truncate in-data-[style-hooks~='lin-crumb']:font-semibold in-data-[style-hooks~='lin-crumb']:text-muted",
             )}
+            title={detail.identifier}
           >
             {detail.identifier}
           </span>
-          <span
-            className={styleClasses(
-              "in-data-[style-hooks~='lin-crumb']:text-foreground in-data-[style-hooks~='lin-crumb']:font-semibold in-data-[style-hooks~='lin-crumb']:overflow-hidden in-data-[style-hooks~='lin-crumb']:text-ellipsis in-data-[style-hooks~='lin-crumb']:whitespace-nowrap data-[style-hooks~='lin-badge']:text-foreground data-[style-hooks~='lin-cycle-live-dot']:bg-[#5e6ad2] data-[style-hooks~='lin-cycle-live-dot']:shadow-[0_0_0_4px_color-mix(in_srgb,#5e6ad2_12%,transparent)]",
-            )}
-            data-style-hooks={styleHooks(
-              "current in-data-[style-hooks~='lin-crumb']:text-foreground in-data-[style-hooks~='lin-crumb']:font-semibold in-data-[style-hooks~='lin-crumb']:overflow-hidden in-data-[style-hooks~='lin-crumb']:text-ellipsis in-data-[style-hooks~='lin-crumb']:whitespace-nowrap data-[style-hooks~='lin-badge']:text-foreground data-[style-hooks~='lin-cycle-live-dot']:bg-[#5e6ad2] data-[style-hooks~='lin-cycle-live-dot']:shadow-[0_0_0_4px_color-mix(in_srgb,#5e6ad2_12%,transparent)]",
-            )}
-          >
-            {detail.title}
-          </span>
+
         </nav>
         <div
           className={styleClasses(
@@ -5567,6 +5560,17 @@ export function GraphIssueDetail({
           )}
         </div>
       </header>
+
+
+      <div
+        className={styleClasses(
+          "flex min-h-0 flex-1 [@media_(max-width:900px)]:flex-col",
+        )}
+        data-style-hooks={styleHooks(
+          "lin-detail flex min-h-0 flex-1 [@media_(max-width:900px)]:flex-col",
+        )}
+      >
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-issue-content="">
       <div
         className={styleClasses(
           "flex items-center gap-1.5 py-2 px-5 border-b border-b-line flex-none",
@@ -5611,21 +5615,12 @@ export function GraphIssueDetail({
           <Trash2 size={15} />
         </IconBtn>
       </div>
-
-      <div
-        className={styleClasses(
-          "flex min-h-0 flex-1 [@media_(max-width:900px)]:flex-col",
-        )}
-        data-style-hooks={styleHooks(
-          "lin-detail flex min-h-0 flex-1 [@media_(max-width:900px)]:flex-col",
-        )}
-      >
         <main
           className={styleClasses(
-            "flex-1 min-w-0 overflow-y-auto pt-6.5 px-10 pb-20 max-w-205 [@media_(max-width:900px)]:max-w-none [@media_(max-width:900px)]:p-5",
+            "flex-1 min-w-0 overflow-y-auto pt-6.5 px-10 pb-20 max-w-none [@media_(max-width:900px)]:p-5",
           )}
           data-style-hooks={styleHooks(
-            "lin-detail-main flex-1 min-w-0 overflow-y-auto pt-[26px] px-[40px] pb-[80px] max-w-[820px] [@media_(max-width:900px)]:max-w-none [@media_(max-width:900px)]:p-[20px]",
+            "lin-detail-main flex-1 min-w-0 overflow-y-auto pt-[26px] px-[40px] pb-[80px] max-w-none [@media_(max-width:900px)]:p-[20px]",
           )}
         >
           <textarea
@@ -5838,6 +5833,7 @@ export function GraphIssueDetail({
             </div>
           )}
 
+          <Accordion>
           <section
             className={styleClasses(
               "border-t border-t-line py-3.5 px-0 [&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-2 [&_>_header]:text-[13px] [&_>_header]:font-semibold [&_>_header]:mb-1.5",
@@ -5848,9 +5844,12 @@ export function GraphIssueDetail({
             aria-label="Sub-tasks"
           >
             <header>
-              <ChevronDown size={14} color="var(--muted)" />
+              <AccordionTrigger>
+              <ChevronRight size={14} className="shrink-0 text-muted transition-transform group-data-expanded:rotate-90 motion-reduce:transition-none" />
               <span>Sub-tasks</span>
               <SubIssuePill done={subsDone} total={subsView.length} />
+
+              </AccordionTrigger>
               <span
                 className={styleClasses(
                   "in-data-[style-hooks~='lin-group-head']:flex-1 in-data-[style-hooks~='lin-hidden-col']:flex-1 in-data-[style-hooks~='lin-hidden-col']:overflow-hidden in-data-[style-hooks~='lin-hidden-col']:text-ellipsis in-data-[style-hooks~='lin-hidden-col']:whitespace-nowrap [[data-style-hooks~='lin-subsec']_>_header_&]:flex-1 [[data-style-hooks~='lin-activity']_>_header_&]:flex-1 in-data-[style-hooks~='lin-dd-opt']:flex-1 in-data-[style-hooks~='lin-dd-opt']:min-w-0 in-data-[style-hooks~='lin-dd-opt']:overflow-hidden in-data-[style-hooks~='lin-dd-opt']:[display:-webkit-box] in-data-[style-hooks~='lin-dd-opt']:[-webkit-line-clamp:2] in-data-[style-hooks~='lin-dd-opt']:[-webkit-box-orient:vertical] in-data-[style-hooks~='lin-dd-opt']:wrap-anywhere",
@@ -5874,6 +5873,7 @@ export function GraphIssueDetail({
                 <Plus size={14} />
               </IconBtn>
             </header>
+            <AccordionContent>
             {addingSub && (
               <div style={{ display: "flex", gap: 8, margin: "4px 0 8px" }}>
                 <input
@@ -5975,8 +5975,11 @@ export function GraphIssueDetail({
                 {detailReady ? "No sub-tasks yet." : "Loading sub-tasks…"}
               </p>
             )}
+            </AccordionContent>
           </section>
+          </Accordion>
 
+          <Accordion>
           <section
             className={styleClasses(
               "border-t border-t-line py-3.5 px-0 [&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-2 [&_>_header]:text-[13px] [&_>_header]:font-semibold [&_>_header]:mb-1.5",
@@ -5987,7 +5990,8 @@ export function GraphIssueDetail({
             aria-label="Attachments"
           >
             <header>
-              <ChevronDown size={14} color="var(--muted)" />
+              <AccordionTrigger>
+              <ChevronRight size={14} className="shrink-0 text-muted transition-transform group-data-expanded:rotate-90 motion-reduce:transition-none" />
               <span>Attachments</span>
               <span
                 style={{ color: "var(--muted)", fontWeight: 500, fontSize: 12 }}
@@ -6000,6 +6004,8 @@ export function GraphIssueDetail({
               >
                 {(detail.attachments?.nodes || []).length}
               </span>
+              </AccordionTrigger>
+
               <span
                 className={styleClasses(
                   "in-data-[style-hooks~='lin-group-head']:flex-1 in-data-[style-hooks~='lin-hidden-col']:flex-1 in-data-[style-hooks~='lin-hidden-col']:overflow-hidden in-data-[style-hooks~='lin-hidden-col']:text-ellipsis in-data-[style-hooks~='lin-hidden-col']:whitespace-nowrap [[data-style-hooks~='lin-subsec']_>_header_&]:flex-1 [[data-style-hooks~='lin-activity']_>_header_&]:flex-1 in-data-[style-hooks~='lin-dd-opt']:flex-1 in-data-[style-hooks~='lin-dd-opt']:min-w-0 in-data-[style-hooks~='lin-dd-opt']:overflow-hidden in-data-[style-hooks~='lin-dd-opt']:[display:-webkit-box] in-data-[style-hooks~='lin-dd-opt']:[-webkit-line-clamp:2] in-data-[style-hooks~='lin-dd-opt']:[-webkit-box-orient:vertical] in-data-[style-hooks~='lin-dd-opt']:wrap-anywhere",
@@ -6109,6 +6115,7 @@ export function GraphIssueDetail({
                 )}
               </span>
             </header>
+            <AccordionContent>
             <div
               className={styleClasses("flex flex-col gap-1.5 my-1.5 mx-0")}
               data-style-hooks={styleHooks(
@@ -6170,7 +6177,9 @@ export function GraphIssueDetail({
                 {detailReady ? "No attachments yet." : "Loading attachments…"}
               </p>
             )}
+            </AccordionContent>
           </section>
+          </Accordion>
 
           {(() => {
             // Compact and absent by default: only rendered when something is actually linked,
@@ -6269,6 +6278,7 @@ export function GraphIssueDetail({
             );
           })()}
 
+          <Accordion>
           <section
             className={styleClasses(
               "border-t border-t-line pt-4 mt-1.5 [&_>_header]:flex [&_>_header]:items-center [&_>_header]:mb-3 [&_>_header_b]:text-[14px]",
@@ -6279,7 +6289,10 @@ export function GraphIssueDetail({
             aria-label="Activity"
           >
             <header>
-              <b>Activity</b>
+              <AccordionTrigger>
+                <ChevronRight size={14} className="shrink-0 text-muted transition-transform group-data-expanded:rotate-90 motion-reduce:transition-none" />
+                <b>Activity</b>
+              </AccordionTrigger>
               <span
                 className={styleClasses(
                   "in-data-[style-hooks~='lin-group-head']:flex-1 in-data-[style-hooks~='lin-hidden-col']:flex-1 in-data-[style-hooks~='lin-hidden-col']:overflow-hidden in-data-[style-hooks~='lin-hidden-col']:text-ellipsis in-data-[style-hooks~='lin-hidden-col']:whitespace-nowrap [[data-style-hooks~='lin-subsec']_>_header_&]:flex-1 [[data-style-hooks~='lin-activity']_>_header_&]:flex-1 in-data-[style-hooks~='lin-dd-opt']:flex-1 in-data-[style-hooks~='lin-dd-opt']:min-w-0 in-data-[style-hooks~='lin-dd-opt']:overflow-hidden in-data-[style-hooks~='lin-dd-opt']:[display:-webkit-box] in-data-[style-hooks~='lin-dd-opt']:[-webkit-line-clamp:2] in-data-[style-hooks~='lin-dd-opt']:[-webkit-box-orient:vertical] in-data-[style-hooks~='lin-dd-opt']:wrap-anywhere",
@@ -6312,6 +6325,7 @@ export function GraphIssueDetail({
                 ))}
               </span>
             </header>
+            <AccordionContent>
             {(detail.activity?.nodes || []).map((e) => (
               <div
                 key={e.id}
@@ -6602,8 +6616,11 @@ export function GraphIssueDetail({
                 {commentError}
               </p>
             )}
+            </AccordionContent>
           </section>
+          </Accordion>
         </main>
+        </div>
 
         <aside
           className={styleClasses(
@@ -7081,8 +7098,9 @@ export function GraphIssueDetail({
               data-style-hooks={styleHooks(
                 "v in-data-[style-hooks~='lin-prop']:flex-1 in-data-[style-hooks~='lin-prop']:min-w-0 in-data-[style-hooks~='lin-prop']:flex in-data-[style-hooks~='lin-prop']:items-center in-data-[style-hooks~='lin-prop']:gap-[7px]",
               )}
-              style={{ position: "relative" }}
+              style={{ position: "relative", flexDirection: "column", alignItems: "stretch" }}
             >
+              <span className="flex w-full min-w-0 items-center gap-1.75">
               {detail.parent ? (
                 <button
                   type="button"
@@ -7120,6 +7138,16 @@ export function GraphIssueDetail({
                   No parent
                 </span>
               )}
+              {detail.parent && (
+                <IconBtn
+                  label="Remove parent"
+                  title="Remove parent"
+                  onClick={() => void change({ parentId: null })}
+                >
+                  <X size={13} />
+                </IconBtn>
+              )}
+              </span>
               {/* Same picker both ways, so moving an issue between parents is one step. */}
               <button
                 type="button"
@@ -7133,15 +7161,6 @@ export function GraphIssueDetail({
               >
                 {detail.parent ? "Change parent…" : "Set parent…"}
               </button>
-              {detail.parent && (
-                <IconBtn
-                  label="Remove parent"
-                  title="Remove parent"
-                  onClick={() => void change({ parentId: null })}
-                >
-                  <X size={13} />
-                </IconBtn>
-              )}
               {parentSearch && (
                 <LinPopover
                   onClose={() => setParentSearch(false)}
