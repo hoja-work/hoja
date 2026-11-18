@@ -13093,11 +13093,20 @@ function SettingsSidebar({
     ],
     ["Tasks", [["cycles", "Cycles", CalendarDays]]],
     [
+      "Projects",
+      [
+        ["project-statuses", "Project statuses", CircleDot],
+        ["project-templates", "Project templates", Layers3],
+      ],
+    ],
+    [
       "Administration",
       [
         ["workspace", "Workspace", Building2],
         ["teams", "Teams", Users],
         ["members", "Members", UserRound],
+        ["permissions", "Permissions", Shield],
+        ["security", "Security", KeyRound],
         ["billing", "Billing", BarChart3],
         ["model-providers", "Model providers", Bot],
         ["extensions", "Extensions", Blocks],
@@ -13129,6 +13138,10 @@ function SettingsSidebar({
                   "workspace",
                   "teams",
                   "members",
+                  "permissions",
+                  "security",
+                  "project-statuses",
+                  "project-templates",
                   "billing",
                   "model-providers",
                   "extensions",
@@ -13274,7 +13287,7 @@ function SettingsSidebar({
           )}
         </label>
         <nav
-          className="block"
+          className="block min-h-0 flex-1 overflow-y-auto overscroll-contain"
           id="settings-navigation"
           aria-label="Settings sections"
         >
@@ -14465,8 +14478,9 @@ function WorkspaceSettings({
             </p>
           )}
           <div
-            className="flex min-h-(--ds-settings-row-height) min-w-0 flex-col items-start justify-between gap-5 border-t border-line p-(--ds-settings-row-padding) first-of-type:border-t-0 first-of-type:pt-0 last-of-type:pb-0.5 md:flex-row md:items-center md:gap-5 shell-phone:gap-3 [@media_(max-width:_700px)]:gap-3"
+            className="flex min-h-(--ds-settings-row-height) min-w-0 flex-col items-start justify-between gap-5 border-t border-line p-(--ds-settings-row-padding) first-of-type:border-t-0 first-of-type:pt-0 last-of-type:pb-0.5 md:flex-col md:items-start md:gap-5 shell-phone:gap-3 [@media_(max-width:_700px)]:gap-3"
             data-setting-row=""
+            data-style-hooks="settings-theme-row"
           >
             <div>
               <b className="font-[620]">Theme</b>
@@ -14476,9 +14490,10 @@ function WorkspaceSettings({
               </small>
             </div>
             <div
-              className="flex w-[min(100%,560px)] max-w-full flex-none flex-wrap gap-3.5 rounded-[10px] border border-line bg-transparent pt-0 pr-0 pb-0 pl-0 md:w-auto flex-row border-0 first:min-w-0 shell-phone:w-full [@media_(max-width:_700px)]:w-full"
+              className="flex w-[min(100%,560px)] max-w-full flex-none flex-wrap gap-3.5 rounded-[10px] border border-line bg-transparent pt-0 pr-0 pb-0 pl-0 md:w-full flex-row border-0 first:min-w-0 shell-phone:w-full [@media_(max-width:_700px)]:w-full"
               data-setting-control=""
               data-theme-control=""
+              data-style-hooks="settings-theme-control"
             >
               <button
                 disabled={preferenceMessage === "Saving…"}
