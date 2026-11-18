@@ -7,10 +7,14 @@
  *   - development builds (`import.meta.env.DEV`), so a working tree shows the surface;
  *   - `localStorage.hoja_agents_surface = 'on'`, a per-browser opt-in used by the geometry
  *     test and by a reviewer looking at a deployed preview;
- *   - `VITE_HOJA_AGENTS=on` at build time, which is how a release would enable it.
+ *   - `VITE_HOJA_AGENTS=on` at build time, which is how a release would enable it;
+ *   - the workspace switch an admin flips in Settings -> Workspace (`workspaceFeatures`), which is
+ *     how production turns it on per organization.
  *
  * Anything else — including a stray value like `'1'` or `'true'` — is off. Fail closed.
  */
+
+import { useSyncExternalStore } from 'react';
 
 export const AGENTS_FLAG_KEY = 'hoja_agents_surface';
 const FLAG_TRUE = 'on';
@@ -28,8 +32,37 @@ function fromStorage(): boolean {
   }
 }
 
+/* The workspace switch (revision 76). The app reads `workspaceFeatures` once per workspace and
+ * stores it here; `null` means "not read yet", which is off. Kept outside React so the sidebar and
+ * the Agents route read one value. */
+let workspaceEnabled: boolean | null = null;
+const listeners = new Set<() => void>();
+
+export function setWorkspaceAgentsEnabled(value: boolean | null): void {
+  if (workspaceEnabled === value) return;
+  workspaceEnabled = value;
+  listeners.forEach(notify => notify());
+}
+
+function subscribe(notify: () => void): () => void {
+  listeners.add(notify);
+  return () => listeners.delete(notify);
+}
+
+/** The workspace's own setting, without the build/localStorage/dev opt-ins. */
+export function useWorkspaceAgentsEnabled(): boolean | null {
+  return useSyncExternalStore(subscribe, () => workspaceEnabled);
+}
+
 export function agentsSurfaceEnabled(): boolean {
   if (fromBuild()) return true;
   if (typeof import.meta.env.DEV !== 'undefined' && import.meta.env.DEV) return true;
+  if (workspaceEnabled === true) return true;
   return fromStorage();
+}
+
+/** `agentsSurfaceEnabled`, re-rendering when an admin flips the workspace switch. */
+export function useAgentsSurfaceEnabled(): boolean {
+  useWorkspaceAgentsEnabled();
+  return agentsSurfaceEnabled();
 }

@@ -26,7 +26,8 @@ from graphql import GraphQLError
 from sqlalchemy import and_, select
 from sqlalchemy.exc import IntegrityError
 
-from hoja_server.db import new_id, now_iso, user, workspace_permission, workspace_security_policy
+from hoja_server import audit
+from hoja_server.db import new_id, now_iso, organization, user, workspace_permission, workspace_security_policy
 
 query = QueryType()
 mutation = MutationType()
@@ -87,14 +88,23 @@ SDL = gql(
       connectEnabled: Boolean
     }
 
+    "Workspace-wide switches every member reads, because they decide what the app shows."
+    type WorkspaceFeatures {
+      "Whether this workspace shows the Agents screens. Off until an admin turns it on."
+      agentsEnabled: Boolean!
+    }
+
     extend type Query {
       workspacePermissions: [WorkspacePermission!]!
       workspaceSecurityPolicy: WorkspaceSecurityPolicy!
+      workspaceFeatures: WorkspaceFeatures!
     }
 
     extend type Mutation {
       workspacePermissionUpdate(capability: String!, memberAllowed: Boolean!): WorkspacePermission!
       workspaceSecurityUpdate(input: WorkspaceSecurityPolicyInput!): WorkspaceSecurityPolicy!
+      "Admins only; every change is written to the audit log."
+      workspaceFeaturesUpdate(agentsEnabled: Boolean!): WorkspaceFeatures!
     }
     """
 )
@@ -388,3 +398,35 @@ def m_workspace_security_update(_, info, input):
                 )
     _invalidate(org)
     return security_policy(store.engine, org)
+
+
+# ------------------------------------------------------------------- features
+def agents_enabled(engine, org_id: str) -> bool:
+    """NULL (every workspace before revision 76) and False both read as off."""
+    with engine.connect() as conn:
+        value = conn.execute(select(organization.c.agents_enabled).where(
+            organization.c.id == org_id)).scalar()
+    return value is True
+
+
+@query.field("workspaceFeatures")
+def r_workspace_features(_, info):
+    # Any member: the sidebar asks this to decide whether to show Agents at all.
+    store, org, _uid = _ctx(info)
+    return {"agentsEnabled": agents_enabled(store.engine, org)}
+
+
+@mutation.field("workspaceFeaturesUpdate")
+def m_workspace_features_update(_, info, agentsEnabled):
+    store, org, uid = _ctx(info)
+    _require_admin(store, org, uid)
+    before = agents_enabled(store.engine, org)
+    after = bool(agentsEnabled)
+    with store.engine.begin() as conn:
+        conn.execute(organization.update().where(organization.c.id == org).values(
+            agents_enabled=after, updated_at=now_iso()))
+    if before != after:
+        audit.record_request(store, info, user_id=uid, action="workspace.features.change",
+                             target_kind="organization", target_id=org,
+                             detail={"agentsEnabled": {"before": before, "after": after}})
+    return {"agentsEnabled": after}

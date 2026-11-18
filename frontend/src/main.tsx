@@ -101,7 +101,11 @@ import { ModelProvidersSettings } from "./ModelProvidersSettings";
 import { ConnectorsSettings } from "./ConnectorsSettings";
 import { AgentConversationsSettings } from "./AgentConversationsSettings";
 import { AgentsSurface } from "./agents/AgentsSurface";
-import { agentsSurfaceEnabled } from "./agents/flag";
+import {
+  setWorkspaceAgentsEnabled,
+  useAgentsSurfaceEnabled,
+  useWorkspaceAgentsEnabled,
+} from "./agents/flag";
 import {
   bodyLayer,
   errorText,
@@ -2152,6 +2156,25 @@ function App() {
     name: string;
     urlKey: string;
   }>({ id: "", name: "", urlKey: "" });
+  const agentsOn = useAgentsSurfaceEnabled();
+  // The workspace's Agents switch (Settings -> Workspace). Read per workspace; until it answers,
+  // and if it fails, the switch reads as off.
+  useEffect(() => {
+    setWorkspaceAgentsEnabled(null);
+    if (!workspace.id) return;
+    let live = true;
+    gql(`{ workspaceFeatures { agentsEnabled } }`)
+      .then((d) => {
+        if (live)
+          setWorkspaceAgentsEnabled(Boolean(d.workspaceFeatures?.agentsEnabled));
+      })
+      .catch(() => {
+        if (live) setWorkspaceAgentsEnabled(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [workspace.id]);
   const [workspaces, setWorkspaces] = useState<
     { organizationId: string; name: string; urlKey: string; role: string }[]
   >([]);
@@ -4658,7 +4681,7 @@ function App() {
                           ))}
                         {[
                           ...items,
-                          ...(section === "primary" && agentsSurfaceEnabled()
+                          ...(section === "primary" && agentsOn
                             ? ([["Agents", GitBranch]] as [
                                 string,
                                 typeof GitBranch,
@@ -13671,6 +13694,83 @@ function SettingsSidebar({
   );
 }
 
+/* Workspace switches (revision 76). Admin-only, like the rest of this page; every member's app
+ * reads the result through `workspaceFeatures`. */
+function WorkspaceFeaturesGroup({ hidden }: { hidden: boolean }) {
+  const enabled = useWorkspaceAgentsEnabled();
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const change = async (next: boolean) => {
+    const previous = enabled;
+    setBusy(true);
+    setMessage("Saving…");
+    setWorkspaceAgentsEnabled(next);
+    try {
+      const d = await gql(
+        `mutation($on:Boolean!){workspaceFeaturesUpdate(agentsEnabled:$on){agentsEnabled}}`,
+        { on: next },
+      );
+      const saved = Boolean(d.workspaceFeaturesUpdate.agentsEnabled);
+      setWorkspaceAgentsEnabled(saved);
+      setMessage(
+        saved
+          ? "Agents are on for everyone in this workspace."
+          : "Agents are off for this workspace.",
+      );
+    } catch (err) {
+      setWorkspaceAgentsEnabled(previous);
+      setMessage(errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section
+      className="mb-9 w-full min-w-0 max-w-none border-0 rounded-[10px] bg-(--settings-card) p-0 text-(--settings-ink) shadow-[none] md:mb-9 static grid gap-3.5 border border-line p-4 md:p-7 data-[settings-hidden]:hidden transform-none shell-phone:pt-3.75 shell-phone:pr-3.75 shell-phone:pb-3.75 shell-phone:pl-3.75 [@media_(max-width:_700px)]:mb-7 [@media_(max-width:_700px)]:pt-5 [@media_(max-width:_700px)]:pr-5 [@media_(max-width:_700px)]:pb-5 [@media_(max-width:_700px)]:pl-5 [@media_(max-width:_700px)]:rounded-[13px]"
+      data-settings-group=""
+      data-workspace-features=""
+      data-settings-hidden={hidden ? "" : undefined}
+    >
+      <h2 className="mt-0 mr-0 mb-0 ml-0 text-(--settings-ink) text-(length:--ds-settings-section-size) font-(--ds-settings-section-weight) leading-(--ds-settings-section-line) tracking-[-.035em] wrap-break-word">
+        Features
+      </h2>
+      <div
+        className="flex min-h-(--ds-settings-row-height) min-w-0 flex-col items-start justify-between gap-5 border-t border-line p-(--ds-settings-row-padding) first-of-type:border-t-0 first-of-type:pt-0 last-of-type:pb-0.5 md:flex-row md:items-center md:gap-5 shell-phone:gap-3 [@media_(max-width:_700px)]:gap-3"
+        data-setting-row=""
+      >
+        <div>
+          <b className="font-[620]">Agents</b>
+          <p>
+            Show the Agents screens (agents, run queue, runners and audit) to
+            everyone in this workspace. Changes are recorded in the audit log.
+          </p>
+        </div>
+        <input
+          className="relative mt-0 mr-0 mb-0 ml-0 h-5.5 w-9.5 flex-none cursor-pointer appearance-none rounded-[999px] border border-line bg-(--settings-subtle) after:absolute after:top-1 after:left-1 after:size-3.5 after:rounded-full after:bg-muted checked:border-foreground checked:bg-foreground checked:after:translate-x-4 checked:after:bg-panel checked:after:transition-transform checked:after:duration-150 checked:after:ease-out motion-reduce:after:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:text-[16px] [@media_(max-width:_700px)]:w-10.5 [@media_(max-width:_700px)]:h-6"
+          aria-label="Agents"
+          data-setting-switch=""
+          role="switch"
+          type="checkbox"
+          checked={enabled === true}
+          disabled={busy || enabled === null}
+          onChange={(e) => void change(e.target.checked)}
+        />
+      </div>
+      {message && (
+        <p
+          role={
+            message === "Saving…" || message.startsWith("Agents are")
+              ? "status"
+              : "alert"
+          }
+          className="wrap-break-word"
+        >
+          {message}
+        </p>
+      )}
+    </section>
+  );
+}
 function LegacyWorkspaceSettings({
   workspace,
   viewer,
@@ -13749,7 +13849,7 @@ function LegacyWorkspaceSettings({
         </p>
       </header>
       <section
-        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-[10px] bg-(--settings-card) p-0 text-(--settings-ink) shadow-[none] md:mb-9 static grid gap-3.5 border border-line p-4 md:p-7 hidden transform-none shell-phone:pt-3.75 shell-phone:pr-3.75 shell-phone:pb-3.75 shell-phone:pl-3.75 [@media_(max-width:_700px)]:mb-7 [@media_(max-width:_700px)]:pt-5 [@media_(max-width:_700px)]:pr-5 [@media_(max-width:_700px)]:pb-5 [@media_(max-width:_700px)]:pl-5 [@media_(max-width:_700px)]:rounded-[13px]"
+        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-[10px] bg-(--settings-card) p-0 text-(--settings-ink) shadow-[none] md:mb-9 static grid gap-3.5 border border-line p-4 md:p-7 data-[settings-hidden]:hidden transform-none shell-phone:pt-3.75 shell-phone:pr-3.75 shell-phone:pb-3.75 shell-phone:pl-3.75 [@media_(max-width:_700px)]:mb-7 [@media_(max-width:_700px)]:pt-5 [@media_(max-width:_700px)]:pr-5 [@media_(max-width:_700px)]:pb-5 [@media_(max-width:_700px)]:pl-5 [@media_(max-width:_700px)]:rounded-[13px]"
         data-settings-group=""
         data-workspace-settings-form=""
         data-settings-hidden={!(section === "account") ? "" : undefined}
@@ -13768,7 +13868,7 @@ function LegacyWorkspaceSettings({
       {viewer.admin && (
         <>
           <section
-            className="mb-9 w-full min-w-0 max-w-none border-0 rounded-[10px] bg-(--settings-card) p-0 text-(--settings-ink) shadow-[none] md:mb-9 static grid gap-3.5 border border-line p-4 md:p-7 hidden transform-none shell-phone:pt-3.75 shell-phone:pr-3.75 shell-phone:pb-3.75 shell-phone:pl-3.75 [@media_(max-width:_700px)]:mb-7 [@media_(max-width:_700px)]:pt-5 [@media_(max-width:_700px)]:pr-5 [@media_(max-width:_700px)]:pb-5 [@media_(max-width:_700px)]:pl-5 [@media_(max-width:_700px)]:rounded-[13px]"
+            className="mb-9 w-full min-w-0 max-w-none border-0 rounded-[10px] bg-(--settings-card) p-0 text-(--settings-ink) shadow-[none] md:mb-9 static grid gap-3.5 border border-line p-4 md:p-7 data-[settings-hidden]:hidden transform-none shell-phone:pt-3.75 shell-phone:pr-3.75 shell-phone:pb-3.75 shell-phone:pl-3.75 [@media_(max-width:_700px)]:mb-7 [@media_(max-width:_700px)]:pt-5 [@media_(max-width:_700px)]:pr-5 [@media_(max-width:_700px)]:pb-5 [@media_(max-width:_700px)]:pl-5 [@media_(max-width:_700px)]:rounded-[13px]"
             data-settings-group=""
             data-workspace-settings-form=""
             data-settings-hidden={!(section === "workspace") ? "" : undefined}
@@ -13829,8 +13929,9 @@ function LegacyWorkspaceSettings({
               </button>
             </form>
           </section>
+          <WorkspaceFeaturesGroup hidden={section !== "workspace"} />
           <form
-            className="mb-9 w-full min-w-0 max-w-none border-0 rounded-[10px] bg-(--settings-card) p-0 text-(--settings-ink) shadow-[none] md:mb-9 static grid gap-3.5 border border-line p-4 md:p-7 hidden transform-none shell-phone:pt-3.75 shell-phone:pr-3.75 shell-phone:pb-3.75 shell-phone:pl-3.75 [@media_(max-width:_700px)]:mb-7 [@media_(max-width:_700px)]:pt-5 [@media_(max-width:_700px)]:pr-5 [@media_(max-width:_700px)]:pb-5 [@media_(max-width:_700px)]:pl-5 [@media_(max-width:_700px)]:rounded-[13px]"
+            className="mb-9 w-full min-w-0 max-w-none border-0 rounded-[10px] bg-(--settings-card) p-0 text-(--settings-ink) shadow-[none] md:mb-9 static grid gap-3.5 border border-line p-4 md:p-7 data-[settings-hidden]:hidden transform-none shell-phone:pt-3.75 shell-phone:pr-3.75 shell-phone:pb-3.75 shell-phone:pl-3.75 [@media_(max-width:_700px)]:mb-7 [@media_(max-width:_700px)]:pt-5 [@media_(max-width:_700px)]:pr-5 [@media_(max-width:_700px)]:pb-5 [@media_(max-width:_700px)]:pl-5 [@media_(max-width:_700px)]:rounded-[13px]"
             data-settings-group=""
             data-workspace-settings-form=""
             data-settings-hidden={!(section === "workspace") ? "" : undefined}

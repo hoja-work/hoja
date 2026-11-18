@@ -37,7 +37,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 75
+CURRENT_SCHEMA_REVISION = 76
 
 log = logging.getLogger(__name__)
 
@@ -77,6 +77,9 @@ organization = Table(
     Column("vanity_host", String, unique=True),
     Column("created_at", String),
     Column("updated_at", String),
+    # Revision 76: whether this workspace shows the Agents screens. NULL (every workspace
+    # before 76) means off; an admin turns it on in Settings -> Workspace.
+    Column("agents_enabled", Boolean),
 )
 
 global_identity = Table(
@@ -3367,6 +3370,17 @@ def _apply_project_update_comments(conn):
         "CREATE INDEX IF NOT EXISTS ix_comment_project_update_id ON comment (project_update_id)")
 
 
+def _apply_organization_agents_enabled(conn):
+    """``organization.agents_enabled``: the workspace switch for the Agents screens.
+
+    Nullable with no backfill, so every existing workspace reads as off until an admin turns
+    it on. The column probe keeps a fresh database (create_all made it) and a replay no-ops.
+    """
+    existing = {column["name"] for column in inspect(conn).get_columns("organization")}
+    if "agents_enabled" not in existing:
+        conn.exec_driver_sql("ALTER TABLE organization ADD COLUMN agents_enabled BOOLEAN")
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -3589,6 +3603,8 @@ _MIGRATIONS = {
     # 75: Pulse comments. A project update is a thing people reply to, and until
     # now the comment table could only point at an issue.
     75: _apply_project_update_comments,
+    # 76: the workspace switch for the Agents screens (Settings -> Workspace).
+    76: _apply_organization_agents_enabled,
 }
 
 

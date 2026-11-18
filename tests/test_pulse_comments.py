@@ -131,7 +131,8 @@ def test_revision_75_upgrades_an_existing_database(tmp_path) -> None:
             " issue_id VARCHAR, body TEXT NOT NULL, user_id VARCHAR, url VARCHAR,"
             " created_at VARCHAR, updated_at VARCHAR, archived_at VARCHAR)")
         conn.exec_driver_sql("DROP TABLE comment_pre75")
-        conn.exec_driver_sql("DELETE FROM schema_revision WHERE revision = 75")
+        # Rewind the ledger to 74: later revisions (76+) must go too, or it is not a prefix.
+        conn.exec_driver_sql("DELETE FROM schema_revision WHERE revision >= 75")
     assert "project_update_id" not in {c["name"] for c in inspect(engine).get_columns("comment")}
 
     migrate(engine)

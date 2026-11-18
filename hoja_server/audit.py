@@ -99,6 +99,9 @@ ACTIONS = frozenset({
     # Hoja Connect (WP09).
     "connect.exposure.open",
     "connect.exposure.close",
+    # Workspace switches every member sees the effect of (revision 76: the Agents screens).
+    # ``detail`` carries the before and after of each switch that changed.
+    "workspace.features.change",
 })
 
 # Bounded read: an admin screen pages, it never asks for the whole ledger.
