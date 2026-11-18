@@ -477,8 +477,10 @@ const SHELL_VIEWS = new Set([
   "Cycles",
   "Members",
   "Settings",
+  "Issue detail",
 ]);
 const HEADERLESS_VIEWS = new Set([
+  "Issue detail",
   "Reviews",
   "Agent",
   "Agents",
@@ -4133,50 +4135,6 @@ function App() {
         sidebarCollapsed && view !== "Settings" ? "" : undefined
       }
     >
-      <header
-        className="border-b border-line shadow-[0_2px_10px_#1b1b1b08] h-17 flex items-center gap-5.5 pt-0 pr-7 pb-0 pl-7 bg-panel sticky top-0 z-30 max-sm:pt-0 max-sm:pr-3.5 max-sm:pb-0 max-sm:pl-3.5 max-sm:gap-2 max-lg:pt-0 max-lg:pr-4 max-lg:pb-0 max-lg:pl-4 max-lg:gap-3 shell-phone:relative shell-phone:z-40 shell-phone:h-15 shell-phone:px-3 shell-phone:gap-2 shell-desktop:col-start-2 shell-desktop:row-start-1 shell-desktop:h-12 shell-desktop:px-5 route-fullbleed:hidden shell-phone:route-fullbleed:flex shell-phone:route-fullbleed:h-15 shell-phone:route-fullbleed:relative shell-phone:route-fullbleed:z-40 shell-desktop:data-headerless:hidden! route-review:hidden! [@media_(max-width:560px)]:pt-0 [@media_(max-width:560px)]:pr-3.5 [@media_(max-width:560px)]:pb-0 [@media_(max-width:560px)]:pl-3.5 [@media_(max-width:560px)]:gap-3 [@media_(max-width:900px)]:pt-0 [@media_(max-width:900px)]:pr-4.5 [@media_(max-width:900px)]:pb-0 [@media_(max-width:900px)]:pl-4.5 [@media_(max-width:900px)]:gap-3 shell-phone:pt-0 shell-phone:pr-3 shell-phone:pb-0 shell-phone:pl-3 shell-phone:min-w-0 [@media_(max-width:420px)]:gap-2 shell-desktop:pt-0 shell-desktop:pr-5 shell-desktop:pb-0 shell-desktop:pl-5"
-        data-topbar
-        data-headerless={HEADERLESS_VIEWS.has(view) ? "" : undefined}
-      >
-        <button
-          ref={mobileToggleRef}
-          className="hidden shell-phone:grid size-11 place-items-center rounded-lg bg-transparent text-inherit hover:bg-subtle pointer-coarse:grid focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:size-11 group shell-phone:w-9 shell-phone:h-9 shell-phone:rounded-lg shell-phone:bg-transparent shell-phone:text-muted shell-phone:hover:bg-subtle"
-          data-mobile-nav-toggle=""
-          aria-label={
-            view === "Settings" ? "Open settings navigation" : "Open navigation"
-          }
-          aria-expanded={mobile}
-          aria-controls={
-            view === "Settings" ? "settings-navigation" : "workspace-sidebar"
-          }
-          onClick={() => setMobile((v) => !v)}
-        >
-          <Menu size={19} />
-        </button>
-        <button
-          className="inline-flex items-center gap-2.25 bg-transparent pt-0 pr-0 pb-0 pl-0 text-[16px] font-bold tracking-[-.02em] flex flex-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-desktop:hidden shell-phone:route-fullbleed:hidden"
-          onClick={() => navigate("My issues")}
-          data-brand
-        >
-          <img
-            className="block w-5 h-5 object-contain"
-            data-brand-mark=""
-            src="/hoja-clover.8371400e.svg"
-            alt=""
-          />
-          <span className="max-sm:last:hidden">Hoja</span>
-        </button>
-        <button
-          className="border command flex items-center gap-2.25 text-muted border-line rounded-[9px] pt-1.75 pr-2.5 pb-1.75 pl-2.5 ml-5 cursor-pointer text-left mt-0 mr-auto mb-0 bg-bg max-sm:text-xs max-lg:w-auto max-lg:flex-1 max-lg:ml-1 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-desktop:hidden shell-phone:route-fullbleed:ml-0 [@media_(max-width:850px)]:ml-0 [@media_(max-width:850px)]:w-auto [@media_(max-width:560px)]:text-[12px] [@media_(max-width:900px)]:w-auto [@media_(max-width:900px)]:ml-1 shell-phone:w-9 shell-phone:h-9 shell-phone:mt-0 shell-phone:mr-0 shell-phone:mb-0 shell-phone:ml-0 shell-phone:pt-2.25 shell-phone:pr-2.25 shell-phone:pb-2.25 shell-phone:pl-2.25 shell-phone:text-[0] shell-phone:gap-0 shell-phone:bg-transparent shell-phone:focus-within:left-14.5 shell-phone:focus-within:right-3 shell-phone:focus-within:z-40 shell-phone:focus-within:w-auto shell-phone:focus-within:bg-panel shell-phone:focus-within:text-[13px] w-[min(410px,38vw)]"
-          onClick={() => setCommandOpen(true)}
-        >
-          <Search size={15} />
-          Search tasks and pages
-          <kbd className="ml-auto border border-line rounded-sm pt-px pr-1.25 pb-px pl-1.25 text-[10px] max-sm:hidden shell-phone:text-transparent shell-phone:focus-within:text-muted">
-            ⌘ K
-          </kbd>
-        </button>
-      </header>
       <div
         className="flex shell-phone:flex shell-phone:flex-1 shell-phone:min-h-0 shell-phone:overflow-hidden shell-desktop:contents shell-phone:min-h-[calc(100dvh-60px)] min-h-[calc(100dvh-68px)]"
         data-app-body=""
@@ -12921,7 +12879,9 @@ function TeamHome({
             className="border border-line rounded-xl shadow-[0_1px_2px_#1b1b1b08] pt-4 pr-4 pb-4 pl-4 bg-panel"
             data-side-card=""
           >
-            <span className="text-[10px] font-bold normal-case text-muted mt-0 mr-2.5 mb-1.75 ml-2.5 tracking-[.12em]">
+            <span
+              className="text-xs font-semibold normal-case text-muted"
+            >
               Current cycle
             </span>
             <h3 className="text-[15px] mt-3 mr-0 mb-1.25 ml-0">
@@ -12963,7 +12923,9 @@ function TeamHome({
             className="border border-line rounded-xl shadow-[0_1px_2px_#1b1b1b08] pt-4 pr-4 pb-4 pl-4 bg-panel"
             data-side-card=""
           >
-            <span className="text-[10px] font-bold normal-case text-muted mt-0 mr-2.5 mb-1.75 ml-2.5 tracking-[.12em]">
+            <span
+  className="text-xs font-semibold normal-case text-muted"
+            >
               Team links
             </span>
             <button
