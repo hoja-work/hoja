@@ -1,5 +1,6 @@
 /* Shared primitives compose standard Tailwind utilities with caller styling. */
 import React from "react";
+import { twMerge } from "tailwind-merge";
 
 type DataAttributes = {
   [name: `data-${string}`]: string | number | boolean | null | undefined;
@@ -125,6 +126,26 @@ export function TabStrip({
     >
       {children}
     </div>
+  );
+}
+
+/** Compact circular toolbar option. Keep icon children at size={16}. */
+export function CircularOptionButton(
+  props: Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "type"> &
+    DataAttributes,
+) {
+  const { className, children, ...rest } = props;
+  return (
+    <button
+      type="button"
+      className={twMerge(
+        "border grid place-items-center size-7 rounded-full border-line bg-panel text-muted hover:bg-subtle hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11",
+        className,
+      )}
+      {...rest}
+    >
+      {children}
+    </button>
   );
 }
 
