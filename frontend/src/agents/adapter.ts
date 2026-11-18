@@ -345,7 +345,7 @@ const STATUS_BY_STATE: Record<string, SessionStatus> = {
   cancelled: 'done',
 };
 
-function sessionStatus(state: string, status: ServerSession['status']): SessionStatus {
+export function sessionStatus(state: string, status: ServerSession['status']): SessionStatus {
   if (status === 'error') return 'failed';
   return STATUS_BY_STATE[state] || 'queued';
 }

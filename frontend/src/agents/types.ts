@@ -182,6 +182,17 @@ export function agentStatus(id: AgentStatus) {
   return AGENT_STATUSES.find(s => s.id === id) || AGENT_STATUSES[0];
 }
 
+/* The run queue's group for each status, and the dot colour every session chip draws (the queue
+ * and the chat's delegation card), so the two screens never disagree about a colour. */
+export const SESSION_TYPE: Record<SessionStatus, {type: string; color: string}> = {
+  queued: {type: 'backlog', color: '#e2a03f'},
+  active: {type: 'started', color: '#5e6ad2'},
+  'awaiting-input': {type: 'unstarted', color: '#c98a1b'},
+  'awaiting-verification': {type: 'unstarted', color: '#2f9e6f'},
+  done: {type: 'completed', color: '#95a2b3'},
+  failed: {type: 'canceled', color: '#c0392b'},
+};
+
 export function sessionStatusName(status: SessionStatus): string {
   return SESSION_STATUSES.find(s => s.id === status)?.name || status;
 }

@@ -8,6 +8,7 @@ import {
 } from "@openuidev/react-ui";
 import { useThread, useThreadList } from "@openuidev/react-headless";
 import { Markdown } from "./markdown";
+import { DelegationCard, splitDelegations } from "./DelegationCard";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { History, SquarePen } from "lucide-react";
 import {
@@ -271,11 +272,17 @@ function AssistantMessage({
 }: {
   message: { id?: string; content?: string | null };
 }) {
-  const { text, questions } = splitAsk(message.content ?? "");
+  const { text: withoutCards, delegations } = splitDelegations(
+    message.content ?? "",
+  );
+  const { text, questions } = splitAsk(withoutCards);
   return (
     <div className="flex items-start gap-3 w-full max-w-(--ag-max) mt-0 mr-auto mb-0 ml-auto pt-3.5 pr-0 pb-3.5 pl-0">
       <div className="flex-1 wrap-break-word [&_p]:mb-3 [&_p:last-child]:mb-0 [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_li+li]:mt-1 [&_code]:rounded-md [&_code]:bg-subtle [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-xs [&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-xl [&_pre]:border [&_pre]:border-line [&_pre]:bg-subtle [&_pre]:p-4 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:leading-normal [&_a]:text-foreground [&_a]:underline [&_a]:decoration-line [&_a]:underline-offset-2 [&_a:hover]:decoration-foreground [&_table]:my-2 [&_table]:border-collapse [&_table]:text-xs [&_th]:border [&_th]:border-line [&_th]:px-2.5 [&_th]:py-1.5 [&_th]:text-left [&_td]:border [&_td]:border-line [&_td]:px-2.5 [&_td]:py-1.5 [&_td]:text-left min-w-0 leading-[1.65] wrap-anywhere pt-0 pr-0 pb-0 pl-0">
         <Markdown text={text} density="compact" />
+        {delegations.map((d) => (
+          <DelegationCard key={d.issueId} delegation={d} />
+        ))}
         {questions && (
           <ul className="mt-[.3em] mr-0 mb-[.7em] ml-0 pl-[1.3em] text-muted">
             {questions.map((q, i) => (

@@ -47,6 +47,7 @@ How to work:
 - Assign people only after confirming they are members of the team.
 - To filter to the signed-in user, first run `{ viewer { id } }`, then use the returned id, e.g. `issues(filter: { assignee: { id: { eq: "<id>" } } })`. `UserFilter` has only id, email, displayName, and name; there is no `isMe` field.
 - After a write, read it back to confirm it exists and is linked to the right project.
+- To hand a task to an agent, call the `delegate` tool with the task and the agent's user id. Find agents with `{ agentMembers { userId user { name } archivedAt } }`; only agents with no `archivedAt` can take work. Delegate only when the user asks for an agent to do the work. If they did not say which agent and more than one exists, ask with `ask_user`. The tool returns the agent session: report its state, and when it is queued, say why in plain words (the `queueReason` values are capacity, budget, window, blocked, approval and lease_held). The chat shows a live card for each delegation, so do not poll for progress.
 
 How to answer:
 - Reply in Markdown. Use short paragraphs, bullet lists for multiple items, and fenced code blocks for queries or IDs.
@@ -58,6 +59,19 @@ How to answer:
 
 
 ASK_FENCE = "hoja-ask"
+DELEGATION_FENCE = "hoja-delegation"
+
+DELEGATE_MUTATION = """
+mutation Delegate($id: String!, $agent: String!) {
+  issueUpdate(id: $id, input: { delegateId: $agent }) {
+    success
+    issue {
+      id identifier title
+      delegate { id name }
+      agentSession { id state status queueReason admitted }
+    }
+  }
+}"""
 
 
 class AskOption(BaseModel):
@@ -84,6 +98,13 @@ def ask_block(ask: AskUser) -> str:
     return f"\n\n```{ASK_FENCE}\n{ask.model_dump_json(exclude_none=True)}\n```\n"
 
 
+def delegation_blocks(delegations: list[dict]) -> str:
+    """Fenced blocks the chat UI renders as live cards, one per delegated task (the last one wins)."""
+    latest = {d["issueId"]: d for d in delegations}
+    return "".join(f"\n\n```{DELEGATION_FENCE}\n{json.dumps(d, separators=(',', ':'))}\n```\n"
+                   for d in latest.values())
+
+
 class AgentDeps:
     def __init__(self, schema, context: dict, graphql_runner=None, sink=None):
         self.schema = schema
@@ -92,6 +113,19 @@ class AgentDeps:
         # Durable runs route the graphql tool through a checkpointed step and stream text to a sink.
         self.graphql_runner = graphql_runner
         self.sink = sink
+        # Tasks this turn handed to an agent; the reply ends with one card per task.
+        self.delegations: list[dict] = []
+
+
+async def _run_graphql(deps: AgentDeps, query: str, variables: dict) -> dict:
+    """The one path every agent read and write takes: the read-only guard, then the durable
+    runner when there is one, else the schema directly, as the signed-in user."""
+    if read_only_violation(query, deps.context.get("access", "read")):
+        return {"errors": [{"message": "This API key is read-only.", "extensions": {"code": "FORBIDDEN", "agentHint": READ_ONLY_HINT}}]}
+    if deps.graphql_runner is not None:
+        return await deps.graphql_runner(query, variables)
+    _ok, result = await graphql_run(deps.schema, query, variables, deps.context)
+    return result
 
 
 def build_agent(model, schema_sdl: str, connector: ConnectorBinding | None = None, *,
@@ -130,11 +164,27 @@ def build_agent(model, schema_sdl: str, connector: ConnectorBinding | None = Non
     async def graphql(ctx: RunContext[AgentDeps], query: str, variables: dict | None = None) -> dict:
         """Run a GraphQL query or mutation against Hoja as the signed-in user.
         `query` is REQUIRED and must be a non-empty GraphQL string. Call `schema` first if you need field names."""
-        if read_only_violation(query, ctx.deps.context.get("access", "read")):
-            return {"errors": [{"message": "This API key is read-only.", "extensions": {"code": "FORBIDDEN", "agentHint": READ_ONLY_HINT}}]}
-        if ctx.deps.graphql_runner is not None:
-            return await ctx.deps.graphql_runner(query, variables or {})
-        _ok, result = await graphql_run(ctx.deps.schema, query, variables or {}, ctx.deps.context)
+        return await _run_graphql(ctx.deps, query, variables or {})
+
+    @agent.tool
+    async def delegate(ctx: RunContext[AgentDeps], issue: str, agent_user_id: str) -> dict:
+        """Hand a task to an agent member to work on.
+        `issue` is the task's id or identifier (e.g. TREBOL-12); `agent_user_id` is the agent's
+        `userId` from `agentMembers`. Returns the task and its agent session (state, status and, when
+        queued, queueReason). The server checks that the agent belongs to this workspace."""
+        result = await _run_graphql(ctx.deps, DELEGATE_MUTATION, {"id": issue, "agent": agent_user_id})
+        # issueUpdate, not taskUpdate: TaskUpdateInput has no delegateId; the task page uses this too.
+        payload = (result.get("data") or {}).get("issueUpdate") or {}
+        task = payload.get("issue")
+        if payload.get("success") and task:
+            session = task.get("agentSession") or {}
+            ctx.deps.delegations.append({
+                "issueId": task["id"],
+                "identifier": task.get("identifier"),
+                "title": task.get("title"),
+                "agentName": (task.get("delegate") or {}).get("name"),
+                "sessionId": session.get("id"),
+            })
         return result
 
     return agent
@@ -269,6 +319,10 @@ async def stream_reply(store, org_id: str, uid: str, messages: list[dict], schem
                 block = ask_block(run.result.output)
                 reply_parts.append(block)
                 yield _chunk(completion_id, {"content": block})
+            if deps.delegations:
+                cards = delegation_blocks(deps.delegations)
+                reply_parts.append(cards)
+                yield _chunk(completion_id, {"content": cards})
     except UnexpectedModelBehavior:
         reply_parts = ["The assistant could not complete that request. Please try again."]
         yield _chunk(completion_id, {"content": reply_parts[0]})
