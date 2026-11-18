@@ -1438,6 +1438,9 @@ def m_membership_invitation_create(_, info, userId):
             invitee_name=target.get("name") or "",
             invitee_email=target.get("email"),
             code=code,
+            # A hosted workspace invites onto its own host: the member who
+            # accepts must land in the workspace that invited them.
+            workspace_url=store.workspace_origin(org),
         )
         email_queued = delivery == "sent"
         if not email_queued:

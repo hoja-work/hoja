@@ -41,14 +41,15 @@ from sqlalchemy.engine import Connection, Engine
 
 from hoja_server import secrets_box, tenant_context
 from hoja_server.db import (
-    app_url,
     change_event,
+    entity_url,
     extension,
     issue,
     issue_activity,
     issue_label_link,
     new_id,
     now_iso,
+    org_links,
     team,
     user,
     webhook,
@@ -304,6 +305,18 @@ def list_webhooks(engine: Engine, org_id: str) -> list[dict]:
 # ------------------------------------------------------------------ dispatch
 
 
+def _issue_link(conn: Connection, row: dict) -> str:
+    """The issue's link for a payload, built the way the writer builds it.
+
+    Only a row written before the workspace host became part of the link reaches
+    this fallback, and it still names its own workspace: the key and the origin
+    come from the same organization row in one read, never from the process-wide
+    ``HOJA_APP_URL`` alone.
+    """
+    url_key, base_url = org_links(conn, row["organization_id"])
+    return entity_url(url_key, "issue", row["identifier"], base_url)
+
+
 def _issue_data(conn: Connection, row: dict) -> dict:
     state = conn.execute(select(workflow_state).where(
         workflow_state.c.id == row["state_id"])).mappings().first() if row.get("state_id") else None
@@ -316,7 +329,7 @@ def _issue_data(conn: Connection, row: dict) -> dict:
         "title": row["title"], "description": row.get("description"),
         "priority": row.get("priority") or 0, "priorityLabel": row.get("priority_label"),
         "estimate": row.get("estimate"), "branchName": row.get("branch_name"),
-        "url": row.get("url") or f"{app_url()}/issue/{row['identifier']}",
+        "url": row.get("url") or _issue_link(conn, row),
         "stateId": row.get("state_id"),
         "state": {"id": state["id"], "name": state["name"], "type": state["type"],
                   "color": state["color"]} if state else None,

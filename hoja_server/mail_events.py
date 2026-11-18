@@ -25,11 +25,16 @@ def _key(*parts: str) -> str:
 
 def send_invite(engine, *, organization_id: str, organization_name: str,
                 inviter_name: str, invitee_name: str, invitee_email: str,
-                code: str, expires_hours: int = 72) -> str:
+                code: str, expires_hours: int = 72, workspace_url: str = "") -> str:
     """One of ``sent``, ``not_configured`` or ``failed``.
 
     A single boolean could not tell an admin which of those happened, so the
     screen said "invite ready" for a send that never left.
+
+    ``workspace_url`` is the origin of the workspace doing the inviting. A
+    workspace with its own host (``organization.vanity_host``) sends its own
+    host, because that is where the invited member must land; empty keeps the
+    canonical application URL this mail has always used.
     """
     config = mail_config.current()
     if not config.configured:
@@ -44,7 +49,7 @@ def send_invite(engine, *, organization_id: str, organization_name: str,
                 "invitee_name": invitee_name or invitee_email,
                 "inviter_name": inviter_name or organization_name,
                 "workspace_name": organization_name,
-                "invite_url": config.invitation_url(code),
+                "invite_url": config.invitation_url(code, workspace_url),
                 "expires_hours": expires_hours,
             },
             # A re-issued invitation has a new code and therefore a new key: the

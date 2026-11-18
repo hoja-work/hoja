@@ -52,6 +52,7 @@ from hoja_server.db import (
     issue_subscriber,
     membership_invitation,
     new_id,
+    org_base_url,
     organization,
     organization_membership,
     password_credential,
@@ -1713,6 +1714,16 @@ class Store:
                 conn.execute(team_member.insert().values(
                     team_id=team_id, user_id=uid, role="member"))
         return self.get_user(org_id, uid), raw_token
+
+    def workspace_origin(self, org_id: str) -> str:
+        """The origin this workspace's links and mail must name.
+
+        Its own host when it has one (``organization.vanity_host``), else the
+        canonical application URL: the same rule ``db.entity_url`` applies, read
+        here for the callers that build a link outside an entity row.
+        """
+        with self.engine.connect() as conn:
+            return org_base_url(conn, org_id)
 
     def workspace(self, org_id: str) -> dict | None:
         with self.engine.connect() as conn:

@@ -27,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Entity links named the canonical host instead of the workspace's own. In a
+  workspace with a `vanity_host` (Core on `core.hoja.work`), every issue, project
+  and profile link was rendered from the process-wide `HOJA_APP_URL`, so it
+  opened the canonical host and the wrong workspace: all 99 issues and 7/7
+  projects of one workspace did. Links are now built from the workspace's
+  origin (`db.tenant_base_url`), revision 73 rewrites the stored ones in place,
+  and an invitation is sent on the host of the workspace that issued it.
 - Completing a Google sign-in answered "Internal Server Error": the tenant's
   `_announce_member` called `membership_announce.announce` while the module was
   never imported, so every successful sign-in and every accepted invitation

@@ -10,6 +10,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from sqlalchemy import (
     BigInteger,
@@ -24,6 +25,7 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
+    and_,
     create_engine,
     event,
     func,
@@ -35,7 +37,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 72
+CURRENT_SCHEMA_REVISION = 73
 
 log = logging.getLogger(__name__)
 
@@ -3261,6 +3263,38 @@ def _apply_agent_policy_harness(conn) -> None:
         conn.exec_driver_sql("ALTER TABLE agent_policy ADD COLUMN harness_allowlist TEXT")
 
 
+def _apply_entity_url_hosts(conn) -> None:
+    """Put every stored entity link on the host its workspace is served from (revision 73).
+
+    One database serves several workspaces, but every link was rendered from the
+    process-wide ``HOJA_APP_URL``, so a workspace with its own host
+    (``organization.vanity_host``, e.g. ``core.hoja.work``) stores links that open
+    the canonical host and therefore the wrong workspace: production Core had
+    99/99 issues and 7/7 projects pointing at ``https://hoja.hoja.work/core/…``.
+    The host on the organization row is the source of truth, so the fix is to say
+    so once (``tenant_base_url``) and move the rows written under the old rule.
+
+    Only a link whose path is still the one ``entity_url`` writes
+    (``<origin>/<url_key>/<kind>/<key>``) is rewritten — see
+    ``_hosted_entity_url`` — so an attachment's object-store URL, a webhook
+    endpoint or a connector's external link is left exactly as it is. Writes go
+    row by row through the ORM-updatable tables, which is portable to SQLite and
+    PostgreSQL alike; the migration role owns those tables, so the
+    ``hoja_tenant`` policies (ENABLE, never FORCE) do not hide their rows.
+
+    Idempotent: a row already on its host does not move, so a second run is a
+    no-op and a migrate that raced another owner to this revision is harmless.
+    """
+    org_ids = list(conn.execute(
+        select(organization.c.id).where(organization.c.vanity_host.isnot(None))
+    ).scalars())
+    moved = 0
+    for org_id in org_ids:
+        moved += repair_entity_urls(conn, org_id)
+    if moved:
+        log.warning("revision 73 moved %s entity link(s) onto their workspace host", moved)
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -3468,6 +3502,13 @@ _MIGRATIONS = {
     # existing policy reads as "nobody chose", which the queue resolves to `pi`: the
     # value `agent_schedule.enqueue_admitted` hard-coded before this revision.
     72: _apply_agent_policy_harness,
+    # 73: entity links carry the workspace's own host. Data-only: every stored
+    # issue/project/profile/comment link was built from the process-wide
+    # HOJA_APP_URL, so in a workspace with a vanity host it names the canonical
+    # host and opens the wrong workspace. Rewrites those rows in place onto
+    # https://<vanity_host>/<url_key>/…, leaves external URLs alone, and is a
+    # no-op on a database whose links are already right.
+    73: _apply_entity_url_hosts,
 }
 
 
@@ -3585,8 +3626,107 @@ def app_url() -> str:
     return os.environ.get("HOJA_APP_URL", "http://localhost:8787").rstrip("/")
 
 
-def entity_url(org_url_key: str, kind: str, entity_key: str) -> str:
-    return f"{app_url()}/{org_url_key}/{kind}/{entity_key}"
+def tenant_base_url(vanity_host: str | None) -> str:
+    """The origin a workspace is served from: its own host, else the canonical app.
+
+    A hosted workspace (``organization.vanity_host``) answers on its own origin,
+    so every link built for it has to name that origin. This is the one place
+    that decision is made; ``entity_url`` and the link repair below only consume
+    it, so a host change cannot leave two answers in the code.
+    """
+    host = (vanity_host or "").strip().strip("/")
+    return f"https://{host}" if host else app_url()
+
+
+def org_links(conn, org_id: str) -> tuple[str, str]:
+    """The ``(url_key, origin)`` a workspace's links are built from.
+
+    Read in one query on purpose: the key and the host sit on the same row, and a
+    link built from one without the other is exactly the bug this prevents.
+    """
+    row = conn.execute(
+        select(organization.c.url_key, organization.c.vanity_host)
+        .where(organization.c.id == org_id)
+    ).first()
+    if not row:
+        return "local", app_url()
+    return (row[0] or "local"), tenant_base_url(row[1])
+
+
+def org_base_url(conn, org_id: str) -> str:
+    """The origin one workspace's links are built from."""
+    return org_links(conn, org_id)[1]
+
+
+def entity_url(org_url_key: str, kind: str, entity_key: str,
+               base_url: str | None = None) -> str:
+    """``<origin>/<url_key>/<kind>/<key>``, on the workspace's own origin when known."""
+    origin = (base_url or app_url()).rstrip("/")
+    return f"{origin}/{org_url_key}/{kind}/{entity_key}"
+
+
+def _hosted_entity_url(url: str | None, url_key: str, kind: str,
+                       base_url: str) -> str | None:
+    """``url`` moved onto ``base_url``, or None when it is not ours to rewrite.
+
+    The shape test is the whole safety story of the repair: only a link whose
+    path is the one ``entity_url`` writes (``/<url_key>/<kind>/<key>``, with an
+    issue comment's ``#comment-…`` fragment surviving) is touched. An
+    attachment's object-store link, a connector's external URL or a webhook's
+    endpoint has no such path and is returned as ``None``, untouched.
+    """
+    if not url or not url_key:
+        return None
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        return None
+    head = f"/{url_key}/{kind}/"
+    if not parts.path.startswith(head) or len(parts.path) == len(head):
+        return None
+    suffix = f"?{parts.query}" if parts.query else ""
+    suffix += f"#{parts.fragment}" if parts.fragment else ""
+    return f"{base_url}{parts.path}{suffix}"
+
+
+# Every table that stores a link ``entity_url`` built, with the kind its path
+# carries. ``comment`` repeats ``issue`` because a comment's link is its issue's
+# link plus a ``#comment-…`` fragment.
+ENTITY_URL_TABLES = (
+    ("issue", issue, "issue"),
+    ("comment", comment, "issue"),
+    ("project", project, "project"),
+    ("user", user, "profiles"),
+)
+
+
+def repair_entity_urls(conn, org_id: str) -> int:
+    """Move one workspace's stored entity links onto the origin it is served from.
+
+    Idempotent: a row already on its host is left alone, so running it twice
+    changes nothing. Revision 73 runs it for every hosted workspace, and the
+    paths that can move the host under existing rows (a tenant merge, a host pin)
+    call it again for the one workspace they changed.
+    """
+    row = conn.execute(
+        select(organization.c.url_key, organization.c.vanity_host)
+        .where(organization.c.id == org_id)
+    ).first()
+    if not row or not row[0]:
+        return 0
+    url_key, base_url = row[0], tenant_base_url(row[1])
+    moved = 0
+    for _name, table, kind in ENTITY_URL_TABLES:
+        rows = conn.execute(select(table.c.id, table.c.url).where(and_(
+            table.c.organization_id == org_id,
+            table.c.url.isnot(None),
+        ))).all()
+        for row_id, url in rows:
+            repaired = _hosted_entity_url(url, url_key, kind, base_url)
+            if repaired is None or repaired == url:
+                continue
+            conn.execute(table.update().where(table.c.id == row_id).values(url=repaired))
+            moved += 1
+    return moved
 
 
 def _default_org_url_key(org_name: str) -> str:
@@ -3601,6 +3741,7 @@ def seed_tenant(
     *,
     org_name: str = "Local",
     org_url_key: str | None = None,
+    org_vanity_host: str | None = None,
     team_key: str = "ENG",
     team_name: str = "Engineering",
     user_name: str = "Local User",
@@ -3614,6 +3755,9 @@ def seed_tenant(
     """
     token = token or gen_token()
     org_url_key = org_url_key or _default_org_url_key(org_name)
+    # A seeded workspace that is served from its own host links to that host, exactly
+    # as a workspace created by writer/cli would; without one it keeps HOJA_APP_URL.
+    base_url = tenant_base_url(org_vanity_host)
     ts = now_iso()
     try:
         with engine.begin() as conn:
@@ -3631,6 +3775,7 @@ def seed_tenant(
                     id=org_id,
                     name=org_name,
                     url_key=org_url_key,
+                    vanity_host=(org_vanity_host or None),
                     created_at=ts,
                     updated_at=ts,
                 )
@@ -3645,7 +3790,7 @@ def seed_tenant(
                     email=user_email,
                     active=True,
                     admin=True,
-                    url=entity_url(org_url_key, "profiles", uid),
+                    url=entity_url(org_url_key, "profiles", uid, base_url),
                     timezone="UTC",
                     created_at=ts,
                     updated_at=ts,
@@ -3702,7 +3847,8 @@ def seed_tenant(
 
             if demo_issues:
                 _seed_demo_issues(
-                    conn, org_id, tid, team_key.upper(), uid, default_state_id, org_url_key
+                    conn, org_id, tid, team_key.upper(), uid, default_state_id, org_url_key,
+                    base_url,
                 )
     except IntegrityError as exc:
         if "token_hash" in str(exc).lower() or "uq_api_key_token_hash" in str(exc):
@@ -3720,7 +3866,8 @@ def seed_tenant(
     }
 
 
-def _seed_demo_issues(conn, org_id, team_id, team_key, uid, state_id, org_url_key):
+def _seed_demo_issues(conn, org_id, team_id, team_key, uid, state_id, org_url_key,
+                      base_url=None):
     ts = now_iso()
     # bump counter to 2, create ENG-1, ENG-2
     samples = [
@@ -3746,7 +3893,7 @@ def _seed_demo_issues(conn, org_id, team_id, team_key, uid, state_id, org_url_ke
                 state_id=state_id,
                 creator_id=uid,
                 assignee_id=uid,
-                url=entity_url(org_url_key, "issue", ident),
+                url=entity_url(org_url_key, "issue", ident, base_url),
                 branch_name=f"{uid[:8]}/{ident.lower()}-{title.lower().replace(' ', '-')[:20]}",
                 created_at=ts,
                 updated_at=ts,

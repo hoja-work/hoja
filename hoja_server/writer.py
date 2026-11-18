@@ -28,6 +28,7 @@ from hoja_server.db import (
     issue_label,
     issue_label_link,
     issue_subscriber,
+    org_links,
     meeting,
     new_id,
     now_iso,
@@ -63,11 +64,6 @@ def _slug(text: str, n: int = 24) -> str:
     while "--" in out:
         out = out.replace("--", "-")
     return out[:n].strip("-")
-
-
-def _org_url_key(conn, org_id: str) -> str:
-    r = conn.execute(select(organization.c.url_key).where(organization.c.id == org_id)).first()
-    return (r[0] if r and r[0] else "local")
 
 
 class InvalidReferenceError(GraphQLError):
@@ -852,7 +848,7 @@ class Writer:
             state_id = inp.get("stateId") or trow.get("default_state_id")
             cycle_id = inp.get("cycleId") or self._auto_add_cycle_id(conn, org_id, trow, state_id)
             ts = now_iso()
-            url_key = _org_url_key(conn, org_id)
+            url_key, base_url = org_links(conn, org_id)
             iid = new_id()
             conn.execute(issue.insert().values(
                 id=iid, organization_id=org_id, team_id=tid, number=n, identifier=ident,
@@ -864,7 +860,7 @@ class Writer:
                 creator_id=viewer_id,
                 project_id=inp.get("projectId"), cycle_id=cycle_id,
                 parent_id=parent_id,
-                url=entity_url(url_key, "issue", ident),
+                url=entity_url(url_key, "issue", ident, base_url),
                 branch_name=f"{viewer_id[:8]}/{ident.lower()}-{_slug(inp['title'])}",
                 due_date=inp.get("dueDate"), created_at=ts, updated_at=ts,
             ))
@@ -1512,7 +1508,7 @@ class Writer:
             ts = now_iso()
             pid = new_id()
             slug = _slug(expanded["name"])
-            url_key = _org_url_key(conn, org_id)
+            url_key, base_url = org_links(conn, org_id)
             conn.execute(project.insert().values(
                 id=pid, organization_id=org_id, name=expanded["name"],
                 description=expanded.get("description"), slug_id=slug,
@@ -1520,7 +1516,7 @@ class Writer:
                 state=state_name, progress=0,
                 lead_id=expanded.get("leadId"), creator_id=viewer_id,
                 start_date=expanded.get("startDate"), target_date=expanded.get("targetDate"),
-                url=entity_url(url_key, "project", slug),
+                url=entity_url(url_key, "project", slug, base_url),
                 created_at=ts, updated_at=ts))
             conn.execute(project_member.insert().values(project_id=pid, user_id=viewer_id))
             for team_id in team_ids:

@@ -69,10 +69,15 @@ class MailConfig:
     def configured(self) -> bool:
         return self.transport in ("cloudflare", "smtp")
 
-    def invitation_url(self, code: str) -> str:
-        """The one accept link shape. A code is a path fragment, never a query."""
-        base = self.app_url.rstrip("/")
-        return f"{base}/#invite={code}"
+    def invitation_url(self, code: str, base: str = "") -> str:
+        """The one accept link shape. A code is a path fragment, never a query.
+
+        ``base`` is the origin the invitation is for: a workspace with its own
+        host sends its own host, so the member who accepts lands in the workspace
+        that invited them. Empty means the canonical application URL.
+        """
+        origin = (base or self.app_url).rstrip("/")
+        return f"{origin}/#invite={code}"
 
     def describe(self) -> dict[str, object]:
         """Safe to log or return over an admin surface: no token, no password."""

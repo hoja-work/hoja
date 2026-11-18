@@ -64,6 +64,7 @@ class Report:
     credentials_updated: list[str] = field(default_factory=list)
     renumbered: dict[str, str] = field(default_factory=dict)
     dropped_stale: dict[str, int] = field(default_factory=dict)
+    urls_rehosted: int = 0
 
     def lines(self) -> list[str]:
         out = [f"organization {self.url_key} ({self.org_id})",
@@ -78,6 +79,8 @@ class Report:
         out += [f"rows {name}={n}" for name, n in sorted(self.tables.items()) if n]
         out += [f"carried from the shared copy {name}={n}" for name, n in sorted(self.carried.items()) if n]
         out += [f"not carried {name}={n}" for name, n in sorted(self.dropped_stale.items()) if n]
+        if self.urls_rehosted:
+            out.append(f"entity links moved onto the workspace host: {self.urls_rehosted}")
         out += [f"renumbered {old} -> {new}" for old, new in sorted(self.renumbered.items())]
         return out
 
@@ -400,6 +403,16 @@ def merge(source: Engine, target: Engine, *, source_secret: str, target_secret: 
                     table = meta.tables[name]
                     report.skipped_rows[name] = src.execute(select(func.count()).select_from(table)).scalar_one()
                 if apply:
+                    # The copied rows carry the links their source tenant rendered,
+                    # so the workspace they now live in would link to the host that
+                    # tenant used. Revision 73's repair is the same routine that
+                    # puts a stored link on its workspace's host, so a merge onto a
+                    # pinned host (--vanity-host) lands correct in one step.
+                    from hoja_server import db as db_module
+
+                    moved = db_module.repair_entity_urls(dst, org_id)
+                    if moved:
+                        report.urls_rehosted = moved
                     tx.commit()
                     report.applied = True
                 else:

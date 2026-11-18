@@ -474,7 +474,9 @@ def test_revision_72_upgrades_a_71_database_twice(tmp_path):
     )
     from tests import legacy_schema
 
-    assert CURRENT_SCHEMA_REVISION == 72
+    # The ledger is global: a later revision (73, entity link hosts) takes the next
+    # number without changing what this proves, so the assertion follows the head.
+    assert CURRENT_SCHEMA_REVISION >= 72
     engine = make_engine(tmp_path / "harness-upgrade.db")
     legacy_schema.create_schema(engine, 71)
     with engine.begin() as conn:
@@ -486,13 +488,13 @@ def test_revision_72_upgrades_a_71_database_twice(tmp_path):
     assert not {"default_harness", "harness_allowlist"} & before
 
     migrate(engine)
-    assert applied_schema_revision(engine) == 72
+    assert applied_schema_revision(engine) == CURRENT_SCHEMA_REVISION
     with engine.connect() as conn:
         columns = {column["name"] for column in inspect(conn).get_columns("agent_policy")}
     assert {"default_harness", "harness_allowlist"} <= columns
 
     migrate(engine)
-    assert applied_schema_revision(engine) == 72
+    assert applied_schema_revision(engine) == CURRENT_SCHEMA_REVISION
 
 
 def test_revision_72_leaves_the_tenant_binding_and_the_ready_probe_as_it_found_them():
