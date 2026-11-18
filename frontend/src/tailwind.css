@@ -4,6 +4,14 @@
 @import "@openuidev/react-ui/styles/index.css" layer(vendor);
 @import "tailwindcss";
 
+/* Shell tracks use fixed pixels (244px sidebar, 48px header). Keep spacing
+ * utilities on the same scale, independent of the root font size. React Grab's
+ * dev-only vendor theme also defines --spacing; this unlayered app token must
+ * win over both vendor and Tailwind defaults in every build mode. */
+:root {
+  --spacing: 4px;
+}
+
 /* The app palette lives in CSS variables (styles.css, light and dark). Registering them as
  * theme colors lets markup style surfaces with utilities (bg-panel, bg-subtle, border-line,
  * text-muted) instead of hard-coded neutrals that would ignore the theme. */

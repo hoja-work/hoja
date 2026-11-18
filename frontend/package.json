@@ -37,6 +37,7 @@
     "lint:tailwind": "node scripts/canonicalize-tailwind.mjs",
     "fix:tailwind-intellisense": "node scripts/fix-tailwind-intellisense.mjs",
     "test:tailwind-intellisense": "node scripts/test-fix-tailwind-intellisense.mjs",
+    "test:spacing-parity": "node scripts/test-spacing-parity.cjs",
     "test:tailwind": "node scripts/test-canonicalize-tailwind.mjs"
   },
   "dependencies": {
