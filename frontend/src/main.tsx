@@ -2263,6 +2263,7 @@ function App() {
   const [selected, setSelected] = useState<Issue | null>(null);
   const [newOpen, setNewOpen] = useState(false);
   const [newStateId, setNewStateId] = useState("");
+  const [newTeamId, setNewTeamId] = useState("");
   const [projectOpen, setProjectOpen] = useState(false);
   const [mobile, setMobile] = useState(false);
   const mobileToggleRef = useRef<HTMLButtonElement>(null);
@@ -3205,8 +3206,21 @@ function App() {
     const path = `/workspace/my-issues/${tab.toLowerCase()}`;
     history.pushState({}, "", path);
   };
+  /* A composer opened from a team surface has to default to that team; without this it
+   * always fell back to the first team in the workspace, so a task created from Design
+   * landed in Engineering. Workspace-wide surfaces have no team in the path and keep
+   * the old default. */
+  const teamIdFromRoute = () => {
+    const parts = location.pathname.split("/");
+    const at = parts.indexOf("team");
+    const key = at >= 0 ? parts[at + 1] : "";
+    return key
+      ? teams.find((t) => t.key.toLowerCase() === key.toLowerCase())?.id || ""
+      : "";
+  };
   const openNewIssue = (stateId?: string) => {
     setNewStateId(stateId || "");
+    setNewTeamId(teamIdFromRoute());
     setNewOpen(true);
   };
   const allStates = teams.flatMap((t) => t.states.nodes);
@@ -4754,13 +4768,16 @@ function App() {
           <NewIssue
             teams={teams}
             initialStateId={newStateId || undefined}
+            initialTeamId={newTeamId || undefined}
             onClose={() => {
               setNewOpen(false);
               setNewStateId("");
+              setNewTeamId("");
             }}
             onCreated={() => {
               setNewOpen(false);
               setNewStateId("");
+              setNewTeamId("");
               void syncRef.current?.pull();
             }}
           />
@@ -9450,11 +9467,13 @@ function NewIssue({
   onClose,
   onCreated,
   initialStateId,
+  initialTeamId,
 }: {
   teams: Team[];
   onClose: () => void;
   onCreated: () => void;
   initialStateId?: string;
+  initialTeamId?: string;
 }) {
   const meta = useSyncMeta();
   const mounted = useRef(true);
@@ -9526,11 +9545,14 @@ function NewIssue({
   const [title, setTitle] = useState(""),
     [description, setDescription] = useState(""),
     [team, setTeam] = useState(
+      /* A column prefill names the status, so its team wins; otherwise the team the
+       * composer was opened from; otherwise the workspace default. */
       teams.find(
         (t) =>
           Boolean(initialStateId) &&
           t.states.nodes.some((s) => s.id === initialStateId),
       )?.id ||
+        teams.find((t) => Boolean(initialTeamId) && t.id === initialTeamId)?.id ||
         teams[0]?.id ||
         "",
     ),

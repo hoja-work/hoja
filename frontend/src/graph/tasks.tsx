@@ -4362,6 +4362,12 @@ export function GraphIssueDetail({
   const [layers, setLayers] = useState<{ patch: Partial<LinIssue> }[]>([]);
   const [desc, setDesc] = useState<string | null>(null);
   const [descEdit, setDescEdit] = useState(false);
+  const descRef = useRef<HTMLTextAreaElement | null>(null);
+  /* Entering description edit is an explicit request to type, so the caret belongs in
+   * the editor instead of on the button that opened it. */
+  useEffect(() => {
+    if (descEdit) descRef.current?.focus();
+  }, [descEdit]);
   const [updateError, setUpdateError] = useState("");
   // Ids whose preview failed to load, so a dead URL degrades to an icon instead of
   // leaving the browser's torn-page glyph in the row.
@@ -5552,6 +5558,7 @@ export function GraphIssueDetail({
           {descEdit ? (
             <div>
               <textarea
+                ref={descRef}
                 aria-label="Description"
                 value={desc ?? ""}
                 rows={6}
