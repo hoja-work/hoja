@@ -1127,6 +1127,13 @@ class Writer:
                 from hoja_server import sla as sla_module
 
                 sla_module.on_state_change(conn, org_id, iid, inp["stateId"], ts)
+            # HOJA-704: a priority, team or cycle change re-matches the policy on
+            # the same commit. The helper reads the row back, so it sees the
+            # values just written rather than the input that asked for them.
+            if any(k in inp for k in ("priority", "cycleId", "teamId", "stateId")):
+                from hoja_server import sla as sla_module
+
+                sla_module.retarget_clock(conn, org_id, iid, ts, actor_id)
             if "labelIds" in inp:
                 conn.execute(issue_label_link.delete().where(issue_label_link.c.issue_id == iid))
                 for lid in (inp.get("labelIds") or []):
@@ -1962,6 +1969,9 @@ def move_issue_to_state(conn, org_id: str, issue_id: str, state_id: str,
     from hoja_server import sla as sla_module
 
     sla_module.on_state_change(conn, org_id, issue_id, state_id, ts)
+    # The move may have auto-added a cycle (HOJA-704), which is exactly the
+    # change a cycle-bound policy binds its deadline to.
+    sla_module.retarget_clock(conn, org_id, issue_id, ts, actor_id)
     writer._record_activity(conn, org_id, issue_id, actor_id, "issueUpdated",
                             {"stateId": {"from": issue_row.get("state_id"), "to": state_id}}, ts)
     writer._notify_issue_recipients(

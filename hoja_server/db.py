@@ -37,7 +37,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 73
+CURRENT_SCHEMA_REVISION = 74
 
 log = logging.getLogger(__name__)
 
@@ -1654,6 +1654,15 @@ sla_policy = Table(
     # JSON array of workflow_state ids that pause the clock (waiting on the
     # customer). Stored as ids, not names: a rename must not silently unpause.
     Column("pause_state_ids", Text),
+    # HOJA-704. All three are nullable so the previous image keeps writing and
+    # reading this table; NULL reads as the value this policy had before the
+    # column existed (calendar minutes, stop on completed, every day counts).
+    # ``cycle_bound`` makes the resolution deadline the end of the task's cycle;
+    # ``stops_on`` is ``completed`` | ``started`` | ``prioritized``;
+    # ``business_days_only`` skips Saturday and Sunday when adding minutes.
+    Column("cycle_bound", Boolean),
+    Column("stops_on", String),
+    Column("business_days_only", Boolean),
     Column("enabled", Boolean, nullable=False, default=True),
     Column("archived_at", String),
     Column("created_at", String),
@@ -1678,6 +1687,12 @@ sla_clock = Table(
     # Set once, when a read first observes the breach. That is the event
     # Pulse/inbox can show, and it is recorded once rather than per read.
     Column("breached_at", String),
+    # HOJA-704: when the clock last moved to another policy or another cycle's
+    # end, and when it stopped following a policy at all (the task left every
+    # policy's scope). Additive and nullable: an existing clock reads as "never
+    # re-targeted, never detached", which is exactly what it is.
+    Column("retargeted_at", String),
+    Column("detached_at", String),
     Column("created_at", String),
     Column("updated_at", String),
     UniqueConstraint("issue_id", name="uq_sla_clock_issue"),
@@ -2907,6 +2922,37 @@ def _down_sla(conn) -> None:
     conn.execute(schema_revision.delete().where(schema_revision.c.revision == 61))
 
 
+def _apply_sla_options(conn) -> None:
+    """Make a policy configurable and cycle-aware (revision 74, HOJA-704).
+
+    Five additive, nullable columns and nothing else: three per-policy settings
+    on ``sla_policy`` and two timestamps on ``sla_clock``. No table is created,
+    so ``rls_policy`` classifies exactly what it classified before and the
+    readiness probe is unaffected.
+
+    Every NULL means "the behaviour this policy already had": ``cycle_bound``
+    NULL is off, ``stops_on`` NULL is ``completed``, ``business_days_only``
+    NULL is off. A previous image writing to this table omits them and the
+    defaults still hold, and a rollback target that predates this revision
+    reads every policy and clock row it wrote.
+
+    Idempotent by construction: each column is added only when the catalog does
+    not already have it, so a second ``hoja-serve migrate`` is a no-op.
+    """
+    policy_columns = {c["name"] for c in inspect(conn).get_columns("sla_policy")}
+    for name, ddl in (
+        ("cycle_bound", "BOOLEAN"),
+        ("stops_on", "VARCHAR"),
+        ("business_days_only", "BOOLEAN"),
+    ):
+        if name not in policy_columns:
+            conn.exec_driver_sql(f"ALTER TABLE sla_policy ADD COLUMN {name} {ddl}")
+    clock_columns = {c["name"] for c in inspect(conn).get_columns("sla_clock")}
+    for name, ddl in (("retargeted_at", "VARCHAR"), ("detached_at", "VARCHAR")):
+        if name not in clock_columns:
+            conn.exec_driver_sql(f"ALTER TABLE sla_clock ADD COLUMN {name} {ddl}")
+
+
 def _apply_task_templates(conn):
     """HOJA-492: the task-template store.
 
@@ -3509,6 +3555,11 @@ _MIGRATIONS = {
     # https://<vanity_host>/<url_key>/…, leaves external URLs alone, and is a
     # no-op on a database whose links are already right.
     73: _apply_entity_url_hosts,
+    # 74: an SLA policy an admin can configure as they want (HOJA-704). Five
+    # additive, nullable columns: cycle_bound / stops_on / business_days_only on
+    # the policy, retargeted_at / detached_at on the clock. No table is created,
+    # so the RLS classification and the readiness probe do not change.
+    74: _apply_sla_options,
 }
 
 

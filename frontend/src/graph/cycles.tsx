@@ -54,6 +54,7 @@ import {
   LinFilters,
   LinIssue,
   linIssueFields,
+  SlaChip,
 } from "./tasks";
 import {
   Avatar,
@@ -2201,6 +2202,7 @@ const CycleIssueGroups = React.memo(function CycleIssueGroups({
                   onSelect={noop}
                   onOpen={open}
                   childCount={childCounts.get(i.id) || 0}
+                  trailing={<SlaChip sla={i.sla} />}
                 />
               </div>
             ))}

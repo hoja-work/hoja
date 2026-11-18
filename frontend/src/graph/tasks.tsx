@@ -35,6 +35,7 @@ import type {
   Issue,
   IssueActivityEvent,
   IssueLabel,
+  IssueSla,
   IssueState,
   Project,
   Team,
@@ -144,7 +145,7 @@ export type LinIssue = Omit<Issue, "subscribers"> & {
   decisions?: IssueDecision[];
 };
 
-export const linIssueFields = `{ id identifier title description createdAt updatedAt stateChangedAt dueDate priority priorityLabel estimate branchName url decisionNeeded state { id name color type } team { id key name } project { id name } assignee { id name } creator { id name } cycle { id name number } parent { id identifier title } labels { nodes { id name color } } }`;
+export const linIssueFields = `{ id identifier title description createdAt updatedAt stateChangedAt dueDate priority priorityLabel estimate branchName url decisionNeeded sla { state resolutionDueAt firstResponseDueAt firstRespondedAt breachedAt overdueMinutes pausedMinutes cycleEndsAt } state { id name color type } team { id key name } project { id name } assignee { id name } creator { id name } cycle { id name number } parent { id identifier title } labels { nodes { id name color } } }`;
 
 /* ---------------- filter + display models ---------------- */
 
@@ -1549,7 +1550,132 @@ export type IssueRowModel = {
   assignee?: { id: string; name?: string } | null;
   createdAt?: string | null;
   updatedAt?: string | null;
+  /** The clock this row's task runs against, when a policy covers it. */
+  sla?: IssueSla | null;
 };
+
+/* HOJA-704: the SLA chip. One glance says whether the task is on track, about to
+ * be late, already late, or waiting on somebody. The server derives the state —
+ * this only chooses a word and a tone for it, so the chip and the API can never
+ * disagree about whether a deadline passed. */
+export type SlaChipView = {
+  state: string;
+  label: string;
+  title: string;
+  className: string;
+};
+
+const SLA_SOON_MS = 24 * 60 * 60 * 1000;
+
+export function slaChipView(sla: IssueSla, now = Date.now()): SlaChipView {
+  const policy = sla.policy?.name ? ` · ${sla.policy.name}` : "";
+  const due = sla.resolutionDueAt || sla.firstResponseDueAt;
+  const dueText = due ? ` · due ${dueIn(due, now)}` : "";
+  const title = `SLA${policy}${dueText}`;
+  if (sla.state === "breached") {
+    const late = sla.overdueMinutes
+      ? ` by ${relTime2(sla.overdueMinutes)}`
+      : "";
+    return {
+      state: "breached",
+      label: "Breached",
+      title: `${title}${late ? ` — late${late}` : ""}`,
+      className: "border-danger/40 bg-danger/10 text-danger",
+    };
+  }
+  if (sla.state === "paused") {
+    return {
+      state: "paused",
+      label: "Paused",
+      title: `${title} — the clock is paused in this state`,
+      className: "border-line bg-subtle text-muted",
+    };
+  }
+  if (sla.state === "met") {
+    return {
+      state: "met",
+      label: "Met",
+      title: `${title} — met`,
+      className: "border-line bg-panel text-muted",
+    };
+  }
+  if (sla.state === "detached") {
+    return {
+      state: "detached",
+      label: "Detached",
+      title: `${title} — no policy covers this task any more`,
+      className: "border-line bg-panel text-muted",
+    };
+  }
+  const next = [
+    sla.firstRespondedAt ? null : sla.firstResponseDueAt,
+    sla.resolutionDueAt,
+  ]
+    .filter((v): v is string => !!v)
+    .map((v) => Date.parse(v))
+    .filter((v) => !Number.isNaN(v));
+  const soonest = next.length ? Math.min(...next) : null;
+  if (soonest !== null && soonest - now <= SLA_SOON_MS) {
+    return {
+      state: "soon",
+      label: "Due soon",
+      title,
+      className: "border-foreground/25 bg-subtle text-foreground",
+    };
+  }
+  return {
+    state: "ok",
+    label: "On track",
+    title,
+    className: "border-line bg-subtle text-muted",
+  };
+}
+
+/** A span of minutes as the shortest honest phrase. */
+function relTime2(minutes: number): string {
+  if (minutes < 60) return `${Math.round(minutes)}m`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours}h`;
+  return `${Math.round(hours / 24)}d`;
+}
+
+/** A deadline as "in 3h" or "3h ago". ``relTime`` reads backwards only. */
+function dueIn(iso: string, now: number): string {
+  const at = Date.parse(iso);
+  if (Number.isNaN(at)) return iso;
+  const minutes = Math.round((at - now) / 60000);
+  return minutes >= 0 ? `in ${relTime2(minutes)}` : `${relTime2(-minutes)} ago`;
+}
+
+export function SlaChip({
+  sla,
+  className,
+}: {
+  sla?: IssueSla | null;
+  className?: string;
+}) {
+  if (!sla || !sla.state) return null;
+  const view = slaChipView(sla);
+  return (
+    <span
+      data-sla-chip={view.state}
+      title={view.title}
+      className={cx(
+        // The same pill geometry as `SubIssuePill`, so a row's chips line up.
+        "inline-flex flex-none items-center gap-1 whitespace-nowrap rounded-full border py-0.5 px-2 text-[12px] font-medium leading-none",
+        view.className,
+        className,
+      )}
+    >
+      {view.label}
+    </span>
+  );
+}
+
+/** The chip for a list row: the clock the row already carries, or nothing. */
+function slaChipFor(issue: IssueRowModel): React.ReactNode {
+  return <SlaChip sla={issue.sla} />;
+}
 
 export const IssueRow = memo(function IssueRow({
   issue,
@@ -3765,6 +3891,7 @@ export function GraphTeamIssues({
                         onOpen={openIssue}
                         childCount={childRollups.get(i.id)?.total || 0}
                         childDone={childRollups.get(i.id)?.done || 0}
+                        trailing={slaChipFor(i)}
                       />
                     ))}
                     {end < n && (
@@ -3880,6 +4007,58 @@ export function GraphTeamIssues({
 
 /* The properties-sidebar control. Exported so the agent detail page (HOJA-602-A-16) edits its
  * policy with the same widget, keyboard behaviour and row height as an issue property. */
+/** A property that shows a fact rather than offering a menu (HOJA-704's SLA row).
+ * Same geometry as ``PropDropdown`` so the pane's rows stay on one grid. */
+function PropStatic({
+  label,
+  icon,
+  value,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  value: React.ReactNode;
+}) {
+  return (
+    <div
+      className={styleClasses(
+        "flex items-center gap-2.5 min-h-8.5 text-[13px] relative",
+      )}
+      data-style-hooks={styleHooks(
+        "lin-prop flex items-center gap-[10px] min-h-[34px] text-[13px] relative",
+      )}
+    >
+      <span
+        className={styleClasses("text-muted")}
+        data-style-hooks={styleHooks("k text-muted")}
+      >
+        <span className="inline-flex items-center gap-2">
+          {icon}
+          {label}
+        </span>
+      </span>
+      <span className="flex min-w-0 flex-1 items-center gap-1.75">{value}</span>
+    </div>
+  );
+}
+
+/** One line under the SLA chip: the deadline, or why there is none. */
+export function slaClockSummary(sla: IssueSla, now = Date.now()): string {
+  const due = sla.resolutionDueAt || sla.firstResponseDueAt;
+  if (!due) return sla.policy?.name ? sla.policy.name : "";
+  const at = Date.parse(due);
+  if (Number.isNaN(at)) return sla.policy?.name || "";
+  const view = slaChipView(sla, now);
+  const when = new Date(at).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  return view.state === "breached" || view.state === "met"
+    ? `${sla.policy?.name || "SLA"} · ${when}`
+    : `${sla.policy?.name || "SLA"} · due ${when}`;
+}
+
 export function PropDropdown({
   label,
   icon,
@@ -4036,6 +4215,7 @@ const commentFields = `{id body createdAt editedAt canEdit canDelete user{id nam
 const detailFields = `{ id identifier title description createdAt updatedAt dueDate priority priorityLabel estimate branchName url
   state{id name color type} team{id key name} project{id name} assignee{id name} delegate{id name} delegateId creator{id name}
   cycle{id name number} parent{id identifier title}
+  sla{state resolutionDueAt firstResponseDueAt firstRespondedAt breachedAt overdueMinutes pausedMinutes cycleEndsAt retargetedAt startedAt policy{id name}}
   labels{nodes{id name color}} subscribers{nodes{id name}}
   attachments{nodes{id url title subtitle contentType createdAt}}
   githubLinks{id kind externalId url title state author sha environment createdAt}
@@ -6644,6 +6824,32 @@ export function GraphIssueDetail({
               })),
             ]}
           />
+          {detail.sla && (
+            <PropStatic
+              label="SLA"
+              icon={
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                >
+                  <circle cx="8" cy="8.6" r="5.4" />
+                  <path d="M8 5.8v3l2 1.3M5.6 2.2h4.8" strokeLinecap="round" />
+                </svg>
+              }
+              value={
+                <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  <SlaChip sla={detail.sla} />
+                  <span className="min-w-0 truncate text-muted">
+                    {slaClockSummary(detail.sla)}
+                  </span>
+                </span>
+              }
+            />
+          )}
 
           <div
             className={styleClasses(

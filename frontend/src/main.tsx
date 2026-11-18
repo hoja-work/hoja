@@ -231,6 +231,25 @@ export type Issue = {
   cycle?: { id: string; name?: string; number?: number };
   labels?: { nodes: IssueLabel[] };
   comments?: { nodes: Comment[] };
+  /** The SLA clock the task runs against (HOJA-491/704); absent when no policy
+   * covers it, so an issue without one draws no chip at all. */
+  sla?: IssueSla | null;
+};
+
+/** The clock a task runs against. ``state`` is derived by the server — the
+ * client never decides whether a deadline passed. */
+export type IssueSla = {
+  state: string;
+  resolutionDueAt?: string | null;
+  firstResponseDueAt?: string | null;
+  firstRespondedAt?: string | null;
+  cycleEndsAt?: string | null;
+  retargetedAt?: string | null;
+  breachedAt?: string | null;
+  overdueMinutes?: number;
+  pausedMinutes?: number;
+  startedAt?: string;
+  policy?: { id: string; name: string } | null;
 };
 export type BoardTab = "Active" | "Backlog" | "All issues";
 export type OlderField = "assignee" | "creator";
@@ -16102,9 +16121,12 @@ type SlaPolicyRow = {
   resolutionMinutes?: number | null;
   pauseStates: { id: string; name: string }[];
   enabled: boolean;
+  cycleBound: boolean;
+  stopsOn: string;
+  businessDaysOnly: boolean;
 };
 const SLA_POLICY_QUERY =
-  "{slaPolicies{id name team{id key} appliesPriorities firstResponseMinutes resolutionMinutes pauseStates{id name} enabled}}";
+  "{slaPolicies{id name team{id key} appliesPriorities firstResponseMinutes resolutionMinutes pauseStates{id name} enabled cycleBound stopsOn businessDaysOnly}}";
 
 function SlaSettings({ teams }: { teams: Team[] }) {
   const blank = {
@@ -16114,6 +16136,14 @@ function SlaSettings({ teams }: { teams: Team[] }) {
     resolution: "",
     priorities: [] as number[],
     pauseStateIds: [] as string[],
+    // HOJA-704. The defaults are today's behaviour, except ``applyToOpen``:
+    // a task that was already open when its policy arrived had no clock, and
+    // starting one now is the gap this pane closes. Untick it for a policy that
+    // should only govern work created after it.
+    cycleBound: false,
+    stopsOn: "completed",
+    businessDaysOnly: false,
+    applyToOpen: true,
   };
   const [draft, setDraft] = useState(blank),
     [editing, setEditing] = useState<string | null>(null),
@@ -16157,6 +16187,10 @@ function SlaSettings({ teams }: { teams: Team[] }) {
       resolutionMinutes: draft.resolution ? Number(draft.resolution) : null,
       appliesPriorities: draft.priorities,
       pauseStateIds: draft.pauseStateIds,
+      cycleBound: draft.cycleBound,
+      stopsOn: draft.stopsOn,
+      businessDaysOnly: draft.businessDaysOnly,
+      applyToOpen: draft.applyToOpen,
     };
     await run(
       async () => {
@@ -16190,6 +16224,12 @@ function SlaSettings({ teams }: { teams: Team[] }) {
       resolution: row.resolutionMinutes ? String(row.resolutionMinutes) : "",
       priorities: row.appliesPriorities,
       pauseStateIds: row.pauseStates.map((s) => s.id),
+      cycleBound: row.cycleBound,
+      stopsOn: row.stopsOn,
+      businessDaysOnly: row.businessDaysOnly,
+      // A save starts clocks only when asked; editing a policy is not consent to
+      // restart the clock of every task it covers.
+      applyToOpen: false,
     });
   };
   const archive = (row: SlaPolicyRow) => async () => {
@@ -16206,6 +16246,101 @@ function SlaSettings({ teams }: { teams: Team[] }) {
       });
       if (!d.slaPolicyArchive) throw Error("The policy could not be archived.");
     }, "Policy archived.");
+  };
+  /* HOJA-704's cycle preset: the five policies a workspace running weekly cycles
+   * actually wants, created in one press. Every policy is workspace-wide and
+   * pauses in every Backlog state, so a task waiting on somebody is not late.
+   * "Cycle-bound, else N days" keeps a target for tasks that sit outside a
+   * cycle, which is why the fallback minutes are always sent. */
+  const cyclePreset = () => {
+    const backlog = [
+      ...new Set(
+        teams.flatMap((t) =>
+          (t.states?.nodes || [])
+            .filter((st) => st.type === "backlog")
+            .map((st) => st.id),
+        ),
+      ),
+    ];
+    const day = 24 * 60;
+    const presets = [
+      {
+        name: "Urgent",
+        appliesPriorities: [1],
+        firstResponseMinutes: 120,
+        resolutionMinutes: day,
+        cycleBound: false,
+      },
+      {
+        name: "High",
+        appliesPriorities: [2],
+        firstResponseMinutes: day,
+        resolutionMinutes: 7 * day,
+        cycleBound: true,
+      },
+      {
+        name: "Medium",
+        appliesPriorities: [3],
+        firstResponseMinutes: null,
+        resolutionMinutes: 14 * day,
+        cycleBound: true,
+      },
+      {
+        name: "Low",
+        appliesPriorities: [4],
+        firstResponseMinutes: null,
+        resolutionMinutes: 28 * day,
+        cycleBound: true,
+      },
+      {
+        // The triage policy: an untriaged task must get a priority within two
+        // days, and the clock stops the moment one arrives.
+        name: "No priority",
+        appliesPriorities: [0],
+        firstResponseMinutes: null,
+        resolutionMinutes: 2 * day,
+        cycleBound: false,
+        stopsOn: "prioritized",
+      },
+    ];
+    return presets.map((preset) => ({
+      teamId: null,
+      pauseStateIds: backlog,
+      businessDaysOnly: false,
+      applyToOpen: true,
+      stopsOn: "completed",
+      ...preset,
+    }));
+  };
+  const [presetBusy, setPresetBusy] = useState(false);
+  const createPreset = async () => {
+    setPresetBusy(true);
+    setError("");
+    setStatus("");
+    let made = 0;
+    const failures: string[] = [];
+    try {
+      for (const input of cyclePreset()) {
+        try {
+          const d = await gql(
+            "mutation($input:SlaPolicyInput!){slaPolicyCreate(input:$input){success}}",
+            { input },
+          );
+          if (d.slaPolicyCreate?.success) made += 1;
+          else failures.push(input.name);
+        } catch (e) {
+          failures.push(`${input.name} (${errorText(e)})`);
+        }
+      }
+      await load();
+      setStatus(
+        failures.length
+          ? `Created ${made} of ${cyclePreset().length} policies. ${failures.join("; ")}`
+          : `Created ${made} policies from the cycle preset.`,
+      );
+    } finally {
+      setPresetBusy(false);
+    }
   };
   const toggle = (list: number[], value: number) =>
     list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
@@ -16238,9 +16373,20 @@ function SlaSettings({ teams }: { teams: Team[] }) {
         data-settings-group=""
       >
         <span className="hidden">Policies</span>
-        <h2 className="mt-0 mr-0 mb-0 ml-0 text-(--settings-ink) text-(length:--ds-settings-section-size) font-(--ds-settings-section-weight) leading-(--ds-settings-section-line) tracking-[-.035em]">
-          {editing ? "Edit policy" : "New policy"}
-        </h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="mt-0 mr-0 mb-0 ml-0 text-(--settings-ink) text-(length:--ds-settings-section-size) font-(--ds-settings-section-weight) leading-(--ds-settings-section-line) tracking-[-.035em]">
+            {editing ? "Edit policy" : "New policy"}
+          </h2>
+          <button
+            className="min-h-8 rounded-lg border border-line bg-(--settings-card) pl-2.75 pr-2.75 pt-1.5 pb-1.5 text-[11px] text-(--settings-ink) hover:bg-(--settings-subtle) hover:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50 shell-phone:min-h-11 pointer-coarse:min-h-11"
+            type="button"
+            data-sla-preset=""
+            disabled={busy || presetBusy}
+            onClick={() => void createPreset()}
+          >
+            {presetBusy ? "Creating…" : "Cycle preset"}
+          </button>
+        </div>
         {editing && (
           <button
             className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 text-accent bg-transparent border-0 text-[11px] focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5]"
@@ -16294,32 +16440,100 @@ function SlaSettings({ teams }: { teams: Team[] }) {
               ))}
             </select>
           </label>
-          <label className="min-w-0 text-[12px]">
-            First response, minutes
-            <input
-              className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-              aria-label="First response minutes"
-              type="number"
-              min="1"
-              value={draft.firstResponse}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, firstResponse: e.target.value }))
-              }
-            />
-          </label>
-          <label className="min-w-0 text-[12px]">
-            Resolution, minutes
-            <input
-              className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-              aria-label="Resolution minutes"
-              type="number"
-              min="1"
-              value={draft.resolution}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, resolution: e.target.value }))
-              }
-            />
-          </label>
+          {/* HOJA-681: the two targets are one decision and sit on one row, so
+              "how fast do you answer" and "how fast do you finish" are read
+              together instead of stacking into two rows of the grid. */}
+          <div
+            className="col-span-full grid min-w-0 grid-cols-2 items-end gap-3.5"
+            data-sla-targets=""
+          >
+            <label className="min-w-0 text-[12px]">
+              First response, minutes
+              <input
+                className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                aria-label="First response minutes"
+                type="number"
+                min="1"
+                value={draft.firstResponse}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, firstResponse: e.target.value }))
+                }
+              />
+            </label>
+            <label className="min-w-0 text-[12px]">
+              {draft.cycleBound
+                ? "Resolution, minutes if no cycle"
+                : "Resolution, minutes"}
+              <input
+                className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                aria-label="Resolution minutes"
+                type="number"
+                min="1"
+                value={draft.resolution}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, resolution: e.target.value }))
+                }
+              />
+            </label>
+          </div>
+          <fieldset
+            className="col-span-full rounded-lg border border-line p-3"
+            data-sla-clock-options=""
+          >
+            <legend className="px-1 text-xs text-muted">Clock</legend>
+            <label className="flex min-w-0 items-center gap-2 text-[12px]">
+              <input
+                className="size-3.5 accent-foreground"
+                type="checkbox"
+                checked={draft.cycleBound}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, cycleBound: e.target.checked }))
+                }
+              />
+              Resolution follows the task&#39;s cycle, ending when the cycle
+              ends
+            </label>
+            <label className="flex min-w-0 items-center gap-2 text-[12px]">
+              <input
+                className="size-3.5 accent-foreground"
+                type="checkbox"
+                checked={draft.businessDaysOnly}
+                onChange={(e) =>
+                  setDraft((d) => ({
+                    ...d,
+                    businessDaysOnly: e.target.checked,
+                  }))
+                }
+              />
+              Count weekdays only, in the team&#39;s timezone
+            </label>
+            <label className="flex min-w-0 items-center gap-2 text-[12px]">
+              <input
+                className="size-3.5 accent-foreground"
+                type="checkbox"
+                checked={draft.applyToOpen}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, applyToOpen: e.target.checked }))
+                }
+              />
+              Start clocks for tasks that are already open
+            </label>
+            <label className="mt-1.5 flex min-w-0 flex-col gap-1 text-[12px]">
+              Stops on
+              <select
+                className="min-w-0 rounded-[7px] border border-line bg-panel pt-0 pr-2.5 pb-0 pl-2.5 text-[13px] text-foreground hover:border-muted"
+                aria-label="What stops the clock"
+                value={draft.stopsOn}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, stopsOn: e.target.value }))
+                }
+              >
+                <option value="completed">Completed</option>
+                <option value="started">A started state</option>
+                <option value="prioritized">A priority arrives</option>
+              </select>
+            </label>
+          </fieldset>
           <fieldset className="col-span-full rounded-lg border border-line p-3">
             <legend className="px-1 text-xs text-muted">Priorities</legend>
             {[1, 2, 3, 4].map((p) => (
@@ -16403,8 +16617,15 @@ function SlaSettings({ teams }: { teams: Team[] }) {
                     ? `${row.firstResponseMinutes}m`
                     : "—"}{" "}
                   · resolution{" "}
-                  {row.resolutionMinutes ? `${row.resolutionMinutes}m` : "—"} ·{" "}
-                  {row.pauseStates.length} pause state
+                  {row.resolutionMinutes ? `${row.resolutionMinutes}m` : "—"}
+                  {row.cycleBound ? " (cycle-bound)" : ""} ·{" "}
+                  {row.businessDaysOnly ? "weekdays" : "every day"} ·{" "}
+                  {row.stopsOn === "started"
+                    ? "stops when started"
+                    : row.stopsOn === "prioritized"
+                      ? "stops when prioritized"
+                      : "stops when completed"}{" "}
+                  · {row.pauseStates.length} pause state
                   {row.pauseStates.length === 1 ? "" : "s"}
                 </small>
               </span>
@@ -16426,7 +16647,31 @@ function SlaSettings({ teams }: { teams: Team[] }) {
               </button>
             </div>
           ))}
-          {!rows.length && <p>No SLA policies yet.</p>}
+          {!rows.length && (
+            <div
+              className="flex flex-col items-start gap-2 bg-(--settings-card) pl-3.5 pr-3.5 pt-3 pb-3"
+              data-sla-empty=""
+            >
+              <p className="m-0 text-[13px] text-(--settings-ink)">
+                No SLA policies yet. A task has no clock until a policy covers
+                it, so nothing is measured today.
+              </p>
+              <p className="m-0 text-xs leading-normal text-(--settings-muted)">
+                The cycle preset creates five workspace policies — Urgent, High,
+                Medium, Low and a triage clock — with every Backlog state
+                pausing the clock.
+              </p>
+              <button
+                className="min-h-8 rounded-lg border border-foreground bg-(--settings-accent-strong) pl-3 pr-3 pt-1.5 pb-1.5 text-[11px] font-[620] text-(--settings-on-accent) hover:bg-foreground/90 hover:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50 shell-phone:min-h-11 pointer-coarse:min-h-11"
+                type="button"
+                data-sla-empty-action=""
+                disabled={busy || presetBusy}
+                onClick={() => void createPreset()}
+              >
+                Start from the cycle preset
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </section>
