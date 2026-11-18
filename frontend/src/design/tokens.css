@@ -97,9 +97,13 @@
   /* The feed's width is derived, not chosen: a reading measure in ch (so it scales with
      the reader's font size instead of pinning a pixel count) plus a gutter that grows
      with the viewport. The column's content box IS the measure, so rules, margins and
-     text share one right edge at every size. At 3440px wide the measure stops at 72ch
-     rather than turning lines into a mail-merge paragraph; the column simply centres. */
-  --ds-feed-measure:clamp(48ch,44vw,72ch);
+     text share one right edge at every size.
+
+     The cap is 60ch because ch is the width of "0", not of an average glyph: measured on
+     this type (Inter 14px) a 72ch measure produced 91 characters per line and 60ch
+     produces 75, which is the readable end of the 60-80 range. Do not raise the cap
+     without re-measuring characters per line — the two units differ by ~20%. */
+  --ds-feed-measure:clamp(44ch,40vw,60ch);
   --ds-feed-gutter:clamp(1rem,2.2vw,2.625rem);
   --ds-feed-width:calc(var(--ds-feed-measure) + 2 * var(--ds-feed-gutter));
   --ds-feed-tab-height:24px;
