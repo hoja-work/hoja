@@ -6264,7 +6264,7 @@ function PulsePage({
                 : `${label} ranking is not available; showing recent project updates`
             }
             onClick={() => setView(label, slug)}
-            className="shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+            className="h-(--ds-feed-tab-height) rounded-(--ds-feed-tab-radius) p-(--ds-feed-tab-padding) shell-phone:h-11 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
           >
             {label}
           </Tab>
@@ -6282,7 +6282,7 @@ function PulsePage({
       </TabStrip>
       <ScrollArea className="min-h-0" variant="list">
         <div
-          className="mt-5.5 mr-auto mb-0 ml-auto pt-0 pr-10.5 pb-15 pl-10.5 max-md:mt-5 max-md:pt-0 max-md:pr-4 max-md:pb-10 max-md:pl-4 shell-phone:mt-5.5 shell-phone:pt-0 shell-phone:pr-4 shell-phone:pb-10 shell-phone:pl-4 w-[min(100%,var(--ds-feed-width))]"
+          className="mt-5.5 mr-auto mb-0 ml-auto pt-0 pr-10.5 pb-15 pl-10.5 shell-phone:mt-5.5 shell-phone:pt-0 shell-phone:pr-4 shell-phone:pb-10 shell-phone:pl-4 w-[min(100%,var(--ds-feed-width))]"
           data-pulse-content=""
         >
           {tab !== "Recent" && (
@@ -6301,13 +6301,13 @@ function PulsePage({
                   eraOf(posts[index - 1].createdAt)) && (
                 <GroupBar
                   as="h2"
-                  className="flex items-center h-auto mt-0 mr-0 mb-4.5 ml-0 pt-0 pr-0 pb-0 pl-0 rounded-none text-muted font-normal [&:after]:h-0 [&:after]:flex-1 [&:after]:bg-line gap-(--ds-group-bar-gap) min-h-(--ds-group-bar-height) after:content-[''] text-(length:--ds-feed-page-title-size)"
+                  className="flex items-center h-auto mt-0 mr-0 mb-4.5 ml-0 pt-0 pr-0 pb-0 pl-0 rounded-none text-muted font-normal [&:after]:h-px [&:after]:flex-1 [&:after]:bg-line gap-(--ds-group-bar-gap) min-h-(--ds-group-bar-height) after:content-[''] text-(length:--ds-feed-page-title-size)"
                   data-pulse-era=""
                   label={eraOf(post.createdAt)}
                 />
               )}
               <article
-                className="pt-0 pr-0 pb-13.75 pl-0 mt-0 mr-0 mb-2 ml-0"
+                className="pt-6 pr-0 pb-6 pl-0 mt-0 mr-0 mb-0 ml-0 border-t border-line first:border-t-0"
                 aria-labelledby={`pulse-post-${post.id}`}
               >
                 <header
@@ -6334,19 +6334,10 @@ function PulsePage({
                       className="flex flex-wrap items-center gap-2 text-muted leading-(--ds-feed-meta-line) text-(length:--ds-feed-meta-size)"
                       data-pulse-meta=""
                     >
-                      {health(post) && (
-                        <span
-                          className="inline-flex items-center text-accent gap-(--ds-group-bar-gap)"
-                          data-pulse-health=""
-                        >
-                          <Activity size={14} aria-hidden="true" />
-                          Project {health(post)}
-                        </span>
-                      )}
                       {post.actor?.name && (
                         <>
                           <span
-                            className="inline-grid rounded-[50%] bg-accent-soft text-accent w-(--ds-feed-avatar-size) h-(--ds-feed-avatar-size)"
+                            className="inline-grid place-items-center leading-none rounded-[50%] bg-accent-soft text-accent w-(--ds-feed-avatar-size) h-(--ds-feed-avatar-size)"
                             data-pulse-avatar=""
                             aria-hidden="true"
                           >
@@ -6361,11 +6352,20 @@ function PulsePage({
                       >
                         {time(post.createdAt)}
                       </time>
+                      {health(post) && (
+                        <span
+                          className={`inline-flex items-center gap-(--ds-group-bar-gap) ${/risk/i.test(health(post) ?? "") ? "text-[var(--health-risk)]" : "text-[var(--health-ok)]"}`}
+                          data-pulse-health=""
+                        >
+                          <Activity size={14} aria-hidden="true" />
+                          Project {health(post)}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </header>
                 <div
-                  className="mt-4.5 mr-0 mb-7 ml-0 wrap-break-word leading-[1.6]"
+                  className="mt-4.5 mr-0 mb-7 ml-0 wrap-break-word leading-[1.6] max-w-[56ch]"
                   data-pulse-post-body=""
                 >
                   <Markdown text={post.body} density="block" />

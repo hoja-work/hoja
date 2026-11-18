@@ -80,7 +80,7 @@ export function IssueChip({ identifier }: { identifier: string }) {
   const color = issue?.state?.color || "#a1a1aa";
   return (
     <a
-      className="inline-flex items-center border border-line no-underline whitespace-nowrap gap-1.5 max-w-full align-middle pt-0.5 pr-2.5 pb-0.5 pl-2 mt-0 mr-0.5 mb-0 ml-0.5 border-solid rounded-[999px] bg-panel text-foreground text-[13px] leading-normal hover:bg-subtle"
+      className="inline-flex items-center border border-line no-underline whitespace-nowrap gap-1.5 max-w-[min(100%,28ch)] align-middle pt-0.5 pr-2.5 pb-0.5 pl-2 mt-0 mr-0.5 mb-0 ml-0.5 border-solid rounded-[999px] bg-panel text-foreground text-[13px] leading-normal hover:bg-subtle"
       data-agent-issue-chip=""
       href={`/workspace/issue/${identifier}`}
       title={issue?.title ?? identifier}

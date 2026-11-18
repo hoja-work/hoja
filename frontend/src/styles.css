@@ -41,10 +41,10 @@ body{background:var(--bg)}
 /* Keep the sticky sidebar header from chaining overscroll; leave touch devices alone so pull-to-refresh still works. */
 
 /* My issues: compact Linear-like list canvas; controls operate on loaded issues. */
-@media(min-width:701px) and (min-height:501px),(min-width:1001px){[data-workspace-content]:has([data-my-issues-view]) .main{min-height:calc(100dvh - 16px)}}
+@media(min-width:701px) and (min-height:501px),(min-width:1001px){[data-workspace-content]:has([data-my-issues-view]) .main{min-height:calc(100dvh - 18px)}}
 /* Filter/display popovers can contain many fields. Keep their final actions
    scrollable within the available viewport instead of clipping below it. */
-@media(min-width:701px) and (min-height:501px),(min-width:1001px){[data-workspace-content]:has([data-my-issues-view]) .main{width:calc(100% - 16px);min-height:calc(100dvh - 16px)}}
+@media(min-width:701px) and (min-height:501px),(min-width:1001px){[data-workspace-content]:has([data-my-issues-view]) .main{width:calc(100% - 16px);min-height:calc(100dvh - 18px)}}
 @media(max-width:700px),(max-width:1000px) and (max-height:500px){.main:has([data-my-issues-view]) [data-my-issue-tabs]{scrollbar-width:none}}
 /* Flexible My issues metadata cells mirror the configurable reference columns without a fixed grid. */
 
@@ -58,7 +58,7 @@ body{background:var(--bg)}
 :root{--sidebar-bg:#f1f1f1}
 :root[data-theme=dark]{--sidebar-bg:#242427}
 /* Pulse: quiet project-update feed, distinct from issue activity. */
-[data-workspace-content]:has([data-pulse-page]) .main{width:calc(100% - 16px);min-height:calc(100dvh - 16px)}
+[data-workspace-content]:has([data-pulse-page]) .main{width:calc(100% - 16px);min-height:calc(100dvh - 18px)}
 [data-pulse-era]:after{content:''}
 @media(max-width:700px),(max-width:1000px) and (max-height:500px){[data-workspace-content]:has([data-pulse-page]) .main{min-height:calc(100dvh - 60px)}}
 /* Project editor belongs to document flow, never the fixed overlay modal. */
@@ -66,13 +66,13 @@ body{background:var(--bg)}
 /* Publish a project update without confusing it with metadata edits. */
 /* Project issue rows are full-width keyboard-accessible navigation targets. */
 /* Inbox notifications are recipient-scoped events, not the generic issue dashboard. */
-[data-workspace-content]:has([data-inbox-page]) .main{width:calc(100% - 16px);min-height:calc(100dvh - 16px)}
+[data-workspace-content]:has([data-inbox-page]) .main{width:calc(100% - 16px);min-height:calc(100dvh - 18px)}
 @media(max-width:700px),(max-width:1000px) and (max-height:500px){[data-workspace-content]:has([data-inbox-page]) .main{min-height:calc(100dvh - 60px)}}
 /* Initiatives: compact reference header and a real scoped list/empty state. */
-[data-workspace-content]:has([data-initiatives-page]) .main{width:calc(100% - 16px);min-height:calc(100dvh - 16px)}
+[data-workspace-content]:has([data-initiatives-page]) .main{width:calc(100% - 16px);min-height:calc(100dvh - 18px)}
 @media(max-width:700px),(max-width:1000px) and (max-height:500px){[data-workspace-content]:has([data-initiatives-page]) .main{min-height:calc(100dvh - 60px)}}
 /* Projects reference layout: app-contained list/board and compact responsive controls. */
-[data-workspace-content]:has([data-projects-reference]) .main,[data-workspace-content]:has([data-project-reference]) .main{width:calc(100% - 16px);min-height:calc(100dvh - 16px)}
+[data-workspace-content]:has([data-projects-reference]) .main,[data-workspace-content]:has([data-project-reference]) .main{width:calc(100% - 16px);min-height:calc(100dvh - 18px)}
 @media(max-width:700px),(max-width:1000px) and (max-height:500px){[data-workspace-content]:has([data-projects-reference]) .main,[data-workspace-content]:has([data-project-reference]) .main{min-height:calc(100dvh - 60px)}}
 /* Measured Projects typography: Inter Variable is self-hosted; the rest of Hoja keeps its existing font stack. */
 [data-workspace-content]:has([data-projects-reference]) .main,[data-workspace-content]:has([data-project-reference]) .main{width:calc(100% - 8px)}
@@ -85,7 +85,7 @@ body{background:var(--bg)}
 }
 
 /* Narrow Projects detail keeps the observed reference properties-first reading order. */
-/* Project Issues uses the same Inter/type tokens, compact rows and quiet grouping as the project shell. */[data-workspace-content]:has([data-workspace-views-page]) .main{width:calc(100% - 8px);min-height:calc(100dvh - 16px)}
+/* Project Issues uses the same Inter/type tokens, compact rows and quiet grouping as the project shell. */[data-workspace-content]:has([data-workspace-views-page]) .main{width:calc(100% - 8px);min-height:calc(100dvh - 18px)}
 @media(max-width:700px),(max-width:1000px) and (max-height:500px){[data-workspace-content]:has([data-workspace-views-page]) .main{min-height:calc(100dvh - 60px)}}
 /* Keep the issue composer centered and typographically aligned with the observed reference. */
 [data-modal-backdrop]:has([data-issue-create-modal]){padding:clamp(60px,13vh,118px) 12px 12px}
