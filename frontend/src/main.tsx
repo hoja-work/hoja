@@ -6490,7 +6490,7 @@ function PulsePage({
                     data-pulse-comments=""
                   >
                     {replies.length ? (
-                      <ul className="flex flex-col gap-3 mt-0 mr-0 mb-0 ml-0 pt-0 pr-0 pb-0 pl-0 list-none">
+                      <ul className="flex flex-col gap-3 mt-0 mr-0 mb-0 ml-0 pt-1 pr-0 pb-0 pl-3 list-none border-l-2 border-line">
                         {replies.map((reply) => (
                           <li key={reply.id} className="flex items-start gap-2">
                             <span
@@ -6500,9 +6500,13 @@ function PulsePage({
                               {(reply.user?.name || "?").slice(0, 1).toUpperCase()}
                             </span>
                             <div className="min-w-0">
-                              <p className="mt-0 mr-0 mb-0.5 ml-0 text-(length:--ds-feed-meta-size) text-muted">
-                                {reply.user?.name || "Someone"}
-                                {reply.createdAt ? ` · ${time(reply.createdAt)}` : ""}
+                              <p className="flex items-center gap-(--ds-group-bar-gap) mt-0 mr-0 mb-0.5 ml-0 text-(length:--ds-feed-meta-size) text-muted">
+                                <span>{reply.user?.name || "Someone"}</span>
+                                {reply.createdAt && (
+                                  <time dateTime={reply.createdAt}>
+                                    {time(reply.createdAt)}
+                                  </time>
+                                )}
                               </p>
                               <p className="mt-0 mr-0 mb-0 ml-0 whitespace-pre-wrap wrap-break-word">
                                 {reply.body}
@@ -6518,6 +6522,7 @@ function PulsePage({
                       </p>
                     )}
                     <Composer
+                      className="mt-0 border border-line bg-panel focus-within:border-accent"
                       value={commentBodies[post.id] || ""}
                       placeholder={`Reply to ${post.project.name}…`}
                       disabled={Boolean(status.pending)}
