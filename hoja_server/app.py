@@ -84,6 +84,8 @@ from hoja_server.db import (
     resolve_token_identity,
     schema_is_current,
     seed_states_for_team,
+    signup_identity,
+    signup_session,
     team,
     team_member,
     token_hash,
@@ -1790,8 +1792,8 @@ def create_app(
             return JSONResponse({"error": "Invalid credentials"}, status_code=401)
         return JSONResponse({"workspaces": store.matching_login_workspaces(email)})
 
-    def _revoke_every_session(request: Request) -> list[str]:
-        """Revoke every session this browser holds, and name the ones it held.
+    def _revoke_every_session(request: Request) -> tuple[list[str], str | None]:
+        """Revoke every session this browser holds, and name who they belonged to.
 
         A workspace session (``hoja_session``) and a hosted sign-up session
         (``hoja_signup_session``) are independent families. Signing out of one and
@@ -1799,26 +1801,149 @@ def create_app(
         ``/signup`` reads a live sign-up session as ``google_verified`` and, when
         the person already has an active workspace, redirects them straight back
         into it. That is the "sign out doesn't kick me out" report.
+
+        The returned address is the verified email both families agree on; it is
+        what lets the caller revoke the *other* hosts' rows, which this browser
+        cannot reach because the cookies are host-only.
+
+        Runs in the explicit system scope: ``/signout`` and ``/signin/signout``
+        are not under a system path prefix, and ``browser_session`` is under
+        row-level security, so without it the revoke would match no rows in a
+        Postgres deployment and sign-out would silently leave the session live.
         """
         cleared: list[str] = []
-        workspace_token = request.cookies.get("hoja_session")
-        if workspace_token:
-            store.revoke_browser_session(workspace_token)
-            cleared.append("workspace")
-        signup_token = request.cookies.get(_SIGNUP_SESSION_COOKIE)
-        if signup_token:
-            signup_store.revoke_session(signup_token)
-            cleared.append("signup")
-        return cleared
+        address: str | None = None
+        with tenant_context.system():
+            workspace_token = request.cookies.get("hoja_session")
+            if workspace_token:
+                session = store.resolve_browser_session(workspace_token) or {}
+                address = address or _identity_address(session.get("identity_id"))
+                store.revoke_browser_session(workspace_token)
+                cleared.append("workspace")
+            signup_token = request.cookies.get(_SIGNUP_SESSION_COOKIE)
+            if signup_token:
+                identity = signup_store.resolve_session(signup_token) or {}
+                address = address or (str(identity.get("email") or "").strip().lower() or None)
+                signup_store.revoke_session(signup_token)
+                cleared.append("signup")
+        return cleared, address
+
+    def _identity_address(identity_id: str | None) -> str | None:
+        """The verified address behind a global identity, or None."""
+        if not identity_id:
+            return None
+        try:
+            with engine.connect() as conn:
+                email = conn.execute(
+                    select(global_identity.c.email).where(global_identity.c.id == identity_id)
+                ).scalar()
+        except Exception:  # pragma: no cover - a database that cannot answer is not a 500
+            _security_log.warning("auth.identity_address failed", exc_info=True)
+            return None
+        return (email or "").strip().lower() or None
+
+    def _revoke_sessions_across_hosts(address: str | None) -> dict:
+        """End every Hoja session row this verified address still owns.
+
+        The cookies are host-only (R5): a tenant host can delete only its own
+        ``hoja_session``, and nothing it does removes ``app.hoja.work``'s
+        ``hoja_signup_session``. Those are server-side rows, and in production one
+        app process and one database serve every tenant (ADR-003), so a single
+        pair of UPDATEs is all "sign out" needs to stick for the whole browser.
+
+        The rows are joined on the address: ``browser_session`` hangs off
+        ``user`` → ``organization_membership`` → ``global_identity.email``, and
+        ``signup_session`` off ``signup_identity`` (provider=google, same email).
+        That makes this a *global* sign-out for the account, not only for this
+        browser: no cross-host row carries a browser id, so there is nothing
+        narrower to match on.
+
+        A deployment where a tenant really is an isolated database has none of
+        these rows here; the statements match nothing, the caller carries on, and
+        the control plane's own sign-out page still removes its cookie. A
+        database that cannot answer at all is logged, never raised: sign-out must
+        not fail closed into a 500.
+        """
+        revoked = {"workspace": 0, "signup": 0}
+        if not address:
+            return revoked
+        stamp = now_iso()
+        try:
+            # System scope: browser_session and organization_membership are under
+            # row-level security, and this deliberately spans every organization.
+            with tenant_context.system(), engine.begin() as conn:
+                identity_ids = [row[0] for row in conn.execute(
+                    select(global_identity.c.id).where(global_identity.c.email == address)
+                )]
+                signup_ids = [row[0] for row in conn.execute(
+                    select(signup_identity.c.id).where(and_(
+                        signup_identity.c.provider == "google",
+                        signup_identity.c.email == address,
+                    ))
+                )]
+                if identity_ids:
+                    user_ids = select(organization_membership.c.profile_user_id).where(
+                        organization_membership.c.identity_id.in_(identity_ids)
+                    )
+                    result = conn.execute(
+                        browser_session.update()
+                        .where(and_(
+                            browser_session.c.user_id.in_(user_ids),
+                            browser_session.c.revoked_at.is_(None),
+                        ))
+                        .values(revoked_at=stamp)
+                    )
+                    revoked["workspace"] = int(result.rowcount or 0)
+                if signup_ids:
+                    result = conn.execute(
+                        signup_session.update()
+                        .where(and_(
+                            signup_session.c.identity_id.in_(signup_ids),
+                            signup_session.c.revoked_at.is_(None),
+                        ))
+                        .values(revoked_at=stamp)
+                    )
+                    revoked["signup"] = int(result.rowcount or 0)
+        except Exception:  # pragma: no cover - degrade, never fail the sign-out
+            _security_log.warning("auth.logout cross_host failed", exc_info=True)
+        return revoked
+
+    def _canonical_signout_url(request: Request) -> str | None:
+        """Where *this* host signs out, or None when the deployment is unhosted.
+
+        Returned to the SPA with the logout response so the next step is a
+        top-level navigation the browser can actually complete, instead of a
+        state reset on a host that still holds a live session one level up.
+        """
+        control_plane = signup_config.control_plane_url
+        if not control_plane:
+            return None
+        if not _is_tenant_origin(request):
+            # The control plane's own sign-out stays here; `from` names this
+            # origin so "sign in again" returns to app.hoja.work, not a tenant.
+            return f"/signout?from={quote(control_plane, safe='')}"
+        back = _tenant_origin_for(request)
+        if back is None:
+            return f"{control_plane}/signout"
+        return f"{control_plane}/signout?from={quote(back, safe='')}"
 
     async def auth_logout(request: Request):
         csrf = _cookie_csrf_error(request, json_only=False)
         if csrf:
             _security_log.info("auth.logout scope=all outcome=refused_csrf")
             return csrf
-        cleared = _revoke_every_session(request)
-        _security_log.info("auth.logout scope=all cleared=%s", ",".join(cleared) or "-")
-        response = JSONResponse({"status": "logged_out", "cleared": cleared})
+        cleared, address = _revoke_every_session(request)
+        revoked = _revoke_sessions_across_hosts(address)
+        _security_log.info(
+            "auth.logout scope=all cleared=%s cross_host=%s,%s",
+            ",".join(cleared) or "-", revoked["workspace"], revoked["signup"],
+        )
+        response = JSONResponse({
+            "status": "logged_out",
+            "cleared": cleared,
+            "revoked": revoked,
+            "signOutUrl": _canonical_signout_url(request),
+        })
         for cookie in ("hoja_session", _SIGNUP_SESSION_COOKIE):
             response.delete_cookie(cookie, **_session_cookie_attrs(request))
         return response
@@ -1857,6 +1982,29 @@ def create_app(
             "samesite": "lax",
             "path": "/",
         }
+
+    #: "Ask which Google account next time." Host-only, short-lived, and set only
+    #: by a sign-out or a "use a different account" link: it turns the account
+    #: chooser from the default back into the exception. Without a marker every
+    #: ``/signin`` on a live control session would re-run Google (the extra hop
+    #: this fixes); with one, resuming the identity somebody just ended is
+    #: impossible (the HOJA-206 guarantee).
+    _CHOOSE_ACCOUNT_COOKIE = "hoja_choose_account"
+    #: One Google round-trip on a slow phone. Long enough to survive the hop from
+    #: a tenant's sign-out to the control plane, short enough not to resurrect on
+    #: the next day's visit.
+    _CHOOSE_ACCOUNT_MAX_AGE = 15 * 60
+
+    def _account_choice_pending(request: Request) -> bool:
+        return request.cookies.get(_CHOOSE_ACCOUNT_COOKIE) == "1"
+
+    def _mark_account_choice_pending(response: Response, request: Request) -> None:
+        response.set_cookie(
+            _CHOOSE_ACCOUNT_COOKIE,
+            "1",
+            max_age=_CHOOSE_ACCOUNT_MAX_AGE,
+            **_session_cookie_attrs(request),
+        )
 
     def _safe_return_to(value: str | None) -> str:
         """Only a path on this host: an absolute URL here would be an open redirect."""
@@ -1946,6 +2094,16 @@ def create_app(
         if _is_tenant_origin(request):
             return f"{control_plane}/signin/signout{suffix}"
         return f"/signin/signout{suffix}"
+
+    def _signout_action(request: Request) -> str:
+        """The form action for "use a different account" on a server-rendered page.
+
+        ``no_workspace_page`` renders a ``<form method="post">``, so this has to
+        be a POST endpoint that exists and that ends the whole sign-out — not
+        ``/auth/google/logout``, which cleared only the sign-up cookie and handed
+        the same identity straight back.
+        """
+        return "/signout"
 
     def _signin_failure(
         request: Request,
@@ -2071,18 +2229,41 @@ def create_app(
     def _workspace_origin(slug: str) -> str:
         return f"https://{slug}.{signup_config.tenant_base_domain}/"
 
-    def _handoff_start_url(origin: str) -> str:
-        """Start the handoff for a specific workspace, asking who is signing in.
+    def _handoff_start_url(origin: str, *, ask_account: bool = False) -> str:
+        """Start the handoff for a specific workspace.
 
-        ``choose_account`` is what makes "Continue to sign in" an actual sign-in
-        rather than a resume: without it the start handler mints the tenant
-        handoff from the control session and never contacts Google, so a person
-        who signed out lands back in the previous identity.
+        ``choose_account`` forces a full Google sign-in instead of resuming the
+        control session. It is opt-in, because resuming is the correct answer for
+        someone who already proved who they are and merely picked a workspace;
+        asking for it unconditionally is what made every "choose a workspace"
+        click a second Google round-trip. It is set only where the person asked to
+        change accounts: a complaint is "it forgot my workspace", never "it did
+        not make me sign in again".
         """
         control_plane = signup_config.control_plane_url or ""
-        return (
-            f"{control_plane}/auth/google/start?return_to={quote(origin, safe='')}"
-            "&choose_account=1"
+        url = f"{control_plane}/auth/google/start?return_to={quote(origin, safe='')}"
+        return f"{url}&choose_account=1" if ask_account else url
+
+    def _resume_tenant_handoff(identity: dict, tenant_target: str) -> Response | None:
+        """Mint the audience-bound handoff from a live control session.
+
+        Google is already done on this host, so the only thing between the
+        browser and the workspace is the signed token. Returns None when this
+        deployment cannot mint one (no master key, or an identity whose address
+        Google did not verify) so the caller can fall back to the Google start.
+        """
+        if not signup_config.identity_transfer_master:
+            return None
+        full_identity = signup_store.identity_by_subject(identity["subject"]) or identity
+        if full_identity.get("email_verified") is not True:
+            return None
+        return _tenant_transfer_redirect(
+            email=full_identity["email"],
+            subject=full_identity["subject"],
+            name=full_identity.get("name"),
+            picture=full_identity.get("picture"),
+            tenant_target=tenant_target,
+            source="control_session",
         )
 
     async def sign_in_invited(request: Request):
@@ -2140,24 +2321,69 @@ def create_app(
             f"https://{host}/?invite={quote(code, safe='')}", status_code=303
         )
 
-    async def sign_in_signout(request: Request):
-        """End the control session, then offer the entry again.
+    async def sign_out_entry(request: Request):
+        """Sign out of Hoja on every host this browser reached, then say so.
 
-        This is the action behind "try a different account" on a refusal page.
-        Without it the page's primary link re-mints the same handoff and the
-        person bounces between ``/signin`` and the same refusal.
+        Two defects end here. ``/signin/signout`` used to revoke only the sign-up
+        session and then 302 back to ``/signin?next=<workspace>``, which
+        immediately re-handed-off the workspace session that was still live — the
+        "it shows me workspace screens and then moves me" bounce. And a tenant's
+        ``POST /auth/logout`` cannot delete a cookie on ``app.hoja.work`` at all,
+        because the cookies are host-only; the control plane's own signup session
+        survived and the next sign-in silently resumed it.
+
+        So this route revokes server-side (this host's cookies, plus every
+        session row the account still owns — see ``_revoke_sessions_across_hosts``),
+        marks the browser as "ask which account next time", and renders a page
+        that only states the fact. A GET, because its only effect is ending
+        sessions: there is nothing else for a cross-site request to trigger.
         """
         control_plane = signup_config.control_plane_url
         if control_plane and _is_tenant_origin(request):
             back = _tenant_origin_for(request)
-            suffix = f"?next={quote(back, safe='')}" if back else ""
-            return RedirectResponse(f"{control_plane}/signin/signout{suffix}", status_code=302)
-        signup_store.revoke_session(request.cookies.get(_SIGNUP_SESSION_COOKIE))
-        back = _tenant_transfer_target(request.query_params.get("next") or "")
-        target = "/signin" + (f"?next={quote(back, safe='')}" if back else "")
-        response = RedirectResponse(target, status_code=302)
-        response.delete_cookie(_SIGNUP_SESSION_COOKIE, path="/")
+            suffix = f"?from={quote(back, safe='')}" if back else ""
+            return RedirectResponse(f"{control_plane}/signout{suffix}", status_code=302)
+        raw_from = (
+            request.query_params.get("from")
+            or request.query_params.get("next")
+            or ""
+        )
+        back = _tenant_transfer_target(raw_from) if raw_from else None
+        if raw_from and back is None:
+            # Not one of our tenant origins (this includes app.hoja.work itself).
+            # The return link falls back to the local entry; nothing is redirected
+            # to a value that came in on the query string.
+            _security_log.info(
+                "auth.signout from_ignored=%s", urlsplit(raw_from).hostname or "-"
+            )
+        cleared, address = _revoke_every_session(request)
+        revoked = _revoke_sessions_across_hosts(address)
+        _security_log.info(
+            "auth.signout cleared=%s cross_host=%s,%s",
+            ",".join(cleared) or "-", revoked["workspace"], revoked["signup"],
+        )
+        sign_in_url = "/signin" + (f"?next={quote(back, safe='')}" if back else "")
+        response = HTMLResponse(
+            signin_pages.signed_out_page(sign_in_url=sign_in_url),
+            headers={"cache-control": "no-store"},
+        )
+        for cookie in (
+            "hoja_session",
+            _SIGNUP_SESSION_COOKIE,
+            _OIDC_FLOW_COOKIE,
+            _INVITE_COOKIE,
+        ):
+            response.delete_cookie(cookie, path="/")
+        _mark_account_choice_pending(response, request)
         return response
+
+    async def sign_in_signout(request: Request):
+        """Kept for the refusal and invitation screens: "use a different account".
+
+        Same action as ``/signout`` — revoke, then land on the signed-out page —
+        so a retry can no longer re-mint the identity it just ended.
+        """
+        return await sign_out_entry(request)
 
     async def sign_in_entry(request: Request):
         """One sign-in entry: verify identity once, then open the right workspace."""
@@ -2180,32 +2406,59 @@ def create_app(
 
         next_target = _tenant_transfer_target(request.query_params.get("next") or "")
         identity = _signup_identity(request)
+        # True only after a sign-out or a "use a different account" link. Every
+        # other visit is a resume: the identity is already verified, and sending
+        # it through Google again is the extra hop this entry used to add.
+        ask_account = _account_choice_pending(request)
         if identity is not None:
             rows = signup_store.workspaces_for(
                 subject=identity.get("subject"), email=identity.get("email")
             )
             active = [row for row in rows if row["status"] == "active"]
-            if next_target is not None:
-                # The person named a workspace. The directory is a fallback for
-                # an entry reached without one, not an override of their choice.
-                return RedirectResponse(_handoff_start_url(next_target), status_code=302)
-            if len(active) == 1:
+            # The person named a workspace; the directory is a fallback for an
+            # entry reached without one, never an override of their choice.
+            target = next_target or (
+                _workspace_origin(active[0]["slug"]) if len(active) == 1 else None
+            )
+            if target is not None:
+                if ask_account:
+                    response = RedirectResponse(
+                        _handoff_start_url(target, ask_account=True), status_code=302
+                    )
+                    # One sign-in asks, the next one resumes.
+                    response.delete_cookie(_CHOOSE_ACCOUNT_COOKIE, path="/")
+                    return response
+                resumed = _resume_tenant_handoff(identity, target)
+                if resumed is not None:
+                    return resumed
+                # No handoff key on this deployment: the Google start is the only
+                # path left that can still succeed, so it must not resume.
                 return RedirectResponse(
-                    _handoff_start_url(_workspace_origin(active[0]["slug"])), status_code=302
+                    _handoff_start_url(target, ask_account=True), status_code=302
                 )
             if len(active) > 1:
                 return HTMLResponse(
                     signin_pages.choose_workspace_page(
                         workspaces=[
-                            (row["slug"], _handoff_start_url(_workspace_origin(row["slug"])))
+                            (
+                                row["slug"],
+                                _handoff_start_url(
+                                    _workspace_origin(row["slug"]), ask_account=ask_account
+                                ),
+                            )
                             for row in active
-                        ]
-                    )
+                        ],
+                        email=identity.get("email"),
+                        sign_out_url=_switch_account_url(request),
+                    ),
+                    headers={"cache-control": "no-store"},
                 )
+            # The default sign-out control here is the account the session
+            # belongs to, not an endpoint that only clears the sign-up cookie.
             return HTMLResponse(
                 signin_pages.no_workspace_page(
                     email=identity.get("email"),
-                    sign_out_url="/auth/google/logout",
+                    sign_out_url=_signout_action(request),
                     invite_action="/signin/invited",
                 ),
                 headers={"cache-control": "no-store"},
@@ -2215,6 +2468,13 @@ def create_app(
             f"?next={quote(next_target, safe='')}" if next_target is not None else ""
         )
         google_url = "/auth/google/start?return_to=" + quote(return_to, safe="")
+        if next_target is not None:
+            # A workspace was already chosen before the browser got here (a
+            # tenant's Login card links to exactly this URL). The page whose only
+            # control is "Continue with Google" is then one screen too many: go
+            # to the same URL its button pointed at, with the same return_to, so
+            # an invitation in flight still survives the round-trip.
+            return RedirectResponse(google_url, status_code=302)
         return HTMLResponse(
             signin_pages.sign_in_page(google_url=google_url),
             headers={"cache-control": "no-store"},
@@ -2264,18 +2524,12 @@ def create_app(
             # The browser already completed Google OIDC on this control plane.
             # Do not send it through the account chooser again: the tenant only
             # needs a freshly minted, audience-bound handoff token. The sign-in
-            # entry sets choose_account=1 because there the person asked to sign
-            # in, and resuming would hand them the identity they just left.
-            full_identity = signup_store.identity_by_subject(identity["subject"]) or identity
-            if full_identity.get("email_verified") is True:
-                return _tenant_transfer_redirect(
-                    email=full_identity["email"],
-                    subject=full_identity["subject"],
-                    name=full_identity.get("name"),
-                    picture=full_identity.get("picture"),
-                    tenant_target=tenant_target,
-                    source="control_session",
-                )
+            # entry asks for choose_account=1 only when the person explicitly
+            # asked to change accounts (a sign-out or a refusal page), because
+            # resuming would otherwise hand them the identity they just left.
+            resumed = _resume_tenant_handoff(identity, tenant_target)
+            if resumed is not None:
+                return resumed
         if not signup_config.configured:
             return JSONResponse(
                 {"error": "Sign-up is not configured on this deployment.",
@@ -3114,6 +3368,10 @@ def create_app(
             WebSocketRoute("/ws", realtime_socket),
             Route("/signin", sign_in_entry, methods=["GET"]),
             Route("/signin/signout", sign_in_signout, methods=["GET"]),
+            # Signing out of Hoja, for the SPA's top-level navigation and for the
+            # server-rendered "use a different account" forms. POST is preferred
+            # (a form, never script); GET has no effect beyond ending sessions.
+            Route("/signout", sign_out_entry, methods=["GET", "POST"]),
             Route("/signin/invited", sign_in_invited, methods=["POST"]),
             Route("/auth/setup", auth_setup, methods=["GET", "POST"]),
             Route("/auth/invite/accept", auth_invite_accept, methods=["POST"]),

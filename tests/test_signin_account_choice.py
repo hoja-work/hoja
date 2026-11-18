@@ -67,8 +67,22 @@ def test_a_fresh_sign_in_asks_google_for_the_account_chooser(hosted: Harness) ->
 
 
 def test_continue_to_sign_in_does_not_resume_the_previous_identity(hosted: Harness) -> None:
-    """The reported repro: sign in once, sign out, press Continue to sign in."""
+    """The reported repro: sign in once, sign out, press Continue to sign in.
+
+    The one-hop entry resumes a live control session — there is nothing left to
+    choose once Google has already answered. So the HOJA-206 guarantee now hangs
+    on the sign-out: it is what marks this browser as "ask which account", and
+    that marker is what turns the next entry back into a real sign-in.
+    """
     hosted.sign_in(subject="google-sub-1", email="one@example.test")
+
+    signed_out = hosted.client.get(
+        "/signout", params={"from": TENANT_ORIGIN},
+        headers={"host": EXPECTED_CONTROL_HOST}, follow_redirects=False,
+    )
+    assert signed_out.status_code == 200, signed_out.text
+    assert "You're signed out" in signed_out.text
+    assert hosted.client.cookies.get("hoja_choose_account") == "1"
 
     entry = hosted.client.get(
         "/signin", params={"next": TENANT_ORIGIN},

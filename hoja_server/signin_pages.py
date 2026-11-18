@@ -183,18 +183,61 @@ def sign_in_page(*, google_url: str, error: str | None = None) -> str:
     return _page("Sign in · Hoja", body)
 
 
-def choose_workspace_page(*, workspaces: list[tuple[str, str]]) -> str:
-    """More than one workspace for this identity: let the person pick one."""
+def choose_workspace_page(
+    *,
+    workspaces: list[tuple[str, str]],
+    email: str | None = None,
+    sign_out_url: str | None = None,
+) -> str:
+    """More than one workspace for this identity: let the person pick one.
+
+    The page names the account it is about to hand over. Without that line the
+    chooser is the one Hoja screen where a person cannot tell whose session they
+    are looking at, and there is no way out of it (the sign-out lives three
+    screens away, on a workspace they have not opened yet).
+    """
     items = "".join(
         f"<li><a class=\"secondary\" href=\"{_e(url)}\">{_e(name)}<span>→</span></a></li>"
         for name, url in workspaces
     )
+    who = (
+        f"<p>Signed in as <span class=\"who\">{_e(email)}</span>.</p>" if email else ""
+    )
+    sign_out = (
+        "<div class=\"actions\">"
+        f"<a class=\"secondary\" href=\"{_e(sign_out_url)}\">Sign out<span>→</span></a>"
+        "</div>"
+        if sign_out_url
+        else ""
+    )
     body = (
         "<h1>Choose a workspace</h1>"
         "<p>This Google account belongs to more than one workspace.</p>"
-        f"<ul>{items}</ul>"
+        f"{who}<ul>{items}</ul>{sign_out}"
     )
     return _page("Choose a workspace · Hoja", body)
+
+
+def signed_out_page(*, sign_in_url: str) -> str:
+    """Where a finished sign-out lands: a statement, and one way forward.
+
+    Deliberately inert. No chooser, no workspace list, no meta refresh and no
+    script: every one of those turns "you're signed out" into "here is another
+    screen that moves you", which is the report this page answers. The single
+    button goes back to the workspace's sign-in entry, which on a signed-out
+    browser goes straight to Google's account chooser.
+    """
+    body = (
+        "<h1>You're signed out</h1>"
+        "<p>You're signed out of Hoja in this browser.</p>"
+        "<div class=\"actions\">"
+        f"<a class=\"button\" href=\"{_e(sign_in_url)}\">Sign in again<span>→</span></a>"
+        "</div>"
+        "<div class=\"meta\">Signing out ended this browser's Hoja sessions, "
+        "including the control plane's. Signing in again asks which Google "
+        "account to use.</div>"
+    )
+    return _page("Signed out · Hoja", body)
 
 
 def no_workspace_page(

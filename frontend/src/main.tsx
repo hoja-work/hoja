@@ -3231,8 +3231,21 @@ function App() {
     setOrgMenu(false);
     setMoreOpen(false);
     setMobile(false);
+    /* Cookies are host-only, so this POST can only end this host's session.
+     * The control plane's `hoja_signup_session` lives on app.hoja.work and would
+     * silently resume the same identity on the next sign-in, so the server
+     * answers with the one URL that can finish the job and we navigate there at
+     * top level. Resetting state here and staying put is what "sign out, then
+     * sign in again, and I'm back in" looked like. */
+    let signOutUrl = "";
     try {
-      await fetch("/auth/logout", { method: "POST", credentials: "include" });
+      const response = await fetch("/auth/logout", {
+        method: "POST",
+        credentials: "include",
+      });
+      const body = await response.json().catch(() => null);
+      if (response.ok && typeof body?.signOutUrl === "string")
+        signOutUrl = body.signOutUrl;
     } finally {
       void syncRef.current?.forget();
       try {
@@ -3265,6 +3278,7 @@ function App() {
       setLabels([]);
       setCycles([]);
     }
+    if (signOutUrl) location.assign(signOutUrl);
   };
   const moveIssueState = async (issueId: string, state: IssueState) => {
     const issue = issues.find((i) => i.id === issueId);

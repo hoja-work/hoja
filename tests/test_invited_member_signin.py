@@ -261,20 +261,15 @@ def test_the_handoff_path_is_not_swallowed_by_an_invite_query(control_client):
     raw, _ident = _signed_in_control_session(engine)
     client.cookies.set("hoja_signup_session", raw)
 
-    # The first hop offers the handoff; the second mints it, and that is where
-    # the path used to be concatenated onto a target carrying `?invite=`.
+    # With a live control session this is now one hop: the entry mints the
+    # handoff itself, and that is where the path used to be concatenated onto a
+    # target carrying `?invite=`.
     first = client.get(
         f"/signin?next=https%3A%2F%2F{TENANT_HOST}%2F%3Finvite%3D{CODE}",
         follow_redirects=False,
     )
     assert first.status_code == 302
-    assert first.headers["location"].startswith(f"https://app.hoja.work/auth/google/start")
-
-    second = client.get(first.headers["location"].replace("https://app.hoja.work", ""),
-                        follow_redirects=False)
-
-    assert second.status_code == 302
-    location = second.headers["location"]
+    location = first.headers["location"]
     assert location.startswith(f"https://{TENANT_HOST}/auth/google/finish?t=")
     assert "invite=" not in location.split("?", 1)[0]
 

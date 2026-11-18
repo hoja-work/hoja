@@ -372,9 +372,25 @@ def test_the_control_plane_serves_the_one_sign_in_page(control_client):
 
 def test_the_sign_in_page_keeps_the_requested_workspace(control_client):
     client, _ = control_client
-    r = client.get(f"/signin?next=https://{TENANT}/")
+    # R1: a workspace was already chosen, so there is no page to read — the same
+    # URL the page's button pointed at is where the browser goes.
+    r = client.get(f"/signin?next=https://{TENANT}/", follow_redirects=False)
 
-    assert "return_to=%2Fsignin%3Fnext%3Dhttps%253A%252F%252Facme.hoja.work%252F" in r.text
+    assert r.status_code == 302
+    assert r.headers["location"].startswith("/auth/google/start?return_to=")
+    assert (
+        "return_to=%2Fsignin%3Fnext%3Dhttps%253A%252F%252Facme.hoja.work%252F"
+        in r.headers["location"]
+    )
+
+
+def test_a_bare_sign_in_entry_still_renders_the_page(control_client):
+    """Without a workspace there is nothing to skip: the page is the decision."""
+    client, _ = control_client
+    r = client.get("/signin", follow_redirects=False)
+
+    assert r.status_code == 200
+    assert "Sign in to Hoja" in r.text
 
 
 def test_another_host_on_the_entry_bounces_to_the_canonical_page(tenant_client):
