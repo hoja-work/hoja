@@ -30,6 +30,9 @@ RUN python -m pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir '.[server]' \
     && chown -R hoja:hoja /app
 ENV HOJA_WEB_ROOT=/app/web
+# The runner wheel lives in /app/downloads, but `pip install .` puts hoja_server in
+# site-packages, so the module's own default (next to the package) is not where the wheel is.
+ENV HOJA_DOWNLOAD_ROOT=/app/downloads
 USER hoja
 EXPOSE 8787
 # exec, so hoja-serve *is* PID 1: the shell that runs migrate is replaced by
