@@ -84,6 +84,7 @@ ROUTE_FINISH = "/runner/finish"
 # WP07 closes two of the gaps WP08 reported (PR #218, "Contract gaps"):
 ROUTE_EFFECT = "/runner/effect"
 ROUTE_RELEASE = "/runner/release"
+ROUTE_LOGS = "/runner/logs"
 
 HEADER_RUNNER = "X-Hoja-Runner"
 HEADER_LEASE = "X-Hoja-Lease"
@@ -730,6 +731,16 @@ def _apply_finish_to_session(conn, org_id: str, lease: Mapping[str, Any], state:
     except agent_sessions.RefusedTransitionError as exc:
         LOG.warning("lease %s finished %s but session %s took no finish: %s",
                     lease["id"], state, session["id"], exc)
+        from hoja_server import agent_run_logs
+
+        try:
+            with conn.begin_nested():
+                agent_run_logs.record(
+                    conn, org_id, level="warning", kind="session.refused",
+                    runner_id=lease.get("runner_id"), lease_id=lease.get("id"),
+                    message=f"the {state} finish did not move session {session['id']}: {exc}")
+        except Exception:  # noqa: BLE001 - the finish outranks its note
+            LOG.debug("could not note a refused finish", exc_info=True)
         return agent_sessions.get_session(conn, org_id, session["id"])
 
 
@@ -758,7 +769,14 @@ def claim_lease(engine, runner_row: Mapping[str, Any]) -> dict[str, Any] | None:
     """
 
     granted, refusals = _claim_locked(engine, runner_row)
+    from hoja_server import agent_run_logs
+
     for refusal in refusals:
+        agent_run_logs.note(
+            engine, runner_row["organization_id"],
+            {"id": refusal.get("lease_id"), "runner_id": None},
+            f"not granted: {refusal['reason']} ({refusal.get('action')})",
+            level="warning", kind="lease.refused", detail=dict(refusal.get("detail") or {}))
         agent_policy.record_refusal(
             engine,
             organization_id=runner_row["organization_id"],
@@ -1224,6 +1242,7 @@ def post_events(engine, runner_row: Mapping[str, Any], body: Mapping[str, Any],
                 # write an injected secret into the activity stream. Scrubbed before
                 # the row exists, so the value is never stored to be redacted later.
                 encoded = agent_policy.scrub_lease_text(conn, org_id, lease, encoded)
+                _log_event(conn, org_id, lease, kind, encoded)
                 if kind in SESSION_EVENT_KINDS:
                     # The session machine's own inputs: started, asked, said. They go
                     # to the session transcript (what the agent screens read), not to
@@ -1329,6 +1348,49 @@ def pending_answers(conn, org_id: str, lease: Mapping[str, Any]) -> list[dict[st
         if payload.get("ask_id"):
             out.append({"ask_id": payload["ask_id"], "response": payload.get("response") or {}})
     return out
+
+
+def _log_event(conn, org_id: str, lease: Mapping[str, Any], kind: str, encoded: str) -> None:
+    """Copy one runner event into the run's timeline (agent_run_logs), never failing the batch."""
+    from hoja_server import agent_run_logs
+
+    try:
+        with conn.begin_nested():
+            payload = json.loads(encoded) if encoded else {}
+            summary = str(payload.get("body") or payload.get("reason") or "")[:300]
+            agent_run_logs.record(conn, org_id, message=f"{kind}{': ' + summary if summary else ''}",
+                                  level="event", source="runner", kind=kind,
+                                  runner_id=lease.get("runner_id"), lease_id=lease.get("id"),
+                                  detail=payload if isinstance(payload, dict) else None)
+    except Exception:  # noqa: BLE001 - the event itself is already stored
+        LOG.debug("could not copy event %s to the run log", kind, exc_info=True)
+
+
+def post_logs(engine, runner_row: Mapping[str, Any], body: Mapping[str, Any]) -> dict[str, Any]:
+    """Store log lines a runner shipped (HOJA-602), optionally tagged with a lease it holds.
+
+    The lease is checked for ownership, not for a live fence: the lines that explain why a run
+    was lost arrive after it was, and they are the ones worth keeping.
+    """
+    from hoja_server import agent_run_logs
+
+    lines = body.get("lines")
+    if not isinstance(lines, list):
+        raise LeaseRequestError(400, ERROR_BAD_PARAMS, "lines must be a list")
+    org_id = runner_row["organization_id"]
+    lease_id = str(body.get("lease_id") or "").strip()
+    with tenant_context.scoped(org_id), engine.begin() as conn:
+        lease = None
+        if lease_id:
+            lease = _row(conn, select(agent_lease).where(and_(
+                agent_lease.c.organization_id == org_id,
+                agent_lease.c.id == lease_id,
+                agent_lease.c.runner_id == runner_row["id"],
+            )))
+        scrub = (lambda text: agent_policy.scrub_lease_text(conn, org_id, lease, text)) \
+            if lease else None
+        kept = agent_run_logs.ingest(conn, org_id, runner_row["id"], lease, lines, scrub=scrub)
+    return {"accepted": kept}
 
 
 def issue_activity_insert(org_id: str, task_id: str, kind: str, payload: str):
@@ -1818,6 +1880,14 @@ def finish_lease(engine, runner_row: Mapping[str, Any], body: Mapping[str, Any],
         if comment_id and session_row is not None:
             _audit_finish_comment(engine, org_id, lease, runner_row, comment_id=comment_id,
                                   session=session_row, model=worker_model)
+        from hoja_server import agent_run_logs
+
+        agent_run_logs.note(
+            engine, org_id, lease,
+            f"finished {state}: {summary or 'no summary'} (session {session_state})",
+            level="error" if state == "failed" else "info", kind="run.finish",
+            detail={"state": state, "session_state": session_state,
+                    "external_ref": ack_effect.get("external_ref"), "model": worker_model})
         _audit_lease(engine, "agent.session.stop", lease, runner_row,
                      detail={"state": state, "key": key,
                              "external_ref": ack_effect.get("external_ref"),
@@ -1971,6 +2041,14 @@ def reap_expired_leases(engine, *, now: datetime | None = None,
                 ttl_s=int(lease["ttl_seconds"]),
             )
         _follow_lost_lease(engine, org_id, lease, requeued, canceled=canceled)
+        from hoja_server import agent_run_logs
+
+        agent_run_logs.note(
+            engine, org_id, lease,
+            ("cancelled: the runner stopped answering after a cancel" if canceled else
+             f"lost: no heartbeat before the lease expired; "
+             f"{'retrying as fence ' + str(requeued['fence']) if requeued else 'no attempt left'}"),
+            level="warning", kind="lease.expired")
         _audit_lease(engine, "agent.lease.expiry", lease, runner_row or {},
                      detail={"fence": lease["fence"], "attempt": lease["attempt"],
                              "reason": "cancel_requested" if canceled else "lease_expired",
@@ -2270,6 +2348,15 @@ def runner_routes(engine) -> list[Route]:
 
         return await run_in_threadpool(_run, record)
 
+    async def logs(request: Request) -> JSONResponse:
+        try:
+            runner_row = _runner_from(request, engine)
+        except LeaseRequestError as rejected:
+            return rejected.response()
+        body = await _json_body(request)
+        return await run_in_threadpool(_run, lambda: JSONResponse(
+            post_logs(engine, runner_row, body)))
+
     async def release(request: Request) -> JSONResponse:
         try:
             runner_row = _runner_from(request, engine)
@@ -2287,6 +2374,7 @@ def runner_routes(engine) -> list[Route]:
         Route(ROUTE_FINISH, finish, methods=["POST"]),
         Route(ROUTE_EFFECT, effect, methods=["POST"]),
         Route(ROUTE_RELEASE, release, methods=["POST"]),
+        Route(ROUTE_LOGS, logs, methods=["POST"]),
     ]
 
 

@@ -38,7 +38,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 81
+CURRENT_SCHEMA_REVISION = 82
 
 log = logging.getLogger(__name__)
 
@@ -1320,6 +1320,32 @@ agent_lease = Table(
     Column("created_at", String, nullable=False),
     Column("updated_at", String, nullable=False),
     UniqueConstraint("task_id", "fence", name="uq_agent_lease_task_fence"),
+)
+
+# Revision 82: one timeline per agent run, for debugging through GraphQL (HOJA-602). What the
+# runner reported (its events, its warnings and errors, a traceback when a run broke) and what
+# the server noted about the run (a refused transition, a policy refusal), in one place, so
+# "why did this run fail" is a query rather than a trip to the machine's terminal.
+agent_run_log = Table(
+    "agent_run_log",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("runner_id", String, ForeignKey("runner.id")),
+    # NULL for a line the daemon wrote while it held no lease (start-up, polling).
+    Column("lease_id", String, ForeignKey("agent_lease.id")),
+    # runner | server
+    Column("source", String, nullable=False),
+    # event | debug | info | warning | error
+    Column("level", String, nullable=False),
+    # The event kind, or the logger name for a log line.
+    Column("kind", String),
+    Column("message", Text, nullable=False),
+    # JSON: the event payload, or {traceback, ...} for a log line.
+    Column("detail", Text),
+    Column("created_at", String, nullable=False),
+    Index("ix_agent_run_log_lease", "organization_id", "lease_id", "created_at"),
+    Index("ix_agent_run_log_runner", "organization_id", "runner_id", "created_at"),
 )
 
 agent_side_effect = Table(
@@ -3305,6 +3331,11 @@ def _apply_project_update_comments(conn):
         "CREATE INDEX IF NOT EXISTS ix_comment_project_update_id ON comment (project_update_id)")
 
 
+def _apply_agent_run_log(conn):
+    """``agent_run_log``: the per-run timeline GraphQL serves (HOJA-602)."""
+    agent_run_log.create(conn, checkfirst=True)
+
+
 def _apply_lease_refusal_reason(conn):
     """``agent_lease.refusal_reason``: the last policy refusal a queued attempt got.
 
@@ -3649,6 +3680,8 @@ _MIGRATIONS = {
     # 81: a refused queued lease records why, so it stops blocking the queue and is
     # audited once per reason instead of once per poll.
     81: _apply_lease_refusal_reason,
+    # 82: one timeline per agent run: runner events, runner logs, server notes.
+    82: _apply_agent_run_log,
 }
 
 
