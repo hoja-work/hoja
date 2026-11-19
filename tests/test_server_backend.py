@@ -979,6 +979,9 @@ def test_api_version_reports_the_running_build(tmp_path, monkeypatch) -> None:
     release_sha = "968fa40" + "0" * 33
     monkeypatch.setenv("HOJA_RELEASE_SHA", release_sha)
     monkeypatch.setenv("HOJA_BUILT_AT", "2026-11-12T05:00:00Z")
+    # A checkout that ran app/scripts/build-runner-wheel.sh has a wheel in
+    # ./downloads, so the image-shaped answer has to be pinned rather than inherited.
+    monkeypatch.setenv("HOJA_DOWNLOAD_ROOT", str(tmp_path / "no-wheel"))
 
     db_path = tmp_path / "version.db"
     engine = make_engine(db_path)
@@ -993,7 +996,11 @@ def test_api_version_reports_the_running_build(tmp_path, monkeypatch) -> None:
     assert response.headers["content-type"].startswith("application/json")
     assert response.headers["cache-control"] == "no-store"
     payload = response.json()
-    assert set(payload) == {"version", "sha", "builtAt"}
+    # `runnerWheel` is HOJA-712: which daemon wheel this deployment publishes, so a
+    # release can prove the artifact is in the image. Null here — this test builds no
+    # wheel — and null is the answer that must not be confused with "no such field".
+    assert set(payload) == {"version", "sha", "builtAt", "runnerWheel"}
+    assert payload["runnerWheel"] is None
     assert payload["version"] == version_file.read_text(encoding="utf-8").strip()
     assert payload["sha"] == release_sha
     assert payload["builtAt"] == "2026-11-12T05:00:00Z"

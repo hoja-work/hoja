@@ -1041,17 +1041,25 @@ function createGraphqlAdapter(fallback: AgentsAdapter): AgentsAdapter {
       const data = await request<{
         runnerEnrollmentCreate: {
           enrollment: ServerEnrollment; token: string; command: string; heartbeatIntervalS: number;
+          installCommand: string | null; connectCommand: string | null; startCommand: string; downloadUrl: string | null;
         };
       }>(`mutation Enroll($name: String!, $ttlMinutes: Int) {
             runnerEnrollmentCreate(name: $name, ttlMinutes: $ttlMinutes) {
               enrollment { ${ENROLLMENT_FIELDS} }
-              token command heartbeatIntervalS } }`,
+              token command installCommand connectCommand startCommand downloadUrl heartbeatIntervalS } }`,
          {name, ttlMinutes: ttlMinutes ?? null});
       const created = data.runnerEnrollmentCreate;
       return {
         enrollment: fromEnrollment(created.enrollment),
         token: created.token,
         command: created.command,
+        /* HOJA-712: the install and start halves of the same hand-off. `installCommand` is null
+         * on a deployment that publishes no wheel, and the panel says so rather than linking a
+         * 404. */
+        installCommand: created.installCommand ?? null,
+        connectCommand: created.connectCommand ?? null,
+        startCommand: created.startCommand,
+        downloadUrl: created.downloadUrl ?? null,
         heartbeatIntervalS: created.heartbeatIntervalS,
       };
     },

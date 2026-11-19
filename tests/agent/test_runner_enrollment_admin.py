@@ -85,7 +85,7 @@ def _create(world, *, org: str = "alpha", name: str = "mac-mini-01",
         mutation {{
           runnerEnrollmentCreate(name: "{name}"{ttl}) {{
             enrollment {{ {ENROLLMENT_SELECTION} }}
-            token command heartbeatIntervalS
+            token command installCommand startCommand downloadUrl heartbeatIntervalS
           }}
         }}''')["runnerEnrollmentCreate"]
 
@@ -191,6 +191,60 @@ def test_the_token_is_returned_once_and_only_its_hash_is_stored(world):
     assert "--name mac-mini-01" in created["command"]
     assert created["command"].count(token) == 1
     assert created["heartbeatIntervalS"] == runner_api.HEARTBEAT_INTERVAL_S
+
+
+def test_the_response_carries_all_three_commands_in_the_order_they_are_run(world, tmp_path,
+                                                                          monkeypatch):
+    """HOJA-712: install, enroll, start — and the URL the install line names is served.
+
+    The enroll line registers and exits, so a response that carried only that line left
+    the machine idle with a spent token. And it began with a bare ``hoja-runnerd`` that no
+    machine had, because the package is published nowhere: the deployment serves the wheel
+    instead, and ``installCommand`` names that URL.
+    """
+    root = tmp_path / "downloads"
+    root.mkdir()
+    wheel = root / "hoja_runnerd-0.1.0-py3-none-any.whl"
+    wheel.write_bytes(b"PK\x05\x06" + b"\0" * 18)
+    monkeypatch.setenv("HOJA_DOWNLOAD_ROOT", str(root))
+
+    created = _create(world, name="mac-mini-01")
+    token = created["token"]
+    assert created["downloadUrl"].endswith("/downloads/hoja_runnerd-0.1.0-py3-none-any.whl")
+    assert created["installCommand"] == f"pipx install {created['downloadUrl']}"
+    assert created["startCommand"] == (
+        f"hoja-runnerd --base-url {created['command'].split('--base-url ')[1].split(' ')[0]}"
+        " --state-dir ~/.hoja/runner")
+
+    # The three lines are the same flags the daemon parses, and only the enroll one spends
+    # the token: a start that carried it would be a credential in a shell history and on
+    # `/proc/<pid>/cmdline`.
+    assert "--enroll" in created["command"] and token in created["command"]
+    assert token not in created["startCommand"]
+    assert "--enroll" not in created["startCommand"]
+    assert "--state-dir ~/.hoja/runner" in created["command"], \
+        "the start line reads the identity from the directory enroll wrote it to"
+    # A start does not name a harness: the default is the one the control plane recorded at
+    # enroll (HOJA-602-A-20), and a second answer here would silently diverge from it.
+    assert "--default-harness" not in created["startCommand"]
+
+    # And the artifact the install line names is actually served, without a credential.
+    served = world["client"].get("/downloads/hoja_runnerd-0.1.0-py3-none-any.whl")
+    assert served.status_code == 200, served.text
+    assert served.content == wheel.read_bytes()
+
+
+def test_an_unpublished_wheel_is_null_rather_than_a_url_that_would_404(world, tmp_path,
+                                                                      monkeypatch):
+    """A checkout that never built the wheel still mints tokens; it must say so."""
+    monkeypatch.setenv("HOJA_DOWNLOAD_ROOT", str(tmp_path / "never-built"))
+    created = _create(world, name="mac-mini-02")
+    assert created["installCommand"] is None
+    assert created["downloadUrl"] is None
+    # The other two steps are unaffected: they are strings the server composes from flags
+    # and this request's URL, not from a file on disk.
+    assert created["startCommand"].startswith("hoja-runnerd --base-url ")
+    assert created["command"].startswith(f"HOJA_ENROLLMENT_TOKEN={created['token']} ")
 
 
 def test_the_enrollment_becomes_spent_once_a_runner_uses_it(world):

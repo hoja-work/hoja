@@ -86,8 +86,16 @@ assert.equal(enrollments.length, 2, 'two enrollment tokens were minted');
 
 const port = 19400 + Math.floor(Math.random() * 90);
 const base = `http://127.0.0.1:${port}`;
+/* The wheel the enrollment panel names (HOJA-712). These bytes are a stub on purpose: this file
+ * asserts that the panel, the pointer and the route agree on the URL, not that a wheel installs —
+ * the real wheel is built by `app/scripts/build-runner-wheel.sh` and proved installable by
+ * `tests/test_runner_release.py` and the release run. */
+const downloads = path.join(dir, 'downloads');
+fs.mkdirSync(downloads, { recursive: true });
+const wheelName = 'hoja_runnerd-0.1.0-py3-none-any.whl';
+fs.writeFileSync(path.join(downloads, wheelName), 'stub wheel bytes');
 const server = spawn(path.join(repo, '.venv/bin/hoja-serve'), ['serve', '--db', db, '--host', '127.0.0.1', '--port', String(port)],
-  { cwd: repo, env: { ...process.env, HOJA_WEB_ROOT: web, PYTHONPATH: repo }, stdio: 'ignore' });
+  { cwd: repo, env: { ...process.env, HOJA_WEB_ROOT: web, HOJA_DOWNLOAD_ROOT: downloads, PYTHONPATH: repo }, stdio: 'ignore' });
 const wait = ms => new Promise(r => setTimeout(r, ms));
 const gql = async (query, variables) => {
   const r = await fetch(`${base}/graphql`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ query, variables }) });
@@ -604,6 +612,42 @@ const focusStop = page => page.evaluate(() => {
   ok(shownCommand.includes('--name e2e-enrolled-machine') && /--base-url https?:\/\//.test(shownCommand),
     'enroll: the command names the machine and this deployment URL', shownCommand);
 
+  /* HOJA-712: three steps, in the order they are run, and the first one names an artifact this
+   * server actually serves. Enrolling exits, so a panel with only the enroll line left the machine
+   * idle with a spent token; and the enroll line began with a `hoja-runnerd` no machine had,
+   * because the package is published nowhere. */
+  const steps = await page.evaluate(() =>
+    [...document.querySelectorAll('[data-enroll-steps] [data-enroll-step]')]
+      .map(el => el.getAttribute('data-enroll-step')));
+  ok(JSON.stringify(steps) === JSON.stringify(['install', 'enroll', 'start']),
+    'enroll: the panel shows install → enroll → start, in that order', JSON.stringify(steps));
+  const shownInstall = await page.evaluate(() =>
+    document.querySelector('[data-install-command]')?.textContent?.trim() || '');
+  const shownStart = await page.evaluate(() =>
+    document.querySelector('[data-start-command]')?.textContent?.trim() || '');
+  ok(shownInstall === `pipx install ${base}/downloads/${wheelName}`,
+    'enroll: the install step is a one-liner naming this deployment\u2019s own wheel', shownInstall);
+  ok(shownStart === `hoja-runnerd --base-url ${base} --state-dir ~/.hoja/runner`,
+    'enroll: the start step is the daemon invocation, with no harness flag and no credential', shownStart);
+  ok(!shownStart.includes(shownToken) && !shownStart.includes('--enroll') && !shownStart.includes('--default-harness'),
+    'enroll: starting does not re-use the token and does not second-guess the recorded default harness', shownStart);
+  const copyButtons = await page.evaluate(() =>
+    [...document.querySelectorAll('[data-enroll-steps] button')].map(b => b.textContent.trim()));
+  ok(JSON.stringify(copyButtons) === JSON.stringify(
+    ['Copy install command', 'Copy enroll command', 'Copy start command']),
+    'enroll: every step has its own copy button', JSON.stringify(copyButtons));
+  ok(/works once/.test(await page.evaluate(() => document.querySelector('[data-enroll-token]')?.textContent || '')),
+    'enroll: the panel says the token works once');
+  /* The route, not the string: the URL the panel prints is what the server answers, unauthenticated,
+   * and the pointer publishes the same one. */
+  const wheelResponse = await fetch(`${base}/downloads/${wheelName}`);
+  ok(wheelResponse.status === 200 && (await wheelResponse.text()).length > 0,
+    'enroll: the wheel the install step names is served on this origin', String(wheelResponse.status));
+  const pointer = await (await fetch(`${base}/downloads/hoja-runnerd/latest`)).json();
+  ok(pointer.url === shownInstall.replace(/^pipx install /, '') && pointer.version === '0.1.0',
+    'enroll: /downloads/hoja-runnerd/latest publishes the same URL and version', JSON.stringify(pointer));
+  await page.screenshot({ path: path.join(shots, `runners-enroll-steps-${W}.png`) });
+
   /* The token is a secret that exists in exactly one place: not in the read side. */
   const apiEnrollments = async () => (await gql(
     `{runnerEnrollments{id label status usable expiresAt usedAt usedByRunner createdAt}}`)).runnerEnrollments;
@@ -691,7 +735,7 @@ const focusStop = page => page.evaluate(() => {
 
   /* The tab strip reaches it. */
   await page.goto(`${base}/workspace/agents`, { waitUntil: 'networkidle' });
-  await page.getByRole('tab', { name: 'Runners' }).click();
+  await page.getByRole('tab', { name: 'Machines' }).click();
   await page.waitForSelector('[data-surface="runners-list"]', { timeout: 15000 }).catch(() => undefined);
   ok(new URL(page.url()).pathname === RUNNERS, 'the Runners tab opens the runner list', new URL(page.url()).pathname);
 

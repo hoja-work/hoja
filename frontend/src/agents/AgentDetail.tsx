@@ -240,34 +240,39 @@ export function AgentDetailPage({
 
   /* Returns the promise so a failed write can re-read the row and *then* state the refusal: the
    * other order lets the successful reload clear the error that explains what happened. */
-  const load = useCallback(
-    () =>
-      Promise.all([
-        getAgentsAdapter().getAgent(agentKey),
-        // A refused claims read is not an empty list; show the refusal beside the claims.
-        getAgentsAdapter()
-          .listClaims({ agentId: agentKey })
-          .then((page) => ({ rows: page.claims, error: "" }))
-          .catch((e: Error) => ({ rows: [] as Claim[], error: e.message })),
-      ])
-        .then(([d, claimed]) => {
-          setDetail(d);
-          setClaims(claimed.rows);
-          setClaimsError(claimed.error);
-          setError(
-            d
-              ? ""
-              : `No agent member with the id ${agentKey} exists in this workspace.`,
-          );
-        })
-        .catch((e: Error) => {
-          setDetail(null);
-          setClaims([]);
-          setClaimsError("");
-          setError(e.message);
-        }),
-    [agentKey],
-  );
+  /* Every read and every write takes a number; a read applies only if nothing newer started
+   * after it. Without this, a poll that left before a save and came back after it redrew the
+   * old row over the new one (a removed grant flickered back). */
+  const generation = useRef(0);
+  const load = useCallback(() => {
+    const mine = ++generation.current;
+    return Promise.all([
+      getAgentsAdapter().getAgent(agentKey),
+      // A refused claims read is not an empty list; show the refusal beside the claims.
+      getAgentsAdapter()
+        .listClaims({ agentId: agentKey })
+        .then((page) => ({ rows: page.claims, error: "" }))
+        .catch((e: Error) => ({ rows: [] as Claim[], error: e.message })),
+    ])
+      .then(([d, claimed]) => {
+        if (mine !== generation.current) return;
+        setDetail(d);
+        setClaims(claimed.rows);
+        setClaimsError(claimed.error);
+        setError(
+          d
+            ? ""
+            : `No agent member with the id ${agentKey} exists in this workspace.`,
+        );
+      })
+      .catch((e: Error) => {
+        if (mine !== generation.current) return;
+        setDetail(null);
+        setClaims([]);
+        setClaimsError("");
+        setError(e.message);
+      });
+  }, [agentKey]);
 
   useEffect(() => {
     load();
@@ -332,6 +337,7 @@ export function AgentDetailPage({
   };
 
   const savePolicy = async (patch: Partial<AgentPolicy>) => {
+    generation.current++;
     setBusy("policy");
     setNotice("");
     setError("");
@@ -368,6 +374,7 @@ export function AgentDetailPage({
     defaultHarness?: string | null;
     harnessAllowlist?: string[];
   }) => {
+    generation.current++;
     setBusy("harness");
     setNotice("");
     setError("");
@@ -399,6 +406,7 @@ export function AgentDetailPage({
    * and that is what the field draws. A refusal is re-thrown so the field that was edited can carry
    * it, after `load()` has put the server's stored list back. */
   const saveConnect = async (grants: ConnectGrant[]) => {
+    generation.current++;
     setBusy("connect");
     setNotice("");
     setError("");

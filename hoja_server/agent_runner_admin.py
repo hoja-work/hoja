@@ -41,7 +41,7 @@ from ariadne import MutationType, QueryType, gql
 from graphql import GraphQLError
 from sqlalchemy import desc, select
 
-from hoja_server import audit, runner_api, tenant_context
+from hoja_server import audit, runner_api, runner_release, tenant_context
 from hoja_server.db import runner_enrollment
 
 query = QueryType()
@@ -61,6 +61,12 @@ MAX_TTL_MINUTES = 365 * 24 * 60
 PENDING = "pending"
 SPENT = "spent"
 EXPIRED = "expired"
+
+#: Where ``--enroll`` keeps the runner's identity, and where the daemon reads it back.
+#: One constant because the enroll and start commands must agree on it: a start that
+#: looked in a different directory would find no credential and dial the control plane
+#: anonymously.
+STATE_DIR = "~/.hoja/runner"
 
 SDL = gql(
     """
@@ -91,6 +97,14 @@ SDL = gql(
       token: String!
       "The exact command an operator runs on the machine, with this token and this workspace's URL."
       command: String!
+      "The command that installs the daemon from this deployment's own wheel (/downloads). Null when this deployment publishes no wheel: a URL that 404s is worse than saying so."
+      installCommand: String
+      "One line that installs, connects and starts a runner on a machine (null when this deployment publishes no runner)."
+      connectCommand: String
+      "The exact command that starts the daemon after enrolling, with this workspace's URL."
+      startCommand: String!
+      "Where this deployment serves the wheel; null when it serves none."
+      downloadUrl: String
       "The cadence the server asks the daemon to heartbeat at (WP07 gap 5)."
       heartbeatIntervalS: Int!
     }
@@ -202,11 +216,30 @@ def enroll_command(base_url: str, *, name: str, token: str) -> str:
     apart: the flag spellings here are ``hoja_runnerd.main``'s own. The token goes
     in through the environment rather than ``argv`` on purpose — ``ps`` shows every
     command line on a shared host, and this value is a credential.
+
+    It registers and exits (HOJA-712). ``start_command`` below is the line that keeps
+    the machine working, and the screen shows both: an operator who runs only this one
+    believes the runner is up while the token is already spent and nothing is polling.
     """
     return (
         f"HOJA_ENROLLMENT_TOKEN={token} hoja-runnerd --enroll "
-        f"--base-url {base_url} --name {name} --state-dir ~/.hoja/runner"
+        f"--base-url {base_url} --name {name} --state-dir {STATE_DIR}"
     )
+
+
+def start_command(base_url: str) -> str:
+    """The exact line that starts the daemon, once, on the enrolled machine.
+
+    No harness flag, and that is the point of HOJA-602-A-20: the default harness is
+    whatever the control plane named at enroll (first entry of the allowlist that call
+    registered, sorted) and ``--enroll`` wrote into the identity file, so a start that
+    names the same ``--state-dir`` resolves it without inventing one. Passing
+    ``--default-harness`` here would be a second, silently diverging answer.
+
+    No credential either: ``--enroll`` stored the runner's own token in that state
+    directory and ``main`` reads it from there (HOJA-635).
+    """
+    return f"hoja-runnerd --base-url {base_url} --state-dir {STATE_DIR}"
 
 
 def _base_url(info) -> str:
@@ -277,10 +310,20 @@ def m_runner_enrollment_create(_obj, info, name, ttlMinutes=None):  # noqa: N803
         detail={"label": label, "ttl_minutes": minutes,
                 "expires_at": row.get("expires_at")},
     )
+    base_url = _base_url(info)
+    # The artifact this deployment publishes, if it built one (HOJA-712). Read at
+    # request time rather than at import: the wheel lands in the image after the
+    # modules are first imported, and a test can point HOJA_DOWNLOAD_ROOT at a fixture.
+    download = runner_release.download_url(base_url)
     return {
         "enrollment": serialize_enrollment(row),
         "token": token,
-        "command": enroll_command(_base_url(info), name=label, token=token),
+        # Kept for compatibility: the enroll half of the same response, unchanged.
+        "command": enroll_command(base_url, name=label, token=token),
+        "installCommand": runner_release.install_command(download) if download else None,
+        "connectCommand": runner_release.connect_command(base_url, token) if download else None,
+        "startCommand": start_command(base_url),
+        "downloadUrl": download,
         "heartbeatIntervalS": runner_api.HEARTBEAT_INTERVAL_S,
     }
 

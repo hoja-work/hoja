@@ -92,6 +92,7 @@ from hoja_server.db import (
 )
 from hoja_server.denials import DENY_HINT, READ_ONLY_HINT, hint_for, read_only_violation
 from hoja_server.deployment import single_org_mode
+from hoja_server import runner_release
 from hoja_server.resolvers import build_schema
 from hoja_server.runner_api import runner_routes
 from hoja_server.secrets_box import SecretBoxError
@@ -3115,8 +3116,22 @@ def create_app(
             except OSError:
                 built_at = ""
 
+        # HOJA-712: which runner wheel this deployment serves, if any. A release can
+        # then prove the artifact it built is in the image (`/downloads` answers 200)
+        # instead of learning about a missing one from an operator's 404. Null, never a
+        # URL: the pointer route is the one place a URL is composed.
+        wheel = runner_release.latest_wheel()
         return JSONResponse(
-            {"version": __version__, "sha": sha or "unknown", "builtAt": built_at or None},
+            {
+                "version": __version__,
+                "sha": sha or "unknown",
+                "builtAt": built_at or None,
+                "runnerWheel": (
+                    {"version": runner_release.wheel_version(wheel),
+                     "path": runner_release.download_path(wheel)}
+                    if wheel else None
+                ),
+            },
             headers={"Cache-Control": "no-store"},
         )
 
@@ -3391,6 +3406,11 @@ def create_app(
             Route("/sync/delta", sync_delta, methods=["GET"]),
             Route("/health", health, methods=["GET"]),
             Route("/api/version", build_version, methods=["GET"]),
+            # The runner daemon's own wheel (HOJA-712). Public, like the SPA bundle and
+            # for the same reason: the machine that runs `pipx install` has not enrolled
+            # yet and holds no credential. The release builds it into the image's
+            # ./downloads (app/scripts/build-runner-wheel.sh) before the image is built.
+            *runner_release.downloads_routes(),
             # Every real /api route above; anything else under /api is a miss
             # and must say so in JSON instead of serving the SPA shell.
             Route(

@@ -12,7 +12,6 @@
 import {
   Check,
   ChevronDown,
-  Copy,
   Cpu,
   KeyRound,
   Loader2,
@@ -26,12 +25,12 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { getAgentsAdapter } from "./adapter";
+import { ConnectMachine } from "./ConnectMachine";
 import type {
   Agent,
   HarnessPolicy,
   RunAccess,
   Runner,
-  RunnerEnrollmentGrant,
   SetupProbe,
 } from "./types";
 
@@ -111,35 +110,6 @@ function providerOf(model: string | null): string | null {
 
 function copy(text: string) {
   void navigator.clipboard?.writeText(text).catch(() => undefined);
-}
-
-function CopyLine({ label, text }: { label: string; text: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <div className="flex flex-col gap-1">
-      <span className="text-xs text-muted">{label}</span>
-      <div className="flex items-start gap-2 rounded-md border border-line bg-subtle p-2">
-        <code className="min-w-0 flex-1 break-all text-xs">{text}</code>
-        <button
-          type="button"
-          className="inline-flex flex-none items-center gap-1 text-xs text-muted hover:text-foreground"
-          aria-label={`Copy: ${label}`}
-          onClick={() => {
-            copy(text);
-            setCopied(true);
-            window.setTimeout(() => setCopied(false), 1500);
-          }}
-        >
-          {copied ? (
-            <Check size={14} aria-hidden="true" />
-          ) : (
-            <Copy size={14} aria-hidden="true" />
-          )}
-          {copied ? "Copied" : "Copy"}
-        </button>
-      </div>
-    </div>
-  );
 }
 
 function StatusIcon({
@@ -252,8 +222,6 @@ export function AgentSetup({
   const [keyDraft, setKeyDraft] = useState("");
   const [baseDraft, setBaseDraft] = useState("");
   const [showBase, setShowBase] = useState(false);
-  const [grant, setGrant] = useState<RunnerEnrollmentGrant | null>(null);
-  const [install, setInstall] = useState<string | null>(null);
   const [probe, setProbe] = useState<SetupProbe | null>(null);
 
   const harness = harnesses.defaultHarness || "";
@@ -285,6 +253,10 @@ export function AgentSetup({
     void readRunners();
   }, [readAccess, readRunners]);
 
+  /* The harness a machine must offer: the chosen one, else the recommended one, so a machine
+   * that can run Hoja Coder counts before anyone has picked how the agent runs. */
+  const runsOn = harness || RECOMMENDED_HARNESS;
+
   /* --- what is true right now ------------------------------------------------------------ */
   const ready = useMemo(
     () =>
@@ -293,9 +265,9 @@ export function AgentSetup({
           r.status === "online" &&
           r.enabled &&
           !r.revoked &&
-          r.harnesses.includes(harness),
+          r.harnesses.includes(runsOn),
       ),
-    [runners, harness],
+    [runners, runsOn],
   );
   const lacking = useMemo(
     () =>
@@ -304,9 +276,9 @@ export function AgentSetup({
           r.status === "online" &&
           r.enabled &&
           !r.revoked &&
-          !r.harnesses.includes(harness),
+          !r.harnesses.includes(runsOn),
       ),
-    [runners, harness],
+    [runners, runsOn],
   );
   const teamsDone =
     !!access && (access.teams.length > 0 || access.projects.length > 0);
@@ -320,11 +292,11 @@ export function AgentSetup({
   const tryDone = probe?.stateName === "In Review";
 
   const steps: { id: StepId; done: boolean }[] = [
+    { id: "machine", done: machineDone },
     { id: "teams", done: teamsDone },
     { id: "harness", done: harnessDone },
     { id: "model", done: modelDone },
     { id: "key", done: keyDone },
-    { id: "machine", done: machineDone },
     { id: "try", done: tryDone },
   ];
   const doneCount = steps.filter((s) => s.done).length;
@@ -342,14 +314,6 @@ export function AgentSetup({
     setOpened((cur) => ((cur ?? next) === id ? "none" : id));
 
   /* --- live: a machine coming online, a test task moving -------------------------------- */
-  const waitingForMachine = !!grant && !machineDone;
-  useEffect(() => {
-    if (!waitingForMachine) return;
-    const id = window.setInterval(() => {
-      if (!document.hidden) void readRunners();
-    }, RUNNER_POLL_MS);
-    return () => window.clearInterval(id);
-  }, [waitingForMachine, readRunners]);
 
   const probing =
     !!probe &&
@@ -416,28 +380,6 @@ export function AgentSetup({
       await readAccess();
     });
 
-  const connectMachine = () =>
-    run("machine", async () => {
-      const name = `${agent.name.toLowerCase().replace(/[^a-z0-9-]+/g, "-")}-runner`;
-      const minted = await adapter.createRunnerEnrollment(name, 60);
-      setGrant(minted);
-      /* The wheel this deployment serves, when it serves one (HOJA-712). Without it the line
-       * points at a source checkout, said as such rather than as a URL that would 404. */
-      const extra = isCoder ? "[coder]" : "";
-      try {
-        const res = await fetch("/downloads/hoja-runnerd/latest");
-        const body = res.ok ? await res.json() : null;
-        const wheel = body && (body.url || body.path || body.wheel);
-        setInstall(
-          wheel
-            ? `pipx install "hoja-runnerd${extra} @ ${new URL(wheel, window.location.origin).href}"`
-            : null,
-        );
-      } catch {
-        setInstall(null);
-      }
-    });
-
   const sendTest = () =>
     run("try", async () => {
       if (!access?.teams.length)
@@ -451,8 +393,6 @@ export function AgentSetup({
       setCollapsed(false);
       setOpened("try");
     });
-
-  const startCommand = `hoja-runnerd --base-url ${window.location.origin} --state-dir ~/.hoja/runner`;
 
   /* --- view -------------------------------------------------------------------------------- */
   if (access === null || runners === null) {
@@ -543,6 +483,60 @@ export function AgentSetup({
         </p>
       )}
       <ol className="mt-2 flex list-none flex-col p-0">
+        <Step
+          id="machine"
+          title="A machine to run on"
+          summary={
+            machineDone
+              ? `${ready.map((r) => r.name).join(", ")} ${ready.length === 1 ? "is" : "are"} online and can run it`
+              : lacking.length && harness
+                ? `${lacking.map((r) => r.name).join(", ")} ${lacking.length === 1 ? "is" : "are"} online but cannot run ${CLI_NAMES[harness] ?? "Hoja Coder"}`
+                : "Connect a laptop, server or CI box with one command. It only dials out to Hoja."
+          }
+          state={
+            busy === "machine"
+              ? "working"
+              : machineDone
+                ? "done"
+                : lacking.length && harness
+                  ? "warn"
+                  : "todo"
+          }
+          open={openStep === "machine"}
+          onToggle={() => toggle("machine")}
+          icon={<Server size={16} />}
+        >
+          {machineDone ? (
+            <ul className="m-0 flex list-none flex-col gap-1 p-0">
+              {ready.map((r) => (
+                <li key={r.id} className="flex items-center gap-2 text-sm">
+                  <span
+                    className="size-2 rounded-full bg-emerald-600"
+                    aria-hidden="true"
+                  />
+                  {r.name}
+                  <span className="text-xs text-muted">
+                    {r.lease ? "busy with a run" : "idle"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <>
+              {lacking.length > 0 && harness && (
+                <p className="m-0 text-sm text-muted">
+                  Run the command below on that machine to upgrade it, or
+                  connect another one.
+                </p>
+              )}
+              <ConnectMachine
+                harness={harness || RECOMMENDED_HARNESS}
+                onConnected={() => void readRunners()}
+              />
+            </>
+          )}
+        </Step>
+
         <Step
           id="teams"
           title="Where it can work"
@@ -819,104 +813,6 @@ export function AgentSetup({
                 They never appear in transcripts or logs.
               </p>
             </form>
-          )}
-        </Step>
-
-        <Step
-          id="machine"
-          title="A machine to run on"
-          summary={
-            machineDone
-              ? `${ready.map((r) => r.name).join(", ")} ${ready.length === 1 ? "is" : "are"} online and can run it`
-              : waitingForMachine
-                ? `Waiting for ${grant?.enrollment.label ?? "the machine"} to come online…`
-                : lacking.length
-                  ? `${lacking.map((r) => r.name).join(", ")} ${lacking.length === 1 ? "is" : "are"} online but cannot run ${CLI_NAMES[harness] ?? "Hoja Coder"}`
-                  : "Connect a laptop, server or CI box. It only dials out to Hoja."
-          }
-          state={
-            busy === "machine" || waitingForMachine
-              ? "working"
-              : machineDone
-                ? "done"
-                : lacking.length
-                  ? "warn"
-                  : "todo"
-          }
-          open={openStep === "machine"}
-          onToggle={() => toggle("machine")}
-          icon={<Server size={16} />}
-        >
-          {machineDone ? (
-            <ul className="m-0 flex list-none flex-col gap-1 p-0">
-              {ready.map((r) => (
-                <li key={r.id} className="flex items-center gap-2 text-sm">
-                  <span
-                    className="size-2 rounded-full bg-emerald-600"
-                    aria-hidden="true"
-                  />
-                  {r.name}
-                  <span className="text-xs text-muted">
-                    {r.lease ? "busy with a run" : "idle"}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          ) : grant ? (
-            <div className="flex flex-col gap-3">
-              <CopyLine
-                label={
-                  isCoder
-                    ? "1. Install the runner with Hoja Coder"
-                    : "1. Install the runner"
-                }
-                text={
-                  install ??
-                  `pipx install "<path to hoja-cloud>/runner${isCoder ? "[coder]" : ""}"`
-                }
-              />
-              <CopyLine
-                label="2. Connect it to this workspace (the code works once, for an hour)"
-                text={grant.command}
-              />
-              <CopyLine label="3. Start it" text={startCommand} />
-              <CopyLine
-                label="Or all at once"
-                text={`${grant.command} && ${startCommand}`}
-              />
-              <p
-                className="m-0 flex items-center gap-2 text-sm text-muted"
-                role="status"
-                aria-live="polite"
-              >
-                <Loader2
-                  size={14}
-                  className="animate-spin"
-                  aria-hidden="true"
-                />
-                This step turns green by itself when the machine checks in.
-              </p>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {lacking.length > 0 && (
-                <p className="m-0 text-sm text-muted">
-                  {isCoder
-                    ? "Install the runner with its coder extra on that machine, then connect it again: a runner only offers what it can start."
-                    : `Install ${CLI_NAMES[harness] ?? harness} on that machine, then connect it again.`}
-                </p>
-              )}
-              <div>
-                <button
-                  type="button"
-                  className={PRIMARY}
-                  onClick={() => void connectMachine()}
-                  disabled={busy === "machine"}
-                >
-                  <Server size={14} aria-hidden="true" /> Connect a machine
-                </button>
-              </div>
-            </div>
           )}
         </Step>
 

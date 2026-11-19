@@ -10,6 +10,13 @@ RUN groupadd --system hoja && useradd --system --gid hoja --home /app --shell /u
 WORKDIR /app
 COPY . .
 COPY --from=frontend-build /frontend/dist /app/web
+# The customer-side daemon's wheel, if the release placed one here (HOJA-712). The
+# build context is this directory — `COPY frontend/` above depends on that — so the
+# sibling `runner/` tree is not reachable from a Dockerfile stage, and the wheel has to
+# exist before the build: `scripts/build-runner-wheel.sh` writes it into ./downloads, and
+# this `COPY . .` carries it to /app/downloads, which GET /downloads reads. Absent (a
+# plain `docker compose build` from a checkout), the app still serves; the enrollment
+# screen then says the wheel is unpublished instead of printing a URL that would 404.
 # Same build identity as the production image: GET /api/version reports the
 # commit this image was built from, and when (never a hardcoded version).
 ARG HOJA_RELEASE_SHA=unknown

@@ -20,7 +20,6 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '../local-e2e/node
 
 const repo = path.resolve(__dirname, '..');
 const runnerRoot = path.resolve(repo, '../runner');
-const runnerBin = path.join(runnerRoot, '.venv/bin');
 const web = path.join(repo, 'frontend/dist');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-setup-'));
 const db = path.join(dir, 'setup.db');
@@ -59,14 +58,8 @@ const until = async (fn, ms, what) => {
   while (Date.now() < end) { const v = await fn().catch(() => null); if (v) return v; await wait(300); }
   throw new Error(`timed out waiting for ${what}`);
 };
-/* The machine side, run from the page's own text: the operator's shell, with the runner installed. */
-const runnerEnv = {
-  PATH: `${runnerBin}:${process.env.PATH}`, HOME: dir,
-  HOJA_CODER_PYTHON: path.join(runnerBin, 'python'),
-  HOJA_CODER_MODEL_FACTORY: 'coder_scripted_model:model',
-  PYTHONPATH: `${runnerRoot}:${path.join(runnerRoot, 'tests')}`,
-};
 
+let pidFile = null;
 (async () => {
   let browser;
   try {
@@ -82,10 +75,24 @@ const runnerEnv = {
     const stepState = (id) => setup.locator(`[data-setup-step="${id}"]`).getAttribute('data-setup-state');
     const doneSoon = (id, ms = 15000) => until(async () => (await stepState(id)) === 'done', ms, `${id} done`);
     ok(await setup.getByText('Get Builder working').count() === 1, 'a new agent opens on its setup checklist');
-    ok((await stepState('teams')) === 'todo', 'nothing is done yet: the first step is the team');
+    ok((await setup.locator('[data-setup-step]').first().getAttribute('data-setup-step')) === 'machine', 'nothing is done yet: the first step is the machine');
     ok((await stepState('model')) === 'todo' && (await stepState('key')) === 'todo',
       'model and key are not "done" before a harness is chosen');
     await page.screenshot({ path: path.join(shots, 'setup-0-new.png'), fullPage: true });
+
+    // 0. Machine: the one command the page prints, run as printed; the step turns green by itself.
+    await setup.locator('[data-setup-step="machine"]').getByRole('button', { name: 'Connect a machine' }).click();
+    const line = (await setup.locator('[data-connect-machine="waiting"] code').first().textContent()).trim();
+    ok(/install\.sh \| HOJA_ENROLLMENT_TOKEN=\S+ sh$/.test(line), 'the machine step prints one command');
+    await page.screenshot({ path: path.join(shots, 'setup-2-commands.png'), fullPage: true });
+    const machineHome = path.join(dir, 'machine'); fs.mkdirSync(machineHome);
+    const installed = spawnSync('bash', ['-c', line], { cwd: machineHome, encoding: 'utf8', timeout: 600000,
+      env: { PATH: process.env.PATH, HOME: machineHome, HOJA_RUNNER_SERVICE: 'none', HOJA_RUNNER_NAME: 'office-mac',
+        HOJA_CODER_MODEL_FACTORY: 'coder_scripted_model:model', PYTHONPATH: path.join(runnerRoot, 'tests') } });
+    ok(installed.status === 0, 'the command works as printed', (installed.stderr || '').slice(-200));
+    pidFile = path.join(machineHome, '.hoja/runner/runnerd.pid');
+    await doneSoon('machine', 30000);
+    ok(true, 'the machine step turns green by itself when the runner checks in');
 
     // 1. Team: one click.
     await setup.getByRole('button', { name: /Trebol/ }).click();
@@ -112,22 +119,6 @@ const runnerEnv = {
     ok(policy.agentPolicy.secrets.includes('ANTHROPIC_API_KEY') && policy.agentSecretNames.includes('ANTHROPIC_API_KEY'),
       'the key is stored as a workspace secret and granted to this agent', JSON.stringify(policy.agentPolicy.secrets));
     await page.screenshot({ path: path.join(shots, 'setup-1-machine.png'), fullPage: true });
-
-    // 5. Machine: the commands the page prints, run as printed; the step turns green by itself.
-    await setup.getByRole('button', { name: 'Connect a machine' }).click();
-    const lines = setup.locator('[data-setup-step="machine"] code');
-    await lines.nth(2).waitFor({ timeout: 15000 });
-    const enroll = await lines.nth(1).textContent();
-    const start = await lines.nth(2).textContent();
-    ok(/--enroll/.test(enroll) && /hoja-runnerd --base-url/.test(start), 'the page prints an enroll line and a start line');
-    await page.screenshot({ path: path.join(shots, 'setup-2-commands.png'), fullPage: true });
-    const enrolled = spawnSync('bash', ['-c', enroll], { cwd: dir, env: runnerEnv, encoding: 'utf8' });
-    ok(enrolled.status === 0, 'the enroll line works as printed', (enrolled.stderr || '').slice(-200));
-    const daemonLog = fs.openSync(path.join(dir, 'runnerd.log'), 'w');
-    const daemon = spawn('bash', ['-c', start], { cwd: dir, env: runnerEnv, stdio: ['ignore', daemonLog, daemonLog] });
-    children.push(daemon);
-    await doneSoon('machine', 30000);
-    ok(true, 'the machine step turns green by itself when the runner checks in');
 
     // 6. Try it: send the test task, answer the agent's question here, watch it reach In Review.
     await setup.getByRole('button', { name: 'Send a test task' }).click();
@@ -194,6 +185,7 @@ const runnerEnv = {
   } finally {
     if (browser) await browser.close();
     for (const child of children) child.kill();
+    try { if (pidFile) process.kill(Number(fs.readFileSync(pidFile, 'utf8'))); } catch { /* not started */ }
     console.log(`\n${pass} passed, ${fail} failed. Screenshots: ${shots}`);
     process.exit(fail ? 1 : 0);
   }

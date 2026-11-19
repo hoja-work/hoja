@@ -18,7 +18,7 @@ export type AgentsTab = { id: string; name: string };
 export const AGENTS_TABS: AgentsTab[] = [
   { id: "agents", name: "Agents" },
   { id: "queue", name: "Run queue" },
-  { id: "runners", name: "Runners" },
+  { id: "runners", name: "Machines" },
   { id: "audit", name: "Audit log" },
 ];
 

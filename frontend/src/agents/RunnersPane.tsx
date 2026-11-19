@@ -13,7 +13,13 @@
  * omits bearer secrets from these reads; Connect-disabled workspaces cannot revoke exposures.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+} from "react";
 import { Copy, Lock, LockOpen, Plus, SlidersHorizontal } from "lucide-react";
 import { confirmDialog } from "../dialogs";
 import { GraphStatusIcon, IconBtn, LabelChip, Tip } from "../graph/shared";
@@ -125,12 +131,85 @@ const RUNNER_DISPLAY: LinDisplay = {
   },
 };
 
+const COMMAND_BOX: CSSProperties = {
+  margin: "4px 0 6px",
+  padding: "10px 12px",
+  borderRadius: 8,
+  border: "1px solid var(--line)",
+  background: "var(--subtle)",
+  overflowX: "auto",
+  fontSize: 12,
+  whiteSpace: "pre-wrap",
+  wordBreak: "break-all",
+};
+
+/* One step of the hand-off: a heading, the line to paste, its copy button and the one thing
+ * that has to be said about it. All three steps share this shape so the block reads as a
+ * sequence (HOJA-712) rather than as three unrelated panels. */
+function CommandStep({
+  step,
+  title,
+  command,
+  note,
+  copied,
+  onCopy,
+}: {
+  step: string;
+  title: string;
+  command: string | null;
+  note: string;
+  copied: boolean;
+  onCopy: () => void;
+}) {
+  /* The three boxes keep the attribute names the checks already select (`data-enroll-command`
+   * is the enroll line, the one a test can prove carries this token), spelled out rather than
+   * composed so a rename cannot quietly break them. */
+  const attribute =
+    step === "install"
+      ? { "data-install-command": true }
+      : step === "start"
+        ? { "data-start-command": true }
+        : step === "connect"
+          ? { "data-connect-command": true }
+          : { "data-enroll-command": true };
+  return (
+    <li data-enroll-step={step}>
+      <b>{title}</b>
+      {command ? (
+        <pre {...attribute} style={COMMAND_BOX}>
+          {command}
+        </pre>
+      ) : null}
+      <div
+        style={{
+          display: "flex",
+          gap: 8,
+          alignItems: "center",
+          flexWrap: "wrap",
+        }}
+      >
+        {command && (
+          <button
+            type="button"
+            className="inline-flex items-center rounded-[7px] border border-line bg-panel px-3 py-1.5 text-[13px] text-foreground hover:bg-subtle disabled:opacity-50"
+            onClick={onCopy}
+          >
+            {copied ? "Copied" : `Copy ${step} command`}
+          </button>
+        )}
+        <span className="text-[12px] text-muted">{note}</span>
+      </div>
+    </li>
+  );
+}
+
 /* Enroll (HOJA-635) — the one control on this screen that hands out a credential.
  *
  * Three states, and the middle one is the whole point:
  *
  *   form   → name + lifetime, then `runnerEnrollmentCreate`
- *   token  → the plaintext, shown once, with the exact command that spends it
+ *   token  → the plaintext, shown once, with the three commands that use it: install,
+ *            enroll, start (the last two are separate because enrolling exits — HOJA-712)
  *   list   → every token in the workspace and whether it can still be used
  *
  * The plaintext lives in this component's state and nowhere else: it is not in a URL, not in
@@ -325,41 +404,75 @@ function EnrollPanel({ onClose }: { onClose: () => void }) {
               {copied === "token" ? "Copied" : "Copy token"}
             </button>
           </div>
-          <pre
-            data-enroll-command
+          {/* Three steps, in the order they are run (HOJA-712). `--enroll` registers and
+           * exits, so a screen that showed only that line left the machine idle with a
+           * spent token; and it assumed a `hoja-runnerd` that no machine had, because the
+           * package is published nowhere. The install step is the deployment's own wheel
+           * (`/downloads`), and the start step carries no harness flag: the default is the
+           * one the server named at enroll and the daemon reads from the state directory. */}
+          {grant.connectCommand && (
+            <ol
+              data-enroll-connect
+              style={{ listStyle: "none", margin: "0 0 12px", padding: 0 }}
+            >
+              <CommandStep
+                step="connect"
+                title="Run this one line on the machine"
+                command={grant.connectCommand}
+                copied={copied === "connect"}
+                onCopy={() => copy("connect", grant.connectCommand || "")}
+                note="Installs the runner into ~/.hoja/runner, connects it and keeps it running as a service. The machine shows up in this list by itself. Or do it step by step:"
+              />
+            </ol>
+          )}
+          <ol
+            data-enroll-steps
             style={{
-              margin: "0 0 8px",
-              padding: "10px 12px",
-              borderRadius: 8,
-              border: "1px solid var(--line)",
-              background: "var(--subtle)",
-              overflowX: "auto",
-              fontSize: 12,
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-all",
+              listStyle: "none",
+              margin: 0,
+              padding: 0,
+              display: "grid",
+              gap: 10,
             }}
           >
-            {grant.command}
-          </pre>
+            <CommandStep
+              step="install"
+              title="1. Install the daemon"
+              command={grant.installCommand}
+              copied={copied === "install"}
+              onCopy={() => copy("install", grant.installCommand || "")}
+              note={
+                grant.installCommand
+                  ? "Python 3.11 or newer, and pipx on PATH (python3 -m pip install --user pipx)."
+                  : "This deployment publishes no daemon wheel. From a checkout of the repository: pip install ./runner"
+              }
+            />
+            <CommandStep
+              step="enroll"
+              title="2. Enroll this machine"
+              command={grant.command}
+              copied={copied === "command"}
+              onCopy={() => copy("command", grant.command)}
+              note="The token works once: this is the only time it is shown, and this step exits when it succeeds."
+            />
+            <CommandStep
+              step="start"
+              title="3. Start the daemon"
+              command={grant.startCommand}
+              copied={copied === "start"}
+              onCopy={() => copy("start", grant.startCommand)}
+              note={`Keep it running under a supervisor; it heartbeats every ${grant.heartbeatIntervalS} s.`}
+            />
+          </ol>
           <div
             style={{
               display: "flex",
               gap: 8,
               alignItems: "center",
               flexWrap: "wrap",
+              marginTop: 10,
             }}
           >
-            <button
-              type="button"
-              className="inline-flex items-center rounded-[7px] border border-line bg-panel px-3 py-1.5 text-[13px] text-foreground hover:bg-subtle disabled:opacity-50"
-              onClick={() => copy("command", grant.command)}
-            >
-              {copied === "command" ? "Copied" : "Copy command"}
-            </button>
-            <span className="text-[12px] text-muted">
-              The daemon heartbeats every {grant.heartbeatIntervalS} s and the
-              token works once.
-            </span>
             <span className="grow" />
             <button
               type="button"
@@ -640,7 +753,7 @@ export function RunnersPane({
               onClick={() => setEnrollOpen((v) => !v)}
             >
               <Plus size={14} aria-hidden="true" />
-              <span className="shell-phone:hidden">Enroll runner</span>
+              <span className="shell-phone:hidden">Connect a machine</span>
             </button>
           )}
           <span className="relative">

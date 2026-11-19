@@ -25,6 +25,7 @@ import {
   type LinFilters,
 } from "../graph/tasks";
 import { stateKey } from "../main";
+import { GettingStarted } from "./GettingStarted";
 import { getAgentsAdapter } from "./adapter";
 import { AGENTS_TABS, AgentsListShell, SearchField } from "./chrome";
 import { AGENT_STATUSES, agentStatus } from "./types";
@@ -643,25 +644,18 @@ export function AgentsPane({
         </div>
       )}
       {nothingYet && (
-        <div
-          className="text-center pt-15 pr-5 pb-15 pl-5 text-muted"
-          data-state="empty"
-        >
-          <h2 className="text-foreground text-[15px] mt-3 mr-0 mb-1.5 ml-0">
-            No agents yet
-          </h2>
-          <p>
-            A workspace with no agent members has nothing to delegate. Create
-            one to give the workspace an identity that can act.
-          </p>
-          <button
-            type="button"
-            className="inline-flex items-center border border-foreground hover:bg-foreground/90 disabled:cursor-default disabled:opacity-50 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 justify-center gap-2 rounded-none bg-[#1b1b1f] text-white pt-2 pr-3.5 pb-2 pl-3.5 font-[650] shadow-none hover:filter-[brightness(1.08)] min-h-11 [transition:background-color_.15s_ease,color_.15s_ease,transform_.15s_ease] tracking-[.01em] hover:not-disabled:bg-[color-mix(in_srgb,var(--accent)_84%,var(--text))] hover:not-disabled:filter-none active:not-disabled:transform-[translateY(1px)] disabled:cursor-wait disabled:opacity-65 [html[data-theme=dark]_&]:text-[#171719] border-solid border-line text-[13px] hover:bg-[#333] border-[#1b1b1f] shell-phone:min-w-11! shell-phone:min-h-11!"
-            onClick={() => setCreating(true)}
-          >
-            <Plus size={14} aria-hidden="true" /> New agent
-          </button>
+        <div data-state="empty">
+          <GettingStarted
+            agentCount={0}
+            onCreateAgent={() => setCreating(true)}
+          />
         </div>
+      )}
+      {!loading && !refused && !nothingYet && (
+        <GettingStarted
+          agentCount={agents.length}
+          onCreateAgent={() => setCreating(true)}
+        />
       )}
       {!loading && !refused && !nothingYet && (
         <div className="pt-1.5 pr-3 pb-10 pl-3" data-style-hooks="lin-list">

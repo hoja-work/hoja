@@ -361,6 +361,18 @@ export type RunnerEnrollmentGrant = {
   token: string;
   /** The exact line an operator runs on the machine, built server-side from this request's URL. */
   command: string;
+  /**
+   * The line that installs the daemon from this deployment's own wheel (`/downloads`).
+   * Null when this deployment publishes no wheel, so the screen says so instead of
+   * printing a URL that would 404.
+   */
+  installCommand: string | null;
+  /** One line that installs, connects and starts the runner (`curl … | sh`); null with no wheel. */
+  connectCommand: string | null;
+  /** The line that starts the daemon afterwards — enroll registers and exits (HOJA-712). */
+  startCommand: string;
+  /** The wheel's URL on this origin; null with `installCommand`. */
+  downloadUrl: string | null;
   /** The cadence the server asks the daemon to heartbeat at. */
   heartbeatIntervalS: number;
 };
