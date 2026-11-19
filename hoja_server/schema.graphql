@@ -37,8 +37,13 @@ type UserPreferencesPayload {
 
 type NotificationPreferencesPayload {
   success: Boolean!
-  issueCreated: Boolean!
+  issueAssigned: Boolean!
+  issueMention: Boolean!
+  issueComment: Boolean!
+  issueStatusChanged: Boolean!
   issueUpdated: Boolean!
+  issueDecision: Boolean!
+  issueCreated: Boolean!
 }
 
 type WorkspaceMembership {
@@ -101,7 +106,7 @@ type Query {
   issues(filter: IssueFilter, first: Int = 50, after: String, orderBy: PaginationOrderBy): IssueConnection @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   issue(id: String!): Issue @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   myIssueActivity(first: Int = 50, after: String): MyIssueActivityConnection @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
-  inboxNotifications(first: Int = 50, after: String, unreadOnly: Boolean = false, archived: Boolean = false): InboxNotificationConnection
+  inboxNotifications(first: Int = 50, after: String, unreadOnly: Boolean = false, archived: Boolean = false, snoozed: Boolean = false): InboxNotificationConnection
   inboxUnreadCount: Int!
   projects(filter: ProjectFilter, first: Int = 50, after: String): ProjectConnection
   initiatives(first: Int = 50, after: String, status: String): InitiativeConnection
@@ -157,6 +162,13 @@ type Mutation {
   notificationMarkRead(id: String!): Boolean!
   notificationArchive(id: String!): Boolean!
   notificationMarkAllRead: Boolean!
+  notificationMarkUnread(id: String!): Boolean!
+  notificationUnarchive(id: String!): Boolean!
+  notificationSnooze(id: String!, until: DateTime): Boolean!
+  notificationsMarkReadForIssue(issueId: String!, read: Boolean = true): Boolean!
+  notificationsArchiveForIssue(issueId: String!): Boolean!
+  notificationsSnoozeForIssue(issueId: String!, until: DateTime): Boolean!
+  notificationsArchiveAllRead: Boolean!
   githubLinkAdd(issueId: String!, url: String!): GithubLink!
   "Approve a pull request as the connected GitHub user, attributed to the Hoja actor."
   reviewApprove(linkId: String!, body: String): ReviewActionPayload!
@@ -238,6 +250,9 @@ type InboxNotification {
   createdAt: DateTime!
   readAt: DateTime
   archivedAt: DateTime
+  snoozedUntil: DateTime
+  data: JSON
+  comment: Comment
 }
 type InboxNotificationConnection { nodes: [InboxNotification!]! pageInfo: PageInfo! }
 

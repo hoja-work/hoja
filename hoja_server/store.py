@@ -408,9 +408,9 @@ class Store:
             return {row.preference_key: row.value for row in rows}
 
     def set_user_preference(self, user_id: str, preference_key: str, value: str) -> bool:
+        from hoja_server.notifications import KINDS
         allowed = {"theme": {"light", "dark"}, "fontSize": {"90", "100", "110"},
-                   "notification:issueCreated": {"true", "false"},
-                   "notification:issueUpdated": {"true", "false"}}
+                   **{f"notification:{kind}": {"true", "false"} for kind in KINDS}}
         if preference_key not in allowed or value not in allowed[preference_key]:
             return False
         now = datetime.now(timezone.utc).isoformat()
@@ -1057,6 +1057,17 @@ class Store:
             "_user_id": row.get("user_id"),
             "_archived": row.get("archived_at") is not None,
         }
+
+    def comments_by_ids(self, org_id: str, comment_ids: list[str]) -> dict[str, dict]:
+        """Live (unarchived) comments by id, for the inbox's comment previews."""
+        ids = [c for c in comment_ids if c]
+        if not ids:
+            return {}
+        with self.engine.connect() as conn:
+            rows = _conn_rows(conn, select(comment).where(and_(
+                comment.c.organization_id == org_id, comment.c.id.in_(ids),
+                comment.c.archived_at.is_(None))))
+        return {row["id"]: self.ser_comment(row) for row in rows}
 
     def ser_attachment(self, row: dict | None) -> dict | None:
         if not row:
@@ -1963,42 +1974,59 @@ class Store:
             stmt = _scope_teams(conn, stmt, org_id, viewer_id, issue.c.team_id)
             return [self.ser_issue(row) for row in _conn_rows(conn, stmt)]
 
+    def _disabled_notification_kinds(self, user_id: str) -> list[str]:
+        return [key.removeprefix("notification:") for key, value
+                in (self.user_preferences(user_id) or {}).items()
+                if key.startswith("notification:") and value == "false"]
+
     def inbox_notifications(self, org_id: str, user_id: str, after=None, limit=51,
-                            unread_only=False, archived=False) -> list[dict]:
+                            unread_only=False, archived=False, snoozed=False) -> list[dict]:
+        """A recipient's notifications, newest first.
+
+        The default list is what is in the inbox now: unarchived, and not snoozed
+        into the future. ``snoozed`` lists only the rows still waiting to come back;
+        ``archived`` lists the archive.
+        """
+        from hoja_server.db import now_iso
+        n = inbox_notification.c
+        now = now_iso()
         with self.engine.connect() as conn:
-            disabled_kinds = [key.removeprefix("notification:") for key, value
-                              in self.user_preferences(user_id).items()
-                              if key.startswith("notification:") and value == "false"]
+            disabled_kinds = self._disabled_notification_kinds(user_id)
             stmt = select(inbox_notification).where(and_(
-                inbox_notification.c.organization_id == org_id,
-                inbox_notification.c.recipient_id == user_id,
-                inbox_notification.c.archived_at.is_not(None) if archived else inbox_notification.c.archived_at.is_(None),
-            ))
+                n.organization_id == org_id, n.recipient_id == user_id))
+            if archived:
+                stmt = stmt.where(n.archived_at.is_not(None))
+            elif snoozed:
+                stmt = stmt.where(and_(n.archived_at.is_(None), n.snoozed_until > now))
+            else:
+                stmt = stmt.where(and_(n.archived_at.is_(None), or_(
+                    n.snoozed_until.is_(None), n.snoozed_until <= now)))
             if disabled_kinds:
-                stmt = stmt.where(inbox_notification.c.kind.not_in(disabled_kinds))
+                stmt = stmt.where(n.kind.not_in(disabled_kinds))
             if unread_only:
-                stmt = stmt.where(inbox_notification.c.read_at.is_(None))
+                stmt = stmt.where(n.read_at.is_(None))
             if after:
                 ts, notification_id = after
-                stmt = stmt.where(inbox_notification.c.created_at <= ts).where(or_(inbox_notification.c.created_at < ts,
-                    and_(inbox_notification.c.created_at == ts, inbox_notification.c.id < notification_id)))
-            return _conn_rows(conn, stmt.order_by(
-                inbox_notification.c.created_at.desc(), inbox_notification.c.id.desc()).limit(limit))
+                stmt = stmt.where(n.created_at <= ts).where(or_(n.created_at < ts,
+                    and_(n.created_at == ts, n.id < notification_id)))
+            return _conn_rows(conn, stmt.order_by(n.created_at.desc(), n.id.desc()).limit(limit))
 
     def inbox_unread_count(self, org_id: str, user_id: str) -> int:
         from sqlalchemy import func
+
+        from hoja_server.db import now_iso
+        n = inbox_notification.c
         with self.engine.connect() as conn:
             conditions = [
-                inbox_notification.c.organization_id == org_id,
-                inbox_notification.c.recipient_id == user_id,
-                inbox_notification.c.read_at.is_(None),
-                inbox_notification.c.archived_at.is_(None),
+                n.organization_id == org_id,
+                n.recipient_id == user_id,
+                n.read_at.is_(None),
+                n.archived_at.is_(None),
+                or_(n.snoozed_until.is_(None), n.snoozed_until <= now_iso()),
             ]
-            disabled_kinds = [key.removeprefix("notification:") for key, value
-                              in self.user_preferences(user_id).items()
-                              if key.startswith("notification:") and value == "false"]
+            disabled_kinds = self._disabled_notification_kinds(user_id)
             if disabled_kinds:
-                conditions.append(inbox_notification.c.kind.not_in(disabled_kinds))
+                conditions.append(n.kind.not_in(disabled_kinds))
             return conn.execute(select(func.count()).select_from(inbox_notification).where(
                 and_(*conditions))).scalar_one()
 
@@ -2017,37 +2045,108 @@ class Store:
         return self.ser_user(self.get_user(org_id, user_id), user_id)
 
     def set_notification_preference(self, user_id: str, kind: str, enabled: bool) -> bool:
-        if kind not in {"issueCreated", "issueUpdated"}:
+        from hoja_server.notifications import KINDS
+        if kind not in KINDS:
             return False
         return self.set_user_preference(user_id, f"notification:{kind}",
                                         "true" if enabled else "false")
+
+    def _inbox_update(self, org_id: str, user_id: str, where, values: dict) -> int:
+        n = inbox_notification.c
+        with self.engine.begin() as conn:
+            return conn.execute(inbox_notification.update().where(and_(
+                n.organization_id == org_id, n.recipient_id == user_id, where,
+            )).values(**values)).rowcount
+
+    def _inbox_owns(self, org_id: str, user_id: str, notification_id: str) -> bool:
+        n = inbox_notification.c
+        with self.engine.connect() as conn:
+            return conn.execute(select(n.id).where(and_(
+                n.id == notification_id, n.organization_id == org_id,
+                n.recipient_id == user_id))).first() is not None
 
     def inbox_mark(self, org_id: str, user_id: str, notification_id: str, column: str) -> bool:
         if column not in ("read_at", "archived_at"):
             raise ValueError("Unsupported notification state.")
         from hoja_server.db import now_iso
         target = inbox_notification.c[column]
-        with self.engine.begin() as conn:
-            result = conn.execute(inbox_notification.update().where(and_(
-                inbox_notification.c.id == notification_id,
-                inbox_notification.c.organization_id == org_id,
-                inbox_notification.c.recipient_id == user_id,
-                target.is_(None),
-            )).values({column: now_iso()}))
-            return result.rowcount > 0 or conn.execute(select(inbox_notification.c.id).where(and_(
-                inbox_notification.c.id == notification_id,
-                inbox_notification.c.organization_id == org_id,
-                inbox_notification.c.recipient_id == user_id,
-            ))).first() is not None
+        changed = self._inbox_update(org_id, user_id, and_(
+            inbox_notification.c.id == notification_id, target.is_(None)), {column: now_iso()})
+        return changed > 0 or self._inbox_owns(org_id, user_id, notification_id)
+
+    def inbox_clear(self, org_id: str, user_id: str, notification_id: str, column: str) -> bool:
+        """Undo :meth:`inbox_mark`: mark unread, or move back out of the archive."""
+        if column not in ("read_at", "archived_at"):
+            raise ValueError("Unsupported notification state.")
+        self._inbox_update(org_id, user_id, inbox_notification.c.id == notification_id,
+                           {column: None})
+        return self._inbox_owns(org_id, user_id, notification_id)
+
+    @staticmethod
+    def _snooze_values(until: str | None) -> dict:
+        # A snoozed notification comes back unread, as if it had just arrived.
+        return {"snoozed_until": until, "read_at": None} if until else {"snoozed_until": None}
+
+    def inbox_snooze(self, org_id: str, user_id: str, notification_id: str,
+                     until: str | None) -> bool:
+        self._inbox_update(org_id, user_id, inbox_notification.c.id == notification_id,
+                           self._snooze_values(until))
+        return self._inbox_owns(org_id, user_id, notification_id)
+
+    def _issue_id_for(self, org_id: str, issue_ref: str) -> str | None:
+        from hoja_server import identifiers
+        with self.engine.connect() as conn:
+            return conn.execute(select(issue.c.id).where(and_(
+                issue.c.organization_id == org_id,
+                identifiers.issue_ref_clause(org_id, issue_ref)))).scalar()
+
+    def inbox_issue_update(self, org_id: str, user_id: str, issue_ref: str, action: str,
+                           read: bool = True, until: str | None = None) -> bool:
+        """Apply one action to every notification the recipient has for one issue.
+
+        The inbox shows one row per issue, so read, archive and snooze act on the
+        whole group, including older rows the client has not paged in. False when
+        the issue does not exist in this workspace.
+        """
+        from hoja_server.db import now_iso
+        iid = self._issue_id_for(org_id, issue_ref)
+        if not iid:
+            return False
+        n = inbox_notification.c
+        scope = and_(n.issue_id == iid, n.archived_at.is_(None))
+        if action == "read":
+            if read:
+                self._inbox_update(org_id, user_id, and_(scope, n.read_at.is_(None)),
+                                   {"read_at": now_iso()})
+            else:
+                # Unread is a property of the latest event, not of history.
+                with self.engine.connect() as conn:
+                    latest = conn.execute(select(n.id).where(and_(
+                        n.organization_id == org_id, n.recipient_id == user_id, scope))
+                        .order_by(n.created_at.desc(), n.id.desc()).limit(1)).scalar()
+                if latest:
+                    self._inbox_update(org_id, user_id, n.id == latest, {"read_at": None})
+        elif action == "archive":
+            self._inbox_update(org_id, user_id, scope, {"archived_at": now_iso()})
+        elif action == "snooze":
+            self._inbox_update(org_id, user_id, scope, self._snooze_values(until))
+        else:
+            raise ValueError("Unsupported notification action.")
+        return True
 
     def inbox_mark_all_read(self, org_id: str, user_id: str) -> bool:
         from hoja_server.db import now_iso
-        with self.engine.begin() as conn:
-            conn.execute(inbox_notification.update().where(and_(
-                inbox_notification.c.organization_id == org_id,
-                inbox_notification.c.recipient_id == user_id,
-                inbox_notification.c.read_at.is_(None),
-            )).values(read_at=now_iso()))
+        n = inbox_notification.c
+        now = now_iso()
+        self._inbox_update(org_id, user_id, and_(n.read_at.is_(None), or_(
+            n.snoozed_until.is_(None), n.snoozed_until <= now)), {"read_at": now})
+        return True
+
+    def inbox_archive_all_read(self, org_id: str, user_id: str) -> bool:
+        from hoja_server.db import now_iso
+        n = inbox_notification.c
+        self._inbox_update(org_id, user_id, and_(n.read_at.is_not(None), n.archived_at.is_(None)),
+                           {"archived_at": now_iso()})
         return True
 
     def my_issue_activity(self, org_id: str, viewer_id: str, after=None, limit=51) -> list[dict]:

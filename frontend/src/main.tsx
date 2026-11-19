@@ -169,6 +169,18 @@ import { BillingUsageSettings } from "./settings/billing/usage";
 
 const setupAdapter = createCloudAdapter();
 import { MeetingNotifier, MeetingBadge } from "./meetings/Notifier";
+import { InboxPage } from "./inbox/InboxPage";
+import { useInboxUnread, useInboxUnreadSync } from "./inbox/model";
+/** Unread task notifications beside the sidebar's Inbox item, styled like the Meetings badge. */
+function InboxBadge() {
+  const n = useInboxUnread();
+  if (!n) return null;
+  return (
+    <em className="" aria-label={`${n} unread`} data-inbox-badge="">
+      {n > 99 ? "99+" : n}
+    </em>
+  );
+}
 import { MeetStandalone } from "./meetings/MeetRoom";
 import {
   GraphTeamCycles,
@@ -311,15 +323,6 @@ export type Initiative = {
   creator?: { id: string };
   projects?: { nodes: { id: string; name: string }[] };
   createdAt?: string;
-};
-export type InboxNotification = {
-  id: string;
-  kind: string;
-  createdAt: string;
-  readAt?: string;
-  archivedAt?: string;
-  issue?: Issue;
-  actor?: { name?: string };
 };
 export type PulseComment = {
   id: string;
@@ -2151,6 +2154,7 @@ function App() {
   if (localStorage.getItem("hoja_token") === "session")
     localStorage.removeItem("hoja_token");
   const [token, setToken] = useState(storedApiToken());
+  useInboxUnreadSync(Boolean(token));
   useEffect(() => {
     if (!token) return;
     const next = takeConsentReturn();
@@ -2184,7 +2188,9 @@ function App() {
     gql(`{ workspaceFeatures { agentsEnabled } }`)
       .then((d) => {
         if (live)
-          setWorkspaceAgentsEnabled(Boolean(d.workspaceFeatures?.agentsEnabled));
+          setWorkspaceAgentsEnabled(
+            Boolean(d.workspaceFeatures?.agentsEnabled),
+          );
       })
       .catch(() => {
         if (live) setWorkspaceAgentsEnabled(false);
@@ -2433,7 +2439,7 @@ function App() {
           : next === "Pulse"
             ? "/workspace/pulse/all"
             : next === "Inbox"
-              ? "/workspace/inbox/other"
+              ? "/workspace/inbox"
               : next === "Views"
                 ? "/workspace/views/issues"
                 : next === "Reviews"
@@ -3874,9 +3880,28 @@ function App() {
     ) : view === "Inbox" ? (
       <InboxPage
         key={workspace.id}
+        scope={`${workspace.id}:${viewer?.id || ""}`}
         path={window.location.pathname}
         onOpenIssue={openIssue}
-        revision={revision}
+        onOpenSettings={() =>
+          navigate("Settings", "/workspace/settings/notifications")
+        }
+        renderDetail={({ issue, onClose }) => (
+          <InboxIssueDetail
+            issue={issue}
+            onClose={onClose}
+            onOpenIssue={openIssue}
+            workspaceName={workspace?.name}
+            viewer={viewer}
+            issueList={issues}
+            teams={teams}
+            projects={projects}
+            labels={labels}
+            cycles={cycles}
+            updateIssue={updateIssue}
+            onError={setError}
+          />
+        )}
       />
     ) : view === "Pulse" ? (
       <PulsePage
@@ -4680,6 +4705,7 @@ function App() {
                                 : label}
                             </span>
                             {label === "Meetings" && <MeetingBadge />}
+                            {label === "Inbox" && <InboxBadge />}
                           </button>
                         ))}
                       </>
@@ -5642,492 +5668,112 @@ function InitiativesPage({
   );
 }
 
-/* Inbox: shows the last list immediately (cached per viewer), revalidates only when a notification
-   changes, and applies read/archive/mark-all optimistically with rollback. */
-type InboxCache = {
-  key: string;
-  items: InboxNotification[];
-  cursor: string | null;
-  hasMore: boolean;
-  unread: number;
-};
-let inboxCache: InboxCache | null = null;
-const INBOX_QUERY = `query InboxNotifications($after:String,$unreadOnly:Boolean){inboxNotifications(first:50,after:$after,unreadOnly:$unreadOnly){nodes{id kind createdAt readAt archivedAt issue{id identifier title state{name type} team{name} project{id name}} actor{name}} pageInfo{hasNextPage endCursor}} inboxUnreadCount}`;
-function InboxPage({
-  path,
+/* The task pane inside the inbox: the same task view as the full page, loaded by identifier and kept
+   live from the sync store, with archive and delete closing the pane instead of navigating. */
+function InboxIssueDetail({
+  issue: seed,
+  onClose,
   onOpenIssue,
+  workspaceName,
+  viewer,
+  issueList,
+  teams,
+  projects,
+  labels,
+  cycles,
+  updateIssue,
+  onError,
 }: {
-  path: string;
+  issue: Issue;
+  onClose: () => void;
   onOpenIssue: (issue: Issue) => void;
-  revision?: number;
+  workspaceName?: string;
+  viewer: Viewer;
+  issueList: Issue[];
+  teams: Team[];
+  projects: Project[];
+  labels: IssueLabel[];
+  cycles: Cycle[];
+  updateIssue: (id: string, input: Record<string, unknown>) => Promise<void>;
+  onError: (message: string) => void;
 }) {
-  const meta = useSyncMeta();
-  const cacheKey = meta ? `${meta.workspace.id}:${meta.viewer.id || ""}` : "";
-  const cached = inboxCache && inboxCache.key === cacheKey ? inboxCache : null;
-  const [tab, setTab] = useState<"other" | "priority">(() =>
-    path.endsWith("/priority") ? "priority" : "other",
+  const [issue, setIssue] = useState<Issue>(
+    () =>
+      peekIssue(seed.id) ||
+      (cachedIssueDetail(seed.id)?.detail as Issue | undefined) ||
+      seed,
   );
-  const [base, setBase] = useState<InboxNotification[]>(
-      () => cached?.items || [],
-    ),
-    [cursor, setCursor] = useState<string | null>(() => cached?.cursor ?? null),
-    [hasMore, setHasMore] = useState(() => cached?.hasMore || false),
-    [serverUnread, setServerUnread] = useState(() => cached?.unread || 0);
-  const [unreadOnly, setUnreadOnly] = useState(false),
-    [loading, setLoading] = useState(() => !cached),
-    [error, setError] = useState(""),
-    [actionError, setActionError] = useState(""),
-    [allPending, setAllPending] = useState(false),
-    [actionsOpen, setActionsOpen] = useState(false);
-  const [items, push] = useOptimisticList(base);
-  const baseRef = useRef(base);
-  baseRef.current = base;
-  // Unread badge = server count adjusted by pending local edits on loaded notifications.
-  const unreadCount = allPending
-    ? 0
-    : Math.max(
-        0,
-        serverUnread -
-          (base.filter((n) => !n.readAt).length -
-            items.filter((n) => !n.readAt).length),
-      );
-  const generation = useRef(0),
-    requesting = useRef(false),
-    revalidating = useRef<Promise<void> | null>(null),
-    again = useRef(false);
-  const notificationVersion = useEntityVersion(["notification"]);
-  const allIssues = useIssues();
-  const storeIssues = useMemo(() => {
-    const want = new Set(base.map((n) => n.issue?.id).filter(Boolean));
-    const map = new Map<string, Issue>();
-    if (want.size)
-      for (const i of allIssues) if (want.has(i.id)) map.set(i.id, i);
-    return map;
-  }, [allIssues, base]);
+  const [error, setError] = useState("");
+  const [retry, setRetry] = useState(0);
   useEffect(() => {
-    if (!unreadOnly && cacheKey && !error)
-      inboxCache = {
-        key: cacheKey,
-        items: base,
-        cursor,
-        hasMore,
-        unread: serverUnread,
-      };
-  }, [base, cursor, hasMore, serverUnread, unreadOnly, cacheKey, error]);
-  const fetchPage = (after: string | null, onlyUnread: boolean) =>
-    gql(INBOX_QUERY, { after, unreadOnly: onlyUnread }).then((d) => {
-      const page = d.inboxNotifications;
-      const nodes: InboxNotification[] = page.nodes;
-      if (
-        page.pageInfo?.hasNextPage &&
-        (!page.pageInfo.endCursor ||
-          page.pageInfo.endCursor === after ||
-          !nodes.length)
-      )
-        throw Error("Inbox pagination did not advance. Retry later.");
-      return {
-        nodes,
-        cursor: page.pageInfo?.endCursor || null,
-        hasMore: Boolean(page.pageInfo?.hasNextPage),
-        unread: d.inboxUnreadCount as number,
-      };
-    });
-  // Load more (or the first page after a filter change): appends.
-  const load = async (after: string | null = null, onlyUnread = unreadOnly) => {
-    if (requesting.current) return;
-    requesting.current = true;
-    const seq = generation.current;
-    setLoading(true);
+    setIssue(
+      (old) =>
+        peekIssue(seed.id) || (old.id === seed.id ? { ...old, ...seed } : seed),
+    );
+  }, [seed]);
+  useEffect(() => {
+    let live = true;
     setError("");
-    try {
-      const page = await fetchPage(after, onlyUnread);
-      if (seq !== generation.current) return;
-      setBase((previous) => {
-        const kept = after ? previous : [];
-        const seen = new Set(kept.map((n) => n.id));
-        return [...kept, ...page.nodes.filter((n) => !seen.has(n.id))];
+    const off = onStoreIssue(seed.id, (i) => {
+      if (live) setIssue((old) => ({ ...old, ...i }));
+    });
+    fetchIssueDetail(seed.identifier || seed.id, seed.id)
+      .then((e) => {
+        if (live) setIssue((old) => ({ ...old, ...(e.detail as Issue) }));
+      })
+      .catch((e) => {
+        if (live) setError(errorText(e));
       });
-      setCursor(page.cursor);
-      setHasMore(page.hasMore);
-      setServerUnread(page.unread);
-    } catch (e) {
-      if (seq === generation.current) setError(errorText(e));
-    } finally {
-      if (seq === generation.current) {
-        requesting.current = false;
-        setLoading(false);
-      }
-    }
-  };
-  // Revalidate the first page in place: the list stays on screen; older loaded pages are kept.
-  const revalidate = (): Promise<void> => {
-    if (revalidating.current) {
-      again.current = true;
-      return revalidating.current;
-    }
-    const run = (async () => {
-      try {
-        do {
-          again.current = false;
-          const seq = generation.current;
-          const page = await fetchPage(null, unreadOnly);
-          if (seq !== generation.current) return;
-          const oldest = page.nodes.length
-            ? page.nodes[page.nodes.length - 1].createdAt
-            : "";
-          const fresh = new Set(page.nodes.map((n) => n.id));
-          const tail = page.hasMore
-            ? baseRef.current.filter(
-                (n) => !fresh.has(n.id) && n.createdAt < oldest,
-              )
-            : [];
-          setBase([...page.nodes, ...tail]);
-          setCursor((c) => (tail.length ? c : page.cursor));
-          setHasMore((h) => (tail.length ? h : page.hasMore));
-          setServerUnread(page.unread);
-          setError("");
-        } while (again.current);
-      } catch (e) {
-        setError(errorText(e));
-      } finally {
-        revalidating.current = null;
-        setLoading(false);
-      }
-    })();
-    revalidating.current = run;
-    return run;
-  };
-  /* eslint-disable react-hooks/exhaustive-deps -- route or session driven; the listed values are written by this effect or are recreated each render */
-  useEffect(() => {
-    if (!cached) {
-      void load();
-    } else void revalidate();
     return () => {
-      generation.current++;
-      requesting.current = false;
+      live = false;
+      off();
     };
-  }, []);
-  /* eslint-enable react-hooks/exhaustive-deps */
-  const firstVersion = useRef(notificationVersion);
-  /* eslint-disable react-hooks/exhaustive-deps -- route or session driven; the listed values are written by this effect or are recreated each render */
-  useEffect(() => {
-    if (notificationVersion !== firstVersion.current) void revalidate();
-  }, [notificationVersion]);
-  /* eslint-enable react-hooks/exhaustive-deps */
-  useEffect(() => {
-    const onPop = () =>
-      setTab(location.pathname.endsWith("/priority") ? "priority" : "other");
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, []);
-  const changeUnread = () => {
-    const next = !unreadOnly;
-    generation.current++;
-    requesting.current = false;
-    setBase([]);
-    setCursor(null);
-    setHasMore(false);
-    setUnreadOnly(next);
-    void load(null, next);
-  };
-  const send = async (query: string, id?: string) => {
-    const d = await gql(query, id ? { id } : undefined);
-    if (!Object.values(d).some((v) => v === true))
-      throw Error("Notification action was rejected");
-  };
-  const markRead = async (n: InboxNotification) => {
-    if (n.readAt) return;
-    setActionError("");
-    const readAt = new Date().toISOString();
-    const layer = push({ id: n.id, patch: { readAt } });
+  }, [seed.id, seed.identifier, retry]);
+  const lifecycle = (verb: "archive" | "delete") => async () => {
+    const settle = hideIssueLocally(issue.id);
+    onClose();
     try {
-      await send(`mutation($id:String!){notificationMarkRead(id:$id)}`, n.id);
-      setBase((b) => b.map((x) => (x.id === n.id ? { ...x, readAt } : x)));
-      setServerUnread((c) => Math.max(0, c - 1));
-      layer.drop();
+      const field = verb === "archive" ? "issueArchive" : "issueDelete";
+      const d = await gql(`mutation($id:String!){${field}(id:$id){success}}`, {
+        id: issue.identifier,
+      });
+      if (!d[field]?.success) throw Error(`Task could not be ${verb}d.`);
+      settle(true);
     } catch (e) {
-      layer.drop();
-      setActionError(`Couldn’t mark read: ${errorText(e)}`);
+      settle(false);
+      onError(`Could not ${verb} ${issue.identifier}: ${errorText(e)}`);
+      throw e;
     }
-  };
-  const archive = async (n: InboxNotification) => {
-    setActionError("");
-    const layer = push({ id: n.id, remove: true });
-    try {
-      await send(`mutation($id:String!){notificationArchive(id:$id)}`, n.id);
-      setBase((b) => b.filter((x) => x.id !== n.id));
-      if (!n.readAt) setServerUnread((c) => Math.max(0, c - 1));
-      layer.drop();
-    } catch (e) {
-      layer.drop();
-      setActionError(`Couldn’t archive: ${errorText(e)}`);
-    }
-  };
-  const markAllRead = async () => {
-    if (allPending) return;
-    setActionError("");
-    const readAt = new Date().toISOString();
-    const layers = items
-      .filter((n) => !n.readAt)
-      .map((n) => push({ id: n.id, patch: { readAt } }));
-    setAllPending(true);
-    try {
-      await send(`mutation{notificationMarkAllRead}`);
-      setBase((b) => b.map((x) => (x.readAt ? x : { ...x, readAt })));
-      setServerUnread(0);
-    } catch (e) {
-      setActionError(`Couldn’t mark all as read: ${errorText(e)}`);
-    } finally {
-      layers.forEach((l) => l.drop());
-      setAllPending(false);
-    }
-  };
-  const open = (n: InboxNotification) => {
-    if (!n.issue) return;
-    onOpenIssue(storeIssues.get(n.issue.id) || n.issue);
-  };
-  const format = (date: string) => {
-    const t = Date.parse(date);
-    if (!Number.isFinite(t)) return "Date unavailable";
-    const days = Math.max(0, Math.floor((Date.now() - t) / 86400000));
-    return days === 0
-      ? "Today"
-      : days < 7
-        ? `${days}d ago`
-        : new Date(t).toLocaleDateString(undefined, {
-            month: "short",
-            day: "numeric",
-          });
   };
   return (
-    <section data-inbox-page="" className=" min-h-[calc(100dvh-16px)] min-w-0">
-      <header
-        className="border-b border-line h-11.25 flex items-center justify-between pt-0 pr-4.5 pb-0 pl-4.5"
-        data-inbox-head=""
-      >
-        <h1 className="mt-0 mr-0 mb-0 ml-0 text-(length:--hoja-title-size) font-(--hoja-title-weight) leading-[normal] tracking-normal ">
-          Inbox
-        </h1>
-        <div className="flex gap-1.5" data-inbox-head-actions="">
-          <UIPopover open={actionsOpen} onOpenChange={setActionsOpen}>
-            <PopoverTrigger asChild>
-              <button
-                className="grid place-items-center w-6.75 h-6.75 rounded-[5px] bg-transparent text-muted hover:bg-subtle hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 group"
-                type="button"
-                aria-label="Notification actions"
-                aria-expanded={actionsOpen}
-              >
-                <MoreHorizontal size={16} />
-              </button>
-            </PopoverTrigger>
-            <PopoverContent
-              align="end"
-              sideOffset={6}
-              className="z-50 w-auto border shadow-(--shadow) max-w-62.5 pt-2.25 pr-2.25 pb-2.25 pl-2.25 border-line rounded-lg bg-panel"
-              data-inbox-action-menu=""
-            >
-              <button
-                className="w-full pt-2 pr-2 pb-2 pl-2 bg-subtle rounded-[5px] text-left disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5]"
-                type="button"
-                disabled={allPending || unreadCount === 0}
-                onClick={() => {
-                  setActionsOpen(false);
-                  void markAllRead();
-                }}
-              >
-                Mark all as read
-              </button>
-              <p className="mt-2 mr-2 mb-2 ml-2 text-muted text-[11px]">
-                Deletion and notification preferences are not available in Hoja.
-              </p>
-            </PopoverContent>
-          </UIPopover>
-          <button
-            className="grid place-items-center w-6.75 h-6.75 rounded-[5px] bg-transparent text-muted hover:bg-subtle aria-pressed:bg-subtle hover:text-foreground aria-pressed:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-            type="button"
-            aria-label={unreadOnly ? "Show read" : "Show unreads only"}
-            aria-pressed={unreadOnly}
-            onClick={changeUnread}
-          >
-            <ListFilter size={16} />
-          </button>
-        </div>
-      </header>
-
-      <nav
-        className="border-b border-line flex gap-1.25 h-11 pt-1.75 pr-3.25 pb-1.75 pl-3.25"
-        data-inbox-tabs=""
-        aria-label="Inbox views"
-      >
-        <a
-          className="inline-flex items-center gap-1.25 pt-0 pr-3 pb-0 pl-3 border border-line rounded-[99px] bg-panel text-muted no-underline text-[12px] aria-[current=page]:bg-subtle aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
-          href="/workspace/inbox/priority"
-          aria-current={tab === "priority" ? "page" : undefined}
-          onClick={(e) => {
-            e.preventDefault();
-            history.pushState({}, "", e.currentTarget.href);
-            setTab("priority");
-          }}
-          title="Priority ranking is not available yet"
-        >
-          Priority
-        </a>
-        <a
-          className="inline-flex items-center gap-1.25 pt-0 pr-3 pb-0 pl-3 border border-line rounded-[99px] bg-panel text-muted no-underline text-[12px] aria-[current=page]:bg-subtle aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
-          href="/workspace/inbox/other"
-          aria-current={tab === "other" ? "page" : undefined}
-          onClick={(e) => {
-            e.preventDefault();
-            history.pushState({}, "", e.currentTarget.href);
-            setTab("other");
-          }}
-        >
-          Other <span className="text-muted">{unreadCount}</span>
-        </a>
-      </nav>
-      <div
-        className="max-w-212.5 min-w-0 mt-4.5 mr-auto mb-4.5 ml-auto pt-0 pr-5 pb-13.75 pl-5 shell-phone:pt-0 shell-phone:pr-2 shell-phone:pb-10 shell-phone:pl-2"
-        data-inbox-feed=""
-      >
-        {tab === "priority" && (
-          <p
-            className="border pt-2.5 pr-3 pb-2.5 pl-3 border-line rounded-md bg-panel text-muted text-[12px]"
-            role="status"
-          >
-            Priority ranking is not available yet. Showing recent notifications.
-          </p>
-        )}
-        {items.map((n) => {
-          const issue = (n.issue && storeIssues.get(n.issue.id)) || n.issue;
-          return (
-            <article
-              className={
-                ` border-b border-line flex items-center gap-2.5 min-w-0 ${n.readAt ? "read" : ""}` +
-                " hover:bg-subtle" +
-                "" +
-                " [&.read_[data-inbox-notification-dot]]:bg-transparent [&.read_strong]:font-normal [&.read_strong]:text-muted" +
-                " hover:bg-subtle shell-phone:pb-1.25"
-              }
-              data-inbox-notification=""
-              key={n.id}
-            >
-              <button
-                type="button"
-                className="flex items-center gap-2.5 min-w-0 flex-1 min-h-14.5 pt-2.25 pr-2 pb-2.25 pl-2 bg-transparent text-left disabled:cursor-default focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:min-h-12"
-                data-inbox-notification-open=""
-                onClick={() => open(n)}
-                disabled={!issue}
-                aria-label={`Open ${issue?.identifier || "unavailable task"}: ${issue?.title || "Task unavailable"}`}
-              >
-                <span
-                  className="w-1.75 h-1.75 flex-none rounded-[50%] bg-transparent"
-                  data-inbox-notification-dot=""
-                  aria-hidden="true"
-                />
-                <span
-                  className="grid gap-1 min-w-0"
-                  data-inbox-notification-text=""
-                >
-                  <strong className="text-[12px] font-normal wrap-break-word">
-                    {issue?.title || "Task unavailable"}
-                  </strong>
-                  <small className="text-[11px] text-muted wrap-break-word">
-                    {issue?.identifier || "—"} · {n.actor?.name || "Someone"}{" "}
-                    {n.kind === "issueCreated"
-                      ? "created an task"
-                      : n.kind === "issueDecision"
-                        ? "needs a decision"
-                        : "updated the task"}{" "}
-                    · {format(n.createdAt)}
-                  </small>
-                </span>
-              </button>
-              <div
-                className="flex gap-1.25 flex-none shell-phone:ml-6.25"
-                data-inbox-notification-actions=""
-              >
-                {!n.readAt && (
-                  <button
-                    className="pt-1.25 pr-1.75 pb-1.25 pl-1.75 rounded-[5px] bg-transparent text-muted text-[11px] hover:bg-panel hover:text-foreground disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5]"
-                    type="button"
-                    onClick={() => void markRead(n)}
-                    aria-label={`Mark ${issue?.identifier || "notification"} read`}
-                  >
-                    Mark read
-                  </button>
-                )}
-                <button
-                  className="pt-1.25 pr-1.75 pb-1.25 pl-1.75 rounded-[5px] bg-transparent text-muted text-[11px] hover:bg-panel hover:text-foreground disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5]"
-                  type="button"
-                  onClick={() => void archive(n)}
-                  aria-label={`Archive ${issue?.identifier || "notification"}`}
-                >
-                  Archive
-                </button>
-              </div>
-            </article>
-          );
-        })}
-        {loading && !items.length && (
-          <p
-            role="status"
-            className="grid justify-items-center gap-2 max-w-105 mt-18.75 mr-auto mb-18.75 ml-auto pt-5 pr-5 pb-5 pl-5 text-center text-muted text-[12px]"
-            data-inbox-message=""
-          >
-            Loading notifications…
-          </p>
-        )}
-        {!loading && !items.length && !error && (
-          <div
-            className="grid justify-items-center gap-2 max-w-105 mt-18.75 mr-auto mb-18.75 ml-auto pt-5 pr-5 pb-5 pl-5 text-center text-muted text-[12px]"
-            data-inbox-message=""
-          >
-            <Inbox size={25} />
-            <h2 className="mt-0 mr-0 mb-0 ml-0 text-foreground text-[16px]">
-              {unreadOnly ? "No unread notifications" : "No notifications yet"}
-            </h2>
-            <p className="mt-0 mr-0 mb-0 ml-0">
-              New task activity involving you will appear here. Earlier changes
-              were not reconstructed.
-            </p>
-          </div>
-        )}
-        {(actionError || error) && (
-          <div
-            className="grid justify-items-center gap-2 max-w-105 mt-18.75 mr-auto mb-18.75 ml-auto pt-5 pr-5 pb-5 pl-5 text-center text-muted text-[12px]"
-            data-inbox-message=""
-            role="alert"
-          >
-            <h2 className="mt-0 mr-0 mb-0 ml-0 text-foreground text-[16px]">
-              {items.length ? "Couldn’t update Inbox" : "Couldn’t load Inbox"}
-            </h2>
-            <p className="mt-0 mr-0 mb-0 ml-0">{actionError || error}</p>
-            <button
-              className="pt-2 pr-3 pb-2 pl-3 border border-line rounded-md bg-panel focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-              type="button"
-              onClick={() => {
-                setError("");
-                setActionError("");
-                void (items.length ? revalidate() : load(cursor));
-              }}
-            >
-              Retry
-            </button>
-          </div>
-        )}
-        {hasMore && (
-          <button
-            className="block mt-5 mr-auto mb-5 ml-auto pt-2 pr-3 pb-2 pl-3 border border-line rounded-md bg-panel focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-            data-inbox-load-more=""
-            type="button"
-            disabled={loading}
-            onClick={() => void load(cursor)}
-          >
-            {loading ? "Loading…" : "Load more notifications"}
-          </button>
-        )}
-      </div>
-    </section>
+    <GraphIssueDetail
+      key={issue.id}
+      workspaceName={workspaceName}
+      viewer={viewer}
+      issue={issue}
+      issueList={issueList}
+      onOpenIssue={onOpenIssue}
+      loading={false}
+      error={error}
+      onArchive={lifecycle("archive")}
+      onDelete={lifecycle("delete")}
+      onDeleteComment={async (cid) => {
+        const d = await gql(
+          `mutation($id:String!){commentDelete(id:$id){success}}`,
+          { id: cid },
+        );
+        if (!d.commentDelete?.success)
+          throw Error("Comment could not be deleted.");
+      }}
+      teams={teams}
+      projects={projects}
+      labels={labels}
+      cycles={cycles}
+      onUpdate={(input) => updateIssue(issue.id, input)}
+      onBack={onClose}
+      backLabel="Inbox"
+      onRetry={() => setRetry((r) => r + 1)}
+    />
   );
 }
 
@@ -6195,7 +5841,9 @@ function PulsePage({
     );
   // Pulse comments. The list is seeded from the query and extended locally on send, so a
   // reply appears without refetching the feed; count reads from the same list.
-  const [commentBodies, setCommentBodies] = useState<Record<string, string>>({});
+  const [commentBodies, setCommentBodies] = useState<Record<string, string>>(
+    {},
+  );
   const [commentExtra, setCommentExtra] = useState<
     Record<string, PulseComment[]>
   >({});
@@ -6284,348 +5932,358 @@ function PulsePage({
         className="flex flex-1 min-h-0 flex-col w-[min(100%,var(--ds-feed-width))] shell-wide:w-[min(100%,calc(var(--ds-feed-width)+var(--ds-feed-rail)+var(--ds-feed-rail-gap)))] mt-0 mr-auto mb-0 ml-auto pt-0 pr-(--ds-feed-gutter) pb-0 pl-(--ds-feed-gutter)"
         data-pulse-column=""
       >
-      <header
-        className="border-b border-line flex flex-none items-center justify-between h-(--ds-tabstrip-height)"
-        data-pulse-heading=""
-      >
-        <h1 className="mt-0 mr-0 mb-0 ml-0 text-(length:--hoja-title-size) font-(--hoja-title-weight) tracking-normal leading-[normal] ">
-          Pulse
-        </h1>
-        <button
-          className="flex items-center pt-1.25 pr-1.75 pb-1.25 pl-1.75 bg-transparent text-muted hover:bg-subtle cursor-not-allowed opacity-50 gap-(--ds-group-bar-gap) rounded-(--ds-tab-radius) focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 text-(length:--ds-feed-meta-size)"
-          data-pulse-subscription=""
-          type="button"
-          aria-disabled="true"
-          aria-describedby="pulse-subscription-unavailable"
-          title="Pulse email subscriptions are not available on this server"
-          aria-label="Subscription unavailable"
+        <header
+          className="border-b border-line flex flex-none items-center justify-between h-(--ds-tabstrip-height)"
+          data-pulse-heading=""
         >
-          <Bell size={15} aria-hidden="true" />
-        </button>
-        <span id="pulse-subscription-unavailable" className="sr-only">
-          Email subscriptions to Pulse are not available on this server, so there
-          is nothing to turn on here.
-        </span>
-      </header>
-      <TabStrip
-        className="flex-none h-(--ds-tabstrip-height) gap-(--ds-tabstrip-gap)"
-        data-pulse-tabs=""
-        role="tablist"
-        label="Pulse views"
-      >
-        {views.map(([label, slug]) => (
-          <Tab
-            key={slug}
-            role="tab"
-            aria-selected={tab === label}
-            title={
-              label === "Recent"
-                ? undefined
-                : `${label} ranking is not available; showing recent project updates`
-            }
-            onClick={() => setView(label, slug)}
-            className="h-(--ds-feed-tab-height) rounded-(--ds-feed-tab-radius) p-(--ds-feed-tab-padding) shell-phone:h-11 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+          <h1 className="mt-0 mr-0 mb-0 ml-0 text-(length:--hoja-title-size) font-(--hoja-title-weight) tracking-normal leading-[normal] ">
+            Pulse
+          </h1>
+          <button
+            className="flex items-center pt-1.25 pr-1.75 pb-1.25 pl-1.75 bg-transparent text-muted hover:bg-subtle cursor-not-allowed opacity-50 gap-(--ds-group-bar-gap) rounded-(--ds-tab-radius) focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 text-(length:--ds-feed-meta-size)"
+            data-pulse-subscription=""
+            type="button"
+            aria-disabled="true"
+            aria-describedby="pulse-subscription-unavailable"
+            title="Pulse email subscriptions are not available on this server"
+            aria-label="Subscription unavailable"
           >
-            {label}
-          </Tab>
-        ))}
-        <button
-          className="grid place-items-center ml-0.5 bg-transparent text-muted hover:bg-subtle cursor-not-allowed opacity-50 rounded-(--ds-tab-radius) w-(--ds-tab-height) h-(--ds-tab-height) focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-          data-pulse-add-view=""
-          type="button"
-          aria-disabled="true"
-          aria-describedby="pulse-views-unavailable"
-          title="Custom Pulse views are not available"
-          aria-label="Add new view unavailable"
+            <Bell size={15} aria-hidden="true" />
+          </button>
+          <span id="pulse-subscription-unavailable" className="sr-only">
+            Email subscriptions to Pulse are not available on this server, so
+            there is nothing to turn on here.
+          </span>
+        </header>
+        <TabStrip
+          className="flex-none h-(--ds-tabstrip-height) gap-(--ds-tabstrip-gap)"
+          data-pulse-tabs=""
+          role="tablist"
+          label="Pulse views"
         >
-          <Plus size={15} aria-hidden="true" />
-        </button>
-      </TabStrip>
-      <span id="pulse-views-unavailable" className="sr-only">
-        Custom Pulse views are not available yet; For me, Popular and Recent are the
-        views this server supports.
-      </span>
-      <ScrollArea className="min-h-0" variant="list">
-        <div
-          className="mt-5.5 mr-0 mb-0 ml-0 pt-0 pr-0 pb-15 pl-0 shell-phone:mt-5.5 shell-phone:pt-0 shell-phone:pb-10"
-          data-pulse-content=""
-        >
-          {tab !== "Recent" && (
-            <p
-              className="border mt-0 mr-0 mb-5 ml-0 pt-2.25 pr-3 pb-2.25 pl-3 border-line rounded-md bg-panel text-muted text-[12px]"
-              role="status"
+          {views.map(([label, slug]) => (
+            <Tab
+              key={slug}
+              role="tab"
+              aria-selected={tab === label}
+              title={
+                label === "Recent"
+                  ? undefined
+                  : `${label} ranking is not available; showing recent project updates`
+              }
+              onClick={() => setView(label, slug)}
+              className="h-(--ds-feed-tab-height) rounded-(--ds-feed-tab-radius) p-(--ds-feed-tab-padding) shell-phone:h-11 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
             >
-              {tab} ranking is not available in Hoja yet. Showing recent project
-              updates.
-            </p>
-          )}
-          {posts.map((post, index) => {
-            // A refetch moves a locally-appended reply into post.comments.nodes while it
-            // is still in commentExtra; keyed by id, the later copy wins and nothing is
-            // rendered twice.
-            const replies = [
-              ...new Map(
-                [
-                  ...(post.comments?.nodes || []),
-                  ...(commentExtra[post.id] || []),
-                ].map((c) => [c.id, c] as const),
-              ).values(),
-            ];
-            const status = commentStatus[post.id] || {};
-            return (
-            <React.Fragment key={post.id}>
-              {(index === 0 ||
-                eraOf(post.createdAt) !==
-                  eraOf(posts[index - 1].createdAt)) && (
-                <GroupBar
-                  as="h2"
-                  className="flex items-center h-auto mt-0 mr-0 mb-4.5 ml-0 pt-0 pr-0 pb-0 pl-0 rounded-none text-muted font-normal [&:after]:h-px [&:after]:flex-1 [&:after]:bg-line gap-(--ds-group-bar-gap) min-h-(--ds-group-bar-height) after:content-[''] text-(length:--ds-feed-page-title-size)"
-                  data-pulse-era=""
-                  label={eraOf(post.createdAt)}
-                />
-              )}
-              <article
-                className="pt-6 pr-0 pb-6 pl-0 mt-0 mr-0 mb-0 ml-0 border-t border-line shell-wide:grid shell-wide:grid-cols-[minmax(0,1fr)_var(--ds-feed-rail)] shell-wide:gap-x-(--ds-feed-rail-gap)"
-                aria-labelledby={`pulse-post-${post.id}`}
+              {label}
+            </Tab>
+          ))}
+          <button
+            className="grid place-items-center ml-0.5 bg-transparent text-muted hover:bg-subtle cursor-not-allowed opacity-50 rounded-(--ds-tab-radius) w-(--ds-tab-height) h-(--ds-tab-height) focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+            data-pulse-add-view=""
+            type="button"
+            aria-disabled="true"
+            aria-describedby="pulse-views-unavailable"
+            title="Custom Pulse views are not available"
+            aria-label="Add new view unavailable"
+          >
+            <Plus size={15} aria-hidden="true" />
+          </button>
+        </TabStrip>
+        <span id="pulse-views-unavailable" className="sr-only">
+          Custom Pulse views are not available yet; For me, Popular and Recent
+          are the views this server supports.
+        </span>
+        <ScrollArea className="min-h-0" variant="list">
+          <div
+            className="mt-5.5 mr-0 mb-0 ml-0 pt-0 pr-0 pb-15 pl-0 shell-phone:mt-5.5 shell-phone:pt-0 shell-phone:pb-10"
+            data-pulse-content=""
+          >
+            {tab !== "Recent" && (
+              <p
+                className="border mt-0 mr-0 mb-5 ml-0 pt-2.25 pr-3 pb-2.25 pl-3 border-line rounded-md bg-panel text-muted text-[12px]"
+                role="status"
               >
-                <header
-                  className="flex items-start gap-3 shell-wide:col-start-1"
-                  data-pulse-post-heading=""
-                >
-                  <div className="min-w-0 flex-1">
-                    <h3
-                      className="mt-0 mr-0 mb-1.25 ml-0 text-(length:--ds-feed-title-size) font-semibold tracking-tight wrap-break-word max-md:text-lg shell-phone:text-[17px]"
-                      id={`pulse-post-${post.id}`}
-                    >
-                      <a
-                        className="text-inherit no-underline hover:underline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
-                        href={`/workspace/project/${encodeURIComponent(post.project.id)}`}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          onOpenProject(post.project);
-                        }}
-                      >
-                        {post.project.name}
-                      </a>
-                    </h3>
-                    <div
-                      className="flex flex-wrap items-center gap-2 text-muted leading-(--ds-feed-meta-line) text-(length:--ds-feed-meta-size)"
-                      data-pulse-meta=""
-                    >
-                      {post.actor?.name && (
-                        <>
-                          <span
-                            className="inline-grid place-items-center leading-none rounded-[50%] bg-accent-soft text-accent w-(--ds-feed-avatar-size) h-(--ds-feed-avatar-size)"
-                            data-pulse-avatar=""
-                            aria-hidden="true"
-                          >
-                            {post.actor.name.slice(0, 1).toUpperCase()}
-                          </span>
-                          <span>{post.actor.name}</span>
-                        </>
-                      )}
-                      <time
-                        dateTime={post.createdAt}
-                        title={new Date(post.createdAt).toLocaleString()}
-                      >
-                        {time(post.createdAt)}
-                      </time>
-                      {health(post) && (
-                        <span
-                          className={`inline-flex items-center gap-(--ds-group-bar-gap) ${/risk/i.test(health(post) ?? "") ? "text-[var(--health-risk)]" : "text-[var(--health-ok)]"}`}
-                          data-pulse-health=""
-                        >
-                          <Activity size={14} aria-hidden="true" />
-                          Project {health(post)}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </header>
-                <div
-                  className="mt-4.5 mr-0 mb-6 ml-0 wrap-break-word leading-[1.6] shell-wide:col-start-1"
-                  data-pulse-post-body=""
-                >
-                  <Markdown text={post.body} density="block" />
-                </div>
-                {(post.progress != null ||
-                  post.project.targetDate ||
-                  post.project.lead?.name) && (
-                  <dl
-                    className="grid gap-1.75 mt-0 mr-0 mb-6 ml-0 pl-3 text-(length:--ds-feed-meta-size) border-l-2 border-line shell-wide:col-start-2 shell-wide:row-start-2 shell-wide:self-start shell-wide:mt-4.5 shell-wide:mb-0 shell-wide:border-l-0 shell-wide:pl-0 shell-wide:[&_dt]:w-auto shell-wide:[&_dt]:flex-[0_0_auto]"
-                    data-pulse-changes=""
-                  >
-                    {post.project.lead?.name && (
-                      <PropertyRow label="Lead">
-                        {post.project.lead.name}
-                      </PropertyRow>
-                    )}
-                    {post.project.targetDate && (
-                      <PropertyRow label="Target date">
-                        {post.project.targetDate}
-                      </PropertyRow>
-                    )}
-                    {post.progress != null && (
-                      <PropertyRow label="Progress">
-                        {Math.round(post.progress)}%
-                      </PropertyRow>
-                    )}
-                  </dl>
-                )}
-                <div className="flex items-center gap-2 shell-wide:col-start-1" data-pulse-actions="">
-                  <button
-                    className="flex items-center gap-1.5 pt-1.25 pr-2.25 pb-1.25 pl-2.25 border border-line bg-panel text-muted hover:bg-subtle aria-expanded:bg-subtle aria-expanded:text-foreground rounded-(--ds-feed-tab-radius) focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                    type="button"
-                    aria-expanded={openComments === post.id}
-                    aria-controls={
-                      openComments === post.id
-                        ? `pulse-comments-${post.id}`
-                        : undefined
-                    }
-                    aria-label={`${openComments === post.id ? "Hide" : "Show"} ${replies.length} ${
-                      replies.length === 1 ? "reply" : "replies"
-                    } to ${post.project.name}`}
-                    onClick={() =>
-                      setOpenComments((v) => (v === post.id ? null : post.id))
-                    }
-                  >
-                    <MessageCircle size={15} aria-hidden="true" />
-                    {replies.length > 0 && (
-                      <span data-pulse-comment-count="">
-                        {replies.length}
-                      </span>
-                    )}
-                  </button>
-                </div>
-                {openComments === post.id && (
-                  <div
-                    className="mt-3 mr-0 mb-0 ml-0 flex flex-col gap-3 shell-wide:col-start-1"
-                    id={`pulse-comments-${post.id}`}
-                    data-pulse-comments=""
-                  >
-                    {replies.length ? (
-                      <ul className="flex flex-col gap-3 mt-0 mr-0 mb-0 ml-0 pt-1 pr-0 pb-0 pl-0 list-none">
-                        {replies.map((reply) => (
-                          <li key={reply.id} className="flex items-start gap-2">
-                            <span
-                              className="inline-grid place-items-center leading-none flex-none rounded-[50%] bg-accent-soft text-accent w-(--ds-feed-avatar-size) h-(--ds-feed-avatar-size)"
-                              aria-hidden="true"
-                            >
-                              {(reply.user?.name || "?").slice(0, 1).toUpperCase()}
-                            </span>
-                            <div className="min-w-0">
-                              <p className="flex items-center gap-(--ds-group-bar-gap) mt-0 mr-0 mb-1 ml-0 text-(length:--ds-feed-meta-size) text-muted">
-                                <span>{reply.user?.name || "Someone"}</span>
-                                {reply.createdAt && (
-                                  <time dateTime={reply.createdAt}>
-                                    {time(reply.createdAt)}
-                                  </time>
-                                )}
-                              </p>
-                              <div className="mt-0 mr-0 mb-0 ml-0 wrap-break-word">
-                                <Markdown text={reply.body} />
-                              </div>
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p className="mt-0 mr-0 mb-0 ml-0 text-muted text-[12px]">
-                        No replies yet. Reply to ask a question or leave
-                        context for whoever reads this next.
-                      </p>
-                    )}
-                    <Composer
-                      className="mt-0 max-w-none bg-subtle rounded-(--ds-composer-radius) focus-within:outline-2 focus-within:outline-accent focus-within:outline-offset-2 [&_input]:text-[14px] [&_input::placeholder]:text-muted [&_button]:rounded-(--ds-composer-radius)"
-                      value={commentBodies[post.id] || ""}
-                      placeholder={`Reply to ${post.project.name}…`}
-                      sendDisabled={!(commentBodies[post.id] || "").trim()}
-                      sendIcon={<Send size={15} aria-hidden="true" />}
-                      sendLabel="Post reply"
-                      onChange={(v) =>
-                        setCommentBodies((s) => ({ ...s, [post.id]: v }))
-                      }
-                      onSend={() => void sendComment(post)}
-                      data-pulse-comment-composer=""
-                    />
-                    <span className="sr-only" role="status">
-                      {status.posted ? "Reply posted" : ""}
-                    </span>
-                    {status.pending && (
-                      <p className="mt-0 mr-0 mb-0 ml-0 text-[12px] text-muted">
-                        Posting…
-                      </p>
-                    )}
-                    {status.error && (
-                      <p
-                        className="mt-0 mr-0 mb-0 ml-0 text-[12px] text-[var(--health-risk)]"
-                        role="alert"
-                      >
-                        {status.error}
-                      </p>
-                    )}
-                  </div>
-                )}
-              </article>
-            </React.Fragment>
-            );
-          })}
-          {!feed.hasData && !error && (
-            <p
-              className="max-w-180 mt-15 mr-auto mb-15 ml-auto pt-7 pr-7 pb-7 pl-7 text-center text-muted text-[13px] gap-(--ds-empty-gap)"
-              data-pulse-status=""
-              role="status"
-            >
-              Loading project updates…
-            </p>
-          )}
-          {feed.hasData && !posts.length && !error && (
-            <EmptyState
-              className="max-w-180 mt-15 mr-auto mb-15 ml-auto pt-7 pr-7 pb-7 pl-7 text-center text-muted text-[13px] gap-(--ds-empty-gap)"
-              data-pulse-status=""
-            >
-              <Activity size={24} aria-hidden="true" />
-              <h2 className="mt-2 mr-0 mb-2 ml-0 text-foreground text-[17px]">
-                No project updates yet
-              </h2>
-              <p>
-                Project updates will appear here when they are published. Task
-                activity is separate from Pulse.
+                {tab} ranking is not available in Hoja yet. Showing recent
+                project updates.
               </p>
-            </EmptyState>
-          )}
-          {error && (
-            <div
-              className="max-w-180 mt-15 mr-auto mb-15 ml-auto pt-7 pr-7 pb-7 pl-7 text-center text-muted text-[13px] gap-(--ds-empty-gap)"
-              data-pulse-status=""
-              role="alert"
-            >
-              <h2 className="mt-2 mr-0 mb-2 ml-0 text-foreground text-[17px]">
-                Couldn’t load Pulse
-              </h2>
-              <p>{error}</p>
-              <button
-                className="mt-3 pt-2 pr-3 pb-2 pl-3 border border-line bg-panel rounded-(--ds-tab-radius) focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                type="button"
-                onClick={feed.retry}
+            )}
+            {posts.map((post, index) => {
+              // A refetch moves a locally-appended reply into post.comments.nodes while it
+              // is still in commentExtra; keyed by id, the later copy wins and nothing is
+              // rendered twice.
+              const replies = [
+                ...new Map(
+                  [
+                    ...(post.comments?.nodes || []),
+                    ...(commentExtra[post.id] || []),
+                  ].map((c) => [c.id, c] as const),
+                ).values(),
+              ];
+              const status = commentStatus[post.id] || {};
+              return (
+                <React.Fragment key={post.id}>
+                  {(index === 0 ||
+                    eraOf(post.createdAt) !==
+                      eraOf(posts[index - 1].createdAt)) && (
+                    <GroupBar
+                      as="h2"
+                      className="flex items-center h-auto mt-0 mr-0 mb-4.5 ml-0 pt-0 pr-0 pb-0 pl-0 rounded-none text-muted font-normal [&:after]:h-px [&:after]:flex-1 [&:after]:bg-line gap-(--ds-group-bar-gap) min-h-(--ds-group-bar-height) after:content-[''] text-(length:--ds-feed-page-title-size)"
+                      data-pulse-era=""
+                      label={eraOf(post.createdAt)}
+                    />
+                  )}
+                  <article
+                    className="pt-6 pr-0 pb-6 pl-0 mt-0 mr-0 mb-0 ml-0 border-t border-line shell-wide:grid shell-wide:grid-cols-[minmax(0,1fr)_var(--ds-feed-rail)] shell-wide:gap-x-(--ds-feed-rail-gap)"
+                    aria-labelledby={`pulse-post-${post.id}`}
+                  >
+                    <header
+                      className="flex items-start gap-3 shell-wide:col-start-1"
+                      data-pulse-post-heading=""
+                    >
+                      <div className="min-w-0 flex-1">
+                        <h3
+                          className="mt-0 mr-0 mb-1.25 ml-0 text-(length:--ds-feed-title-size) font-semibold tracking-tight wrap-break-word max-md:text-lg shell-phone:text-[17px]"
+                          id={`pulse-post-${post.id}`}
+                        >
+                          <a
+                            className="text-inherit no-underline hover:underline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+                            href={`/workspace/project/${encodeURIComponent(post.project.id)}`}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              onOpenProject(post.project);
+                            }}
+                          >
+                            {post.project.name}
+                          </a>
+                        </h3>
+                        <div
+                          className="flex flex-wrap items-center gap-2 text-muted leading-(--ds-feed-meta-line) text-(length:--ds-feed-meta-size)"
+                          data-pulse-meta=""
+                        >
+                          {post.actor?.name && (
+                            <>
+                              <span
+                                className="inline-grid place-items-center leading-none rounded-[50%] bg-accent-soft text-accent w-(--ds-feed-avatar-size) h-(--ds-feed-avatar-size)"
+                                data-pulse-avatar=""
+                                aria-hidden="true"
+                              >
+                                {post.actor.name.slice(0, 1).toUpperCase()}
+                              </span>
+                              <span>{post.actor.name}</span>
+                            </>
+                          )}
+                          <time
+                            dateTime={post.createdAt}
+                            title={new Date(post.createdAt).toLocaleString()}
+                          >
+                            {time(post.createdAt)}
+                          </time>
+                          {health(post) && (
+                            <span
+                              className={`inline-flex items-center gap-(--ds-group-bar-gap) ${/risk/i.test(health(post) ?? "") ? "text-[var(--health-risk)]" : "text-[var(--health-ok)]"}`}
+                              data-pulse-health=""
+                            >
+                              <Activity size={14} aria-hidden="true" />
+                              Project {health(post)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </header>
+                    <div
+                      className="mt-4.5 mr-0 mb-6 ml-0 wrap-break-word leading-[1.6] shell-wide:col-start-1"
+                      data-pulse-post-body=""
+                    >
+                      <Markdown text={post.body} density="block" />
+                    </div>
+                    {(post.progress != null ||
+                      post.project.targetDate ||
+                      post.project.lead?.name) && (
+                      <dl
+                        className="grid gap-1.75 mt-0 mr-0 mb-6 ml-0 pl-3 text-(length:--ds-feed-meta-size) border-l-2 border-line shell-wide:col-start-2 shell-wide:row-start-2 shell-wide:self-start shell-wide:mt-4.5 shell-wide:mb-0 shell-wide:border-l-0 shell-wide:pl-0 shell-wide:[&_dt]:w-auto shell-wide:[&_dt]:flex-[0_0_auto]"
+                        data-pulse-changes=""
+                      >
+                        {post.project.lead?.name && (
+                          <PropertyRow label="Lead">
+                            {post.project.lead.name}
+                          </PropertyRow>
+                        )}
+                        {post.project.targetDate && (
+                          <PropertyRow label="Target date">
+                            {post.project.targetDate}
+                          </PropertyRow>
+                        )}
+                        {post.progress != null && (
+                          <PropertyRow label="Progress">
+                            {Math.round(post.progress)}%
+                          </PropertyRow>
+                        )}
+                      </dl>
+                    )}
+                    <div
+                      className="flex items-center gap-2 shell-wide:col-start-1"
+                      data-pulse-actions=""
+                    >
+                      <button
+                        className="flex items-center gap-1.5 pt-1.25 pr-2.25 pb-1.25 pl-2.25 border border-line bg-panel text-muted hover:bg-subtle aria-expanded:bg-subtle aria-expanded:text-foreground rounded-(--ds-feed-tab-radius) focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                        type="button"
+                        aria-expanded={openComments === post.id}
+                        aria-controls={
+                          openComments === post.id
+                            ? `pulse-comments-${post.id}`
+                            : undefined
+                        }
+                        aria-label={`${openComments === post.id ? "Hide" : "Show"} ${replies.length} ${
+                          replies.length === 1 ? "reply" : "replies"
+                        } to ${post.project.name}`}
+                        onClick={() =>
+                          setOpenComments((v) =>
+                            v === post.id ? null : post.id,
+                          )
+                        }
+                      >
+                        <MessageCircle size={15} aria-hidden="true" />
+                        {replies.length > 0 && (
+                          <span data-pulse-comment-count="">
+                            {replies.length}
+                          </span>
+                        )}
+                      </button>
+                    </div>
+                    {openComments === post.id && (
+                      <div
+                        className="mt-3 mr-0 mb-0 ml-0 flex flex-col gap-3 shell-wide:col-start-1"
+                        id={`pulse-comments-${post.id}`}
+                        data-pulse-comments=""
+                      >
+                        {replies.length ? (
+                          <ul className="flex flex-col gap-3 mt-0 mr-0 mb-0 ml-0 pt-1 pr-0 pb-0 pl-0 list-none">
+                            {replies.map((reply) => (
+                              <li
+                                key={reply.id}
+                                className="flex items-start gap-2"
+                              >
+                                <span
+                                  className="inline-grid place-items-center leading-none flex-none rounded-[50%] bg-accent-soft text-accent w-(--ds-feed-avatar-size) h-(--ds-feed-avatar-size)"
+                                  aria-hidden="true"
+                                >
+                                  {(reply.user?.name || "?")
+                                    .slice(0, 1)
+                                    .toUpperCase()}
+                                </span>
+                                <div className="min-w-0">
+                                  <p className="flex items-center gap-(--ds-group-bar-gap) mt-0 mr-0 mb-1 ml-0 text-(length:--ds-feed-meta-size) text-muted">
+                                    <span>{reply.user?.name || "Someone"}</span>
+                                    {reply.createdAt && (
+                                      <time dateTime={reply.createdAt}>
+                                        {time(reply.createdAt)}
+                                      </time>
+                                    )}
+                                  </p>
+                                  <div className="mt-0 mr-0 mb-0 ml-0 wrap-break-word">
+                                    <Markdown text={reply.body} />
+                                  </div>
+                                </div>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="mt-0 mr-0 mb-0 ml-0 text-muted text-[12px]">
+                            No replies yet. Reply to ask a question or leave
+                            context for whoever reads this next.
+                          </p>
+                        )}
+                        <Composer
+                          className="mt-0 max-w-none bg-subtle rounded-(--ds-composer-radius) focus-within:outline-2 focus-within:outline-accent focus-within:outline-offset-2 [&_input]:text-[14px] [&_input::placeholder]:text-muted [&_button]:rounded-(--ds-composer-radius)"
+                          value={commentBodies[post.id] || ""}
+                          placeholder={`Reply to ${post.project.name}…`}
+                          sendDisabled={!(commentBodies[post.id] || "").trim()}
+                          sendIcon={<Send size={15} aria-hidden="true" />}
+                          sendLabel="Post reply"
+                          onChange={(v) =>
+                            setCommentBodies((s) => ({ ...s, [post.id]: v }))
+                          }
+                          onSend={() => void sendComment(post)}
+                          data-pulse-comment-composer=""
+                        />
+                        <span className="sr-only" role="status">
+                          {status.posted ? "Reply posted" : ""}
+                        </span>
+                        {status.pending && (
+                          <p className="mt-0 mr-0 mb-0 ml-0 text-[12px] text-muted">
+                            Posting…
+                          </p>
+                        )}
+                        {status.error && (
+                          <p
+                            className="mt-0 mr-0 mb-0 ml-0 text-[12px] text-[var(--health-risk)]"
+                            role="alert"
+                          >
+                            {status.error}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </article>
+                </React.Fragment>
+              );
+            })}
+            {!feed.hasData && !error && (
+              <p
+                className="max-w-180 mt-15 mr-auto mb-15 ml-auto pt-7 pr-7 pb-7 pl-7 text-center text-muted text-[13px] gap-(--ds-empty-gap)"
+                data-pulse-status=""
+                role="status"
               >
-                Retry
+                Loading project updates…
+              </p>
+            )}
+            {feed.hasData && !posts.length && !error && (
+              <EmptyState
+                className="max-w-180 mt-15 mr-auto mb-15 ml-auto pt-7 pr-7 pb-7 pl-7 text-center text-muted text-[13px] gap-(--ds-empty-gap)"
+                data-pulse-status=""
+              >
+                <Activity size={24} aria-hidden="true" />
+                <h2 className="mt-2 mr-0 mb-2 ml-0 text-foreground text-[17px]">
+                  No project updates yet
+                </h2>
+                <p>
+                  Project updates will appear here when they are published. Task
+                  activity is separate from Pulse.
+                </p>
+              </EmptyState>
+            )}
+            {error && (
+              <div
+                className="max-w-180 mt-15 mr-auto mb-15 ml-auto pt-7 pr-7 pb-7 pl-7 text-center text-muted text-[13px] gap-(--ds-empty-gap)"
+                data-pulse-status=""
+                role="alert"
+              >
+                <h2 className="mt-2 mr-0 mb-2 ml-0 text-foreground text-[17px]">
+                  Couldn’t load Pulse
+                </h2>
+                <p>{error}</p>
+                <button
+                  className="mt-3 pt-2 pr-3 pb-2 pl-3 border border-line bg-panel rounded-(--ds-tab-radius) focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                  type="button"
+                  onClick={feed.retry}
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+            {hasMore && (
+              <button
+                className="block mt-4.5 mr-auto mb-4.5 ml-auto pt-2 pr-3 pb-2 pl-3 border border-line bg-panel rounded-(--ds-tab-radius) focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                data-pulse-load-more=""
+                type="button"
+                disabled={feed.loadingMore}
+                onClick={feed.loadMore}
+              >
+                {feed.loadingMore ? "Loading updates…" : "Load more updates"}
               </button>
-            </div>
-          )}
-          {hasMore && (
-            <button
-              className="block mt-4.5 mr-auto mb-4.5 ml-auto pt-2 pr-3 pb-2 pl-3 border border-line bg-panel rounded-(--ds-tab-radius) focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-              data-pulse-load-more=""
-              type="button"
-              disabled={feed.loadingMore}
-              onClick={feed.loadMore}
-            >
-              {feed.loadingMore ? "Loading updates…" : "Load more updates"}
-            </button>
-          )}
-        </div>
-      </ScrollArea>
+            )}
+          </div>
+        </ScrollArea>
       </div>
     </section>
   );
@@ -8080,7 +7738,11 @@ function KanbanCard({
   const reduceMotion = useReducedMotion();
   const stackRef = useRef<HTMLDivElement>(null);
   const anchorRef = useRef<HTMLDivElement>(null);
-  const [stackPosition, setStackPosition] = useState({ top: 16, left: 16, width: 280 });
+  const [stackPosition, setStackPosition] = useState({
+    top: 16,
+    left: 16,
+    width: 280,
+  });
   // An expanded parent opens its own task page; collapsed, it expands the stack.
   const openOrSelect = () => {
     if (subtasks.length && !stackMounted) toggleStack();
@@ -8089,13 +7751,26 @@ function KanbanCard({
   const closeStack = () => {
     // Return to the current anchor, even if the underlying board moved.
     const rect = anchorRef.current?.getBoundingClientRect();
-    if (rect) setStackPosition({ top: rect.top, left: rect.left, width: Math.min(rect.width, window.innerWidth - 32) });
+    if (rect)
+      setStackPosition({
+        top: rect.top,
+        left: rect.left,
+        width: Math.min(rect.width, window.innerWidth - 32),
+      });
     setSubtasksOpen(false);
   };
   const toggleStack = () => {
-    if (stackMounted) { closeStack(); return; }
+    if (stackMounted) {
+      closeStack();
+      return;
+    }
     const rect = anchorRef.current?.getBoundingClientRect();
-    if (rect) setStackPosition({ top: rect.top, left: rect.left, width: Math.min(rect.width, window.innerWidth - 32) });
+    if (rect)
+      setStackPosition({
+        top: rect.top,
+        left: rect.left,
+        width: Math.min(rect.width, window.innerWidth - 32),
+      });
     setStackMounted(true);
     setSubtasksOpen(true);
   };
@@ -8103,23 +7778,53 @@ function KanbanCard({
   useLayoutEffect(() => {
     const root = stackRef.current;
     if (!root || !subtasks.length) return;
-    const cards = Array.from(root.children).filter((el) => el.hasAttribute("data-stack-layer"));
-    const measure = () => setCardHeights((previous) => {
-      const next = cards.map((el) => ((el.hasAttribute("data-kanban-card") ? el : el.firstElementChild) as HTMLElement).offsetHeight);
-      return next.length === previous.length && next.every((h, i) => h === previous[i]) ? previous : next;
-    });
+    const cards = Array.from(root.children).filter((el) =>
+      el.hasAttribute("data-stack-layer"),
+    );
+    const measure = () =>
+      setCardHeights((previous) => {
+        const next = cards.map(
+          (el) =>
+            (
+              (el.hasAttribute("data-kanban-card")
+                ? el
+                : el.firstElementChild) as HTMLElement
+            ).offsetHeight,
+        );
+        return next.length === previous.length &&
+          next.every((h, i) => h === previous[i])
+          ? previous
+          : next;
+      });
     const observer = new ResizeObserver(measure);
-    cards.forEach((card) => observer.observe(card.hasAttribute("data-kanban-card") ? card : card.firstElementChild!));
+    cards.forEach((card) =>
+      observer.observe(
+        card.hasAttribute("data-kanban-card") ? card : card.firstElementChild!,
+      ),
+    );
     measure();
     return () => observer.disconnect();
   }, [subtasks, stackMounted]);
-  const spring = reduceMotion ? { duration: 0 } : { type: "spring" as const, stiffness: 200, damping: 30 };
+  const spring = reduceMotion
+    ? { duration: 0 }
+    : { type: "spring" as const, stiffness: 200, damping: 30 };
   const parentHeight = cardHeights[0] || 210;
   const collapsedStackOffset = 5;
-  const startsStatusGroup = (index: number) => index === 0 || (subtasks[index].state?.id || subtasks[index].state?.name) !== (subtasks[index - 1].state?.id || subtasks[index - 1].state?.name);
+  const startsStatusGroup = (index: number) =>
+    index === 0 ||
+    (subtasks[index].state?.id || subtasks[index].state?.name) !==
+      (subtasks[index - 1].state?.id || subtasks[index - 1].state?.name);
   const dividerHeight = 40;
   const stackHeight = subtasksOpen
-    ? parentHeight + subtasks.reduce((sum, _, index) => sum + (cardHeights[index + 1] || parentHeight) + 8 + (startsStatusGroup(index) ? dividerHeight : 0), 0)
+    ? parentHeight +
+      subtasks.reduce(
+        (sum, _, index) =>
+          sum +
+          (cardHeights[index + 1] || parentHeight) +
+          8 +
+          (startsStatusGroup(index) ? dividerHeight : 0),
+        0,
+      )
     : parentHeight + Math.min(3, subtasks.length) * collapsedStackOffset;
 
   const members =
@@ -8141,212 +7846,415 @@ function KanbanCard({
     }
   };
   const stack = (
-    <motion.div ref={stackRef} className="relative isolate min-w-0" style={{ perspective: "1000px", overflow: stackMounted ? "visible" : "clip" }} animate={subtasks.length ? { height: stackHeight } : undefined} transition={spring} data-kanban-stack={subtasks.length ? (subtasksOpen ? "open" : "closed") : undefined}>
-    {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- drag surface only; the keyboard path (alt+arrow) lives on the inner button */}
-    <div
-      className="relative z-10 border flex flex-col gap-2.25 text-left cursor-grab touch-none rounded-2xl border-line bg-panel p-3 hover:border-line active:cursor-grabbing focus-visible:relative focus-visible:z-1 data-dragging:opacity-45 [&[data-depth]:not([data-depth=0])]:relative [&[data-depth]:not([data-depth=0])::before]:absolute [&[data-depth]:not([data-depth=0])::before]:-left-2 [&[data-depth]:not([data-depth=0])::before]:top-1.5 [&[data-depth]:not([data-depth=0])::before]:bottom-1.5 [&[data-depth]:not([data-depth=0])::before]:w-0.5 [&[data-depth]:not([data-depth=0])::before]:rounded-sm [&[data-depth]:not([data-depth=0])::before]:bg-line focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 pointer-coarse:touch-pan-y pointer-coarse:cursor-auto [&[data-depth]:not([data-depth=0])]:before:content-['']"
-      data-stack-layer=""
-      data-kanban-card=""
-      data-issue-id={issue.id}
-      data-depth={depth}
-      data-parent={parentIdent || undefined}
-      data-dragging={dragged ? true : undefined}
-      style={depth ? { marginLeft: depth * 18 } : undefined}
-      draggable
-      onDragStart={(e) => {
-        if ((e.target as HTMLElement).closest("input,select,label,button")) {
-          e.preventDefault();
-          return;
-        }
-        onDragStart(e);
+    <motion.div
+      ref={stackRef}
+      className="relative isolate min-w-0"
+      style={{
+        perspective: "1000px",
+        overflow: stackMounted ? "visible" : "clip",
       }}
-      onDragEnd={onDragEnd}
-      onClick={(event) => {
-        if (subtasks.length && !(event.target as HTMLElement).closest("button,input,label,select,a,[data-kanban-card-props]")) {
-          openOrSelect();
-        }
-      }}
+      animate={subtasks.length ? { height: stackHeight } : undefined}
+      transition={spring}
+      data-kanban-stack={
+        subtasks.length ? (subtasksOpen ? "open" : "closed") : undefined
+      }
     >
-      <div className="flex items-center justify-between gap-2">
-        <button
-          type="button"
-          className="flex min-w-0 text-left focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11"
-          onClick={openOrSelect}
-          aria-label={`Open ${issue.identifier}`}
-        >
-          <small className="flex min-w-0 items-center gap-1 text-muted text-xs">
-            {parentIdent ? (
-              <span
-                className="border text-[10px] text-muted border-line rounded-sm pt-0 pr-1 pb-0 pl-1 mr-1.25"
-                title={`Parent ${parentIdent}`}
-              >{`↳${parentIdent}`}</span>
-            ) : null}
-            {issue.identifier}
-            {issue.decisionNeeded ? (
-              <span
-                className="inline-grid place-items-center w-3.75 h-3.75 ml-1.5 rounded-[50%] text-[10px] font-bold leading-none cursor-default bg-[#fdf3cf] text-[#5b4a0f] align-middle border border-amber-400"
-                data-my-issue-decision=""
-                role="img"
-                aria-label="Needs a decision"
-                title="Needs a decision"
-              >
-                ?
-              </span>
-            ) : null}
-          </small>
-        </button>
-        <div className="flex shrink-0 items-center gap-2">
-          {rollup && rollup.total > 0 && (
-            <span className="flex shrink-0 items-center gap-1.5" title={`${rollup.done} of ${rollup.total} subtasks completed`}>
-              <span role="progressbar" aria-label="Subtask completion" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(rollup.done / rollup.total * 100)} className="h-1.5 w-16 overflow-hidden rounded-full bg-neutral-100">
-                <span className="block h-full rounded-full bg-[#10B981] transition-[width] motion-reduce:transition-none" style={{ width: `${rollup.done / rollup.total * 100}%` }} />
-              </span>
-              <span className="border text-xs bg-neutral-100 text-neutral-500 border border-neutral-200 tabular-nums border-line rounded-full px-1.25" aria-label={`${rollup.done} of ${rollup.total} sub-tasks complete`}>{`${rollup.done}/${rollup.total}`}</span>
-            </span>
-          )}
-          <KanbanAssignee
-            issue={issue}
-            members={members}
-            busy={busy}
-            onChange={(assigneeId) => void edit({ assigneeId })}
-          />
-        </div>
-      </div>
-      <button
-        type="button"
-        className="flex w-full flex-col gap-1.5 pt-0 pr-0 pb-0 pl-0 bg-transparent text-inherit text-left min-w-0 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-        data-kanban-card-open=""
-        onClick={openOrSelect}
-        onKeyDown={(e) => {
-          if (e.altKey && e.key === "ArrowRight") {
+      {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- drag surface only; the keyboard path (alt+arrow) lives on the inner button */}
+      <div
+        className="relative z-10 border flex flex-col gap-2.25 text-left cursor-grab touch-none rounded-2xl border-line bg-panel p-3 hover:border-line active:cursor-grabbing focus-visible:relative focus-visible:z-1 data-dragging:opacity-45 [&[data-depth]:not([data-depth=0])]:relative [&[data-depth]:not([data-depth=0])::before]:absolute [&[data-depth]:not([data-depth=0])::before]:-left-2 [&[data-depth]:not([data-depth=0])::before]:top-1.5 [&[data-depth]:not([data-depth=0])::before]:bottom-1.5 [&[data-depth]:not([data-depth=0])::before]:w-0.5 [&[data-depth]:not([data-depth=0])::before]:rounded-sm [&[data-depth]:not([data-depth=0])::before]:bg-line focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 pointer-coarse:touch-pan-y pointer-coarse:cursor-auto [&[data-depth]:not([data-depth=0])]:before:content-['']"
+        data-stack-layer=""
+        data-kanban-card=""
+        data-issue-id={issue.id}
+        data-depth={depth}
+        data-parent={parentIdent || undefined}
+        data-dragging={dragged ? true : undefined}
+        style={depth ? { marginLeft: depth * 18 } : undefined}
+        draggable
+        onDragStart={(e) => {
+          if ((e.target as HTMLElement).closest("input,select,label,button")) {
             e.preventDefault();
-            onMoveNext();
+            return;
+          }
+          onDragStart(e);
+        }}
+        onDragEnd={onDragEnd}
+        onClick={(event) => {
+          if (
+            subtasks.length &&
+            !(event.target as HTMLElement).closest(
+              "button,input,label,select,a,[data-kanban-card-props]",
+            )
+          ) {
+            openOrSelect();
           }
         }}
-        aria-expanded={subtasks.length ? subtasksOpen : undefined}
-        aria-label={subtasks.length ? `${subtasksOpen ? "Collapse" : "Expand"} ${issue.identifier}: ${subtasks.length} subtasks` : `Open ${issue.identifier}: ${issue.title}`}
       >
-        <strong className="text-sm font-medium">
-          {issue.title}
-        </strong>
-      </button>
-      <div
-        className="flex flex-col min-w-0 mt-1 text-[12px] text-muted [&>label]:gap-2 [&>div]:gap-2 [&>label]:h-7 [&>div]:h-7 [&>label]:px-2.25 [&>div]:px-2.25 [&>label]:rounded-lg [&>div]:rounded-lg **:data-status-picker:min-w-0 **:data-status-picker:self-center **:data-status-picker-trigger:w-auto **:data-status-picker-trigger:max-w-full **:data-status-picker-trigger:h-auto **:data-status-picker-trigger:p-0 **:data-status-picker-trigger:border-0 **:data-status-picker-trigger:bg-transparent **:data-status-picker-trigger:text-inherit **:data-status-picker-trigger:gap-2 [&>label:hover]:[transition:none] [&>div:hover]:[transition:none] [&>label:focus-within]:[transition:none]"
-        data-kanban-card-props=""
-        aria-busy={busy || undefined}
-      >
-        {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- pointer shortcut; the nested status button is the keyboard and screen-reader target. */}
-        <div
-          className="cursor-pointer flex items-center gap-2 h-7 min-w-0 pt-0 pr-2 pb-0 pl-2 rounded-lg hover:bg-subtle [transition:background-color_120ms_ease-out]"
-          onClick={(e) => {
-            if (!(e.target as HTMLElement).closest("button"))
-              e.currentTarget
-                .querySelector<HTMLButtonElement>(
-                  "[data-status-picker-trigger]",
-                )
-                ?.click();
-          }}
-        >
-          <StatusPicker
-            compact
-            showLabel
-            iconClassName="size-4 shrink-0"
-            issue={issue}
-            teams={teams}
-            disabled={busy}
-            onChange={(stateId) => {
-              const st = teams
-                .find((t) => t.id === issue.team?.id)
-                ?.states.nodes.find((x) => x.id === stateId);
-              if (!st) throw Error("Status not found");
-              return onUpdate(issue.id, { stateId: st.id });
-            }}
-          />
+        <div className="flex items-center justify-between gap-2">
+          <button
+            type="button"
+            className="flex min-w-0 text-left focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11"
+            onClick={openOrSelect}
+            aria-label={`Open ${issue.identifier}`}
+          >
+            <small className="flex min-w-0 items-center gap-1 text-muted text-xs">
+              {parentIdent ? (
+                <span
+                  className="border text-[10px] text-muted border-line rounded-sm pt-0 pr-1 pb-0 pl-1 mr-1.25"
+                  title={`Parent ${parentIdent}`}
+                >{`↳${parentIdent}`}</span>
+              ) : null}
+              {issue.identifier}
+              {issue.decisionNeeded ? (
+                <span
+                  className="inline-grid place-items-center w-3.75 h-3.75 ml-1.5 rounded-[50%] text-[10px] font-bold leading-none cursor-default bg-[#fdf3cf] text-[#5b4a0f] align-middle border border-amber-400"
+                  data-my-issue-decision=""
+                  role="img"
+                  aria-label="Needs a decision"
+                  title="Needs a decision"
+                >
+                  ?
+                </span>
+              ) : null}
+            </small>
+          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            {rollup && rollup.total > 0 && (
+              <span
+                className="flex shrink-0 items-center gap-1.5"
+                title={`${rollup.done} of ${rollup.total} subtasks completed`}
+              >
+                <span
+                  role="progressbar"
+                  aria-label="Subtask completion"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round((rollup.done / rollup.total) * 100)}
+                  className="h-1.5 w-16 overflow-hidden rounded-full bg-neutral-100"
+                >
+                  <span
+                    className="block h-full rounded-full bg-[#10B981] transition-[width] motion-reduce:transition-none"
+                    style={{ width: `${(rollup.done / rollup.total) * 100}%` }}
+                  />
+                </span>
+                <span
+                  className="border text-xs bg-neutral-100 text-neutral-500 border border-neutral-200 tabular-nums border-line rounded-full px-1.25"
+                  aria-label={`${rollup.done} of ${rollup.total} sub-tasks complete`}
+                >{`${rollup.done}/${rollup.total}`}</span>
+              </span>
+            )}
+            <KanbanAssignee
+              issue={issue}
+              members={members}
+              busy={busy}
+              onChange={(assigneeId) => void edit({ assigneeId })}
+            />
+          </div>
         </div>
-        <label
-          className={
-            (overdue ? "relative text-danger" : "relative") +
-            " flex items-center gap-2 h-7 min-w-0 pt-0 pr-2.25 pb-0 pl-2.25 rounded-lg hover:bg-subtle focus-within:bg-subtle" +
-            " hover:bg-subtle focus-within:bg-subtle" +
-            " [transition:background-color_120ms_ease-out]"
-          }
-          title={due ? `Due ${due}` : "Set due date"}
-        >
-          <CalendarDays aria-hidden="true" size={16} className="size-4 shrink-0" />
-          <span className="truncate">
-            {due
-              ? new Date(due).toLocaleDateString(undefined, {
-                  month: "short",
-                  day: "numeric",
-                })
-              : "Set due date"}
-          </span>
-          <input
-            type="date"
-            value={due}
-            disabled={busy}
-            aria-label={`Due date of ${issue.identifier}`}
-            className="absolute inset-0 h-full w-full cursor-pointer opacity-0 max-md:text-base placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-            onClick={(e) => {
-              try {
-                e.currentTarget.showPicker?.();
-              } catch {
-                /* the native picker is unavailable in this browser */
-              }
-            }}
-            onChange={(e) => void edit({ dueDate: e.target.value || null })}
-          />
-        </label>
-        {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- pointer shortcut; the nested priority button is the keyboard and screen-reader target. */}
-        <div
-          className="cursor-pointer flex items-center gap-2 h-7 min-w-0 pt-0 pr-2.25 pb-0 pl-2.25 rounded-lg hover:bg-subtle [transition:background-color_120ms_ease-out]"
-          onClick={(e) => {
-            if (!(e.target as HTMLElement).closest("button"))
-              e.currentTarget
-                .querySelector<HTMLButtonElement>("button")
-                ?.click();
+        <button
+          type="button"
+          className="flex w-full flex-col gap-1.5 pt-0 pr-0 pb-0 pl-0 bg-transparent text-inherit text-left min-w-0 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+          data-kanban-card-open=""
+          onClick={openOrSelect}
+          onKeyDown={(e) => {
+            if (e.altKey && e.key === "ArrowRight") {
+              e.preventDefault();
+              onMoveNext();
+            }
           }}
+          aria-expanded={subtasks.length ? subtasksOpen : undefined}
+          aria-label={
+            subtasks.length
+              ? `${subtasksOpen ? "Collapse" : "Expand"} ${issue.identifier}: ${subtasks.length} subtasks`
+              : `Open ${issue.identifier}: ${issue.title}`
+          }
         >
-          <KanbanPriority
-            issue={issue}
-            busy={busy}
-            onChange={(priority) => void edit({ priority })}
-          />
+          <strong className="text-sm font-medium">{issue.title}</strong>
+        </button>
+        <div
+          className="flex flex-col min-w-0 mt-1 text-[12px] text-muted [&>label]:gap-2 [&>div]:gap-2 [&>label]:h-7 [&>div]:h-7 [&>label]:px-2.25 [&>div]:px-2.25 [&>label]:rounded-lg [&>div]:rounded-lg **:data-status-picker:min-w-0 **:data-status-picker:self-center **:data-status-picker-trigger:w-auto **:data-status-picker-trigger:max-w-full **:data-status-picker-trigger:h-auto **:data-status-picker-trigger:p-0 **:data-status-picker-trigger:border-0 **:data-status-picker-trigger:bg-transparent **:data-status-picker-trigger:text-inherit **:data-status-picker-trigger:gap-2 [&>label:hover]:[transition:none] [&>div:hover]:[transition:none] [&>label:focus-within]:[transition:none]"
+          data-kanban-card-props=""
+          aria-busy={busy || undefined}
+        >
+          {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- pointer shortcut; the nested status button is the keyboard and screen-reader target. */}
+          <div
+            className="cursor-pointer flex items-center gap-2 h-7 min-w-0 pt-0 pr-2 pb-0 pl-2 rounded-lg hover:bg-subtle [transition:background-color_120ms_ease-out]"
+            onClick={(e) => {
+              if (!(e.target as HTMLElement).closest("button"))
+                e.currentTarget
+                  .querySelector<HTMLButtonElement>(
+                    "[data-status-picker-trigger]",
+                  )
+                  ?.click();
+            }}
+          >
+            <StatusPicker
+              compact
+              showLabel
+              iconClassName="size-4 shrink-0"
+              issue={issue}
+              teams={teams}
+              disabled={busy}
+              onChange={(stateId) => {
+                const st = teams
+                  .find((t) => t.id === issue.team?.id)
+                  ?.states.nodes.find((x) => x.id === stateId);
+                if (!st) throw Error("Status not found");
+                return onUpdate(issue.id, { stateId: st.id });
+              }}
+            />
+          </div>
+          <label
+            className={
+              (overdue ? "relative text-danger" : "relative") +
+              " flex items-center gap-2 h-7 min-w-0 pt-0 pr-2.25 pb-0 pl-2.25 rounded-lg hover:bg-subtle focus-within:bg-subtle" +
+              " hover:bg-subtle focus-within:bg-subtle" +
+              " [transition:background-color_120ms_ease-out]"
+            }
+            title={due ? `Due ${due}` : "Set due date"}
+          >
+            <CalendarDays
+              aria-hidden="true"
+              size={16}
+              className="size-4 shrink-0"
+            />
+            <span className="truncate">
+              {due
+                ? new Date(due).toLocaleDateString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                  })
+                : "Set due date"}
+            </span>
+            <input
+              type="date"
+              value={due}
+              disabled={busy}
+              aria-label={`Due date of ${issue.identifier}`}
+              className="absolute inset-0 h-full w-full cursor-pointer opacity-0 max-md:text-base placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              onClick={(e) => {
+                try {
+                  e.currentTarget.showPicker?.();
+                } catch {
+                  /* the native picker is unavailable in this browser */
+                }
+              }}
+              onChange={(e) => void edit({ dueDate: e.target.value || null })}
+            />
+          </label>
+          {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- pointer shortcut; the nested priority button is the keyboard and screen-reader target. */}
+          <div
+            className="cursor-pointer flex items-center gap-2 h-7 min-w-0 pt-0 pr-2.25 pb-0 pl-2.25 rounded-lg hover:bg-subtle [transition:background-color_120ms_ease-out]"
+            onClick={(e) => {
+              if (!(e.target as HTMLElement).closest("button"))
+                e.currentTarget
+                  .querySelector<HTMLButtonElement>("button")
+                  ?.click();
+            }}
+          >
+            <KanbanPriority
+              issue={issue}
+              busy={busy}
+              onChange={(priority) => void edit({ priority })}
+            />
+          </div>
         </div>
       </div>
-    </div>
       {subtasks.map((child, index) => {
-        const beforeDivider = parentHeight + 8 + subtasks.slice(0, index).reduce((sum, _, i) => sum + (cardHeights[i + 1] || parentHeight) + 8 + (startsStatusGroup(i) ? dividerHeight : 0), 0);
-        const offset = beforeDivider + (startsStatusGroup(index) ? dividerHeight : 0);
-        return <React.Fragment key={child.id}>
-          {startsStatusGroup(index) && <motion.div className="absolute top-0 flex h-8 items-center" data-subtask-status-divider="" style={{ left: "50%", width: "max(100%, 33.333vw)", x: "-50%", pointerEvents: "none" }} initial={{ opacity: 0 }} animate={{ y: subtasksOpen ? beforeDivider : 0, opacity: subtasksOpen ? 1 : 0 }} transition={spring} aria-hidden={!subtasksOpen}>
-            <span className={`relative isolate inline-flex h-7 w-36 shrink-0 items-center pl-3 pr-8 text-[11px] font-medium ${child.state?.type === "completed" ? "text-[#5151C1]" : child.state?.type === "started" ? "text-yellow-950" : "text-muted"}`}>
-              <svg aria-hidden="true" className={`absolute inset-0 -z-1 h-full w-full ${child.state?.type === "completed" ? "text-[#ECEEFF]" : child.state?.type === "started" ? "text-yellow-300" : "text-neutral-100"}`} viewBox="0 0 144 28">
-                <path d="M5 1 H138 Q143 1 140 5 L120 25 Q118 27 115 27 H5 Q1 27 1 23 V5 Q1 1 5 1 Z" fill="currentColor" stroke={child.state?.type === "completed" ? "#5151C1" : "var(--line)"} strokeWidth="1" strokeLinejoin="round" />
-              </svg>
-              {child.state?.name || "No status"}
-            </span>
-            <span aria-hidden="true" className={`flex-1 border-t-2 border-dashed ${child.state?.type === "completed" ? "border-[#ECEEFF]" : "border-line"}`} />
-          </motion.div>}
-          <motion.div data-stack-layer="" className="absolute inset-x-0 top-0 rounded-2xl" style={{ zIndex: subtasksOpen ? 1 : -index - 1, pointerEvents: subtasksOpen ? "auto" : "none", height: subtasksOpen ? undefined : parentHeight, overflow: subtasksOpen ? "visible" : "hidden", background: subtasksOpen ? "transparent" : "var(--panel)", boxShadow: subtasksOpen ? undefined : "inset 0 0 0 1px var(--line)" }} inert={!subtasksOpen} aria-hidden={!subtasksOpen} initial={subtasksOpen && !reduceMotion ? { y: Math.min(index + 1, 3) * collapsedStackOffset, scaleX: 1 - Math.min(index + 1, 3) * 0.04, opacity: index < 3 ? 1 : 0 } : false} animate={{ y: subtasksOpen ? offset : Math.min(index + 1, 3) * collapsedStackOffset, z: 0, scaleX: subtasksOpen ? 1 : 1 - Math.min(index + 1, 3) * 0.04, opacity: subtasksOpen || index < 3 ? 1 : 0 }} transition={spring}>
-          <div style={{ visibility: subtasksOpen ? "visible" : "hidden" }}>
-            <KanbanCard issue={child} teams={teams} dragged={false} onDragStart={(e) => onDragStart(e, child)} onDragEnd={onDragEnd} onSelect={onSelect} onUpdate={onUpdate} onMoveNext={() => onMoveNext(child)} canMoveNext={canMoveNext} /></div>
-        </motion.div></React.Fragment>;
+        const beforeDivider =
+          parentHeight +
+          8 +
+          subtasks
+            .slice(0, index)
+            .reduce(
+              (sum, _, i) =>
+                sum +
+                (cardHeights[i + 1] || parentHeight) +
+                8 +
+                (startsStatusGroup(i) ? dividerHeight : 0),
+              0,
+            );
+        const offset =
+          beforeDivider + (startsStatusGroup(index) ? dividerHeight : 0);
+        return (
+          <React.Fragment key={child.id}>
+            {startsStatusGroup(index) && (
+              <motion.div
+                className="absolute top-0 flex h-8 items-center"
+                data-subtask-status-divider=""
+                style={{
+                  left: "50%",
+                  width: "max(100%, 33.333vw)",
+                  x: "-50%",
+                  pointerEvents: "none",
+                }}
+                initial={{ opacity: 0 }}
+                animate={{
+                  y: subtasksOpen ? beforeDivider : 0,
+                  opacity: subtasksOpen ? 1 : 0,
+                }}
+                transition={spring}
+                aria-hidden={!subtasksOpen}
+              >
+                <span
+                  className={`relative isolate inline-flex h-7 w-36 shrink-0 items-center pl-3 pr-8 text-[11px] font-medium ${child.state?.type === "completed" ? "text-[#5151C1]" : child.state?.type === "started" ? "text-yellow-950" : "text-muted"}`}
+                >
+                  <svg
+                    aria-hidden="true"
+                    className={`absolute inset-0 -z-1 h-full w-full ${child.state?.type === "completed" ? "text-[#ECEEFF]" : child.state?.type === "started" ? "text-yellow-300" : "text-neutral-100"}`}
+                    viewBox="0 0 144 28"
+                  >
+                    <path
+                      d="M5 1 H138 Q143 1 140 5 L120 25 Q118 27 115 27 H5 Q1 27 1 23 V5 Q1 1 5 1 Z"
+                      fill="currentColor"
+                      stroke={
+                        child.state?.type === "completed"
+                          ? "#5151C1"
+                          : "var(--line)"
+                      }
+                      strokeWidth="1"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                  {child.state?.name || "No status"}
+                </span>
+                <span
+                  aria-hidden="true"
+                  className={`flex-1 border-t-2 border-dashed ${child.state?.type === "completed" ? "border-[#ECEEFF]" : "border-line"}`}
+                />
+              </motion.div>
+            )}
+            <motion.div
+              data-stack-layer=""
+              className="absolute inset-x-0 top-0 rounded-2xl"
+              style={{
+                zIndex: subtasksOpen ? 1 : -index - 1,
+                pointerEvents: subtasksOpen ? "auto" : "none",
+                height: subtasksOpen ? undefined : parentHeight,
+                overflow: subtasksOpen ? "visible" : "hidden",
+                background: subtasksOpen ? "transparent" : "var(--panel)",
+                boxShadow: subtasksOpen
+                  ? undefined
+                  : "inset 0 0 0 1px var(--line)",
+              }}
+              inert={!subtasksOpen}
+              aria-hidden={!subtasksOpen}
+              initial={
+                subtasksOpen && !reduceMotion
+                  ? {
+                      y: Math.min(index + 1, 3) * collapsedStackOffset,
+                      scaleX: 1 - Math.min(index + 1, 3) * 0.04,
+                      opacity: index < 3 ? 1 : 0,
+                    }
+                  : false
+              }
+              animate={{
+                y: subtasksOpen
+                  ? offset
+                  : Math.min(index + 1, 3) * collapsedStackOffset,
+                z: 0,
+                scaleX: subtasksOpen ? 1 : 1 - Math.min(index + 1, 3) * 0.04,
+                opacity: subtasksOpen || index < 3 ? 1 : 0,
+              }}
+              transition={spring}
+            >
+              <div style={{ visibility: subtasksOpen ? "visible" : "hidden" }}>
+                <KanbanCard
+                  issue={child}
+                  teams={teams}
+                  dragged={false}
+                  onDragStart={(e) => onDragStart(e, child)}
+                  onDragEnd={onDragEnd}
+                  onSelect={onSelect}
+                  onUpdate={onUpdate}
+                  onMoveNext={() => onMoveNext(child)}
+                  canMoveNext={canMoveNext}
+                />
+              </div>
+            </motion.div>
+          </React.Fragment>
+        );
       })}
     </motion.div>
   );
   return (
-    <div ref={anchorRef} className="relative min-w-0 shrink-0" style={stackMounted ? { paddingBottom: Math.min(3, subtasks.length) * collapsedStackOffset } : undefined}>
-      {stackMounted && <div aria-hidden="true" data-kanban-stack-placeholder="" className="rounded-2xl border-2 border-dashed border-line bg-neutral-100" style={{ height: parentHeight }} />}
+    <div
+      ref={anchorRef}
+      className="relative min-w-0 shrink-0"
+      style={
+        stackMounted
+          ? {
+              paddingBottom:
+                Math.min(3, subtasks.length) * collapsedStackOffset,
+            }
+          : undefined
+      }
+    >
+      {stackMounted && (
+        <div
+          aria-hidden="true"
+          data-kanban-stack-placeholder=""
+          className="rounded-2xl border-2 border-dashed border-line bg-neutral-100"
+          style={{ height: parentHeight }}
+        />
+      )}
       {!stackMounted && stack}
-      <StackDialog.Root open={stackMounted} onOpenChange={(open) => { if (!open) closeStack(); }}>
+      <StackDialog.Root
+        open={stackMounted}
+        onOpenChange={(open) => {
+          if (!open) closeStack();
+        }}
+      >
         <StackDialog.Portal>
-          <StackDialog.Overlay asChild><motion.div className="fixed inset-0 z-100 bg-black/30" initial={{ opacity: 0 }} animate={{ opacity: subtasksOpen ? 1 : 0 }} transition={{ duration: reduceMotion ? 0 : 0.25 }} /></StackDialog.Overlay>
-          <StackDialog.Content aria-describedby={undefined} className="fixed inset-0 z-101 overflow-y-auto overscroll-contain outline-none pointer-events-none" onPointerDown={(event) => { if (event.target === event.currentTarget) closeStack(); }}>
-            <StackDialog.Title className="sr-only">{issue.identifier} subtasks</StackDialog.Title>
-            <motion.div className="absolute pointer-events-auto pb-6" style={{ width: stackPosition.width }} initial={{ top: stackPosition.top, left: stackPosition.left }} animate={subtasksOpen ? { top: window.innerHeight / 4, left: (window.innerWidth - stackPosition.width) / 2 } : { top: stackPosition.top, left: stackPosition.left }} transition={spring} onAnimationComplete={() => { if (!subtasksOpen) setStackMounted(false); }}>
+          <StackDialog.Overlay asChild>
+            <motion.div
+              className="fixed inset-0 z-100 bg-black/30"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: subtasksOpen ? 1 : 0 }}
+              transition={{ duration: reduceMotion ? 0 : 0.25 }}
+            />
+          </StackDialog.Overlay>
+          <StackDialog.Content
+            aria-describedby={undefined}
+            className="fixed inset-0 z-101 overflow-y-auto overscroll-contain outline-none pointer-events-none"
+            onPointerDown={(event) => {
+              if (event.target === event.currentTarget) closeStack();
+            }}
+          >
+            <StackDialog.Title className="sr-only">
+              {issue.identifier} subtasks
+            </StackDialog.Title>
+            <motion.div
+              className="absolute pointer-events-auto pb-6"
+              style={{ width: stackPosition.width }}
+              initial={{ top: stackPosition.top, left: stackPosition.left }}
+              animate={
+                subtasksOpen
+                  ? {
+                      top: window.innerHeight / 4,
+                      left: (window.innerWidth - stackPosition.width) / 2,
+                    }
+                  : { top: stackPosition.top, left: stackPosition.left }
+              }
+              transition={spring}
+              onAnimationComplete={() => {
+                if (!subtasksOpen) setStackMounted(false);
+              }}
+            >
               <StackDialog.Close asChild>
-                <motion.button type="button" aria-label="Collapse subtask stack" className="absolute -top-9 right-0 rounded-lg border border-line bg-panel px-3 py-1 text-[12px] text-muted focus-visible:outline-2 focus-visible:outline-accent" initial={{ opacity: 0, y: 4 }} animate={{ opacity: subtasksOpen ? 1 : 0, y: subtasksOpen ? 0 : 4 }} transition={{ duration: reduceMotion ? 0 : 0.2 }} style={{ pointerEvents: subtasksOpen ? "auto" : "none" }}>Collapse subtasks ×</motion.button>
+                <motion.button
+                  type="button"
+                  aria-label="Collapse subtask stack"
+                  className="absolute -top-9 right-0 rounded-lg border border-line bg-panel px-3 py-1 text-[12px] text-muted focus-visible:outline-2 focus-visible:outline-accent"
+                  initial={{ opacity: 0, y: 4 }}
+                  animate={{
+                    opacity: subtasksOpen ? 1 : 0,
+                    y: subtasksOpen ? 0 : 4,
+                  }}
+                  transition={{ duration: reduceMotion ? 0 : 0.2 }}
+                  style={{ pointerEvents: subtasksOpen ? "auto" : "none" }}
+                >
+                  Collapse subtasks ×
+                </motion.button>
               </StackDialog.Close>
               {stack}
             </motion.div>
@@ -8370,8 +8278,13 @@ function KanbanScrollFade({ children }: { children: React.ReactNode }) {
     const update = () => {
       const max = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
       const offset = Math.max(0, Math.min(viewport.scrollTop, max));
-      const top = strength(offset), bottom = strength(max - offset);
-      setEdges((previous) => previous.top === top && previous.bottom === bottom ? previous : { top, bottom });
+      const top = strength(offset),
+        bottom = strength(max - offset);
+      setEdges((previous) =>
+        previous.top === top && previous.bottom === bottom
+          ? previous
+          : { top, bottom },
+      );
     };
     const resize = new ResizeObserver(update);
     const observe = () => {
@@ -8390,11 +8303,32 @@ function KanbanScrollFade({ children }: { children: React.ReactNode }) {
       mutations.disconnect();
     };
   }, []);
-  return <div ref={rootRef} className="relative isolate flex min-h-0 flex-1 flex-col overflow-hidden">
-    {children}
-    <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 z-20 h-8" style={{ opacity: edges.top, background: "radial-gradient(ellipse at 50% 0%, var(--panel) 0%, transparent 100%)" }} />
-    <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-8" style={{ opacity: edges.bottom, background: "radial-gradient(ellipse at 50% 100%, var(--panel) 0%, transparent 100%)" }} />
-  </div>;
+  return (
+    <div
+      ref={rootRef}
+      className="relative isolate flex min-h-0 flex-1 flex-col overflow-hidden"
+    >
+      {children}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 top-0 z-20 h-8"
+        style={{
+          opacity: edges.top,
+          background:
+            "radial-gradient(ellipse at 50% 0%, var(--panel) 0%, transparent 100%)",
+        }}
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-8"
+        style={{
+          opacity: edges.bottom,
+          background:
+            "radial-gradient(ellipse at 50% 100%, var(--panel) 0%, transparent 100%)",
+        }}
+      />
+    </div>
+  );
 }
 
 function Kanban({
@@ -8518,31 +8452,53 @@ function Kanban({
     const statusRank = (child: Issue) => {
       if (child.state?.name.toLowerCase() === "todo") return 0;
       switch (child.state?.type) {
-        case "unstarted": return 0;
-        case "backlog": return 1;
-        case "started": return 2;
-        case "canceled": return 4;
-        case "completed": return 5;
-        default: return 3;
+        case "unstarted":
+          return 0;
+        case "backlog":
+          return 1;
+        case "started":
+          return 2;
+        case "canceled":
+          return 4;
+        case "completed":
+          return 5;
+        default:
+          return 3;
       }
     };
     // Creation uses <parent>-<letter slot>-<sibling ordinal> at each depth.
     // Compare the final ordinal numerically (2 before 10), not the slot letters.
-    const siblingOrdinal = (child: Issue) => Number(child.identifier.match(/(?:-|\/)(\d+)$/)?.[1] ?? Number.MAX_SAFE_INTEGER);
-    for (const children of m.values()) children.sort((a, b) =>
-      statusRank(a) - statusRank(b)
-      || (a.state?.name || "").localeCompare(b.state?.name || "")
-      || siblingOrdinal(a) - siblingOrdinal(b)
-      || a.identifier.localeCompare(b.identifier, undefined, { numeric: true }),
-    );
+    const siblingOrdinal = (child: Issue) =>
+      Number(
+        child.identifier.match(/(?:-|\/)(\d+)$/)?.[1] ??
+          Number.MAX_SAFE_INTEGER,
+      );
+    for (const children of m.values())
+      children.sort(
+        (a, b) =>
+          statusRank(a) - statusRank(b) ||
+          (a.state?.name || "").localeCompare(b.state?.name || "") ||
+          siblingOrdinal(a) - siblingOrdinal(b) ||
+          a.identifier.localeCompare(b.identifier, undefined, {
+            numeric: true,
+          }),
+      );
     return m;
   }, [allIssues]);
-  const rollups = useMemo(() => new Map(
-    Array.from(subtasksByParent, ([id, children]) => [id, {
-      total: children.length,
-      done: children.filter((child) => child.state?.type === "completed").length,
-    }]),
-  ), [subtasksByParent]);
+  const rollups = useMemo(
+    () =>
+      new Map(
+        Array.from(subtasksByParent, ([id, children]) => [
+          id,
+          {
+            total: children.length,
+            done: children.filter((child) => child.state?.type === "completed")
+              .length,
+          },
+        ]),
+      ),
+    [subtasksByParent],
+  );
   return (
     <div className="kanban flex min-h-0 min-w-0 flex-1 flex-col w-full">
       <div
@@ -8609,84 +8565,97 @@ function Kanban({
               </button>
             </header>
             <KanbanScrollFade>
-            <div
-              className="flex flex-col gap-2 pt-1 pr-2.5 pb-2 pl-2.5 overflow-y-auto flex-auto min-h-0 overscroll-contain [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-subtle [&::-webkit-scrollbar-thumb]:rounded-lg [&::-webkit-scrollbar-thumb]:bg-muted max-h-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 scrollbar-thin [&::-webkit-scrollbar-thumb]:border-[2px_solid_var(--subtle)]"
-              data-kanban-cards=""
-              onScroll={
-                group.items.length > (limits[group.state.id] || KANBAN_PAGE)
-                  ? (e) => {
-                      const el = e.currentTarget;
-                      if (
-                        el.scrollTop + el.clientHeight >
-                        el.scrollHeight - 800
-                      )
-                        grow(group.state.id);
-                    }
-                  : undefined
-              }
-            >
-              {group.items.length === 0 && (
-                <p
-                  className="mt-1 mr-0 mb-1 ml-0 pt-3 pr-3 pb-3 pl-3 rounded-[7px] text-muted text-[12px] text-center border border-dashed border-line"
-                  data-kanban-empty=""
-                >
-                  No tasks in {group.state.name}.
-                </p>
-              )}
-              {treeOrder(group.items, {})
-                .filter(({ i }) => !i.parent?.id || !grouped.some((g) => g.items.some((parent) => parent.id === i.parent?.id && parent.id !== i.id)))
-                .slice(0, limits[group.state.id] || KANBAN_PAGE)
-                .map(({ i: issue, depth, parentInGroup }) => (
-                  <KanbanCard
-                    key={issue.id}
-                    issue={issue}
-                    teams={teams}
-                    dragged={dragged === issue.id}
-                    depth={depth}
-                    parentIdent={
-                      parentInGroup ? undefined : issue.parent?.identifier
-                    }
-                    rollup={rollups.get(issue.id)}
-                    subtasks={subtasksByParent.get(issue.id)}
-                    onDragStart={(e, task = issue) => {
-                      setDragged(task.id);
-                      setDropLine(null);
-                      e.dataTransfer.effectAllowed = "move";
-                      e.dataTransfer.setData("text/hoja-issue", task.id);
-                    }}
-                    onDragEnd={() => {
-                      setDragged("");
-                      setDropLine(null);
-                    }}
-                    onSelect={onSelect}
-                    onUpdate={update}
-                    onMoveNext={(task = issue) => void moveNext(task, task.state?.id || group.state.id)}
-                    canMoveNext={Boolean(
-                      grouped[
-                        grouped.findIndex(
-                          (g) => g.state.id === group.state.id,
-                        ) + 1
-                      ],
-                    )}
-                  />
-                ))}
-              {group.items.length > (limits[group.state.id] || KANBAN_PAGE) && (
-                <button
-                  type="button"
-                  className="inline-flex items-center justify-center gap-2 rounded-md border border-line bg-panel px-3 py-2 text-sm text-inherit hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                  onClick={() => grow(group.state.id)}
-                >
-                  Show{" "}
-                  {Math.min(
-                    group.items.length -
-                      (limits[group.state.id] || KANBAN_PAGE),
-                    KANBAN_STEP,
-                  )}{" "}
-                  more of{" "}
-                  {group.items.length - (limits[group.state.id] || KANBAN_PAGE)}
-                </button>
-              )}
-            </div>
+              <div
+                className="flex flex-col gap-2 pt-1 pr-2.5 pb-2 pl-2.5 overflow-y-auto flex-auto min-h-0 overscroll-contain [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-subtle [&::-webkit-scrollbar-thumb]:rounded-lg [&::-webkit-scrollbar-thumb]:bg-muted max-h-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 scrollbar-thin [&::-webkit-scrollbar-thumb]:border-[2px_solid_var(--subtle)]"
+                data-kanban-cards=""
+                onScroll={
+                  group.items.length > (limits[group.state.id] || KANBAN_PAGE)
+                    ? (e) => {
+                        const el = e.currentTarget;
+                        if (
+                          el.scrollTop + el.clientHeight >
+                          el.scrollHeight - 800
+                        )
+                          grow(group.state.id);
+                      }
+                    : undefined
+                }
+              >
+                {group.items.length === 0 && (
+                  <p
+                    className="mt-1 mr-0 mb-1 ml-0 pt-3 pr-3 pb-3 pl-3 rounded-[7px] text-muted text-[12px] text-center border border-dashed border-line"
+                    data-kanban-empty=""
+                  >
+                    No tasks in {group.state.name}.
+                  </p>
+                )}
+                {treeOrder(group.items, {})
+                  .filter(
+                    ({ i }) =>
+                      !i.parent?.id ||
+                      !grouped.some((g) =>
+                        g.items.some(
+                          (parent) =>
+                            parent.id === i.parent?.id && parent.id !== i.id,
+                        ),
+                      ),
+                  )
+                  .slice(0, limits[group.state.id] || KANBAN_PAGE)
+                  .map(({ i: issue, depth, parentInGroup }) => (
+                    <KanbanCard
+                      key={issue.id}
+                      issue={issue}
+                      teams={teams}
+                      dragged={dragged === issue.id}
+                      depth={depth}
+                      parentIdent={
+                        parentInGroup ? undefined : issue.parent?.identifier
+                      }
+                      rollup={rollups.get(issue.id)}
+                      subtasks={subtasksByParent.get(issue.id)}
+                      onDragStart={(e, task = issue) => {
+                        setDragged(task.id);
+                        setDropLine(null);
+                        e.dataTransfer.effectAllowed = "move";
+                        e.dataTransfer.setData("text/hoja-issue", task.id);
+                      }}
+                      onDragEnd={() => {
+                        setDragged("");
+                        setDropLine(null);
+                      }}
+                      onSelect={onSelect}
+                      onUpdate={update}
+                      onMoveNext={(task = issue) =>
+                        void moveNext(task, task.state?.id || group.state.id)
+                      }
+                      canMoveNext={Boolean(
+                        grouped[
+                          grouped.findIndex(
+                            (g) => g.state.id === group.state.id,
+                          ) + 1
+                        ],
+                      )}
+                    />
+                  ))}
+                {group.items.length >
+                  (limits[group.state.id] || KANBAN_PAGE) && (
+                  <button
+                    type="button"
+                    className="inline-flex items-center justify-center gap-2 rounded-md border border-line bg-panel px-3 py-2 text-sm text-inherit hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                    onClick={() => grow(group.state.id)}
+                  >
+                    Show{" "}
+                    {Math.min(
+                      group.items.length -
+                        (limits[group.state.id] || KANBAN_PAGE),
+                      KANBAN_STEP,
+                    )}{" "}
+                    more of{" "}
+                    {group.items.length -
+                      (limits[group.state.id] || KANBAN_PAGE)}
+                  </button>
+                )}
+              </div>
             </KanbanScrollFade>
           </section>
         ))}
@@ -12256,9 +12225,14 @@ function IssueBoard({
   onNew: (stateId?: string) => void;
 }) {
   const syncedIssues = useSyncIssues() as Issue[];
-  const allIssues = useMemo(() => [...new Map(
-    [...syncedIssues, ...issues].map((issue) => [issue.id, issue]),
-  ).values()], [syncedIssues, issues]);
+  const allIssues = useMemo(
+    () => [
+      ...new Map(
+        [...syncedIssues, ...issues].map((issue) => [issue.id, issue]),
+      ).values(),
+    ],
+    [syncedIssues, issues],
+  );
   const grouped = useMemo(() => {
     // Canceled work stays in the list; the board hides its column until it has a design.
     const boardStates = states.filter((s) => s.type !== "canceled");
@@ -13057,9 +13031,7 @@ function TeamHome({
             className="border border-line rounded-xl shadow-[0_1px_2px_#1b1b1b08] pt-4 pr-4 pb-4 pl-4 bg-panel"
             data-side-card=""
           >
-            <span
-              className="text-xs font-semibold normal-case text-muted"
-            >
+            <span className="text-xs font-semibold normal-case text-muted">
               Current cycle
             </span>
             <h3 className="text-[15px] mt-3 mr-0 mb-1.25 ml-0">
@@ -13101,9 +13073,7 @@ function TeamHome({
             className="border border-line rounded-xl shadow-[0_1px_2px_#1b1b1b08] pt-4 pr-4 pb-4 pl-4 bg-panel"
             data-side-card=""
           >
-            <span
-  className="text-xs font-semibold normal-case text-muted"
-            >
+            <span className="text-xs font-semibold normal-case text-muted">
               Team links
             </span>
             <button
@@ -15385,12 +15355,59 @@ function ProfileSettings({
     </section>
   );
 }
-type NotificationPrefs = { issueCreated: boolean; issueUpdated: boolean };
+const NOTIFICATION_KINDS = [
+  [
+    "issueAssigned",
+    "Assigned to me",
+    "Someone makes you the assignee of a task.",
+  ],
+  ["issueMention", "Mentioned", "Someone @mentions you in a comment."],
+  [
+    "issueDecision",
+    "Decision requested",
+    "A task you own or follow asks for a decision.",
+  ],
+  [
+    "issueComment",
+    "New comments",
+    "Someone comments on a task you're subscribed to.",
+  ],
+  [
+    "issueStatusChanged",
+    "Status changes",
+    "A task you're subscribed to moves to another status.",
+  ],
+  [
+    "issueUpdated",
+    "Priority and due date changes",
+    "A task you're subscribed to changes priority or due date.",
+  ],
+] as const;
+type NotificationKind = (typeof NOTIFICATION_KINDS)[number][0] | "issueCreated";
+type NotificationPrefs = Record<NotificationKind, boolean>;
+const NOTIFICATION_PREF_FIELDS =
+  "issueAssigned issueMention issueComment issueStatusChanged issueUpdated issueDecision issueCreated";
+const allNotificationsOn = (): NotificationPrefs => ({
+  issueAssigned: true,
+  issueMention: true,
+  issueDecision: true,
+  issueComment: true,
+  issueStatusChanged: true,
+  issueUpdated: true,
+  issueCreated: true,
+});
+const readNotificationPrefs = (
+  d: Record<string, unknown>,
+): NotificationPrefs => {
+  const next = allNotificationsOn();
+  for (const k of Object.keys(next) as NotificationKind[])
+    if (typeof d[k] === "boolean") next[k] = d[k] as boolean;
+  return next;
+};
 let notificationPrefsCache: NotificationPrefs | null = null;
 function NotificationSettings() {
   const [prefs, setPrefs] = useState<NotificationPrefs>(
-      () =>
-        notificationPrefsCache || { issueCreated: true, issueUpdated: true },
+      () => notificationPrefsCache || allNotificationsOn(),
     ),
     [message, setMessage] = useState(() =>
       notificationPrefsCache ? "" : "Loading…",
@@ -15398,13 +15415,10 @@ function NotificationSettings() {
   const loaded = useRef(!!notificationPrefsCache);
   useEffect(() => {
     let live = true;
-    gql("{myNotificationPreferences{success issueCreated issueUpdated}}")
+    gql(`{myNotificationPreferences{success ${NOTIFICATION_PREF_FIELDS}}}`)
       .then((d) => {
         if (!live) return;
-        const next = {
-          issueCreated: d.myNotificationPreferences.issueCreated,
-          issueUpdated: d.myNotificationPreferences.issueUpdated,
-        };
+        const next = readNotificationPrefs(d.myNotificationPreferences);
         notificationPrefsCache = next;
         loaded.current = true;
         setPrefs(next);
@@ -15424,15 +15438,12 @@ function NotificationSettings() {
     setMessage("Saving…");
     try {
       const d = await gql(
-        `mutation($kind:String!,$enabled:Boolean!){notificationPreferenceSet(kind:$kind,enabled:$enabled){success issueCreated issueUpdated}}`,
+        `mutation($kind:String!,$enabled:Boolean!){notificationPreferenceSet(kind:$kind,enabled:$enabled){success ${NOTIFICATION_PREF_FIELDS}}}`,
         { kind: key, enabled },
       );
       if (!d.notificationPreferenceSet.success)
         throw Error("Preference could not be saved");
-      const next = {
-        issueCreated: d.notificationPreferenceSet.issueCreated,
-        issueUpdated: d.notificationPreferenceSet.issueUpdated,
-      };
+      const next = readNotificationPrefs(d.notificationPreferenceSet);
       notificationPrefsCache = next;
       setPrefs(next);
       setMessage("Notification preference saved.");
@@ -15471,14 +15482,10 @@ function NotificationSettings() {
           className="mt-1.5 mb-5 max-w-147.5 text-[13px] leading-[1.55] text-(--settings-muted)"
           data-settings-section-intro=""
         >
-          Choose which activity earns a place in your inbox.
+          You're subscribed to tasks you create, are assigned, comment on or are
+          mentioned in. Choose which of their events reach your inbox.
         </p>
-        {(
-          [
-            ["issueCreated", "Task created for me"],
-            ["issueUpdated", "Tasks I follow are updated"],
-          ] as const
-        ).map(([key, label]) => (
+        {NOTIFICATION_KINDS.map(([key, label, hint]) => (
           <div
             className="flex min-h-(--ds-settings-row-height) min-w-0 flex-col items-start justify-between gap-5 border-t border-line p-(--ds-settings-row-padding) first-of-type:border-t-0 first-of-type:pt-0 last-of-type:pb-0.5 md:flex-row md:items-center md:gap-5 shell-phone:gap-3 [@media_(max-width:_700px)]:gap-3"
             data-setting-row=""
@@ -15486,7 +15493,7 @@ function NotificationSettings() {
           >
             <div>
               <b className="font-[620]">{label}</b>
-              <p>Show this event in your inbox.</p>
+              <p>{hint}</p>
             </div>
             <input
               className="relative mt-0 mr-0 mb-0 ml-0 h-5.5 w-9.5 flex-none cursor-pointer appearance-none rounded-[999px] border border-line bg-(--settings-subtle) after:absolute after:top-1 after:left-1 after:size-3.5 after:rounded-full after:bg-muted checked:border-foreground checked:bg-foreground checked:after:translate-x-4 checked:after:bg-panel checked:after:transition-transform checked:after:duration-150 checked:after:ease-out motion-reduce:after:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:text-[16px] [@media_(max-width:_700px)]:w-10.5 [@media_(max-width:_700px)]:h-6"

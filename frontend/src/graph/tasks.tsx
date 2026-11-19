@@ -1,4 +1,8 @@
-import { Accordion, AccordionTrigger, AccordionContent } from "../components/motion-primitives/accordion";
+import {
+  Accordion,
+  AccordionTrigger,
+  AccordionContent,
+} from "../components/motion-primitives/accordion";
 import { styleClasses, styleHooks } from "./shared";
 import React, {
   memo,
@@ -31,6 +35,7 @@ import {
   Zap,
 } from "lucide-react";
 import { attachGithubReferences, gql, relTime, stateKey } from "../main";
+import { MentionMenu, useMentions } from "../inbox/mentions";
 import type {
   Cycle,
   Issue,
@@ -4555,6 +4560,13 @@ export function GraphIssueDetail({
   const [brokenThumbs, setBrokenThumbs] = useState<Record<string, boolean>>({});
   const [comment, setComment] = useState("");
   const [commentError, setCommentError] = useState("");
+  const commentRef = useRef<HTMLTextAreaElement | null>(null);
+  const mentions = useMentions(
+    commentRef,
+    teams.find((t) => t.id === issue?.team?.id)?.members?.nodes || [],
+    comment,
+    setComment,
+  );
   const [pendingComments, setPendingComments] = useState<PendingComment[]>([]);
   const [hiddenComments, setHiddenComments] = useState<string[]>([]);
   const [editedComments, setEditedComments] = useState<Record<string, string>>(
@@ -5323,7 +5335,9 @@ export function GraphIssueDetail({
 
   return (
     <section
-      className={styleClasses("min-w-0 flex flex-col flex-1 min-h-0 bg-panel rounded-xl")}
+      className={styleClasses(
+        "min-w-0 flex flex-col flex-1 min-h-0 bg-panel rounded-xl",
+      )}
       data-style-hooks={styleHooks(
         "lin-page min-w-0 flex flex-col flex-1 min-h-0 bg-panel",
       )}
@@ -5424,7 +5438,6 @@ export function GraphIssueDetail({
           >
             {detail.identifier}
           </span>
-
         </nav>
         <div
           className={styleClasses(
@@ -5561,7 +5574,6 @@ export function GraphIssueDetail({
         </div>
       </header>
 
-
       <div
         className={styleClasses(
           "flex min-h-0 flex-1 [@media_(max-width:900px)]:flex-col",
@@ -5570,1040 +5582,96 @@ export function GraphIssueDetail({
           "lin-detail flex min-h-0 flex-1 [@media_(max-width:900px)]:flex-col",
         )}
       >
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-issue-content="">
-      <div
-        className={styleClasses(
-          "flex items-center gap-1.5 py-2 px-5 border-b border-b-line flex-none",
-        )}
-        data-style-hooks={styleHooks(
-          "lin-toolbar flex items-center gap-[6px] py-[8px] px-[20px] border-b border-b-line flex-none",
-        )}
-        style={{ justifyContent: "flex-end" }}
-      >
-        <IconBtn
-          label="Copy link"
-          title="Copy link"
-          onClick={() => void copyText(window.location.href)}
+        <div
+          className="flex min-h-0 min-w-0 flex-1 flex-col"
+          data-issue-content=""
         >
-          <Link2 size={15} />
-        </IconBtn>
-        <IconBtn
-          label="Create copy of task"
-          title="Create copy of task"
-          onClick={() => void copyIssue()}
-        >
-          <Copy size={15} />
-        </IconBtn>
-        <Tip label="Hoja has no public share links — copies the private URL">
-          <span>
+          <div
+            className={styleClasses(
+              "flex items-center gap-1.5 py-2 px-5 border-b border-b-line flex-none",
+            )}
+            data-style-hooks={styleHooks(
+              "lin-toolbar flex items-center gap-[6px] py-[8px] px-[20px] border-b border-b-line flex-none",
+            )}
+            style={{ justifyContent: "flex-end" }}
+          >
             <IconBtn
-              label="Share task externally"
-              title="Share task externally"
+              label="Copy link"
+              title="Copy link"
               onClick={() => void copyText(window.location.href)}
             >
-              <ExternalLink size={15} />
+              <Link2 size={15} />
             </IconBtn>
-          </span>
-        </Tip>
-        <IconBtn
-          label="Archive task"
-          title="Archive task"
-          onClick={async () => {
-            if (await confirmDialog(`Archive ${detail.identifier}?`)) archive();
-          }}
-        >
-          <Trash2 size={15} />
-        </IconBtn>
-      </div>
-        <main
-          className={styleClasses(
-            "flex-1 min-w-0 overflow-y-auto pt-6.5 px-10 pb-20 max-w-none [@media_(max-width:900px)]:p-5",
-          )}
-          data-style-hooks={styleHooks(
-            "lin-detail-main flex-1 min-w-0 overflow-y-auto pt-[26px] px-[40px] pb-[80px] max-w-none [@media_(max-width:900px)]:p-[20px]",
-          )}
-        >
-          <textarea
+            <IconBtn
+              label="Create copy of task"
+              title="Create copy of task"
+              onClick={() => void copyIssue()}
+            >
+              <Copy size={15} />
+            </IconBtn>
+            <Tip label="Hoja has no public share links — copies the private URL">
+              <span>
+                <IconBtn
+                  label="Share task externally"
+                  title="Share task externally"
+                  onClick={() => void copyText(window.location.href)}
+                >
+                  <ExternalLink size={15} />
+                </IconBtn>
+              </span>
+            </Tip>
+            <IconBtn
+              label="Archive task"
+              title="Archive task"
+              onClick={async () => {
+                if (await confirmDialog(`Archive ${detail.identifier}?`))
+                  archive();
+              }}
+            >
+              <Trash2 size={15} />
+            </IconBtn>
+          </div>
+          <main
             className={styleClasses(
-              "w-full border-0 bg-transparent text-foreground text-[21px] font-[650] tracking-[-.015em] leading-[1.3] p-0 mt-0 mx-0 mb-3.5 resize-none overflow-hidden font-[inherit] focus:[outline:none]",
+              "flex-1 min-w-0 overflow-y-auto pt-6.5 px-10 pb-20 max-w-none [@media_(max-width:900px)]:p-5",
             )}
             data-style-hooks={styleHooks(
-              "lin-detail-title w-full border-0 bg-transparent text-foreground text-[21px] font-[650] tracking-[-.015em] leading-[1.3] p-0 mt-0 mx-0 mb-[14px] resize-none overflow-hidden font-[inherit] focus:[outline:none]",
+              "lin-detail-main flex-1 min-w-0 overflow-y-auto pt-[26px] px-[40px] pb-[80px] max-w-none [@media_(max-width:900px)]:p-[20px]",
             )}
-            aria-label="Title"
-            rows={1}
-            value={title}
-            onFocus={() => {
-              titleFocused.current = true;
-            }}
-            onChange={(e) => {
-              setTitle(e.target.value);
-              e.currentTarget.style.height = "auto";
-              e.currentTarget.style.height =
-                e.currentTarget.scrollHeight + "px";
-            }}
-            onBlur={() => {
-              titleFocused.current = false;
-              const t = title.trim();
-              if (t && t !== detail.title) void change({ title: t });
-              else setTitle(detail.title);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                e.currentTarget.blur();
-              }
-            }}
-          />
-          {updateError && (
-            <p
+          >
+            <textarea
               className={styleClasses(
-                "in-data-[style-hooks~='lin-loadmore']:flex in-data-[style-hooks~='lin-loadmore']:items-center in-data-[style-hooks~='lin-loadmore']:gap-2.5 my-4 mx-6 py-3 px-4 border border-solid border-[color-mix(in_srgb,var(--danger)_40%,var(--line))] rounded-lg text-danger text-[13px] bg-[color-mix(in_srgb,var(--danger)_6%,var(--panel))]",
+                "w-full border-0 bg-transparent text-foreground text-[21px] font-[650] tracking-[-.015em] leading-[1.3] p-0 mt-0 mx-0 mb-3.5 resize-none overflow-hidden font-[inherit] focus:[outline:none]",
               )}
               data-style-hooks={styleHooks(
-                "lin-error in-data-[style-hooks~='lin-loadmore']:flex in-data-[style-hooks~='lin-loadmore']:items-center in-data-[style-hooks~='lin-loadmore']:gap-[10px] my-[16px] mx-[24px] py-[12px] px-[16px] border border-solid border-[color-mix(in_srgb,var(--danger)_40%,var(--line))] rounded-[8px] text-danger text-[13px] bg-[color-mix(in_srgb,var(--danger)_6%,var(--panel))]",
+                "lin-detail-title w-full border-0 bg-transparent text-foreground text-[21px] font-[650] tracking-[-.015em] leading-[1.3] p-0 mt-0 mx-0 mb-[14px] resize-none overflow-hidden font-[inherit] focus:[outline:none]",
               )}
-              role="alert"
-            >
-              {updateError}
-            </p>
-          )}
-          {actionNotice && (
-            <p
-              className={styleClasses(
-                actionNotice.kind === "error"
-                  ? "flex items-center gap-2.5 flex-wrap mt-3 mx-0 mb-0 py-2.5 px-3.5 border border-solid border-line rounded-lg bg-subtle text-foreground text-[13px] [&_>_span]:flex-[1_1_220px] [&_>_span]:min-w-0 [&_>_span]:wrap-anywhere [&_>_span]:leading-normal data-[style-hooks~='lin-action-notice']:border-[color-mix(in_srgb,var(--danger)_40%,var(--line))] data-[style-hooks~='lin-action-notice']:bg-[color-mix(in_srgb,var(--danger)_6%,var(--panel))] data-[style-hooks~='lin-action-notice']:text-danger"
-                  : "flex items-center gap-2.5 flex-wrap mt-3 mx-0 mb-0 py-2.5 px-3.5 border border-solid border-line rounded-lg bg-subtle text-foreground text-[13px] [&_>_span]:flex-[1_1_220px] [&_>_span]:min-w-0 [&_>_span]:wrap-anywhere [&_>_span]:leading-normal",
-              )}
-              data-style-hooks={styleHooks(
-                actionNotice.kind === "error"
-                  ? "lin-action-notice flex items-center gap-[10px] flex-wrap mt-[12px] mx-0 mb-0 py-[10px] px-[14px] border border-solid border-line rounded-[8px] bg-subtle text-foreground text-[13px] [&_>_span]:flex-[1_1_220px] [&_>_span]:min-w-0 [&_>_span]:wrap-anywhere [&_>_span]:leading-normal error data-[style-hooks~='lin-action-notice']:border-[color-mix(in_srgb,var(--danger)_40%,var(--line))] data-[style-hooks~='lin-action-notice']:bg-[color-mix(in_srgb,var(--danger)_6%,var(--panel))] data-[style-hooks~='lin-action-notice']:text-danger"
-                  : "lin-action-notice flex items-center gap-[10px] flex-wrap mt-[12px] mx-0 mb-0 py-[10px] px-[14px] border border-solid border-line rounded-[8px] bg-subtle text-foreground text-[13px] [&_>_span]:flex-[1_1_220px] [&_>_span]:min-w-0 [&_>_span]:wrap-anywhere [&_>_span]:leading-normal",
-              )}
-              role={actionNotice.kind === "error" ? "alert" : "status"}
-            >
-              <span>{actionNotice.text}</span>
-              <button
-                type="button"
-                className={styleClasses(
-                  "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default",
-                )}
-                data-style-hooks={styleHooks(
-                  "lin-btn inline-flex items-center gap-[8px] border border-solid border-line bg-panel text-foreground rounded-[7px] py-[8px] px-[14px] text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default",
-                )}
-                onClick={() => setActionNotice(null)}
-              >
-                Dismiss
-              </button>
-            </p>
-          )}
-          {loadError && (
-            <p
-              className={styleClasses(
-                "in-data-[style-hooks~='lin-loadmore']:flex in-data-[style-hooks~='lin-loadmore']:items-center in-data-[style-hooks~='lin-loadmore']:gap-2.5 my-4 mx-6 py-3 px-4 border border-solid border-[color-mix(in_srgb,var(--danger)_40%,var(--line))] rounded-lg text-danger text-[13px] bg-[color-mix(in_srgb,var(--danger)_6%,var(--panel))]",
-              )}
-              data-style-hooks={styleHooks(
-                "lin-error in-data-[style-hooks~='lin-loadmore']:flex in-data-[style-hooks~='lin-loadmore']:items-center in-data-[style-hooks~='lin-loadmore']:gap-[10px] my-[16px] mx-[24px] py-[12px] px-[16px] border border-solid border-[color-mix(in_srgb,var(--danger)_40%,var(--line))] rounded-[8px] text-danger text-[13px] bg-[color-mix(in_srgb,var(--danger)_6%,var(--panel))]",
-              )}
-              role="alert"
-            >
-              {loadError}{" "}
-              <button
-                type="button"
-                className={styleClasses(
-                  "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default",
-                )}
-                data-style-hooks={styleHooks(
-                  "lin-btn inline-flex items-center gap-[8px] border border-solid border-line bg-panel text-foreground rounded-[7px] py-[8px] px-[14px] text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default",
-                )}
-                onClick={() => {
-                  setRetryTick((n) => n + 1);
-                  onRetry?.();
-                }}
-              >
-                Retry
-              </button>
-            </p>
-          )}
-          <DecisionPanel
-            decisions={detail.decisions || []}
-            onAnswer={answerOne}
-            onCancel={cancelOne}
-          />
-          {descEdit ? (
-            <div>
-              <textarea
-                ref={descRef}
-                aria-label="Description"
-                value={desc ?? ""}
-                rows={6}
-                onChange={(e) => setDesc(e.target.value)}
-                style={{
-                  width: "100%",
-                  border: "1px solid var(--line)",
-                  borderRadius: 8,
-                  padding: 10,
-                  font: "inherit",
-                  fontSize: 14,
-                }}
-              />
-              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                <button
-                  type="button"
-                  className={styleClasses(
-                    "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333]",
-                  )}
-                  data-style-hooks={styleHooks(
-                    "lin-btn inline-flex items-center gap-[8px] border border-solid border-line bg-panel text-foreground rounded-[7px] py-[8px] px-[14px] text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default primary data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333]",
-                  )}
-                  onClick={() => {
-                    const text = (desc ?? "").trim() || null;
-                    setDescEdit(false);
-                    void change({ description: text }).then((ok) => {
-                      if (!ok) {
-                        setDesc(text || "");
-                        setDescEdit(true);
-                        return;
-                      }
-                      void attachGithubReferences(detail.id, text);
-                    });
-                  }}
-                >
-                  Save
-                </button>
-                <button
-                  type="button"
-                  className={styleClasses(
-                    "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default",
-                  )}
-                  data-style-hooks={styleHooks(
-                    "lin-btn inline-flex items-center gap-[8px] border border-solid border-line bg-panel text-foreground rounded-[7px] py-[8px] px-[14px] text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default",
-                  )}
-                  onClick={() => {
-                    setDescEdit(false);
-                    setDesc(detail.description || "");
-                  }}
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div
-              className={styleClasses(
-                cx(
-                  "relative text-[14px] leading-[1.6] text-foreground [word-break:break-word] mt-0 mx-0 mb-2 min-h-6",
-                  !detail.description &&
-                    "data-[style-hooks~='lin-detail-desc']:text-muted data-[style-hooks~='lin-card-due']:text-muted data-[style-hooks~='lin-card-due']:border-dashed data-[style-hooks~='lin-card-due']:border-line",
-                ),
-              )}
-              data-style-hooks={styleHooks(
-                cx(
-                  "lin-detail-desc relative text-[14px] leading-[1.6] text-foreground [word-break:break-word] mt-0 mx-0 mb-[8px] min-h-[24px]",
-                  !detail.description &&
-                    "empty data-[style-hooks~='lin-detail-desc']:text-muted data-[style-hooks~='lin-card-due']:text-muted data-[style-hooks~='lin-card-due']:border-dashed data-[style-hooks~='lin-card-due']:border-line",
-                ),
-              )}
-              aria-busy={!detailReady && !detail.description}
-              role="button"
-              tabIndex={0}
+              aria-label="Title"
+              rows={1}
+              value={title}
+              onFocus={() => {
+                titleFocused.current = true;
+              }}
+              onChange={(e) => {
+                setTitle(e.target.value);
+                e.currentTarget.style.height = "auto";
+                e.currentTarget.style.height =
+                  e.currentTarget.scrollHeight + "px";
+              }}
+              onBlur={() => {
+                titleFocused.current = false;
+                const t = title.trim();
+                if (t && t !== detail.title) void change({ title: t });
+                else setTitle(detail.title);
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
-                  if (!detailReady && !detail.description) return;
-                  setDesc(detail.description || "");
-                  setDescEdit(true);
+                  e.preventDefault();
+                  e.currentTarget.blur();
                 }
               }}
-              onClick={() => {
-                if (!detailReady && !detail.description) return;
-                setDesc(detail.description || "");
-                setDescEdit(true);
-              }}
-              data-issue-description
-              title="Click to edit description"
-              style={{ cursor: "text" }}
-            >
-              {detail.description ? (
-                <Markdown text={detail.description} density="block" />
-              ) : detailReady ? (
-                "Add description…"
-              ) : (
-                "Loading description…"
-              )}
-            </div>
-          )}
-
-          <Accordion>
-          <section
-            className={styleClasses(
-              "border-t border-t-line py-3.5 px-0 [&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-2 [&_>_header]:text-[13px] [&_>_header]:font-semibold [&_>_header]:mb-1.5",
-            )}
-            data-style-hooks={styleHooks(
-              "lin-subsec border-t border-t-line py-[14px] px-0 [&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-[8px] [&_>_header]:text-[13px] [&_>_header]:font-semibold [&_>_header]:mb-[6px]",
-            )}
-            aria-label="Sub-tasks"
-          >
-            <header>
-              <AccordionTrigger>
-              <ChevronRight size={14} className="shrink-0 text-muted transition-transform group-data-expanded:rotate-90 motion-reduce:transition-none" />
-              <span>Sub-tasks</span>
-              <SubIssuePill done={subsDone} total={subsView.length} />
-
-              </AccordionTrigger>
-              <span
-                className={styleClasses(
-                  "in-data-[style-hooks~='lin-group-head']:flex-1 in-data-[style-hooks~='lin-hidden-col']:flex-1 in-data-[style-hooks~='lin-hidden-col']:overflow-hidden in-data-[style-hooks~='lin-hidden-col']:text-ellipsis in-data-[style-hooks~='lin-hidden-col']:whitespace-nowrap [[data-style-hooks~='lin-subsec']_>_header_&]:flex-1 [[data-style-hooks~='lin-activity']_>_header_&]:flex-1 in-data-[style-hooks~='lin-dd-opt']:flex-1 in-data-[style-hooks~='lin-dd-opt']:min-w-0 in-data-[style-hooks~='lin-dd-opt']:overflow-hidden in-data-[style-hooks~='lin-dd-opt']:[display:-webkit-box] in-data-[style-hooks~='lin-dd-opt']:[-webkit-line-clamp:2] in-data-[style-hooks~='lin-dd-opt']:[-webkit-box-orient:vertical] in-data-[style-hooks~='lin-dd-opt']:wrap-anywhere",
-                )}
-                data-style-hooks={styleHooks(
-                  "grow in-data-[style-hooks~='lin-group-head']:flex-1 in-data-[style-hooks~='lin-hidden-col']:flex-1 in-data-[style-hooks~='lin-hidden-col']:overflow-hidden in-data-[style-hooks~='lin-hidden-col']:text-ellipsis in-data-[style-hooks~='lin-hidden-col']:whitespace-nowrap [[data-style-hooks~='lin-subsec']_>_header_&]:flex-1 [[data-style-hooks~='lin-activity']_>_header_&]:flex-1 in-data-[style-hooks~='lin-dd-opt']:flex-1 in-data-[style-hooks~='lin-dd-opt']:min-w-0 in-data-[style-hooks~='lin-dd-opt']:overflow-hidden in-data-[style-hooks~='lin-dd-opt']:[display:-webkit-box] in-data-[style-hooks~='lin-dd-opt']:[-webkit-line-clamp:2] in-data-[style-hooks~='lin-dd-opt']:[-webkit-box-orient:vertical] in-data-[style-hooks~='lin-dd-opt']:wrap-anywhere",
-                )}
-              />
-              <IconBtn
-                label="Sub-task display settings"
-                title="Sub-task display options are not available yet"
-                disabled
-              >
-                <SlidersHorizontal size={14} />
-              </IconBtn>
-              <IconBtn
-                label="Add sub-task"
-                title="Add sub-task"
-                onClick={() => setAddingSub((v) => !v)}
-              >
-                <Plus size={14} />
-              </IconBtn>
-            </header>
-            <AccordionContent>
-            {addingSub && (
-              <div style={{ display: "flex", gap: 8, margin: "4px 0 8px" }}>
-                <input
-                  placeholder="Sub-task title…"
-                  value={newSubTitle}
-                  onChange={(e) => setNewSubTitle(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") void createSub();
-                  }}
-                  style={{
-                    flex: 1,
-                    border: "1px solid var(--line)",
-                    borderRadius: 7,
-                    padding: "8px 10px",
-                    fontSize: 13,
-                  }}
-                />
-                <button
-                  type="button"
-                  className={styleClasses(
-                    "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333]",
-                  )}
-                  data-style-hooks={styleHooks(
-                    "lin-btn inline-flex items-center gap-[8px] border border-solid border-line bg-panel text-foreground rounded-[7px] py-[8px] px-[14px] text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default primary data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333]",
-                  )}
-                  disabled={!newSubTitle.trim()}
-                  onClick={() => void createSub()}
-                >
-                  Add
-                </button>
-              </div>
-            )}
-            {subsView.map((s) => (
-              <div
-                key={s.id}
-                className={styleClasses(
-                  cx(
-                    "flex items-center gap-2.5 py-1.75 px-2 rounded-[7px] font-[inherit] text-[13px] w-full [background:none] border-0 text-left text-foreground cursor-pointer [&:hover]:bg-subtle",
-                    s.state?.type === "completed" && "",
-                    isLocalIssueId(s.id) &&
-                      "data-[style-hooks~='lin-subrow']:opacity-62 data-[style-hooks~='lin-comment']:opacity-62 [[data-style-hooks~='lin-comment']&_>_header_time]:italic",
-                  ),
-                )}
-                data-style-hooks={styleHooks(
-                  cx(
-                    "lin-subrow flex items-center gap-[10px] py-[7px] px-[8px] rounded-[7px] font-[inherit] text-[13px] w-full [background:none] border-0 text-left text-foreground cursor-pointer [&:hover]:bg-subtle",
-                    s.state?.type === "completed" && "done",
-                    isLocalIssueId(s.id) &&
-                      "pending data-[style-hooks~='lin-subrow']:opacity-62 data-[style-hooks~='lin-comment']:opacity-62 [[data-style-hooks~='lin-comment']&_>_header_time]:italic",
-                  ),
-                )}
-                aria-busy={isLocalIssueId(s.id) || undefined}
-                {...(isLocalIssueId(s.id) ? {} : issueIntentProps(s))}
-              >
-                <GraphStatusIcon state={s.state} size={14} />
-                <span
-                  className={styleClasses(
-                    "in-data-[style-hooks~='lin-row']:font-semibold in-data-[style-hooks~='lin-row']:whitespace-nowrap in-data-[style-hooks~='lin-row']:text-foreground [[data-style-hooks~='lin-bcard']_[data-style-hooks~='top']_&]:font-[450] [[data-style-hooks~='lin-bcard']_[data-style-hooks~='top']_&]:text-muted",
-                  )}
-                  data-style-hooks={styleHooks(
-                    "ident in-data-[style-hooks~='lin-row']:font-semibold in-data-[style-hooks~='lin-row']:whitespace-nowrap in-data-[style-hooks~='lin-row']:text-foreground [[data-style-hooks~='lin-bcard']_[data-style-hooks~='top']_&]:font-[450] [[data-style-hooks~='lin-bcard']_[data-style-hooks~='top']_&]:text-muted",
-                  )}
-                >
-                  {s.identifier}
-                </span>
-                <button
-                  type="button"
-                  className={styleClasses(
-                    "in-data-[style-hooks~='lin-subrow']:flex-1 in-data-[style-hooks~='lin-subrow']:min-w-0 in-data-[style-hooks~='lin-subrow']:overflow-hidden in-data-[style-hooks~='lin-subrow']:text-ellipsis in-data-[style-hooks~='lin-subrow']:whitespace-nowrap [[data-style-hooks~='lin-subrow'][data-style-hooks~='done']_&]:line-through [[data-style-hooks~='lin-subrow'][data-style-hooks~='done']_&]:text-muted",
-                  )}
-                  data-style-hooks={styleHooks(
-                    "t in-data-[style-hooks~='lin-subrow']:flex-1 in-data-[style-hooks~='lin-subrow']:min-w-0 in-data-[style-hooks~='lin-subrow']:overflow-hidden in-data-[style-hooks~='lin-subrow']:text-ellipsis in-data-[style-hooks~='lin-subrow']:whitespace-nowrap [[data-style-hooks~='lin-subrow'][data-style-hooks~='done']_&]:line-through [[data-style-hooks~='lin-subrow'][data-style-hooks~='done']_&]:text-muted",
-                  )}
-                  disabled={isLocalIssueId(s.id)}
-                  onClick={() => onOpenIssue(s)}
-                  title={s.title}
-                >
-                  {s.title}
-                </button>
-                {s.labels?.nodes.map((l) => (
-                  <LabelChip key={l.id} label={l} />
-                ))}
-                {s.assignee && <Avatar name={s.assignee.name} size={18} />}
-                <IconBtn
-                  label={`Open sub-task ${s.identifier}`}
-                  title="Open sub-task"
-                  disabled={isLocalIssueId(s.id)}
-                  onClick={() => onOpenIssue(s)}
-                >
-                  <ExternalLink size={13} />
-                </IconBtn>
-              </div>
-            ))}
-            {!subsView.length && !addingSub && (
-              <p
-                className={styleClasses("text-[12px] text-muted")}
-                data-style-hooks={styleHooks("lin-note text-[12px] text-muted")}
-              >
-                {detailReady ? "No sub-tasks yet." : "Loading sub-tasks…"}
-              </p>
-            )}
-            </AccordionContent>
-          </section>
-          </Accordion>
-
-          <Accordion>
-          <section
-            className={styleClasses(
-              "border-t border-t-line py-3.5 px-0 [&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-2 [&_>_header]:text-[13px] [&_>_header]:font-semibold [&_>_header]:mb-1.5",
-            )}
-            data-style-hooks={styleHooks(
-              "lin-subsec border-t border-t-line py-[14px] px-0 [&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-[8px] [&_>_header]:text-[13px] [&_>_header]:font-semibold [&_>_header]:mb-[6px]",
-            )}
-            aria-label="Attachments"
-          >
-            <header>
-              <AccordionTrigger>
-              <ChevronRight size={14} className="shrink-0 text-muted transition-transform group-data-expanded:rotate-90 motion-reduce:transition-none" />
-              <span>Attachments</span>
-              <span
-                style={{ color: "var(--muted)", fontWeight: 500, fontSize: 12 }}
-                className={styleClasses(
-                  "in-data-[style-hooks~='lin-group-head']:text-muted in-data-[style-hooks~='lin-group-head']:font-medium in-data-[style-hooks~='lin-group-head']:text-[12px] [[data-style-hooks~='lin-bcol']_>_header_&]:text-muted [[data-style-hooks~='lin-bcol']_>_header_&]:font-normal",
-                )}
-                data-style-hooks={styleHooks(
-                  "count in-data-[style-hooks~='lin-group-head']:text-muted in-data-[style-hooks~='lin-group-head']:font-medium in-data-[style-hooks~='lin-group-head']:text-[12px] [[data-style-hooks~='lin-bcol']_>_header_&]:text-muted [[data-style-hooks~='lin-bcol']_>_header_&]:font-normal",
-                )}
-              >
-                {(detail.attachments?.nodes || []).length}
-              </span>
-              </AccordionTrigger>
-
-              <span
-                className={styleClasses(
-                  "in-data-[style-hooks~='lin-group-head']:flex-1 in-data-[style-hooks~='lin-hidden-col']:flex-1 in-data-[style-hooks~='lin-hidden-col']:overflow-hidden in-data-[style-hooks~='lin-hidden-col']:text-ellipsis in-data-[style-hooks~='lin-hidden-col']:whitespace-nowrap [[data-style-hooks~='lin-subsec']_>_header_&]:flex-1 [[data-style-hooks~='lin-activity']_>_header_&]:flex-1 in-data-[style-hooks~='lin-dd-opt']:flex-1 in-data-[style-hooks~='lin-dd-opt']:min-w-0 in-data-[style-hooks~='lin-dd-opt']:overflow-hidden in-data-[style-hooks~='lin-dd-opt']:[display:-webkit-box] in-data-[style-hooks~='lin-dd-opt']:[-webkit-line-clamp:2] in-data-[style-hooks~='lin-dd-opt']:[-webkit-box-orient:vertical] in-data-[style-hooks~='lin-dd-opt']:wrap-anywhere",
-                )}
-                data-style-hooks={styleHooks(
-                  "grow in-data-[style-hooks~='lin-group-head']:flex-1 in-data-[style-hooks~='lin-hidden-col']:flex-1 in-data-[style-hooks~='lin-hidden-col']:overflow-hidden in-data-[style-hooks~='lin-hidden-col']:text-ellipsis in-data-[style-hooks~='lin-hidden-col']:whitespace-nowrap [[data-style-hooks~='lin-subsec']_>_header_&]:flex-1 [[data-style-hooks~='lin-activity']_>_header_&]:flex-1 in-data-[style-hooks~='lin-dd-opt']:flex-1 in-data-[style-hooks~='lin-dd-opt']:min-w-0 in-data-[style-hooks~='lin-dd-opt']:overflow-hidden in-data-[style-hooks~='lin-dd-opt']:[display:-webkit-box] in-data-[style-hooks~='lin-dd-opt']:[-webkit-line-clamp:2] in-data-[style-hooks~='lin-dd-opt']:[-webkit-box-orient:vertical] in-data-[style-hooks~='lin-dd-opt']:wrap-anywhere",
-                )}
-              />
-              <span style={{ position: "relative" }}>
-                <IconBtn
-                  label="Attach file or link"
-                  title="Attach"
-                  onClick={() => setAttachMenu((v) => !v)}
-                >
-                  <Plus size={14} />
-                </IconBtn>
-                {attachMenu && (
-                  <LinPopover
-                    onClose={() => setAttachMenu(false)}
-                    className={styleClasses(
-                      "absolute z-130 border border-solid border-line rounded-[10px] bg-panel shadow-[0_12px_40px_#1b1b1b1f]",
-                    )}
-                    data-style-hooks={styleHooks(
-                      "lin-popover absolute z-130 border border-solid border-line rounded-[10px] bg-panel shadow-[0_12px_40px_#1b1b1b1f]",
-                    )}
-                    style={{
-                      right: 0,
-                      top: "calc(100% + 6px)",
-                      width: 300,
-                      padding: 12,
-                    }}
-                  >
-                    <b style={{ fontSize: 13 }}>Attach</b>
-                    <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                      <button
-                        type="button"
-                        className={styleClasses(
-                          "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default",
-                        )}
-                        data-style-hooks={styleHooks(
-                          "lin-btn inline-flex items-center gap-[8px] border border-solid border-line bg-panel text-foreground rounded-[7px] py-[8px] px-[14px] text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default",
-                        )}
-                        disabled={uploading}
-                        onClick={() => fileRef.current?.click()}
-                      >
-                        {uploading ? "Uploading…" : "Upload file"}
-                      </button>
-                      <input
-                        ref={fileRef}
-                        type="file"
-                        hidden
-                        accept="image/*,video/*,.pdf,.txt,.md,.markdown,.csv,.tsv,.json,.rtf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.odt,.ods,.odp"
-                        onChange={(e) => {
-                          const f = e.target.files?.[0];
-                          if (f) void doUpload(f);
-                          e.target.value = "";
-                        }}
-                      />
-                    </div>
-                    <div
-                      className={styleClasses("h-px bg-line my-1.25 mx-1")}
-                      data-style-hooks={styleHooks(
-                        "lin-menu-divider h-px bg-line my-[5px] mx-[4px]",
-                      )}
-                    />
-                    <input
-                      placeholder="Paste link URL…"
-                      value={attachUrl}
-                      onChange={(e) => setAttachUrl(e.target.value)}
-                      style={{
-                        width: "100%",
-                        border: "1px solid var(--line)",
-                        borderRadius: 6,
-                        padding: "7px 10px",
-                        fontSize: 13,
-                        marginBottom: 8,
-                      }}
-                    />
-                    <input
-                      placeholder="Link title (optional)"
-                      value={attachTitle}
-                      onChange={(e) => setAttachTitle(e.target.value)}
-                      style={{
-                        width: "100%",
-                        border: "1px solid var(--line)",
-                        borderRadius: 6,
-                        padding: "7px 10px",
-                        fontSize: 13,
-                        marginBottom: 8,
-                      }}
-                    />
-                    <button
-                      type="button"
-                      className={styleClasses(
-                        "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333]",
-                      )}
-                      data-style-hooks={styleHooks(
-                        "lin-btn inline-flex items-center gap-[8px] border border-solid border-line bg-panel text-foreground rounded-[7px] py-[8px] px-[14px] text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default primary data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333]",
-                      )}
-                      style={{ width: "100%", justifyContent: "center" }}
-                      disabled={!attachUrl.trim() || uploading}
-                      onClick={() => void attachLink()}
-                    >
-                      Attach link
-                    </button>
-                  </LinPopover>
-                )}
-              </span>
-            </header>
-            <AccordionContent>
-            <div
-              className={styleClasses("flex flex-col gap-1.5 my-1.5 mx-0")}
-              data-style-hooks={styleHooks(
-                "lin-attach-list flex flex-col gap-[6px] my-[6px] mx-0",
-              )}
-            >
-              {(detail.attachments?.nodes || []).map((a) => {
-                const preview =
-                  attachmentKind(a) === "image" && !brokenThumbs[a.id];
-                return (
-                  <div
-                    key={a.id}
-                    className={styleClasses(
-                      "flex items-center gap-2.5 border border-solid border-line rounded-lg py-2 px-3 text-[13px] [&_a]:text-foreground [&_a]:font-[550] [&_a]:overflow-hidden [&_a]:text-ellipsis [&_a]:whitespace-nowrap [&_small]:text-muted",
-                    )}
-                    data-style-hooks={styleHooks(
-                      "lin-attach flex items-center gap-[10px] border border-solid border-line rounded-[8px] py-[8px] px-[12px] text-[13px] [&_a]:text-foreground [&_a]:font-[550] [&_a]:overflow-hidden [&_a]:text-ellipsis [&_a]:whitespace-nowrap [&_small]:text-muted",
-                    )}
-                  >
-                    {preview ? (
-                      <img
-                        className={styleClasses(
-                          "[[data-style-hooks~='lin-attach']_img&]:w-11 [[data-style-hooks~='lin-attach']_img&]:h-11 [[data-style-hooks~='lin-attach']_img&]:object-cover [[data-style-hooks~='lin-attach']_img&]:rounded-md [[data-style-hooks~='lin-attach']_img&]:flex-none",
-                        )}
-                        data-style-hooks={styleHooks(
-                          "thumb [[data-style-hooks~='lin-attach']_img&]:w-[44px] [[data-style-hooks~='lin-attach']_img&]:h-[44px] [[data-style-hooks~='lin-attach']_img&]:object-cover [[data-style-hooks~='lin-attach']_img&]:rounded-[6px] [[data-style-hooks~='lin-attach']_img&]:flex-none",
-                        )}
-                        src={a.url}
-                        alt=""
-                        loading="lazy"
-                        decoding="async"
-                        onError={() =>
-                          setBrokenThumbs((m) => ({ ...m, [a.id]: true }))
-                        }
-                      />
-                    ) : (
-                      <FileText
-                        size={16}
-                        color="var(--muted)"
-                        aria-hidden="true"
-                      />
-                    )}
-                    <a href={a.url} target="_blank" rel="noopener noreferrer">
-                      {a.title}
-                    </a>
-                    {a.subtitle && <small>{a.subtitle}</small>}
-                    <small style={{ marginLeft: "auto" }}>
-                      {relTime(a.createdAt)}
-                    </small>
-                  </div>
-                );
-              })}
-            </div>
-            {!(detail.attachments?.nodes || []).length && (
-              <p
-                className={styleClasses("text-[12px] text-muted")}
-                data-style-hooks={styleHooks("lin-note text-[12px] text-muted")}
-              >
-                {detailReady ? "No attachments yet." : "Loading attachments…"}
-              </p>
-            )}
-            </AccordionContent>
-          </section>
-          </Accordion>
-
-          {(() => {
-            // Compact and absent by default: only rendered when something is actually linked,
-            // so an issue with no GitHub work stays visually unchanged.
-            const ghl = detail.githubLinks || [];
-            if (!ghl.length) return null;
-            return (
-              <section
-                className={styleClasses(
-                  "border-t border-t-line py-3.5 px-0 [&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-2 [&_>_header]:text-[13px] [&_>_header]:font-semibold [&_>_header]:mb-1.5",
-                )}
-                data-style-hooks={styleHooks(
-                  "lin-subsec border-t border-t-line py-[14px] px-0 [&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-[8px] [&_>_header]:text-[13px] [&_>_header]:font-semibold [&_>_header]:mb-[6px]",
-                )}
-                aria-label="GitHub"
-              >
-                <header>
-                  <ChevronDown size={14} color="var(--muted)" />
-                  <span>GitHub</span>
-                  <span
-                    style={{
-                      color: "var(--muted)",
-                      fontWeight: 500,
-                      fontSize: 12,
-                    }}
-                    className={styleClasses(
-                      "in-data-[style-hooks~='lin-group-head']:text-muted in-data-[style-hooks~='lin-group-head']:font-medium in-data-[style-hooks~='lin-group-head']:text-[12px] [[data-style-hooks~='lin-bcol']_>_header_&]:text-muted [[data-style-hooks~='lin-bcol']_>_header_&]:font-normal",
-                    )}
-                    data-style-hooks={styleHooks(
-                      "count in-data-[style-hooks~='lin-group-head']:text-muted in-data-[style-hooks~='lin-group-head']:font-medium in-data-[style-hooks~='lin-group-head']:text-[12px] [[data-style-hooks~='lin-bcol']_>_header_&]:text-muted [[data-style-hooks~='lin-bcol']_>_header_&]:font-normal",
-                    )}
-                  >
-                    {ghl.length}
-                  </span>
-                </header>
-                <div
-                  className={styleClasses("flex flex-col gap-1.5 my-1.5 mx-0")}
-                  data-style-hooks={styleHooks(
-                    "lin-attach-list flex flex-col gap-[6px] my-[6px] mx-0",
-                  )}
-                >
-                  {ghl.map((l) => {
-                    const kindLabel =
-                      l.kind === "pr"
-                        ? "PR"
-                        : l.kind === "commit"
-                          ? "Commit"
-                          : l.kind === "deploy"
-                            ? "Deploy"
-                            : l.kind;
-                    const detailText =
-                      l.kind === "pr"
-                        ? l.state
-                        : l.kind === "commit"
-                          ? l.sha
-                            ? l.sha.slice(0, 7)
-                            : ""
-                          : l.kind === "deploy"
-                            ? l.environment
-                            : "";
-                    return (
-                      <div
-                        key={l.id}
-                        className={styleClasses(
-                          "flex items-center gap-2.5 border border-solid border-line rounded-lg py-2 px-3 text-[13px] [&_a]:text-foreground [&_a]:font-[550] [&_a]:overflow-hidden [&_a]:text-ellipsis [&_a]:whitespace-nowrap [&_small]:text-muted",
-                        )}
-                        data-style-hooks={styleHooks(
-                          "lin-attach flex items-center gap-[10px] border border-solid border-line rounded-[8px] py-[8px] px-[12px] text-[13px] [&_a]:text-foreground [&_a]:font-[550] [&_a]:overflow-hidden [&_a]:text-ellipsis [&_a]:whitespace-nowrap [&_small]:text-muted",
-                        )}
-                      >
-                        <Link2 size={16} color="var(--muted)" />
-                        <small
-                          style={{
-                            textTransform: "uppercase",
-                            letterSpacing: ".04em",
-                          }}
-                        >
-                          {kindLabel}
-                        </small>
-                        <a
-                          href={l.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          {l.title || l.externalId}
-                        </a>
-                        {detailText && <small>{detailText}</small>}
-                        <small style={{ marginLeft: "auto" }}>
-                          {relTime(l.createdAt)}
-                        </small>
-                      </div>
-                    );
-                  })}
-                </div>
-              </section>
-            );
-          })()}
-
-          <Accordion>
-          <section
-            className={styleClasses(
-              "border-t border-t-line pt-4 mt-1.5 [&_>_header]:flex [&_>_header]:items-center [&_>_header]:mb-3 [&_>_header_b]:text-[14px]",
-            )}
-            data-style-hooks={styleHooks(
-              "lin-activity border-t border-t-line pt-[16px] mt-[6px] [&_>_header]:flex [&_>_header]:items-center [&_>_header]:mb-[12px] [&_>_header_b]:text-[14px]",
-            )}
-            aria-label="Activity"
-          >
-            <header>
-              <AccordionTrigger>
-                <ChevronRight size={14} className="shrink-0 text-muted transition-transform group-data-expanded:rotate-90 motion-reduce:transition-none" />
-                <b>Activity</b>
-              </AccordionTrigger>
-              <span
-                className={styleClasses(
-                  "in-data-[style-hooks~='lin-group-head']:flex-1 in-data-[style-hooks~='lin-hidden-col']:flex-1 in-data-[style-hooks~='lin-hidden-col']:overflow-hidden in-data-[style-hooks~='lin-hidden-col']:text-ellipsis in-data-[style-hooks~='lin-hidden-col']:whitespace-nowrap [[data-style-hooks~='lin-subsec']_>_header_&]:flex-1 [[data-style-hooks~='lin-activity']_>_header_&]:flex-1 in-data-[style-hooks~='lin-dd-opt']:flex-1 in-data-[style-hooks~='lin-dd-opt']:min-w-0 in-data-[style-hooks~='lin-dd-opt']:overflow-hidden in-data-[style-hooks~='lin-dd-opt']:[display:-webkit-box] in-data-[style-hooks~='lin-dd-opt']:[-webkit-line-clamp:2] in-data-[style-hooks~='lin-dd-opt']:[-webkit-box-orient:vertical] in-data-[style-hooks~='lin-dd-opt']:wrap-anywhere",
-                )}
-                data-style-hooks={styleHooks(
-                  "grow in-data-[style-hooks~='lin-group-head']:flex-1 in-data-[style-hooks~='lin-hidden-col']:flex-1 in-data-[style-hooks~='lin-hidden-col']:overflow-hidden in-data-[style-hooks~='lin-hidden-col']:text-ellipsis in-data-[style-hooks~='lin-hidden-col']:whitespace-nowrap [[data-style-hooks~='lin-subsec']_>_header_&]:flex-1 [[data-style-hooks~='lin-activity']_>_header_&]:flex-1 in-data-[style-hooks~='lin-dd-opt']:flex-1 in-data-[style-hooks~='lin-dd-opt']:min-w-0 in-data-[style-hooks~='lin-dd-opt']:overflow-hidden in-data-[style-hooks~='lin-dd-opt']:[display:-webkit-box] in-data-[style-hooks~='lin-dd-opt']:[-webkit-line-clamp:2] in-data-[style-hooks~='lin-dd-opt']:[-webkit-box-orient:vertical] in-data-[style-hooks~='lin-dd-opt']:wrap-anywhere",
-                )}
-              />
-              <button
-                type="button"
-                className={styleClasses(
-                  "[background:none] border-0 text-muted text-[12px] font-medium inline-flex items-center gap-1.75 py-1.25 px-2 rounded-md [&:hover]:bg-subtle [&:hover]:text-foreground",
-                )}
-                data-style-hooks={styleHooks(
-                  "lin-subscribe-btn [background:none] border-0 text-muted text-[12px] font-medium inline-flex items-center gap-[7px] py-[5px] px-[8px] rounded-[6px] [&:hover]:bg-subtle [&:hover]:text-foreground",
-                )}
-                onClick={() => void toggleSubscribe()}
-                aria-pressed={subscribed}
-              >
-                {subscribed ? "Subscribed" : "Subscribe"}
-              </button>
-              <span
-                className={styleClasses("flex gap-1.5 mt-2")}
-                data-style-hooks={styleHooks(
-                  "lin-sublist flex gap-[6px] mt-[8px]",
-                )}
-              >
-                {(detail.subscribers?.nodes || []).slice(0, 5).map((s) => (
-                  <Avatar key={s.id} name={s.name} size={20} />
-                ))}
-              </span>
-            </header>
-            <AccordionContent>
-            {(detail.activity?.nodes || []).map((e) => (
-              <div
-                key={e.id}
-                className={styleClasses(
-                  "flex gap-2.5 items-start text-[13px] text-muted py-1.75 px-0 [&_b]:text-foreground [&_b]:font-semibold [&_time]:ml-auto [&_time]:flex-none [&_time]:text-[12px]",
-                )}
-                data-style-hooks={styleHooks(
-                  "lin-event flex gap-[10px] items-start text-[13px] text-muted py-[7px] px-0 [&_b]:text-foreground [&_b]:font-semibold [&_time]:ml-auto [&_time]:flex-none [&_time]:text-[12px]",
-                )}
-              >
-                <Avatar name={e.actor?.name} size={18} />
-                <span>
-                  <b>{e.actor?.name || "Someone"}</b>{" "}
-                  {describeEvent(e, states).replace(
-                    /^.*? (created|moved|assigned|changed|updated)/,
-                    "$1",
-                  )}
-                </span>
-                <time>{relTime(e.createdAt)}</time>
-              </div>
-            ))}
-            {!detailReady && (
-              <p
-                className={styleClasses("text-[12px] text-muted")}
-                data-style-hooks={styleHooks("lin-note text-[12px] text-muted")}
-                role="status"
-              >
-                Loading activity…
-              </p>
-            )}
-            {serverComments.map((c) => (
-              <article
-                data-issue-comment
-                key={c.id}
-                className={styleClasses(
-                  cx(
-                    "border border-solid border-line rounded-lg py-2.75 px-3.25 my-2 mx-0 text-[13px] [&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-2 [&_>_header]:mb-1.5 [&_>_header_b]:text-[13px] [&_>_header_time]:text-muted [&_>_header_time]:text-[12px]",
-                    editedComments[c.id] !== undefined &&
-                      "data-[style-hooks~='lin-subrow']:opacity-62 data-[style-hooks~='lin-comment']:opacity-62 [[data-style-hooks~='lin-comment']&_>_header_time]:italic",
-                  ),
-                )}
-                data-style-hooks={styleHooks(
-                  cx(
-                    "lin-comment border border-solid border-line rounded-[8px] py-[11px] px-[13px] my-[8px] mx-0 text-[13px] [&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-[8px] [&_>_header]:mb-[6px] [&_>_header_b]:text-[13px] [&_>_header_time]:text-muted [&_>_header_time]:text-[12px]",
-                    editedComments[c.id] !== undefined &&
-                      "pending data-[style-hooks~='lin-subrow']:opacity-62 data-[style-hooks~='lin-comment']:opacity-62 [[data-style-hooks~='lin-comment']&_>_header_time]:italic",
-                  ),
-                )}
-                aria-busy={editedComments[c.id] !== undefined || undefined}
-              >
-                <header>
-                  <Avatar name={c.user?.name} size={18} />
-                  <b>{c.user?.name || "User"}</b>
-                  <time>
-                    {editedComments[c.id] !== undefined
-                      ? "Saving…"
-                      : relTime(c.createdAt)}
-                  </time>
-                  {c.editedAt && editedComments[c.id] === undefined && (
-                    <span
-                      className={styleClasses(
-                        "[[data-style-hooks~='lin-comment']_>_header_&]:text-muted [[data-style-hooks~='lin-comment']_>_header_&]:text-[12px]",
-                      )}
-                      data-style-hooks={styleHooks(
-                        "lin-comment-edited [[data-style-hooks~='lin-comment']_>_header_&]:text-muted [[data-style-hooks~='lin-comment']_>_header_&]:text-[12px]",
-                      )}
-                      title={`Edited ${relTime(c.editedAt)}`}
-                    >
-                      (edited)
-                    </span>
-                  )}
-                </header>
-                {editing?.id === c.id && c.canEdit ? (
-                  <form
-                    className={styleClasses(
-                      "[[data-style-hooks~='lin-comment']_>_&]:mt-1 border border-solid border-line rounded-[9px] mt-3.5 bg-panel [&_textarea]:w-full [&_textarea]:border-0 [&_textarea]:bg-transparent [&_textarea]:resize-y [&_textarea]:min-h-16 [&_textarea]:py-3 [&_textarea]:px-3.5 [&_textarea]:[font:inherit] [&_textarea]:text-[13px] [&_textarea]:text-foreground [&_textarea:focus]:[outline:none] [&_footer]:flex [&_footer]:items-center [&_footer]:justify-end [&_footer]:gap-1 [&_footer]:py-1.5 [&_footer]:px-2 [&_footer]:border-t [&_footer]:border-t-line",
-                    )}
-                    data-style-hooks={styleHooks(
-                      "lin-commentbox [[data-style-hooks~='lin-comment']_>_&]:mt-[4px] border border-solid border-line rounded-[9px] mt-[14px] bg-panel [&_textarea]:w-full [&_textarea]:border-0 [&_textarea]:bg-transparent [&_textarea]:resize-y [&_textarea]:min-h-[64px] [&_textarea]:py-[12px] [&_textarea]:px-[14px] [&_textarea]:[font:inherit] [&_textarea]:text-[13px] [&_textarea]:text-foreground [&_textarea:focus]:[outline:none] [&_footer]:flex [&_footer]:items-center [&_footer]:justify-end [&_footer]:gap-[4px] [&_footer]:py-[6px] [&_footer]:px-[8px] [&_footer]:border-t [&_footer]:border-t-line",
-                    )}
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      void saveComment(c.id, editing.body);
-                    }}
-                  >
-                    <textarea
-                      rows={2}
-                      value={editing.body}
-                      aria-label="Edit comment"
-                      onChange={(e) =>
-                        setEditing({ id: c.id, body: e.target.value })
-                      }
-                      onKeyDown={(e) => {
-                        if (e.key === "Escape") setEditing(null);
-                        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                          e.preventDefault();
-                          e.currentTarget.form?.requestSubmit();
-                        }
-                      }}
-                    />
-                    <footer>
-                      <button
-                        type="button"
-                        className={styleClasses(
-                          "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default",
-                        )}
-                        data-style-hooks={styleHooks(
-                          "lin-btn inline-flex items-center gap-[8px] border border-solid border-line bg-panel text-foreground rounded-[7px] py-[8px] px-[14px] text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default",
-                        )}
-                        onClick={() => setEditing(null)}
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="submit"
-                        className={styleClasses(
-                          "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333]",
-                        )}
-                        data-style-hooks={styleHooks(
-                          "lin-btn inline-flex items-center gap-[8px] border border-solid border-line bg-panel text-foreground rounded-[7px] py-[8px] px-[14px] text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default primary data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333]",
-                        )}
-                        disabled={!editing.body.trim()}
-                      >
-                        Save
-                      </button>
-                    </footer>
-                  </form>
-                ) : (
-                  <Markdown text={c.body} />
-                )}
-                {editing?.id !== c.id && (
-                  <>
-                    {c.canEdit && (
-                      <button
-                        type="button"
-                        className={styleClasses(
-                          "inline-flex items-center gap-2 [background:none] border-0 text-muted text-[13px] py-1.25 px-1.5 rounded-md [&:hover]:bg-subtle [&:hover]:text-foreground in-data-[style-hooks~='lin-comment']:mt-2",
-                        )}
-                        data-style-hooks={styleHooks(
-                          "lin-addrow inline-flex items-center gap-[8px] [background:none] border-0 text-muted text-[13px] py-[5px] px-[6px] rounded-[6px] [&:hover]:bg-subtle [&:hover]:text-foreground del in-data-[style-hooks~='lin-comment']:mt-[8px]",
-                        )}
-                        onClick={() => setEditing({ id: c.id, body: c.body })}
-                      >
-                        Edit comment
-                      </button>
-                    )}
-                    {c.canDelete && (
-                      <button
-                        type="button"
-                        className={styleClasses(
-                          "inline-flex items-center gap-2 [background:none] border-0 text-muted text-[13px] py-1.25 px-1.5 rounded-md [&:hover]:bg-subtle [&:hover]:text-foreground in-data-[style-hooks~='lin-comment']:mt-2",
-                        )}
-                        data-style-hooks={styleHooks(
-                          "lin-addrow inline-flex items-center gap-[8px] [background:none] border-0 text-muted text-[13px] py-[5px] px-[6px] rounded-[6px] [&:hover]:bg-subtle [&:hover]:text-foreground del in-data-[style-hooks~='lin-comment']:mt-[8px]",
-                        )}
-                        onClick={async () => {
-                          if (
-                            await confirmDialog(
-                              c.user?.id && c.user.id !== viewer.id
-                                ? `Delete ${c.user?.name || "this member"}'s comment? This removes it for everyone.`
-                                : "Delete this comment?",
-                              { danger: true },
-                            )
-                          )
-                            void deleteComment(c.id);
-                        }}
-                      >
-                        Delete comment
-                      </button>
-                    )}
-                  </>
-                )}
-              </article>
-            ))}
-            {shownPendingComments.map((p) => (
-              <article
-                key={p.id}
-                className={styleClasses(
-                  "border border-solid border-line rounded-lg py-2.75 px-3.25 my-2 mx-0 text-[13px] [&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-2 [&_>_header]:mb-1.5 [&_>_header_b]:text-[13px] [&_>_header_time]:text-muted [&_>_header_time]:text-[12px] data-[style-hooks~='lin-subrow']:opacity-62 data-[style-hooks~='lin-comment']:opacity-62 [[data-style-hooks~='lin-comment']&_>_header_time]:italic",
-                )}
-                data-style-hooks={styleHooks(
-                  "lin-comment border border-solid border-line rounded-[8px] py-[11px] px-[13px] my-[8px] mx-0 text-[13px] [&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-[8px] [&_>_header]:mb-[6px] [&_>_header_b]:text-[13px] [&_>_header_time]:text-muted [&_>_header_time]:text-[12px] pending data-[style-hooks~='lin-subrow']:opacity-62 data-[style-hooks~='lin-comment']:opacity-62 [[data-style-hooks~='lin-comment']&_>_header_time]:italic",
-                )}
-                aria-busy="true"
-              >
-                <header>
-                  <Avatar name={viewer.name} size={18} />
-                  <b>{viewer.name || "You"}</b>
-                  <time>Sending…</time>
-                </header>
-                <Markdown text={p.body} />
-              </article>
-            ))}
-            <form
-              className={styleClasses(
-                "[[data-style-hooks~='lin-comment']_>_&]:mt-1 border border-solid border-line rounded-[9px] mt-3.5 bg-panel [&_textarea]:w-full [&_textarea]:border-0 [&_textarea]:bg-transparent [&_textarea]:resize-y [&_textarea]:min-h-16 [&_textarea]:py-3 [&_textarea]:px-3.5 [&_textarea]:[font:inherit] [&_textarea]:text-[13px] [&_textarea]:text-foreground [&_textarea:focus]:[outline:none] [&_footer]:flex [&_footer]:items-center [&_footer]:justify-end [&_footer]:gap-1 [&_footer]:py-1.5 [&_footer]:px-2 [&_footer]:border-t [&_footer]:border-t-line",
-              )}
-              data-style-hooks={styleHooks(
-                "lin-commentbox [[data-style-hooks~='lin-comment']_>_&]:mt-[4px] border border-solid border-line rounded-[9px] mt-[14px] bg-panel [&_textarea]:w-full [&_textarea]:border-0 [&_textarea]:bg-transparent [&_textarea]:resize-y [&_textarea]:min-h-[64px] [&_textarea]:py-[12px] [&_textarea]:px-[14px] [&_textarea]:[font:inherit] [&_textarea]:text-[13px] [&_textarea]:text-foreground [&_textarea:focus]:[outline:none] [&_footer]:flex [&_footer]:items-center [&_footer]:justify-end [&_footer]:gap-[4px] [&_footer]:py-[6px] [&_footer]:px-[8px] [&_footer]:border-t [&_footer]:border-t-line",
-              )}
-              onSubmit={submitComment}
-            >
-              <textarea
-                rows={2}
-                value={comment}
-                aria-label="Leave a comment"
-                placeholder="Leave a comment…"
-                onChange={(e) => {
-                  setComment(e.target.value);
-                  if (commentError) setCommentError("");
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                    e.preventDefault();
-                    e.currentTarget.form?.requestSubmit();
-                  }
-                }}
-              />
-              <footer>
-                <Tip label="Attach a file">
-                  <button
-                    type="button"
-                    className={styleClasses(
-                      "grid place-items-center w-7 h-7 rounded-md bg-transparent text-muted border border-solid border-transparent relative [&:hover]:bg-subtle [&:hover]:text-foreground disabled:opacity-40 disabled:cursor-default",
-                    )}
-                    data-style-hooks={styleHooks(
-                      "lin-icon-btn grid place-items-center w-[28px] h-[28px] rounded-[6px] bg-transparent text-muted border border-solid border-transparent relative [&:hover]:bg-subtle [&:hover]:text-foreground disabled:opacity-40 disabled:cursor-default",
-                    )}
-                    aria-label="Attach a file"
-                    onClick={() => {
-                      setAttachMenu(true);
-                    }}
-                  >
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                    >
-                      <path
-                        d="M11.5 8.5l-4.7 4.7a2.4 2.4 0 0 1-3.4-3.4l5.4-5.4a1.6 1.6 0 0 1 2.3 2.3L5.7 12"
-                        strokeLinecap="round"
-                      />
-                    </svg>
-                  </button>
-                </Tip>
-                <button
-                  type="submit"
-                  className={styleClasses(
-                    "grid place-items-center w-7 h-7 rounded-md bg-transparent text-muted border border-solid border-transparent relative [&:hover]:bg-subtle [&:hover]:text-foreground disabled:opacity-40 disabled:cursor-default",
-                  )}
-                  data-style-hooks={styleHooks(
-                    "lin-icon-btn grid place-items-center w-[28px] h-[28px] rounded-[6px] bg-transparent text-muted border border-solid border-transparent relative [&:hover]:bg-subtle [&:hover]:text-foreground disabled:opacity-40 disabled:cursor-default",
-                  )}
-                  aria-label="Submit comment"
-                  title="Submit comment (⌘↵)"
-                  disabled={!comment.trim()}
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.7"
-                  >
-                    <path
-                      d="M8 13V3M4 7l4-4 4 4"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                </button>
-              </footer>
-            </form>
-            {commentError && (
+            />
+            {updateError && (
               <p
                 className={styleClasses(
                   "in-data-[style-hooks~='lin-loadmore']:flex in-data-[style-hooks~='lin-loadmore']:items-center in-data-[style-hooks~='lin-loadmore']:gap-2.5 my-4 mx-6 py-3 px-4 border border-solid border-[color-mix(in_srgb,var(--danger)_40%,var(--line))] rounded-lg text-danger text-[13px] bg-[color-mix(in_srgb,var(--danger)_6%,var(--panel))]",
@@ -6613,13 +5681,1012 @@ export function GraphIssueDetail({
                 )}
                 role="alert"
               >
-                {commentError}
+                {updateError}
               </p>
             )}
-            </AccordionContent>
-          </section>
-          </Accordion>
-        </main>
+            {actionNotice && (
+              <p
+                className={styleClasses(
+                  actionNotice.kind === "error"
+                    ? "flex items-center gap-2.5 flex-wrap mt-3 mx-0 mb-0 py-2.5 px-3.5 border border-solid border-line rounded-lg bg-subtle text-foreground text-[13px] [&_>_span]:flex-[1_1_220px] [&_>_span]:min-w-0 [&_>_span]:wrap-anywhere [&_>_span]:leading-normal data-[style-hooks~='lin-action-notice']:border-[color-mix(in_srgb,var(--danger)_40%,var(--line))] data-[style-hooks~='lin-action-notice']:bg-[color-mix(in_srgb,var(--danger)_6%,var(--panel))] data-[style-hooks~='lin-action-notice']:text-danger"
+                    : "flex items-center gap-2.5 flex-wrap mt-3 mx-0 mb-0 py-2.5 px-3.5 border border-solid border-line rounded-lg bg-subtle text-foreground text-[13px] [&_>_span]:flex-[1_1_220px] [&_>_span]:min-w-0 [&_>_span]:wrap-anywhere [&_>_span]:leading-normal",
+                )}
+                data-style-hooks={styleHooks(
+                  actionNotice.kind === "error"
+                    ? "lin-action-notice flex items-center gap-[10px] flex-wrap mt-[12px] mx-0 mb-0 py-[10px] px-[14px] border border-solid border-line rounded-[8px] bg-subtle text-foreground text-[13px] [&_>_span]:flex-[1_1_220px] [&_>_span]:min-w-0 [&_>_span]:wrap-anywhere [&_>_span]:leading-normal error data-[style-hooks~='lin-action-notice']:border-[color-mix(in_srgb,var(--danger)_40%,var(--line))] data-[style-hooks~='lin-action-notice']:bg-[color-mix(in_srgb,var(--danger)_6%,var(--panel))] data-[style-hooks~='lin-action-notice']:text-danger"
+                    : "lin-action-notice flex items-center gap-[10px] flex-wrap mt-[12px] mx-0 mb-0 py-[10px] px-[14px] border border-solid border-line rounded-[8px] bg-subtle text-foreground text-[13px] [&_>_span]:flex-[1_1_220px] [&_>_span]:min-w-0 [&_>_span]:wrap-anywhere [&_>_span]:leading-normal",
+                )}
+                role={actionNotice.kind === "error" ? "alert" : "status"}
+              >
+                <span>{actionNotice.text}</span>
+                <button
+                  type="button"
+                  className={styleClasses(
+                    "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default",
+                  )}
+                  data-style-hooks={styleHooks(
+                    "lin-btn inline-flex items-center gap-[8px] border border-solid border-line bg-panel text-foreground rounded-[7px] py-[8px] px-[14px] text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default",
+                  )}
+                  onClick={() => setActionNotice(null)}
+                >
+                  Dismiss
+                </button>
+              </p>
+            )}
+            {loadError && (
+              <p
+                className={styleClasses(
+                  "in-data-[style-hooks~='lin-loadmore']:flex in-data-[style-hooks~='lin-loadmore']:items-center in-data-[style-hooks~='lin-loadmore']:gap-2.5 my-4 mx-6 py-3 px-4 border border-solid border-[color-mix(in_srgb,var(--danger)_40%,var(--line))] rounded-lg text-danger text-[13px] bg-[color-mix(in_srgb,var(--danger)_6%,var(--panel))]",
+                )}
+                data-style-hooks={styleHooks(
+                  "lin-error in-data-[style-hooks~='lin-loadmore']:flex in-data-[style-hooks~='lin-loadmore']:items-center in-data-[style-hooks~='lin-loadmore']:gap-[10px] my-[16px] mx-[24px] py-[12px] px-[16px] border border-solid border-[color-mix(in_srgb,var(--danger)_40%,var(--line))] rounded-[8px] text-danger text-[13px] bg-[color-mix(in_srgb,var(--danger)_6%,var(--panel))]",
+                )}
+                role="alert"
+              >
+                {loadError}{" "}
+                <button
+                  type="button"
+                  className={styleClasses(
+                    "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default",
+                  )}
+                  data-style-hooks={styleHooks(
+                    "lin-btn inline-flex items-center gap-[8px] border border-solid border-line bg-panel text-foreground rounded-[7px] py-[8px] px-[14px] text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default",
+                  )}
+                  onClick={() => {
+                    setRetryTick((n) => n + 1);
+                    onRetry?.();
+                  }}
+                >
+                  Retry
+                </button>
+              </p>
+            )}
+            <DecisionPanel
+              decisions={detail.decisions || []}
+              onAnswer={answerOne}
+              onCancel={cancelOne}
+            />
+            {descEdit ? (
+              <div>
+                <textarea
+                  ref={descRef}
+                  aria-label="Description"
+                  value={desc ?? ""}
+                  rows={6}
+                  onChange={(e) => setDesc(e.target.value)}
+                  style={{
+                    width: "100%",
+                    border: "1px solid var(--line)",
+                    borderRadius: 8,
+                    padding: 10,
+                    font: "inherit",
+                    fontSize: 14,
+                  }}
+                />
+                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                  <button
+                    type="button"
+                    className={styleClasses(
+                      "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333]",
+                    )}
+                    data-style-hooks={styleHooks(
+                      "lin-btn inline-flex items-center gap-[8px] border border-solid border-line bg-panel text-foreground rounded-[7px] py-[8px] px-[14px] text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default primary data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333]",
+                    )}
+                    onClick={() => {
+                      const text = (desc ?? "").trim() || null;
+                      setDescEdit(false);
+                      void change({ description: text }).then((ok) => {
+                        if (!ok) {
+                          setDesc(text || "");
+                          setDescEdit(true);
+                          return;
+                        }
+                        void attachGithubReferences(detail.id, text);
+                      });
+                    }}
+                  >
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    className={styleClasses(
+                      "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default",
+                    )}
+                    data-style-hooks={styleHooks(
+                      "lin-btn inline-flex items-center gap-[8px] border border-solid border-line bg-panel text-foreground rounded-[7px] py-[8px] px-[14px] text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default",
+                    )}
+                    onClick={() => {
+                      setDescEdit(false);
+                      setDesc(detail.description || "");
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div
+                className={styleClasses(
+                  cx(
+                    "relative text-[14px] leading-[1.6] text-foreground [word-break:break-word] mt-0 mx-0 mb-2 min-h-6",
+                    !detail.description &&
+                      "data-[style-hooks~='lin-detail-desc']:text-muted data-[style-hooks~='lin-card-due']:text-muted data-[style-hooks~='lin-card-due']:border-dashed data-[style-hooks~='lin-card-due']:border-line",
+                  ),
+                )}
+                data-style-hooks={styleHooks(
+                  cx(
+                    "lin-detail-desc relative text-[14px] leading-[1.6] text-foreground [word-break:break-word] mt-0 mx-0 mb-[8px] min-h-[24px]",
+                    !detail.description &&
+                      "empty data-[style-hooks~='lin-detail-desc']:text-muted data-[style-hooks~='lin-card-due']:text-muted data-[style-hooks~='lin-card-due']:border-dashed data-[style-hooks~='lin-card-due']:border-line",
+                  ),
+                )}
+                aria-busy={!detailReady && !detail.description}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    if (!detailReady && !detail.description) return;
+                    setDesc(detail.description || "");
+                    setDescEdit(true);
+                  }
+                }}
+                onClick={() => {
+                  if (!detailReady && !detail.description) return;
+                  setDesc(detail.description || "");
+                  setDescEdit(true);
+                }}
+                data-issue-description
+                title="Click to edit description"
+                style={{ cursor: "text" }}
+              >
+                {detail.description ? (
+                  <Markdown text={detail.description} density="block" />
+                ) : detailReady ? (
+                  "Add description…"
+                ) : (
+                  "Loading description…"
+                )}
+              </div>
+            )}
+
+            <Accordion>
+              <section
+                className={styleClasses(
+                  "border-t border-t-line py-3.5 px-0 [&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-2 [&_>_header]:text-[13px] [&_>_header]:font-semibold [&_>_header]:mb-1.5",
+                )}
+                data-style-hooks={styleHooks(
+                  "lin-subsec border-t border-t-line py-[14px] px-0 [&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-[8px] [&_>_header]:text-[13px] [&_>_header]:font-semibold [&_>_header]:mb-[6px]",
+                )}
+                aria-label="Sub-tasks"
+              >
+                <header>
+                  <AccordionTrigger>
+                    <ChevronRight
+                      size={14}
+                      className="shrink-0 text-muted transition-transform group-data-expanded:rotate-90 motion-reduce:transition-none"
+                    />
+                    <span>Sub-tasks</span>
+                    <SubIssuePill done={subsDone} total={subsView.length} />
+                  </AccordionTrigger>
+                  <span
+                    className={styleClasses(
+                      "in-data-[style-hooks~='lin-group-head']:flex-1 in-data-[style-hooks~='lin-hidden-col']:flex-1 in-data-[style-hooks~='lin-hidden-col']:overflow-hidden in-data-[style-hooks~='lin-hidden-col']:text-ellipsis in-data-[style-hooks~='lin-hidden-col']:whitespace-nowrap [[data-style-hooks~='lin-subsec']_>_header_&]:flex-1 [[data-style-hooks~='lin-activity']_>_header_&]:flex-1 in-data-[style-hooks~='lin-dd-opt']:flex-1 in-data-[style-hooks~='lin-dd-opt']:min-w-0 in-data-[style-hooks~='lin-dd-opt']:overflow-hidden in-data-[style-hooks~='lin-dd-opt']:[display:-webkit-box] in-data-[style-hooks~='lin-dd-opt']:[-webkit-line-clamp:2] in-data-[style-hooks~='lin-dd-opt']:[-webkit-box-orient:vertical] in-data-[style-hooks~='lin-dd-opt']:wrap-anywhere",
+                    )}
+                    data-style-hooks={styleHooks(
+                      "grow in-data-[style-hooks~='lin-group-head']:flex-1 in-data-[style-hooks~='lin-hidden-col']:flex-1 in-data-[style-hooks~='lin-hidden-col']:overflow-hidden in-data-[style-hooks~='lin-hidden-col']:text-ellipsis in-data-[style-hooks~='lin-hidden-col']:whitespace-nowrap [[data-style-hooks~='lin-subsec']_>_header_&]:flex-1 [[data-style-hooks~='lin-activity']_>_header_&]:flex-1 in-data-[style-hooks~='lin-dd-opt']:flex-1 in-data-[style-hooks~='lin-dd-opt']:min-w-0 in-data-[style-hooks~='lin-dd-opt']:overflow-hidden in-data-[style-hooks~='lin-dd-opt']:[display:-webkit-box] in-data-[style-hooks~='lin-dd-opt']:[-webkit-line-clamp:2] in-data-[style-hooks~='lin-dd-opt']:[-webkit-box-orient:vertical] in-data-[style-hooks~='lin-dd-opt']:wrap-anywhere",
+                    )}
+                  />
+                  <IconBtn
+                    label="Sub-task display settings"
+                    title="Sub-task display options are not available yet"
+                    disabled
+                  >
+                    <SlidersHorizontal size={14} />
+                  </IconBtn>
+                  <IconBtn
+                    label="Add sub-task"
+                    title="Add sub-task"
+                    onClick={() => setAddingSub((v) => !v)}
+                  >
+                    <Plus size={14} />
+                  </IconBtn>
+                </header>
+                <AccordionContent>
+                  {addingSub && (
+                    <div
+                      style={{ display: "flex", gap: 8, margin: "4px 0 8px" }}
+                    >
+                      <input
+                        placeholder="Sub-task title…"
+                        value={newSubTitle}
+                        onChange={(e) => setNewSubTitle(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") void createSub();
+                        }}
+                        style={{
+                          flex: 1,
+                          border: "1px solid var(--line)",
+                          borderRadius: 7,
+                          padding: "8px 10px",
+                          fontSize: 13,
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className={styleClasses(
+                          "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333]",
+                        )}
+                        data-style-hooks={styleHooks(
+                          "lin-btn inline-flex items-center gap-[8px] border border-solid border-line bg-panel text-foreground rounded-[7px] py-[8px] px-[14px] text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default primary data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333]",
+                        )}
+                        disabled={!newSubTitle.trim()}
+                        onClick={() => void createSub()}
+                      >
+                        Add
+                      </button>
+                    </div>
+                  )}
+                  {subsView.map((s) => (
+                    <div
+                      key={s.id}
+                      className={styleClasses(
+                        cx(
+                          "flex items-center gap-2.5 py-1.75 px-2 rounded-[7px] font-[inherit] text-[13px] w-full [background:none] border-0 text-left text-foreground cursor-pointer [&:hover]:bg-subtle",
+                          s.state?.type === "completed" && "",
+                          isLocalIssueId(s.id) &&
+                            "data-[style-hooks~='lin-subrow']:opacity-62 data-[style-hooks~='lin-comment']:opacity-62 [[data-style-hooks~='lin-comment']&_>_header_time]:italic",
+                        ),
+                      )}
+                      data-style-hooks={styleHooks(
+                        cx(
+                          "lin-subrow flex items-center gap-[10px] py-[7px] px-[8px] rounded-[7px] font-[inherit] text-[13px] w-full [background:none] border-0 text-left text-foreground cursor-pointer [&:hover]:bg-subtle",
+                          s.state?.type === "completed" && "done",
+                          isLocalIssueId(s.id) &&
+                            "pending data-[style-hooks~='lin-subrow']:opacity-62 data-[style-hooks~='lin-comment']:opacity-62 [[data-style-hooks~='lin-comment']&_>_header_time]:italic",
+                        ),
+                      )}
+                      aria-busy={isLocalIssueId(s.id) || undefined}
+                      {...(isLocalIssueId(s.id) ? {} : issueIntentProps(s))}
+                    >
+                      <GraphStatusIcon state={s.state} size={14} />
+                      <span
+                        className={styleClasses(
+                          "in-data-[style-hooks~='lin-row']:font-semibold in-data-[style-hooks~='lin-row']:whitespace-nowrap in-data-[style-hooks~='lin-row']:text-foreground [[data-style-hooks~='lin-bcard']_[data-style-hooks~='top']_&]:font-[450] [[data-style-hooks~='lin-bcard']_[data-style-hooks~='top']_&]:text-muted",
+                        )}
+                        data-style-hooks={styleHooks(
+                          "ident in-data-[style-hooks~='lin-row']:font-semibold in-data-[style-hooks~='lin-row']:whitespace-nowrap in-data-[style-hooks~='lin-row']:text-foreground [[data-style-hooks~='lin-bcard']_[data-style-hooks~='top']_&]:font-[450] [[data-style-hooks~='lin-bcard']_[data-style-hooks~='top']_&]:text-muted",
+                        )}
+                      >
+                        {s.identifier}
+                      </span>
+                      <button
+                        type="button"
+                        className={styleClasses(
+                          "in-data-[style-hooks~='lin-subrow']:flex-1 in-data-[style-hooks~='lin-subrow']:min-w-0 in-data-[style-hooks~='lin-subrow']:overflow-hidden in-data-[style-hooks~='lin-subrow']:text-ellipsis in-data-[style-hooks~='lin-subrow']:whitespace-nowrap [[data-style-hooks~='lin-subrow'][data-style-hooks~='done']_&]:line-through [[data-style-hooks~='lin-subrow'][data-style-hooks~='done']_&]:text-muted",
+                        )}
+                        data-style-hooks={styleHooks(
+                          "t in-data-[style-hooks~='lin-subrow']:flex-1 in-data-[style-hooks~='lin-subrow']:min-w-0 in-data-[style-hooks~='lin-subrow']:overflow-hidden in-data-[style-hooks~='lin-subrow']:text-ellipsis in-data-[style-hooks~='lin-subrow']:whitespace-nowrap [[data-style-hooks~='lin-subrow'][data-style-hooks~='done']_&]:line-through [[data-style-hooks~='lin-subrow'][data-style-hooks~='done']_&]:text-muted",
+                        )}
+                        disabled={isLocalIssueId(s.id)}
+                        onClick={() => onOpenIssue(s)}
+                        title={s.title}
+                      >
+                        {s.title}
+                      </button>
+                      {s.labels?.nodes.map((l) => (
+                        <LabelChip key={l.id} label={l} />
+                      ))}
+                      {s.assignee && (
+                        <Avatar name={s.assignee.name} size={18} />
+                      )}
+                      <IconBtn
+                        label={`Open sub-task ${s.identifier}`}
+                        title="Open sub-task"
+                        disabled={isLocalIssueId(s.id)}
+                        onClick={() => onOpenIssue(s)}
+                      >
+                        <ExternalLink size={13} />
+                      </IconBtn>
+                    </div>
+                  ))}
+                  {!subsView.length && !addingSub && (
+                    <p
+                      className={styleClasses("text-[12px] text-muted")}
+                      data-style-hooks={styleHooks(
+                        "lin-note text-[12px] text-muted",
+                      )}
+                    >
+                      {detailReady ? "No sub-tasks yet." : "Loading sub-tasks…"}
+                    </p>
+                  )}
+                </AccordionContent>
+              </section>
+            </Accordion>
+
+            <Accordion>
+              <section
+                className={styleClasses(
+                  "border-t border-t-line py-3.5 px-0 [&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-2 [&_>_header]:text-[13px] [&_>_header]:font-semibold [&_>_header]:mb-1.5",
+                )}
+                data-style-hooks={styleHooks(
+                  "lin-subsec border-t border-t-line py-[14px] px-0 [&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-[8px] [&_>_header]:text-[13px] [&_>_header]:font-semibold [&_>_header]:mb-[6px]",
+                )}
+                aria-label="Attachments"
+              >
+                <header>
+                  <AccordionTrigger>
+                    <ChevronRight
+                      size={14}
+                      className="shrink-0 text-muted transition-transform group-data-expanded:rotate-90 motion-reduce:transition-none"
+                    />
+                    <span>Attachments</span>
+                    <span
+                      style={{
+                        color: "var(--muted)",
+                        fontWeight: 500,
+                        fontSize: 12,
+                      }}
+                      className={styleClasses(
+                        "in-data-[style-hooks~='lin-group-head']:text-muted in-data-[style-hooks~='lin-group-head']:font-medium in-data-[style-hooks~='lin-group-head']:text-[12px] [[data-style-hooks~='lin-bcol']_>_header_&]:text-muted [[data-style-hooks~='lin-bcol']_>_header_&]:font-normal",
+                      )}
+                      data-style-hooks={styleHooks(
+                        "count in-data-[style-hooks~='lin-group-head']:text-muted in-data-[style-hooks~='lin-group-head']:font-medium in-data-[style-hooks~='lin-group-head']:text-[12px] [[data-style-hooks~='lin-bcol']_>_header_&]:text-muted [[data-style-hooks~='lin-bcol']_>_header_&]:font-normal",
+                      )}
+                    >
+                      {(detail.attachments?.nodes || []).length}
+                    </span>
+                  </AccordionTrigger>
+
+                  <span
+                    className={styleClasses(
+                      "in-data-[style-hooks~='lin-group-head']:flex-1 in-data-[style-hooks~='lin-hidden-col']:flex-1 in-data-[style-hooks~='lin-hidden-col']:overflow-hidden in-data-[style-hooks~='lin-hidden-col']:text-ellipsis in-data-[style-hooks~='lin-hidden-col']:whitespace-nowrap [[data-style-hooks~='lin-subsec']_>_header_&]:flex-1 [[data-style-hooks~='lin-activity']_>_header_&]:flex-1 in-data-[style-hooks~='lin-dd-opt']:flex-1 in-data-[style-hooks~='lin-dd-opt']:min-w-0 in-data-[style-hooks~='lin-dd-opt']:overflow-hidden in-data-[style-hooks~='lin-dd-opt']:[display:-webkit-box] in-data-[style-hooks~='lin-dd-opt']:[-webkit-line-clamp:2] in-data-[style-hooks~='lin-dd-opt']:[-webkit-box-orient:vertical] in-data-[style-hooks~='lin-dd-opt']:wrap-anywhere",
+                    )}
+                    data-style-hooks={styleHooks(
+                      "grow in-data-[style-hooks~='lin-group-head']:flex-1 in-data-[style-hooks~='lin-hidden-col']:flex-1 in-data-[style-hooks~='lin-hidden-col']:overflow-hidden in-data-[style-hooks~='lin-hidden-col']:text-ellipsis in-data-[style-hooks~='lin-hidden-col']:whitespace-nowrap [[data-style-hooks~='lin-subsec']_>_header_&]:flex-1 [[data-style-hooks~='lin-activity']_>_header_&]:flex-1 in-data-[style-hooks~='lin-dd-opt']:flex-1 in-data-[style-hooks~='lin-dd-opt']:min-w-0 in-data-[style-hooks~='lin-dd-opt']:overflow-hidden in-data-[style-hooks~='lin-dd-opt']:[display:-webkit-box] in-data-[style-hooks~='lin-dd-opt']:[-webkit-line-clamp:2] in-data-[style-hooks~='lin-dd-opt']:[-webkit-box-orient:vertical] in-data-[style-hooks~='lin-dd-opt']:wrap-anywhere",
+                    )}
+                  />
+                  <span style={{ position: "relative" }}>
+                    <IconBtn
+                      label="Attach file or link"
+                      title="Attach"
+                      onClick={() => setAttachMenu((v) => !v)}
+                    >
+                      <Plus size={14} />
+                    </IconBtn>
+                    {attachMenu && (
+                      <LinPopover
+                        onClose={() => setAttachMenu(false)}
+                        className={styleClasses(
+                          "absolute z-130 border border-solid border-line rounded-[10px] bg-panel shadow-[0_12px_40px_#1b1b1b1f]",
+                        )}
+                        data-style-hooks={styleHooks(
+                          "lin-popover absolute z-130 border border-solid border-line rounded-[10px] bg-panel shadow-[0_12px_40px_#1b1b1b1f]",
+                        )}
+                        style={{
+                          right: 0,
+                          top: "calc(100% + 6px)",
+                          width: 300,
+                          padding: 12,
+                        }}
+                      >
+                        <b style={{ fontSize: 13 }}>Attach</b>
+                        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                          <button
+                            type="button"
+                            className={styleClasses(
+                              "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default",
+                            )}
+                            data-style-hooks={styleHooks(
+                              "lin-btn inline-flex items-center gap-[8px] border border-solid border-line bg-panel text-foreground rounded-[7px] py-[8px] px-[14px] text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default",
+                            )}
+                            disabled={uploading}
+                            onClick={() => fileRef.current?.click()}
+                          >
+                            {uploading ? "Uploading…" : "Upload file"}
+                          </button>
+                          <input
+                            ref={fileRef}
+                            type="file"
+                            hidden
+                            accept="image/*,video/*,.pdf,.txt,.md,.markdown,.csv,.tsv,.json,.rtf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.odt,.ods,.odp"
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              if (f) void doUpload(f);
+                              e.target.value = "";
+                            }}
+                          />
+                        </div>
+                        <div
+                          className={styleClasses("h-px bg-line my-1.25 mx-1")}
+                          data-style-hooks={styleHooks(
+                            "lin-menu-divider h-px bg-line my-[5px] mx-[4px]",
+                          )}
+                        />
+                        <input
+                          placeholder="Paste link URL…"
+                          value={attachUrl}
+                          onChange={(e) => setAttachUrl(e.target.value)}
+                          style={{
+                            width: "100%",
+                            border: "1px solid var(--line)",
+                            borderRadius: 6,
+                            padding: "7px 10px",
+                            fontSize: 13,
+                            marginBottom: 8,
+                          }}
+                        />
+                        <input
+                          placeholder="Link title (optional)"
+                          value={attachTitle}
+                          onChange={(e) => setAttachTitle(e.target.value)}
+                          style={{
+                            width: "100%",
+                            border: "1px solid var(--line)",
+                            borderRadius: 6,
+                            padding: "7px 10px",
+                            fontSize: 13,
+                            marginBottom: 8,
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className={styleClasses(
+                            "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333]",
+                          )}
+                          data-style-hooks={styleHooks(
+                            "lin-btn inline-flex items-center gap-[8px] border border-solid border-line bg-panel text-foreground rounded-[7px] py-[8px] px-[14px] text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default primary data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333]",
+                          )}
+                          style={{ width: "100%", justifyContent: "center" }}
+                          disabled={!attachUrl.trim() || uploading}
+                          onClick={() => void attachLink()}
+                        >
+                          Attach link
+                        </button>
+                      </LinPopover>
+                    )}
+                  </span>
+                </header>
+                <AccordionContent>
+                  <div
+                    className={styleClasses(
+                      "flex flex-col gap-1.5 my-1.5 mx-0",
+                    )}
+                    data-style-hooks={styleHooks(
+                      "lin-attach-list flex flex-col gap-[6px] my-[6px] mx-0",
+                    )}
+                  >
+                    {(detail.attachments?.nodes || []).map((a) => {
+                      const preview =
+                        attachmentKind(a) === "image" && !brokenThumbs[a.id];
+                      return (
+                        <div
+                          key={a.id}
+                          className={styleClasses(
+                            "flex items-center gap-2.5 border border-solid border-line rounded-lg py-2 px-3 text-[13px] [&_a]:text-foreground [&_a]:font-[550] [&_a]:overflow-hidden [&_a]:text-ellipsis [&_a]:whitespace-nowrap [&_small]:text-muted",
+                          )}
+                          data-style-hooks={styleHooks(
+                            "lin-attach flex items-center gap-[10px] border border-solid border-line rounded-[8px] py-[8px] px-[12px] text-[13px] [&_a]:text-foreground [&_a]:font-[550] [&_a]:overflow-hidden [&_a]:text-ellipsis [&_a]:whitespace-nowrap [&_small]:text-muted",
+                          )}
+                        >
+                          {preview ? (
+                            <img
+                              className={styleClasses(
+                                "[[data-style-hooks~='lin-attach']_img&]:w-11 [[data-style-hooks~='lin-attach']_img&]:h-11 [[data-style-hooks~='lin-attach']_img&]:object-cover [[data-style-hooks~='lin-attach']_img&]:rounded-md [[data-style-hooks~='lin-attach']_img&]:flex-none",
+                              )}
+                              data-style-hooks={styleHooks(
+                                "thumb [[data-style-hooks~='lin-attach']_img&]:w-[44px] [[data-style-hooks~='lin-attach']_img&]:h-[44px] [[data-style-hooks~='lin-attach']_img&]:object-cover [[data-style-hooks~='lin-attach']_img&]:rounded-[6px] [[data-style-hooks~='lin-attach']_img&]:flex-none",
+                              )}
+                              src={a.url}
+                              alt=""
+                              loading="lazy"
+                              decoding="async"
+                              onError={() =>
+                                setBrokenThumbs((m) => ({ ...m, [a.id]: true }))
+                              }
+                            />
+                          ) : (
+                            <FileText
+                              size={16}
+                              color="var(--muted)"
+                              aria-hidden="true"
+                            />
+                          )}
+                          <a
+                            href={a.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            {a.title}
+                          </a>
+                          {a.subtitle && <small>{a.subtitle}</small>}
+                          <small style={{ marginLeft: "auto" }}>
+                            {relTime(a.createdAt)}
+                          </small>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {!(detail.attachments?.nodes || []).length && (
+                    <p
+                      className={styleClasses("text-[12px] text-muted")}
+                      data-style-hooks={styleHooks(
+                        "lin-note text-[12px] text-muted",
+                      )}
+                    >
+                      {detailReady
+                        ? "No attachments yet."
+                        : "Loading attachments…"}
+                    </p>
+                  )}
+                </AccordionContent>
+              </section>
+            </Accordion>
+
+            {(() => {
+              // Compact and absent by default: only rendered when something is actually linked,
+              // so an issue with no GitHub work stays visually unchanged.
+              const ghl = detail.githubLinks || [];
+              if (!ghl.length) return null;
+              return (
+                <section
+                  className={styleClasses(
+                    "border-t border-t-line py-3.5 px-0 [&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-2 [&_>_header]:text-[13px] [&_>_header]:font-semibold [&_>_header]:mb-1.5",
+                  )}
+                  data-style-hooks={styleHooks(
+                    "lin-subsec border-t border-t-line py-[14px] px-0 [&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-[8px] [&_>_header]:text-[13px] [&_>_header]:font-semibold [&_>_header]:mb-[6px]",
+                  )}
+                  aria-label="GitHub"
+                >
+                  <header>
+                    <ChevronDown size={14} color="var(--muted)" />
+                    <span>GitHub</span>
+                    <span
+                      style={{
+                        color: "var(--muted)",
+                        fontWeight: 500,
+                        fontSize: 12,
+                      }}
+                      className={styleClasses(
+                        "in-data-[style-hooks~='lin-group-head']:text-muted in-data-[style-hooks~='lin-group-head']:font-medium in-data-[style-hooks~='lin-group-head']:text-[12px] [[data-style-hooks~='lin-bcol']_>_header_&]:text-muted [[data-style-hooks~='lin-bcol']_>_header_&]:font-normal",
+                      )}
+                      data-style-hooks={styleHooks(
+                        "count in-data-[style-hooks~='lin-group-head']:text-muted in-data-[style-hooks~='lin-group-head']:font-medium in-data-[style-hooks~='lin-group-head']:text-[12px] [[data-style-hooks~='lin-bcol']_>_header_&]:text-muted [[data-style-hooks~='lin-bcol']_>_header_&]:font-normal",
+                      )}
+                    >
+                      {ghl.length}
+                    </span>
+                  </header>
+                  <div
+                    className={styleClasses(
+                      "flex flex-col gap-1.5 my-1.5 mx-0",
+                    )}
+                    data-style-hooks={styleHooks(
+                      "lin-attach-list flex flex-col gap-[6px] my-[6px] mx-0",
+                    )}
+                  >
+                    {ghl.map((l) => {
+                      const kindLabel =
+                        l.kind === "pr"
+                          ? "PR"
+                          : l.kind === "commit"
+                            ? "Commit"
+                            : l.kind === "deploy"
+                              ? "Deploy"
+                              : l.kind;
+                      const detailText =
+                        l.kind === "pr"
+                          ? l.state
+                          : l.kind === "commit"
+                            ? l.sha
+                              ? l.sha.slice(0, 7)
+                              : ""
+                            : l.kind === "deploy"
+                              ? l.environment
+                              : "";
+                      return (
+                        <div
+                          key={l.id}
+                          className={styleClasses(
+                            "flex items-center gap-2.5 border border-solid border-line rounded-lg py-2 px-3 text-[13px] [&_a]:text-foreground [&_a]:font-[550] [&_a]:overflow-hidden [&_a]:text-ellipsis [&_a]:whitespace-nowrap [&_small]:text-muted",
+                          )}
+                          data-style-hooks={styleHooks(
+                            "lin-attach flex items-center gap-[10px] border border-solid border-line rounded-[8px] py-[8px] px-[12px] text-[13px] [&_a]:text-foreground [&_a]:font-[550] [&_a]:overflow-hidden [&_a]:text-ellipsis [&_a]:whitespace-nowrap [&_small]:text-muted",
+                          )}
+                        >
+                          <Link2 size={16} color="var(--muted)" />
+                          <small
+                            style={{
+                              textTransform: "uppercase",
+                              letterSpacing: ".04em",
+                            }}
+                          >
+                            {kindLabel}
+                          </small>
+                          <a
+                            href={l.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            {l.title || l.externalId}
+                          </a>
+                          {detailText && <small>{detailText}</small>}
+                          <small style={{ marginLeft: "auto" }}>
+                            {relTime(l.createdAt)}
+                          </small>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              );
+            })()}
+
+            <Accordion>
+              <section
+                className={styleClasses(
+                  "border-t border-t-line pt-4 mt-1.5 [&_>_header]:flex [&_>_header]:items-center [&_>_header]:mb-3 [&_>_header_b]:text-[14px]",
+                )}
+                data-style-hooks={styleHooks(
+                  "lin-activity border-t border-t-line pt-[16px] mt-[6px] [&_>_header]:flex [&_>_header]:items-center [&_>_header]:mb-[12px] [&_>_header_b]:text-[14px]",
+                )}
+                aria-label="Activity"
+              >
+                <header>
+                  <AccordionTrigger>
+                    <ChevronRight
+                      size={14}
+                      className="shrink-0 text-muted transition-transform group-data-expanded:rotate-90 motion-reduce:transition-none"
+                    />
+                    <b>Activity</b>
+                  </AccordionTrigger>
+                  <span
+                    className={styleClasses(
+                      "in-data-[style-hooks~='lin-group-head']:flex-1 in-data-[style-hooks~='lin-hidden-col']:flex-1 in-data-[style-hooks~='lin-hidden-col']:overflow-hidden in-data-[style-hooks~='lin-hidden-col']:text-ellipsis in-data-[style-hooks~='lin-hidden-col']:whitespace-nowrap [[data-style-hooks~='lin-subsec']_>_header_&]:flex-1 [[data-style-hooks~='lin-activity']_>_header_&]:flex-1 in-data-[style-hooks~='lin-dd-opt']:flex-1 in-data-[style-hooks~='lin-dd-opt']:min-w-0 in-data-[style-hooks~='lin-dd-opt']:overflow-hidden in-data-[style-hooks~='lin-dd-opt']:[display:-webkit-box] in-data-[style-hooks~='lin-dd-opt']:[-webkit-line-clamp:2] in-data-[style-hooks~='lin-dd-opt']:[-webkit-box-orient:vertical] in-data-[style-hooks~='lin-dd-opt']:wrap-anywhere",
+                    )}
+                    data-style-hooks={styleHooks(
+                      "grow in-data-[style-hooks~='lin-group-head']:flex-1 in-data-[style-hooks~='lin-hidden-col']:flex-1 in-data-[style-hooks~='lin-hidden-col']:overflow-hidden in-data-[style-hooks~='lin-hidden-col']:text-ellipsis in-data-[style-hooks~='lin-hidden-col']:whitespace-nowrap [[data-style-hooks~='lin-subsec']_>_header_&]:flex-1 [[data-style-hooks~='lin-activity']_>_header_&]:flex-1 in-data-[style-hooks~='lin-dd-opt']:flex-1 in-data-[style-hooks~='lin-dd-opt']:min-w-0 in-data-[style-hooks~='lin-dd-opt']:overflow-hidden in-data-[style-hooks~='lin-dd-opt']:[display:-webkit-box] in-data-[style-hooks~='lin-dd-opt']:[-webkit-line-clamp:2] in-data-[style-hooks~='lin-dd-opt']:[-webkit-box-orient:vertical] in-data-[style-hooks~='lin-dd-opt']:wrap-anywhere",
+                    )}
+                  />
+                  <button
+                    type="button"
+                    className={styleClasses(
+                      "[background:none] border-0 text-muted text-[12px] font-medium inline-flex items-center gap-1.75 py-1.25 px-2 rounded-md [&:hover]:bg-subtle [&:hover]:text-foreground",
+                    )}
+                    data-style-hooks={styleHooks(
+                      "lin-subscribe-btn [background:none] border-0 text-muted text-[12px] font-medium inline-flex items-center gap-[7px] py-[5px] px-[8px] rounded-[6px] [&:hover]:bg-subtle [&:hover]:text-foreground",
+                    )}
+                    onClick={() => void toggleSubscribe()}
+                    aria-pressed={subscribed}
+                  >
+                    {subscribed ? "Subscribed" : "Subscribe"}
+                  </button>
+                  <span
+                    className={styleClasses("flex gap-1.5 mt-2")}
+                    data-style-hooks={styleHooks(
+                      "lin-sublist flex gap-[6px] mt-[8px]",
+                    )}
+                  >
+                    {(detail.subscribers?.nodes || []).slice(0, 5).map((s) => (
+                      <Avatar key={s.id} name={s.name} size={20} />
+                    ))}
+                  </span>
+                </header>
+                <AccordionContent>
+                  {(detail.activity?.nodes || []).map((e) => (
+                    <div
+                      key={e.id}
+                      className={styleClasses(
+                        "flex gap-2.5 items-start text-[13px] text-muted py-1.75 px-0 [&_b]:text-foreground [&_b]:font-semibold [&_time]:ml-auto [&_time]:flex-none [&_time]:text-[12px]",
+                      )}
+                      data-style-hooks={styleHooks(
+                        "lin-event flex gap-[10px] items-start text-[13px] text-muted py-[7px] px-0 [&_b]:text-foreground [&_b]:font-semibold [&_time]:ml-auto [&_time]:flex-none [&_time]:text-[12px]",
+                      )}
+                    >
+                      <Avatar name={e.actor?.name} size={18} />
+                      <span>
+                        <b>{e.actor?.name || "Someone"}</b>{" "}
+                        {describeEvent(e, states).replace(
+                          /^.*? (created|moved|assigned|changed|updated)/,
+                          "$1",
+                        )}
+                      </span>
+                      <time>{relTime(e.createdAt)}</time>
+                    </div>
+                  ))}
+                  {!detailReady && (
+                    <p
+                      className={styleClasses("text-[12px] text-muted")}
+                      data-style-hooks={styleHooks(
+                        "lin-note text-[12px] text-muted",
+                      )}
+                      role="status"
+                    >
+                      Loading activity…
+                    </p>
+                  )}
+                  {serverComments.map((c) => (
+                    <article
+                      data-issue-comment
+                      key={c.id}
+                      className={styleClasses(
+                        cx(
+                          "border border-solid border-line rounded-lg py-2.75 px-3.25 my-2 mx-0 text-[13px] [&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-2 [&_>_header]:mb-1.5 [&_>_header_b]:text-[13px] [&_>_header_time]:text-muted [&_>_header_time]:text-[12px]",
+                          editedComments[c.id] !== undefined &&
+                            "data-[style-hooks~='lin-subrow']:opacity-62 data-[style-hooks~='lin-comment']:opacity-62 [[data-style-hooks~='lin-comment']&_>_header_time]:italic",
+                        ),
+                      )}
+                      data-style-hooks={styleHooks(
+                        cx(
+                          "lin-comment border border-solid border-line rounded-[8px] py-[11px] px-[13px] my-[8px] mx-0 text-[13px] [&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-[8px] [&_>_header]:mb-[6px] [&_>_header_b]:text-[13px] [&_>_header_time]:text-muted [&_>_header_time]:text-[12px]",
+                          editedComments[c.id] !== undefined &&
+                            "pending data-[style-hooks~='lin-subrow']:opacity-62 data-[style-hooks~='lin-comment']:opacity-62 [[data-style-hooks~='lin-comment']&_>_header_time]:italic",
+                        ),
+                      )}
+                      aria-busy={
+                        editedComments[c.id] !== undefined || undefined
+                      }
+                    >
+                      <header>
+                        <Avatar name={c.user?.name} size={18} />
+                        <b>{c.user?.name || "User"}</b>
+                        <time>
+                          {editedComments[c.id] !== undefined
+                            ? "Saving…"
+                            : relTime(c.createdAt)}
+                        </time>
+                        {c.editedAt && editedComments[c.id] === undefined && (
+                          <span
+                            className={styleClasses(
+                              "[[data-style-hooks~='lin-comment']_>_header_&]:text-muted [[data-style-hooks~='lin-comment']_>_header_&]:text-[12px]",
+                            )}
+                            data-style-hooks={styleHooks(
+                              "lin-comment-edited [[data-style-hooks~='lin-comment']_>_header_&]:text-muted [[data-style-hooks~='lin-comment']_>_header_&]:text-[12px]",
+                            )}
+                            title={`Edited ${relTime(c.editedAt)}`}
+                          >
+                            (edited)
+                          </span>
+                        )}
+                      </header>
+                      {editing?.id === c.id && c.canEdit ? (
+                        <form
+                          className={styleClasses(
+                            "[[data-style-hooks~='lin-comment']_>_&]:mt-1 border border-solid border-line rounded-[9px] mt-3.5 bg-panel [&_textarea]:w-full [&_textarea]:border-0 [&_textarea]:bg-transparent [&_textarea]:resize-y [&_textarea]:min-h-16 [&_textarea]:py-3 [&_textarea]:px-3.5 [&_textarea]:[font:inherit] [&_textarea]:text-[13px] [&_textarea]:text-foreground [&_textarea:focus]:[outline:none] [&_footer]:flex [&_footer]:items-center [&_footer]:justify-end [&_footer]:gap-1 [&_footer]:py-1.5 [&_footer]:px-2 [&_footer]:border-t [&_footer]:border-t-line",
+                          )}
+                          data-style-hooks={styleHooks(
+                            "lin-commentbox [[data-style-hooks~='lin-comment']_>_&]:mt-[4px] border border-solid border-line rounded-[9px] mt-[14px] bg-panel [&_textarea]:w-full [&_textarea]:border-0 [&_textarea]:bg-transparent [&_textarea]:resize-y [&_textarea]:min-h-[64px] [&_textarea]:py-[12px] [&_textarea]:px-[14px] [&_textarea]:[font:inherit] [&_textarea]:text-[13px] [&_textarea]:text-foreground [&_textarea:focus]:[outline:none] [&_footer]:flex [&_footer]:items-center [&_footer]:justify-end [&_footer]:gap-[4px] [&_footer]:py-[6px] [&_footer]:px-[8px] [&_footer]:border-t [&_footer]:border-t-line",
+                          )}
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            void saveComment(c.id, editing.body);
+                          }}
+                        >
+                          <textarea
+                            rows={2}
+                            value={editing.body}
+                            aria-label="Edit comment"
+                            onChange={(e) =>
+                              setEditing({ id: c.id, body: e.target.value })
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Escape") setEditing(null);
+                              if (
+                                e.key === "Enter" &&
+                                (e.metaKey || e.ctrlKey)
+                              ) {
+                                e.preventDefault();
+                                e.currentTarget.form?.requestSubmit();
+                              }
+                            }}
+                          />
+                          <footer>
+                            <button
+                              type="button"
+                              className={styleClasses(
+                                "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default",
+                              )}
+                              data-style-hooks={styleHooks(
+                                "lin-btn inline-flex items-center gap-[8px] border border-solid border-line bg-panel text-foreground rounded-[7px] py-[8px] px-[14px] text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default",
+                              )}
+                              onClick={() => setEditing(null)}
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="submit"
+                              className={styleClasses(
+                                "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333]",
+                              )}
+                              data-style-hooks={styleHooks(
+                                "lin-btn inline-flex items-center gap-[8px] border border-solid border-line bg-panel text-foreground rounded-[7px] py-[8px] px-[14px] text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default primary data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333]",
+                              )}
+                              disabled={!editing.body.trim()}
+                            >
+                              Save
+                            </button>
+                          </footer>
+                        </form>
+                      ) : (
+                        <Markdown text={c.body} />
+                      )}
+                      {editing?.id !== c.id && (
+                        <>
+                          {c.canEdit && (
+                            <button
+                              type="button"
+                              className={styleClasses(
+                                "inline-flex items-center gap-2 [background:none] border-0 text-muted text-[13px] py-1.25 px-1.5 rounded-md [&:hover]:bg-subtle [&:hover]:text-foreground in-data-[style-hooks~='lin-comment']:mt-2",
+                              )}
+                              data-style-hooks={styleHooks(
+                                "lin-addrow inline-flex items-center gap-[8px] [background:none] border-0 text-muted text-[13px] py-[5px] px-[6px] rounded-[6px] [&:hover]:bg-subtle [&:hover]:text-foreground del in-data-[style-hooks~='lin-comment']:mt-[8px]",
+                              )}
+                              onClick={() =>
+                                setEditing({ id: c.id, body: c.body })
+                              }
+                            >
+                              Edit comment
+                            </button>
+                          )}
+                          {c.canDelete && (
+                            <button
+                              type="button"
+                              className={styleClasses(
+                                "inline-flex items-center gap-2 [background:none] border-0 text-muted text-[13px] py-1.25 px-1.5 rounded-md [&:hover]:bg-subtle [&:hover]:text-foreground in-data-[style-hooks~='lin-comment']:mt-2",
+                              )}
+                              data-style-hooks={styleHooks(
+                                "lin-addrow inline-flex items-center gap-[8px] [background:none] border-0 text-muted text-[13px] py-[5px] px-[6px] rounded-[6px] [&:hover]:bg-subtle [&:hover]:text-foreground del in-data-[style-hooks~='lin-comment']:mt-[8px]",
+                              )}
+                              onClick={async () => {
+                                if (
+                                  await confirmDialog(
+                                    c.user?.id && c.user.id !== viewer.id
+                                      ? `Delete ${c.user?.name || "this member"}'s comment? This removes it for everyone.`
+                                      : "Delete this comment?",
+                                    { danger: true },
+                                  )
+                                )
+                                  void deleteComment(c.id);
+                              }}
+                            >
+                              Delete comment
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </article>
+                  ))}
+                  {shownPendingComments.map((p) => (
+                    <article
+                      key={p.id}
+                      className={styleClasses(
+                        "border border-solid border-line rounded-lg py-2.75 px-3.25 my-2 mx-0 text-[13px] [&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-2 [&_>_header]:mb-1.5 [&_>_header_b]:text-[13px] [&_>_header_time]:text-muted [&_>_header_time]:text-[12px] data-[style-hooks~='lin-subrow']:opacity-62 data-[style-hooks~='lin-comment']:opacity-62 [[data-style-hooks~='lin-comment']&_>_header_time]:italic",
+                      )}
+                      data-style-hooks={styleHooks(
+                        "lin-comment border border-solid border-line rounded-[8px] py-[11px] px-[13px] my-[8px] mx-0 text-[13px] [&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-[8px] [&_>_header]:mb-[6px] [&_>_header_b]:text-[13px] [&_>_header_time]:text-muted [&_>_header_time]:text-[12px] pending data-[style-hooks~='lin-subrow']:opacity-62 data-[style-hooks~='lin-comment']:opacity-62 [[data-style-hooks~='lin-comment']&_>_header_time]:italic",
+                      )}
+                      aria-busy="true"
+                    >
+                      <header>
+                        <Avatar name={viewer.name} size={18} />
+                        <b>{viewer.name || "You"}</b>
+                        <time>Sending…</time>
+                      </header>
+                      <Markdown text={p.body} />
+                    </article>
+                  ))}
+                  <form
+                    className={styleClasses(
+                      "[[data-style-hooks~='lin-comment']_>_&]:mt-1 border border-solid border-line rounded-[9px] mt-3.5 bg-panel [&_textarea]:w-full [&_textarea]:border-0 [&_textarea]:bg-transparent [&_textarea]:resize-y [&_textarea]:min-h-16 [&_textarea]:py-3 [&_textarea]:px-3.5 [&_textarea]:[font:inherit] [&_textarea]:text-[13px] [&_textarea]:text-foreground [&_textarea:focus]:[outline:none] [&_footer]:flex [&_footer]:items-center [&_footer]:justify-end [&_footer]:gap-1 [&_footer]:py-1.5 [&_footer]:px-2 [&_footer]:border-t [&_footer]:border-t-line",
+                    )}
+                    data-style-hooks={styleHooks(
+                      "lin-commentbox [[data-style-hooks~='lin-comment']_>_&]:mt-[4px] border border-solid border-line rounded-[9px] mt-[14px] bg-panel [&_textarea]:w-full [&_textarea]:border-0 [&_textarea]:bg-transparent [&_textarea]:resize-y [&_textarea]:min-h-[64px] [&_textarea]:py-[12px] [&_textarea]:px-[14px] [&_textarea]:[font:inherit] [&_textarea]:text-[13px] [&_textarea]:text-foreground [&_textarea:focus]:[outline:none] [&_footer]:flex [&_footer]:items-center [&_footer]:justify-end [&_footer]:gap-[4px] [&_footer]:py-[6px] [&_footer]:px-[8px] [&_footer]:border-t [&_footer]:border-t-line",
+                    )}
+                    onSubmit={submitComment}
+                  >
+                    <div className="relative">
+                      <MentionMenu
+                        matches={mentions.matches}
+                        index={mentions.index}
+                        pick={mentions.pick}
+                      />
+                      <textarea
+                        ref={commentRef}
+                        rows={2}
+                        value={comment}
+                        aria-label="Leave a comment"
+                        placeholder="Leave a comment… Type @ to mention someone"
+                        onChange={(e) => {
+                          setComment(e.target.value);
+                          if (commentError) setCommentError("");
+                          mentions.track();
+                        }}
+                        onClick={mentions.track}
+                        onBlur={mentions.close}
+                        onKeyDown={(e) => {
+                          if (mentions.onKeyDown(e)) return;
+                          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                            e.preventDefault();
+                            e.currentTarget.form?.requestSubmit();
+                          }
+                        }}
+                      />
+                    </div>
+                    <footer>
+                      <Tip label="Attach a file">
+                        <button
+                          type="button"
+                          className={styleClasses(
+                            "grid place-items-center w-7 h-7 rounded-md bg-transparent text-muted border border-solid border-transparent relative [&:hover]:bg-subtle [&:hover]:text-foreground disabled:opacity-40 disabled:cursor-default",
+                          )}
+                          data-style-hooks={styleHooks(
+                            "lin-icon-btn grid place-items-center w-[28px] h-[28px] rounded-[6px] bg-transparent text-muted border border-solid border-transparent relative [&:hover]:bg-subtle [&:hover]:text-foreground disabled:opacity-40 disabled:cursor-default",
+                          )}
+                          aria-label="Attach a file"
+                          onClick={() => {
+                            setAttachMenu(true);
+                          }}
+                        >
+                          <svg
+                            width="14"
+                            height="14"
+                            viewBox="0 0 16 16"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                          >
+                            <path
+                              d="M11.5 8.5l-4.7 4.7a2.4 2.4 0 0 1-3.4-3.4l5.4-5.4a1.6 1.6 0 0 1 2.3 2.3L5.7 12"
+                              strokeLinecap="round"
+                            />
+                          </svg>
+                        </button>
+                      </Tip>
+                      <button
+                        type="submit"
+                        className={styleClasses(
+                          "grid place-items-center w-7 h-7 rounded-md bg-transparent text-muted border border-solid border-transparent relative [&:hover]:bg-subtle [&:hover]:text-foreground disabled:opacity-40 disabled:cursor-default",
+                        )}
+                        data-style-hooks={styleHooks(
+                          "lin-icon-btn grid place-items-center w-[28px] h-[28px] rounded-[6px] bg-transparent text-muted border border-solid border-transparent relative [&:hover]:bg-subtle [&:hover]:text-foreground disabled:opacity-40 disabled:cursor-default",
+                        )}
+                        aria-label="Submit comment"
+                        title="Submit comment (⌘↵)"
+                        disabled={!comment.trim()}
+                      >
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.7"
+                        >
+                          <path
+                            d="M8 13V3M4 7l4-4 4 4"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </button>
+                    </footer>
+                  </form>
+                  {commentError && (
+                    <p
+                      className={styleClasses(
+                        "in-data-[style-hooks~='lin-loadmore']:flex in-data-[style-hooks~='lin-loadmore']:items-center in-data-[style-hooks~='lin-loadmore']:gap-2.5 my-4 mx-6 py-3 px-4 border border-solid border-[color-mix(in_srgb,var(--danger)_40%,var(--line))] rounded-lg text-danger text-[13px] bg-[color-mix(in_srgb,var(--danger)_6%,var(--panel))]",
+                      )}
+                      data-style-hooks={styleHooks(
+                        "lin-error in-data-[style-hooks~='lin-loadmore']:flex in-data-[style-hooks~='lin-loadmore']:items-center in-data-[style-hooks~='lin-loadmore']:gap-[10px] my-[16px] mx-[24px] py-[12px] px-[16px] border border-solid border-[color-mix(in_srgb,var(--danger)_40%,var(--line))] rounded-[8px] text-danger text-[13px] bg-[color-mix(in_srgb,var(--danger)_6%,var(--panel))]",
+                      )}
+                      role="alert"
+                    >
+                      {commentError}
+                    </p>
+                  )}
+                </AccordionContent>
+              </section>
+            </Accordion>
+          </main>
         </div>
 
         <aside
@@ -7098,55 +7165,59 @@ export function GraphIssueDetail({
               data-style-hooks={styleHooks(
                 "v in-data-[style-hooks~='lin-prop']:flex-1 in-data-[style-hooks~='lin-prop']:min-w-0 in-data-[style-hooks~='lin-prop']:flex in-data-[style-hooks~='lin-prop']:items-center in-data-[style-hooks~='lin-prop']:gap-[7px]",
               )}
-              style={{ position: "relative", flexDirection: "column", alignItems: "stretch" }}
+              style={{
+                position: "relative",
+                flexDirection: "column",
+                alignItems: "stretch",
+              }}
             >
               <span className="flex w-full min-w-0 items-center gap-1.75">
-              {detail.parent ? (
-                <button
-                  type="button"
-                  className={styleClasses(
-                    "[[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:[background:none] [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:border-0 [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:[font:inherit] [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:text-foreground [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:py-1 [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:px-1.5 [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:rounded-md [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:inline-flex [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:items-center [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:gap-1.75 [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:min-w-0 [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:text-left [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&:hover]:bg-subtle",
-                  )}
-                  data-style-hooks={styleHooks(
-                    "plain [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:[background:none] [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:border-0 [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:[font:inherit] [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:text-foreground [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:py-[4px] [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:px-[6px] [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:rounded-[6px] [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:inline-flex [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:items-center [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:gap-[7px] [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:min-w-0 [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:text-left [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&:hover]:bg-subtle",
-                  )}
-                  onClick={() =>
-                    onOpenIssue({
-                      ...(detail.parent as LinIssue),
-                      id: detail.parent!.id,
-                    })
-                  }
-                >
-                  <span
+                {detail.parent ? (
+                  <button
+                    type="button"
                     className={styleClasses(
-                      "[[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_&]:overflow-hidden [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_&]:text-ellipsis [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_&]:whitespace-nowrap",
+                      "[[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:[background:none] [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:border-0 [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:[font:inherit] [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:text-foreground [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:py-1 [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:px-1.5 [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:rounded-md [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:inline-flex [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:items-center [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:gap-1.75 [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:min-w-0 [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:text-left [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&:hover]:bg-subtle",
                     )}
                     data-style-hooks={styleHooks(
-                      "trunc [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_&]:overflow-hidden [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_&]:text-ellipsis [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_&]:whitespace-nowrap",
+                      "plain [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:[background:none] [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:border-0 [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:[font:inherit] [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:text-foreground [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:py-[4px] [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:px-[6px] [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:rounded-[6px] [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:inline-flex [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:items-center [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:gap-[7px] [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:min-w-0 [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&]:text-left [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_button&:hover]:bg-subtle",
+                    )}
+                    onClick={() =>
+                      onOpenIssue({
+                        ...(detail.parent as LinIssue),
+                        id: detail.parent!.id,
+                      })
+                    }
+                  >
+                    <span
+                      className={styleClasses(
+                        "[[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_&]:overflow-hidden [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_&]:text-ellipsis [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_&]:whitespace-nowrap",
+                      )}
+                      data-style-hooks={styleHooks(
+                        "trunc [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_&]:overflow-hidden [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_&]:text-ellipsis [[data-style-hooks~='lin-prop']_[data-style-hooks~='v']_&]:whitespace-nowrap",
+                      )}
+                    >
+                      <b>{detail.parent.identifier}</b> {detail.parent.title}
+                    </span>
+                  </button>
+                ) : (
+                  <span
+                    className={styleClasses("text-[12px] text-muted")}
+                    data-style-hooks={styleHooks(
+                      "lin-note text-[12px] text-muted",
                     )}
                   >
-                    <b>{detail.parent.identifier}</b> {detail.parent.title}
+                    No parent
                   </span>
-                </button>
-              ) : (
-                <span
-                  className={styleClasses("text-[12px] text-muted")}
-                  data-style-hooks={styleHooks(
-                    "lin-note text-[12px] text-muted",
-                  )}
-                >
-                  No parent
-                </span>
-              )}
-              {detail.parent && (
-                <IconBtn
-                  label="Remove parent"
-                  title="Remove parent"
-                  onClick={() => void change({ parentId: null })}
-                >
-                  <X size={13} />
-                </IconBtn>
-              )}
+                )}
+                {detail.parent && (
+                  <IconBtn
+                    label="Remove parent"
+                    title="Remove parent"
+                    onClick={() => void change({ parentId: null })}
+                  >
+                    <X size={13} />
+                  </IconBtn>
+                )}
               </span>
               {/* Same picker both ways, so moving an issue between parents is one step. */}
               <button

@@ -233,7 +233,7 @@ def _grant_all_tools(world, member_id: str, *, org: str = "alpha") -> dict:
 
 
 def test_every_registered_mcp_tool_is_denied_without_a_grant(world):
-    """The table-driven acceptance: 72 tools, none reachable without its own grant.
+    """The table-driven acceptance: 79 tools, none reachable without its own grant.
 
     Three columns per tool: no policy at all, an empty policy, and the matching
     grant. The third is what makes the first two meaningful - a table that only
@@ -242,7 +242,7 @@ def test_every_registered_mcp_tool_is_denied_without_a_grant(world):
     agent = _agent(world)
     tools = [("read", name) for name in sorted(READ_TOOLS)] + \
             [("write", name) for name in sorted(WRITE_TOOLS)]
-    assert len(tools) == 72, f"the registry has {len(tools)} tools, not 72"
+    assert len(tools) == 79, f"the registry has {len(tools)} tools, not 79"
 
     # Column 1: no policy row at all. Absence is denial.
     for kind, tool in tools:

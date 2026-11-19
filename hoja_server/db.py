@@ -37,7 +37,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 76
+CURRENT_SCHEMA_REVISION = 77
 
 log = logging.getLogger(__name__)
 
@@ -1527,6 +1527,12 @@ inbox_notification = Table(
     Column("created_at", String, nullable=False, index=True),
     Column("read_at", String),
     Column("archived_at", String),
+    # What happened, for the row to say it: a state move's from/to, a comment's
+    # snippet, the changed fields. JSON text; NULL on rows written before rev 77.
+    Column("data", Text),
+    Column("comment_id", String),
+    # Hidden from the inbox (and its unread count) until this instant passes.
+    Column("snoozed_until", String),
 )
 
 attachment = Table(
@@ -3381,6 +3387,19 @@ def _apply_organization_agents_enabled(conn):
         conn.exec_driver_sql("ALTER TABLE organization ADD COLUMN agents_enabled BOOLEAN")
 
 
+def _apply_inbox_notification_detail(conn):
+    """``inbox_notification.data`` / ``comment_id`` / ``snoozed_until``.
+
+    Three nullable columns, no backfill: a row written before this revision has no
+    payload and reads as its bare kind. The recipient change-event triggers are
+    row-level and name no columns beyond ids, so they need no rebuild.
+    """
+    existing = {column["name"] for column in inspect(conn).get_columns("inbox_notification")}
+    for name, sql_type in (("data", "TEXT"), ("comment_id", "VARCHAR"), ("snoozed_until", "VARCHAR")):
+        if name not in existing:
+            conn.exec_driver_sql(f"ALTER TABLE inbox_notification ADD COLUMN {name} {sql_type}")
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -3605,6 +3624,8 @@ _MIGRATIONS = {
     75: _apply_project_update_comments,
     # 76: the workspace switch for the Agents screens (Settings -> Workspace).
     76: _apply_organization_agents_enabled,
+    # 77: inbox notifications say what happened and can be snoozed.
+    77: _apply_inbox_notification_detail,
 }
 
 

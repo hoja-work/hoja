@@ -11,6 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Inbox: notifications now follow task subscriptions. Creators, assignees, commenters
+  and @mentioned people are subscribed automatically. Subscribers hear about comments,
+  status changes, and priority or due-date changes. Assignments, mentions and decision
+  requests go straight to the person they name. Each notification carries what happened
+  (`data`, `comment`). New `snoozedUntil` and `inboxNotifications(snoozed:)` fields, and
+  new mutations for mark unread, unarchive, snooze, archive all read, and per-task read,
+  archive and snooze (`notificationsMarkReadForIssue`, `notificationsArchiveForIssue`,
+  `notificationsSnoozeForIssue`). Notification preferences cover every kind.
+- The web inbox shows one row per task with the task beside it. Opening a row marks it
+  read. Keys: J/K to move, E to archive, U for read or unread, H to snooze, S to
+  unsubscribe. Archive and snooze can be undone. There are Priority, Snoozed and
+  Archived views, an unread badge in the sidebar, and @mention suggestions in comment
+  boxes.
 - Decisions: an agent can ask a human a question on an issue (`issueDecisionCreate`),
   the issue reports `decisionNeeded` and is flagged on a board or list, and the human
   answers in the issue detail with one click (`issueDecisionAnswer`, idempotent and

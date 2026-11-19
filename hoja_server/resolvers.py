@@ -226,21 +226,33 @@ def _decode_project_update_cursor(cursor, label="project update"):
 
 # ----------------------------------------------------------------- Query
 @query.field("inboxNotifications")
-def r_inbox_notifications(_, info, first=50, after=None, unreadOnly=False, archived=False):
+def r_inbox_notifications(_, info, first=50, after=None, unreadOnly=False, archived=False,
+                          snoozed=False):
     store, _w, org, uid = _ctx(info)
     first = _page_size(first)
     cursor = _decode_activity_cursor(after)
-    rows = store.inbox_notifications(org, uid, cursor, first + 1,
-                                     unread_only=unreadOnly, archived=archived)
+    rows = store.inbox_notifications(org, uid, cursor, first + 1, unread_only=unreadOnly,
+                                     archived=archived, snoozed=snoozed)
+    page = rows[:first]
+    # ``issue`` is non-null: a row whose task the viewer can no longer see (its team
+    # was made private to them) is left out rather than failing the whole page.
+    issue_ids = list({row["issue_id"] for row in page})
+    visible = store.issues_by_ids(org, issue_ids, viewer_id=uid)
+    _prime_issue_nodes(info, list(visible.values()))
+    entry = _batch_entry(info, "issue_obj")
+    if entry is not None:
+        entry["loaded"].update(visible)
     nodes = [dict(row, createdAt=row["created_at"], readAt=row["read_at"],
-                  archivedAt=row["archived_at"], _actor_id=row["actor_id"],
-                  _issue_id=row["issue_id"]) for row in rows[:first]]
-    _prime(info, "issue_obj", [n["_issue_id"] for n in nodes])
+                  archivedAt=row["archived_at"], snoozedUntil=row.get("snoozed_until"),
+                  _actor_id=row["actor_id"], _issue_id=row["issue_id"],
+                  _comment_id=row.get("comment_id")) for row in page
+             if row["issue_id"] in visible]
     _prime(info, "user_row", [n["_actor_id"] for n in nodes])
+    _prime(info, "inbox_comment", [n["_comment_id"] for n in nodes])
     return {"nodes": nodes, "pageInfo": {
         "hasNextPage": len(rows) > first, "hasPreviousPage": after is not None,
-        "startCursor": _activity_cursor(nodes[0]) if nodes else None,
-        "endCursor": _activity_cursor(nodes[-1]) if nodes else None,
+        "startCursor": _activity_cursor(page[0]) if page else None,
+        "endCursor": _activity_cursor(page[-1]) if page else None,
     }}
 
 
@@ -250,16 +262,73 @@ def r_inbox_unread_count(_, info):
     return store.inbox_unread_count(org, uid)
 
 
+def _snooze_until(until):
+    """Normalize a client instant to the stored UTC ISO form, so string order is time order."""
+    if until in (None, ""):
+        return None
+    from datetime import datetime, timezone
+    try:
+        parsed = datetime.fromisoformat(str(until).replace("Z", "+00:00"))
+    except ValueError:
+        raise GraphQLError("until must be an ISO-8601 date-time.",
+                           extensions={"code": "BAD_USER_INPUT", "field": "until"}) from None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat()
+
+
 @mutation.field("notificationMarkRead")
 def m_notification_mark_read(_, info, id):
     store, _w, org, uid = _ctx(info)
     return store.inbox_mark(org, uid, id, "read_at")
 
 
+@mutation.field("notificationMarkUnread")
+def m_notification_mark_unread(_, info, id):
+    store, _w, org, uid = _ctx(info)
+    return store.inbox_clear(org, uid, id, "read_at")
+
+
 @mutation.field("notificationArchive")
 def m_notification_archive(_, info, id):
     store, _w, org, uid = _ctx(info)
     return store.inbox_mark(org, uid, id, "archived_at")
+
+
+@mutation.field("notificationUnarchive")
+def m_notification_unarchive(_, info, id):
+    store, _w, org, uid = _ctx(info)
+    return store.inbox_clear(org, uid, id, "archived_at")
+
+
+@mutation.field("notificationSnooze")
+def m_notification_snooze(_, info, id, until=None):
+    store, _w, org, uid = _ctx(info)
+    return store.inbox_snooze(org, uid, id, _snooze_until(until))
+
+
+@mutation.field("notificationsMarkReadForIssue")
+def m_notifications_mark_read_for_issue(_, info, issueId, read=True):
+    store, _w, org, uid = _ctx(info)
+    return store.inbox_issue_update(org, uid, issueId, "read", read=read)
+
+
+@mutation.field("notificationsArchiveForIssue")
+def m_notifications_archive_for_issue(_, info, issueId):
+    store, _w, org, uid = _ctx(info)
+    return store.inbox_issue_update(org, uid, issueId, "archive")
+
+
+@mutation.field("notificationsSnoozeForIssue")
+def m_notifications_snooze_for_issue(_, info, issueId, until=None):
+    store, _w, org, uid = _ctx(info)
+    return store.inbox_issue_update(org, uid, issueId, "snooze", until=_snooze_until(until))
+
+
+@mutation.field("notificationsArchiveAllRead")
+def m_notifications_archive_all_read(_, info):
+    store, _w, org, uid = _ctx(info)
+    return store.inbox_archive_all_read(org, uid)
 
 
 @mutation.field("githubLinkAdd")
@@ -599,6 +668,29 @@ def _issue_obj(info, issue_id):
                     lambda: store.issue_by_id_or_identifier(org, issue_id, viewer_id=uid))
 
 
+@InboxNotification.field("data")
+def inbox_data(obj, _info):
+    raw = obj.get("data")
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+@InboxNotification.field("comment")
+def inbox_comment(obj, info):
+    """The comment a comment or mention notification points at; null once deleted."""
+    cid = obj.get("_comment_id")
+    if not cid:
+        return None
+    store, _w, org, _uid = _ctx(info)
+    return _batched(info, "inbox_comment", cid,
+                    lambda ids: store.comments_by_ids(org, ids),
+                    lambda: store.comments_by_ids(org, [cid]).get(cid))
+
+
 @InboxNotification.field("actor")
 def inbox_actor(obj, info):
     store, _w, _org, uid = _ctx(info)
@@ -649,13 +741,18 @@ def r_my_preferences(_, info):
     return _preference_payload(store, uid)
 
 
+def _notification_preferences(store, uid, success):
+    """One boolean per kind; a kind with no stored preference is on."""
+    from hoja_server.notifications import KINDS
+    prefs = store.user_preferences(uid) or {}
+    return {"success": success, **{kind: prefs.get(f"notification:{kind}", "true") == "true"
+                                   for kind in KINDS}}
+
+
 @query.field("myNotificationPreferences")
 def r_my_notification_preferences(_, info):
     store, _w, _org, uid = _ctx(info)
-    prefs = store.user_preferences(uid) or {}
-    return {"success": True,
-            "issueCreated": prefs.get("notification:issueCreated", "true") == "true",
-            "issueUpdated": prefs.get("notification:issueUpdated", "true") == "true"}
+    return _notification_preferences(store, uid, True)
 
 
 @query.field("issueLabelSettings")
@@ -1407,10 +1504,7 @@ def m_profile_name_update(_, info, name):
 def m_notification_preference_set(_, info, kind, enabled):
     store, _w, _org, uid = _ctx(info)
     success = store.set_notification_preference(uid, kind, enabled)
-    prefs = store.user_preferences(uid) or {}
-    return {"success": success,
-            "issueCreated": prefs.get("notification:issueCreated", "true") == "true",
-            "issueUpdated": prefs.get("notification:issueUpdated", "true") == "true"}
+    return _notification_preferences(store, uid, success)
 
 
 @mutation.field("workspaceSwitch")

@@ -148,6 +148,13 @@ WRITE_TOOLS: dict[str, str] = {
     "notificationMarkRead": "Mark an inbox notification read.",
     "notificationArchive": "Archive an inbox notification.",
     "notificationMarkAllRead": "Mark every inbox notification read.",
+    "notificationMarkUnread": "Mark an inbox notification unread.",
+    "notificationUnarchive": "Move an inbox notification out of the archive.",
+    "notificationSnooze": "Hide an inbox notification until a time; it returns unread. Null until unsnoozes.",
+    "notificationsMarkReadForIssue": "Mark every inbox notification about one task read (or unread with read: false).",
+    "notificationsArchiveForIssue": "Archive every inbox notification about one task.",
+    "notificationsSnoozeForIssue": "Snooze every inbox notification about one task until a time.",
+    "notificationsArchiveAllRead": "Archive every read inbox notification.",
     "issueDecisionCreate": (
         "Ask a human a decision on an issue while you work (docs/decisions.md). Pass question, "
         "optional options [{key,label,description}] and context; the issue is then flagged "
@@ -194,7 +201,9 @@ WRITE_TOOLS: dict[str, str] = {
 DESTRUCTIVE = {"issueDelete", "commentDelete", "issueLabelDelete", "teamMemberRemove",
                "issueArchive", "projectArchive", "initiativeArchive", "teamArchive",
                "taskDelete", "taskLabelDelete", "taskArchive"}
-IDEMPOTENT_PREFIXES = ("notificationMark", "notificationArchive")
+IDEMPOTENT_PREFIXES = ("notificationMark", "notificationArchive", "notificationUnarchive",
+                       "notificationSnooze", "notificationsMark", "notificationsArchive",
+                       "notificationsSnooze")
 
 FIELD_HINTS = {
     "teamId": "Team key (e.g. \"ENG\") or id.",

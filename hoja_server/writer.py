@@ -9,7 +9,7 @@ from graphql import GraphQLError
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.engine import Engine
 
-from hoja_server import comment_policy, identifiers, uploads
+from hoja_server import comment_policy, identifiers, notifications, uploads
 from hoja_server import decisions as decisiondocs
 from hoja_server import views as viewdocs
 from hoja_server.db import (
@@ -718,12 +718,12 @@ class Writer:
         ))
 
     @staticmethod
-    def _notify_issue_recipients(conn, org_id, issue_id, actor_id, recipients, kind, ts):
-        for recipient_id in set(recipients) - {actor_id, None}:
-            conn.execute(inbox_notification.insert().values(
-                id=new_id(), organization_id=org_id, recipient_id=recipient_id,
-                issue_id=issue_id, actor_id=actor_id, kind=kind, created_at=ts,
-            ))
+    def _notify_issue_recipients(conn, org_id, issue_id, actor_id, recipients, kind, ts,
+                                 data=None, comment_id=None):
+        """Write rows for an explicit recipient list. Fan-out decisions live in
+        ``hoja_server.notifications``; this stays for callers that already know who."""
+        notifications.notify(conn, org_id, issue_id, actor_id, recipients, kind, ts,
+                             data=data, comment_id=comment_id)
 
     # -------------------------------------------------------------- issues
     @staticmethod
@@ -875,9 +875,7 @@ class Writer:
             for lid in (inp.get("labelIds") or []):
                 conn.execute(issue_label_link.insert().values(issue_id=iid, label_id=lid))
             self._record_activity(conn, org_id, iid, viewer_id, "issueCreated", {"title": inp["title"]}, ts)
-            self._notify_issue_recipients(
-                conn, org_id, iid, viewer_id, [inp.get("assigneeId"), viewer_id], "issueCreated", ts
-            )
+            notifications.on_issue_created(conn, org_id, iid, viewer_id, inp.get("assigneeId"), ts)
             session = self._open_delegation_session(
                 conn, org_id, iid, inp.get("delegateId"), viewer_id, ts)
         self._dispatch_admitted(session)
@@ -990,9 +988,7 @@ class Writer:
             self._refresh_decision_flag(conn, org_id, irow["id"])
             self._record_activity(conn, org_id, irow["id"], viewer_id, "decisionCreated",
                                   {"decisionId": decision_id, "question": question}, ts)
-            self._notify_issue_recipients(
-                conn, org_id, irow["id"], viewer_id,
-                [irow.get("assignee_id"), irow.get("creator_id")], "issueDecision", ts)
+            notifications.on_decision(conn, org_id, irow, viewer_id, decision_id, question, ts)
         return decision_id
 
     def decision_answer(self, org_id: str, viewer_id: str, decision_id: str,
@@ -1140,11 +1136,10 @@ class Writer:
                     conn.execute(issue_label_link.insert().values(issue_id=iid, label_id=lid))
             if changes:
                 self._record_activity(conn, org_id, iid, actor_id, "issueUpdated", changes, ts)
-                self._notify_issue_recipients(
-                    conn, org_id, iid, actor_id,
-                    [issue_row.get("assignee_id"), values.get("assignee_id", issue_row.get("assignee_id")),
-                     issue_row.get("creator_id")], "issueUpdated", ts,
-                )
+            # Outside the activity gate: a due-date move is not in ``changes`` but is
+            # something the people following the task hear about.
+            notifications.on_issue_updated(
+                conn, org_id, issue_row, {**issue_row, **values}, actor_id, ts)
         self._dispatch_admitted(session)
         return iid
 
@@ -1263,6 +1258,7 @@ class Writer:
                 user_id=viewer_id, url=f"{irow.get('url')}#comment-{cid[:8]}",
                 created_at=ts, updated_at=ts))
             self._record_activity(conn, org_id, irow["id"], viewer_id, "commentCreated", {"commentId": cid}, ts)
+            notifications.on_comment(conn, org_id, irow, viewer_id, cid, inp["body"], ts)
             # HOJA-491: the first comment by someone other than the creator is the
             # "first response" the target measures.
             from hoja_server import sla as sla_module
@@ -2013,7 +2009,5 @@ def move_issue_to_state(conn, org_id: str, issue_id: str, state_id: str,
     sla_module.retarget_clock(conn, org_id, issue_id, ts, actor_id)
     writer._record_activity(conn, org_id, issue_id, actor_id, "issueUpdated",
                             {"stateId": {"from": issue_row.get("state_id"), "to": state_id}}, ts)
-    writer._notify_issue_recipients(
-        conn, org_id, issue_id, actor_id,
-        [issue_row.get("assignee_id"), issue_row.get("creator_id")], "issueUpdated", ts)
+    notifications.on_issue_updated(conn, org_id, issue_row, {**issue_row, **values}, actor_id, ts)
     return {"moved": True, "stateId": state_id, "from": issue_row.get("state_id")}
