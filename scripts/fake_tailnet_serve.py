@@ -16,11 +16,20 @@ import sys
 from hoja_server import cli, tailnet
 
 SECRET = "tskey-client-kfake-SECRET"
+TOKEN = "tskey-api-kfake-TOKEN123"
+POLICY = {"text": open(os.path.join(os.path.dirname(__file__), "..", "tests", "agent", "fixtures",
+                                    "tailscale_default_policy.hujson")).read(), "writes": 0}
 DEVICES = [
     {"nodeId": "n-office", "name": "office-mac.tail1234.ts.net", "hostname": "office-mac",
-     "os": "linux", "addresses": ["100.64.0.7"], "connectedToControl": True, "tags": []},
+     "os": "linux", "addresses": ["100.64.0.7"], "connectedToControl": True, "tags": [],
+     "sshEnabled": True, "user": "ada@example.test"},
+    {"nodeId": "n-studio", "name": "studio.tail1234.ts.net", "hostname": "studio",
+     "os": "macOS", "addresses": ["100.64.0.10"], "connectedToControl": True, "tags": [],
+     "sshEnabled": False},
     {"nodeId": "n-build", "name": "build-box.tail1234.ts.net", "hostname": "build-box",
      "os": "linux", "addresses": ["100.64.0.8"], "connectedToControl": True, "tags": []},
+    {"nodeId": "n-pc", "name": "gamepc.tail1234.ts.net", "hostname": "gamepc",
+     "os": "windows", "addresses": ["100.64.0.11"], "connectedToControl": True, "tags": []},
     {"nodeId": "n-phone", "name": "pixel.tail1234.ts.net", "hostname": "pixel",
      "os": "android", "addresses": ["100.64.0.9"], "connectedToControl": False, "tags": []},
 ]
@@ -32,6 +41,9 @@ class API:
         self.secret = secret
 
     def devices(self):
+        flag = os.environ.get("FAKE_TAILNET_SSH_ON")
+        if flag and os.path.exists(flag):  # the person ran `sudo tailscale set --ssh` on studio
+            next(d for d in DEVICES if d["hostname"] == "studio")["sshEnabled"] = True
         if self.secret != SECRET:
             raise tailnet.TailnetError("Tailscale refused this OAuth client. Check the client "
                                        "ID and secret, and that the client is not revoked.")
@@ -41,6 +53,30 @@ class API:
         for d in DEVICES:
             if d["nodeId"] == device_id:
                 d["tags"] = sorted(tags)
+
+
+class TokenAPI(API):
+    def __init__(self, token):
+        super().__init__(None, SECRET)
+        self.token = token
+
+    def devices(self):
+        if self.token != TOKEN:
+            raise tailnet.TailnetError("Tailscale refused the token: it may have expired. Create "
+                                       "a new one and paste it again.")
+        return super().devices()
+
+    def get_policy(self):
+        return POLICY["text"], '"etag-%d"' % POLICY["writes"]
+
+    def validate_policy(self, text):
+        tailnet.standard_json(text)
+
+    def set_policy(self, text, etag):
+        POLICY["text"], POLICY["writes"] = text, POLICY["writes"] + 1
+
+    def create_oauth_client(self, description, scopes, tags):
+        return "kfake", SECRET
 
 
 class Node:
@@ -76,4 +112,5 @@ def ssh(node, address, user, command, *, on_output, timeout=0):
 
 
 tailnet.api_factory, tailnet.node_factory, tailnet.ssh = API, Node, ssh
+tailnet.token_api_factory = TokenAPI
 sys.exit(cli.main(sys.argv[1:]))

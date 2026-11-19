@@ -551,6 +551,10 @@ export interface TailnetDevice {
   online: boolean;
   lastSeen: string | null;
   tags: string[];
+  sshEnabled: boolean | null;
+  /** yes (Linux), cli (macOS with the open-source tailscaled only), no. */
+  sshSupport: "yes" | "cli" | "no";
+  suggestedUser: string | null;
   reachable: boolean;
   runnerId: string | null;
   runnerName: string | null;
@@ -570,4 +574,12 @@ export interface Tailnet {
   policy: string;
   devices: TailnetDevice[];
   devicesError: string | null;
+}
+
+export interface TailnetSetupPlan {
+  name: string | null;
+  devices: number;
+  additions: string[];
+  addedText: string;
+  problem: string | null;
 }

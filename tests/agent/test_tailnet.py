@@ -17,6 +17,12 @@ just_this_once_is_used_up_and_revoke_sticks     once: no second connect; revoke:
 a_failed_install_says_why_everywhere            state failed, the log, the run log, the audit
 input_and_permissions                           root refused, bad mode refused, members refused
 disconnecting_revokes_and_leaves_the_tailnet    machines revoked, node down, secret gone
+the_policy_edit_keeps_everything_and_is_idempot  Tailscale's default policy: comments kept,
+                                                only what is missing added, twice = once
+setting_up_with_an_access_token                 plan changes nothing; setup writes the policy
+                                                (If-Match), creates Hoja's own OAuth client
+                                                (scopes, tags), stores that, never the token
+a_machine_with_tailscale_ssh_off_is_not_tagged  refused before anything changes
 revision_84_adds_the_tables_and_replays         migration
 ==============================================  ==============================================
 """
@@ -47,13 +53,20 @@ from tests.agent.test_auto_verify_and_pools import (  # noqa: F401 - `world` is 
 )
 
 SECRET = "tskey-client-kabc123-SECRETVALUE"
+TOKEN = "tskey-api-kperson-TOKENVALUE"
+FIXTURE = __import__("pathlib").Path(__file__).parent / "fixtures" / "tailscale_default_policy.hujson"
 DEVICES = [
     {"nodeId": "n-surface", "name": "surface.tail1234.ts.net", "hostname": "surface",
      "os": "linux", "addresses": ["100.64.0.7", "fd7a::7"], "connectedToControl": True,
      "lastSeen": "2026-11-19T20:00:00Z", "tags": []},
     {"nodeId": "n-laptop", "name": "laptop.tail1234.ts.net", "hostname": "laptop",
      "os": "macOS", "addresses": ["100.64.0.8"], "connectedToControl": False,
-     "lastSeen": "2026-11-18T10:00:00Z", "tags": ["tag:dev"]},
+     "lastSeen": "2026-11-18T10:00:00Z", "tags": ["tag:dev"], "sshEnabled": True},
+    {"nodeId": "n-nossh", "name": "nossh.tail1234.ts.net", "hostname": "nossh",
+     "os": "linux", "addresses": ["100.64.0.10"], "connectedToControl": True,
+     "tags": [], "sshEnabled": False, "user": "Ada.Lovelace@example.com"},
+    {"nodeId": "n-pc", "name": "gamepc.tail1234.ts.net", "hostname": "gamepc",
+     "os": "windows", "addresses": ["100.64.0.11"], "connectedToControl": True, "tags": []},
     {"nodeId": "n-hoja", "name": "hoja-alpha.tail1234.ts.net", "hostname": "hoja-alpha",
      "os": "linux", "addresses": ["100.64.0.9"], "connectedToControl": True,
      "tags": ["tag:hoja"]},
@@ -69,6 +82,10 @@ class FakeTailnet:
         self.ssh_calls: list[dict] = []
         self.ssh_result: object = 0
         self.refuse_secret = False
+        self.policy = open(FIXTURE).read()
+        self.etag = '"e1"'
+        self.policy_writes: list[tuple[str, str]] = []
+        self.clients: list[dict] = []
 
     # api_factory
     def api(self, client_id, secret):
@@ -86,6 +103,32 @@ class FakeTailnet:
                     if d["nodeId"] == device_id:
                         d["tags"] = sorted(tags)
         return API()
+
+    # token_api_factory: a person's access token, which may also edit the policy and make clients
+    def token_api(self, token):
+        fake, base = self, self.api(None, SECRET)
+
+        class TokenAPI:
+            def devices(self):
+                if token != TOKEN:
+                    raise tailnet.TailnetError("Tailscale refused the token: it may have expired.")
+                return base.devices()
+
+            def get_policy(self):
+                return fake.policy, fake.etag
+
+            def validate_policy(self, text):
+                tailnet.standard_json(text)
+
+            def set_policy(self, text, etag):
+                assert etag == fake.etag
+                fake.policy_writes.append((text, etag))
+                fake.policy, fake.etag = text, '"e2"'
+
+            def create_oauth_client(self, description, scopes, tags):
+                fake.clients.append({"description": description, "scopes": scopes, "tags": tags})
+                return "kmade1", SECRET
+        return TokenAPI()
 
     # node_factory
     def node(self, org):
@@ -118,6 +161,7 @@ class FakeTailnet:
 def fake(monkeypatch):
     f = FakeTailnet()
     monkeypatch.setattr(tailnet, "api_factory", f.api)
+    monkeypatch.setattr(tailnet, "token_api_factory", f.token_api)
     monkeypatch.setattr(tailnet, "node_factory", f.node)
     monkeypatch.setattr(tailnet, "ssh", f.ssh)
     monkeypatch.setattr(tailnet, "in_background", lambda work: work())
@@ -127,7 +171,7 @@ def fake(monkeypatch):
 
 
 TAILNET = """connected name clientId nodeState nodeName nodeError policy devicesError
-  devices { id hostname online tags reachable runnerId runnerName runnerStatus
+  devices { id hostname online tags reachable sshEnabled sshSupport suggestedUser runnerId runnerName runnerStatus
             access { mode sshUser workRoot state log hostKey usedAt } }"""
 
 
@@ -188,11 +232,12 @@ def test_the_tailnet_lists_its_machines(world, fake):
         conn.execute(runner.update().where(runner.c.id == identity["runner_id"]).values(
             name="surface", last_seen=now_iso()))
     devices = _tailnet(world)["devices"]
-    assert [d["hostname"] for d in devices] == ["surface", "laptop"], "online first, no Hoja"
-    surface = devices[0]
+    assert [d["hostname"] for d in devices] == ["nossh", "surface", "laptop", "gamepc"], (
+        "online first, no Hoja, the ones Tailscale SSH cannot reach last")
+    surface = devices[1]
     assert surface["online"] and not surface["reachable"]
     assert surface["runnerId"] == identity["runner_id"] and surface["runnerStatus"] == "online"
-    assert devices[1]["runnerId"] is None and devices[1]["access"] is None
+    assert devices[2]["runnerId"] is None and devices[2]["access"] is None
 
 
 def test_allowing_a_machine_tags_it_and_installs(world, fake):
@@ -239,7 +284,7 @@ def test_a_failed_install_says_why_everywhere(world, fake):
         "The machine answered, but not with Tailscale SSH. Turn it on once there: "
         "sudo tailscale set --ssh")
     _allow(world)
-    access = _tailnet(world)["devices"][0]["access"]
+    access = next(d for d in _tailnet(world)["devices"] if d["hostname"] == "surface")["access"]
     assert access["state"] == "failed" and "sudo tailscale set --ssh" in access["log"]
     with world["engine"].connect() as conn:
         notes = conn.execute(select(agent_run_log.c.level, agent_run_log.c.message).where(
@@ -249,7 +294,8 @@ def test_a_failed_install_says_why_everywhere(world, fake):
 
     fake.ssh_result = 3
     _allow(world)
-    assert "exited with 3" in _tailnet(world)["devices"][0]["access"]["log"]
+    assert "exited with 3" in next(d for d in _tailnet(world)["devices"]
+                                   if d["hostname"] == "surface")["access"]["log"]
 
 
 def test_input_and_permissions(world, fake):
@@ -284,6 +330,73 @@ def test_disconnecting_revokes_and_leaves_the_tailnet(world, fake):
     with world["engine"].connect() as conn:
         assert conn.execute(select(tailnet_table)).first() is None
         assert conn.execute(select(tailnet_machine.c.state)).scalars().all() == ["revoked"]
+
+
+def test_the_policy_edit_keeps_everything_and_is_idempotent():
+    original = FIXTURE.read_text()
+    new, notes = tailnet.plan_policy(original)
+    assert len(notes) == 4
+    for line in original.splitlines():
+        assert line in new, f"lost: {line!r}"
+    data = tailnet.standard_json(new)
+    assert len(data["ssh"]) == 2 and data["ssh"][1]["action"] == "check", "theirs kept, in order"
+    assert data["grants"] == tailnet.POLICY["grants"]
+    assert set(data["tagOwners"]) == {"tag:hoja", "tag:hoja-machine"}
+    assert data["hosts"] == {'weird "key" // not a comment': "100.64.0.1"}
+    assert tailnet.plan_policy(new) == (new, []), "nothing added twice"
+    partial = '{"tagOwners": {"tag:hoja": ["alice@example.com"]}, // mine\n}'
+    out, notes = tailnet.plan_policy(partial)
+    assert tailnet.standard_json(out)["tagOwners"]["tag:hoja"] == ["alice@example.com"]
+    assert "// mine" in out and len(notes) == 3
+    assert sorted(tailnet.standard_json(tailnet.plan_policy("")[0])) == ["grants", "ssh", "tagOwners"]
+
+
+def test_setting_up_with_an_access_token(world, fake):
+    plan = _gql(world, _token(world), f'''mutation {{ tailnetSetupPlan(accessToken: "{TOKEN}") {{
+        name devices additions addedText problem }} }}''')
+    assert "errors" not in plan, plan
+    plan = plan["data"]["tailnetSetupPlan"]
+    assert plan["name"] == "tail1234.ts.net" and plan["devices"] == 4 and plan["problem"] is None
+    assert any("may SSH into tag:hoja-machine" in a for a in plan["additions"])
+    assert plan["addedText"].startswith('"tagOwners": {') and '"ssh": [' in plan["addedText"]
+    assert "Allow all" not in plan["addedText"]
+    assert not fake.policy_writes and not fake.clients, "a plan changes nothing"
+    assert not _tailnet(world)["connected"]
+
+    assert _gql(world, _token(world), '''mutation { tailnetSetup(accessToken: "nope") {
+        connected } }''')["errors"][0]["extensions"]["field"] == "accessToken"
+    body = _gql(world, _token(world), f'''mutation {{ tailnetSetup(accessToken: "{TOKEN}") {{
+        {TAILNET} }} }}''')
+    assert "errors" not in body, body
+    assert body["data"]["tailnetSetup"]["connected"]
+    assert body["data"]["tailnetSetup"]["clientId"] == "kmade1"
+    assert len(fake.policy_writes) == 1 and fake.policy_writes[0][1] == '"e1"', "If-Match"
+    assert fake.clients == [{"description": "Hoja agents", "scopes": ["devices:core", "auth_keys"],
+                             "tags": ["tag:hoja", "tag:hoja-machine"]}]
+    with world["engine"].connect() as conn:
+        stored = conn.execute(select(tailnet_table.c.client_secret)).scalar()
+        assert TOKEN not in json.dumps([dict(r._mapping) for r in conn.execute(
+            select(audit_event))], default=str)
+    assert SECRET not in stored
+    assert _audits(world, "tailnet.policy.change")[0]["added"]
+    assert _audits(world, "tailnet.connect")[0]["method"] == "access token"
+
+    _gql(world, _token(world), f'''mutation {{ tailnetSetup(accessToken: "{TOKEN}") {{ connected }} }}''')
+    assert len(fake.policy_writes) == 1, "a complete policy is not written again"
+
+
+def test_a_machine_with_tailscale_ssh_off_is_not_tagged(world, fake):
+    _connect(world)
+    nossh = next(d for d in _tailnet(world)["devices"] if d["hostname"] == "nossh")
+    assert nossh["sshEnabled"] is False and nossh["suggestedUser"] == "ada.lovelace"
+    assert nossh["sshSupport"] == "yes"
+    laptop = next(d for d in _tailnet(world)["devices"] if d["hostname"] == "laptop")
+    assert laptop["sshSupport"] == "cli", "macOS: only with the open-source tailscaled"
+    windows = _allow(world, device="n-pc")
+    assert "Connect it with the command instead" in windows["errors"][0]["message"]
+    refused = _allow(world, device="n-nossh")
+    assert "sudo tailscale set --ssh" in refused["errors"][0]["message"]
+    assert not fake.tag_calls and not fake.ssh_calls
 
 
 def test_revision_84_adds_the_tables_and_replays(tmp_path):

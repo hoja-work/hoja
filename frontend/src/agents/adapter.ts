@@ -26,6 +26,7 @@
 
 import type {
   Tailnet,
+  TailnetSetupPlan,
   Agent, AgentAnswer, AgentAsk, RunAccess, SetupProbe, AgentDetail, AgentEvent, AgentQuestion, AgentPolicy, AgentSession, AuditEvent, Claim, ClaimVerdict,
   ConnectGrant, HarnessPolicy,
   ConnectEndpointRow, ConnectExposure, Runner, RunnerEnrollment, RunnerEnrollmentGrant, RunnerLease,
@@ -105,6 +106,10 @@ export type AgentsAdapter = {
   /** The workspace's tailnet: Hoja's node and the machines on it. */
   getTailnet(): Promise<Tailnet>;
   connectTailnet(clientId: string, clientSecret: string): Promise<Tailnet>;
+  /** What setting Hoja up with this access token would change; changes nothing. */
+  planTailnetSetup(accessToken: string): Promise<TailnetSetupPlan>;
+  /** Set Hoja up with a person's access token (used once, never stored). */
+  setupTailnet(accessToken: string): Promise<Tailnet>;
   disconnectTailnet(): Promise<Tailnet>;
   allowTailnetMachine(deviceId: string, sshUser: string, mode: "standing" | "once", workRoot: string | null): Promise<void>;
   revokeTailnetMachine(deviceId: string): Promise<void>;
@@ -330,7 +335,7 @@ const SESSION_FIELDS = `id issueId agentUserId status state queueReason admitted
   issue { id identifier title priority }`;
 const TAILNET_FIELDS = `connected name clientId nodeState nodeName nodeError hojaTag machineTag
   policy devicesError devices { id name hostname os address online lastSeen tags reachable
-  runnerId runnerName runnerStatus access { mode sshUser workRoot state log hostKey grantedAt usedAt } }`;
+  sshEnabled sshSupport suggestedUser runnerId runnerName runnerStatus access { mode sshUser workRoot state log hostKey grantedAt usedAt } }`;
 const ACTIVITY_FIELDS = `id kind authorKind authorId body payload signal createdAt`;
 
 type ServerActivity = {
@@ -899,6 +904,20 @@ function createGraphqlAdapter(fallback: AgentsAdapter): AgentsAdapter {
       return data.tailnetConnect;
     },
 
+    async planTailnetSetup(accessToken: string) {
+      const data = await request<{tailnetSetupPlan: TailnetSetupPlan}>(
+        `mutation TailnetPlan($t: String!) { tailnetSetupPlan(accessToken: $t) {
+           name devices additions addedText problem } }`, {t: accessToken});
+      return data.tailnetSetupPlan;
+    },
+
+    async setupTailnet(accessToken: string) {
+      const data = await request<{tailnetSetup: Tailnet}>(
+        `mutation TailnetSetup($t: String!) { tailnetSetup(accessToken: $t) { ${TAILNET_FIELDS} } }`,
+        {t: accessToken});
+      return data.tailnetSetup;
+    },
+
     async disconnectTailnet() {
       const data = await request<{tailnetDisconnect: Tailnet}>(
         `mutation TailnetDisconnect { tailnetDisconnect { ${TAILNET_FIELDS} } }`);
@@ -1260,6 +1279,8 @@ function createFallbackAdapter(): AgentsAdapter {
     async getProjectRepository() { return serverOnly('a project repository'); },
     async getTailnet() { return serverOnly('Tailscale'); },
     async connectTailnet() { return serverOnly('Tailscale'); },
+    async planTailnetSetup() { return serverOnly('Tailscale'); },
+    async setupTailnet() { return serverOnly('Tailscale'); },
     async disconnectTailnet() { return serverOnly('Tailscale'); },
     async allowTailnetMachine() { return serverOnly('Tailscale'); },
     async revokeTailnetMachine() { return serverOnly('Tailscale'); },

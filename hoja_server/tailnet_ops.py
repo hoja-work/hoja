@@ -2,7 +2,10 @@
 
     query    tailnet                      connected? Hoja's node, the policy, the tailnet's
                                           machines (online, tagged, runner, access)
-    mutation tailnetConnect(clientId, clientSecret)
+    mutation tailnetSetupPlan(accessToken)  what Hoja would add to the policy (changes nothing)
+             tailnetSetup(accessToken)      add it, create Hoja's own OAuth client, connect;
+                                            the access token is used for this call only
+             tailnetConnect(clientId, clientSecret)   the manual path
              tailnetDisconnect
              tailnetMachineAllow(deviceId, sshUser, mode, workRoot)
                                           tag it, record the permission, install the runner
@@ -68,6 +71,12 @@ SDL = gql(
       online: Boolean!
       lastSeen: String
       tags: [String!]!
+      "Tailscale SSH is on for it (null: Tailscale did not say)."
+      sshEnabled: Boolean
+      "Can Tailscale SSH run on it: yes (Linux), cli (macOS with the open-source tailscaled only), or no (Windows, phones, the Mac App Store app)."
+      sshSupport: String!
+      "A likely user name on the machine, from the login that registered it."
+      suggestedUser: String
       "Tagged for Hoja: Tailscale lets Hoja's node reach it."
       reachable: Boolean!
       runnerId: String
@@ -90,12 +99,29 @@ SDL = gql(
       usedAt: String
     }
 
+    "What connecting with an access token would do, before it is done."
+    type TailnetSetupPlan {
+      "The tailnet's DNS name."
+      name: String
+      devices: Int!
+      "One line per addition to the policy file; empty when it already has everything."
+      additions: [String!]!
+      "The lines that would be added, as they would appear in the policy file."
+      addedText: String!
+      "Tailscale's verdict on the changed policy: null when it accepts it."
+      problem: String
+    }
+
     extend type Query {
       "Admin only."
       tailnet: Tailnet!
     }
 
     extend type Mutation {
+      "Admin only. Read the tailnet with a person's API access token (tskey-api-…) and say what setting Hoja up would add to its policy. Changes nothing; the token is not kept."
+      tailnetSetupPlan(accessToken: String!): TailnetSetupPlan!
+      "Admin only. With a person's API access token: add Hoja's lines to the tailnet policy (only what is missing, comments kept), create Hoja's own OAuth client, and connect. The token is used for this call only and never stored."
+      tailnetSetup(accessToken: String!): Tailnet!
       "Admin only. Connect the workspace to a tailnet with an OAuth client (scopes devices:core and auth_keys, tags tag:hoja and tag:hoja-machine)."
       tailnetConnect(clientId: String!, clientSecret: String!): Tailnet!
       "Admin only. Forget the OAuth client and take Hoja's node off the tailnet."
@@ -223,6 +249,7 @@ def _device_out(device: tailnet.Device, access: dict | None, runners: list[dict]
     return {"id": device.id, "name": device.name, "hostname": device.hostname, "os": device.os,
             "address": device.address, "online": device.online, "lastSeen": device.last_seen,
             "tags": list(device.tags), "reachable": tailnet.MACHINE_TAG in device.tags,
+            "sshEnabled": device.ssh_enabled, "sshSupport": device.ssh_support, "suggestedUser": tailnet.suggested_user(device.user),
             "runnerId": found["id"] if found else None,
             "runnerName": found["name"] if found else None,
             "runnerStatus": runner_status(found) if found else None,
@@ -255,7 +282,7 @@ def _payload(engine, org: str, *, fresh: bool = False) -> dict:
     base["devices"] = sorted(
         (_device_out(d, machines.get(d.id), runners) for d in devices
          if tailnet.HOJA_TAG not in d.tags and d.hostname not in hoja_names),
-        key=lambda d: (not d["online"], d["hostname"].lower()))
+        key=lambda d: (d["sshSupport"] == "no", not d["online"], d["hostname"].lower()))
     return base
 
 
@@ -268,20 +295,68 @@ def r_tailnet(_obj, info):
 
 
 # ---------------------------------------------------------------------------- mutations
-@mutation.field("tailnetConnect")
-def m_tailnet_connect(_obj, info, clientId, clientSecret):  # noqa: N803
+def _token_api(token: str | None):
+    text = (token or "").strip()
+    if not text.startswith("tskey-api-"):
+        raise _user_error(ValueError("Paste an API access token from Tailscale: it starts with "
+                                     "tskey-api-."), "accessToken")
+    return tailnet.token_api_factory(text)
+
+
+def _plan(api) -> tuple[list[tailnet.Device], str, str, str, list[str]]:
+    devices = api.devices()
+    text, etag = api.get_policy()
+    new, notes = tailnet.plan_policy(text)
+    return devices, text, etag, new, notes
+
+
+@mutation.field("tailnetSetupPlan")
+def m_tailnet_setup_plan(_obj, info, accessToken):  # noqa: N803
     store, org, uid = _ctx(info)
     _require_admin(store, org, uid)
-    client_id, secret = (clientId or "").strip(), (clientSecret or "").strip()
-    if not client_id or not secret.startswith("tskey-client-"):
-        raise _user_error(ValueError("Paste the OAuth client's ID and its secret (it starts "
-                                     "with tskey-client-)."), "clientSecret")
+    api = _token_api(accessToken)
     try:
-        devices = tailnet.api_factory(client_id, secret).devices()
+        devices, text, _etag, new, notes = _plan(api)
+        problem = None
+        if notes:
+            try:
+                api.validate_policy(new)
+            except tailnet.TailnetError as exc:
+                problem = str(exc)
     except tailnet.TailnetError as exc:
-        raise _user_error(exc, "clientSecret") from exc
+        raise _user_error(exc, "accessToken") from exc
     except Exception as exc:  # noqa: BLE001
         raise _user_error(ValueError(f"Could not reach Tailscale: {exc}")) from exc
+    return {"name": next((d.tailnet_name for d in devices if d.tailnet_name), None),
+            "devices": len([d for d in devices if tailnet.HOJA_TAG not in d.tags]),
+            "additions": notes, "addedText": tailnet.added_snippet(text), "problem": problem}
+
+
+@mutation.field("tailnetSetup")
+def m_tailnet_setup(_obj, info, accessToken):  # noqa: N803
+    store, org, uid = _ctx(info)
+    _require_admin(store, org, uid)
+    api = _token_api(accessToken)
+    try:
+        devices, _text, etag, new, notes = _plan(api)
+        if notes:
+            api.validate_policy(new)
+            api.set_policy(new, etag)
+        client_id, secret = api.create_oauth_client(
+            "Hoja agents", tailnet.CLIENT_SCOPES, tailnet.CLIENT_TAGS)
+    except tailnet.TailnetError as exc:
+        raise _user_error(exc, "accessToken") from exc
+    except Exception as exc:  # noqa: BLE001
+        raise _user_error(ValueError(f"Could not reach Tailscale: {exc}")) from exc
+    if notes:
+        audit.record_request(store, info, user_id=uid, action="tailnet.policy.change",
+                             target_kind="tailnet", target_id=org, detail={"added": notes})
+    _store_connection(store, info, org, uid, client_id, secret, devices, method="access token")
+    return _payload(store.engine, org)
+
+
+def _store_connection(store, info, org: str, uid: str, client_id: str, secret: str,
+                      devices: list[tailnet.Device], *, method: str) -> None:
     name = next((d.tailnet_name for d in devices if d.tailnet_name), None)
     stamp, sealed = now_iso(), secrets_box.encrypt_secret(secret, org)
     with store.engine.begin() as conn:
@@ -299,9 +374,26 @@ def m_tailnet_connect(_obj, info, clientId, clientSecret):  # noqa: N803
     _node_errors.pop(org, None)
     audit.record_request(store, info, user_id=uid, action="tailnet.connect",
                          target_kind="tailnet", target_id=org,
-                         detail={"client_id": client_id, "tailnet": name,
+                         detail={"client_id": client_id, "tailnet": name, "method": method,
                                  "devices": len(devices)})
     _start_node(store.engine, org, _connection(store.engine, org))
+
+
+@mutation.field("tailnetConnect")
+def m_tailnet_connect(_obj, info, clientId, clientSecret):  # noqa: N803
+    store, org, uid = _ctx(info)
+    _require_admin(store, org, uid)
+    client_id, secret = (clientId or "").strip(), (clientSecret or "").strip()
+    if not client_id or not secret.startswith("tskey-client-"):
+        raise _user_error(ValueError("Paste the OAuth client's ID and its secret (it starts "
+                                     "with tskey-client-)."), "clientSecret")
+    try:
+        devices = tailnet.api_factory(client_id, secret).devices()
+    except tailnet.TailnetError as exc:
+        raise _user_error(exc, "clientSecret") from exc
+    except Exception as exc:  # noqa: BLE001
+        raise _user_error(ValueError(f"Could not reach Tailscale: {exc}")) from exc
+    _store_connection(store, info, org, uid, client_id, secret, devices, method="oauth client")
     return _payload(store.engine, org)
 
 
@@ -352,6 +444,14 @@ def m_tailnet_machine_allow(_obj, info, deviceId, sshUser, mode="standing",  # n
         raise GraphQLError("That machine is not on the tailnet.", extensions={"code": "NOT_FOUND"})
     if not device.address:
         raise _user_error(ValueError("Tailscale gave no address for that machine."))
+    if device.ssh_support == "no":
+        raise _user_error(ValueError(
+            f"Tailscale SSH cannot run on {device.os or 'that machine'}, so Hoja cannot set it "
+            "up from here. Connect it with the command instead."))
+    if device.ssh_enabled is False:
+        raise _user_error(ValueError(
+            f"Tailscale SSH is off on {device.hostname}. Run this there once, then try again: "
+            "sudo tailscale set --ssh"))
     if machine_busy(store.engine, org, deviceId):
         raise _user_error(ValueError("Hoja is already installing on that machine."))
     if tailnet.MACHINE_TAG not in device.tags:

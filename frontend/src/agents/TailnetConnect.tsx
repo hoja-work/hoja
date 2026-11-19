@@ -16,7 +16,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { getAgentsAdapter } from "./adapter";
-import type { Runner, Tailnet, TailnetDevice } from "./types";
+import type { Runner, Tailnet, TailnetDevice, TailnetSetupPlan } from "./types";
 
 const POLL_FAST_MS = 2000;
 const POLL_MS = 10000;
@@ -63,8 +63,183 @@ function Step({
   );
 }
 
-/* Not connected yet: three steps, the last one in Hoja. */
+const KEYS_URL = "https://login.tailscale.com/admin/settings/keys";
+const TOKEN_RE = /^tskey-api-\S{8,}$/;
+
+/* Not connected yet: one token, a preview of exactly what changes, one click. Hoja adds its
+ * lines to the policy and makes its own OAuth client; the token is used once and dropped. */
 function ConnectTailscale({
+  tailnet,
+  onConnected,
+}: {
+  tailnet: Tailnet;
+  onConnected: (t: Tailnet) => void;
+}) {
+  const adapter = getAgentsAdapter();
+  const [token, setToken] = useState("");
+  const [plan, setPlan] = useState<TailnetSetupPlan | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [showLines, setShowLines] = useState(false);
+  const pasted = token.trim();
+
+  useEffect(() => {
+    setPlan(null);
+    setError("");
+    if (!TOKEN_RE.test(pasted)) return;
+    let live = true;
+    setChecking(true);
+    adapter
+      .planTailnetSetup(pasted)
+      .then((p) => live && setPlan(p))
+      .catch((e) => live && setError((e as Error).message))
+      .finally(() => live && setChecking(false));
+    return () => {
+      live = false;
+    };
+  }, [pasted, adapter]);
+
+  return (
+    <div className="flex flex-col gap-4" data-tailnet="connect">
+      <p className="m-0 text-sm text-muted">
+        Hoja joins your tailnet as its own machine, lists your machines here,
+        and sets up the ones you allow over Tailscale SSH. You never open a
+        terminal.
+      </p>
+      <ol className="m-0 flex list-none flex-col gap-4 p-0">
+        <Step n={1} title="Create an access token in Tailscale">
+          <a
+            className="inline-flex w-fit items-center gap-2 rounded-md border border-line px-3 py-1.5 text-sm hover:bg-subtle"
+            href={KEYS_URL}
+            target="_blank"
+            rel="noreferrer"
+            data-tailnet-keys-link
+          >
+            <ExternalLink size={14} /> Open Tailscale keys
+          </a>
+          <span className="text-xs text-muted">
+            <b>Generate access token…</b>, set it to expire in 1 day, then{" "}
+            <b>Generate</b> and copy it. Hoja uses it once to set itself up and
+            does not keep it.
+          </span>
+        </Step>
+        <Step n={2} title="Paste it here">
+          <input
+            className="rounded-md border border-line bg-panel px-2 py-1.5 text-sm"
+            aria-label="Access token"
+            placeholder="tskey-api-…"
+            type="password"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            autoComplete="off"
+          />
+          {checking && (
+            <span className="flex items-center gap-2 text-xs text-muted">
+              <Loader2 size={12} className="animate-spin" /> Reading your
+              tailnet…
+            </span>
+          )}
+          {error && (
+            <p className="m-0 text-sm text-danger" role="alert">
+              {error}
+            </p>
+          )}
+          {plan && (
+            <div
+              className="flex flex-col gap-2 rounded-lg border border-line p-3 text-sm"
+              data-tailnet-plan
+            >
+              <span className="font-medium">
+                {plan.name ?? "Your tailnet"} · {plan.devices}{" "}
+                {plan.devices === 1 ? "machine" : "machines"}
+              </span>
+              {plan.additions.length ? (
+                <>
+                  <span className="text-xs text-muted">
+                    Hoja will add to your tailnet policy (your comments and
+                    rules stay as they are):
+                  </span>
+                  <ul className="m-0 flex flex-col gap-1 pl-4 text-xs">
+                    {plan.additions.map((a) => (
+                      <li key={a}>{a}</li>
+                    ))}
+                  </ul>
+                  <button
+                    type="button"
+                    className="w-fit text-xs text-muted underline"
+                    onClick={() => setShowLines((v) => !v)}
+                  >
+                    {showLines ? "Hide" : "Show"} the exact lines
+                  </button>
+                  {showLines && (
+                    <pre
+                      className="m-0 max-h-48 overflow-auto rounded-md border border-line bg-subtle p-2 text-xs text-emerald-700"
+                      data-tailnet-added
+                    >
+                      {plan.addedText}
+                    </pre>
+                  )}
+                </>
+              ) : (
+                <span className="text-xs text-muted">
+                  Your policy already has everything Hoja needs.
+                </span>
+              )}
+              <span className="text-xs text-muted">
+                It also creates its own OAuth client, “Hoja agents” (devices and
+                auth keys, tags {tailnet.hojaTag} and {tailnet.machineTag}
+                ), which you can revoke in Tailscale any time.
+              </span>
+              {plan.problem && (
+                <p className="m-0 text-sm text-danger" role="alert">
+                  {plan.problem}
+                </p>
+              )}
+              <span>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-2 rounded-md bg-foreground px-4 py-2 text-sm font-medium text-panel disabled:opacity-50"
+                  disabled={busy || !!plan.problem}
+                  onClick={() => {
+                    setBusy(true);
+                    setError("");
+                    adapter
+                      .setupTailnet(pasted)
+                      .then((t) => {
+                        setToken("");
+                        onConnected(t);
+                      })
+                      .catch((e) => setError((e as Error).message))
+                      .finally(() => setBusy(false));
+                  }}
+                >
+                  {busy ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : (
+                    <Network size={16} />
+                  )}
+                  Connect {plan.name ?? "Tailscale"}
+                </button>
+              </span>
+            </div>
+          )}
+        </Step>
+      </ol>
+      <details className="text-sm" data-tailnet-manual>
+        <summary className="cursor-pointer text-xs text-muted">
+          Use an OAuth client instead (no access token)
+        </summary>
+        <div className="mt-3">
+          <ManualConnect tailnet={tailnet} onConnected={onConnected} />
+        </div>
+      </details>
+    </div>
+  );
+}
+
+/* The manual path: the policy lines and an OAuth client the person makes themselves. */
+function ManualConnect({
   tailnet,
   onConnected,
 }: {
@@ -76,12 +251,7 @@ function ConnectTailscale({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   return (
-    <div className="flex flex-col gap-4" data-tailnet="connect">
-      <p className="m-0 text-sm text-muted">
-        Hoja joins your tailnet as its own machine ({tailnet.hojaTag}), lists
-        your machines here, and sets up the ones you allow over Tailscale SSH.
-        You never open a terminal.
-      </p>
+    <div className="flex flex-col gap-4" data-tailnet="manual">
       <ol className="m-0 flex list-none flex-col gap-4 p-0">
         <Step n={1} title="Let Hoja's machine reach the ones you allow">
           <span className="text-xs text-muted">
@@ -191,7 +361,9 @@ function AllowCard({
   onDone: () => void;
   onCancel: () => void;
 }) {
-  const [user, setUser] = useState(device.access?.sshUser ?? "");
+  const [user, setUser] = useState(
+    device.access?.sshUser ?? device.suggestedUser ?? "",
+  );
   const [mode, setMode] = useState<"standing" | "once">("standing");
   const [folder, setFolder] = useState(device.access?.workRoot ?? "");
   const [busy, setBusy] = useState(false);
@@ -305,25 +477,39 @@ function DeviceRow({
   device,
   tailnet,
   onChanged,
+  onUseCommand,
 }: {
   device: TailnetDevice;
   tailnet: Tailnet;
   onChanged: () => void;
+  onUseCommand?: () => void;
 }) {
   const [asking, setAsking] = useState(false);
   const access = device.access;
   const running = device.runnerStatus === "online";
   const installing = access?.state === "installing";
   const failed = access?.state === "failed";
+  /* Tailscale says SSH is off: the one thing to do on the machine, shown before anything else. */
+  const unsupported = device.sshSupport === "no" && !running;
+  const sshOff =
+    !unsupported &&
+    device.online &&
+    device.sshEnabled === false &&
+    !running &&
+    !installing;
   const status = running
     ? "Running agents"
     : installing
       ? "Setting up…"
       : failed
         ? "Setup failed"
-        : device.online
-          ? "Online"
-          : "Offline";
+        : unsupported
+          ? `Tailscale SSH can't run on ${device.os ?? "it"}`
+          : sshOff
+            ? "Tailscale SSH is off"
+            : device.online
+              ? "Online"
+              : "Offline";
   const lastLog = (access?.log ?? "").trim().split("\n").slice(-6).join("\n");
   return (
     <li
@@ -358,7 +544,17 @@ function DeviceRow({
               : ""}
           </span>
         </span>
-        {installing ? (
+        {unsupported ? (
+          onUseCommand ? (
+            <button
+              type="button"
+              className="rounded-md border border-line px-3 py-1.5 text-xs font-medium hover:bg-subtle"
+              onClick={onUseCommand}
+            >
+              Use a command instead
+            </button>
+          ) : null
+        ) : installing ? (
           <Loader2 size={16} className="animate-spin text-muted" />
         ) : running ? (
           <Check size={16} className="text-emerald-600" />
@@ -366,8 +562,14 @@ function DeviceRow({
           <button
             type="button"
             className="rounded-md border border-line px-3 py-1.5 text-xs font-medium hover:bg-subtle disabled:opacity-50"
-            disabled={!device.online}
-            title={device.online ? undefined : "Turn the machine on first"}
+            disabled={!device.online || sshOff}
+            title={
+              !device.online
+                ? "Turn the machine on first"
+                : sshOff
+                  ? "Turn on Tailscale SSH first"
+                  : undefined
+            }
             onClick={() => setAsking(true)}
           >
             {failed ? "Try again" : "Use for agents"}
@@ -387,6 +589,20 @@ function DeviceRow({
           </button>
         )}
       </div>
+      {sshOff && (
+        <div
+          className="flex flex-wrap items-center gap-2 pl-7 text-xs text-muted"
+          data-tailnet-ssh-off
+        >
+          {device.sshSupport === "cli"
+            ? `On a Mac this needs Tailscale's open-source tailscaled, not the App Store app. With it, run this once on ${device.hostname}:`
+            : `Run this once on ${device.hostname}; it shows up here as ready:`}
+          <code className="rounded bg-subtle px-1.5 py-0.5">
+            sudo tailscale set --ssh
+          </code>
+          <CopyButton text="sudo tailscale set --ssh" label="Copy" />
+        </div>
+      )}
       {asking && !installing && (
         <AllowCard
           device={device}
@@ -414,14 +630,23 @@ function DeviceRow({
 export function TailnetConnect({
   onConnected,
   initial,
+  onUseCommand,
+  onTailnet,
 }: {
   onConnected?: (runner: Runner) => void;
   initial?: Tailnet | null;
+  /** Switch to the one-line command, for a machine Tailscale SSH cannot reach. */
+  onUseCommand?: () => void;
+  /** Told about every fresh read, so a parent that remounts this starts from it. */
+  onTailnet?: (t: Tailnet) => void;
 }) {
   const adapter = getAgentsAdapter();
   const [tailnet, setTailnet] = useState<Tailnet | null>(initial ?? null);
   const [error, setError] = useState("");
   const reported = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (tailnet) onTailnet?.(tailnet);
+  }, [tailnet, onTailnet]);
 
   const load = useCallback(() => {
     adapter
@@ -442,7 +667,9 @@ export function TailnetConnect({
     tailnet?.connected &&
     (tailnet.nodeState === "starting" ||
       tailnet.devices.some(
-        (d) => d.access?.state === "connected" && d.runnerStatus !== "online",
+        (d) =>
+          (d.access?.state === "connected" && d.runnerStatus !== "online") ||
+          (d.online && d.sshEnabled === false && d.runnerStatus !== "online"),
       ));
   useEffect(() => {
     if (!tailnet?.connected) return;
@@ -533,6 +760,7 @@ export function TailnetConnect({
               device={d}
               tailnet={tailnet}
               onChanged={load}
+              onUseCommand={onUseCommand}
             />
           ))}
         </ul>

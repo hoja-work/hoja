@@ -128,7 +128,12 @@ export function ConnectMachine(props: {
         </button>
       </div>
       {shown === "tailscale" ? (
-        <TailnetConnect initial={tailnet} onConnected={props.onConnected} />
+        <TailnetConnect
+          initial={tailnet}
+          onConnected={props.onConnected}
+          onUseCommand={() => setTab("command")}
+          onTailnet={setTailnet}
+        />
       ) : (
         <CommandConnect {...props} />
       )}

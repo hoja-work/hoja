@@ -81,6 +81,7 @@ ACTIONS = frozenset({
     # so the before and after are on the record.
     "project.repository.change",
     "tailnet.connect",
+    "tailnet.policy.change",
     "tailnet.disconnect",
     "tailnet.machine.allow",
     "tailnet.machine.revoke",

@@ -88,6 +88,21 @@ class Device:
     online: bool
     last_seen: str | None
     tags: tuple[str, ...]
+    #: Tailscale SSH is on for the machine (the API's sshEnabled); None when not reported.
+    ssh_enabled: bool | None = None
+    #: The login that registered it (ada@example.com), for suggesting the local user name.
+    user: str | None = None
+
+    @property
+    def ssh_support(self) -> str:
+        """Whether Tailscale SSH can run on it: yes (Linux), cli (macOS, only with the
+        open-source tailscaled, not the App Store or standalone app), or no."""
+        system = (self.os or "").lower()
+        if system == "linux":
+            return "yes"
+        if system in ("macos", "darwin"):
+            return "cli"
+        return "no"
 
     @property
     def tailnet_name(self) -> str | None:
@@ -98,10 +113,17 @@ class Device:
 class TailscaleAPI:
     """The few calls Hoja makes, with an OAuth client's credentials."""
 
-    def __init__(self, client_id: str, client_secret: str, *, http: httpx.Client | None = None):
+    def __init__(self, client_id: str | None, client_secret: str | None, *,
+                 access_token: str | None = None, http: httpx.Client | None = None):
         self.client_id, self.client_secret = client_id, client_secret
         self._http = http or httpx.Client(timeout=20)
-        self._token: tuple[str, float] | None = None
+        self._token: tuple[str, float] | None = (
+            (access_token, float("inf")) if access_token else None)
+
+    @classmethod
+    def with_access_token(cls, token: str, *, http: httpx.Client | None = None) -> "TailscaleAPI":
+        """A person's API access token (tskey-api-…): used once to set Hoja up, never stored."""
+        return cls(None, None, access_token=token, http=http)
 
     def _bearer(self) -> str:
         if self._token and self._token[1] > time.time() + 60:
@@ -120,12 +142,20 @@ class TailscaleAPI:
     def _call(self, method: str, path: str, **kwargs) -> Any:
         response = self._http.request(method, f"{API}{path}", headers={
             "Authorization": f"Bearer {self._bearer()}"}, **kwargs)
+        if response.status_code == 401:
+            raise TailnetError("Tailscale refused the token: it may have expired. Create a new "
+                               "one and paste it again.")
+        if response.status_code == 403 and self.client_id is None:
+            raise TailnetError(f"Your Tailscale account may not do that ({_message(response)}). "
+                               f"An Owner or Admin of the tailnet has to connect it.")
         if response.status_code == 403:
             raise TailnetError(f"The OAuth client may not do that ({_message(response)}). Give it "
                                f"the devices:core and auth_keys scopes, with the tags "
                                f"{HOJA_TAG} and {MACHINE_TAG}.")
         if response.status_code >= 400:
             raise TailnetError(f"Tailscale said: {_message(response)}")
+        if kwargs.get("headers", {}).get("Accept") == "application/hujson":
+            return response
         return response.json() if response.content else None
 
     def devices(self) -> list[Device]:
@@ -134,6 +164,36 @@ class TailscaleAPI:
 
     def set_tags(self, device_id: str, tags: list[str]) -> None:
         self._call("POST", f"/device/{device_id}/tags", json={"tags": sorted(set(tags))})
+
+    def get_policy(self) -> tuple[str, str]:
+        """The policy file as written (HuJSON, comments kept) and its ETag."""
+        response = self._call("GET", "/tailnet/-/acl", headers={"Accept": "application/hujson"})
+        return response.text, response.headers.get("ETag", "")
+
+    def validate_policy(self, text: str) -> None:
+        body = self._call("POST", "/tailnet/-/acl/validate", content=text.encode(),
+                          headers={"Content-Type": "application/hujson"})
+        problem = (body or {}).get("message") or (body or {}).get("errors")
+        if problem:
+            raise TailnetError(f"Tailscale would not accept the policy change: {problem}")
+
+    def set_policy(self, text: str, etag: str) -> None:
+        headers = {"Content-Type": "application/hujson", "Accept": "application/hujson"}
+        if etag:
+            headers["If-Match"] = etag
+        response = self._http.post(f"{API}/tailnet/-/acl", content=text.encode(), headers={
+            **headers, "Authorization": f"Bearer {self._bearer()}"})
+        if response.status_code == 412:
+            raise TailnetError("Someone changed the tailnet policy just now. Try again.")
+        if response.status_code >= 400:
+            raise TailnetError(f"Tailscale would not save the policy: {_message(response)}")
+
+    def create_oauth_client(self, description: str, scopes: list[str],
+                            tags: list[str]) -> tuple[str, str]:
+        """(client id, secret) of a new OAuth client (a trust credential)."""
+        body = self._call("POST", "/tailnet/-/keys", json={
+            "keyType": "client", "description": description, "scopes": scopes, "tags": tags})
+        return str(body["id"]), str(body["key"])
 
 
 def _message(response: httpx.Response) -> str:
@@ -152,7 +212,182 @@ def _device(raw: Mapping[str, Any]) -> Device:
         hostname=str(raw.get("hostname") or name.split(".")[0]),
         os=raw.get("os"), address=str(addresses[0]) if addresses else None,
         online=bool(raw.get("connectedToControl")), last_seen=raw.get("lastSeen"),
-        tags=tuple(raw.get("tags") or ()))
+        tags=tuple(raw.get("tags") or ()),
+        ssh_enabled=raw.get("sshEnabled") if isinstance(raw.get("sshEnabled"), bool) else None,
+        user=raw.get("user") or None)
+
+
+# ----------------------------------------------------------------------- the policy file
+CLIENT_SCOPES = ["devices:core", "auth_keys"]
+CLIENT_TAGS = [HOJA_TAG, MACHINE_TAG]
+
+
+def _scan(text: str):
+    """Yield (index, char, depth) for the HuJSON structure outside strings and comments."""
+    i, depth, n = 0, 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == '"':
+            j = i + 1
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            yield i, '"', depth
+            i = j + 1
+            continue
+        if text.startswith("//", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        if text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+            continue
+        if c in "{[":
+            yield i, c, depth
+            depth += 1
+        elif c in "}]":
+            depth -= 1
+            yield i, c, depth
+        elif not c.isspace():
+            yield i, c, depth
+        i += 1
+
+
+def standard_json(text: str) -> Any:
+    """HuJSON to data: comments and trailing commas removed."""
+    out, i, n = [], 0, len(text)
+
+    def skip(k: int) -> int:  # past whitespace and comments
+        while k < n:
+            if text[k].isspace():
+                k += 1
+            elif text.startswith("//", k):
+                j = text.find("\n", k)
+                k = n if j < 0 else j
+            elif text.startswith("/*", k):
+                j = text.find("*/", k + 2)
+                k = n if j < 0 else j + 2
+            else:
+                break
+        return k
+
+    while i < n:
+        c = text[i]
+        if c == '"':
+            j = i + 1
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            out.append(text[i:j + 1])
+            i = j + 1
+        elif text.startswith("//", i) or text.startswith("/*", i):
+            i = skip(i)
+            out.append(" ")
+        elif c == ",":
+            k = skip(i + 1)
+            if k >= n or text[k] not in "}]":
+                out.append(",")
+            i += 1
+        else:
+            out.append(c)
+            i += 1
+    return json.loads("".join(out) or "{}")
+
+
+def _top_level(text: str) -> tuple[int, dict[str, int]]:
+    """(index just inside the root object's {, {key: index just inside its value's { or [})."""
+    root, keys, key, want_value = -1, {}, None, False
+    tokens = list(_scan(text))
+    for k, (i, c, depth) in enumerate(tokens):
+        if root < 0:
+            if c == "{":
+                root = i + 1
+            continue
+        if depth == 1 and c == '"' and not want_value:
+            nxt = tokens[k + 1] if k + 1 < len(tokens) else None
+            if nxt and nxt[1] == ":":
+                end = i + 1
+                while text[end] != '"':
+                    end += 2 if text[end] == "\\" else 1
+                key = json.loads(text[i:end + 1])
+                want_value = True
+            continue
+        if want_value and c in "{[" and depth == 1:
+            keys[key] = i + 1
+            want_value = False
+        elif want_value and c not in ":":
+            want_value = False
+    return root, keys
+
+
+def added_snippet(old: str) -> str:
+    """What plan_policy adds, grouped under its section, as it reads in the policy file."""
+    current = standard_json(old) if old.strip() else {}
+    parts = []
+    owners = {t: w for t, w in POLICY["tagOwners"].items()
+              if t not in (current.get("tagOwners") or {})}
+    if owners:
+        parts.append('"tagOwners": {\n' + "".join(
+            f'\t{json.dumps(t)}: {json.dumps(w)},\n' for t, w in owners.items()) + "}")
+    for section in ("grants", "ssh"):
+        rules = [r for r in POLICY[section] if r not in (current.get(section) or [])]
+        if rules:
+            parts.append(f'"{section}": [\n' + "".join(f"\t{json.dumps(r)},\n" for r in rules)
+                         + "]")
+    return "\n".join(parts)
+
+
+def plan_policy(text: str) -> tuple[str, list[str]]:
+    """The policy with what Hoja needs added, and a line per addition. Comments, order and
+    everything already there are kept; what is already present is not added twice."""
+    current = standard_json(text) if text.strip() else {}
+    if not text.strip():
+        text = "{\n}\n"
+    owners = current.get("tagOwners") or {}
+    inserts: dict[str, list[str]] = {}
+    notes: list[str] = []
+    for tag, who in POLICY["tagOwners"].items():
+        if tag not in owners:
+            inserts.setdefault("tagOwners", []).append(f'"{tag}": {json.dumps(who)}')
+            notes.append(f"tagOwners: {tag} (owned by {', '.join(who)})")
+    for section in ("grants", "ssh"):
+        for rule in POLICY[section]:
+            if rule not in (current.get(section) or []):
+                inserts.setdefault(section, []).append(json.dumps(rule))
+                notes.append(f"{section}: {_describe(section, rule)}")
+    if not inserts:
+        return text, []
+    root, keys = _top_level(text)
+    edits: list[tuple[int, str]] = []
+    missing = []
+    for section, entries in inserts.items():
+        body = "".join(f"\n\t\t// Added by Hoja (agents on your machines)\n\t\t{e},"
+                       if n == 0 else f"\n\t\t{e}," for n, e in enumerate(entries))
+        if section in keys:
+            edits.append((keys[section], body))
+        else:
+            missing.append((section, body))
+    if missing:
+        opener = {"tagOwners": ("{", "}"), "grants": ("[", "]"), "ssh": ("[", "]")}
+        block = "".join(f'\n\t"{section}": {opener[section][0]}{body}\n\t{opener[section][1]},'
+                        for section, body in missing)
+        edits.append((root, block))
+    for at, insertion in sorted(edits, reverse=True):
+        text = text[:at] + insertion + text[at:]
+    standard_json(text)  # still parses
+    return text, notes
+
+
+def _describe(section: str, rule: Mapping[str, Any]) -> str:
+    if section == "grants":
+        return f"{', '.join(rule['src'])} may reach {', '.join(rule['dst'])} on port 22"
+    return (f"{', '.join(rule['src'])} may SSH into {', '.join(rule['dst'])} as "
+            f"{', '.join(rule['users'])}")
+
+
+def suggested_user(login: str | None) -> str | None:
+    local = (login or "").split("@", 1)[0].lower()
+    local = re.sub(r"[^a-z0-9_.-]", "", local)
+    return local if local and _USER_RE.match(local) and local != "root" else None
 
 
 # ------------------------------------------------------------------------- Hoja's node
@@ -352,6 +587,7 @@ def ssh_run(node: TailnetNode, address: str, user: str, command: str, *,
 # ----------------------------------------------------------------------- seams for tests
 #: Replaced in tests: build the API client, the node, and the SSH call.
 api_factory: Callable[[str, str], Any] = TailscaleAPI
+token_api_factory: Callable[[str], Any] = TailscaleAPI.with_access_token
 node_factory: Callable[[str], Any] = TailnetNode
 ssh = ssh_run
 
