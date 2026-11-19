@@ -144,3 +144,20 @@ def test_a_built_wheel_carries_the_profiles_and_the_entry_point():
         assert f"hoja_runnerd/profiles/{profile}.toml" in names, names
     assert any(name.endswith(".dist-info/entry_points.txt") for name in names), names
     assert "hoja_client/client.py" in names, "hoja_client ships in the same distribution"
+
+
+def test_an_installed_package_finds_the_wheel_beside_the_web_root(tmp_path, monkeypatch):
+    """Production pip-installs hoja_server into site-packages and copies the wheel to
+    /app/downloads next to /app/web; the module must find it there without HOJA_DOWNLOAD_ROOT."""
+    from hoja_server import runner_release
+
+    app = tmp_path / "app"
+    (app / "web").mkdir(parents=True)
+    (app / "downloads").mkdir()
+    wheel = app / "downloads" / "hoja_runnerd-0.1.0-py3-none-any.whl"
+    wheel.write_bytes(b"wheel")
+    monkeypatch.delenv("HOJA_DOWNLOAD_ROOT", raising=False)
+    monkeypatch.setenv("HOJA_WEB_ROOT", str(app / "web"))
+    monkeypatch.setattr(runner_release, "__file__", str(tmp_path / "site-packages" / "hoja_server" / "runner_release.py"))
+    assert runner_release.download_root() == app / "downloads"
+    assert runner_release.latest_wheel() == wheel

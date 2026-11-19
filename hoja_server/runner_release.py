@@ -65,7 +65,20 @@ def download_root() -> Path:
     configured = os.environ.get("HOJA_DOWNLOAD_ROOT", "").strip()
     if configured:
         return Path(configured)
-    return Path(__file__).resolve().parent.parent / "downloads"
+    package_adjacent = Path(__file__).resolve().parent.parent / "downloads"
+    # An image that pip-installs the app puts this module in site-packages, so the directory
+    # next to the package is not /app/downloads. The web root is configured in every image
+    # (HOJA_WEB_ROOT=/app/web), and the wheel is copied beside it; production builds from a
+    # server-side Dockerfile, so this cannot rely on an ENV line in the repository's one.
+    web_root = os.environ.get("HOJA_WEB_ROOT", "").strip()
+    candidates = [package_adjacent]
+    if web_root:
+        candidates.append(Path(web_root).parent / "downloads")
+    candidates.append(Path.cwd() / "downloads")
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    return package_adjacent
 
 
 def _version_key(version: str) -> tuple:
