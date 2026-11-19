@@ -412,7 +412,9 @@ def test_a_finished_claim_is_awaiting_until_a_separate_principal_signs_it(world)
     assert verdict_row["workerModel"] == "worker-model"
     outcomes = {check["name"]: check["outcome"] for check in verdict_row["checks"]}
     assert outcomes["acceptance_list"] == "passed", outcomes
-    assert outcomes["pull_request"] == "uncertain", outcomes
+    # The claim names no pull request and the task links none: a run that changed no
+    # repository is not asked for one (it used to make every such claim uncertain).
+    assert "pull_request" not in outcomes, outcomes
     assert outcomes["principal_separation"] == "passed", outcomes
     assert "CI" not in " ".join(check["detail"] for check in verdict_row["checks"])
 

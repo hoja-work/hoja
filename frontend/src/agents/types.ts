@@ -109,6 +109,29 @@ export type AgentEvent = {
   text: string;
   /** Set on `action`: the tool the agent invoked. */
   tool?: string;
+  /** Who wrote it: the agent, or a person (a `prompt` answering the agent). */
+  author?: 'agent' | 'user';
+  /** Set on an `elicitation` the agent's harness asked: the questions and the id an answer
+   * must name. `null` on an elicitation that carries no structured question. */
+  ask?: AgentAsk | null;
+  /** Set on a `prompt` that answered an ask: which one. */
+  answersAsk?: string | null;
+};
+
+/** One multiple-choice question an agent asked mid-run (Pydantic AI Harness `AskUser`). */
+export type AgentQuestion = {
+  header: string;
+  question: string;
+  multiSelect: boolean;
+  options: {label: string; description?: string | null}[];
+};
+
+export type AgentAsk = {askId: string; questions: AgentQuestion[]};
+
+/** A person's answer, as `agentSessionPrompt(response:)` takes it. */
+export type AgentAnswer = {
+  answers?: {header: string; selected: string[]; customAnswer?: string}[];
+  cancelled?: boolean;
 };
 
 /* Exactly the columns `agentMemberUpdate` accepts (agent_members.py `_clean`). WP12's policy lives
@@ -385,6 +408,10 @@ export type ConnectExposure = {
   /** open | closed and why it closed, so a row can say more than "gone". */
   state: string;
   closeReason: string | null;
+  /** The agent whose run opened it, as the endpoint row names it; absent on older rows. */
+  agentId?: string | null;
+  /** The host the grant named (the policy's host, never the tunnel address). */
+  host?: string | null;
 };
 
 /* ---------------- Claims and verdicts (WP10) ---------------- */
@@ -459,3 +486,27 @@ export function ttlLabel(expiresAt: number, at: number = Date.now()): string {
   const s = left % 60;
   return `${m}:${String(s).padStart(2, '0')}`;
 }
+
+/* ---------------- Agent setup (HOJA-602: "get this agent running") ---------------- */
+
+/** What the setup checklist reads about an agent's run policy, beyond the harness half. */
+export type RunAccess = {
+  /** Team ids the agent may work in (`agentPolicy.teams`). Empty means it can take no task. */
+  teams: string[];
+  projects: string[];
+  /** Secret NAMES granted to the agent's runs (`agentPolicy.secrets`). */
+  secrets: string[];
+  /** Every secret name stored in the workspace (`agentSecretNames`). */
+  workspaceSecrets: string[];
+  /** The workspace's teams, for the "where it works" choice. */
+  allTeams: {id: string; key: string; name: string}[];
+};
+
+/** A test task's progress, for the setup checklist's last step. */
+export type SetupProbe = {
+  issueId: string;
+  identifier: string;
+  stateName: string | null;
+  sessionState: string | null;
+  verdict: string | null;
+};

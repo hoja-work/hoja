@@ -256,7 +256,8 @@ def test_a_finished_claim_is_verified_automatically(world):
     assert signed["worker_model"] == WORKER_MODEL
     outcomes = {c["name"]: c["outcome"] for c in json.loads(signed["checks"])}
     assert outcomes["pull_request"] == "passed" and outcomes["acceptance_list"] == "passed"
-    assert outcomes["deployed"] == "passed"
+    # Merge and deployment are recorded for the reader, never part of the In Review gate.
+    assert outcomes["deployed"] == "info" and outcomes["merged_on_main"] == "info"
 
     # The principal is a real identity: a user row with no seat and no member row.
     with world["engine"].connect() as conn:

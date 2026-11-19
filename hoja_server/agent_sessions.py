@@ -143,11 +143,17 @@ TRANSITIONS = {
     # A crashed runner leaves the row claiming the lease; only the timer moves it.
     (LEASED, "tick"): QUEUED,
     (RUNNING, "tick"): QUEUED,
+    (AWAITING_INPUT, "tick"): QUEUED,
+    # A question answered while the run that asked it is still live goes back to that
+    # run; the answer travels on the lease's heartbeat. ``prompt`` (to queued) remains
+    # for a session whose run is gone.
+    (AWAITING_INPUT, "answer"): RUNNING,
     # A failed finish is the runner saying the attempt produced nothing (WP10).
     # It is not a verdict on a claim: there is no claim to verify, so it fails
     # where it stands and the schedule check decides whether to retry.
     (LEASED, "fail"): FAILED,
     (RUNNING, "fail"): FAILED,
+    (AWAITING_INPUT, "fail"): FAILED,
 }
 # Events that are legal but leave the state where it is.
 STEADY_EVENTS = {
@@ -396,7 +402,8 @@ def transition(conn, session: dict, event: str, *, at: str | None = None,
         # The promise of a lease is spent once there is a lease; keeping it would
         # make a verifying or finished session look like it still reserves capacity.
         changes["admitted_at"] = None
-    if target == RUNNING:
+    if target == RUNNING and event == "start":
+        # Only the first start: going back to running after an answer is not a new start.
         append_activity(conn, session["organization_id"], session["id"], "action",
                         body="Started.", at=at)
     if target == VERIFYING:
@@ -747,8 +754,8 @@ SDL = gql(
     extend type Mutation {
       "A human stop. Cancel always wins: no later event revives the session."
       agentSessionStop(id: String!, reason: String): AgentSessionPayload!
-      "A human prompt on a session that is waiting for one; it queues the work again."
-      agentSessionPrompt(id: String!, body: String!): AgentSessionPayload!
+      "A human answer to a session that is waiting for one. With a live run (the agent asked through its harness) the answer goes back to that run on its next heartbeat; otherwise the work is queued again. `response` answers the elicitation's questions: {answers: [{header, selected: [label], customAnswer}]} or {cancelled: true}."
+      agentSessionPrompt(id: String!, body: String!, response: JSON): AgentSessionPayload!
       "A separate verifier's verdict on a finished claim. Only met moves the task to In Review; not_met fails the session and uncertain leaves it awaiting evidence. A verifier sharing the worker's principal or model is refused, and no check reads CI status."
       agentSessionVerify(id: String!, verdict: String!, rationale: String,
                          model: String, liveRevision: String): AgentSessionPayload!
@@ -833,12 +840,24 @@ def m_agent_session_stop(_obj, info, id, reason=None):
 
 
 @mutation.field("agentSessionPrompt")
-def m_agent_session_prompt(_obj, info, id, body):
+def m_agent_session_prompt(_obj, info, id, body, response=None):
     store, org, uid = _ctx(info)
     with store.engine.begin() as conn:
         row = _require_session(conn, org, id)
         if row["state"] != AWAITING_INPUT:
             _bad("id", "A prompt answers a session that is awaiting input.")
+        ask = _open_ask(conn, org, row["id"])
+        if ask is not None and _lease_is_live(conn, org, row.get("lease_id")):
+            # The run that asked is still holding its lease and waiting on the answer:
+            # hand it back to that run (the heartbeat carries it) instead of queueing a
+            # new attempt that would start the work over.
+            answer = _clean_response(response, body)
+            append_activity(conn, org, row["id"], "prompt", body=body, author_kind="user",
+                            author_id=uid, signal="continue",
+                            payload={"ask_id": ask, "response": answer})
+            row = transition(conn, row, "answer", actor_id=uid)
+            payload = serialize(conn, org, row)
+            return {"success": True, "agentSession": payload}
         append_activity(conn, org, row["id"], "prompt", body=body, author_kind="user",
                         author_id=uid, signal="continue")
         row = transition(conn, row, "prompt", actor_id=uid)
@@ -850,6 +869,63 @@ def m_agent_session_prompt(_obj, info, id, body):
         row = agent_schedule.reevaluate(conn, row, at=now_iso())
         payload = serialize(conn, org, row)
     return {"success": True, "agentSession": payload}
+
+
+def _open_ask(conn, org_id: str, session_id: str) -> str | None:
+    """The ask id of the latest elicitation, when it has not been answered yet."""
+    rows = conn.execute(select(agent_activity.c.kind, agent_activity.c.payload).where(and_(
+        agent_activity.c.organization_id == org_id,
+        agent_activity.c.session_id == session_id,
+        agent_activity.c.kind.in_(("elicitation", "prompt")),
+    )).order_by(desc(agent_activity.c.created_at)).limit(1)).mappings().first()
+    if not rows or rows["kind"] != "elicitation":
+        return None
+    try:
+        payload = json.loads(rows["payload"] or "{}")
+    except (TypeError, ValueError):
+        return None
+    return str(payload.get("ask_id") or "") or None
+
+
+def _lease_is_live(conn, org_id: str, lease_id: str | None) -> bool:
+    if not lease_id:
+        return False
+    state = conn.execute(select(agent_lease.c.state).where(and_(
+        agent_lease.c.organization_id == org_id, agent_lease.c.id == lease_id))).scalar()
+    return state == "active"
+
+
+#: How much free text one answer may carry to a run.
+MAX_ANSWER_CHARS = 4000
+
+
+def _clean_response(response, body: str) -> dict:
+    """The answer as the runner relays it: picked labels per question, or a decline.
+
+    Validation against the question's options happens in the harness, which owns the
+    question; here the shape is bounded and a plain-text prompt becomes a custom answer,
+    so a person who just types a reply is still heard.
+    """
+    if isinstance(response, str):
+        # A JSON scalar written as a string literal arrives as text; read it the same way.
+        try:
+            response = json.loads(response)
+        except (TypeError, ValueError):
+            response = None
+    if isinstance(response, dict) and response.get("cancelled"):
+        return {"cancelled": True}
+    answers = []
+    raw = response.get("answers") if isinstance(response, dict) else None
+    for item in raw or []:
+        if not isinstance(item, dict) or not item.get("header"):
+            continue
+        selected = [str(x)[:200] for x in (item.get("selected") or []) if str(x).strip()][:10]
+        custom = str(item.get("customAnswer") or "").strip()[:MAX_ANSWER_CHARS] or None
+        answers.append({"header": str(item["header"])[:200], "selected": selected,
+                        "custom_answer": custom})
+    if not answers:
+        return {"answers": [], "text": (body or "").strip()[:MAX_ANSWER_CHARS]}
+    return {"answers": answers}
 
 
 @mutation.field("agentSessionVerify")

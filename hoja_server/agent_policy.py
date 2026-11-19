@@ -49,7 +49,7 @@ from typing import Any
 
 from ariadne import MutationType, ObjectType, QueryType, gql
 from graphql import GraphQLError
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 
 from hoja_server import abac, audit, logging_setup, secrets_box, usage_ledger
 from hoja_server.db import (
@@ -91,7 +91,7 @@ BUDGET_ACTIONS = (QUEUE, STOP)
 #: and the daemon declares ``ProfileSet.allowlist()``, which holds canonical names.
 #: Storing an alias would therefore produce a lease no normally-enrolled runner can
 #: take, so an alias is refused with the canonical name in the message instead.
-KNOWN_HARNESSES = ("claude-code", "codex", "gemini", "generic", "opencode", "pi")
+KNOWN_HARNESSES = ("claude-code", "codex", "gemini", "generic", "hoja-coder", "opencode", "pi")
 
 #: What a delegation runs on when nobody chose (HOJA-602-A-22). It is the value
 #: ``agent_schedule.enqueue_admitted`` hard-coded before this revision, so an
@@ -108,6 +108,7 @@ HARNESS_ALIASES = {
     "open-code": "opencode",
     "cli": "generic",
     "shell": "generic",
+    "coder": "hoja-coder",
 }
 
 #: Names a repository's default branch actually goes by. Never grantable. A
@@ -862,13 +863,19 @@ def _month_start(stamp: datetime) -> datetime:
     return stamp.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
 
-def _agent_leases(conn, org_id: str, agent_user_id: str) -> list[dict]:
+def _agent_leases(conn, org_id: str, agent_user_id: str, *,
+                  granted_since: str | None = None) -> list[dict]:
+    """This agent's leases, optionally only those granted on or after an ISO day.
+
+    The bound is pushed into SQL: this runs on every lease claim, and an agent's whole
+    history grows without limit while a month of it does not.
+    """
+    clauses = [agent_lease.c.organization_id == org_id, issue.c.delegate_id == agent_user_id]
+    if granted_since is not None:
+        clauses.append(agent_lease.c.granted_at >= granted_since)
     rows = conn.execute(select(
         agent_lease.c.state, agent_lease.c.granted_at, agent_lease.c.finished_at,
-    ).join(issue, issue.c.id == agent_lease.c.task_id).where(and_(
-        agent_lease.c.organization_id == org_id,
-        issue.c.delegate_id == agent_user_id,
-    ))).mappings().all()
+    ).join(issue, issue.c.id == agent_lease.c.task_id).where(and_(*clauses))).mappings().all()
     return [dict(r) for r in rows]
 
 
@@ -887,7 +894,10 @@ def run_minutes_this_month(conn, org_id: str, agent_user_id: str,
     now = now or datetime.now(timezone.utc)
     start = _month_start(now)
     total = 0.0
-    for lease in _agent_leases(conn, org_id, agent_user_id):
+    # The day prefix is a safe lower bound for every ISO stamp this month, whichever
+    # offset spelling wrote it; the exact comparison below still decides.
+    for lease in _agent_leases(conn, org_id, agent_user_id,
+                               granted_since=start.strftime("%Y-%m-%d")):
         granted = _parse_iso(lease.get("granted_at"))
         if granted is None or granted < start:
             continue
@@ -897,8 +907,25 @@ def run_minutes_this_month(conn, org_id: str, agent_user_id: str,
 
 
 def active_leases(conn, org_id: str, agent_user_id: str) -> int:
-    return sum(1 for lease in _agent_leases(conn, org_id, agent_user_id)
-               if lease["state"] == "active")
+    return int(conn.execute(select(func.count()).select_from(agent_lease).join(
+        issue, issue.c.id == agent_lease.c.task_id).where(and_(
+            agent_lease.c.organization_id == org_id,
+            issue.c.delegate_id == agent_user_id,
+            agent_lease.c.state == "active",
+        ))).scalar() or 0)
+
+
+def effective_capacity(member: Mapping[str, Any] | None, view: "PolicyView | None") -> int:
+    """How many runs this agent may hold at once: the one number both gates use.
+
+    The schedule check (WP06) and the lease gate (WP12) used to read two different
+    fields, so an agent could be admitted by one and refused by the other forever. The
+    policy's ``max_concurrency`` is authoritative when a policy exists; the member's
+    ``capacity`` is the fallback.
+    """
+    if view is not None and view.max_concurrency:
+        return max(1, int(view.max_concurrency))
+    return max(1, int((member or {}).get("capacity") or 1))
 
 
 def check_lease(conn, org_id: str, lease: Mapping[str, Any], *,
@@ -938,7 +965,7 @@ def check_lease(conn, org_id: str, lease: Mapping[str, Any], *,
                             detail={"agent": agent_user_id, "member": member["id"],
                                     "why": scope_decision.reason},
                             agent_member_id=member["id"], policy_version=view.version)
-    limit = max(1, int(view.max_concurrency or member.get("capacity") or 1))
+    limit = effective_capacity(member, view)
     running = active_leases(conn, org_id, agent_user_id)
     if running >= limit:
         return LeaseVerdict(

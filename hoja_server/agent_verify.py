@@ -63,6 +63,8 @@ VERDICTS = ("met", "not_met", "uncertain")
 STRENGTH = {"met": 2, "uncertain": 1, "not_met": 0}
 
 PASSED, FAILED, MISSING = "passed", "failed", "uncertain"
+# Recorded for the reader, never part of the verdict (merged / deployed, see check_claim).
+INFO = "info"
 # The checks a verdict carries. Deliberately no CI entry: there is no CI.
 CHECK_ORDER = ("principal_separation", "acceptance_list", "pull_request",
                "merged_on_main", "deployed")
@@ -277,10 +279,17 @@ def check_claim(conn, org_id: str, session: dict, *, live_revision: str | None =
             add("acceptance_list", PASSED,
                 f"all {len(expected)} acceptance item(s) are answered by the claim")
 
-    # 3. The pull request, re-read now rather than trusted as claimed (class D8).
+    # 3. The pull request, re-read now rather than trusted as claimed (class D8). Only
+    # asked of work that involves one: the claim names a PR, the run was given a
+    # repository, or the task already carries a PR link. A task that asked for an answer
+    # rather than a change has no PR to re-read, and demanding one made every such run
+    # uncertain forever.
     pr_claim = claim.get("pull_request") if isinstance(claim.get("pull_request"), dict) else {}
     link = _pull_request_link(conn, org_id, session["issue_id"], claim)
-    if link is None:
+    involves_pr = bool(pr_claim) or bool(claim.get("repo")) or link is not None
+    if not involves_pr:
+        pass
+    elif link is None:
         add("pull_request", MISSING,
             "no pull-request link is recorded for this task, so the claim cannot be re-read")
     else:
@@ -298,29 +307,31 @@ def check_claim(conn, org_id: str, session: dict, *, live_revision: str | None =
                 f"{link.get('url')} is {'merged' if merged else str(link.get('state') or 'open')} "
                 f"with {len(files)} changed file(s)")
 
-        # 4. Merged on main: a claim of completion means the work is on the trunk.
+        # 4. Merged on main. Informational at this gate: ``met`` moves the task to In
+        # Review, and review comes before merge, so requiring a merge here failed every
+        # pull request that was waiting for exactly the review this gate opens.
         merged_sha = str(pr_claim.get("merged_sha") or claim.get("merged_sha")
                          or link.get("sha") or "")
         if not merged:
-            add("merged_on_main", FAILED,
-                "the pull request is not merged, so nothing is on main")
+            add("merged_on_main", INFO, "the pull request is not merged yet (review comes next)")
         elif not merged_sha:
-            add("merged_on_main", MISSING,
-                "the link records no merge commit, so main cannot be tied to it")
+            add("merged_on_main", INFO, "merged, but the link records no merge commit")
         else:
-            add("merged_on_main", PASSED,
-                f"merged at {link.get('merged_at')} as {merged_sha}")
+            add("merged_on_main", INFO, f"merged at {link.get('merged_at')} as {merged_sha}")
 
-    # 5. Deployed: the revision the deployment reports, never a CI conclusion.
+    # 5. Deployed. Informational, and only when the claim states a revision: the
+    # revision configured here is the one *this* server runs, which says nothing about a
+    # customer's deployment, and a claim that names none used to pass this check by
+    # default.
     live = live_revision or os.environ.get(LIVE_REVISION_ENV) or None
     claimed_deploy = str(claim.get("deployed_revision") or "")
-    if not live:
-        add("deployed", MISSING,
-            f"no deployed revision is configured ({LIVE_REVISION_ENV}), so deployment is unproved")
-    elif claimed_deploy and not live.startswith(claimed_deploy) and claimed_deploy != live:
-        add("deployed", FAILED, f"the deployment serves {live}, the claim says {claimed_deploy}")
-    else:
-        add("deployed", PASSED, f"the deployment serves {live}")
+    if claimed_deploy:
+        if not live:
+            add("deployed", INFO, f"the claim names {claimed_deploy}; no live revision is known")
+        elif live.startswith(claimed_deploy) or claimed_deploy == live:
+            add("deployed", INFO, f"the deployment serves {live}, as claimed")
+        else:
+            add("deployed", INFO, f"the deployment serves {live}, the claim says {claimed_deploy}")
 
     order = {name: index for index, name in enumerate(CHECK_ORDER)}
     checks.sort(key=lambda c: order.get(c["name"], len(order)))

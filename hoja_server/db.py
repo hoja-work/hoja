@@ -38,7 +38,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 80
+CURRENT_SCHEMA_REVISION = 81
 
 log = logging.getLogger(__name__)
 
@@ -1310,6 +1310,10 @@ agent_lease = Table(
     # re-checks it on every heartbeat: a policy edited mid-run cancels the lease
     # instead of leaving the old grants in force until the work ends.
     Column("policy_version", Integer),
+    # Revision 81: the policy refusal this queued attempt last received at grant time.
+    # A refused attempt is skipped (it no longer blocks the queue behind it), and the
+    # refusal is audited only when this value changes, not on every poll.
+    Column("refusal_reason", String),
     Column("finished_at", String),
     Column("lost_at", String),
     Column("lost_reason", String),
@@ -3301,6 +3305,17 @@ def _apply_project_update_comments(conn):
         "CREATE INDEX IF NOT EXISTS ix_comment_project_update_id ON comment (project_update_id)")
 
 
+def _apply_lease_refusal_reason(conn):
+    """``agent_lease.refusal_reason``: the last policy refusal a queued attempt got.
+
+    Nullable, no backfill: an attempt that was never refused has nothing to record. The
+    column probe keeps a fresh database (create_all made it) and a replay a no-op.
+    """
+    existing = {column["name"] for column in inspect(conn).get_columns("agent_lease")}
+    if "refusal_reason" not in existing:
+        conn.exec_driver_sql("ALTER TABLE agent_lease ADD COLUMN refusal_reason VARCHAR")
+
+
 def _apply_organization_agents_enabled(conn):
     """``organization.agents_enabled``: the workspace switch for the Agents screens.
 
@@ -3631,6 +3646,9 @@ _MIGRATIONS = {
     79: _apply_remove_meetings,
     # 80: cycle start/end notifications are stamped once, whoever sends them.
     80: _apply_cycle_event_stamps,
+    # 81: a refused queued lease records why, so it stops blocking the queue and is
+    # audited once per reason instead of once per poll.
+    81: _apply_lease_refusal_reason,
 }
 
 

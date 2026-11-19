@@ -28,20 +28,31 @@ function authHeaders(): Record<string, string> {
     : {};
 }
 
+/* The token is read on every request, not once when this module loads: a sign-in, sign-out or
+ * workspace switch after the first import used to keep sending the token from before it. */
+function authedFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  headers.delete("authorization");
+  for (const [name, value] of Object.entries(authHeaders()))
+    headers.set(name, value);
+  return fetch(input, { ...init, headers, credentials: "include" });
+}
+
 // One thread per chat: the library sends threadId on every turn, and the server appends to that thread.
 const llm = fetchLLM({
   url: "/api/agent/chat",
   streamAdapter: openAIAdapter(),
   messageFormat: openAIMessageFormat,
-  headers: authHeaders(),
-  fetch: (input, init) => fetch(input, { ...init, credentials: "include" }),
+  fetch: authedFetch,
 });
 
 const storage = restStorage({
   baseUrl: "/api/agent/threads",
   messageFormat: openAIMessageFormat,
-  headers: authHeaders(),
-  fetch: (input, init) => fetch(input, { ...init, credentials: "include" }),
+  fetch: authedFetch,
 });
 
 type AskOption = { label: string; description?: string };

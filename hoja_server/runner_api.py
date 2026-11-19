@@ -569,9 +569,16 @@ def _pool_grantable(pools: frozenset[str]):
     return or_(pool.is_(None), pool.in_(sorted(pools)))
 
 
+#: How many queued attempts one claim looks at. A refused attempt is skipped rather than
+#: retried at the head of the queue, so one agent whose policy refuses its work cannot
+#: starve every other agent in the workspace; the window bounds the work one poll does.
+GRANT_WINDOW = 25
+
+
 def _grantable(conn, org_id: str, harnesses: Sequence[str],
-               pools: frozenset[str] = frozenset()) -> dict[str, Any] | None:
-    """One queued attempt for a harness this runner declared, or None.
+               pools: frozenset[str] = frozenset(),
+               limit: int = GRANT_WINDOW) -> list[dict[str, Any]]:
+    """Queued attempts for a harness this runner declared, oldest first.
 
     Postgres takes the row lock with ``SKIP LOCKED`` so two runners claiming at
     the same instant take two different tasks instead of colliding; SQLite is
@@ -583,15 +590,15 @@ def _grantable(conn, org_id: str, harnesses: Sequence[str],
     may not take and ``SKIP LOCKED`` keeps its meaning.
     """
     stmt = select(agent_lease.c.id, agent_lease.c.task_id, agent_lease.c.fence,
-                  agent_lease.c.ttl_seconds).where(and_(
+                  agent_lease.c.ttl_seconds, agent_lease.c.refusal_reason).where(and_(
         agent_lease.c.organization_id == org_id,
         agent_lease.c.state == LEASE_QUEUED,
         agent_lease.c.harness.in_(list(harnesses)),
     )).where(_pool_grantable(pools)
-    ).order_by(agent_lease.c.created_at, agent_lease.c.fence).limit(1)
+    ).order_by(agent_lease.c.created_at, agent_lease.c.fence).limit(max(1, int(limit)))
     if conn.dialect.name == "postgresql":
         stmt = stmt.with_for_update(skip_locked=True)
-    return _row(conn, stmt)
+    return [dict(row) for row in conn.execute(stmt).mappings()]
 
 
 def _refused(conn, org_id: str, harnesses: Sequence[str]) -> list[dict[str, Any]]:
@@ -742,12 +749,16 @@ def claim_lease(engine, runner_row: Mapping[str, Any]) -> dict[str, Any] | None:
     WP12 (T053) inserts the agent's policy between "there is work" and "here is a
     lease": scope, concurrency and budget are checked against the policy row before
     the lease is awarded, and the version granted under is recorded on the lease so
-    a later edit is detectable (see ``heartbeat_lease``). The refusal is audited
-    after the transaction commits, and nothing is granted when it happens.
+    a later edit is detectable (see ``heartbeat_lease``).
+
+    A refused attempt is skipped, not retried at the head of the queue: the claim walks
+    the oldest ``GRANT_WINDOW`` attempts and grants the first one the policy allows. The
+    refusal is stored on the lease (``refusal_reason``) and audited only when it changes,
+    so a refused attempt costs one audit row per reason instead of one per poll.
     """
 
-    granted, refusal = _claim_locked(engine, runner_row)
-    if refusal is not None:
+    granted, refusals = _claim_locked(engine, runner_row)
+    for refusal in refusals:
         agent_policy.record_refusal(
             engine,
             organization_id=runner_row["organization_id"],
@@ -763,36 +774,44 @@ def claim_lease(engine, runner_row: Mapping[str, Any]) -> dict[str, Any] | None:
     return granted
 
 
-def _claim_locked(engine, runner_row: Mapping[str, Any]) -> tuple[dict[str, Any] | None, dict | None]:
-    """The transaction half of ``claim_lease``: (lease payload, refusal or None)."""
+def _claim_locked(engine, runner_row: Mapping[str, Any]) -> tuple[dict[str, Any] | None, list[dict]]:
+    """The transaction half of ``claim_lease``: (lease payload or None, new refusals)."""
 
     org_id = runner_row["organization_id"]
     harnesses = _json_list(runner_row.get("harnesses"))
     pools = runner_pools(runner_row)
     stamp = _now()
+    refusals: list[dict] = []
     with tenant_context.scoped(org_id), engine.begin() as conn:
         if not harnesses:
-            return None, None
-        candidate = _grantable(conn, org_id, harnesses, pools)
-        if not candidate:
-            return None, None
-        verdict = agent_policy.check_lease(conn, org_id, candidate)
-        if not verdict.allowed:
-            if verdict.action == agent_policy.STOP:
+            return None, refusals
+        candidate = None
+        verdict = None
+        for row in _grantable(conn, org_id, harnesses, pools):
+            check = agent_policy.check_lease(conn, org_id, row)
+            if check.allowed:
+                candidate, verdict = row, check
+                break
+            code = check.refusal_code()
+            values: dict[str, Any] = {}
+            if check.action == agent_policy.STOP:
                 # 'stop' is recorded on the lease, not only refused: otherwise the
                 # same exhausted attempt is re-examined on every poll forever.
+                values = {"state": LEASE_CANCELED, "cancel_requested_at": now_iso(),
+                          "cancel_reason": code, "lost_reason": code}
+            if code != row.get("refusal_reason") or values:
                 conn.execute(agent_lease.update().where(and_(
-                    agent_lease.c.id == candidate["id"],
+                    agent_lease.c.id == row["id"],
                     agent_lease.c.state == LEASE_QUEUED,
-                    agent_lease.c.fence == candidate["fence"],
-                )).values(state=LEASE_CANCELED, cancel_requested_at=now_iso(),
-                          cancel_reason=verdict.refusal_code(),
-                          lost_reason=verdict.refusal_code(), updated_at=now_iso()))
-            return None, {
-                "lease_id": candidate["id"], "task_id": candidate["task_id"],
-                "fence": candidate["fence"], "reason": verdict.refusal_code(),
-                "action": verdict.action, "detail": verdict.detail,
-            }
+                    agent_lease.c.fence == row["fence"],
+                )).values(refusal_reason=code, updated_at=now_iso(), **values))
+                refusals.append({
+                    "lease_id": row["id"], "task_id": row["task_id"],
+                    "fence": row["fence"], "reason": code,
+                    "action": check.action, "detail": check.detail,
+                })
+        if candidate is None or verdict is None:
+            return None, refusals
         lease_token = gen_token()
         until = _iso(stamp + timedelta(seconds=int(candidate["ttl_seconds"])))
         awarded = conn.execute(agent_lease.update().where(and_(
@@ -806,26 +825,29 @@ def _claim_locked(engine, runner_row: Mapping[str, Any]) -> tuple[dict[str, Any]
             lease_until=until,
             granted_at=now_iso(),
             policy_version=verdict.policy_version,
+            refusal_reason=None,
             updated_at=now_iso(),
         ))
         if awarded.rowcount != 1:
             # Another runner won the same row between our read and our write.
-            return None, None
+            return None, refusals
         lease = _row(conn, select(agent_lease).where(agent_lease.c.id == candidate["id"]))
         if lease is None:  # pragma: no cover - the row we just updated
-            return None, None
+            return None, refusals
         lease["token"] = lease_token
         org_key = conn.execute(select(organization.c.url_key).where(
             organization.c.id == org_id)).scalar()
         # The session a delegated task opened follows the lease it was queued for.
         _bind_session_to_lease(conn, org_id, lease)
         policy = None
+        view = None
         if verdict.agent_member_id:
             view = agent_policy.view_for_member(conn, org_id, verdict.agent_member_id)
             if view is not None:
                 # Secrets and egress travel here, in the lease payload, and never in
                 # the prompt: the prompt is the task text and lands in the transcript.
                 policy = agent_policy.lease_payload(conn, org_id, view)
+        run_spec = _run_spec(conn, org_id, lease, verdict.agent_member_id, view)
     _audit_lease(engine, "agent.lease.grant", lease, runner_row,
                  detail={"fence": lease["fence"], "attempt": lease["attempt"],
                          "harness": lease["harness"], "ttl_s": lease["ttl_seconds"],
@@ -841,13 +863,58 @@ def _claim_locked(engine, runner_row: Mapping[str, Any]) -> tuple[dict[str, Any]
         "ttl_s": lease["ttl_seconds"],
         "worktree": None,
         "workspace": org_key,
-        "model": None,
+        # The agent member's configured model. Null when the member names none; the
+        # harness then uses its own default.
+        "model": run_spec["model"],
+        # What the run is about, as data: the verifier answers these acceptance items one
+        # by one, so a harness that is given them can answer them verbatim.
+        "task": run_spec["task"],
+        # The repository to work in, from the agent's repo grant: {repo, url, branch,
+        # base}. Null when the policy grants no repo; the runner then gives the run an
+        # empty scratch directory, never the daemon's own working directory.
+        "repo": run_spec["repo"],
         "labels": _json_dict(runner_row.get("labels")),
         "heartbeat_interval_s": HEARTBEAT_INTERVAL_S,
         # WP12: what this agent may touch, and the values it may use, for this
         # lease only.
         "policy": policy,
-    }, None
+    }, refusals
+
+
+def _clone_url(repo: str) -> str:
+    """Where a granted repo is cloned from. ``owner/name`` is GitHub; anything else is a URL
+    or a path the operator's git already understands (a local mirror, an SSH remote)."""
+    if "://" in repo or repo.startswith(("git@", "/", "file:")):
+        return repo
+    return f"https://github.com/{repo}.git"
+
+
+def _run_spec(conn, org_id: str, lease: Mapping[str, Any], agent_member_id: str | None,
+              view: Any) -> dict[str, Any]:
+    """The model, the task facts and the repository a granted lease runs with."""
+    from hoja_server import agent_verify
+
+    found = _row(conn, select(issue.c.identifier, issue.c.title, issue.c.description).where(
+        and_(issue.c.id == lease["task_id"], issue.c.organization_id == org_id)))
+    task = None
+    if found:
+        task = {"id": lease["task_id"], "identifier": found["identifier"],
+                "title": found["title"],
+                "acceptance": agent_verify.acceptance_items(found["description"])}
+    model = None
+    if agent_member_id:
+        model = conn.execute(select(agent_member.c.model).where(and_(
+            agent_member.c.organization_id == org_id,
+            agent_member.c.id == agent_member_id))).scalar() or None
+    repo = None
+    grants = tuple(getattr(view, "repos", ()) or ()) if view is not None else ()
+    if grants:
+        grant = grants[0]
+        # The first branch the grant names is the one the run pushes to: a grant is an
+        # explicit list (no wildcard, never a default branch), so any entry is allowed.
+        repo = {"repo": grant.repo, "url": _clone_url(grant.repo),
+                "branch": grant.branches[0] if grant.branches else None}
+    return {"model": model, "task": task, "repo": repo}
 
 
 def _audit_lease(engine, action: str, lease: Mapping[str, Any], runner_row: Mapping[str, Any],
@@ -990,8 +1057,17 @@ def heartbeat_lease(engine, runner_row: Mapping[str, Any], body: Mapping[str, An
     from hoja_server import connect_api
 
     revoke = connect_api.pending_revocations(engine, runner_row)
+    with tenant_context.scoped(org_id), engine.connect() as conn:
+        answers = pending_answers(conn, org_id, lease)
     return {
         "fence": lease["fence"],
+        # A person's answers to the questions this run asked (HOJA-602 e2e loop).
+        "answers": answers,
+        # How long this server will hold a heartbeat open when the runner asks it to
+        # (``wait_ms``): a cancel or an answer ends the wait at once, so the runner can
+        # beat every few seconds instead of four times a second and still hear a stop
+        # inside the NFR-005 budget.
+        "max_wait_ms": MAX_HEARTBEAT_WAIT_MS,
         "cancel": cancel,
         "cancel_reason": reason,
         # The cancel is the instruction; the version is the evidence for why it
@@ -1004,6 +1080,33 @@ def heartbeat_lease(engine, runner_row: Mapping[str, Any], body: Mapping[str, An
         "heartbeat_interval_s": HEARTBEAT_INTERVAL_S,
         "connect_revoke": revoke,
     }
+
+
+#: The longest a heartbeat is held open for a waiting runner. Well under the minimum TTL,
+#: so a held beat can never be what lets a lease expire.
+MAX_HEARTBEAT_WAIT_MS = 5_000
+#: How often a held heartbeat re-reads its lease for a cancel or an answer.
+HEARTBEAT_WATCH_S = 0.2
+
+
+def _heartbeat_signal(engine, org_id: str, lease_id: str, waiting: Sequence[str]) -> bool:
+    """Has anything the runner must hear happened? One indexed read, no writes.
+
+    Only the cheap facts are watched: a cancel request, the lease leaving ``active``,
+    and an answer to one of the asks the runner said it is waiting on. Everything else
+    (policy drift, revocations) is re-read by the next full beat a few seconds later.
+    """
+    with tenant_context.scoped(org_id), engine.connect() as conn:
+        row = _row(conn, select(agent_lease.c.state, agent_lease.c.cancel_requested_at,
+                                agent_lease.c.task_id, agent_lease.c.id).where(and_(
+            agent_lease.c.organization_id == org_id, agent_lease.c.id == lease_id)))
+        if row is None or row["state"] != LEASE_ACTIVE or row["cancel_requested_at"]:
+            return True
+        if waiting:
+            answered = {a["ask_id"] for a in pending_answers(conn, org_id, row)}
+            if answered & set(waiting):
+                return True
+    return False
 
 
 def _policy_drift(conn, org_id: str, lease: Mapping[str, Any]) -> bool:
@@ -1121,12 +1224,111 @@ def post_events(engine, runner_row: Mapping[str, Any], body: Mapping[str, Any],
                 # write an injected secret into the activity stream. Scrubbed before
                 # the row exists, so the value is never stored to be redacted later.
                 encoded = agent_policy.scrub_lease_text(conn, org_id, lease, encoded)
-                conn.execute(issue_activity_insert(org_id, lease["task_id"], kind, encoded))
+                if kind in SESSION_EVENT_KINDS:
+                    # The session machine's own inputs: started, asked, said. They go
+                    # to the session transcript (what the agent screens read), not to
+                    # the issue's activity log.
+                    _apply_session_event(conn, org_id, lease, kind, json.loads(encoded))
+                else:
+                    conn.execute(issue_activity_insert(org_id, lease["task_id"], kind, encoded))
+                    if kind in START_EVENT_KINDS:
+                        _apply_session_event(conn, org_id, lease, EVENT_STARTED, {})
                 accepted = max(accepted, seq)
             if accepted:
                 conn.execute(agent_lease.update().where(agent_lease.c.id == lease["id"]).values(
                     last_event_seq=accepted, updated_at=now_iso()))
     return {"accepted_seq": accepted or int(lease["last_event_seq"] or 0)}
+
+
+#: Runner events that move the session or write its transcript (HOJA-602 e2e loop).
+EVENT_STARTED = "session.started"
+EVENT_ASK = "session.ask"
+EVENT_ACTION = "session.action"
+EVENT_THOUGHT = "session.thought"
+SESSION_EVENT_KINDS = frozenset({EVENT_STARTED, EVENT_ASK, EVENT_ACTION, EVENT_THOUGHT})
+#: Older runner events that also mean "the harness is running": a runner that predates
+#: ``session.started`` still moves its session out of ``leased``.
+START_EVENT_KINDS = frozenset({"harness.spawned", "harness.prompted"})
+#: How much of one transcript line a runner may write.
+MAX_SESSION_BODY = 2000
+
+
+def _apply_session_event(conn, org_id: str, lease: Mapping[str, Any], kind: str,
+                         payload: Mapping[str, Any]) -> None:
+    """Drive the session a lease executes from what its runner reports.
+
+    The machine had edges for ``start`` and ``await_input`` that nothing ever sent: a
+    session sat in ``leased`` for its whole run and could not reach ``awaiting_input``,
+    so a harness's question had nowhere to go. A refused transition is logged, never
+    raised: the event stream is the runner's contract with the lease.
+    """
+    from hoja_server import agent_sessions, agent_verify
+
+    session = agent_verify.session_for_lease(conn, org_id, dict(lease))
+    if session is None or session["state"] in agent_sessions.TERMINAL:
+        return
+    try:
+        if kind == EVENT_STARTED:
+            if session["state"] == agent_sessions.QUEUED:
+                session = agent_sessions.transition(conn, session, "lease")
+            if session["state"] == agent_sessions.LEASED:
+                agent_sessions.transition(conn, session, "start")
+        elif kind == EVENT_ASK:
+            questions = payload.get("questions")
+            ask_id = str(payload.get("ask_id") or "")
+            if not ask_id or not isinstance(questions, list):
+                return
+            if session["state"] == agent_sessions.LEASED:
+                session = agent_sessions.transition(conn, session, "start")
+            agent_sessions.append_activity(
+                conn, org_id, session["id"], "elicitation",
+                body=str(payload.get("body") or _ask_summary(questions))[:MAX_SESSION_BODY],
+                payload={"ask_id": ask_id, "questions": questions})
+            if session["state"] == agent_sessions.RUNNING:
+                agent_sessions.transition(conn, session, "await_input")
+        else:
+            body = str(payload.get("body") or "").strip()
+            if not body:
+                return
+            agent_sessions.append_activity(
+                conn, org_id, session["id"],
+                "action" if kind == EVENT_ACTION else "thought",
+                body=body[:MAX_SESSION_BODY],
+                payload={k: v for k, v in payload.items() if k != "body"} or None)
+    except agent_sessions.RefusedTransitionError as exc:
+        LOG.info("lease %s event %s left session %s %s: %s", lease.get("id"), kind,
+                 session["id"], session["state"], exc)
+
+
+def _ask_summary(questions: Sequence[Any]) -> str:
+    texts = [str(q.get("question") or "") for q in questions if isinstance(q, Mapping)]
+    return " ".join(t for t in texts if t) or "The agent has a question."
+
+
+def pending_answers(conn, org_id: str, lease: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Answers a person gave to this run's questions, for the heartbeat to deliver.
+
+    Every answered ask of the lease's session is returned on every beat; the runner
+    keeps the ids it is waiting on and ignores the rest, so a lost response costs a
+    repeat, never an answer.
+    """
+    from hoja_server import agent_sessions, agent_verify
+    from hoja_server.db import agent_activity
+
+    session = agent_verify.session_for_lease(conn, org_id, dict(lease))
+    if session is None or session["state"] in agent_sessions.TERMINAL:
+        return []
+    rows = conn.execute(select(agent_activity.c.payload).where(and_(
+        agent_activity.c.organization_id == org_id,
+        agent_activity.c.session_id == session["id"],
+        agent_activity.c.kind == "prompt",
+    )).order_by(agent_activity.c.created_at)).scalars().all()
+    out = []
+    for raw in rows:
+        payload = _json_dict(raw)
+        if payload.get("ask_id"):
+            out.append({"ask_id": payload["ask_id"], "response": payload.get("response") or {}})
+    return out
 
 
 def issue_activity_insert(org_id: str, task_id: str, kind: str, payload: str):
@@ -1549,6 +1751,9 @@ def finish_lease(engine, runner_row: Mapping[str, Any], body: Mapping[str, Any],
             "evidence": dict(evidence),
             "model": worker_model,
             "acceptance": body.get("acceptance") or [],
+            # The repository the run was given, so the verifier asks a run that was meant to
+            # change code for its pull request (and does not ask one that was not).
+            "repo": body.get("repo") if isinstance(body.get("repo"), Mapping) else None,
             "pull_request": pr_claim,
             "merged_sha": body.get("merged_sha"),
             "deployed_revision": body.get("deployed_revision"),
@@ -1765,6 +1970,7 @@ def reap_expired_leases(engine, *, now: datetime | None = None,
                 prompt=lease["prompt"],
                 ttl_s=int(lease["ttl_seconds"]),
             )
+        _follow_lost_lease(engine, org_id, lease, requeued, canceled=canceled)
         _audit_lease(engine, "agent.lease.expiry", lease, runner_row or {},
                      detail={"fence": lease["fence"], "attempt": lease["attempt"],
                              "reason": "cancel_requested" if canceled else "lease_expired",
@@ -1781,6 +1987,44 @@ def reap_expired_leases(engine, *, now: datetime | None = None,
                      "fence": lease["fence"], "state": terminal,
                      "requeued_fence": requeued["fence"] if requeued else None})
     return lost
+
+
+def _follow_lost_lease(engine, org_id: str, lease: Mapping[str, Any],
+                       requeued: Mapping[str, Any] | None, *, canceled: bool) -> None:
+    """Move the session a lost lease was executing along with the attempt.
+
+    The session used to keep pointing at the dead lease, still ``leased``: the next
+    attempt ran under a session that claimed an older one, and an attempt the reaper
+    gave up on left the session live forever. Now a re-queued attempt sends the session
+    back to ``queued`` on the new lease (the machine's ``tick`` edge), and an attempt with
+    no retry left fails it with the reason.
+    """
+    from hoja_server import agent_sessions, agent_verify
+
+    if canceled:
+        return  # a human stop already ended the session; the reaper only closes the lease
+    stamp = now_iso()
+    try:
+        with tenant_context.scoped(org_id), engine.begin() as conn:
+            session = agent_verify.session_for_lease(conn, org_id, dict(lease))
+            if session is None or session["state"] not in (
+                    agent_sessions.LEASED, agent_sessions.RUNNING, agent_sessions.AWAITING_INPUT):
+                return
+            if requeued is not None:
+                session = agent_sessions.transition(conn, session, "tick", at=stamp)
+                agent_sessions.append_activity(
+                    conn, org_id, session["id"], "thought",
+                    body=f"The runner stopped answering; retrying (attempt {requeued['attempt']}).",
+                    at=stamp)
+                conn.execute(agent_session.update().where(
+                    agent_session.c.id == session["id"]).values(
+                    lease_id=requeued["id"], admitted_at=stamp, updated_at=stamp))
+            else:
+                agent_sessions.transition(
+                    conn, session, "fail", at=stamp,
+                    reason=f"the runner stopped answering after {lease['attempt']} attempt(s)")
+    except Exception:
+        LOG.warning("could not move the session of lost lease %s", lease.get("id"), exc_info=True)
 
 
 async def run_reaper_forever(engine, *, interval_s: int = REAP_INTERVAL_S) -> None:
@@ -1812,6 +2056,16 @@ async def run_reaper_forever(engine, *, interval_s: int = REAP_INTERVAL_S) -> No
             except Exception:
                 LOG.warning("automatic verification sweep failed", exc_info=True)
         tick += 1
+        try:
+            # The schedule tick: queued sessions are re-checked and admitted ones queued
+            # for a runner. Before this, nothing re-asked after the delegation itself.
+            from hoja_server import agent_schedule
+
+            swept = await run_in_threadpool(agent_schedule.sweep, engine)
+            if swept.get("enqueued") or swept.get("cancelled"):
+                LOG.info("schedule sweep: %s", swept)
+        except Exception:
+            LOG.warning("schedule sweep failed", exc_info=True)
         try:
             reaped = await run_in_threadpool(reap_expired_leases, engine)
             if reaped:
@@ -1910,7 +2164,11 @@ def runner_routes(engine) -> list[Route]:
                     # (or the heartbeat of the lease it is granted) repairs the row.
                     LOG.warning("could not record liveness for runner %s",
                                 runner_row.get("id"), exc_info=True)
-            granted = await run_in_threadpool(claim_lease, engine, runner_row)
+            # One indexed read first: an idle workspace must not cost a locking claim
+            # transaction (and a policy check) four times a second per runner.
+            granted = None
+            if await run_in_threadpool(_has_queued, engine, runner_row):
+                granted = await run_in_threadpool(claim_lease, engine, runner_row)
             if granted:
                 return JSONResponse({"lease": granted})
             remaining = deadline - time.monotonic()
@@ -1927,6 +2185,26 @@ def runner_routes(engine) -> list[Route]:
         except LeaseRequestError as rejected:
             return rejected.response()
         body = await _json_body(request)
+        try:
+            wait_ms = max(0, min(int(body.get("wait_ms") or 0), MAX_HEARTBEAT_WAIT_MS))
+        except (TypeError, ValueError):
+            wait_ms = 0
+        waiting = [str(x) for x in (body.get("waiting_asks") or []) if x][:20]
+        lease_id = str(body.get("lease_id") or request.headers.get(HEADER_LEASE) or "")
+        if wait_ms and lease_id:
+            # Hold the beat open until something the runner must hear happens, or the
+            # wait runs out; then do the full beat (extend, drift, answers) once.
+            deadline = time.monotonic() + wait_ms / 1000.0
+            org_id = runner_row["organization_id"]
+            while time.monotonic() < deadline:
+                try:
+                    if await run_in_threadpool(_heartbeat_signal, engine, org_id,
+                                               lease_id, waiting):
+                        break
+                except Exception:  # the full beat below reports the real error
+                    break
+                await asyncio.sleep(min(HEARTBEAT_WATCH_S,
+                                        max(0.0, deadline - time.monotonic())))
         return await run_in_threadpool(_run, lambda: JSONResponse(
             heartbeat_lease(engine, runner_row, body, request)))
 
@@ -2010,6 +2288,25 @@ def runner_routes(engine) -> list[Route]:
         Route(ROUTE_EFFECT, effect, methods=["POST"]),
         Route(ROUTE_RELEASE, release, methods=["POST"]),
     ]
+
+
+def _has_queued(engine, runner_row: Mapping[str, Any]) -> bool:
+    """Is there any queued attempt this runner could be offered? Read-only and cheap.
+
+    A refused attempt still counts, so its policy is re-checked on the next claim (a
+    budget can reset, a policy can be edited); the refusal itself is audited only when
+    its reason changes (``claim_lease``).
+    """
+    harnesses = _json_list(runner_row.get("harnesses"))
+    if not harnesses:
+        return False
+    org_id = runner_row["organization_id"]
+    with tenant_context.scoped(org_id), engine.connect() as conn:
+        return conn.execute(select(agent_lease.c.id).where(and_(
+            agent_lease.c.organization_id == org_id,
+            agent_lease.c.state == LEASE_QUEUED,
+            agent_lease.c.harness.in_(list(harnesses)),
+        )).limit(1)).first() is not None
 
 
 def _refused_for(engine, runner_row: Mapping[str, Any]) -> list[dict[str, Any]]:

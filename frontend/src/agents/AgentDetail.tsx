@@ -33,7 +33,11 @@ import {
   verdictColor,
   verdictLabel,
 } from "./types";
+import { AgentSetup } from "./AgentSetup";
+import { ConnectField } from "./ConnectField";
+import { AskCard } from "./AskCard";
 import type {
+  AgentAnswer,
   AgentDetail,
   AgentEvent,
   AgentPolicy,
@@ -41,6 +45,9 @@ import type {
   Claim,
   ConnectGrant,
 } from "./types";
+
+/** How often a page with a live run re-reads it. */
+const LIVE_REFRESH_MS = 4000;
 
 const EVENT_LABELS: Record<AgentEvent["kind"], string> = {
   thought: "Thought",
@@ -171,7 +178,11 @@ function PolicyField({
           aria-live="polite"
           data-field-state={state}
         >
-          {state === "saving" ? "Saving…" : state === "saved" ? "Saved" : "Not saved"}
+          {state === "saving"
+            ? "Saving…"
+            : state === "saved"
+              ? "Saved"
+              : "Not saved"}
         </p>
       )}
     </>
@@ -187,216 +198,6 @@ function PolicyField({
  * `hoja_server/agent_policy.py` so an obvious mistake is refused before a round trip; the server
  * stays the authority, and its `BAD_USER_INPUT` sentence is what the field shows when it is the
  * one that refused. Nothing is kept locally: the rows are the list the server returned. */
-function ConnectField({
-  grants,
-  disabled,
-  connectOn,
-  onSave,
-}: {
-  grants: ConnectGrant[];
-  disabled: boolean;
-  /** `agentPolicy.connect`; `false` only when the workspace kill switch was read and is off. */
-  connectOn: boolean | null;
-  onSave: (next: ConnectGrant[]) => Promise<void>;
-}) {
-  const [host, setHost] = useState("");
-  const [port, setPort] = useState("");
-  const [state, setState] = useState<"idle" | "saving" | "saved" | "failed">(
-    "idle",
-  );
-  /* The sentence under the field, and who said it: "local" is one of the mirrored rules below,
-   * "server" is the resolver's own refusal, passed through untouched. */
-  const [message, setMessage] = useState("");
-  const [source, setSource] = useState<"local" | "server">("local");
-  const timer = useRef<number | undefined>(undefined);
-  useEffect(
-    () => () => {
-      if (timer.current) window.clearTimeout(timer.current);
-    },
-    [],
-  );
-
-  const refuse = (text: string) => {
-    setSource("local");
-    setMessage(text);
-    setState("failed");
-  };
-
-  const commit = async (next: ConnectGrant[]) => {
-    if (timer.current) {
-      window.clearTimeout(timer.current);
-      timer.current = undefined;
-    }
-    setState("saving");
-    setMessage("");
-    try {
-      await onSave(next);
-      setState("saved");
-      timer.current = window.setTimeout(() => setState("idle"), 1600);
-    } catch (e) {
-      /* The server refused, so it kept what it had: the rows below are re-read from the policy
-       * row, and this line carries the server's sentence rather than a guess at it. */
-      setSource("server");
-      setMessage((e as Error).message);
-      setState("failed");
-    }
-  };
-
-  /* `agent_policy.clean_connect`, in the same order: a host must be named (the wildcard is the
-   * whole internet, not a grant), the port must be an integer in 1..65535. A pair already in the
-   * list is not a second grant; saying so beats a row that vanishes into a deduplicated list. */
-  const add = () => {
-    const name = host.trim();
-    const digits = port.trim();
-    if (!name || name === "*") {
-      refuse("A Connect host must be named explicitly.");
-      return;
-    }
-    if (!/^\d+$/.test(digits)) {
-      refuse("A Connect port must be an integer.");
-      return;
-    }
-    const number = Number(digits);
-    if (number < 1 || number > 65535) {
-      refuse("A Connect port must be between 1 and 65535.");
-      return;
-    }
-    if (grants.some((g) => g.host === name && g.port === number)) {
-      refuse(`${name}:${number} is already granted.`);
-      return;
-    }
-    setHost("");
-    setPort("");
-    void commit([...grants, { host: name, port: number }]);
-  };
-
-  const remove = (grant: ConnectGrant) =>
-    void commit(
-      grants.filter((g) => !(g.host === grant.host && g.port === grant.port)),
-    );
-
-  const inputClass =
-    "border border-line border-solid bg-panel text-foreground rounded-md min-h-8 pt-1 pr-2 pb-1 pl-2 text-[12px] min-w-0 shell-phone:min-h-11 pointer-coarse:min-h-11";
-
-  /* The label keeps the sidebar's property-row shape and height, so the field reads as one of the
-   * properties above it. The list, the two inputs and the outcome sit *under* it at the sidebar's
-   * full width: at 1440 the sidebar is 18rem, and a grant plus a Remove button does not fit beside
-   * a 6rem label - it would truncate "localhost:3000" to "loca…". */
-  return (
-    <div className="text-[13px]" data-connect-field>
-      <div
-        className="flex items-center gap-2.5 min-h-8.5"
-        data-style-hooks="lin-prop"
-      >
-        <span className="flex flex-none items-center gap-2 text-muted w-24">
-          <span aria-hidden="true">⇄</span>
-          Connect
-        </span>
-        <span className="flex-1 min-w-0 text-[12px] text-muted" data-connect-count={grants.length}>
-          {grants.length
-            ? `${grants.length} ${grants.length === 1 ? "grant" : "grants"}`
-            : "No grant"}
-        </span>
-      </div>
-      {/* The kill switch is the workspace's, and this field cannot override it: a grant that is
-          stored while Connect is off opens nothing. Said here rather than left to look like a
-          working control. */}
-      {connectOn === false && (
-        <p className="text-[12px] text-muted mt-1 mb-0" data-connect-notice="off">
-          An admin turned Connect off for this workspace. A grant can still
-          be stored, but no tunnel opens until it is back on.
-        </p>
-      )}
-      <div className="flex flex-col gap-1 mt-1">
-        {grants.map((grant) => {
-          const pair = `${grant.host}:${grant.port}`;
-          return (
-            <span
-              key={pair}
-              className="flex items-center gap-1.5 min-w-0"
-              data-connect-grant={pair}
-            >
-              <code className="min-w-0 truncate">{pair}</code>
-              <button
-                type="button"
-                aria-label={`Remove ${pair}`}
-                className="ml-auto inline-flex flex-none items-center border border-line border-solid bg-panel text-muted hover:bg-subtle hover:text-foreground disabled:cursor-default disabled:opacity-50 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 gap-1 rounded-md text-[12px] pt-0.5 pr-1.5 pb-0.5 pl-1.5"
-                disabled={disabled}
-                onClick={() => remove(grant)}
-              >
-                <X size={12} aria-hidden="true" />
-                Remove
-              </button>
-            </span>
-          );
-        })}
-        {!grants.length && (
-          <span className="text-[12px] text-muted">
-            No port is granted, so a run of this agent cannot expose one.
-          </span>
-        )}
-      </div>
-      <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-        <input
-          aria-label="Connect host"
-          className={`flex-1 basis-24 ${inputClass}`}
-          placeholder="host"
-          value={host}
-          disabled={disabled}
-          onChange={(e) => setHost(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              add();
-            }
-          }}
-        />
-        <input
-          aria-label="Connect port"
-          className={`flex-1 basis-16 ${inputClass}`}
-          placeholder="port"
-          inputMode="numeric"
-          value={port}
-          disabled={disabled}
-          onChange={(e) => setPort(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              add();
-            }
-          }}
-        />
-        <button
-          type="button"
-          aria-label="Add Connect grant"
-          className="ml-auto inline-flex flex-none items-center border border-line border-solid bg-panel text-foreground hover:bg-subtle disabled:cursor-default disabled:opacity-50 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 gap-1 rounded-md min-h-8 pt-1 pr-2.5 pb-1 pl-2.5 text-[12px] font-[550]"
-          disabled={disabled}
-          onClick={add}
-        >
-          Add
-        </button>
-      </div>
-      {/* Same three outcomes as a single-value policy row: the field that was edited says what
-          happened, and a refusal carries the sentence that refused it. */}
-      {state !== "idle" && (
-        <p
-          className={`text-[12px] mt-1.5 mb-0 ${state === "failed" ? "text-danger" : "text-muted"}`}
-          role="status"
-          aria-live="polite"
-          data-field-state={state}
-          data-connect-source={state === "failed" ? source : undefined}
-        >
-          {state === "saving"
-            ? "Saving…"
-            : state === "saved"
-              ? "Saved"
-              : message || "Not saved"}
-        </p>
-      )}
-    </div>
-  );
-}
-
 export function AgentDetailPage({
   agentKey,
   workspaceName,
@@ -483,6 +284,47 @@ export function AgentDetailPage({
     () => [...(detail?.events || [])].sort((a, b) => (a.at < b.at ? -1 : 1)),
     [detail],
   );
+
+  /* While a run is live its transcript moves on the server: re-read it every few seconds
+   * (paused while the tab is hidden) instead of showing what was true when the page opened. */
+  useEffect(() => {
+    if (!active) return;
+    const id = window.setInterval(() => {
+      if (!document.hidden) void load();
+    }, LIVE_REFRESH_MS);
+    return () => window.clearInterval(id);
+  }, [active?.id, active?.status, load]);
+
+  /* The question the active run is waiting on: its latest elicitation, unless a person's
+   * answer to that same ask is already on the transcript. */
+  const openAsk = useMemo(() => {
+    if (!active || active.status !== "awaiting-input") return null;
+    const mine = events.filter((e) => e.sessionId === active.id);
+    const asked = [...mine].reverse().find((e) => e.kind === "elicitation");
+    if (!asked) return null;
+    const answered = mine.some(
+      (e) =>
+        e.kind === "prompt" &&
+        e.at >= asked.at &&
+        (!asked.ask || e.answersAsk === asked.ask.askId),
+    );
+    return answered ? null : asked;
+  }, [active, events]);
+
+  const answer = async (body: string, response?: AgentAnswer) => {
+    if (!active) return;
+    setBusy("answer");
+    setError("");
+    try {
+      await getAgentsAdapter().answerSession(active.id, body, response);
+      setNotice(`Answer sent to the agent on ${active.issueIdentifier}.`);
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy("");
+    }
+  };
 
   const applyPolicy = (policy: AgentPolicy, auditNotice: string) => {
     setDetail((d) => (d ? { ...d, policy } : d));
@@ -785,6 +627,14 @@ export function AgentDetailPage({
             {stamp(agent.createdAt)}
           </p>
 
+          <AgentSetup
+            agent={agent}
+            harnesses={detail.harnesses}
+            onSaveModel={(model) => savePolicy({ model })}
+            onSaveHarness={(defaultHarness) => saveHarness({ defaultHarness })}
+            onRunStarted={() => void load()}
+          />
+
           <section
             className="border-t border-line border-t-line pt-4 mt-1.5"
             data-style-hooks="lin-activity"
@@ -813,6 +663,15 @@ export function AgentDetailPage({
                 </span>
               )}
             </header>
+            {openAsk && (
+              <AskCard
+                key={openAsk.id}
+                ask={openAsk.ask ?? null}
+                prompt={openAsk.text}
+                busy={busy === "answer"}
+                onAnswer={answer}
+              />
+            )}
             {events.map((e) => (
               <div
                 key={e.id}
@@ -820,7 +679,10 @@ export function AgentDetailPage({
                 data-style-hooks="lin-event"
                 data-kind={e.kind}
               >
-                <Avatar name={agent.name} size={18} />
+                <Avatar
+                  name={e.author === "user" ? viewerName || "You" : agent.name}
+                  size={18}
+                />
                 <span>
                   <b
                     className={
@@ -828,7 +690,9 @@ export function AgentDetailPage({
                       " block mt-3 mr-0 mb-3 ml-0 font-semibold"
                     }
                   >
-                    {EVENT_LABELS[e.kind]}
+                    {e.kind === "prompt" && e.answersAsk
+                      ? "Answer"
+                      : EVENT_LABELS[e.kind]}
                   </b>
                   {e.tool ? (
                     <>
@@ -1045,9 +909,7 @@ export function AgentDetailPage({
               /* A value the policy cannot hold is refused here, before the round trip, and the
                  field says "Not saved" like any other refusal rather than reporting a save. */
               if (!Number.isFinite(n) || n < 1)
-                return Promise.reject(
-                  new Error("Capacity must be at least 1"),
-                );
+                return Promise.reject(new Error("Capacity must be at least 1"));
               return savePolicy({ capacity: n });
             }}
           />
@@ -1195,15 +1057,11 @@ export function AgentDetailPage({
             disabled={busy === "connect"}
             connectOn={connectOn}
             onSave={saveConnect}
+            agentUserId={agent.userId}
           />
           <p className="text-xs text-muted">
-            A run of this agent can expose only a host and port granted here.
-            The server checks every exposure against this list when the runner
-            opens it, so one outside it is refused there, not hidden here. The
-            grants are the policy row&rsquo;s, so a change applies to the next
-            lease and to nothing already running. Tools, repos, secrets, network
-            and approvers have their own columns in the policy row and no
-            control on this page yet.
+            The server checks every tunnel against this list, and a change
+            applies from the next run.
           </p>
         </aside>
       </div>

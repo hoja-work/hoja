@@ -25,7 +25,7 @@
  */
 
 import type {
-  Agent, AgentDetail, AgentEvent, AgentPolicy, AgentSession, AuditEvent, Claim, ClaimVerdict,
+  Agent, AgentAnswer, AgentAsk, RunAccess, SetupProbe, AgentDetail, AgentEvent, AgentQuestion, AgentPolicy, AgentSession, AuditEvent, Claim, ClaimVerdict,
   ConnectGrant, HarnessPolicy,
   ConnectEndpointRow, ConnectExposure, Runner, RunnerEnrollment, RunnerEnrollmentGrant, RunnerLease,
   SessionStatus, VerificationCheck, Verdict,
@@ -95,6 +95,16 @@ export type AgentsAdapter = {
   /** Stops a run through `agentSessionStop`. A terminal session is returned unchanged by the
    * server's machine, which refuses the event rather than pretending it happened. */
   stopSession(sessionId: string): Promise<{session: AgentSession; audit: null}>;
+  /** Answer a session that is awaiting input. With a live run the answer goes back to it. */
+  answerSession(sessionId: string, body: string, response?: AgentAnswer): Promise<void>;
+  /** The run policy fields the setup checklist needs, plus the workspace's teams and secret names. */
+  getRunAccess(agentId: string): Promise<RunAccess>;
+  updateRunAccess(agentId: string, patch: {teams?: string[]; secrets?: string[]}): Promise<void>;
+  /** Store a named workspace secret. The value is sealed server-side and never read back. */
+  setSecret(name: string, value: string): Promise<void>;
+  /** Create a small task delegated to the agent, to prove the whole chain works. */
+  createSetupTask(agentUserId: string, teamId: string): Promise<SetupProbe>;
+  getSetupProbe(issueId: string): Promise<SetupProbe>;
 
   /* -- server-backed: GraphQL, WP05 ---------------------------------------------------------- */
   /** One page of the workspace audit ledger, oldest first, filtered server-side. A non-admin is
@@ -351,7 +361,9 @@ const STATUS_BY_STATE: Record<string, SessionStatus> = {
 
 export function sessionStatus(state: string, status: ServerSession['status']): SessionStatus {
   if (status === 'error') return 'failed';
-  return STATUS_BY_STATE[state] || 'queued';
+  /* A state this screen does not know is drawn as active, never as queued: "queued" would claim
+   * the run has not started, which a newer server state almost certainly contradicts. */
+  return STATUS_BY_STATE[state] || 'active';
 }
 
 function issueOf(row: ServerSession) {
@@ -401,16 +413,47 @@ async function membersByUserId(): Promise<Map<string, {id: string; name: string}
   return byUser;
 }
 
+/* The questions a harness asked (runner_api `session.ask`), validated: anything malformed is
+ * `null`, which the screen draws as a plain "needs input" line with a free-text answer. */
+function askOf(payload: Record<string, unknown>): AgentAsk | null {
+  const askId = payload.ask_id;
+  const raw = payload.questions;
+  if (typeof askId !== 'string' || !Array.isArray(raw)) return null;
+  const questions: AgentQuestion[] = [];
+  for (const q of raw) {
+    if (!q || typeof q !== 'object') continue;
+    const item = q as Record<string, unknown>;
+    if (typeof item.header !== 'string' || !Array.isArray(item.options)) continue;
+    questions.push({
+      header: item.header,
+      question: typeof item.question === 'string' ? item.question : item.header,
+      multiSelect: item.multi_select === true,
+      options: (item.options as Record<string, unknown>[])
+        .filter((o) => o && typeof o.label === 'string')
+        .map((o) => ({label: o.label as string,
+          description: typeof o.description === 'string' ? o.description : null})),
+    });
+  }
+  return questions.length ? {askId, questions} : null;
+}
+
 function eventsOf(sessions: ServerSession[]): AgentEvent[] {
   const events: AgentEvent[] = [];
   for (const session of sessions) {
     for (const activity of session.activities || []) {
+      const payload = (activity.payload && typeof activity.payload === 'object'
+        ? activity.payload : {}) as Record<string, unknown>;
       events.push({
         id: activity.id,
         sessionId: session.id,
         kind: activity.kind,
         at: activity.createdAt,
         text: activity.body || '',
+        author: activity.authorKind === 'user' ? 'user' : 'agent',
+        tool: typeof payload.tool === 'string' ? payload.tool : undefined,
+        ask: activity.kind === 'elicitation' ? askOf(payload) : undefined,
+        answersAsk: activity.kind === 'prompt' && typeof payload.ask_id === 'string'
+          ? payload.ask_id : null,
       });
     }
   }
@@ -513,6 +556,8 @@ export function groupExposures(rows: ConnectEndpointRow[], now = Date.now()): Co
       runnerName: first.runnerName,
       state: first.state,
       closeReason: first.closeReason,
+      agentId: first.agentId ?? null,
+      host: first.host ?? null,
     };
   }).sort((a, b) => b.expiresAt - a.expiresAt);
 }
@@ -811,6 +856,82 @@ function createGraphqlAdapter(fallback: AgentsAdapter): AgentsAdapter {
       return {session: fromSession(row), audit: null};
     },
 
+    async answerSession(sessionId: string, body: string, response?: AgentAnswer) {
+      const data = await request<{agentSessionPrompt: {success: boolean}}>(
+        `mutation Answer($id: String!, $body: String!, $response: JSON) {
+           agentSessionPrompt(id: $id, body: $body, response: $response) { success } }`,
+        {id: sessionId, body, response: response ?? null});
+      if (!data.agentSessionPrompt?.success) {
+        throw new AgentApiError('ERROR', 'The answer was not recorded.');
+      }
+    },
+
+    async getRunAccess(agentId: string) {
+      const data = await request<{
+        agentPolicy: {teams: string[]; projects: string[]; secrets: string[]} | null;
+        agentSecretNames: string[];
+        teams: {nodes: {id: string; key: string; name: string}[]};
+      }>(
+        `query RunAccess($id: String!) {
+           agentPolicy(agentMemberId: $id) { teams projects secrets }
+           agentSecretNames
+           teams { nodes { id key name } } }`,
+        {id: agentId});
+      return {
+        teams: data.agentPolicy?.teams ?? [],
+        projects: data.agentPolicy?.projects ?? [],
+        secrets: data.agentPolicy?.secrets ?? [],
+        workspaceSecrets: data.agentSecretNames ?? [],
+        allTeams: data.teams?.nodes ?? [],
+      };
+    },
+
+    async updateRunAccess(agentId: string, patch: {teams?: string[]; secrets?: string[]}) {
+      const input: Record<string, unknown> = {};
+      if (patch.teams) input.teams = patch.teams;
+      if (patch.secrets) input.secrets = patch.secrets;
+      const data = await request<{agentPolicyUpdate: {success: boolean}}>(
+        `mutation RunAccess($id: String!, $input: AgentPolicyInput!) {
+           agentPolicyUpdate(agentMemberId: $id, input: $input) { success } }`,
+        {id: agentId, input});
+      if (!data.agentPolicyUpdate?.success) throw new AgentApiError('ERROR', 'The policy was not saved.');
+    },
+
+    async setSecret(name: string, value: string) {
+      const data = await request<{agentSecretSet: boolean}>(
+        `mutation Secret($name: String!, $value: String!) { agentSecretSet(name: $name, value: $value) }`,
+        {name, value});
+      if (!data.agentSecretSet) throw new AgentApiError('ERROR', 'The key was not stored.');
+    },
+
+    async createSetupTask(agentUserId: string, teamId: string) {
+      const description = [
+        'A setup check from the agent page: reply with one sentence saying hello and naming the',
+        'model you run on. Do not change any files.',
+        '',
+        '## Acceptance',
+        '- the agent replies with a greeting',
+      ].join('\n');
+      const data = await request<{issueCreate: {issue: {id: string; identifier: string}}}>(
+        `mutation Setup($input: IssueCreateInput!) { issueCreate(input: $input) { issue { id identifier } } }`,
+        {input: {teamId, title: 'Setup check: say hello', delegateId: agentUserId, description}});
+      const issue = data.issueCreate.issue;
+      return {issueId: issue.id, identifier: issue.identifier, stateName: null,
+        sessionState: null, verdict: null};
+    },
+
+    async getSetupProbe(issueId: string) {
+      const data = await request<{issue: {id: string; identifier: string; state: {name: string} | null;
+        agentSession: {state: string; verdict: string | null} | null} | null}>(
+        `query Probe($id: String!) { issue(id: $id) { id identifier state { name }
+           agentSession { state verdict } } }`,
+        {id: issueId});
+      const issue = data.issue;
+      if (!issue) throw new AgentApiError('NOT_FOUND', 'The setup task is gone.');
+      return {issueId: issue.id, identifier: issue.identifier, stateName: issue.state?.name ?? null,
+        sessionState: issue.agentSession?.state ?? null, verdict: issue.agentSession?.verdict ?? null};
+    },
+
     async listAuditEvents(filter) {
       const data = await request<{auditEvents: {nodes: ServerAudit[]; pageInfo: {hasNextPage: boolean; endCursor: string | null}}}>(
         `query Audit($first: Int!, $after: String, $actorId: String, $action: String) {
@@ -1049,6 +1170,12 @@ function createFallbackAdapter(): AgentsAdapter {
     async listSessions() { return serverOnly('the run queue'); },
     async listAuditEvents() { return serverOnly('the audit log'); },
     async stopSession() { return serverOnly('stopping a session'); },
+    async answerSession() { return serverOnly('answering a session'); },
+    async getRunAccess() { return serverOnly('the run policy'); },
+    async updateRunAccess() { return serverOnly('saving the run policy'); },
+    async setSecret() { return serverOnly('storing a key'); },
+    async createSetupTask() { return serverOnly('a setup task'); },
+    async getSetupProbe() { return serverOnly('a setup task'); },
 
     async listRunners() { return serverOnly('the runner list'); },
     async getRunner() { return serverOnly('a runner'); },

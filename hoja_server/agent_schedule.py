@@ -211,8 +211,13 @@ def gather(conn, org_id: str, member: dict, issue_row: dict, session_row: dict,
     # budget has been spent this month is not runnable, however the member row was
     # configured, and the reason the card reports is the same "budget" code either way.
     budget = usage_ledger.budget_status(conn, org_id, member["user_id"])
+    # The same limit the lease gate applies (agent_policy.effective_capacity): two gates
+    # reading two fields admitted work here that the lease gate then refused forever.
+    from hoja_server import agent_policy
+
+    view = agent_policy.view_for_member(conn, org_id, member["id"])
     return Facts(
-        capacity_free=len(holding) < int(member.get("capacity") or 1),
+        capacity_free=len(holding) < agent_policy.effective_capacity(member, view),
         budget_remaining=not budget["exhausted"],
         in_window=working_window(member.get("working_hours"), member.get("timezone"), at),
         dependencies_clear=_dependencies_clear(conn, org_id, issue_row["id"]),
@@ -373,3 +378,79 @@ def _harness_for(engine, session_row: dict, *, requested: str | None = None):
         row = agent_policy.member_row_for_user(conn, org_id, session_row["agent_user_id"])
         policy_view = view(conn, org_id, row["id"]) if row else None
     return agent_policy.resolve_harness(policy_view, requested=requested)
+
+
+# ---------------------------------------------------------------------------
+# The scheduler tick: what gives a queued session a future
+# ---------------------------------------------------------------------------
+
+#: Queued sessions one tick looks at, oldest first, across every workspace.
+SWEEP_LIMIT = 200
+
+
+def _lease_state(conn, org_id: str, lease_id: str) -> dict | None:
+    from hoja_server.db import agent_lease
+
+    row = conn.execute(select(agent_lease.c.state, agent_lease.c.cancel_reason).where(and_(
+        agent_lease.c.organization_id == org_id,
+        agent_lease.c.id == lease_id,
+    ))).mappings().first()
+    return dict(row) if row else None
+
+
+def sweep(engine, *, at: str | None = None, limit: int = SWEEP_LIMIT) -> dict[str, int]:
+    """Re-run the schedule check for every queued session, and queue what it admits.
+
+    Delegation runs the check once. Every reason it can return — capacity, budget,
+    working hours, an unfinished child, an unanswered approval, another live claim — is
+    a fact that changes later, without the session being touched: a run finishes, a
+    month turns, a person approves. Without this tick nothing re-asked, so a session
+    queued for any reason stayed queued forever, and an approval answered "approve"
+    started nothing.
+
+    Two passes per session, each idempotent:
+
+    1. a session not yet admitted is re-checked (``reevaluate``), in its own tenant's
+       transaction; a session whose verdict is unchanged gets its keepalive instead;
+    2. an admitted session with no lease is handed to WP07's queue
+       (``enqueue_admitted``), after that transaction commits. This is also the retry
+       for a delegation whose post-commit enqueue failed.
+
+    A session whose lease the policy gate cancelled outright (``action=stop``: no policy,
+    a deleted delegate) is cancelled with the gate's reason rather than left queued
+    behind a lease nobody will ever grant.
+    """
+    from hoja_server import tenant_context
+
+    stamp = at or now_iso()
+    with tenant_context.system(), engine.connect() as conn:
+        rows = [dict(r) for r in conn.execute(select(
+            agent_session.c.id, agent_session.c.organization_id,
+        ).where(agent_session.c.state == sessions.QUEUED
+        ).order_by(agent_session.c.created_at).limit(max(1, int(limit)))).mappings()]
+    counts = {"reevaluated": 0, "enqueued": 0, "cancelled": 0}
+    for ref in rows:
+        org_id = ref["organization_id"]
+        try:
+            with tenant_context.scoped(org_id):
+                with engine.begin() as conn:
+                    row = sessions.get_session(conn, org_id, ref["id"])
+                    if row is None or row["state"] != sessions.QUEUED:
+                        continue
+                    if row.get("lease_id"):
+                        lease = _lease_state(conn, org_id, row["lease_id"])
+                        if lease and lease["state"] == "canceled":
+                            sessions.transition(
+                                conn, row, "cancel", at=stamp,
+                                reason=f"the lease was refused: {lease.get('cancel_reason')}")
+                            counts["cancelled"] += 1
+                        continue
+                    if not row.get("admitted_at"):
+                        row = reevaluate(conn, row, at=stamp)
+                        counts["reevaluated"] += 1
+                if row.get("admitted_at") and not row.get("lease_id"):
+                    enqueue_admitted(engine, row)
+                    counts["enqueued"] += 1
+        except Exception:  # one bad row must not stop the tick for every other workspace
+            LOG.warning("schedule sweep failed for session %s", ref["id"], exc_info=True)
+    return counts
