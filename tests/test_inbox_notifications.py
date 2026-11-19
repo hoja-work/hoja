@@ -252,6 +252,6 @@ def test_revision_77_adds_the_columns_to_an_older_database_and_replays(tmp_path)
         conn.exec_driver_sql("DELETE FROM schema_revision WHERE revision >= 77")
     for _ in range(2):
         migrate(engine)
-        assert db_module.applied_schema_revision(engine) == db_module.CURRENT_SCHEMA_REVISION == 77
+        assert db_module.applied_schema_revision(engine) == db_module.CURRENT_SCHEMA_REVISION >= 77
     columns = {c["name"] for c in inspect(engine).get_columns("inbox_notification")}
     assert {"data", "comment_id", "snoozed_until"} <= columns

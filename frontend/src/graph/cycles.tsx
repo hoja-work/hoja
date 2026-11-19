@@ -82,6 +82,7 @@ import {
   scopeCompletion,
 } from "./cycleMetrics";
 import type { CycleStats } from "./cycleMetrics";
+import { setFollowing, useFollowing } from "../inbox/follow";
 import { cycleKeyTarget } from "./cycleSelection";
 
 /* the upstream API 1:1 Cycles views. */
@@ -1821,6 +1822,7 @@ function CycleOptionsMenu({
   const busy = false;
   const error = "";
   const [fav, toggleFav] = useFavorite("cycles", cycle.id);
+  const following = useFollowing("cycle", cycle.id);
   // Optimistic: the edit shows at once; a rejected save rolls back and reports on the page.
   const save = (input: Record<string, unknown>) => {
     setEditing(false);
@@ -1994,9 +1996,19 @@ function CycleOptionsMenu({
         },
         {
           key: "sub",
-          label: "Subscribe to cycle notifications",
-          disabled: true,
-          onSelect: () => {},
+          label: following
+            ? "Unsubscribe from cycle notifications"
+            : "Subscribe to cycle notifications",
+          icon: following ? <Check size={14} /> : undefined,
+          disabled: following === null,
+          onSelect: () => {
+            onClose();
+            setFollowing("cycle", cycle.id, !following).catch((e) =>
+              onError(
+                `Couldn’t ${following ? "unsubscribe" : "subscribe"}: ${(e as Error).message}`,
+              ),
+            );
+          },
         },
         { key: "div1", divider: true },
         {

@@ -14,7 +14,10 @@ import {
   Check,
   CircleDot,
   Clock,
+  FolderKanban,
   Inbox as InboxIcon,
+  RefreshCcw,
+  Target,
   ListFilter,
   MoreHorizontal,
   X,
@@ -24,6 +27,8 @@ import type { Issue } from "../main";
 import { errorText } from "../localFirst";
 import { useEntityVersion, useIssues } from "../sync";
 import { Avatar } from "../graph/shared";
+import { FollowButton, setFollowing } from "./follow";
+import { SubjectPanel } from "./SubjectPanel";
 import {
   Popover as UIPopover,
   PopoverContent,
@@ -38,11 +43,22 @@ import {
   fullTime,
   groupNotifications,
   setInboxUnread,
+  subjectLabel,
+  subjectTitle,
+  isSystemEvent,
   useInboxUnread,
+  type SubjectType,
   shortTime,
   type InboxGroup,
   type InboxNotification,
 } from "./model";
+
+const SUBJECT_ICON = {
+  issue: CircleDot,
+  project: FolderKanban,
+  initiative: Target,
+  cycle: RefreshCcw,
+};
 
 export type InboxTab = "all" | "priority" | "snoozed" | "archived";
 const TABS: { id: InboxTab; label: string; path: string }[] = [
@@ -93,6 +109,7 @@ export function InboxPage({
   path,
   scope,
   onOpenIssue,
+  onOpenSubject,
   onOpenSettings,
   renderDetail,
 }: {
@@ -100,6 +117,8 @@ export function InboxPage({
   /** Workspace and viewer: the cache must never show one person's inbox to another. */
   scope: string;
   onOpenIssue: (issue: Issue) => void;
+  /** Open a project, an initiative or a cycle outside the inbox. */
+  onOpenSubject: (type: Exclude<SubjectType, "issue">, id: string) => void;
   onOpenSettings: () => void;
   renderDetail: (args: {
     issue: Issue;
@@ -262,20 +281,32 @@ export function InboxPage({
   // The same number as the sidebar badge: unread notifications, not unread rows.
   const unreadTotal = useInboxUnread();
 
-  // Keep the URL addressable: /workspace/inbox?task=HOJ-12 reopens the same row.
+  // Keep the URL addressable: /workspace/inbox?task=HOJ-12 (or ?subject=<id>) reopens the row.
+  const urlKey = selected
+    ? selected.issue?.identifier
+      ? `task=${selected.issue.identifier}`
+      : `subject=${selected.key}`
+    : "";
   useEffect(() => {
     const url = new URL(location.href);
-    const ident = selected?.issue?.identifier;
-    if (ident) url.searchParams.set("task", ident);
-    else url.searchParams.delete("task");
+    url.searchParams.delete("task");
+    url.searchParams.delete("subject");
+    if (urlKey) {
+      const [k, v] = urlKey.split("=");
+      url.searchParams.set(k, v);
+    }
     if (url.href !== location.href)
       history.replaceState(history.state, "", url);
-  }, [selected?.issue?.identifier]);
-  const wanted = useRef(new URL(location.href).searchParams.get("task"));
+  }, [urlKey]);
+  const wantedValue = useRef<string | null>(
+    new URL(location.href).searchParams.get("task") ||
+      new URL(location.href).searchParams.get("subject"),
+  );
   useEffect(() => {
-    if (!wanted.current || !groups.length) return;
-    const g = groups.find((x) => x.issue?.identifier === wanted.current);
-    wanted.current = null;
+    if (!wantedValue.current || !groups.length) return;
+    const w = wantedValue.current;
+    const g = groups.find((x) => x.issue?.identifier === w || x.key === w);
+    wantedValue.current = null;
     if (g) setSelectedKey(g.key);
   }, [groups]);
 
@@ -316,14 +347,17 @@ export function InboxPage({
     }
   };
 
-  const issueIdOf = (g: InboxGroup) => g.issue?.id || g.latest.id;
+  /** "ENG-12", "Project Atlas", "ENG · Cycle 4": how toasts and labels name a row. */
+  const nameOf = (g: InboxGroup) =>
+    g.issue?.identifier || subjectTitle(g) || "notification";
+  const real = (g: InboxGroup) => !g.key.startsWith("missing:");
   const inGroup = (g: InboxGroup) => {
     const ids = new Set(g.items.map((n) => n.id));
     return (n: InboxNotification) => ids.has(n.id);
   };
 
   const setRead = (g: InboxGroup, read: boolean) => {
-    if (!g.issue) return;
+    if (!real(g)) return;
     if (read ? g.unreadCount === 0 : g.unreadCount > 0) return;
     const readAt = read ? new Date().toISOString() : null;
     const has = inGroup(g);
@@ -334,8 +368,8 @@ export function InboxPage({
       (list) => list.map((n) => (target(n) ? { ...n, readAt } : n)),
       () =>
         gql(
-          `mutation($id:String!,$read:Boolean){notificationsMarkReadForIssue(issueId:$id,read:$read)}`,
-          { id: issueIdOf(g), read },
+          `mutation($id:String!,$read:Boolean){notificationsMarkReadForSubject(subjectId:$id,read:$read)}`,
+          { id: g.key, read },
         ),
       tab === "all" || tab === "priority" ? delta : 0,
       read ? "Couldn’t mark read" : "Couldn’t mark unread",
@@ -374,19 +408,15 @@ export function InboxPage({
         () => unarchive(g),
         0,
         "Couldn’t restore",
-      ).then(() =>
-        say(`Moved ${g.issue?.identifier || "notification"} back to the inbox`),
-      );
+      ).then(() => say(`Moved ${nameOf(g)} back to the inbox`));
     }
     return mutate(
       removeGroup(g),
       () =>
-        g.issue
+        real(g)
           ? gql(
-              `mutation($id:String!){notificationsArchiveForIssue(issueId:$id)}`,
-              {
-                id: issueIdOf(g),
-              },
+              `mutation($id:String!){notificationsArchiveForSubject(subjectId:$id)}`,
+              { id: g.key },
             )
           : gql(`mutation($id:String!){notificationArchive(id:$id)}`, {
               id: g.latest.id,
@@ -395,7 +425,7 @@ export function InboxPage({
       "Couldn’t archive",
     ).then(() =>
       say(
-        `Archived ${g.issue?.identifier || "notification"}`,
+        `Archived ${nameOf(g)}`,
         () =>
           void unarchive(g).catch((e) =>
             say(`Couldn’t restore: ${errorText(e)}`),
@@ -406,13 +436,13 @@ export function InboxPage({
 
   const snooze = (g: InboxGroup, until: Date | null) => {
     setSnoozeFor(null);
-    if (!g.issue) return;
+    if (!real(g)) return;
     return mutate(
       removeGroup(g),
       () =>
         gql(
-          `mutation($id:String!,$until:DateTime){notificationsSnoozeForIssue(issueId:$id,until:$until)}`,
-          { id: issueIdOf(g), until: until ? until.toISOString() : null },
+          `mutation($id:String!,$until:DateTime){notificationsSnoozeForSubject(subjectId:$id,until:$until)}`,
+          { id: g.key, until: until ? until.toISOString() : null },
         ),
       until ? liveDelta(g) : 0,
       until ? "Couldn’t snooze" : "Couldn’t unsnooze",
@@ -420,8 +450,8 @@ export function InboxPage({
       .then(() =>
         say(
           until
-            ? `Snoozed ${g.issue?.identifier} until ${until.toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}`
-            : `${g.issue?.identifier} is back in the inbox`,
+            ? `Snoozed ${nameOf(g)} until ${until.toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}`
+            : `${nameOf(g)} is back in the inbox`,
           until ? () => void snooze(g, null) : undefined,
         ),
       )
@@ -431,22 +461,19 @@ export function InboxPage({
   };
 
   const unsubscribe = async (g: InboxGroup) => {
-    if (!g.issue) return;
+    if (!real(g)) return;
     try {
-      const d = await gql(`mutation($id:String!){issueUnsubscribe(id:$id)}`, {
-        id: g.issue.id,
-      });
-      if (d.issueUnsubscribe === false)
-        throw Error("The server refused the change.");
+      await setFollowing(g.type, g.key, false);
       say(
-        `Unsubscribed from ${g.issue.identifier}. Only assignments and mentions will reach you.`,
+        `Unfollowed ${nameOf(g)}. Only things addressed to you will reach you.`,
         () =>
-          void gql(`mutation($id:String!){issueSubscribe(id:$id)}`, {
-            id: g.issue!.id,
-          }).then(() => say(`Subscribed to ${g.issue!.identifier} again`)),
+          void setFollowing(g.type, g.key, true).then(
+            () => say(`Following ${nameOf(g)} again`),
+            (e) => say(`Couldn’t follow again: ${errorText(e)}`),
+          ),
       );
     } catch (e) {
-      say(`Couldn’t unsubscribe: ${errorText(e)}`);
+      say(`Couldn’t unfollow: ${errorText(e)}`);
     }
   };
 
@@ -479,6 +506,13 @@ export function InboxPage({
     if (g.unreadCount > 0 && tab !== "archived") void setRead(g, true);
   };
   const close = () => setSelectedKey(null);
+  /** Leave the inbox for the subject's own page. */
+  const openFull = (g: InboxGroup) => {
+    if (g.type === "issue") {
+      const issue = liveIssue(g.issue);
+      if (issue) onOpenIssue(issue);
+    } else if (real(g)) onOpenSubject(g.type, g.key);
+  };
   const focusRow = (key: string) =>
     requestAnimationFrame(() =>
       listRef.current
@@ -508,7 +542,7 @@ export function InboxPage({
     archive,
     setRead,
     unsubscribe,
-    onOpenIssue,
+    openFull,
     selected,
   });
   handlers.current = {
@@ -517,7 +551,7 @@ export function InboxPage({
     archive,
     setRead,
     unsubscribe,
-    onOpenIssue,
+    openFull,
     selected,
   };
   useEffect(() => {
@@ -537,7 +571,7 @@ export function InboxPage({
         // Enter on any other button presses that button; on a row or the page it opens the task.
         const t = e.target as HTMLElement;
         if (t.tagName === "BUTTON" && !t.dataset.inboxNotificationOpen) return;
-        if (g.issue) h.onOpenIssue(g.issue);
+        h.openFull(g);
       } else if (key === "e" || key === "Backspace" || key === "Delete")
         void h.archive(g);
       else if (key === "u") void h.setRead(g, g.unreadCount > 0);
@@ -561,8 +595,14 @@ export function InboxPage({
   const iconButton =
     "grid size-7 place-items-center rounded-md bg-transparent text-muted hover:bg-subtle hover:text-foreground aria-pressed:bg-subtle aria-pressed:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 pointer-coarse:size-11 shell-phone:size-11";
   const rowAction =
-    "grid size-7 place-items-center rounded-md bg-transparent text-muted hover:bg-subtle hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:size-10";
-  const detailIssue = selected?.issue ? liveIssue(selected.issue) : null;
+    "grid size-6 place-items-center rounded bg-transparent text-muted hover:bg-subtle hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:size-9";
+  const detailIssue =
+    selected?.type === "issue" && selected.issue
+      ? liveIssue(selected.issue)
+      : null;
+  const showDetail = Boolean(
+    detailIssue || (selected && selected.type !== "issue"),
+  );
 
   const empty = {
     all: unreadOnly
@@ -572,11 +612,11 @@ export function InboxPage({
         ]
       : [
           "Inbox zero",
-          "Assignments, mentions, comments and status changes on tasks you follow land here.",
+          "Assignments, mentions, comments and status changes on what you follow — tasks, projects, initiatives and cycles — land here.",
         ],
     priority: [
       "Nothing needs you",
-      "Tasks assigned to you, mentions and decisions you’re asked for appear here.",
+      "Things addressed to you appear here: assignments, mentions, decisions, and projects or initiatives handed to you.",
     ],
     snoozed: [
       "Nothing snoozed",
@@ -726,6 +766,11 @@ export function InboxPage({
             {groups.map((g) => {
               const n = g.latest;
               const issue = liveIssue(g.issue);
+              const SubjectIcon = SUBJECT_ICON[g.type];
+              const system = isSystemEvent(n);
+              const who = system
+                ? subjectLabel(g.type)
+                : n.actor?.name || "Someone";
               const unread = g.unreadCount > 0;
               const isSelected = g.key === selectedKey;
               const quote = excerpt(n);
@@ -743,36 +788,52 @@ export function InboxPage({
                     data-inbox-notification-open="true"
                     className="flex w-full min-w-0 items-start gap-2.5 bg-transparent px-3 py-2.5 text-left focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent"
                     onClick={() => open(g)}
-                    onDoubleClick={() => issue && onOpenIssue(issue)}
+                    onDoubleClick={() => openFull(g)}
                     aria-current={isSelected ? "true" : undefined}
-                    aria-label={`${unread ? "Unread: " : ""}${issue?.identifier || "Task"} ${issue?.title || "unavailable"} — ${n.actor?.name || "Someone"} ${describe(n)}`}
+                    aria-label={`${unread ? "Unread: " : ""}${issue?.identifier || subjectLabel(g.type)} ${subjectTitle(g)} — ${who} ${describe(n)}`}
                   >
                     <span
                       aria-hidden="true"
                       className={`mt-2 size-1.5 flex-none rounded-full ${unread ? "bg-accent" : "bg-transparent"}`}
                       data-inbox-notification-dot=""
                     />
-                    <Avatar name={n.actor?.name || null} size={24} />
+                    {system ? (
+                      <span className="grid size-6 flex-none place-items-center rounded-full bg-subtle text-muted">
+                        <SubjectIcon size={13} />
+                      </span>
+                    ) : (
+                      <Avatar name={n.actor?.name || null} size={24} />
+                    )}
                     <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                       <span className="flex min-w-0 items-center gap-1.5">
-                        {issue?.state && (
-                          <StatusIcon
-                            state={issue.state}
-                            className="size-3.5 flex-none"
+                        {g.type === "issue" ? (
+                          issue?.state && (
+                            <StatusIcon
+                              state={issue.state}
+                              className="size-3.5 flex-none"
+                            />
+                          )
+                        ) : (
+                          <SubjectIcon
+                            size={13}
+                            className="flex-none text-muted"
+                            aria-label={subjectLabel(g.type)}
                           />
                         )}
-                        <span className="flex-none text-xs text-muted">
-                          {issue?.identifier || "—"}
-                        </span>
+                        {g.type === "issue" && (
+                          <span className="flex-none text-xs text-muted">
+                            {issue?.identifier || "—"}
+                          </span>
+                        )}
                         <span
                           className={`truncate text-sm ${unread ? "font-semibold text-foreground" : "text-foreground"}`}
                         >
-                          {issue?.title || "Task unavailable"}
+                          {subjectTitle(g)}
                         </span>
                       </span>
                       <span className="truncate text-xs text-muted">
                         <span className={unread ? "text-foreground" : ""}>
-                          {n.actor?.name || "Someone"}
+                          {who}
                         </span>{" "}
                         {describe(n)}
                         {quote ? `: ${quote}` : ""}
@@ -799,7 +860,7 @@ export function InboxPage({
                     </span>
                   </button>
                   <div
-                    className="absolute right-2 top-2 hidden items-center gap-0.5 rounded-md border border-line bg-panel p-0.5 shadow-(--shadow) group-hover:flex group-focus-within:flex"
+                    className="absolute right-2 top-2 hidden items-center rounded-md bg-panel group-hover:flex group-focus-within:flex"
                     data-inbox-notification-actions=""
                   >
                     {tab !== "archived" && (
@@ -807,10 +868,10 @@ export function InboxPage({
                         type="button"
                         className={rowAction}
                         title={unread ? "Mark read (U)" : "Mark unread (U)"}
-                        aria-label={`${unread ? "Mark read" : "Mark unread"}: ${issue?.identifier || "notification"}`}
+                        aria-label={`${unread ? "Mark read" : "Mark unread"}: ${nameOf(g)}`}
                         onClick={() => void setRead(g, unread)}
                       >
-                        {unread ? <Check size={14} /> : <CircleDot size={14} />}
+                        {unread ? <Check size={13} /> : <CircleDot size={13} />}
                       </button>
                     )}
                     {tab !== "archived" && (
@@ -823,11 +884,11 @@ export function InboxPage({
                             type="button"
                             className={rowAction}
                             title="Snooze (H)"
-                            aria-label={`Snooze ${issue?.identifier || "notification"}`}
+                            aria-label={`Snooze ${nameOf(g)}`}
                             aria-haspopup="menu"
                             aria-expanded={snoozeFor === g.key}
                           >
-                            <Clock size={14} />
+                            <Clock size={13} />
                           </button>
                         </PopoverTrigger>
                         <PopoverContent
@@ -875,13 +936,13 @@ export function InboxPage({
                           ? "Move back to inbox"
                           : "Archive (E)"
                       }
-                      aria-label={`${tab === "archived" ? "Unarchive" : "Archive"} ${issue?.identifier || "notification"}`}
+                      aria-label={`${tab === "archived" ? "Unarchive" : "Archive"} ${nameOf(g)}`}
                       onClick={() => void archive(g)}
                     >
                       {tab === "archived" ? (
-                        <ArchiveRestore size={14} />
+                        <ArchiveRestore size={13} />
                       ) : (
-                        <Archive size={14} />
+                        <Archive size={13} />
                       )}
                     </button>
                   </div>
@@ -926,90 +987,99 @@ export function InboxPage({
     </div>
   );
 
-  const detail = detailIssue ? (
-    <div
-      ref={detailRef}
-      className="flex min-h-0 flex-1 flex-col"
-      data-inbox-detail=""
-    >
-      <div className="flex flex-none items-center justify-between gap-2 border-b border-line px-3 py-1.5">
-        <button
-          type="button"
-          className="inline-flex items-center gap-1 rounded-md bg-transparent px-2 py-1 text-xs text-muted hover:bg-subtle hover:text-foreground md:hidden pointer-coarse:min-h-11"
-          onClick={close}
-        >
-          ← Inbox
-        </button>
-        <span className="hidden truncate text-xs text-muted md:inline">
-          {selected?.latest.actor?.name || "Someone"}{" "}
-          {selected ? describe(selected.latest) : ""}
-          {selected ? ` · ${fullTime(selected.latest.createdAt)}` : ""}
-        </span>
-        <div className="flex items-center gap-1">
+  const detail =
+    showDetail && selected ? (
+      <div
+        ref={detailRef}
+        className="flex min-h-0 flex-1 flex-col"
+        data-inbox-detail=""
+      >
+        <div className="flex flex-none items-center justify-between gap-2 border-b border-line px-3 py-1.5">
           <button
             type="button"
-            className="rounded-md bg-transparent px-2 py-1 text-xs text-muted hover:bg-subtle hover:text-foreground pointer-coarse:min-h-11"
-            onClick={() => detailIssue && onOpenIssue(detailIssue)}
-            title="Open the full page (Enter)"
-          >
-            Open
-          </button>
-          <button
-            type="button"
-            className={iconButton}
-            aria-label="Unsubscribe from this task (S)"
-            title="Unsubscribe (S)"
-            onClick={() => selected && void unsubscribe(selected)}
-          >
-            <BellOff size={14} />
-          </button>
-          <button
-            type="button"
-            className={iconButton}
-            aria-label="Close (Esc)"
-            title="Close (Esc)"
+            className="inline-flex items-center gap-1 rounded-md bg-transparent px-2 py-1 text-xs text-muted hover:bg-subtle hover:text-foreground md:hidden pointer-coarse:min-h-11"
             onClick={close}
           >
-            <X size={15} />
+            ← Inbox
           </button>
+          <span className="hidden truncate text-xs text-muted md:inline">
+            {isSystemEvent(selected.latest)
+              ? subjectLabel(selected.type)
+              : selected.latest.actor?.name || "Someone"}{" "}
+            {describe(selected.latest)} · {fullTime(selected.latest.createdAt)}
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              className="rounded-md bg-transparent px-2 py-1 text-xs text-muted hover:bg-subtle hover:text-foreground pointer-coarse:min-h-11"
+              onClick={() => openFull(selected)}
+              title="Open the full page (Enter)"
+            >
+              Open
+            </button>
+            {selected.type === "issue" && real(selected) && (
+              <FollowButton
+                type="issue"
+                id={selected.key}
+                compact
+                onError={(m) => say(m)}
+              />
+            )}
+            <button
+              type="button"
+              className={iconButton}
+              aria-label="Close (Esc)"
+              title="Close (Esc)"
+              onClick={close}
+            >
+              <X size={15} />
+            </button>
+          </div>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          {detailIssue ? (
+            renderDetail({ issue: detailIssue, onClose: close })
+          ) : (
+            <SubjectPanel
+              group={selected}
+              onOpen={() => openFull(selected)}
+              onError={(m) => say(m)}
+            />
+          )}
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-        {renderDetail({ issue: detailIssue, onClose: close })}
+    ) : (
+      <div
+        className="flex flex-1 flex-col items-center justify-center gap-3 p-4 text-center"
+        data-inbox-detail-empty=""
+      >
+        <InboxIcon size={28} className="text-muted" />
+        <p className="m-0 text-sm text-muted">
+          {groups.length
+            ? "Select a notification to read it here"
+            : "You’re all caught up"}
+        </p>
+        <dl className="m-0 grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs text-muted">
+          {(
+            [
+              ["J / K", "Next / previous"],
+              ["E", "Archive"],
+              ["U", "Read / unread"],
+              ["H", "Snooze"],
+              ["S", "Unfollow"],
+              ["Enter", "Open full page"],
+            ] as const
+          ).map(([k, label]) => (
+            <div key={k} className="contents">
+              <dt className="flex justify-end">
+                <Kbd>{k}</Kbd>
+              </dt>
+              <dd className="m-0 text-left">{label}</dd>
+            </div>
+          ))}
+        </dl>
       </div>
-    </div>
-  ) : (
-    <div
-      className="flex flex-1 flex-col items-center justify-center gap-3 p-4 text-center"
-      data-inbox-detail-empty=""
-    >
-      <InboxIcon size={28} className="text-muted" />
-      <p className="m-0 text-sm text-muted">
-        {groups.length
-          ? "Select a notification to read it here"
-          : "You’re all caught up"}
-      </p>
-      <dl className="m-0 grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs text-muted">
-        {(
-          [
-            ["J / K", "Next / previous"],
-            ["E", "Archive"],
-            ["U", "Read / unread"],
-            ["H", "Snooze"],
-            ["S", "Unsubscribe"],
-            ["Enter", "Open full page"],
-          ] as const
-        ).map(([k, label]) => (
-          <div key={k} className="contents">
-            <dt className="flex justify-end">
-              <Kbd>{k}</Kbd>
-            </dt>
-            <dd className="m-0 text-left">{label}</dd>
-          </div>
-        ))}
-      </dl>
-    </div>
-  );
+    );
 
   return (
     <section
@@ -1018,13 +1088,13 @@ export function InboxPage({
     >
       <div className="flex min-h-0 flex-1">
         <div
-          className={`flex min-h-0 w-full flex-col border-line md:w-2/5 md:max-w-md md:flex-none md:border-r ${detailIssue ? "max-md:hidden" : ""}`}
+          className={`flex min-h-0 w-full flex-col border-line md:w-2/5 md:max-w-md md:flex-none md:border-r ${showDetail ? "max-md:hidden" : ""}`}
           data-inbox-ledger=""
         >
           {list}
         </div>
         <div
-          className={`min-h-0 min-w-0 flex-1 flex-col ${detailIssue ? "flex" : "hidden md:flex"}`}
+          className={`min-h-0 min-w-0 flex-1 flex-col ${showDetail ? "flex" : "hidden md:flex"}`}
         >
           {detail}
         </div>

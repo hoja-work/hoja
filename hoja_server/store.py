@@ -2108,12 +2108,43 @@ class Store:
         whole group, including older rows the client has not paged in. False when
         the issue does not exist in this workspace.
         """
-        from hoja_server.db import now_iso
         iid = self._issue_id_for(org_id, issue_ref)
         if not iid:
             return False
+        return self._inbox_group_update(org_id, user_id, inbox_notification.c.issue_id == iid,
+                                        action, read, until)
+
+    def _subject_column_for(self, org_id: str, subject_ref: str):
+        """The inbox column and id of whatever subject ``subject_ref`` names in this
+        workspace: a task (id or identifier), project (id or slug), initiative or cycle."""
         n = inbox_notification.c
-        scope = and_(n.issue_id == iid, n.archived_at.is_(None))
+        with self.engine.connect() as conn:
+            for table, column, slug in ((project, n.project_id, project.c.slug_id),
+                                        (initiative, n.initiative_id, None),
+                                        (cycle, n.cycle_id, None)):
+                match = table.c.id == subject_ref
+                if slug is not None:
+                    match = or_(match, slug == subject_ref)
+                found = conn.execute(select(table.c.id).where(and_(
+                    table.c.organization_id == org_id, match))).scalar()
+                if found:
+                    return column, found
+        iid = self._issue_id_for(org_id, subject_ref)
+        return (n.issue_id, iid) if iid else (None, None)
+
+    def inbox_subject_update(self, org_id: str, user_id: str, subject_ref: str, action: str,
+                             read: bool = True, until: str | None = None) -> bool:
+        """:meth:`inbox_issue_update` for any subject; False when nothing by that id exists."""
+        column, sid = self._subject_column_for(org_id, subject_ref)
+        if column is None:
+            return False
+        return self._inbox_group_update(org_id, user_id, column == sid, action, read, until)
+
+    def _inbox_group_update(self, org_id: str, user_id: str, subject_clause, action: str,
+                            read: bool, until: str | None) -> bool:
+        from hoja_server.db import now_iso
+        n = inbox_notification.c
+        scope = and_(subject_clause, n.archived_at.is_(None))
         if action == "read":
             if read:
                 self._inbox_update(org_id, user_id, and_(scope, n.read_at.is_(None)),
@@ -2133,6 +2164,73 @@ class Store:
         else:
             raise ValueError("Unsupported notification action.")
         return True
+
+    def visible_inbox_subjects(self, org_id: str, viewer_id: str, rows: list[dict]) -> set[str]:
+        """Subject ids among ``rows`` the viewer may still see.
+
+        Archived projects, initiatives and cycles stay visible (the notification
+        happened); a project or cycle behind a team the viewer cannot see does not.
+        Task rows are checked by the caller with the task's own visibility rule.
+        """
+        ids = {col: {r[col] for r in rows if r.get(col)} for col in
+               ("project_id", "initiative_id", "cycle_id")}
+        seen: set[str] = set()
+        with self.engine.connect() as conn:
+            if ids["project_id"]:
+                stmt = select(project.c.id).where(and_(
+                    project.c.organization_id == org_id, project.c.id.in_(ids["project_id"])))
+                seen |= set(conn.execute(_scope_projects(conn, stmt, org_id, viewer_id)).scalars())
+            if ids["initiative_id"]:
+                seen |= set(conn.execute(select(initiative.c.id).where(and_(
+                    initiative.c.organization_id == org_id,
+                    initiative.c.id.in_(ids["initiative_id"])))).scalars())
+            if ids["cycle_id"]:
+                stmt = select(cycle.c.id).where(and_(
+                    cycle.c.organization_id == org_id, cycle.c.id.in_(ids["cycle_id"])))
+                seen |= set(conn.execute(_scope_teams(conn, stmt, org_id, viewer_id,
+                                                      cycle.c.team_id)).scalars())
+        return seen
+
+    def subjects_by_ids(self, org_id: str, kind: str, ids: list[str],
+                        viewer_id: str | None = None) -> dict[str, dict]:
+        """Projects, initiatives or cycles by id, archived ones included, for inbox rows."""
+        ids = [i for i in dict.fromkeys(ids) if i]
+        if not ids:
+            return {}
+        with self.engine.connect() as conn:
+            if kind == "project":
+                stmt = _scope_projects(conn, select(project).where(and_(
+                    project.c.organization_id == org_id, project.c.id.in_(ids))), org_id, viewer_id)
+                return {r["id"]: self.ser_project(r) for r in _conn_rows(conn, stmt)}
+            if kind == "initiative":
+                rows = _conn_rows(conn, select(initiative).where(and_(
+                    initiative.c.organization_id == org_id, initiative.c.id.in_(ids))))
+                return {r["id"]: self.ser_initiative(conn, r) for r in rows}
+            if kind == "cycle":
+                stmt = _scope_teams(conn, select(cycle).where(and_(
+                    cycle.c.organization_id == org_id, cycle.c.id.in_(ids))),
+                    org_id, viewer_id, cycle.c.team_id)
+                return {r["id"]: self.ser_cycle(r) for r in _conn_rows(conn, stmt)}
+        raise ValueError(f"Unknown subject kind {kind!r}")
+
+    def subject_subscribers_for_many(self, org_id: str, subject_type: str,
+                                     ids: list[str]) -> dict[str, list[dict]]:
+        """Subscribers of many projects, initiatives or cycles: one query, by subject id."""
+        from hoja_server.notifications import SUBJECTS
+        table, column, _ = SUBJECTS[subject_type]
+        ids = [i for i in dict.fromkeys(ids) if i]
+        out: dict[str, list[dict]] = {i: [] for i in ids}
+        if not ids:
+            return out
+        with self.engine.connect() as conn:
+            rows = conn.execute(select(table.c[column].label("_subject_id"), user).select_from(
+                user.join(table, table.c.user_id == user.c.id)).where(and_(
+                    table.c[column].in_(ids), user.c.organization_id == org_id))
+                .order_by(user.c.name)).mappings().all()
+        for row in rows:
+            row = dict(row)
+            out[row.pop("_subject_id")].append(self.ser_user(row))
+        return out
 
     def inbox_mark_all_read(self, org_id: str, user_id: str) -> bool:
         from hoja_server.db import now_iso
@@ -2601,6 +2699,14 @@ class Store:
                 cycle.c.organization_id == org_id, cycle.c.id == cycle_id))
             stmt = _scope_teams(conn, stmt, org_id, viewer_id, cycle.c.team_id)
             return self.ser_cycle(_one(conn, stmt))
+
+    def project_by_slug(self, org_id: str, slug: str, viewer_id: str | None = None) -> dict | None:
+        with self.engine.connect() as conn:
+            stmt = select(project).where(and_(
+                project.c.organization_id == org_id, project.c.slug_id == slug,
+                project.c.archived_at.is_(None)))
+            stmt = _scope_projects(conn, stmt, org_id, viewer_id)
+            return self.ser_project(_one(conn, stmt))
 
     def project_by_id(self, org_id: str, pid: str, viewer_id: str | None = None) -> dict | None:
         with self.engine.connect() as conn:

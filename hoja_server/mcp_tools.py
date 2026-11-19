@@ -155,6 +155,17 @@ WRITE_TOOLS: dict[str, str] = {
     "notificationsArchiveForIssue": "Archive every inbox notification about one task.",
     "notificationsSnoozeForIssue": "Snooze every inbox notification about one task until a time.",
     "notificationsArchiveAllRead": "Archive every read inbox notification.",
+    "notificationsMarkReadForSubject": (
+        "Mark every inbox notification about one subject (a task, project, initiative or cycle, "
+        "by the notification's subjectId) read, or unread with read: false."),
+    "notificationsArchiveForSubject": "Archive every inbox notification about one subject (by subjectId).",
+    "notificationsSnoozeForSubject": "Snooze every inbox notification about one subject (by subjectId) until a time.",
+    "projectSubscribe": "Follow a project (id or slugId): its updates, replies and status, target date or lead changes reach the inbox.",
+    "projectUnsubscribe": "Stop following a project. Mentions and being made lead still arrive.",
+    "initiativeSubscribe": "Follow an initiative: its updates and status, target date or owner changes reach the inbox.",
+    "initiativeUnsubscribe": "Stop following an initiative. Being made owner still arrives.",
+    "cycleSubscribe": "Hear when a cycle starts and when it completes.",
+    "cycleUnsubscribe": "Stop hearing about a cycle starting and completing.",
     "issueDecisionCreate": (
         "Ask a human a decision on an issue while you work (docs/decisions.md). Pass question, "
         "optional options [{key,label,description}] and context; the issue is then flagged "
@@ -203,7 +214,9 @@ DESTRUCTIVE = {"issueDelete", "commentDelete", "issueLabelDelete", "teamMemberRe
                "taskDelete", "taskLabelDelete", "taskArchive"}
 IDEMPOTENT_PREFIXES = ("notificationMark", "notificationArchive", "notificationUnarchive",
                        "notificationSnooze", "notificationsMark", "notificationsArchive",
-                       "notificationsSnooze")
+                       "notificationsSnooze", "projectSubscribe", "projectUnsubscribe",
+                       "initiativeSubscribe", "initiativeUnsubscribe", "cycleSubscribe",
+                       "cycleUnsubscribe")
 
 FIELD_HINTS = {
     "teamId": "Team key (e.g. \"ENG\") or id.",

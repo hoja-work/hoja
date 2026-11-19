@@ -13,6 +13,7 @@ from hoja_server import comment_policy, identifiers, notifications, uploads
 from hoja_server import decisions as decisiondocs
 from hoja_server import views as viewdocs
 from hoja_server.db import (
+    cycle_subscriber,
     PRIORITY_LABELS,
     attachment,
     comment,
@@ -570,6 +571,10 @@ class Writer:
             team_cycle_ids = select(cycle.c.id).where(cycle.c.team_id == team_id)
             conn.execute(issue.update().where(issue.c.cycle_id.in_(team_cycle_ids))
                          .values(cycle_id=None, updated_at=now_iso()))
+            conn.execute(inbox_notification.delete().where(
+                inbox_notification.c.cycle_id.in_(team_cycle_ids)))
+            conn.execute(cycle_subscriber.delete().where(
+                cycle_subscriber.c.cycle_id.in_(team_cycle_ids)))
             conn.execute(cycle.delete().where(cycle.c.team_id == team_id))
             # Projects are workspace-level: deleting a team only drops its link to them.
             conn.execute(project_team.delete().where(project_team.c.team_id == team_id))
@@ -657,6 +662,7 @@ class Writer:
                 raise ValueError("Owner must belong to the current organization.")
             conn.execute(initiative.insert().values(id=ident, organization_id=org_id, name=name, summary=inp.get("summary"), status=status, priority=priority, owner_id=owner_id, creator_id=actor_id, target_date=inp.get("targetDate"), created_at=ts, updated_at=ts))
             self._initiative_projects(conn, org_id, ident, inp.get("projectIds", []))
+            notifications.on_initiative_created(conn, org_id, ident, actor_id, owner_id, ts)
         return ident
 
     @staticmethod
@@ -689,13 +695,15 @@ class Writer:
                         raise ValueError("Owner must belong to the current organization.")
             values["owner_id"] = owner
         with self.engine.begin() as conn:
-            exists = conn.execute(select(initiative.c.id).where(and_(initiative.c.id == ident, initiative.c.organization_id == org_id, initiative.c.archived_at.is_(None)))).first()
+            exists = conn.execute(select(initiative).where(and_(initiative.c.id == ident, initiative.c.organization_id == org_id, initiative.c.archived_at.is_(None)))).mappings().first()
             if not exists: return False
+            before = dict(exists)
             if "projectIds" in inp:
                 conn.execute(initiative_project.delete().where(and_(initiative_project.c.organization_id == org_id, initiative_project.c.initiative_id == ident)))
                 self._initiative_projects(conn, org_id, ident, inp["projectIds"])
             values["updated_at"] = now_iso()
             conn.execute(initiative.update().where(and_(initiative.c.id == ident, initiative.c.organization_id == org_id)).values(**values))
+            notifications.on_initiative_updated(conn, org_id, before, values, viewer_id, values["updated_at"])
         return True
 
     def initiative_archive(self, org_id: str, viewer_id: str, ident: str) -> bool:
@@ -1243,6 +1251,8 @@ class Writer:
                 conn.execute(comment.insert().values(
                     id=cid, organization_id=org_id, project_update_id=urow["id"],
                     body=inp["body"], user_id=viewer_id, created_at=ts, updated_at=ts))
+                notifications.on_project_update_reply(
+                    conn, org_id, dict(urow), cid, viewer_id, inp["body"], ts)
                 return cid
             irow = conn.execute(select(issue).where(and_(
                 issue.c.organization_id == org_id,
@@ -1391,6 +1401,26 @@ class Writer:
             conn.execute(issue_subscriber.delete().where(and_(
                 issue_subscriber.c.issue_id == irow[0],
                 issue_subscriber.c.user_id == user_id)))
+            return True
+
+    def subject_subscribe(self, org_id: str, user_id: str, subject_type: str,
+                          subject_id: str, subscribed: bool) -> bool:
+        """Follow or unfollow a project, initiative or cycle (idempotent).
+
+        The caller has already resolved ``subject_id`` to a row the user can see;
+        this only re-checks that it belongs to the workspace.
+        """
+        from hoja_server.db import cycle as cycle_t, initiative as initiative_t, project as project_t
+        table = {"project": project_t, "initiative": initiative_t, "cycle": cycle_t}[subject_type]
+        with self.engine.begin() as conn:
+            if not conn.execute(select(table.c.id).where(and_(
+                    table.c.organization_id == org_id, table.c.id == subject_id))).first():
+                return False
+            if subscribed:
+                # Same eligibility as auto-subscribe: only active human members follow.
+                notifications.subscribe_subject(conn, org_id, subject_type, subject_id, [user_id])
+            else:
+                notifications.unsubscribe_subject(conn, subject_type, subject_id, user_id)
             return True
 
     # ---------------------------------------------------------------- cycles
@@ -1557,6 +1587,8 @@ class Writer:
             conn.execute(project_member.insert().values(project_id=pid, user_id=viewer_id))
             for team_id in team_ids:
                 conn.execute(project_team.insert().values(project_id=pid, team_id=team_id))
+            notifications.on_project_created(
+                conn, org_id, pid, viewer_id, expanded.get("leadId"), [viewer_id], ts)
         # The optional task set becomes real tasks in the project, through the
         # same tested issue_create path the API uses — never a row written by
         # hand. issue_create opens its own transaction, so this runs after the
@@ -1587,6 +1619,8 @@ class Writer:
                 actor_id=actor_id, body=body, status=inp.get("status"), health=inp.get("health"),
                 progress=self._project_progress(conn, org_id, pid), created_at=ts, updated_at=ts,
             ))
+            notifications.on_project_update_posted(
+                conn, org_id, pid, update_id, actor_id, body, inp.get("health"), ts)
             return update_id
 
     def _pulse_update_row(self, conn, table, org_id: str, update_id: str):
@@ -1639,6 +1673,10 @@ class Writer:
             conn.execute(comment.delete().where(and_(
                 comment.c.organization_id == org_id,
                 comment.c.project_update_id == update_id)))
+            # The posts and replies a reader was told about are gone; so are the rows.
+            conn.execute(inbox_notification.delete().where(and_(
+                inbox_notification.c.organization_id == org_id,
+                inbox_notification.c.project_update_id == update_id)))
             conn.execute(project_update.delete().where(and_(
                 project_update.c.organization_id == org_id, project_update.c.id == update_id)))
             return True
@@ -1661,6 +1699,8 @@ class Writer:
                 actor_id=actor_id, body=body, status=inp.get("status"),
                 health=inp.get("health"), created_at=ts, updated_at=ts,
             ))
+            notifications.on_initiative_update_posted(
+                conn, org_id, initiative_id, update_id, actor_id, body, inp.get("health"), ts)
             return update_id
 
     def initiative_update_update(self, org_id: str, viewer_id: str, update_id: str, inp: dict) -> str | None:
@@ -1694,6 +1734,9 @@ class Writer:
                 user.c.organization_id == org_id, user.c.id == viewer_id))).scalar()
             if row["actor_id"] != viewer_id and not actor:
                 return False
+            conn.execute(inbox_notification.delete().where(and_(
+                inbox_notification.c.organization_id == org_id,
+                inbox_notification.c.initiative_update_id == update_id)))
             conn.execute(initiative_update.delete().where(and_(
                 initiative_update.c.organization_id == org_id, initiative_update.c.id == update_id)))
             return True
@@ -1730,10 +1773,11 @@ class Writer:
             project_settings.validate_project_state(self.engine, org_id, inp["state"])
             if inp.get("state") else None)
         with self.engine.begin() as conn:
-            row = conn.execute(select(project.c.id).where(and_(
-                project.c.organization_id == org_id, project.c.id == pid))).first()
+            row = conn.execute(select(project).where(and_(
+                project.c.organization_id == org_id, project.c.id == pid))).mappings().first()
             if not row:
                 return None
+            before = dict(row)
             if not self._require_project_owner(conn, org_id, viewer_id, pid):
                 return None
             if lead_id := inp.get("leadId"):
@@ -1766,6 +1810,7 @@ class Writer:
             if canonical_state is not None:
                 vals["state"] = canonical_state
             conn.execute(project.update().where(project.c.id == pid).values(**vals))
+            notifications.on_project_updated(conn, org_id, before, vals, viewer_id, vals["updated_at"])
             return pid
 
     def project_archive(self, org_id: str, viewer_id: str, pid: str) -> bool:

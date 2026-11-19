@@ -1,7 +1,8 @@
-// Inbox model: notification types, grouping by task, human copy, and the shared unread count.
+// Inbox model: notification types, grouping by subject, human copy, and the shared unread count.
 //
-// The server stores one row per event. The inbox shows one row per task (Linear's model): the
-// latest event leads, and read / archive / snooze act on every notification of that task at once.
+// The server stores one row per event. Every event is about one subject: a task, a project, an
+// initiative or a cycle. The inbox shows one row per subject (Linear's model): the latest event
+// leads, and read / archive / snooze act on every notification of that subject at once.
 import { useEffect, useSyncExternalStore } from "react";
 import { gql } from "../main";
 import type { Issue } from "../main";
@@ -14,7 +15,54 @@ export type InboxKind =
   | "issueStatusChanged"
   | "issueUpdated"
   | "issueDecision"
-  | "issueCreated";
+  | "issueCreated"
+  | "projectUpdatePosted"
+  | "projectUpdateReply"
+  | "projectMention"
+  | "projectLeadAssigned"
+  | "projectUpdated"
+  | "initiativeUpdatePosted"
+  | "initiativeOwnerAssigned"
+  | "initiativeUpdated"
+  | "cycleStarted"
+  | "cycleCompleted";
+
+export type SubjectType = "issue" | "project" | "initiative" | "cycle";
+export type ProjectRef = {
+  id: string;
+  name: string;
+  icon?: string | null;
+  color?: string | null;
+  state?: string | null;
+  health?: string | null;
+  progress?: number | null;
+  targetDate?: string | null;
+  lead?: { id?: string; name?: string } | null;
+};
+export type InitiativeRef = {
+  id: string;
+  name: string;
+  status?: string | null;
+  summary?: string | null;
+  targetDate?: string | null;
+  owner?: { id?: string; name?: string } | null;
+};
+export type CycleRef = {
+  id: string;
+  name?: string | null;
+  number?: number | null;
+  startsAt?: string | null;
+  endsAt?: string | null;
+  completedAt?: string | null;
+  progress?: number | null;
+  team?: { id?: string; key?: string; name?: string } | null;
+};
+export type UpdateRef = {
+  id: string;
+  body: string;
+  health?: string | null;
+  createdAt?: string;
+};
 
 type StateRef = { id?: string; name?: string; type?: string };
 export type NotificationData = {
@@ -24,6 +72,14 @@ export type NotificationData = {
   commentId?: string;
   snippet?: string;
   question?: string;
+  updateId?: string;
+  health?: string;
+  name?: string;
+  number?: number;
+  teamKey?: string;
+  completed?: number;
+  total?: number;
+  carriedOver?: number;
 } | null;
 
 export type InboxNotification = {
@@ -36,13 +92,24 @@ export type InboxNotification = {
   data?: NotificationData | string;
   comment?: { id: string; body: string } | null;
   issue?: Issue | null;
+  subjectType?: SubjectType;
+  subjectId?: string;
+  project?: ProjectRef | null;
+  initiative?: InitiativeRef | null;
+  cycle?: CycleRef | null;
+  projectUpdate?: UpdateRef | null;
+  initiativeUpdate?: UpdateRef | null;
   actor?: { id?: string; name?: string } | null;
 };
 
 export type InboxGroup = {
-  /** The task id; groups are keyed by task. */
+  /** The subject id; groups are keyed by subject. */
   key: string;
+  type: SubjectType;
   issue: Issue | null;
+  project: ProjectRef | null;
+  initiative: InitiativeRef | null;
+  cycle: CycleRef | null;
   latest: InboxNotification;
   items: InboxNotification[];
   unreadCount: number;
@@ -55,9 +122,57 @@ export const DIRECT_KINDS = new Set<string>([
   "issueAssigned",
   "issueMention",
   "issueDecision",
+  "projectMention",
+  "projectLeadAssigned",
+  "initiativeOwnerAssigned",
 ]);
 
-export const NOTIFICATION_FIELDS = `id kind createdAt readAt archivedAt snoozedUntil data comment{id body} issue{id identifier title priority priorityLabel state{id name type color} team{id key name} assignee{id name}} actor{id name}`;
+export const NOTIFICATION_FIELDS = `id kind createdAt readAt archivedAt snoozedUntil data subjectType subjectId comment{id body} issue{id identifier title priority priorityLabel state{id name type color} team{id key name} assignee{id name}} project{id name icon color state health progress targetDate lead{id name}} initiative{id name status summary targetDate owner{id name}} cycle{id name number startsAt endsAt completedAt progress team{id key name}} projectUpdate{id body health createdAt} initiativeUpdate{id body health createdAt} actor{id name}`;
+
+export function subjectOf(n: InboxNotification): {
+  type: SubjectType;
+  id: string;
+} {
+  const type: SubjectType =
+    n.subjectType ||
+    (n.project
+      ? "project"
+      : n.initiative
+        ? "initiative"
+        : n.cycle
+          ? "cycle"
+          : "issue");
+  const id =
+    n.subjectId ||
+    n.issue?.id ||
+    n.project?.id ||
+    n.initiative?.id ||
+    n.cycle?.id ||
+    `missing:${n.id}`;
+  return { type, id };
+}
+
+/** The subject's name as the row shows it. */
+export function subjectTitle(g: InboxGroup): string {
+  if (g.type === "project") return g.project?.name || "Project unavailable";
+  if (g.type === "initiative")
+    return g.initiative?.name || "Initiative unavailable";
+  if (g.type === "cycle") {
+    const c = g.cycle;
+    const team = c?.team?.key || dataOf(g.latest)?.teamKey;
+    const name = c?.name || (c?.number ? `Cycle ${c.number}` : "Cycle");
+    return team ? `${team} · ${name}` : name;
+  }
+  return g.issue?.title || "Task unavailable";
+}
+export function subjectLabel(type: SubjectType): string {
+  return {
+    issue: "Task",
+    project: "Project",
+    initiative: "Initiative",
+    cycle: "Cycle",
+  }[type];
+}
 
 export function dataOf(n: InboxNotification): NotificationData {
   if (!n.data) return null;
@@ -74,12 +189,17 @@ export function dataOf(n: InboxNotification): NotificationData {
 export function groupNotifications(list: InboxNotification[]): InboxGroup[] {
   const groups = new Map<string, InboxGroup>();
   for (const n of list) {
-    const key = n.issue?.id || `missing:${n.id}`;
+    const subject = subjectOf(n);
+    const key = subject.id;
     let g = groups.get(key);
     if (!g) {
       g = {
         key,
+        type: subject.type,
         issue: n.issue || null,
+        project: n.project || null,
+        initiative: n.initiative || null,
+        cycle: n.cycle || null,
         latest: n,
         items: [],
         unreadCount: 0,
@@ -124,7 +244,26 @@ function formatChange(field: string, to: unknown): string {
       ? `set the due date to ${new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" })}`
       : "changed the due date";
   }
+  if (field === "targetDate" || field === "target_date") {
+    if (!to) return "removed the target date";
+    const t = Date.parse(String(to));
+    return Number.isFinite(t)
+      ? `set the target date to ${new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" })}`
+      : "changed the target date";
+  }
+  if (field === "state" || field === "status")
+    return to ? `set the status to ${String(to)}` : "changed the status";
+  if (field === "lead" || field === "owner") {
+    const name = (to as { name?: string } | null)?.name;
+    return name ? `made ${name} the ${field}` : `removed the ${field}`;
+  }
   return `changed ${field}`;
+}
+
+function changesText(data: NotificationData, fallback: string): string {
+  const changes = Object.entries(data?.changes || {});
+  if (!changes.length) return fallback;
+  return changes.map(([k, v]) => formatChange(k, v?.to)).join(", ");
 }
 
 /** What happened, as a phrase that follows the actor's name ("Ana" + "moved it to Done"). */
@@ -145,20 +284,64 @@ export function describe(n: InboxNotification): string {
       return data?.to?.name
         ? `moved it to ${data.to.name}`
         : "changed the status";
-    case "issueUpdated": {
-      const changes = Object.entries(data?.changes || {});
-      if (!changes.length) return "updated the task";
-      return changes.map(([k, v]) => formatChange(k, v?.to)).join(", ");
-    }
+    case "issueUpdated":
+      return changesText(data, "updated the task");
+    case "projectUpdatePosted":
+    case "initiativeUpdatePosted":
+      return data?.health
+        ? `posted an update · ${healthLabel(data.health)}`
+        : "posted an update";
+    case "projectUpdateReply":
+      return "replied to an update";
+    case "projectMention":
+      return "mentioned you";
+    case "projectLeadAssigned":
+      return "made you the project lead";
+    case "initiativeOwnerAssigned":
+      return "made you the initiative owner";
+    case "projectUpdated":
+      return changesText(data, "updated the project");
+    case "initiativeUpdated":
+      return changesText(data, "updated the initiative");
+    case "cycleStarted":
+      return "started";
+    case "cycleCompleted":
+      return typeof data?.completed === "number" &&
+        typeof data?.total === "number"
+        ? `ended · ${data.completed} of ${data.total} done${data.carriedOver ? `, ${data.carriedOver} carried over` : ""}`
+        : "ended";
     default:
       return "updated the task";
   }
 }
 
-/** The quoted text under a comment or mention, when there is one. */
+export function healthLabel(health?: string | null): string {
+  if (!health) return "";
+  const h = health.toLowerCase().replace(/[^a-z]/g, "");
+  return h === "ontrack"
+    ? "On track"
+    : h === "atrisk"
+      ? "At risk"
+      : h === "offtrack"
+        ? "Off track"
+        : health;
+}
+
+/** Cycle events have no person behind them; everything else does. */
+export function isSystemEvent(n: InboxNotification): boolean {
+  return n.kind === "cycleStarted" || n.kind === "cycleCompleted";
+}
+
+/** The quoted text under a comment, mention or update, when there is one. */
 export function excerpt(n: InboxNotification): string {
   const data = dataOf(n);
-  const body = n.comment?.body || data?.snippet || data?.question || "";
+  const body =
+    n.comment?.body ||
+    data?.snippet ||
+    data?.question ||
+    n.projectUpdate?.body ||
+    n.initiativeUpdate?.body ||
+    "";
   return body ? plain(body) : "";
 }
 

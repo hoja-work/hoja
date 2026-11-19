@@ -172,6 +172,7 @@ import { BillingUsageSettings } from "./settings/billing/usage";
 const setupAdapter = createCloudAdapter();
 import { MeetingNotifier, MeetingBadge } from "./meetings/Notifier";
 import { InboxPage } from "./inbox/InboxPage";
+import { FollowButton } from "./inbox/follow";
 import { useInboxUnread, useInboxUnreadSync } from "./inbox/model";
 /** Unread task notifications beside the sidebar's Inbox item, styled like the Meetings badge. */
 function InboxBadge() {
@@ -317,6 +318,7 @@ export type Cycle = {
 export type Initiative = {
   id: string;
   name: string;
+  viewerSubscribed?: boolean;
   summary?: string;
   status: string;
   priority?: number;
@@ -3892,6 +3894,16 @@ function App() {
         scope={`${workspace.id}:${viewer?.id || ""}`}
         path={window.location.pathname}
         onOpenIssue={openIssue}
+        onOpenSubject={(type, id) =>
+          type === "project"
+            ? navigate("Project detail", `/workspace/project/${id}`)
+            : type === "cycle"
+              ? navigate("Cycle detail", `/workspace/cycle/${id}`)
+              : navigate(
+                  "Initiatives",
+                  `/workspace/initiatives/all?initiative=${encodeURIComponent(id)}`,
+                )
+        }
         onOpenSettings={() =>
           navigate("Settings", "/workspace/settings/notifications")
         }
@@ -4984,7 +4996,7 @@ import {
 } from "./projectStore";
 import "./mobile-touch.css";
 const PROJECT_FIELDS = `id name description state progress startDate targetDate health lead{name} teams{nodes{id name key}}`;
-const INITIATIVE_FIELDS = `id name summary status priority targetDate createdAt owner{id name} creator{id} projects{nodes{id name}}`;
+const INITIATIVE_FIELDS = `id name summary status priority targetDate createdAt viewerSubscribed owner{id name} creator{id} projects{nodes{id name}}`;
 const PULSE_FIELDS = `id status body createdAt progress health actor{id name} project{id name health progress targetDate lead{name}} comments(first:20){nodes{id body createdAt user{id name}}}`;
 const pulseKey = (meta: SyncMeta | null) =>
   meta ? `pulse:${meta.workspace.id}:${meta.viewer.id || ""}` : null;
@@ -5053,6 +5065,10 @@ function InitiativesPage({
     hasMore = list.more;
   const [actionError, setActionError] = useState("");
   const error = actionError || list.error;
+  // The inbox opens an initiative as ?initiative=<id>: that row is scrolled to and marked.
+  const highlightedInitiative = new URLSearchParams(location.search).get(
+    "initiative",
+  );
   const [createOpen, setCreateOpen] = useState(false),
     [name, setName] = useState(""),
     [summary, setSummary] = useState(""),
@@ -5374,15 +5390,34 @@ function InitiativesPage({
             </div>
             {visible.map((i) => (
               <article
-                className="border-b border-line grid items-center gap-3.5 pt-2.75 pr-3.75 pb-2.75 pl-3.75 min-h-14.25 text-[12px] leading-normal grid-cols-1 md:grid-cols-4 shell-phone:gap-2"
+                className="data-highlighted:bg-subtle border-b border-line grid items-center gap-3.5 pt-2.75 pr-3.75 pb-2.75 pl-3.75 min-h-14.25 text-[12px] leading-normal grid-cols-1 md:grid-cols-4 shell-phone:gap-2"
                 data-initiative-row=""
+                data-highlighted={
+                  i.id === highlightedInitiative ? "true" : undefined
+                }
+                ref={
+                  i.id === highlightedInitiative
+                    ? (el) => el?.scrollIntoView({ block: "center" })
+                    : undefined
+                }
                 key={i.id}
                 aria-busy={i.id.startsWith("optimistic:") || undefined}
               >
                 <div className="max-md:first:col-span-full">
-                  <strong className="text-[13px] wrap-break-word font-medium">
-                    {i.name}
-                  </strong>
+                  <div className="flex items-center justify-between gap-2">
+                    <strong className="text-[13px] wrap-break-word font-medium">
+                      {i.name}
+                    </strong>
+                    {!i.id.startsWith("optimistic:") && (
+                      <FollowButton
+                        type="initiative"
+                        id={i.id}
+                        known={i.viewerSubscribed}
+                        compact
+                        onError={setActionError}
+                      />
+                    )}
+                  </div>
                   {showDescription && i.summary && (
                     <p className="mt-1 mr-0 mb-0 ml-0 text-muted wrap-break-word text-[12px] leading-normal">
                       {i.summary}
@@ -11467,6 +11502,11 @@ function ProjectDetails({
         <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[12px] shell-phone:max-w-36 shell-phone:max-w-37.5">
           {project.name}
         </span>
+        <FollowButton
+          type="project"
+          id={project.id}
+          onError={(m) => setStatus(m)}
+        />
         <button
           className="flex-none pt-1.25 pr-1.25 pb-1.25 pl-1.25 rounded-[5px] bg-transparent text-[12px] max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
           type="button"
@@ -15442,47 +15482,112 @@ function ProfileSettings({
     </section>
   );
 }
-const NOTIFICATION_KINDS = [
+const NOTIFICATION_GROUPS = [
   [
-    "issueAssigned",
-    "Assigned to me",
-    "Someone makes you the assignee of a task.",
+    "Tasks",
+    [
+      [
+        "issueAssigned",
+        "Assigned to me",
+        "Someone makes you the assignee of a task.",
+      ],
+      ["issueMention", "Mentioned", "Someone @mentions you in a task comment."],
+      [
+        "issueDecision",
+        "Decision requested",
+        "A task you own or follow asks for a decision.",
+      ],
+      [
+        "issueComment",
+        "New comments",
+        "Someone comments on a task you follow.",
+      ],
+      [
+        "issueStatusChanged",
+        "Status changes",
+        "A task you follow moves to another status.",
+      ],
+      [
+        "issueUpdated",
+        "Priority and due date changes",
+        "A task you follow changes priority or due date.",
+      ],
+    ],
   ],
-  ["issueMention", "Mentioned", "Someone @mentions you in a comment."],
   [
-    "issueDecision",
-    "Decision requested",
-    "A task you own or follow asks for a decision.",
+    "Projects",
+    [
+      [
+        "projectLeadAssigned",
+        "Made project lead",
+        "Someone makes you the lead of a project.",
+      ],
+      [
+        "projectMention",
+        "Mentioned",
+        "Someone @mentions you in a project update or a reply.",
+      ],
+      [
+        "projectUpdatePosted",
+        "Project updates",
+        "A project you follow posts an update.",
+      ],
+      [
+        "projectUpdateReply",
+        "Replies",
+        "Someone replies to an update you posted or replied to.",
+      ],
+      [
+        "projectUpdated",
+        "Status, target date and lead changes",
+        "A project you follow changes status, target date or lead.",
+      ],
+    ],
   ],
   [
-    "issueComment",
-    "New comments",
-    "Someone comments on a task you're subscribed to.",
+    "Initiatives",
+    [
+      [
+        "initiativeOwnerAssigned",
+        "Made initiative owner",
+        "Someone makes you the owner of an initiative.",
+      ],
+      [
+        "initiativeUpdatePosted",
+        "Initiative updates",
+        "An initiative you follow posts an update.",
+      ],
+      [
+        "initiativeUpdated",
+        "Status, target date and owner changes",
+        "An initiative you follow changes status, target date or owner.",
+      ],
+    ],
   ],
   [
-    "issueStatusChanged",
-    "Status changes",
-    "A task you're subscribed to moves to another status.",
-  ],
-  [
-    "issueUpdated",
-    "Priority and due date changes",
-    "A task you're subscribed to changes priority or due date.",
+    "Cycles",
+    [
+      ["cycleStarted", "Cycle started", "A cycle you subscribed to starts."],
+      [
+        "cycleCompleted",
+        "Cycle ended",
+        "A cycle you subscribed to ends, with what got done.",
+      ],
+    ],
   ],
 ] as const;
-type NotificationKind = (typeof NOTIFICATION_KINDS)[number][0] | "issueCreated";
+type NotificationKind =
+  (typeof NOTIFICATION_GROUPS)[number][1][number][0] | "issueCreated";
 type NotificationPrefs = Record<NotificationKind, boolean>;
-const NOTIFICATION_PREF_FIELDS =
-  "issueAssigned issueMention issueComment issueStatusChanged issueUpdated issueDecision issueCreated";
-const allNotificationsOn = (): NotificationPrefs => ({
-  issueAssigned: true,
-  issueMention: true,
-  issueDecision: true,
-  issueComment: true,
-  issueStatusChanged: true,
-  issueUpdated: true,
-  issueCreated: true,
-});
+const NOTIFICATION_KIND_KEYS: NotificationKind[] = [
+  ...NOTIFICATION_GROUPS.flatMap(([, kinds]) => kinds.map(([k]) => k)),
+  "issueCreated",
+];
+const NOTIFICATION_PREF_FIELDS = NOTIFICATION_KIND_KEYS.join(" ");
+const allNotificationsOn = (): NotificationPrefs =>
+  Object.fromEntries(
+    NOTIFICATION_KIND_KEYS.map((k) => [k, true]),
+  ) as NotificationPrefs;
 const readNotificationPrefs = (
   d: Record<string, unknown>,
 ): NotificationPrefs => {
@@ -15569,30 +15674,45 @@ function NotificationSettings() {
           className="mt-1.5 mb-5 max-w-147.5 text-[13px] leading-[1.55] text-(--settings-muted)"
           data-settings-section-intro=""
         >
-          You're subscribed to tasks you create, are assigned, comment on or are
-          mentioned in. Choose which of their events reach your inbox.
+          You follow tasks you create, are assigned, comment on or are mentioned
+          in; projects you lead, create or post to; initiatives you own or
+          create; and cycles you subscribe to. Choose which events reach your
+          inbox. Things addressed to you, like assignments and mentions, are
+          listed first in each group.
         </p>
-        {NOTIFICATION_KINDS.map(([key, label, hint]) => (
-          <div
-            className="flex min-h-(--ds-settings-row-height) min-w-0 flex-col items-start justify-between gap-5 border-t border-line p-(--ds-settings-row-padding) first-of-type:border-t-0 first-of-type:pt-0 last-of-type:pb-0.5 md:flex-row md:items-center md:gap-5 shell-phone:gap-3 [@media_(max-width:_700px)]:gap-3"
-            data-setting-row=""
-            key={key}
+        {NOTIFICATION_GROUPS.map(([group, kinds]) => (
+          <section
+            key={group}
+            className="mt-5 first-of-type:mt-0"
+            data-setting-notification-group={group}
+            aria-label={`${group} notifications`}
           >
-            <div>
-              <b className="font-[620]">{label}</b>
-              <p>{hint}</p>
-            </div>
-            <input
-              className="relative mt-0 mr-0 mb-0 ml-0 h-5.5 w-9.5 flex-none cursor-pointer appearance-none rounded-[999px] border border-line bg-(--settings-subtle) after:absolute after:top-1 after:left-1 after:size-3.5 after:rounded-full after:bg-muted checked:border-foreground checked:bg-foreground checked:after:translate-x-4 checked:after:bg-panel checked:after:transition-transform checked:after:duration-150 checked:after:ease-out motion-reduce:after:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:text-[16px] [@media_(max-width:_700px)]:w-10.5 [@media_(max-width:_700px)]:h-6"
-              aria-label={label}
-              data-setting-switch=""
-              role="switch"
-              type="checkbox"
-              checked={prefs[key]}
-              disabled={!loaded.current && message === "Loading…"}
-              onChange={(e) => void change(key, e.target.checked)}
-            />
-          </div>
+            <h3 className="mt-0 mb-2 text-sm font-semibold text-(--settings-ink)">
+              {group}
+            </h3>
+            {kinds.map(([key, label, hint]) => (
+              <div
+                className="flex min-h-(--ds-settings-row-height) min-w-0 flex-col items-start justify-between gap-5 border-t border-line p-(--ds-settings-row-padding) first-of-type:border-t-0 first-of-type:pt-0 last-of-type:pb-0.5 md:flex-row md:items-center md:gap-5 shell-phone:gap-3 [@media_(max-width:_700px)]:gap-3"
+                data-setting-row=""
+                key={key}
+              >
+                <div>
+                  <b className="font-[620]">{label}</b>
+                  <p>{hint}</p>
+                </div>
+                <input
+                  className="relative mt-0 mr-0 mb-0 ml-0 h-5.5 w-9.5 flex-none cursor-pointer appearance-none rounded-[999px] border border-line bg-(--settings-subtle) after:absolute after:top-1 after:left-1 after:size-3.5 after:rounded-full after:bg-muted checked:border-foreground checked:bg-foreground checked:after:translate-x-4 checked:after:bg-panel checked:after:transition-transform checked:after:duration-150 checked:after:ease-out motion-reduce:after:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:text-[16px] [@media_(max-width:_700px)]:w-10.5 [@media_(max-width:_700px)]:h-6"
+                  aria-label={label}
+                  data-setting-switch=""
+                  role="switch"
+                  type="checkbox"
+                  checked={prefs[key]}
+                  disabled={!loaded.current && message === "Loading…"}
+                  onChange={(e) => void change(key, e.target.checked)}
+                />
+              </div>
+            ))}
+          </section>
         ))}
         {message && (
           <p role={message.includes("could not") ? "alert" : "status"}>

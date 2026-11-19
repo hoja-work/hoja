@@ -477,9 +477,10 @@ def test_revision_74_upgrades_a_revision_73_database_twice(tmp_path) -> None:
     assert applied_schema_revision(engine) == 73
 
     migrate(engine)
-    assert applied_schema_revision(engine) == CURRENT_SCHEMA_REVISION == 74
+    # Later revisions run too; the point is that 74 applies cleanly and replays.
+    assert applied_schema_revision(engine) == CURRENT_SCHEMA_REVISION >= 74
     migrate(engine)  # the second boot is a no-op, not a replayed ALTER
-    assert applied_schema_revision(engine) == 74
+    assert applied_schema_revision(engine) == CURRENT_SCHEMA_REVISION
     with engine.begin() as conn:
         db._apply_sla_options(conn)  # and so is a raced owner
 

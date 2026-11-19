@@ -21,6 +21,7 @@ from ariadne import (
 from graphql import GraphQLError
 
 from hoja_server import mail_events
+from hoja_server import notifications
 from hoja_server import audit
 
 logger = logging.getLogger(__name__)
@@ -234,21 +235,30 @@ def r_inbox_notifications(_, info, first=50, after=None, unreadOnly=False, archi
     rows = store.inbox_notifications(org, uid, cursor, first + 1, unread_only=unreadOnly,
                                      archived=archived, snoozed=snoozed)
     page = rows[:first]
-    # ``issue`` is non-null: a row whose task the viewer can no longer see (its team
-    # was made private to them) is left out rather than failing the whole page.
-    issue_ids = list({row["issue_id"] for row in page})
-    visible = store.issues_by_ids(org, issue_ids, viewer_id=uid)
+    # A row whose subject the viewer can no longer see (a task or project behind a
+    # team made private to them) is left out rather than shown with a blank subject.
+    issue_ids = list({row["issue_id"] for row in page if row.get("issue_id")})
+    visible = store.issues_by_ids(org, issue_ids, viewer_id=uid) if issue_ids else {}
     _prime_issue_nodes(info, list(visible.values()))
     entry = _batch_entry(info, "issue_obj")
     if entry is not None:
         entry["loaded"].update(visible)
-    nodes = [dict(row, createdAt=row["created_at"], readAt=row["read_at"],
-                  archivedAt=row["archived_at"], snoozedUntil=row.get("snoozed_until"),
-                  _actor_id=row["actor_id"], _issue_id=row["issue_id"],
-                  _comment_id=row.get("comment_id")) for row in page
-             if row["issue_id"] in visible]
+    other_visible = store.visible_inbox_subjects(org, uid, page)
+    nodes = []
+    for row in page:
+        subject_type, subject_id = notifications.subject_of(row)
+        if subject_type is None or subject_id not in (visible if subject_type == "issue"
+                                                       else other_visible):
+            continue
+        nodes.append(dict(row, createdAt=row["created_at"], readAt=row["read_at"],
+                          archivedAt=row["archived_at"], snoozedUntil=row.get("snoozed_until"),
+                          subjectType=subject_type, subjectId=subject_id,
+                          _actor_id=row["actor_id"], _issue_id=row.get("issue_id"),
+                          _comment_id=row.get("comment_id")))
     _prime(info, "user_row", [n["_actor_id"] for n in nodes])
     _prime(info, "inbox_comment", [n["_comment_id"] for n in nodes])
+    for kind in ("project", "initiative", "cycle"):
+        _prime(info, f"inbox_{kind}", [n.get(f"{kind}_id") for n in nodes])
     return {"nodes": nodes, "pageInfo": {
         "hasNextPage": len(rows) > first, "hasPreviousPage": after is not None,
         "startCursor": _activity_cursor(page[0]) if page else None,
@@ -653,7 +663,37 @@ def github_link_issue(obj, info):
 
 @InboxNotification.field("issue")
 def inbox_issue(obj, info):
-    return _issue_obj(info, obj["_issue_id"])
+    return _issue_obj(info, obj["_issue_id"]) if obj.get("_issue_id") else None
+
+
+def _inbox_subject(kind):
+    def resolve(obj, info):
+        sid = obj.get(f"{kind}_id")
+        if not sid:
+            return None
+        store, _w, org, uid = _ctx(info)
+        return _batched(info, f"inbox_{kind}", sid,
+                        lambda ids: store.subjects_by_ids(org, kind, ids, viewer_id=uid),
+                        lambda: store.subjects_by_ids(org, kind, [sid], viewer_id=uid).get(sid))
+    return resolve
+
+
+for _kind in ("project", "initiative", "cycle"):
+    InboxNotification.set_field(_kind, _inbox_subject(_kind))
+
+
+@InboxNotification.field("projectUpdate")
+def inbox_project_update(obj, info):
+    store, _w, org, _uid = _ctx(info)
+    ref = obj.get("project_update_id")
+    return store.project_update_by_id(org, ref) if ref else None
+
+
+@InboxNotification.field("initiativeUpdate")
+def inbox_initiative_update(obj, info):
+    store, _w, org, _uid = _ctx(info)
+    ref = obj.get("initiative_update_id")
+    return store.initiative_update_by_id(org, ref) if ref else None
 
 
 def _issue_obj(info, issue_id):
@@ -1903,6 +1943,73 @@ def m_attachment_create(_, info, input):
     _store, w, org, uid = _ctx(info)
     created = w.attachment_create(org, uid, input)
     return {"success": bool(created), "attachment": created}
+
+
+def _subject_subscribers(kind):
+    def resolve(obj, info, first=50):
+        store, _w, org, _uid = _ctx(info)
+        subs = _batched(info, f"{kind}_subscribers", obj["id"],
+                        lambda ids: store.subject_subscribers_for_many(org, kind, ids),
+                        lambda: store.subject_subscribers_for_many(org, kind, [obj["id"]])
+                        .get(obj["id"], []), default=[])
+        return _conn(subs[:_page_size(first)])
+    return resolve
+
+
+def _viewer_subscribed(kind):
+    def resolve(obj, info):
+        store, _w, org, uid = _ctx(info)
+        subs = _batched(info, f"{kind}_subscribers", obj["id"],
+                        lambda ids: store.subject_subscribers_for_many(org, kind, ids),
+                        lambda: store.subject_subscribers_for_many(org, kind, [obj["id"]])
+                        .get(obj["id"], []), default=[])
+        return any(u and u.get("id") == uid for u in subs)
+    return resolve
+
+
+for _kind, _type in (("project", Project), ("initiative", Initiative), ("cycle", Cycle)):
+    _type.set_field("subscribers", _subject_subscribers(_kind))
+    _type.set_field("viewerSubscribed", _viewer_subscribed(_kind))
+
+
+def _follow(kind, subscribed):
+    def resolve(_, info, id):
+        store, w, org, uid = _ctx(info)
+        # Resolve through the same reads that decide what the viewer may see, so an
+        # id from a private team behaves exactly like an id that does not exist.
+        if kind == "project":
+            found = store.project_by_id(org, id, viewer_id=uid) or store.project_by_slug(org, id, viewer_id=uid)
+        elif kind == "initiative":
+            found = store.initiative_by_id(org, id)
+        else:
+            found = store.cycle_by_id(org, id, viewer_id=uid)
+        if not found:
+            return False
+        return w.subject_subscribe(org, uid, kind, found["id"], subscribed)
+    return resolve
+
+
+for _kind in ("project", "initiative", "cycle"):
+    mutation.set_field(f"{_kind}Subscribe", _follow(_kind, True))
+    mutation.set_field(f"{_kind}Unsubscribe", _follow(_kind, False))
+
+
+@mutation.field("notificationsMarkReadForSubject")
+def m_notifications_mark_read_for_subject(_, info, subjectId, read=True):
+    store, _w, org, uid = _ctx(info)
+    return store.inbox_subject_update(org, uid, subjectId, "read", read=read)
+
+
+@mutation.field("notificationsArchiveForSubject")
+def m_notifications_archive_for_subject(_, info, subjectId):
+    store, _w, org, uid = _ctx(info)
+    return store.inbox_subject_update(org, uid, subjectId, "archive")
+
+
+@mutation.field("notificationsSnoozeForSubject")
+def m_notifications_snooze_for_subject(_, info, subjectId, until=None):
+    store, _w, org, uid = _ctx(info)
+    return store.inbox_subject_update(org, uid, subjectId, "snooze", until=_snooze_until(until))
 
 
 @mutation.field("issueSubscribe")

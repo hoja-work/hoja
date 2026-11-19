@@ -44,6 +44,16 @@ type NotificationPreferencesPayload {
   issueUpdated: Boolean!
   issueDecision: Boolean!
   issueCreated: Boolean!
+  projectUpdatePosted: Boolean!
+  projectUpdateReply: Boolean!
+  projectMention: Boolean!
+  projectLeadAssigned: Boolean!
+  projectUpdated: Boolean!
+  initiativeUpdatePosted: Boolean!
+  initiativeOwnerAssigned: Boolean!
+  initiativeUpdated: Boolean!
+  cycleStarted: Boolean!
+  cycleCompleted: Boolean!
 }
 
 type WorkspaceMembership {
@@ -169,6 +179,20 @@ type Mutation {
   notificationsArchiveForIssue(issueId: String!): Boolean!
   notificationsSnoozeForIssue(issueId: String!, until: DateTime): Boolean!
   notificationsArchiveAllRead: Boolean!
+  "Read or unread every notification about one subject: a task, project, initiative or cycle."
+  notificationsMarkReadForSubject(subjectId: String!, read: Boolean = true): Boolean!
+  notificationsArchiveForSubject(subjectId: String!): Boolean!
+  "Snooze every notification about one subject until the instant; null brings them back now."
+  notificationsSnoozeForSubject(subjectId: String!, until: DateTime): Boolean!
+  "Follow a project: its updates, replies to your posts, and status, target date or lead changes reach your inbox. Accepts the id or slugId."
+  projectSubscribe(id: String!): Boolean!
+  projectUnsubscribe(id: String!): Boolean!
+  "Follow an initiative: its updates and status, target date or owner changes reach your inbox."
+  initiativeSubscribe(id: String!): Boolean!
+  initiativeUnsubscribe(id: String!): Boolean!
+  "Hear when a cycle starts and when it completes."
+  cycleSubscribe(id: String!): Boolean!
+  cycleUnsubscribe(id: String!): Boolean!
   githubLinkAdd(issueId: String!, url: String!): GithubLink!
   "Approve a pull request as the connected GitHub user, attributed to the Hoja actor."
   reviewApprove(linkId: String!, body: String): ReviewActionPayload!
@@ -244,7 +268,17 @@ type AuditEventConnection { nodes: [AuditEvent!]! pageInfo: PageInfo! }
 
 type InboxNotification {
   id: ID!
-  issue: Issue!
+  "What the notification is about: issue, project, initiative or cycle."
+  subjectType: String!
+  subjectId: ID!
+  "Null when the notification is about a project, initiative or cycle."
+  issue: Issue
+  project: Project
+  initiative: Initiative
+  cycle: Cycle
+  "The project update a post, reply or mention points at; null once deleted."
+  projectUpdate: ProjectUpdate
+  initiativeUpdate: InitiativeUpdate
   actor: User
   kind: String!
   createdAt: DateTime!
@@ -331,6 +365,9 @@ type Cycle {
   createdAt: DateTime
   updatedAt: DateTime
   team: Team
+  subscribers(first: Int = 50): UserConnection
+  "Whether the signed-in user follows this cycle."
+  viewerSubscribed: Boolean!
 }
 
 type Project {
@@ -354,6 +391,9 @@ type Project {
   health: String
   createdAt: DateTime
   updatedAt: DateTime
+  subscribers(first: Int = 50): UserConnection
+  "Whether the signed-in user follows this project."
+  viewerSubscribed: Boolean!
 }
 
 input ProjectUpdateFilter { project: ProjectFilter }
@@ -455,7 +495,7 @@ type IssueConnection { nodes: [Issue!]! pageInfo: PageInfo! }
 type IssueLabelConnection { nodes: [IssueLabel!]! pageInfo: PageInfo! }
 type ProjectConnection { nodes: [Project!]! pageInfo: PageInfo! }
 type InitiativeConnection { nodes: [Initiative!]! pageInfo: PageInfo! }
-type Initiative { id: ID! name: String! summary: String status: String! priority: Int! owner: User creator: User targetDate: TimelessDate createdAt: DateTime! updatedAt: DateTime! projects: ProjectConnection! }
+type Initiative { id: ID! name: String! summary: String status: String! priority: Int! owner: User creator: User targetDate: TimelessDate createdAt: DateTime! updatedAt: DateTime! projects: ProjectConnection! subscribers(first: Int = 50): UserConnection "Whether the signed-in user follows this initiative." viewerSubscribed: Boolean! }
 type InitiativePayload { success: Boolean! initiative: Initiative }
 type ProjectUpdateConnection { nodes: [ProjectUpdate!]! pageInfo: PageInfo! }
 type CycleConnection { nodes: [Cycle!]! pageInfo: PageInfo! }

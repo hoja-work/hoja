@@ -37,7 +37,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 77
+CURRENT_SCHEMA_REVISION = 78
 
 log = logging.getLogger(__name__)
 
@@ -1521,7 +1521,9 @@ inbox_notification = Table(
     Column("id", String, primary_key=True),
     Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
     Column("recipient_id", String, ForeignKey("user.id"), nullable=False, index=True),
-    Column("issue_id", String, ForeignKey("issue.id"), nullable=False, index=True),
+    # Exactly one subject column is set (revision 78): the task, project, initiative
+    # or cycle the row is about. issue_id stayed NOT NULL until then.
+    Column("issue_id", String, ForeignKey("issue.id"), index=True),
     Column("actor_id", String, ForeignKey("user.id")),
     Column("kind", String, nullable=False),
     Column("created_at", String, nullable=False, index=True),
@@ -1533,6 +1535,37 @@ inbox_notification = Table(
     Column("comment_id", String),
     # Hidden from the inbox (and its unread count) until this instant passes.
     Column("snoozed_until", String),
+    # Non-task subjects and the post a row points at (revision 78). Plain columns,
+    # not foreign keys: a deleted update or cycle takes its rows with it in the
+    # writer, and an FK here would make that order matter on PostgreSQL.
+    Column("project_id", String, index=True),
+    Column("initiative_id", String, index=True),
+    Column("cycle_id", String, index=True),
+    Column("project_update_id", String, index=True),
+    Column("initiative_update_id", String, index=True),
+)
+
+# Following a project, an initiative or a cycle (revision 78). Same shape as
+# issue_subscriber; row-level security derives each one from its parent's FK.
+project_subscriber = Table(
+    "project_subscriber",
+    metadata,
+    Column("project_id", String, ForeignKey("project.id"), primary_key=True),
+    Column("user_id", String, ForeignKey("user.id"), primary_key=True),
+)
+
+initiative_subscriber = Table(
+    "initiative_subscriber",
+    metadata,
+    Column("initiative_id", String, ForeignKey("initiative.id"), primary_key=True),
+    Column("user_id", String, ForeignKey("user.id"), primary_key=True),
+)
+
+cycle_subscriber = Table(
+    "cycle_subscriber",
+    metadata,
+    Column("cycle_id", String, ForeignKey("cycle.id"), primary_key=True),
+    Column("user_id", String, ForeignKey("user.id"), primary_key=True),
 )
 
 attachment = Table(
@@ -2280,6 +2313,21 @@ _PG_SKIP = {"team": "  IF TG_OP = 'UPDATE' AND OLD.issue_counter IS DISTINCT FRO
 _RECIPIENT_CAPTURE = {"inbox_notification": "{row}.recipient_id"}
 
 
+def _install_sqlite_inbox_triggers(conn) -> None:
+    """SQLite's recipient-scoped notification triggers. Rebuilding the table drops
+    them, so revision 78 reinstalls them through this same definition."""
+    for op, label in (("insert", "create"), ("update", "update"), ("delete", "delete")):
+        row = "OLD" if op == "delete" else "NEW"
+        conn.exec_driver_sql(f"DROP TRIGGER IF EXISTS trg_chg_inbox_notification_{label}")
+        conn.exec_driver_sql(
+            f"CREATE TRIGGER trg_chg_inbox_notification_{label} AFTER {op.upper()} ON inbox_notification "
+            "FOR EACH ROW BEGIN INSERT INTO change_event "
+            "(organization_id, entity, entity_id, action, team_id, created_at, recipient_id, "
+            "actor_kind, actor_id, on_behalf_of) "
+            f"VALUES ({row}.organization_id, 'notification', CAST({row}.id AS TEXT), '{label}', NULL, "
+            f"strftime('%Y-%m-%dT%H:%M:%fZ','now'), {row}.recipient_id, {_ACTOR_SQLITE}); END;")
+
+
 def _apply_realtime_v2_capture(conn):
     """Recipient-scoped notification events; on PostgreSQL also deferred,
     commit-ordered capture with LISTEN/NOTIFY wakeups."""
@@ -2288,16 +2336,7 @@ def _apply_realtime_v2_capture(conn):
     if conn.dialect.name == "sqlite":
         # SQLite serializes writers, so its seqs are already commit-ordered; only
         # notification events change, to carry their recipient.
-        for op, label in (("insert", "create"), ("update", "update"), ("delete", "delete")):
-            row = "OLD" if op == "delete" else "NEW"
-            conn.exec_driver_sql(f"DROP TRIGGER IF EXISTS trg_chg_inbox_notification_{label}")
-            conn.exec_driver_sql(
-                f"CREATE TRIGGER trg_chg_inbox_notification_{label} AFTER {op.upper()} ON inbox_notification "
-                "FOR EACH ROW BEGIN INSERT INTO change_event "
-                "(organization_id, entity, entity_id, action, team_id, created_at, recipient_id, "
-                "actor_kind, actor_id, on_behalf_of) "
-                f"VALUES ({row}.organization_id, 'notification', CAST({row}.id AS TEXT), '{label}', NULL, "
-                f"strftime('%Y-%m-%dT%H:%M:%fZ','now'), {row}.recipient_id, {_ACTOR_SQLITE}); END;")
+        _install_sqlite_inbox_triggers(conn)
         # Allocating an issue number bumps team.issue_counter; that is not a team
         # change, and publishing it made every client re-bootstrap on issue create.
         conn.exec_driver_sql("DROP TRIGGER IF EXISTS trg_chg_team_update")
@@ -3400,6 +3439,64 @@ def _apply_inbox_notification_detail(conn):
             conn.exec_driver_sql(f"ALTER TABLE inbox_notification ADD COLUMN {name} {sql_type}")
 
 
+_INBOX_SUBJECT_COLUMNS = ("project_id", "initiative_id", "cycle_id",
+                          "project_update_id", "initiative_update_id")
+
+
+def _apply_follow_subjects(conn):
+    """Follow projects, initiatives and cycles; a notification can be about any of them.
+
+    Three subscriber tables, and ``inbox_notification`` gains one nullable column per
+    non-task subject while ``issue_id`` becomes nullable.
+
+    PostgreSQL alters in place, which keeps its triggers. SQLite has no ALTER COLUMN,
+    so the table is rebuilt from its declared definition (already nullable, already
+    carrying the new columns) with rows and indexes carried over; dropping the table
+    drops its triggers, so the recipient-scoped change triggers are reinstalled.
+    Both paths are no-ops on a fresh database, where create_all already built the
+    declared shape.
+    """
+    for table in (project_subscriber, initiative_subscriber, cycle_subscriber):
+        table.create(conn, checkfirst=True)
+    inspector = inspect(conn)
+    columns = {c["name"]: c for c in inspector.get_columns("inbox_notification")}
+    missing = [name for name in _INBOX_SUBJECT_COLUMNS if name not in columns]
+    issue_required = not columns["issue_id"].get("nullable", True)
+    if conn.dialect.name != "sqlite":
+        for name in missing:
+            conn.exec_driver_sql(f'ALTER TABLE inbox_notification ADD COLUMN "{name}" VARCHAR')
+        if issue_required:
+            conn.exec_driver_sql('ALTER TABLE inbox_notification ALTER COLUMN "issue_id" DROP NOT NULL')
+        for name in _INBOX_SUBJECT_COLUMNS:
+            conn.exec_driver_sql(
+                f'CREATE INDEX IF NOT EXISTS "ix_inbox_notification_{name}" ON inbox_notification ("{name}")')
+        return
+    if not missing and not issue_required:
+        return
+    table = inbox_notification
+    indexes = inspector.get_indexes(table.name)
+    scratch = MetaData()
+    for other in metadata.sorted_tables:
+        other.to_metadata(scratch)
+    staging = table.to_metadata(scratch, name=f"{table.name}__rebuild")
+    staging.indexes.clear()
+    staging.create(conn)
+    carried = ", ".join(f'"{name}"' for name in columns if name in table.c)
+    conn.exec_driver_sql(f'INSERT INTO "{staging.name}" ({carried}) SELECT {carried} FROM "{table.name}"')
+    conn.exec_driver_sql(f'DROP TABLE "{table.name}"')
+    conn.exec_driver_sql(f'ALTER TABLE "{staging.name}" RENAME TO "{table.name}"')
+    recreated = set()
+    for index in indexes:
+        cols = ", ".join(f'"{c}"' for c in index["column_names"] if c is not None)
+        unique = "UNIQUE " if index.get("unique") else ""
+        conn.exec_driver_sql(f'CREATE {unique}INDEX IF NOT EXISTS "{index["name"]}" ON "{table.name}" ({cols})')
+        recreated.add(index["name"])
+    for index in table.indexes:
+        if index.name not in recreated:
+            index.create(conn, checkfirst=True)
+    _install_sqlite_inbox_triggers(conn)
+
+
 _MIGRATIONS = {
     1: lambda _conn: None,
     2: _apply_token_hash_uniqueness,
@@ -3626,6 +3723,8 @@ _MIGRATIONS = {
     76: _apply_organization_agents_enabled,
     # 77: inbox notifications say what happened and can be snoozed.
     77: _apply_inbox_notification_detail,
+    # 78: follow projects, initiatives and cycles; notifications about any subject.
+    78: _apply_follow_subjects,
 }
 
 

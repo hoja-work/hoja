@@ -11,6 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Follow projects, initiatives and cycles. There is a Follow switch on the project page,
+  on each initiative and in the inbox panel, and the cycle menu's "Subscribe to cycle
+  notifications" now works. Creators, leads, owners, members, update authors and
+  repliers follow automatically.
+  - Followers get posted updates, replies, and status, target-date, lead or owner
+    changes. Cycle subscribers hear when a cycle starts and when it ends, with what got
+    done and what carried over.
+  - Being made a lead or owner, and @mentions in updates or replies, reach you directly.
+  - Inbox rows can be about any of these subjects: `InboxNotification.subjectType`,
+    `subjectId`, `project`, `initiative`, `cycle`, `projectUpdate` and
+    `initiativeUpdate`. Read, archive and snooze work per subject.
+  - The inbox shows a summary panel for these subjects, and notification settings are
+    grouped by subject.
 - Inbox: notifications now follow task subscriptions. Creators, assignees, commenters
   and @mentioned people are subscribed automatically. Subscribers hear about comments,
   status changes, and priority or due-date changes. Assignments, mentions and decision
