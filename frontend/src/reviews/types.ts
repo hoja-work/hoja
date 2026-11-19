@@ -1,0 +1,44 @@
+/** Shapes of a linked pull request as the Reviews page reads them from the GraphQL API. */
+export type ReviewReviewer = { login?: string; state?: string };
+export type ReviewDiffFile = {
+  path: string;
+  additions: number;
+  deletions: number;
+  status: string;
+  patch?: string | null;
+  previousPath?: string | null;
+};
+export type ReviewIssueRef = { identifier?: string };
+export type ReviewLink = {
+  id: string;
+  kind: string;
+  externalId: string;
+  url?: string;
+  title?: string;
+  state?: string;
+  author?: string;
+  sha?: string;
+  environment?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  issue?: ReviewIssueRef;
+  additions?: number | null;
+  deletions?: number | null;
+  baseRef?: string | null;
+  headRef?: string | null;
+  behind?: number | null;
+  ahead?: number | null;
+  mergeable?: boolean | null;
+  mergeState?: string | null;
+  reviewDecision?: string | null;
+  reviewers?: ReviewReviewer[] | null;
+  checksState?: string | null;
+  checksTotal?: number | null;
+  checksPassing?: number | null;
+  checksFailing?: number | null;
+  body?: string | null;
+  mergedAt?: string | null;
+  githubUpdatedAt?: string | null;
+  files?: ReviewDiffFile[] | null;
+  key: string;
+};
