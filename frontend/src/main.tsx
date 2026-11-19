@@ -140,7 +140,9 @@ import { SettingsSelect } from "./SettingsSelect";
 import { GraphIssueDetail } from "./graph/tasks";
 import { Avatar, AvatarFallback, AvatarGroup } from "./components/ui/avatar";
 import { ProjectActivity } from "./ProjectActivity";
-import { dueIsOverdue } from "./graph/shared";
+import { dueIsOverdue, SubIssuePill } from "./graph/shared";
+import { orderTree, railLeft, ROW_INSET, SIBLING_STEP } from "./graph/hierarchy";
+import { StateGlyph } from "./graph/stateGlyph";
 import { formatDuration, statusAgeLabel } from "./graph/statusAge";
 import { useScrollWindow, visibleRange } from "./graph/taskStore";
 import { useIssues as useSyncIssues, useSyncStatus } from "./sync";
@@ -523,6 +525,7 @@ function StatusPicker({
   compact,
   showLabel,
   iconClassName,
+  icon,
 }: {
   issue: Issue;
   teams: Team[];
@@ -531,6 +534,8 @@ function StatusPicker({
   compact?: boolean;
   showLabel?: boolean;
   iconClassName?: string;
+  /** Replaces the default status dot while keeping the picker and its menu. */
+  icon?: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -647,16 +652,20 @@ function StatusPicker({
                 disabled={disabled}
               >
                 {compact && !showLabel ? (
-                  <StatusIcon
-                    state={issue.state || {}}
-                    className={iconClassName}
-                  />
-                ) : (
-                  <>
+                  (icon ?? (
                     <StatusIcon
                       state={issue.state || {}}
                       className={iconClassName}
                     />
+                  ))
+                ) : (
+                  <>
+                    {icon ?? (
+                      <StatusIcon
+                        state={issue.state || {}}
+                        className={iconClassName}
+                      />
+                    )}
                     <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
                       {issue.state?.name || "No status"}
                     </span>
@@ -6352,44 +6361,6 @@ export function StatusIcon({
 }
 /* The one issue list + board surface: My issues, team issues and project issues all render this,
  * so rows, groups, toolbar, filters, display options and the Kanban stay identical everywhere. */
-/* Order a group's tasks so each parent is immediately followed by its own sub-tasks.
- * Only parents inside the same group nest; everything else stays a root and keeps its chip. */
-function treeOrder(items: Issue[], collapsed: Record<string, boolean>) {
-  const ids = new Set(items.map((i) => i.id));
-  const kids = new Map<string, Issue[]>();
-  const roots: Issue[] = [];
-  for (const i of items) {
-    const pid = i.parent?.id;
-    if (pid && ids.has(pid)) {
-      const l = kids.get(pid);
-      if (l) l.push(i);
-      else kids.set(pid, [i]);
-    } else roots.push(i);
-  }
-  const out: {
-    i: Issue;
-    depth: number;
-    kids: number;
-    open: boolean;
-    done: number;
-    parentInGroup: boolean;
-  }[] = [];
-  const walk = (i: Issue, depth: number) => {
-    const k = kids.get(i.id) || [];
-    const isOpen = !collapsed[i.id];
-    out.push({
-      i,
-      depth,
-      kids: k.length,
-      open: isOpen,
-      done: k.filter((x) => x.state?.type === "completed").length,
-      parentInGroup: Boolean(i.parent && ids.has(i.parent.id)),
-    });
-    if (isOpen) k.forEach((c) => walk(c, depth + 1));
-  };
-  roots.forEach((r) => walk(r, 0));
-  return out;
-}
 function MyIssuesContent({
   issues,
   onNew,
@@ -6458,6 +6429,9 @@ function MyIssuesContent({
     [grouping, setGrouping] = useState(
       () => localStorage.getItem("hoja_my_issues_grouping") || "Focus",
     ),
+    /* Collapsed parents, keyed by issue id. Per-surface and deliberately not persisted:
+       a collapsed epic in one view must not hide work in another. */
+    [treeCollapsed, setTreeCollapsed] = useState<Record<string, boolean>>({}),
     [showAssignee, setShowAssignee] = useState(
       () => localStorage.getItem("hoja_my_issues_assignee") !== "false",
     ),
@@ -7210,12 +7184,37 @@ function MyIssuesContent({
                 ? visibleRange(win, rowsTop, rowH, n)
                 : [0, n];
               y = rowsTop + n * rowH;
+              /* Parent then children, so a sub-task is never rendered above the task that
+                 created it. Activity rows are events, not a hierarchy, and stay flat. */
+              const treeRows =
+                tab === "Activity" || !open
+                  ? []
+                  : orderTree(g.items, treeCollapsed);
               const items =
-                start > 0 || end < n
-                  ? g.items.slice(start, end)
-                  : open
-                    ? g.items
-                    : [];
+                tab === "Activity"
+                  ? (start > 0 || end < n
+                      ? g.items.slice(start, end)
+                      : g.items
+                    ).map((issue, index) => ({
+                      issue,
+                      index,
+                      depth: 0,
+                      isLast: true,
+                      openRails: [] as number[],
+                      childCount: 0,
+                      doneCount: 0,
+                      parentOutside: false,
+                    }))
+                  : treeRows.slice(start, end).map((row, index) => ({
+                      issue: row.node,
+                      index,
+                      depth: row.depth,
+                      isLast: row.isLast,
+                      openRails: row.openRails,
+                      childCount: row.childCount,
+                      doneCount: row.doneCount,
+                      parentOutside: row.parentOutside,
+                    }));
               const dayEvents =
                 tab === "Activity"
                   ? (eventsByDate.get(g.name) || []).slice(start, end)
@@ -7264,10 +7263,22 @@ function MyIssuesContent({
                   {start > 0 && (
                     <div aria-hidden="true" style={{ height: start * rowH }} />
                   )}
-                  {items.map((i, index) => (
+                  {items.map(
+                    ({
+                      issue: i,
+                      index,
+                      depth,
+                      isLast,
+                      openRails,
+                      childCount,
+                      doneCount,
+                      parentOutside,
+                    }) => (
                     <div
-                      className="flex w-full min-w-0 min-h-9 items-center gap-2  bg-transparent py-0 pl-10.5 pr-6 text-left text-foreground hover:bg-subtle cursor-pointer max-md:gap-1 max-md:px-2.5 [@media_(max-width:650px)]:gap-1.25 shell-phone:px-2.5"
+                      className="relative flex w-full min-w-0 min-h-9 items-center gap-2 bg-transparent py-0 pr-6 text-left text-foreground hover:bg-subtle cursor-pointer max-md:gap-1 [@media_(max-width:650px)]:gap-1.25"
+                      style={{ paddingLeft: ROW_INSET + depth * SIBLING_STEP }}
                       data-my-issue-row=""
+                      data-depth={depth}
                       role="presentation"
                       key={
                         tab === "Activity"
@@ -7276,6 +7287,66 @@ function MyIssuesContent({
                       }
                       onClick={() => onOpenIssue(i)}
                     >
+                      {/* Ancestry rails: one 2px line per open ancestor, then this row's own
+                          connector — a T for a middle child, a rounded corner for the last. */}
+                      {openRails.map((column) => (
+                        <span
+                          key={`rail-${column}`}
+                          aria-hidden="true"
+                          className="absolute top-0 bottom-0 w-0.5 bg-line"
+                          style={{ left: railLeft(column) }}
+                          data-tree-rail=""
+                        />
+                      ))}
+                      {depth > 0 && isLast && (
+                        <span
+                          aria-hidden="true"
+                          className="absolute w-2.5 border-l-2 border-b-2 border-line rounded-bl-[6px]"
+                          style={{ left: railLeft(depth - 1), top: 0, height: 18 }}
+                          data-tree-rail="last"
+                        />
+                      )}
+                      {depth > 0 && !isLast && (
+                        <>
+                          <span
+                            aria-hidden="true"
+                            className="absolute top-0 bottom-0 w-0.5 bg-line"
+                            style={{ left: railLeft(depth - 1) }}
+                            data-tree-rail="through"
+                          />
+                          <span
+                            aria-hidden="true"
+                            className="absolute h-0.5 w-2.5 bg-line"
+                            style={{ left: railLeft(depth - 1), top: 18 }}
+                          />
+                        </>
+                      )}
+                      {/* Reserved 16px so every column lines up whether or not a row has children. */}
+                      <span className="relative grid place-items-center w-4 h-4 flex-none">
+                        {childCount > 0 && (
+                          <button
+                            type="button"
+                            aria-expanded={!treeCollapsed[i.id]}
+                            aria-label={`${treeCollapsed[i.id] ? "Expand" : "Collapse"} ${childCount} sub-tasks of ${i.identifier}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setTreeCollapsed((old) => ({
+                                ...old,
+                                [i.id]: !old[i.id],
+                              }));
+                            }}
+                            className="grid place-items-center w-4 h-4 rounded bg-transparent text-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent"
+                            data-tree-toggle=""
+                          >
+                            <ChevronDown
+                              size={12}
+                              className={
+                                treeCollapsed[i.id] ? "-rotate-90" : ""
+                              }
+                            />
+                          </button>
+                        )}
+                      </span>
                       {showPriority && (
                         <span
                           className="text-muted text-[13px] data-[p=1]:text-danger"
@@ -7309,6 +7380,7 @@ function MyIssuesContent({
                             compact
                             issue={i}
                             teams={teams}
+                            icon={<StateGlyph state={i.state} />}
                             onChange={(stateId) => {
                               const st = teamStates(i)?.find(
                                 (x) => x.id === stateId,
@@ -7319,6 +7391,18 @@ function MyIssuesContent({
                           />
                         </span>
                       )}
+                      {/* A sub-task whose parent sits in another status section cannot nest
+                          there, so it carries the parent identifier instead of reading as an
+                          orphan. The board does the same. */}
+                      {parentOutside && i.parent?.identifier ? (
+                        <span
+                          className="shrink-0 rounded border border-line py-0 px-1 text-[10px] text-muted"
+                          data-my-issue-parent=""
+                          title={i.parent.title}
+                        >
+                          ↳{i.parent.identifier}
+                        </span>
+                      ) : null}
                       <button
                         type="button"
                         className="overflow-hidden text-ellipsis whitespace-nowrap text-[12px] flex-1 min-w-0 [background:none] border-0 pt-0 pr-0 pb-0 pl-0 mt-0 mr-0 mb-0 ml-0 text-inherit text-left cursor-pointer block font-[inherit] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
@@ -7341,6 +7425,9 @@ function MyIssuesContent({
                           </small>
                         )}
                       </button>
+                      {childCount > 0 && (
+                        <SubIssuePill done={doneCount} total={childCount} />
+                      )}
                       {showLabels && i.labels?.nodes.length ? (
                         <span
                           className="max-w-25 overflow-hidden text-ellipsis whitespace-nowrap text-[#777] text-[11px] max-md:hidden"
@@ -8589,9 +8676,9 @@ function Kanban({
                     No tasks in {group.state.name}.
                   </p>
                 )}
-                {treeOrder(group.items, {})
+                {orderTree(group.items, {})
                   .filter(
-                    ({ i }) =>
+                    ({ node: i }) =>
                       !i.parent?.id ||
                       !grouped.some((g) =>
                         g.items.some(
@@ -8601,7 +8688,7 @@ function Kanban({
                       ),
                   )
                   .slice(0, limits[group.state.id] || KANBAN_PAGE)
-                  .map(({ i: issue, depth, parentInGroup }) => (
+                  .map(({ node: issue, depth, parentOutside }) => (
                     <KanbanCard
                       key={issue.id}
                       issue={issue}
@@ -8609,7 +8696,7 @@ function Kanban({
                       dragged={dragged === issue.id}
                       depth={depth}
                       parentIdent={
-                        parentInGroup ? undefined : issue.parent?.identifier
+                        parentOutside ? issue.parent?.identifier : undefined
                       }
                       rollup={rollups.get(issue.id)}
                       subtasks={subtasksByParent.get(issue.id)}

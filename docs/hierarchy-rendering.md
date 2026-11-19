@@ -1,6 +1,9 @@
 # Hierarchy rendering (parent tasks, sub-tasks, tree layout)
 
-Three surfaces render the `issue.parent` relation. They are deliberately different.
+One derivation feeds both issue surfaces: `orderTree` in
+`app/frontend/src/graph/hierarchy.ts`. The list and the board call the same function, so they
+cannot drift apart — an earlier revision had the board nesting while the list rendered flat,
+because each surface carried its own copy of the walk.
 
 ## Data
 
@@ -8,51 +11,62 @@ Three surfaces render the `issue.parent` relation. They are deliberately differe
   `Issue` type carries `parent?: {id, identifier, title} | null`.
 - The server owns validity: `hoja_server/writer.py` requires the parent to be in the same
   organisation and team, accepts an id or an identifier, and rejects self-parenting and
-  ancestor cycles. `Issue.children(first, after)` is a `(created_at, id)` cursor connection.
+  ancestor cycles.
+- Issues carry **no icon field**. `icon` exists only on `team`, `project`, `project_template`
+  and `saved_view` (`hoja_server/db.py`), and holds an emoji string.
+
+## Derivation
+
+`orderTree(items, collapsed)` returns, for every issue: `node`, `depth`, `isLast`,
+`openRails` (depths of ancestors whose rail continues past this row), `childCount`,
+`doneCount` and `parentOutside`.
+
+- Roots are issues whose parent is absent, filtered out, or outside the loaded set. A parent
+  that cannot be nested keeps the `↳IDENT` chip and is flagged `parentOutside` rather than
+  reading as an orphan.
+- Children are ordered **oldest first**, so a sub-task never renders above the task that
+  created it even though the list itself sorts newest first.
+- A collapsed parent drops its descendants from the output, so the rendered row count falls.
 
 ## List layout (the default)
 
-The grouped list is unchanged: the same `my-issue-group` sections, headers, counts and spacing,
-and each row keeps its full composition (status picker, priority, identifier, labels, assignee,
-due, project, date). `treeOrder` only re-orders and offsets those rows, so a task nests under its
-parent when both fall in the same group; a disclosure toggle sits in a 16px gutter that the row
-reserves, and a completed/total rollup is appended inside the title cell. A child whose parent sits in another group keeps its `↳IDENT` chip
-and does not drag the parent into that section (the parent backfill is gated behind
-`fetchMissing` and off for grouped lists). It groups the same `visible` issues the board receives.
-
-- Roots are issues whose parent is absent, filtered out, or outside the `issues(first:100)`
-  snapshot. Missing parents are fetched by id (bounded to 40 per pass) and folded in, so a
-  child nests under its parent even when the parent is not in the page. A parent that cannot
-  be read is shown as a `↳IDENT` chip instead.
-- Depth is communicated by a 22px indent step (10px at depth 0, 32px at depth 1, 54px at
-  depth 2) and the disclosure chevron. There are no guide rails: previous versions drew
-  `::before`/`::after` lines and they were removed on request.
-- Collapsing a parent removes its descendants from the DOM (row count drops); state is
-  per-surface and not persisted.
-- The row rollup is `completed children / children` computed from the loaded children.
+- Depth is communicated by a **24px step** (`SIBLING_STEP`) off a **42px** inset
+  (`ROW_INSET`), drawn as **2px `bg-line` rails**: one per open ancestor, then the row's own
+  connector — a T-junction (`through` rail plus a 10px arm) for a middle child, a
+  `rounded-bl-[6px]` corner for the last. The corner closes an only-child too.
+- The leftmost cell of a row is a **16px reserved disclosure gutter** so columns line up
+  whether or not a row has children; the chevron renders only when `childCount > 0`.
+- The status control renders `StateGlyph` (`app/frontend/src/graph/stateGlyph.tsx`): Phosphor
+  filled glyphs mapped from the workflow state type, imported per icon so the bundle carries
+  only the five that are used. Empty states stay outline; started/completed/canceled are
+  solid. The glyph sits inside the existing `StatusPicker`, so the status menu still works.
+- A parent appends a `SubIssuePill` (`done/total`) inside its title cell.
+- Collapse state is per-surface and deliberately not persisted: a collapsed epic in one view
+  must not hide work in another.
 
 ## Board (`Kanban`)
 
-The board groups by workflow state first, then nests inside each column with the same
-`treeOrder` the list uses: a sub-task whose parent is in the same column is indented under it
-(`data-depth`, 18px per level, with a 2px rail) and the parent card carries the same rollup.
-A sub-task whose parent lives in another column stays a root in its own column and keeps the
-`↳IDENT` parent chip, so it is never read as an orphan. The board rollup spans every column
-(a done sub-task sits under Done even when its parent is in Todo), which is why it is computed
-over the whole `grouped` set rather than per column; like the list it counts loaded children.
+Same `orderTree` call, then the board applies its own presentation: 18px per level with a 2px
+rail, and `parentIdent` when `parentOutside`. The board rollup spans every column (a done
+sub-task sits under Done even when its parent is in Todo), so it is computed over the whole
+grouped set rather than per column; like the list it counts loaded children.
 
 ## Task page (`/workspace/task/<IDENT>`)
 
-The breadcrumb carries the parent (`lin-crumb-parent[data-parent-path]`, clickable, so a child
-navigates up) and the Sub-tasks section lists each child with its server-issued identifier and
-a `completed/total` pill. Both identifiers and counts come from the server payload; nothing is
-synthesised in the client.
+The breadcrumb carries the parent (`lin-crumb-parent`, clickable, so a child navigates up).
+The Sub-tasks section renders each child with the same rail geometry — one branch closing on
+the last child — plus `StateGlyph` and the title stacked over the first line of the
+description. Identifiers and counts come from the server payload; nothing is synthesised in
+the client.
 
 ## What is not true
 
 - Rollups are not server aggregates: a parent whose children fall outside the loaded set shows
   the ratio for what is loaded.
+- **Grandchildren are not loaded on the task page.** `subs` is one query,
+  `issues(first:100, filter:{parent:{id:{eq:detail.id}}})`, so the tree there is depth 1 by
+  construction. Deeper nesting needs a second bounded fetch.
 - Identifiers are still flat and per-team (`ENG-42`), including for sub-tasks: the recursive
-  `TEAM-NUMBER-LETTER-NUMBER` scheme in HOJA-33 is an allocator change, not a rendering one,
-  and is not implemented here (see the verdict in the HOJA-33 report).
-- `a/b` rollups count loaded children only, not a server aggregate.
+  `TEAM-NUMBER-LETTER-NUMBER` scheme is an allocator change, not a rendering one.
+- Keeping a family together across *status* sections is a grouping change, not a rendering
+  one; today such a child stays a root in its own section with the `↳IDENT` chip.

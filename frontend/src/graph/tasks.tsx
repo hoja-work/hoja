@@ -4,6 +4,7 @@ import {
   AccordionContent,
 } from "../components/motion-primitives/accordion";
 import { styleClasses, styleHooks } from "./shared";
+import { StateGlyph } from "./stateGlyph";
 import React, {
   memo,
   useCallback,
@@ -5926,12 +5927,12 @@ export function GraphIssueDetail({
                       </button>
                     </div>
                   )}
-                  {subsView.map((s) => (
+                  {subsView.map((s, subIndex) => (
                     <div
                       key={s.id}
                       className={styleClasses(
                         cx(
-                          "flex items-center gap-2.5 py-1.75 px-2 rounded-[7px] font-[inherit] text-[13px] w-full [background:none] border-0 text-left text-foreground cursor-pointer [&:hover]:bg-subtle",
+                          "relative flex items-center gap-2.5 py-1.75 pr-2 pl-7 rounded-[7px] font-[inherit] text-[13px] w-full [background:none] border-0 text-left text-foreground cursor-pointer [&:hover]:bg-subtle",
                           s.state?.type === "completed" && "",
                           isLocalIssueId(s.id) &&
                             "data-[style-hooks~='lin-subrow']:opacity-62 data-[style-hooks~='lin-comment']:opacity-62 [[data-style-hooks~='lin-comment']&_>_header_time]:italic",
@@ -5948,7 +5949,28 @@ export function GraphIssueDetail({
                       aria-busy={isLocalIssueId(s.id) || undefined}
                       {...(isLocalIssueId(s.id) ? {} : issueIntentProps(s))}
                     >
-                      <GraphStatusIcon state={s.state} size={14} />
+                      {/* The rail runs the height of the list and closes on the last sub-task, so
+                          the set reads as one branch of the task rather than as loose rows. */}
+                      {subIndex === subsView.length - 1 ? (
+                        <span
+                          aria-hidden="true"
+                          className="absolute left-3 top-0 h-1/2 w-2.5 border-l-2 border-b-2 border-line rounded-bl-[6px]"
+                          data-tree-rail="last"
+                        />
+                      ) : (
+                        <>
+                          <span
+                            aria-hidden="true"
+                            className="absolute left-3 top-0 bottom-0 w-0.5 bg-line"
+                            data-tree-rail="through"
+                          />
+                          <span
+                            aria-hidden="true"
+                            className="absolute left-3 top-1/2 h-0.5 w-2.5 bg-line"
+                          />
+                        </>
+                      )}
+                      <StateGlyph state={s.state} size={15} />
                       <span
                         className={styleClasses(
                           "in-data-[style-hooks~='lin-row']:font-semibold in-data-[style-hooks~='lin-row']:whitespace-nowrap in-data-[style-hooks~='lin-row']:text-foreground [[data-style-hooks~='lin-bcard']_[data-style-hooks~='top']_&]:font-[450] [[data-style-hooks~='lin-bcard']_[data-style-hooks~='top']_&]:text-muted",
@@ -5971,7 +5993,14 @@ export function GraphIssueDetail({
                         onClick={() => onOpenIssue(s)}
                         title={s.title}
                       >
-                        {s.title}
+                        <span className="flex min-w-0 flex-col">
+                          <span className="truncate">{s.title}</span>
+                          {s.description ? (
+                            <span className="truncate text-[11px] font-normal text-muted">
+                              {s.description.split("\n")[0].slice(0, 96)}
+                            </span>
+                          ) : null}
+                        </span>
                       </button>
                       {s.labels?.nodes.map((l) => (
                         <LabelChip key={l.id} label={l} />
