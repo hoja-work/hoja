@@ -101,7 +101,8 @@ export type AgentsAdapter = {
   getRunAccess(agentId: string): Promise<RunAccess>;
   /** Turn the workspace's Agents switch on (admin only; the same mutation as Settings). */
   enableAgents(): Promise<void>;
-  updateRunAccess(agentId: string, patch: {teams?: string[]; secrets?: string[]}): Promise<void>;
+  updateRunAccess(agentId: string, patch: {teams?: string[]; secrets?: string[];
+    repos?: {repo: string; branches: string[]}[]}): Promise<void>;
   /** Store a named workspace secret. The value is sealed server-side and never read back. */
   setSecret(name: string, value: string): Promise<void>;
   /** Create a small task delegated to the agent, to prove the whole chain works. */
@@ -134,7 +135,7 @@ export type AgentsAdapter = {
   listRunnerEnrollments(): Promise<RunnerEnrollment[]>;
   /** Mint a single-use token. This response is the only place the plaintext exists, so the caller
    *  must hold it in component state and drop it when the panel closes. */
-  createRunnerEnrollment(name: string, ttlMinutes?: number): Promise<RunnerEnrollmentGrant>;
+  createRunnerEnrollment(name: string, ttlMinutes?: number, workRoot?: string | null): Promise<RunnerEnrollmentGrant>;
   /** Withdraw an unspent token. `false` means it was already spent or already withdrawn —
    *  `/runner/enroll` refuses it either way. */
   revokeRunnerEnrollment(id: string): Promise<boolean>;
@@ -467,7 +468,7 @@ function eventsOf(sessions: ServerSession[]): AgentEvent[] {
 /* `Runner` and `AgentLease` in agent_runners.py. The selection is the whole of what a screen may
  * show: the credential columns (`lease_token_hash`, `token_hint`) are not in the SDL, so they
  * cannot be asked for by accident. */
-const RUNNER_FIELDS = `id name organizationId status enabled revokedAt labels harnesses
+const RUNNER_FIELDS = `id name organizationId status enabled revokedAt labels harnesses workRoot os runnerVersion
   lastHeartbeatAt createdAt
   currentLease { id taskId state harness fence leaseUntil grantedAt finishState finishedAt
                  issue { identifier } }`;
@@ -504,6 +505,7 @@ type ServerLease = {
 type ServerRunner = {
   id: string; name: string; organizationId: string; status: string; enabled: boolean;
   revokedAt: string | null; labels: string[]; harnesses: string[];
+  workRoot?: string | null; os?: string | null; runnerVersion?: string | null;
   lastHeartbeatAt: string | null; createdAt: string; currentLease: ServerLease | null;
 };
 
@@ -579,6 +581,9 @@ function fromRunner(row: ServerRunner): Runner {
     revokedAt: row.revokedAt ?? null,
     labels: row.labels || [],
     harnesses: row.harnesses || [],
+    workRoot: row.workRoot ?? null,
+    os: row.os ?? null,
+    runnerVersion: row.runnerVersion ?? null,
     lastSeenAt: row.lastHeartbeatAt ?? null,
     lease: row.currentLease ? fromLease(row.currentLease) : null,
   };
@@ -878,12 +883,13 @@ function createGraphqlAdapter(fallback: AgentsAdapter): AgentsAdapter {
 
     async getRunAccess(agentId: string) {
       const data = await request<{
-        agentPolicy: {teams: string[]; projects: string[]; secrets: string[]} | null;
+        agentPolicy: {teams: string[]; projects: string[]; secrets: string[];
+          repos: {repo: string; branches: string[]}[] | null} | null;
         agentSecretNames: string[];
         teams: {nodes: {id: string; key: string; name: string}[]};
       }>(
         `query RunAccess($id: String!) {
-           agentPolicy(agentMemberId: $id) { teams projects secrets }
+           agentPolicy(agentMemberId: $id) { teams projects secrets repos }
            agentSecretNames
            teams { nodes { id key name } } }`,
         {id: agentId});
@@ -891,13 +897,16 @@ function createGraphqlAdapter(fallback: AgentsAdapter): AgentsAdapter {
         teams: data.agentPolicy?.teams ?? [],
         projects: data.agentPolicy?.projects ?? [],
         secrets: data.agentPolicy?.secrets ?? [],
+        repos: Array.isArray(data.agentPolicy?.repos) ? data.agentPolicy!.repos! : [],
         workspaceSecrets: data.agentSecretNames ?? [],
         allTeams: data.teams?.nodes ?? [],
       };
     },
 
-    async updateRunAccess(agentId: string, patch: {teams?: string[]; secrets?: string[]}) {
+    async updateRunAccess(agentId: string, patch: {teams?: string[]; secrets?: string[];
+      repos?: {repo: string; branches: string[]}[]}) {
       const input: Record<string, unknown> = {};
+      if (patch.repos) input.repos = patch.repos;
       if (patch.teams) input.teams = patch.teams;
       if (patch.secrets) input.secrets = patch.secrets;
       const data = await request<{agentPolicyUpdate: {success: boolean}}>(
@@ -1035,7 +1044,7 @@ function createGraphqlAdapter(fallback: AgentsAdapter): AgentsAdapter {
       return (data.runnerEnrollments || []).map(fromEnrollment);
     },
 
-    async createRunnerEnrollment(name: string, ttlMinutes?: number) {
+    async createRunnerEnrollment(name: string, ttlMinutes?: number, workRoot?: string | null) {
       /* The plaintext arrives here and nowhere else. It is returned to the caller, which keeps it
        * in state until the panel closes; nothing in this module stores, logs or caches it. */
       const data = await request<{
@@ -1043,11 +1052,11 @@ function createGraphqlAdapter(fallback: AgentsAdapter): AgentsAdapter {
           enrollment: ServerEnrollment; token: string; command: string; heartbeatIntervalS: number;
           installCommand: string | null; connectCommand: string | null; startCommand: string; downloadUrl: string | null;
         };
-      }>(`mutation Enroll($name: String!, $ttlMinutes: Int) {
-            runnerEnrollmentCreate(name: $name, ttlMinutes: $ttlMinutes) {
+      }>(`mutation Enroll($name: String!, $ttlMinutes: Int, $workRoot: String) {
+            runnerEnrollmentCreate(name: $name, ttlMinutes: $ttlMinutes, workRoot: $workRoot) {
               enrollment { ${ENROLLMENT_FIELDS} }
               token command installCommand connectCommand startCommand downloadUrl heartbeatIntervalS } }`,
-         {name, ttlMinutes: ttlMinutes ?? null});
+         {name, ttlMinutes: ttlMinutes ?? null, workRoot: workRoot || null});
       const created = data.runnerEnrollmentCreate;
       return {
         enrollment: fromEnrollment(created.enrollment),

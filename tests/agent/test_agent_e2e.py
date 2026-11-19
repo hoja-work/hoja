@@ -208,7 +208,7 @@ def test_a_delegated_task_reaches_in_review_through_a_real_runner_and_harness(li
         assert bodies_.count("Started.") == 1, "an answer is not a second start"
 
         # The agent wrote the file in its own workspace, with the answer it was given.
-        written = list((state_dir / "work").glob("*/choice.txt"))
+        written = list((state_dir / "work" / "scratch").glob("*/choice.txt"))
         assert written and written[0].read_text().strip() == "Postgres"
 
         # Its reply is on the task, and the run was metered from the harness's own usage.

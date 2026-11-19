@@ -155,3 +155,52 @@ def test_revision_82_adds_the_run_log_and_replays(tmp_path):
         db_module.migrate(engine)
         assert db_module.applied_schema_revision(engine) == db_module.CURRENT_SCHEMA_REVISION
     assert "agent_run_log" in inspect(engine).get_table_names()
+
+
+# ------------------------------------------------------------------- machine workspace
+def test_the_connect_command_carries_the_work_folder_and_refuses_unsafe_ones(world, monkeypatch, tmp_path):
+    (tmp_path / "hoja_runnerd-0.1.2-py3-none-any.whl").write_bytes(b"w")
+    monkeypatch.setenv("HOJA_DOWNLOAD_ROOT", str(tmp_path))
+    ok = _gql(world, world["alpha"]["token"], '''mutation { runnerEnrollmentCreate(
+        name: "ci", workRoot: "~/code") { connectCommand } }''')
+    assert "errors" not in ok, ok
+    assert ok["data"]["runnerEnrollmentCreate"]["connectCommand"].endswith(" HOJA_WORK_ROOT=~/code sh")
+    bad = _gql(world, world["alpha"]["token"], '''mutation { runnerEnrollmentCreate(
+        name: "ci2", workRoot: "~/x; rm -rf /") { connectCommand } }''')
+    assert bad["errors"][0]["extensions"]["code"] == "BAD_USER_INPUT"
+
+
+def test_a_machine_says_where_it_works_on_its_first_poll(world):
+    identity = _enroll(world)
+    response = world["client"].post("/runner/lease", headers=_auth(identity), json={
+        "runner_id": identity["runner_id"], "poll_timeout_ms": 0,
+        "labels": {"work_root": "/home/ada/code", "os": "linux", "runner_version": "0.1.2",
+                   "password": "not a machine label"}})
+    assert response.status_code == 200
+    body = _gql(world, world["alpha"]["token"], f'''query {{ runner(id: "{identity["runner_id"]}") {{
+        workRoot os runnerVersion labels }} }}''')
+    assert "errors" not in body, body
+    machine = body["data"]["runner"]
+    assert machine["workRoot"] == "/home/ada/code" and machine["os"] == "linux"
+    assert machine["runnerVersion"] == "0.1.2"
+    assert "work_root" not in machine["labels"] and "password" not in machine["labels"]
+
+
+def test_a_prefix_grant_gives_each_task_its_own_branch(world):
+    agent = _create_agent(world)
+    granted = _gql(world, world["alpha"]["token"], f'''mutation {{ agentPolicyUpdate(
+        agentMemberId: "{agent["id"]}", input: {{ repos: {json.dumps(json.dumps(
+            [{"repo": "acme/demo", "branches": ["agent/"]}]))} }}) {{ success }} }}''')
+    assert "errors" not in granted, granted
+    launched = _launch(world, agent, teamId=world["alpha"]["team_id"], title="Branch me")
+    lease, _ = _claim(world, _enroll(world))
+    assert lease["repo"]["branch"] == f"agent/{launched['issue']['identifier'].lower()}"
+
+
+def test_an_unchosen_harness_prefers_the_coder_harness_when_a_machine_offers_it(world):
+    agent = _create_agent(world)  # its policy names no harness
+    identity = _enroll(world, harnesses=("hoja-coder", "pi"))
+    launched = _launch(world, agent, teamId=world["alpha"]["team_id"], title="Which harness")
+    assert launched["lease"]["harness"] == "hoja-coder"
+    lease, _ = _claim(world, identity)
+    assert lease is not None and lease["harness"] == "hoja-coder"

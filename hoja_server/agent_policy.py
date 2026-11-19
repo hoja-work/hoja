@@ -285,6 +285,12 @@ def resolve_harness(view: PolicyView | None, *,
     return HarnessChoice(FALLBACK_HARNESS, "default")
 
 
+def permitted_harness(view: "PolicyView | None", name: str) -> bool:
+    """Does this agent's harness allowlist (empty: no allowlist) allow ``name``?"""
+    allowlist = view.harness_allowlist if view is not None else frozenset()
+    return bool(name) and (not allowlist or name in allowlist)
+
+
 # ---------------------------------------------------------------------------
 # The policy, as a value
 # ---------------------------------------------------------------------------
@@ -438,7 +444,11 @@ def _bags(view: PolicyView, **resource: Any) -> tuple[dict, dict, dict]:
 
 
 def _branch_granted(view: PolicyView, repo: str, branch: str) -> bool:
-    return any(grant.repo == repo and branch in grant.branches for grant in view.repos)
+    """An exact branch, or one under a prefix grant (a granted name ending in ``/``)."""
+    return any(grant.repo == repo and any(
+        branch == granted or (granted.endswith("/") and branch.startswith(granted)
+                              and len(branch) > len(granted))
+        for granted in grant.branches) for grant in view.repos)
 
 
 def _connect_granted(view: PolicyView, host: str, port: int) -> bool:

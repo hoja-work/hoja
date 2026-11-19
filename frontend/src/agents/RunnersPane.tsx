@@ -1515,6 +1515,25 @@ export function RunnerDetailPage({
             </span>
           </div>
           <div className="mt-4.5 mr-0 mb-1 ml-0 text-[12px] font-semibold text-muted">
+            Works in
+          </div>
+          <div
+            className="mb-1.5 text-[12px]"
+            data-work-root={runner.workRoot || ""}
+          >
+            {runner.workRoot ? (
+              <code>{runner.workRoot}</code>
+            ) : (
+              <span className="text-muted">Not reported (an older runner)</span>
+            )}
+            {runner.runnerVersion ? (
+              <span className="text-muted">
+                {" "}
+                · runner {runner.runnerVersion}
+              </span>
+            ) : null}
+          </div>
+          <div className="mt-4.5 mr-0 mb-1 ml-0 text-[12px] font-semibold text-muted">
             Harnesses
           </div>
           <div className="flex flex-wrap gap-1.5 mb-1.5">

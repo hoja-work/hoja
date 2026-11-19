@@ -67,6 +67,12 @@ SDL = gql(
       revokedAt: DateTime
       "The operator's free-form labels (pool, host, region), as registered."
       labels: [String!]!
+      "Where agents work on this machine: repos under it, a worktree per run (reported by the runner)."
+      workRoot: String
+      "The machine's OS, as the runner reports it (linux, darwin)."
+      os: String
+      "The hoja-runnerd version the machine runs."
+      runnerVersion: String
       "The harnesses this runner declared at registration: the allowlist the lease route enforces."
       harnesses: [String!]!
       "The last heartbeat or long-poll Hoja recorded; null before the first one."
@@ -179,6 +185,15 @@ def runner_status(row: dict, *, lease: dict | None = None,
     return ONLINE if (now - seen).total_seconds() <= ONLINE_WINDOW_S else OFFLINE
 
 
+def _label(row: dict, key: str) -> str | None:
+    try:
+        parsed = json.loads(row.get("labels") or "{}")
+    except (TypeError, ValueError):
+        return None
+    value = parsed.get(key) if isinstance(parsed, dict) else None
+    return str(value) if value else None
+
+
 def _json_list(value) -> list[str]:
     """The ``labels``/``harnesses`` columns are JSON text; an unreadable value is empty.
 
@@ -230,11 +245,17 @@ def serialize_runner(row: dict, *, lease: dict | None = None,
         "status": runner_status(row, lease=lease, now=now),
         "enabled": bool(row.get("enabled")),
         "revokedAt": row.get("revoked_at"),
-        "labels": _json_list(row.get("labels")),
+        # The machine's self-description has its own fields (workRoot, os, runnerVersion).
+        "labels": [label for label in _json_list(row.get("labels"))
+                   if label.split("=", 1)[0] not in runner_api.MACHINE_LABELS],
         "harnesses": _json_list(row.get("harnesses")),
         "lastHeartbeatAt": row.get("last_seen"),
         "createdAt": row["created_at"],
         "currentLease": serialize_lease(lease, runner_name=row["name"]) if lease else None,
+        # What the daemon reports about its machine on its first poll (HOJA-602).
+        "workRoot": _label(row, "work_root"),
+        "os": _label(row, "os"),
+        "runnerVersion": _label(row, "runner_version"),
         "_row": row,
     }
 

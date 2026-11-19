@@ -331,6 +331,10 @@ export type Runner = {
   labels: string[];
   /** The harnesses this runner declared at registration: the lease route's allowlist. */
   harnesses: string[];
+  /** Where agents work on this machine (repos, a worktree per task), as the runner reports it. */
+  workRoot?: string | null;
+  os?: string | null;
+  runnerVersion?: string | null;
   /** The last heartbeat Hoja recorded; `null` before the first one. */
   lastSeenAt: string | null;
   /** The lease it holds right now, or `null`. */
@@ -506,6 +510,9 @@ export type RunAccess = {
   /** Team ids the agent may work in (`agentPolicy.teams`). Empty means it can take no task. */
   teams: string[];
   projects: string[];
+  /** Repositories its runs work in (`agentPolicy.repos`); a branch ending in "/" is a prefix:
+   * each task gets its own branch under it. */
+  repos: {repo: string; branches: string[]}[];
   /** Secret NAMES granted to the agent's runs (`agentPolicy.secrets`). */
   secrets: string[];
   /** Every secret name stored in the workspace (`agentSecretNames`). */

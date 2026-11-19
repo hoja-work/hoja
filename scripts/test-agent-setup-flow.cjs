@@ -82,7 +82,7 @@ let pidFile = null;
 
     // 0. Machine: the one command the page prints, run as printed; the step turns green by itself.
     await setup.locator('[data-setup-step="machine"]').getByRole('button', { name: 'Connect a machine' }).click();
-    const line = (await setup.locator('[data-connect-machine="waiting"] code').first().textContent()).trim();
+    const line = (await setup.locator('[data-connect-machine="waiting"] [data-connect-command]').first().textContent()).trim();
     ok(/install\.sh \| HOJA_ENROLLMENT_TOKEN=\S+ sh$/.test(line), 'the machine step prints one command');
     await page.screenshot({ path: path.join(shots, 'setup-2-commands.png'), fullPage: true });
     const machineHome = path.join(dir, 'machine'); fs.mkdirSync(machineHome);

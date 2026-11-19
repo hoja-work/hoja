@@ -140,14 +140,32 @@ def install_command(url: str) -> str:
 INSTALL_SCRIPT_PATH = "/install.sh"
 
 
-def connect_command(base_url: str, token: str) -> str:
+def clean_work_root(value: str | None) -> str | None:
+    """A work root a person typed, or None for the standard one. Refused when it could not be a
+    directory on the machine or could not be passed to a shell safely."""
+    text = (value or "").strip()
+    if not text:
+        return None
+    if len(text) > 300 or any(ch in text for ch in " \n\r\t\"'`$;|&<>\\"):
+        raise ValueError("A work folder is a plain path without spaces, like ~/code or /srv/hoja.")
+    if not (text.startswith("/") or text == "~" or text.startswith("~/")):
+        raise ValueError("Give an absolute path (/srv/hoja) or one under your home (~/code).")
+    return text.rstrip("/") or "/"
+
+
+def connect_command(base_url: str, token: str, *, work_root: str | None = None) -> str:
     """The single line that installs, enrolls and starts a runner on a machine.
 
     The token travels as an environment variable of the ``sh`` that runs the script, never as an
     argument, so ``ps`` on a shared host does not show it; it is single-use and short-lived either
     way. The machine names itself after its hostname, the way a device joins a tailnet.
     """
-    return f"curl -fsSL {base_url.rstrip('/')}{INSTALL_SCRIPT_PATH} | HOJA_ENROLLMENT_TOKEN={token} sh"
+    # ``~`` stays unquoted so the machine's shell expands it to that machine's home.
+    where = ""
+    if work_root:
+        where = f" HOJA_WORK_ROOT={work_root}"
+    return (f"curl -fsSL {base_url.rstrip('/')}{INSTALL_SCRIPT_PATH} | "
+            f"HOJA_ENROLLMENT_TOKEN={token}{where} sh")
 
 
 def install_script(base_url: str, wheel_url: str) -> str:
@@ -167,6 +185,9 @@ set -eu
 BASE="@BASE@"
 WHEEL="@WHEEL@"
 DIR="${HOJA_RUNNER_DIR:-$HOME/.hoja/runner}"
+# Where agents work: repos under it, one git worktree per task (worktrees/), scratch/ for the rest.
+WORK="${HOJA_WORK_ROOT:-$HOME/hoja}"
+case "$WORK" in "~"|"~/"*) WORK="$HOME${WORK#\~}" ;; esac
 NAME="${HOJA_RUNNER_NAME:-$(hostname -s 2>/dev/null || hostname)}"
 EXTRA="[coder]"
 [ "${HOJA_RUNNER_NO_CODER:-}" = "1" ] && EXTRA=""
@@ -202,7 +223,8 @@ if [ -n "${HOJA_ENROLLMENT_TOKEN:-}" ]; then
   HOJA_ENROLLMENT_TOKEN="$HOJA_ENROLLMENT_TOKEN" "$RUNNERD" --enroll --base-url "$BASE"     --name "$NAME" --state-dir "$DIR" >/dev/null || fail "Hoja refused the token (it works once, for an hour). Copy a fresh command and run it again."
 fi
 
-START="$RUNNERD --base-url $BASE --state-dir $DIR"
+mkdir -p "$WORK"
+START="$RUNNERD --base-url $BASE --state-dir $DIR --work-root $WORK"
 SERVICE="${HOJA_RUNNER_SERVICE:-auto}"   # auto | none (a container, a CI box, a test)
 if [ "$SERVICE" = "none" ]; then
   :
@@ -216,7 +238,8 @@ elif [ "$(uname -s)" = "Darwin" ]; then
   <key>Label</key><string>work.hoja.runnerd</string>
   <key>ProgramArguments</key><array>
     <string>$RUNNERD</string><string>--base-url</string><string>$BASE</string>
-    <string>--state-dir</string><string>$DIR</string></array>
+    <string>--state-dir</string><string>$DIR</string>
+    <string>--work-root</string><string>$WORK</string></array>
   <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
   <key>StandardOutPath</key><string>$DIR/runnerd.log</string>
   <key>StandardErrorPath</key><string>$DIR/runnerd.log</string>
@@ -256,6 +279,7 @@ fi
 
 say ""
 say "  Connected: $NAME is running $HOW."
+say "  Agents work in $WORK (your repos, a worktree per task under $WORK/worktrees)."
 say "  It shows up in Hoja under Agents -> Machines within a few seconds."
 """
 

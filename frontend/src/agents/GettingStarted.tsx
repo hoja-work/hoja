@@ -133,6 +133,7 @@ export function GettingStarted({
                     {r.name}
                     <span className="text-xs text-muted">
                       {r.status === "online" ? harnessNames(r) : "offline"}
+                      {r.workRoot ? ` · works in ${r.workRoot}` : ""}
                     </span>
                   </li>
                 ))}

@@ -222,6 +222,8 @@ export function AgentSetup({
   const [keyDraft, setKeyDraft] = useState("");
   const [baseDraft, setBaseDraft] = useState("");
   const [showBase, setShowBase] = useState(false);
+  const [repoDraft, setRepoDraft] = useState("");
+  const [prefixDraft, setPrefixDraft] = useState("agent/");
   const [probe, setProbe] = useState<SetupProbe | null>(null);
 
   const harness = harnesses.defaultHarness || "";
@@ -357,6 +359,26 @@ export function AgentSetup({
       await adapter.updateRunAccess(agent.id, { teams });
       await readAccess();
     });
+
+  const saveRepos = (repos: { repo: string; branches: string[] }[]) =>
+    run("teams", async () => {
+      if (!access) return;
+      setAccess({ ...access, repos });
+      await adapter.updateRunAccess(agent.id, { repos });
+      await readAccess();
+    });
+
+  const addRepo = () => {
+    if (!access) return;
+    const repo = repoDraft.trim();
+    const prefix = prefixDraft.trim() || "agent/";
+    if (!repo) return;
+    setRepoDraft("");
+    void saveRepos([
+      ...access.repos.filter((g) => g.repo !== repo),
+      { repo, branches: [prefix] },
+    ]);
+  };
 
   const saveKey = () =>
     run("key", async () => {
@@ -574,6 +596,67 @@ export function AgentSetup({
                 </button>
               );
             })}
+          </div>
+          <div className="flex flex-col gap-2" data-setup-repos>
+            <span className="text-sm">
+              Repositories <span className="text-muted">(optional)</span>
+            </span>
+            <span className="text-xs text-muted">
+              The machine clones each one into its work folder once; every task
+              gets its own worktree and its own branch under the prefix, e.g.
+              agent/hoja-12.
+            </span>
+            {access.repos.map((g) => (
+              <span
+                key={g.repo}
+                className="flex items-center gap-2 text-sm"
+                data-repo-grant={g.repo}
+              >
+                <code className="text-xs">{g.repo}</code>
+                <span className="text-xs text-muted">
+                  branches {g.branches.join(", ")}
+                </span>
+                <button
+                  type="button"
+                  className="ml-auto text-xs text-muted hover:text-foreground"
+                  onClick={() =>
+                    void saveRepos(
+                      access.repos.filter((x) => x.repo !== g.repo),
+                    )
+                  }
+                >
+                  Remove
+                </button>
+              </span>
+            ))}
+            <form
+              className="flex flex-wrap gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                addRepo();
+              }}
+            >
+              <input
+                className={FIELD}
+                aria-label="Repository"
+                placeholder="owner/name, a git URL, or a path on the machine"
+                value={repoDraft}
+                onChange={(e) => setRepoDraft(e.target.value)}
+              />
+              <input
+                className="w-28 flex-none rounded-md border border-line bg-panel px-2 py-1.5 text-sm text-foreground"
+                aria-label="Branch prefix"
+                value={prefixDraft}
+                onChange={(e) => setPrefixDraft(e.target.value)}
+              />
+              <button
+                type="submit"
+                className={BUTTON}
+                disabled={!repoDraft.trim()}
+              >
+                Add
+              </button>
+            </form>
           </div>
         </Step>
 

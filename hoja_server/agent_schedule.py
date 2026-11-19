@@ -377,7 +377,36 @@ def _harness_for(engine, session_row: dict, *, requested: str | None = None):
         view = agent_policy.view_for_member
         row = agent_policy.member_row_for_user(conn, org_id, session_row["agent_user_id"])
         policy_view = view(conn, org_id, row["id"]) if row else None
-    return agent_policy.resolve_harness(policy_view, requested=requested)
+    choice = agent_policy.resolve_harness(policy_view, requested=requested)
+    if choice.source == "default" and agent_policy.permitted_harness(policy_view, PREFERRED_HARNESS) \
+            and _workspace_offers(engine, org_id, PREFERRED_HARNESS):
+        # Nobody chose: prefer the harness every installed runner ships with (and the one that
+        # can ask a person and report a typed result) over pi, which a machine has to be set up
+        # for separately. A workspace whose machines do not offer it keeps the old default.
+        return agent_policy.HarnessChoice(PREFERRED_HARNESS, "default")
+    return choice
+
+
+#: The harness an unchosen delegation prefers when a machine in the workspace offers it.
+PREFERRED_HARNESS = "hoja-coder"
+
+
+def _workspace_offers(engine, org_id: str, harness: str) -> bool:
+    from hoja_server.db import runner
+
+    with engine.connect() as conn:
+        rows = conn.execute(select(runner.c.harnesses).where(and_(
+            runner.c.organization_id == org_id,
+            runner.c.enabled.is_(True),
+            runner.c.revoked_at.is_(None),
+        ))).scalars().all()
+    for raw in rows:
+        try:
+            if harness in json.loads(raw or "[]"):
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
 
 
 # ---------------------------------------------------------------------------

@@ -930,8 +930,12 @@ def _run_spec(conn, org_id: str, lease: Mapping[str, Any], agent_member_id: str 
         grant = grants[0]
         # The first branch the grant names is the one the run pushes to: a grant is an
         # explicit list (no wildcard, never a default branch), so any entry is allowed.
-        repo = {"repo": grant.repo, "url": _clone_url(grant.repo),
-                "branch": grant.branches[0] if grant.branches else None}
+        branch = grant.branches[0] if grant.branches else None
+        if branch and branch.endswith("/") and task:
+            # A prefix grant (``agent/``): each task works on its own branch under it, so two
+            # tasks on the same repo never share (or fight over) one branch.
+            branch = f"{branch}{str(task['identifier']).lower()}"
+        repo = {"repo": grant.repo, "url": _clone_url(grant.repo), "branch": branch}
     return {"model": model, "task": task, "repo": repo}
 
 
@@ -1358,6 +1362,8 @@ def _log_event(conn, org_id: str, lease: Mapping[str, Any], kind: str, encoded: 
         with conn.begin_nested():
             payload = json.loads(encoded) if encoded else {}
             summary = str(payload.get("body") or payload.get("reason") or "")[:300]
+            if payload.get("tool"):
+                summary = f"{payload['tool']} {summary}".strip()
             agent_run_logs.record(conn, org_id, message=f"{kind}{': ' + summary if summary else ''}",
                                   level="event", source="runner", kind=kind,
                                   runner_id=lease.get("runner_id"), lease_id=lease.get("id"),
@@ -2220,6 +2226,11 @@ def runner_routes(engine) -> list[Route]:
         except LeaseRequestError as rejected:
             return rejected.response()
         body = await _json_body(request)
+        if isinstance(body.get("labels"), Mapping):
+            try:
+                await run_in_threadpool(_update_machine_labels, engine, runner_row, body["labels"])
+            except Exception:  # labels are a description; they never cost the poll
+                LOG.debug("could not record runner labels", exc_info=True)
         try:
             poll_ms = int(body.get("poll_timeout_ms") or 0)
         except (TypeError, ValueError):
@@ -2376,6 +2387,28 @@ def runner_routes(engine) -> list[Route]:
         Route(ROUTE_RELEASE, release, methods=["POST"]),
         Route(ROUTE_LOGS, logs, methods=["POST"]),
     ]
+
+
+#: What a daemon may say about its machine on its first poll (HOJA-602 machine workspace).
+MACHINE_LABELS = ("work_root", "os", "hostname", "runner_version")
+
+
+def _update_machine_labels(engine, runner_row: Mapping[str, Any], labels: Mapping[str, Any]) -> None:
+    """Merge the machine's self-description into ``runner.labels`` when it changed.
+
+    Registration labels (an operator's pool) are kept; only the known machine keys are taken
+    from the daemon, so the Machines list stays true after an upgrade or a moved work root.
+    """
+    org_id = runner_row["organization_id"]
+    with tenant_context.scoped(org_id), engine.begin() as conn:
+        current = _json_dict(conn.execute(select(runner.c.labels).where(and_(
+            runner.c.organization_id == org_id, runner.c.id == runner_row["id"]))).scalar())
+        merged = {**current, **{k: str(v)[:300] for k, v in labels.items()
+                                if k in MACHINE_LABELS and v is not None}}
+        if merged != current:
+            conn.execute(runner.update().where(and_(
+                runner.c.organization_id == org_id, runner.c.id == runner_row["id"],
+            )).values(labels=json.dumps(merged, sort_keys=True)))
 
 
 def _has_queued(engine, runner_row: Mapping[str, Any]) -> bool:

@@ -116,7 +116,9 @@ SDL = gql(
 
     extend type Mutation {
       "Mint a single-use enrollment token. The plaintext is returned by this call only."
-      runnerEnrollmentCreate(name: String!, ttlMinutes: Int): RunnerEnrollmentCreated!
+      runnerEnrollmentCreate(name: String!, ttlMinutes: Int,
+        "Where agents should work on the machine; baked into connectCommand. Default ~/hoja."
+        workRoot: String): RunnerEnrollmentCreated!
       "Withdraw an unspent enrollment token. False when this workspace has no such row."
       runnerEnrollmentRevoke(id: String!): Boolean!
       "Disable an enrolled runner and every token it holds. False when it was already revoked."
@@ -276,9 +278,14 @@ def r_runner_enrollments(_obj, info, first=None):
 
 
 @mutation.field("runnerEnrollmentCreate")
-def m_runner_enrollment_create(_obj, info, name, ttlMinutes=None):  # noqa: N803 - GraphQL name
+def m_runner_enrollment_create(_obj, info, name, ttlMinutes=None,  # noqa: N803 - GraphQL names
+                               workRoot=None):
     store, org, uid = _ctx(info)
     _require_admin(store, org, uid)
+    try:
+        work_root = runner_release.clean_work_root(workRoot)
+    except ValueError as exc:
+        raise GraphQLError(str(exc), extensions={"code": "BAD_USER_INPUT", "field": "workRoot"}) from exc
     label = (name or "").strip()
     if not label:
         _bad("name", "name must not be empty")
@@ -321,7 +328,8 @@ def m_runner_enrollment_create(_obj, info, name, ttlMinutes=None):  # noqa: N803
         # Kept for compatibility: the enroll half of the same response, unchanged.
         "command": enroll_command(base_url, name=label, token=token),
         "installCommand": runner_release.install_command(download) if download else None,
-        "connectCommand": runner_release.connect_command(base_url, token) if download else None,
+        "connectCommand": (runner_release.connect_command(base_url, token, work_root=work_root)
+                           if download else None),
         "startCommand": start_command(base_url),
         "downloadUrl": download,
         "heartbeatIntervalS": runner_api.HEARTBEAT_INTERVAL_S,

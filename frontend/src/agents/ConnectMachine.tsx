@@ -38,6 +38,7 @@ function CommandBox({ text, big = false }: { text: string; big?: boolean }) {
     <div className="flex items-start gap-2 rounded-lg border border-line bg-subtle p-3">
       <code
         className={`min-w-0 flex-1 break-all ${big ? "text-sm" : "text-xs"}`}
+        data-connect-command={big ? "" : undefined}
       >
         {text}
       </code>
@@ -78,6 +79,10 @@ export function ConnectMachine({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [connected, setConnected] = useState<Runner | null>(null);
+  /* Where agents work on the machine: the standard layout, or a folder already in use. */
+  const [where, setWhere] = useState<"standard" | "custom">("standard");
+  const [folder, setFolder] = useState("");
+  const workRoot = where === "custom" ? folder.trim() : "";
   const known = useRef<Set<string> | null>(null);
   const reported = useRef(false);
 
@@ -89,13 +94,19 @@ export function ConnectMachine({
     try {
       const page = await adapter.listRunners();
       known.current = new Set(page.runners.map((r) => r.id));
-      setGrant(await adapter.createRunnerEnrollment("Connect a machine", 60));
+      setGrant(
+        await adapter.createRunnerEnrollment(
+          "Connect a machine",
+          60,
+          workRoot || null,
+        ),
+      );
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
     }
-  }, [adapter]);
+  }, [adapter, workRoot]);
 
   useEffect(() => {
     if (autoStart && !grant && !busy && !error) void mint();
@@ -145,6 +156,7 @@ export function ConnectMachine({
             {ready
               ? `Ready to run ${harnessNames(connected)}`
               : `Online, but it cannot run ${CLI_NAMES[harness ?? ""] ?? harness} yet`}
+            {connected.workRoot ? ` · works in ${connected.workRoot}` : ""}
           </span>
         </span>
         <button
@@ -159,24 +171,84 @@ export function ConnectMachine({
   }
 
   if (!grant) {
+    const shown = workRoot || "~/hoja";
     return (
-      <div
-        className="flex flex-col items-start gap-2"
-        data-connect-machine="start"
-      >
-        <button
-          type="button"
-          className="inline-flex items-center gap-2 rounded-md bg-foreground px-4 py-2 text-sm font-medium text-panel disabled:opacity-50 shell-phone:min-h-11 pointer-coarse:min-h-11"
-          disabled={busy}
-          onClick={() => void mint()}
-        >
-          {busy ? (
-            <Loader2 size={16} className="animate-spin" aria-hidden="true" />
-          ) : (
-            <Monitor size={16} aria-hidden="true" />
-          )}
-          Connect a machine
-        </button>
+      <div className="flex flex-col gap-3" data-connect-machine="start">
+        <fieldset className="m-0 flex flex-col gap-2 border-0 p-0">
+          <legend className="mb-2 text-sm font-medium">
+            Where should agents work on this machine?
+          </legend>
+          <label
+            className={`flex cursor-pointer flex-col gap-2 rounded-lg border p-3 ${where === "standard" ? "border-foreground" : "border-line"}`}
+          >
+            <span className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name="work-root"
+                checked={where === "standard"}
+                onChange={() => setWhere("standard")}
+              />
+              Standard folder <code className="text-xs">~/hoja</code>
+              <span className="rounded-full bg-emerald-600 px-2 text-xs text-white">
+                Recommended
+              </span>
+            </span>
+            <span className="pl-6 text-xs text-muted">
+              A clean folder Hoja keeps tidy. Nothing else on the machine is
+              touched.
+            </span>
+          </label>
+          <label
+            className={`flex cursor-pointer flex-col gap-2 rounded-lg border p-3 ${where === "custom" ? "border-foreground" : "border-line"}`}
+          >
+            <span className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name="work-root"
+                checked={where === "custom"}
+                onChange={() => setWhere("custom")}
+              />
+              A folder I already use
+            </span>
+            <span className="pl-6 text-xs text-muted">
+              Repos already cloned there are reused; each task still gets its
+              own worktree, so your checkouts stay on their branch.
+            </span>
+            {where === "custom" && (
+              <input
+                className="ml-6 rounded-md border border-line bg-panel px-2 py-1.5 text-sm text-foreground"
+                aria-label="Work folder"
+                placeholder="~/code or /srv/repos"
+                value={folder}
+                onChange={(e) => setFolder(e.target.value)}
+                autoFocus
+              />
+            )}
+          </label>
+        </fieldset>
+        <pre
+          className="m-0 overflow-x-auto rounded-lg border border-line bg-subtle p-3 text-xs text-muted"
+          aria-label="How the folder is laid out"
+          data-work-layout
+        >{`${shown}/
+  <repo>/                    your repos, cloned once
+  worktrees/<repo>/<task>/   one per task, removed after
+  scratch/                   tasks with no repo`}</pre>
+        <div>
+          <button
+            type="button"
+            className="inline-flex items-center gap-2 rounded-md bg-foreground px-4 py-2 text-sm font-medium text-panel disabled:opacity-50 shell-phone:min-h-11 pointer-coarse:min-h-11"
+            disabled={busy || (where === "custom" && !folder.trim())}
+            onClick={() => void mint()}
+          >
+            {busy ? (
+              <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+            ) : (
+              <Monitor size={16} aria-hidden="true" />
+            )}
+            Connect a machine
+          </button>
+        </div>
         {error && (
           <p className="m-0 text-sm text-danger" role="alert">
             {error}
@@ -191,7 +263,9 @@ export function ConnectMachine({
       {grant.connectCommand ? (
         <>
           <span className="text-sm">
-            Run this on the machine (macOS or Linux; on Windows, inside WSL):
+            Run this on the machine (macOS or Linux; on Windows, inside WSL).
+            Agents will work in{" "}
+            <code className="text-xs">{workRoot || "~/hoja"}</code>.
           </span>
           <CommandBox text={grant.connectCommand} big />
         </>
