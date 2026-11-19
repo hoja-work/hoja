@@ -248,7 +248,7 @@ def test_the_lease_names_the_model_task_and_repo(world):
         "only a met verdict reaches In Review"]
     assert lease["repo"] == {"repo": "hoja-work/demo",
                              "url": "https://github.com/hoja-work/demo.git",
-                             "branch": "agent/demo"}
+                             "branch": "agent/demo", "source": "agent"}
 
 
 # ---------------------------------------------------------------------- the migration

@@ -38,7 +38,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 82
+CURRENT_SCHEMA_REVISION = 83
 
 log = logging.getLogger(__name__)
 
@@ -1635,6 +1635,10 @@ project = Table(
     Column("created_at", String),
     Column("updated_at", String),
     Column("archived_at", String),
+    # Revision 83: the repository this project's tasks are worked on in (owner/name, a git URL
+    # or a path on the machine). An agent delegated a task in the project works in it, on the
+    # task's own branch; a project without one leaves the task in a scratch folder.
+    Column("repository", String),
 )
 
 project_status = Table(
@@ -3331,6 +3335,13 @@ def _apply_project_update_comments(conn):
         "CREATE INDEX IF NOT EXISTS ix_comment_project_update_id ON comment (project_update_id)")
 
 
+def _apply_project_repository(conn):
+    """``project.repository``: the repo a project's agent tasks are worked on in (HOJA-602)."""
+    existing = {column["name"] for column in inspect(conn).get_columns("project")}
+    if "repository" not in existing:
+        conn.exec_driver_sql("ALTER TABLE project ADD COLUMN repository VARCHAR")
+
+
 def _apply_agent_run_log(conn):
     """``agent_run_log``: the per-run timeline GraphQL serves (HOJA-602)."""
     agent_run_log.create(conn, checkfirst=True)
@@ -3682,6 +3693,8 @@ _MIGRATIONS = {
     81: _apply_lease_refusal_reason,
     # 82: one timeline per agent run: runner events, runner logs, server notes.
     82: _apply_agent_run_log,
+    # 83: a project can name the repository its agent tasks are worked on in.
+    83: _apply_project_repository,
 }
 
 

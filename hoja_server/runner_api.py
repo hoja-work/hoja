@@ -866,6 +866,15 @@ def _claim_locked(engine, runner_row: Mapping[str, Any]) -> tuple[dict[str, Any]
                 # the prompt: the prompt is the task text and lands in the transcript.
                 policy = agent_policy.lease_payload(conn, org_id, view)
         run_spec = _run_spec(conn, org_id, lease, verdict.agent_member_id, view)
+    from hoja_server import agent_run_logs
+
+    where = run_spec["repo"]
+    agent_run_logs.note(
+        engine, runner_row["organization_id"], {**lease, "runner_id": runner_row["id"]},
+        (f"granted to {runner_row.get('name')}; works in {where['repo']} on {where['branch']} "
+         f"({'from project ' + str(where.get('project')) if where.get('source') == 'project' else 'from the agent' + chr(39) + 's repo grant'})"
+         if where else f"granted to {runner_row.get('name')}; no repository: a scratch folder"),
+        kind="lease.grant", detail={"repo": where, "harness": lease["harness"]})
     _audit_lease(engine, "agent.lease.grant", lease, runner_row,
                  detail={"fence": lease["fence"], "attempt": lease["attempt"],
                          "harness": lease["harness"], "ttl_s": lease["ttl_seconds"],
@@ -924,9 +933,20 @@ def _run_spec(conn, org_id: str, lease: Mapping[str, Any], agent_member_id: str 
         model = conn.execute(select(agent_member.c.model).where(and_(
             agent_member.c.organization_id == org_id,
             agent_member.c.id == agent_member_id))).scalar() or None
+    # Where the run works (hoja_server/project_repos.py): the task's project's repository, else
+    # the agent's own repo grant, else nothing (a scratch folder). Delegating the task is the
+    # permission to work on it there (agent_policy: a delegated task is the grant itself).
+    from hoja_server import project_repos
+
     repo = None
+    project_repo, project_name = project_repos.repository_for_task(conn, org_id, lease["task_id"])
     grants = tuple(getattr(view, "repos", ()) or ()) if view is not None else ()
-    if grants:
+    if project_repo:
+        identifier = str((task or {}).get("identifier") or lease["task_id"]).lower()
+        repo = {"repo": project_repo, "url": _clone_url(project_repo),
+                "branch": f"{project_repos.BRANCH_PREFIX}{identifier}",
+                "source": "project", "project": project_name}
+    elif grants:
         grant = grants[0]
         # The first branch the grant names is the one the run pushes to: a grant is an
         # explicit list (no wildcard, never a default branch), so any entry is allowed.
@@ -935,7 +955,8 @@ def _run_spec(conn, org_id: str, lease: Mapping[str, Any], agent_member_id: str 
             # A prefix grant (``agent/``): each task works on its own branch under it, so two
             # tasks on the same repo never share (or fight over) one branch.
             branch = f"{branch}{str(task['identifier']).lower()}"
-        repo = {"repo": grant.repo, "url": _clone_url(grant.repo), "branch": branch}
+        repo = {"repo": grant.repo, "url": _clone_url(grant.repo), "branch": branch,
+                "source": "agent"}
     return {"model": model, "task": task, "repo": repo}
 
 

@@ -101,6 +101,9 @@ export type AgentsAdapter = {
   getRunAccess(agentId: string): Promise<RunAccess>;
   /** Turn the workspace's Agents switch on (admin only; the same mutation as Settings). */
   enableAgents(): Promise<void>;
+  /** The repository a project's agent tasks work in (null: none). */
+  getProjectRepository(projectId: string): Promise<string | null>;
+  setProjectRepository(projectId: string, repository: string | null): Promise<string | null>;
   updateRunAccess(agentId: string, patch: {teams?: string[]; secrets?: string[];
     repos?: {repo: string; branches: string[]}[]}): Promise<void>;
   /** Store a named workspace secret. The value is sealed server-side and never read back. */
@@ -873,6 +876,20 @@ function createGraphqlAdapter(fallback: AgentsAdapter): AgentsAdapter {
       }
     },
 
+    async getProjectRepository(projectId: string) {
+      const data = await request<{project: {repository: string | null} | null}>(
+        `query ProjectRepo($id: String!) { project(id: $id) { repository } }`, {id: projectId});
+      return data.project?.repository ?? null;
+    },
+
+    async setProjectRepository(projectId: string, repository: string | null) {
+      const data = await request<{projectRepositorySet: {repository: string | null} | null}>(
+        `mutation ProjectRepoSet($id: String!, $repo: String) {
+           projectRepositorySet(projectId: $id, repository: $repo) { repository } }`,
+        {id: projectId, repo: repository});
+      return data.projectRepositorySet?.repository ?? null;
+    },
+
     async enableAgents() {
       const data = await request<{workspaceFeaturesUpdate: {agentsEnabled: boolean}}>(
         `mutation { workspaceFeaturesUpdate(agentsEnabled: true) { agentsEnabled } }`);
@@ -1200,6 +1217,8 @@ function createFallbackAdapter(): AgentsAdapter {
     async answerSession() { return serverOnly('answering a session'); },
     async getRunAccess() { return serverOnly('the run policy'); },
     async enableAgents() { return serverOnly('turning Agents on'); },
+    async getProjectRepository() { return serverOnly('a project repository'); },
+    async setProjectRepository() { return serverOnly('a project repository'); },
     async updateRunAccess() { return serverOnly('saving the run policy'); },
     async setSecret() { return serverOnly('storing a key'); },
     async createSetupTask() { return serverOnly('a setup task'); },

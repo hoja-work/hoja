@@ -102,6 +102,7 @@ import { ModelProvidersSettings } from "./ModelProvidersSettings";
 import { ConnectorsSettings } from "./ConnectorsSettings";
 import { AgentConversationsSettings } from "./AgentConversationsSettings";
 import { AgentsSurface } from "./agents/AgentsSurface";
+import { ProjectRepository } from "./agents/ProjectRepository";
 import {
   setWorkspaceAgentsEnabled,
   useAgentsSurfaceEnabled,
@@ -10596,6 +10597,7 @@ function ProjectDetails({
                   "No teams"}
               </b>
             </div>
+            <ProjectRepository projectId={project.id} />
             <button
               type="button"
               className="inline-flex items-center justify-center gap-1.75 rounded-md border border-line bg-panel pl-2.75 pr-2.75 pt-2 pb-2 text-inherit transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 w-full text-[12px] max-w-full font-sans shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 group"

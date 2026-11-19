@@ -604,7 +604,8 @@ export function AgentSetup({
             <span className="text-xs text-muted">
               The machine clones each one into its work folder once; every task
               gets its own worktree and its own branch under the prefix, e.g.
-              agent/hoja-12.
+              agent/hoja-12. A task in a project that names a repository (on the
+              project page) works in that one instead.
             </span>
             {access.repos.map((g) => (
               <span
