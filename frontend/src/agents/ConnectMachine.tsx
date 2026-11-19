@@ -8,11 +8,20 @@
  *
  * "Connected" is a fact read from the server: a runner that was not in the list when the command
  * was minted, now reporting online. */
-import { Check, Copy, Loader2, Monitor, RefreshCw } from "lucide-react";
+import {
+  Check,
+  Copy,
+  Loader2,
+  Monitor,
+  Network,
+  RefreshCw,
+  Terminal,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { getAgentsAdapter } from "./adapter";
-import type { Runner, RunnerEnrollmentGrant } from "./types";
+import { TailnetConnect } from "./TailnetConnect";
+import type { Runner, RunnerEnrollmentGrant, Tailnet } from "./types";
 
 const POLL_MS = 2000;
 
@@ -62,7 +71,72 @@ function CommandBox({ text, big = false }: { text: string; big?: boolean }) {
   );
 }
 
-export function ConnectMachine({
+/* Two ways to connect: from the workspace's tailnet (no terminal, TailnetConnect.tsx), or the
+ * one-line command. Tailscale is the default once the workspace has connected it. */
+export function ConnectMachine(props: {
+  onConnected?: (runner: Runner) => void;
+  autoStart?: boolean;
+  harness?: string;
+}) {
+  const [tailnet, setTailnet] = useState<Tailnet | null | undefined>(undefined);
+  const [tab, setTab] = useState<"tailscale" | "command" | null>(null);
+  useEffect(() => {
+    let live = true;
+    getAgentsAdapter()
+      .getTailnet()
+      .then((t) => live && setTailnet(t))
+      .catch(() => live && setTailnet(null)); // not an admin, or no server: the command only
+    return () => {
+      live = false;
+    };
+  }, []);
+  if (tailnet === undefined) {
+    return <Loader2 size={16} className="animate-spin text-muted" />;
+  }
+  if (tailnet === null) return <CommandConnect {...props} />;
+  const shown = tab ?? (tailnet.connected ? "tailscale" : "command");
+  const tabClass = (on: boolean) =>
+    `inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium ${on ? "bg-panel text-foreground shadow-sm" : "text-muted hover:text-foreground"}`;
+  return (
+    <div className="flex flex-col gap-4" data-connect-tabs={shown}>
+      <div
+        className="inline-flex w-fit gap-1 rounded-lg bg-subtle p-1"
+        role="tablist"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={shown === "tailscale"}
+          className={tabClass(shown === "tailscale")}
+          onClick={() => setTab("tailscale")}
+        >
+          <Network size={14} aria-hidden="true" /> From Tailscale
+          {!tailnet.connected && (
+            <span className="rounded-full bg-emerald-600 px-1.5 text-[10px] text-white">
+              No terminal
+            </span>
+          )}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={shown === "command"}
+          className={tabClass(shown === "command")}
+          onClick={() => setTab("command")}
+        >
+          <Terminal size={14} aria-hidden="true" /> With a command
+        </button>
+      </div>
+      {shown === "tailscale" ? (
+        <TailnetConnect initial={tailnet} onConnected={props.onConnected} />
+      ) : (
+        <CommandConnect {...props} />
+      )}
+    </div>
+  );
+}
+
+function CommandConnect({
   onConnected,
   autoStart = false,
   harness,

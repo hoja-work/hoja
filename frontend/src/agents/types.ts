@@ -529,3 +529,45 @@ export type SetupProbe = {
   sessionState: string | null;
   verdict: string | null;
 };
+
+/** A workspace's Tailscale connection (hoja_server/tailnet_ops.py). */
+export interface TailnetAccess {
+  mode: "standing" | "once";
+  sshUser: string;
+  workRoot: string | null;
+  state: "allowed" | "installing" | "connected" | "failed" | "revoked";
+  log: string | null;
+  hostKey: string | null;
+  grantedAt: string;
+  usedAt: string | null;
+}
+
+export interface TailnetDevice {
+  id: string;
+  name: string;
+  hostname: string;
+  os: string | null;
+  address: string | null;
+  online: boolean;
+  lastSeen: string | null;
+  tags: string[];
+  reachable: boolean;
+  runnerId: string | null;
+  runnerName: string | null;
+  runnerStatus: string | null;
+  access: TailnetAccess | null;
+}
+
+export interface Tailnet {
+  connected: boolean;
+  name: string | null;
+  clientId: string | null;
+  nodeState: string;
+  nodeName: string | null;
+  nodeError: string | null;
+  hojaTag: string;
+  machineTag: string;
+  policy: string;
+  devices: TailnetDevice[];
+  devicesError: string | null;
+}

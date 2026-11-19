@@ -73,6 +73,8 @@ server = [
     "sqlalchemy>=2.0",
     "aiosqlite>=0.20",
     "psycopg[binary]>=3.2",
+    # Tailscale SSH to a workspace's machines (hoja_server/tailnet.py).
+    "paramiko>=3.4,<5",
 ]
 saas = [
     "asyncpg>=0.29",

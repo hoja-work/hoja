@@ -2063,7 +2063,7 @@ def build_schema():
     # HOJA-635: the write half of the runner surface — mint and revoke enrollment
     # tokens, revoke a machine. Kept out of agent_runners.py so that module's
     # read-only invariant stays true.
-    from hoja_server import agent_ops, agent_runner_admin, project_repos
+    from hoja_server import agent_ops, agent_runner_admin, project_repos, tailnet_ops
     from hoja_server.agent_conversations import SDL as CONVERSATION_SDL
     from hoja_server.agent_conversations import query as conversation_query
     from hoja_server.model_providers import SDL as PROVIDER_SDL
@@ -2089,7 +2089,7 @@ def build_schema():
          views_api.SDL, decisions_api.SDL, project_settings.SDL, permissions.SDL,
          task_templates.SDL, sla.SDL, agent_members.SDL, agent_sessions.SDL,
          agent_policy.SDL, agent_runners.SDL, agent_runner_admin.SDL,
-         agent_claims.SDL, usage_ledger.SDL, connect_endpoints.SDL, agent_ops.SDL, project_repos.SDL, tasks_sdl],
+         agent_claims.SDL, usage_ledger.SDL, connect_endpoints.SDL, agent_ops.SDL, project_repos.SDL, tailnet_ops.SDL, tasks_sdl],
         query, mutation, *task_bindables,
         model_providers.query, model_providers.mutation,
         project_settings.query, project_settings.mutation,
@@ -2112,6 +2112,7 @@ def build_schema():
         agent_runner_admin.query, agent_runner_admin.mutation,
         agent_ops.query, agent_ops.mutation,
         project_repos.mutation, project_repos.project_type,
+        tailnet_ops.query, tailnet_ops.mutation,
         connect_endpoints.query, connect_endpoints.mutation,
         connect_endpoints.connect_endpoint_type,
         agent_claims.query, agent_claims.verifier_claim_type,

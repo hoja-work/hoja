@@ -38,7 +38,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 83
+CURRENT_SCHEMA_REVISION = 84
 
 log = logging.getLogger(__name__)
 
@@ -1346,6 +1346,52 @@ agent_run_log = Table(
     Column("created_at", String, nullable=False),
     Index("ix_agent_run_log_lease", "organization_id", "lease_id", "created_at"),
     Index("ix_agent_run_log_runner", "organization_id", "runner_id", "created_at"),
+)
+
+# Revision 84: a workspace's Tailscale connection (HOJA-602). Hoja joins the tailnet as an
+# ephemeral tag:hoja node with this OAuth client, lists its machines, and installs the runner on
+# the ones a person allowed, over Tailscale SSH. One row per organization.
+tailnet = Table(
+    "tailnet",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False,
+           unique=True),
+    Column("client_id", String, nullable=False),
+    # secrets_box sealed, per organization.
+    Column("client_secret", Text, nullable=False),
+    # The tailnet's DNS name (tail1234.ts.net), learned from its devices; display only.
+    Column("name", String),
+    Column("created_by", String, ForeignKey("user.id")),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+)
+
+# One machine of the tailnet a person allowed Hoja to reach: as which local user, for good or
+# once, and how installing the runner there went.
+tailnet_machine = Table(
+    "tailnet_machine",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("device_id", String, nullable=False),
+    Column("hostname", String, nullable=False),
+    Column("address", String),
+    Column("ssh_user", String, nullable=False),
+    # standing | once
+    Column("mode", String, nullable=False),
+    Column("work_root", String),
+    # allowed | installing | connected | failed | revoked
+    Column("state", String, nullable=False),
+    Column("log", Text),
+    Column("host_key", String),
+    Column("runner_id", String, ForeignKey("runner.id")),
+    Column("granted_by", String, ForeignKey("user.id")),
+    Column("granted_at", String, nullable=False),
+    Column("used_at", String),
+    Column("revoked_at", String),
+    Column("updated_at", String, nullable=False),
+    UniqueConstraint("organization_id", "device_id", name="uq_tailnet_machine_device"),
 )
 
 agent_side_effect = Table(
@@ -3342,6 +3388,12 @@ def _apply_project_repository(conn):
         conn.exec_driver_sql("ALTER TABLE project ADD COLUMN repository VARCHAR")
 
 
+def _apply_tailnet(conn):
+    """``tailnet`` and ``tailnet_machine``: Tailscale-connected machines (HOJA-602)."""
+    tailnet.create(conn, checkfirst=True)
+    tailnet_machine.create(conn, checkfirst=True)
+
+
 def _apply_agent_run_log(conn):
     """``agent_run_log``: the per-run timeline GraphQL serves (HOJA-602)."""
     agent_run_log.create(conn, checkfirst=True)
@@ -3695,6 +3747,7 @@ _MIGRATIONS = {
     82: _apply_agent_run_log,
     # 83: a project can name the repository its agent tasks are worked on in.
     83: _apply_project_repository,
+    84: _apply_tailnet,
 }
 
 

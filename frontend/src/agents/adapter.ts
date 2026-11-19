@@ -25,6 +25,7 @@
  */
 
 import type {
+  Tailnet,
   Agent, AgentAnswer, AgentAsk, RunAccess, SetupProbe, AgentDetail, AgentEvent, AgentQuestion, AgentPolicy, AgentSession, AuditEvent, Claim, ClaimVerdict,
   ConnectGrant, HarnessPolicy,
   ConnectEndpointRow, ConnectExposure, Runner, RunnerEnrollment, RunnerEnrollmentGrant, RunnerLease,
@@ -101,6 +102,12 @@ export type AgentsAdapter = {
   getRunAccess(agentId: string): Promise<RunAccess>;
   /** Turn the workspace's Agents switch on (admin only; the same mutation as Settings). */
   enableAgents(): Promise<void>;
+  /** The workspace's tailnet: Hoja's node and the machines on it. */
+  getTailnet(): Promise<Tailnet>;
+  connectTailnet(clientId: string, clientSecret: string): Promise<Tailnet>;
+  disconnectTailnet(): Promise<Tailnet>;
+  allowTailnetMachine(deviceId: string, sshUser: string, mode: "standing" | "once", workRoot: string | null): Promise<void>;
+  revokeTailnetMachine(deviceId: string): Promise<void>;
   /** The repository a project's agent tasks work in (null: none). */
   getProjectRepository(projectId: string): Promise<string | null>;
   setProjectRepository(projectId: string, repository: string | null): Promise<string | null>;
@@ -321,6 +328,9 @@ const SESSION_FIELDS = `id issueId agentUserId status state queueReason admitted
   ackedAt activatedAt endedAt createdAt updatedAt
   claim claimAt workerModel verdict verifiedAt verifierId verifierModel
   issue { id identifier title priority }`;
+const TAILNET_FIELDS = `connected name clientId nodeState nodeName nodeError hojaTag machineTag
+  policy devicesError devices { id name hostname os address online lastSeen tags reachable
+  runnerId runnerName runnerStatus access { mode sshUser workRoot state log hostKey grantedAt usedAt } }`;
 const ACTIVITY_FIELDS = `id kind authorKind authorId body payload signal createdAt`;
 
 type ServerActivity = {
@@ -876,6 +886,36 @@ function createGraphqlAdapter(fallback: AgentsAdapter): AgentsAdapter {
       }
     },
 
+    async getTailnet() {
+      const data = await request<{tailnet: Tailnet}>(`query Tailnet { tailnet { ${TAILNET_FIELDS} } }`);
+      return data.tailnet;
+    },
+
+    async connectTailnet(clientId: string, clientSecret: string) {
+      const data = await request<{tailnetConnect: Tailnet}>(
+        `mutation TailnetConnect($id: String!, $secret: String!) {
+           tailnetConnect(clientId: $id, clientSecret: $secret) { ${TAILNET_FIELDS} } }`,
+        {id: clientId, secret: clientSecret});
+      return data.tailnetConnect;
+    },
+
+    async disconnectTailnet() {
+      const data = await request<{tailnetDisconnect: Tailnet}>(
+        `mutation TailnetDisconnect { tailnetDisconnect { ${TAILNET_FIELDS} } }`);
+      return data.tailnetDisconnect;
+    },
+
+    async allowTailnetMachine(deviceId: string, sshUser: string, mode: "standing" | "once", workRoot: string | null) {
+      await request(
+        `mutation TailnetAllow($d: String!, $u: String!, $m: String!, $w: String) {
+           tailnetMachineAllow(deviceId: $d, sshUser: $u, mode: $m, workRoot: $w) { id } }`,
+        {d: deviceId, u: sshUser, m: mode, w: workRoot});
+    },
+
+    async revokeTailnetMachine(deviceId: string) {
+      await request(`mutation TailnetRevoke($d: String!) { tailnetMachineRevoke(deviceId: $d) { id } }`, {d: deviceId});
+    },
+
     async getProjectRepository(projectId: string) {
       const data = await request<{project: {repository: string | null} | null}>(
         `query ProjectRepo($id: String!) { project(id: $id) { repository } }`, {id: projectId});
@@ -1218,6 +1258,11 @@ function createFallbackAdapter(): AgentsAdapter {
     async getRunAccess() { return serverOnly('the run policy'); },
     async enableAgents() { return serverOnly('turning Agents on'); },
     async getProjectRepository() { return serverOnly('a project repository'); },
+    async getTailnet() { return serverOnly('Tailscale'); },
+    async connectTailnet() { return serverOnly('Tailscale'); },
+    async disconnectTailnet() { return serverOnly('Tailscale'); },
+    async allowTailnetMachine() { return serverOnly('Tailscale'); },
+    async revokeTailnetMachine() { return serverOnly('Tailscale'); },
     async setProjectRepository() { return serverOnly('a project repository'); },
     async updateRunAccess() { return serverOnly('saving the run policy'); },
     async setSecret() { return serverOnly('storing a key'); },

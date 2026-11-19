@@ -31,6 +31,7 @@ import {
   type IssueRowModel,
   type LinDisplay,
 } from "../graph/tasks";
+import { TailnetConnect } from "./TailnetConnect";
 import { getAgentsAdapter } from "./adapter";
 import { AGENTS_TABS, AgentsListShell, SearchField } from "./chrome";
 import {
@@ -299,6 +300,12 @@ function EnrollPanel({ onClose }: { onClose: () => void }) {
         borderBottom: "1px solid var(--line)",
       }}
     >
+      {/* From the tailnet first: no terminal (TailnetConnect.tsx). The token below is the
+          manual path. */}
+      <div className="mb-4 max-w-[640px] text-foreground" data-enroll-tailnet>
+        <b className="mb-2 block text-muted">From your tailnet</b>
+        <TailnetConnect />
+      </div>
       {!grant && (
         <div
           style={{

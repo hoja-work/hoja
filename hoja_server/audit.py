@@ -80,6 +80,11 @@ ACTIONS = frozenset({
     # The repository a project's agent tasks work in (HOJA-602): granting it is an admin act,
     # so the before and after are on the record.
     "project.repository.change",
+    "tailnet.connect",
+    "tailnet.disconnect",
+    "tailnet.machine.allow",
+    "tailnet.machine.revoke",
+    "tailnet.machine.install",
     # The runner's own credentials (HOJA-635). Minting an enrollment token, revoking
     # one before it is spent, and revoking an enrolled machine are three different
     # facts: the first hands out a way in, the second takes that way back, and the

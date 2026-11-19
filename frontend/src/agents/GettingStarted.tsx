@@ -118,8 +118,8 @@ export function GettingStarted({
             <div>
               <h3 className="m-0 text-base font-medium">Connect a machine</h3>
               <p className="m-0 text-sm text-muted">
-                A laptop, server or CI box. One command installs the runner and
-                keeps it running.
+                A laptop, server or CI box. Pick it from your tailnet, or run
+                one command on it.
               </p>
             </div>
             {machineDone && !justConnected ? (
