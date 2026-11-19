@@ -161,3 +161,19 @@ def test_an_installed_package_finds_the_wheel_beside_the_web_root(tmp_path, monk
     monkeypatch.setattr(runner_release, "__file__", str(tmp_path / "site-packages" / "hoja_server" / "runner_release.py"))
     assert runner_release.download_root() == app / "downloads"
     assert runner_release.latest_wheel() == wheel
+
+
+def test_the_installer_points_at_https_behind_the_proxy(tmp_path, monkeypatch):
+    """Behind the TLS-terminating proxy the app sees http; the installer must not send the runner
+    there (a redirected POST is not the same POST)."""
+    from starlette.applications import Starlette
+    from starlette.testclient import TestClient
+
+    from hoja_server import runner_release
+
+    (tmp_path / "hoja_runnerd-0.1.0-py3-none-any.whl").write_bytes(b"wheel")
+    client = TestClient(Starlette(routes=runner_release.downloads_routes(tmp_path)))
+    body = client.get("/install.sh", headers={"x-forwarded-proto": "https",
+                                               "host": "app.hoja.work"}).text
+    assert 'BASE="https://app.hoja.work"' in body
+    assert 'WHEEL="https://app.hoja.work/downloads/hoja_runnerd-0.1.0-py3-none-any.whl"' in body

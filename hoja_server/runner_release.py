@@ -260,6 +260,23 @@ say "  It shows up in Hoja under Agents -> Machines within a few seconds."
 """
 
 
+def public_base(request: Request) -> str:
+    """This deployment's URL as the client reached it, behind the TLS-terminating proxy.
+
+    ``request.base_url`` is ``http://`` behind the proxy, and an installer that pointed the
+    runner at it would send every API call into a 301 (a redirected POST is not the same POST).
+    Same rule as ``agent_runner_admin._base_url``: honour X-Forwarded-Proto and -Host.
+    """
+    headers = request.headers
+    host = (headers.get("x-forwarded-host") or headers.get("host") or "").strip()
+    scheme = (headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
+    if scheme not in ("http", "https"):
+        scheme = request.url.scheme or "https"
+    if not host:
+        return str(request.base_url).rstrip("/")
+    return f"{scheme}://{host}"
+
+
 def downloads_routes(root: Path | None = None) -> list[Route]:
     """The three routes, as Starlette ``Route`` objects for ``create_app``."""
 
@@ -278,7 +295,7 @@ def downloads_routes(root: Path | None = None) -> list[Route]:
                 {"error": "This deployment publishes no hoja-runnerd wheel."},
                 status_code=404,
             )
-        url = f"{str(request.base_url).rstrip('/')}{download_path(wheel)}"
+        url = f"{public_base(request)}{download_path(wheel)}"
         return JSONResponse({
             "name": "hoja-runnerd",
             "version": wheel_version(wheel),
@@ -301,7 +318,7 @@ def downloads_routes(root: Path | None = None) -> list[Route]:
 
     async def installer(request: Request) -> Response:
         wheel = latest_wheel(root)
-        base = str(request.base_url).rstrip("/")
+        base = public_base(request)
         if wheel is None:
             body = ("#!/bin/sh\necho 'hoja: this deployment publishes no runner yet; "
                     "ask your Hoja admin.' >&2\nexit 1\n")
