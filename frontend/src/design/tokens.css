@@ -106,6 +106,10 @@
   --ds-feed-measure:clamp(44ch,40vw,60ch);
   --ds-feed-gutter:clamp(1rem,2.2vw,2.625rem);
   --ds-feed-width:calc(var(--ds-feed-measure) + 2 * var(--ds-feed-gutter));
+  /* shell-wide only: the metadata rail and the gap between it and the text. rem, so it
+     follows the root font size like every other measure here. */
+  --ds-feed-rail:14rem;
+  --ds-feed-rail-gap:2rem;
   --ds-feed-tab-height:24px;
   --ds-feed-tab-radius:9999px;
   --ds-feed-tab-padding:0 8px;

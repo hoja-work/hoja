@@ -6279,7 +6279,7 @@ function PulsePage({
           box. Centring the chrome and the posts separately put them 5px apart,
           because the posts' scroller is narrower by its own scrollbar. */}
       <div
-        className="flex flex-1 min-h-0 flex-col w-[min(100%,var(--ds-feed-width))] mt-0 mr-auto mb-0 ml-auto pt-0 pr-(--ds-feed-gutter) pb-0 pl-(--ds-feed-gutter)"
+        className="flex flex-1 min-h-0 flex-col w-[min(100%,var(--ds-feed-width))] shell-wide:w-[min(100%,calc(var(--ds-feed-width)+var(--ds-feed-rail)+var(--ds-feed-rail-gap)))] mt-0 mr-auto mb-0 ml-auto pt-0 pr-(--ds-feed-gutter) pb-0 pl-(--ds-feed-gutter)"
         data-pulse-column=""
       >
       <header
@@ -6383,11 +6383,11 @@ function PulsePage({
                 />
               )}
               <article
-                className="pt-6 pr-0 pb-6 pl-0 mt-0 mr-0 mb-0 ml-0 border-t border-line"
+                className="pt-6 pr-0 pb-6 pl-0 mt-0 mr-0 mb-0 ml-0 border-t border-line shell-wide:grid shell-wide:grid-cols-[minmax(0,1fr)_var(--ds-feed-rail)] shell-wide:gap-x-(--ds-feed-rail-gap)"
                 aria-labelledby={`pulse-post-${post.id}`}
               >
                 <header
-                  className="flex items-start gap-3"
+                  className="flex items-start gap-3 shell-wide:col-start-1"
                   data-pulse-post-heading=""
                 >
                   <div className="min-w-0 flex-1">
@@ -6441,7 +6441,7 @@ function PulsePage({
                   </div>
                 </header>
                 <div
-                  className="mt-4.5 mr-0 mb-6 ml-0 wrap-break-word leading-[1.6]"
+                  className="mt-4.5 mr-0 mb-6 ml-0 wrap-break-word leading-[1.6] shell-wide:col-start-1"
                   data-pulse-post-body=""
                 >
                   <Markdown text={post.body} density="block" />
@@ -6450,7 +6450,7 @@ function PulsePage({
                   post.project.targetDate ||
                   post.project.lead?.name) && (
                   <dl
-                    className="grid gap-1.75 mt-0 mr-0 mb-6 ml-0 pl-3 text-(length:--ds-feed-meta-size) border-l-2 border-line"
+                    className="grid gap-1.75 mt-0 mr-0 mb-6 ml-0 pl-3 text-(length:--ds-feed-meta-size) border-l-2 border-line shell-wide:col-start-2 shell-wide:row-start-2 shell-wide:self-start shell-wide:mt-0 shell-wide:mb-0 shell-wide:border-l-0 shell-wide:pl-0"
                     data-pulse-changes=""
                   >
                     {post.project.lead?.name && (
@@ -6470,7 +6470,7 @@ function PulsePage({
                     )}
                   </dl>
                 )}
-                <div className="flex items-center gap-2" data-pulse-actions="">
+                <div className="flex items-center gap-2 shell-wide:col-start-1" data-pulse-actions="">
                   <button
                     className="flex items-center gap-1.5 pt-1.25 pr-2.25 pb-1.25 pl-2.25 border border-line bg-panel text-muted hover:bg-subtle aria-expanded:bg-subtle aria-expanded:text-foreground rounded-(--ds-feed-tab-radius) focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
                     type="button"
@@ -6497,7 +6497,7 @@ function PulsePage({
                 </div>
                 {openComments === post.id && (
                   <div
-                    className="mt-3 mr-0 mb-0 ml-0 flex flex-col gap-3"
+                    className="mt-3 mr-0 mb-0 ml-0 flex flex-col gap-3 shell-wide:col-start-1"
                     id={`pulse-comments-${post.id}`}
                     data-pulse-comments=""
                   >

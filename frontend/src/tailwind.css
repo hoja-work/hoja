@@ -44,6 +44,12 @@
 @custom-variant shell-phone {
   @media (max-width: 700px), (max-width: 1000px) and (max-height: 500px) { @slot; }
 }
+/* Very wide screens: the post's metadata moves into a second column instead of sitting
+   under the text. Same shape as the other shell breakpoints, so screens say
+   `shell-wide:` rather than carrying their own @media. */
+@custom-variant shell-wide {
+  @media (min-width: 1800px) { @slot; }
+}
 @custom-variant review-single {
   @media (max-width: 1227px) { @slot; }
 }
