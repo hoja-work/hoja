@@ -3285,6 +3285,12 @@ def create_app(
             from hoja_server import webhooks
 
             webhook_worker = asyncio.create_task(tenant_context.as_system(webhooks.run_forever(engine)))
+        # Cycle start/end notifications for every team, on time (cycle_events.py).
+        cycle_sweeper = None
+        if os.environ.get("HOJA_CYCLE_EVENTS", "1").strip().lower() not in ("0", "false", "no"):
+            from hoja_server import cycle_events
+
+            cycle_sweeper = asyncio.create_task(tenant_context.as_system(cycle_events.run_forever(engine)))
         async with runtime_app.router.lifespan_context(runtime_app):
             if agent_dbos_url := os.environ.get("HOJA_AGENT_DBOS_URL"):
                 missing = _missing_packages(("dbos", *_AGENT_REQUIRED_PACKAGES))
@@ -3324,6 +3330,10 @@ def create_app(
                 await lease_reaper
         if webhook_worker is not None:
             webhook_worker.cancel()
+        if cycle_sweeper is not None:
+            cycle_sweeper.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await cycle_sweeper
         if pinned_mcp is not None:
             pinned_mcp.cancel()
             with contextlib.suppress(asyncio.CancelledError):

@@ -21,6 +21,7 @@ export type InboxKind =
   | "projectMention"
   | "projectLeadAssigned"
   | "projectUpdated"
+  | "projectMemberAdded"
   | "initiativeUpdatePosted"
   | "initiativeOwnerAssigned"
   | "initiativeUpdated"
@@ -80,6 +81,7 @@ export type NotificationData = {
   completed?: number;
   total?: number;
   carriedOver?: number;
+  unfinished?: number;
 } | null;
 
 export type InboxNotification = {
@@ -124,6 +126,7 @@ export const DIRECT_KINDS = new Set<string>([
   "issueDecision",
   "projectMention",
   "projectLeadAssigned",
+  "projectMemberAdded",
   "initiativeOwnerAssigned",
 ]);
 
@@ -297,6 +300,8 @@ export function describe(n: InboxNotification): string {
       return "mentioned you";
     case "projectLeadAssigned":
       return "made you the project lead";
+    case "projectMemberAdded":
+      return "added you to the project";
     case "initiativeOwnerAssigned":
       return "made you the initiative owner";
     case "projectUpdated":
@@ -308,11 +313,18 @@ export function describe(n: InboxNotification): string {
     case "cycleCompleted":
       return typeof data?.completed === "number" &&
         typeof data?.total === "number"
-        ? `ended · ${data.completed} of ${data.total} done${data.carriedOver ? `, ${data.carriedOver} carried over` : ""}`
+        ? `ended · ${data.completed} of ${data.total} done${cycleLeftover(data)}`
         : "ended";
     default:
       return "updated the task";
   }
+}
+
+/** ", 3 carried over" when the rollover moved them, ", 3 unfinished" when the cycle just ended. */
+export function cycleLeftover(data: NotificationData): string {
+  if (data?.carriedOver) return `, ${data.carriedOver} carried over`;
+  if (data?.unfinished) return `, ${data.unfinished} unfinished`;
+  return "";
 }
 
 export function healthLabel(health?: string | null): string {

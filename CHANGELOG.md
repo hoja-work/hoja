@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Project members can be managed. `memberIds` on `projectCreate` and `projectUpdate`
+  (Linear's field), and a Members picker on the project page. Anyone added follows the
+  project and gets "added you to the project" in their inbox (`projectMemberAdded`).
+  Removing someone keeps their subscription.
+- Cycle start and end notifications go out on time for every team, including teams
+  that make cycles by hand. A background sweep (`hoja_server/cycle_events.py`, turned
+  off with `HOJA_CYCLE_EVENTS=0`) announces each edge from the cycle's own dates.
+  Revision 80 stamps each edge once, so the cadence rollover and the sweep never
+  announce it twice, and past cycles are never announced. A cycle that ends without a
+  rollover reports its open work as unfinished.
+- Dev snapshots copy who follows which project, initiative and cycle.
 - Follow projects, initiatives and cycles. There is a Follow switch on the project page,
   on each initiative and in the inbox panel, and the cycle menu's "Subscribe to cycle
   notifications" now works. Creators, leads, owners, members, update authors and

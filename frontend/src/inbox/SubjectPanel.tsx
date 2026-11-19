@@ -9,6 +9,7 @@ import { Markdown } from "../markdown";
 import { Avatar } from "../graph/shared";
 import { FollowButton, type FollowType } from "./follow";
 import {
+  cycleLeftover,
   dataOf,
   describe,
   fullTime,
@@ -142,7 +143,7 @@ export function SubjectPanel({
           {type === "cycle" && typeof data?.total === "number" && (
             <Fact
               label="Done"
-              value={`${data.completed ?? 0} of ${data.total}${data.carriedOver ? ` · ${data.carriedOver} carried over` : ""}`}
+              value={`${data.completed ?? 0} of ${data.total}${cycleLeftover(data).replace(",", " ·")}`}
             />
           )}
         </dl>

@@ -22,7 +22,8 @@ TABLES = (
     "organization", "user", "team", "workflow_state", "team_member",
     "issue", "issue_identifier_alias", "issue_label", "issue_label_link",
     "issue_subscriber", "comment", "project", "project_status", "project_member",
-    "project_team", "cycle", "initiative", "initiative_project", "project_update",
+    "project_team", "project_subscriber", "cycle", "cycle_subscriber", "initiative",
+    "initiative_project", "initiative_subscriber", "project_update",
     "initiative_update", "saved_view", "saved_view_favorite",
 )
 
@@ -37,6 +38,9 @@ def query(org):
         "issue_subscriber": 'issue_id IN (SELECT id FROM issue WHERE organization_id IN (SELECT id FROM chosen))',
         "project_member": 'project_id IN (SELECT id FROM project WHERE organization_id IN (SELECT id FROM chosen))',
         "project_team": 'project_id IN (SELECT id FROM project WHERE organization_id IN (SELECT id FROM chosen))',
+        "project_subscriber": 'project_id IN (SELECT id FROM project WHERE organization_id IN (SELECT id FROM chosen))',
+        "cycle_subscriber": 'cycle_id IN (SELECT id FROM cycle WHERE organization_id IN (SELECT id FROM chosen))',
+        "initiative_subscriber": 'initiative_id IN (SELECT id FROM initiative WHERE organization_id IN (SELECT id FROM chosen))',
         "initiative_project": 'initiative_id IN (SELECT id FROM initiative WHERE organization_id IN (SELECT id FROM chosen))',
         "saved_view_favorite": 'view_id IN (SELECT id FROM saved_view WHERE organization_id IN (SELECT id FROM chosen))',
     }

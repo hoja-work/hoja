@@ -38,6 +38,7 @@ type UserPreferencesPayload {
 type NotificationPreferencesPayload {
   success: Boolean!
   issueAssigned: Boolean!
+  projectMemberAdded: Boolean!
   issueMention: Boolean!
   issueComment: Boolean!
   issueStatusChanged: Boolean!
@@ -743,8 +744,8 @@ input CommentCreateInput { issueId: String projectUpdateId: String body: String!
 input CommentUpdateInput { body: String }
 input IssueLabelUpdateInput { name: String color: String description: String }
 input IssueLabelCreateInput { name: String! teamId: String color: String description: String }
-input ProjectCreateInput { name: String! description: String teamIds: [String!] leadId: String state: String color: String icon: String startDate: TimelessDate targetDate: TimelessDate "Apply a workspace project template: absent fields fall back to the template's, and its task set is created as tasks." templateId: String }
-input ProjectUpdateInput { name: String description: String leadId: String state: String color: String icon: String startDate: TimelessDate targetDate: TimelessDate teamIds: [String!] }
+input ProjectCreateInput { name: String! description: String teamIds: [String!] "People working on the project. The creator is always a member; members follow the project." memberIds: [String!] leadId: String state: String color: String icon: String startDate: TimelessDate targetDate: TimelessDate "Apply a workspace project template: absent fields fall back to the template's, and its task set is created as tasks." templateId: String }
+input ProjectUpdateInput { name: String description: String "Replaces the member list. Anyone added follows the project and is told; removing someone leaves their subscription alone." memberIds: [String!] leadId: String state: String color: String icon: String startDate: TimelessDate targetDate: TimelessDate teamIds: [String!] }
 input ProjectUpdateCreateInput { projectId: String! body: String! status: String health: String }
 input ProjectUpdateUpdateInput { body: String status: String health: String }
 

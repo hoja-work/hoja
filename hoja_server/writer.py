@@ -1580,11 +1580,15 @@ class Writer:
                 start_date=expanded.get("startDate"), target_date=expanded.get("targetDate"),
                 url=entity_url(url_key, "project", slug, base_url),
                 created_at=ts, updated_at=ts))
-            conn.execute(project_member.insert().values(project_id=pid, user_id=viewer_id))
+            members = [viewer_id, *self._project_member_ids(conn, org_id, inp.get("memberIds"))]
+            for uid in dict.fromkeys(members):
+                conn.execute(project_member.insert().values(project_id=pid, user_id=uid))
             for team_id in team_ids:
                 conn.execute(project_team.insert().values(project_id=pid, team_id=team_id))
             notifications.on_project_created(
-                conn, org_id, pid, viewer_id, expanded.get("leadId"), [viewer_id], ts)
+                conn, org_id, pid, viewer_id, expanded.get("leadId"), members, ts)
+            notifications.on_project_members_added(
+                conn, org_id, pid, viewer_id, [uid for uid in members if uid != viewer_id], ts)
         # The optional task set becomes real tasks in the project, through the
         # same tested issue_create path the API uses — never a row written by
         # hand. issue_create opens its own transaction, so this runs after the
@@ -1595,6 +1599,18 @@ class Writer:
                 self.issue_create(org_id, viewer_id, {
                     "teamId": sorted(team_ids)[0], "title": title, "projectId": pid})
         return pid
+
+    @staticmethod
+    def _project_member_ids(conn, org_id: str, ids) -> list[str]:
+        """Validated member ids: active people in this organization, never agents or bots."""
+        if ids is None:
+            return []
+        if not isinstance(ids, list):
+            raise InvalidReferenceError("memberIds")
+        for uid in ids:
+            _require_org_reference(conn, user, org_id, uid, "memberIds",
+                                   user.c.active.is_(True), user.c.kind == "human")
+        return list(ids)
 
     def project_update_create(self, org_id: str, pid: str, actor_id: str, inp: dict) -> str | None:
         body = inp.get("body")
@@ -1796,6 +1812,17 @@ class Writer:
                 conn.execute(project_team.delete().where(project_team.c.project_id == pid))
                 for tid in sorted(team_ids):
                     conn.execute(project_team.insert().values(project_id=pid, team_id=tid))
+            if "memberIds" in inp:
+                wanted = list(dict.fromkeys(self._project_member_ids(conn, org_id, inp.get("memberIds"))))
+                current = set(conn.execute(select(project_member.c.user_id).where(
+                    project_member.c.project_id == pid)).scalars())
+                conn.execute(project_member.delete().where(and_(
+                    project_member.c.project_id == pid,
+                    project_member.c.user_id.not_in(wanted or [""]))))
+                added = [uid for uid in wanted if uid not in current]
+                for uid in added:
+                    conn.execute(project_member.insert().values(project_id=pid, user_id=uid))
+                notifications.on_project_members_added(conn, org_id, pid, viewer_id, added, now_iso())
             vals = {"updated_at": now_iso()}
             m = {"name": "name", "description": "description", "leadId": "lead_id",
                  "state": "state", "color": "color", "icon": "icon",

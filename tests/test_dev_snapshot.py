@@ -32,6 +32,10 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(target.stat().st_mode & 0o777, 0o600)
             with sqlite3.connect(target) as conn:
                 self.assertEqual(conn.execute('select name from organization').fetchone()[0], 'Private Workspace')
+                # Who follows what is UI data: the inbox and Follow buttons read it.
+                for table in ('project_subscriber', 'initiative_subscriber', 'cycle_subscriber'):
+                    self.assertIn(table, snapshot.TABLES)
+                    self.assertIn(table, snapshot.query('x'))
                 for table in ('browser_session', 'password_credential', 'identity_credential',
                               'connector_account', 'model_provider', 'webhook', 'runner',
                               'agent_lease', 'mail_outbox', 'github_link'):

@@ -30,6 +30,7 @@ from sqlalchemy import (
     event,
     func,
     inspect,
+    or_,
     select,
     text,
 )
@@ -37,7 +38,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 79
+CURRENT_SCHEMA_REVISION = 80
 
 log = logging.getLogger(__name__)
 
@@ -1850,6 +1851,11 @@ cycle = Table(
     Column("created_at", String),
     Column("updated_at", String),
     Column("archived_at", String),
+    # When "cycle started" / "cycle ended" went out (revision 80). Claimed with a
+    # conditional UPDATE, so the cadence rollover and the scheduled sweep can both
+    # try and exactly one of them notifies.
+    Column("start_notified_at", String),
+    Column("end_notified_at", String),
     UniqueConstraint("team_id", "number", name="uq_cycle_team_number"),
     UniqueConstraint("team_id", "cadence_boundary_at", name="uq_cycle_team_cadence_boundary"),
 )
@@ -3323,6 +3329,28 @@ _INBOX_SUBJECT_COLUMNS = ("project_id", "initiative_id", "cycle_id",
                           "project_update_id", "initiative_update_id")
 
 
+def _apply_cycle_event_stamps(conn):
+    """``cycle.start_notified_at`` / ``end_notified_at``: one notification per edge.
+
+    The scheduled sweep (``cycle_events``) announces a cycle when its start or end
+    passes. Every cycle whose edge is already in the past is stamped here, so the
+    first sweep after this revision does not announce history. The column probe
+    keeps a fresh database (create_all made them) and a replay no-ops.
+    """
+    existing = {column["name"] for column in inspect(conn).get_columns("cycle")}
+    for name in ("start_notified_at", "end_notified_at"):
+        if name not in existing:
+            conn.exec_driver_sql(f"ALTER TABLE cycle ADD COLUMN {name} VARCHAR")
+    stamp = now_iso()
+    conn.execute(cycle.update().where(and_(
+        cycle.c.start_notified_at.is_(None), cycle.c.starts_at.is_not(None),
+        cycle.c.starts_at <= stamp)).values(start_notified_at=stamp))
+    conn.execute(cycle.update().where(and_(
+        cycle.c.end_notified_at.is_(None),
+        or_(cycle.c.completed_at.is_not(None),
+            and_(cycle.c.ends_at.is_not(None), cycle.c.ends_at <= stamp)))).values(end_notified_at=stamp))
+
+
 def _apply_follow_subjects(conn):
     """Follow projects, initiatives and cycles; a notification can be about any of them.
 
@@ -3601,6 +3629,8 @@ _MIGRATIONS = {
     # 78: follow projects, initiatives and cycles; notifications about any subject.
     78: _apply_follow_subjects,
     79: _apply_remove_meetings,
+    # 80: cycle start/end notifications are stamped once, whoever sends them.
+    80: _apply_cycle_event_stamps,
 }
 
 

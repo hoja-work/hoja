@@ -140,7 +140,12 @@ import { GraphIssueDetail } from "./graph/tasks";
 import { Avatar, AvatarFallback, AvatarGroup } from "./components/ui/avatar";
 import { ProjectActivity } from "./ProjectActivity";
 import { dueIsOverdue, SubIssuePill } from "./graph/shared";
-import { orderTree, railLeft, ROW_INSET, SIBLING_STEP } from "./graph/hierarchy";
+import {
+  orderTree,
+  railLeft,
+  ROW_INSET,
+  SIBLING_STEP,
+} from "./graph/hierarchy";
 import { StateGlyph } from "./graph/stateGlyph";
 import { formatDuration, statusAgeLabel } from "./graph/statusAge";
 import { useScrollWindow, visibleRange } from "./graph/taskStore";
@@ -170,6 +175,7 @@ import { BillingUsageSettings } from "./settings/billing/usage";
 const setupAdapter = createCloudAdapter();
 import { InboxPage } from "./inbox/InboxPage";
 import { FollowButton } from "./inbox/follow";
+import { ProjectMembers } from "./ProjectMembers";
 import { useInboxUnread, useInboxUnreadSync } from "./inbox/model";
 /** Unread task notifications beside the sidebar's Inbox item, styled like the Inbox badge. */
 function InboxBadge() {
@@ -7299,219 +7305,226 @@ function MyIssuesContent({
                       doneCount,
                       parentOutside,
                     }) => (
-                    <div
-                      className="relative flex w-full min-w-0 min-h-9 items-center gap-2 bg-transparent py-0 pr-6 text-left text-foreground hover:bg-subtle cursor-pointer max-md:gap-1 [@media_(max-width:650px)]:gap-1.25"
-                      style={{ paddingLeft: ROW_INSET + depth * SIBLING_STEP }}
-                      data-my-issue-row=""
-                      data-depth={depth}
-                      role="presentation"
-                      key={
-                        tab === "Activity"
-                          ? `${g.name}-${dayEvents[index]?.id || index}`
-                          : i.id
-                      }
-                      onClick={() => onOpenIssue(i)}
-                    >
-                      {/* Ancestry rails: one 2px line per open ancestor, then this row's own
+                      <div
+                        className="relative flex w-full min-w-0 min-h-9 items-center gap-2 bg-transparent py-0 pr-6 text-left text-foreground hover:bg-subtle cursor-pointer max-md:gap-1 [@media_(max-width:650px)]:gap-1.25"
+                        style={{
+                          paddingLeft: ROW_INSET + depth * SIBLING_STEP,
+                        }}
+                        data-my-issue-row=""
+                        data-depth={depth}
+                        role="presentation"
+                        key={
+                          tab === "Activity"
+                            ? `${g.name}-${dayEvents[index]?.id || index}`
+                            : i.id
+                        }
+                        onClick={() => onOpenIssue(i)}
+                      >
+                        {/* Ancestry rails: one 2px line per open ancestor, then this row's own
                           connector — a T for a middle child, a rounded corner for the last. */}
-                      {openRails.map((column) => (
-                        <span
-                          key={`rail-${column}`}
-                          aria-hidden="true"
-                          className="absolute top-0 bottom-0 w-0.5 bg-line"
-                          style={{ left: railLeft(column) }}
-                          data-tree-rail=""
-                        />
-                      ))}
-                      {depth > 0 && isLast && (
-                        <span
-                          aria-hidden="true"
-                          className="absolute w-2.5 border-l-2 border-b-2 border-line rounded-bl-[6px]"
-                          style={{ left: railLeft(depth - 1), top: 0, height: 18 }}
-                          data-tree-rail="last"
-                        />
-                      )}
-                      {depth > 0 && !isLast && (
-                        <>
+                        {openRails.map((column) => (
                           <span
+                            key={`rail-${column}`}
                             aria-hidden="true"
                             className="absolute top-0 bottom-0 w-0.5 bg-line"
-                            style={{ left: railLeft(depth - 1) }}
-                            data-tree-rail="through"
+                            style={{ left: railLeft(column) }}
+                            data-tree-rail=""
                           />
+                        ))}
+                        {depth > 0 && isLast && (
                           <span
                             aria-hidden="true"
-                            className="absolute h-0.5 w-2.5 bg-line"
-                            style={{ left: railLeft(depth - 1), top: 18 }}
-                          />
-                        </>
-                      )}
-                      {/* Reserved 16px so every column lines up whether or not a row has children. */}
-                      <span className="relative grid place-items-center w-4 h-4 flex-none">
-                        {childCount > 0 && (
-                          <button
-                            type="button"
-                            aria-expanded={!treeCollapsed[i.id]}
-                            aria-label={`${treeCollapsed[i.id] ? "Expand" : "Collapse"} ${childCount} sub-tasks of ${i.identifier}`}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              setTreeCollapsed((old) => ({
-                                ...old,
-                                [i.id]: !old[i.id],
-                              }));
+                            className="absolute w-2.5 border-l-2 border-b-2 border-line rounded-bl-[6px]"
+                            style={{
+                              left: railLeft(depth - 1),
+                              top: 0,
+                              height: 18,
                             }}
-                            className="grid place-items-center w-4 h-4 rounded bg-transparent text-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent"
-                            data-tree-toggle=""
-                          >
-                            <ChevronDown
-                              size={12}
-                              className={
-                                treeCollapsed[i.id] ? "-rotate-90" : ""
-                              }
-                            />
-                          </button>
+                            data-tree-rail="last"
+                          />
                         )}
-                      </span>
-                      {showPriority && (
-                        <span
-                          className="text-muted text-[13px] data-[p=1]:text-danger"
-                          data-my-issue-priority=""
-                          data-p={i.priority}
-                        >
-                          ≡
+                        {depth > 0 && !isLast && (
+                          <>
+                            <span
+                              aria-hidden="true"
+                              className="absolute top-0 bottom-0 w-0.5 bg-line"
+                              style={{ left: railLeft(depth - 1) }}
+                              data-tree-rail="through"
+                            />
+                            <span
+                              aria-hidden="true"
+                              className="absolute h-0.5 w-2.5 bg-line"
+                              style={{ left: railLeft(depth - 1), top: 18 }}
+                            />
+                          </>
+                        )}
+                        {/* Reserved 16px so every column lines up whether or not a row has children. */}
+                        <span className="relative grid place-items-center w-4 h-4 flex-none">
+                          {childCount > 0 && (
+                            <button
+                              type="button"
+                              aria-expanded={!treeCollapsed[i.id]}
+                              aria-label={`${treeCollapsed[i.id] ? "Expand" : "Collapse"} ${childCount} sub-tasks of ${i.identifier}`}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setTreeCollapsed((old) => ({
+                                  ...old,
+                                  [i.id]: !old[i.id],
+                                }));
+                              }}
+                              className="grid place-items-center w-4 h-4 rounded bg-transparent text-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent"
+                              data-tree-toggle=""
+                            >
+                              <ChevronDown
+                                size={12}
+                                className={
+                                  treeCollapsed[i.id] ? "-rotate-90" : ""
+                                }
+                              />
+                            </button>
+                          )}
                         </span>
-                      )}
-                      <code className="text-muted text-[12px] font-[inherit]">
-                        {i.identifier}
-                      </code>
-                      {i.decisionNeeded ? (
-                        <span
-                          className="inline-grid place-items-center w-3.75 h-3.75 ml-1.5 rounded-[50%] text-[10px] font-bold leading-none cursor-default bg-[#fdf3cf] text-[#5b4a0f] align-middle border border-amber-400"
-                          data-my-issue-decision=""
-                          role="img"
-                          aria-label="Needs a decision"
-                          title="Needs a decision"
-                        >
-                          ?
-                        </span>
-                      ) : null}
-                      {showStatus && (
-                        <span
-                          className="text-[12px] text-[#89948d] data-[status=started]:text-foreground"
-                          data-my-issue-status=""
-                          data-status={i.state?.type}
-                        >
-                          <StatusPicker
-                            compact
-                            issue={i}
-                            teams={teams}
-                            icon={<StateGlyph state={i.state} />}
-                            onChange={(stateId) => {
-                              const st = teamStates(i)?.find(
-                                (x) => x.id === stateId,
-                              );
-                              if (!st) throw Error("Status not found");
-                              return onMoved(i.id, st);
-                            }}
-                          />
-                        </span>
-                      )}
-                      {/* A sub-task whose parent sits in another status section cannot nest
+                        {showPriority && (
+                          <span
+                            className="text-muted text-[13px] data-[p=1]:text-danger"
+                            data-my-issue-priority=""
+                            data-p={i.priority}
+                          >
+                            ≡
+                          </span>
+                        )}
+                        <code className="text-muted text-[12px] font-[inherit]">
+                          {i.identifier}
+                        </code>
+                        {i.decisionNeeded ? (
+                          <span
+                            className="inline-grid place-items-center w-3.75 h-3.75 ml-1.5 rounded-[50%] text-[10px] font-bold leading-none cursor-default bg-[#fdf3cf] text-[#5b4a0f] align-middle border border-amber-400"
+                            data-my-issue-decision=""
+                            role="img"
+                            aria-label="Needs a decision"
+                            title="Needs a decision"
+                          >
+                            ?
+                          </span>
+                        ) : null}
+                        {showStatus && (
+                          <span
+                            className="text-[12px] text-[#89948d] data-[status=started]:text-foreground"
+                            data-my-issue-status=""
+                            data-status={i.state?.type}
+                          >
+                            <StatusPicker
+                              compact
+                              issue={i}
+                              teams={teams}
+                              icon={<StateGlyph state={i.state} />}
+                              onChange={(stateId) => {
+                                const st = teamStates(i)?.find(
+                                  (x) => x.id === stateId,
+                                );
+                                if (!st) throw Error("Status not found");
+                                return onMoved(i.id, st);
+                              }}
+                            />
+                          </span>
+                        )}
+                        {/* A sub-task whose parent sits in another status section cannot nest
                           there, so it carries the parent identifier instead of reading as an
                           orphan. The board does the same. */}
-                      {parentOutside && i.parent?.identifier ? (
-                        <span
-                          className="shrink-0 rounded border border-line py-0 px-1 text-[10px] text-muted"
-                          data-my-issue-parent=""
-                          title={i.parent.title}
-                        >
-                          ↳{i.parent.identifier}
-                        </span>
-                      ) : null}
-                      <button
-                        type="button"
-                        className="overflow-hidden text-ellipsis whitespace-nowrap text-[12px] flex-1 min-w-0 [background:none] border-0 pt-0 pr-0 pb-0 pl-0 mt-0 mr-0 mb-0 ml-0 text-inherit text-left cursor-pointer block font-[inherit] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                        data-my-issue-title=""
-                        data-my-issue-title-open=""
-                        aria-label={`Open ${i.identifier}: ${i.title}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onOpenIssue(i);
-                        }}
-                      >
-                        {i.title}
-                        {tab === "Activity" && (
-                          <small
-                            className="text-[11px] font-normal text-[#777]"
-                            data-my-activity-kind=""
+                        {parentOutside && i.parent?.identifier ? (
+                          <span
+                            className="shrink-0 rounded border border-line py-0 px-1 text-[10px] text-muted"
+                            data-my-issue-parent=""
+                            title={i.parent.title}
                           >
-                            {" "}
-                            · {dayEvents[index]?.eventType || "event"}
-                          </small>
+                            ↳{i.parent.identifier}
+                          </span>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="overflow-hidden text-ellipsis whitespace-nowrap text-[12px] flex-1 min-w-0 [background:none] border-0 pt-0 pr-0 pb-0 pl-0 mt-0 mr-0 mb-0 ml-0 text-inherit text-left cursor-pointer block font-[inherit] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                          data-my-issue-title=""
+                          data-my-issue-title-open=""
+                          aria-label={`Open ${i.identifier}: ${i.title}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onOpenIssue(i);
+                          }}
+                        >
+                          {i.title}
+                          {tab === "Activity" && (
+                            <small
+                              className="text-[11px] font-normal text-[#777]"
+                              data-my-activity-kind=""
+                            >
+                              {" "}
+                              · {dayEvents[index]?.eventType || "event"}
+                            </small>
+                          )}
+                        </button>
+                        {childCount > 0 && (
+                          <SubIssuePill done={doneCount} total={childCount} />
                         )}
-                      </button>
-                      {childCount > 0 && (
-                        <SubIssuePill done={doneCount} total={childCount} />
-                      )}
-                      {showLabels && i.labels?.nodes.length ? (
-                        <span
-                          className="max-w-25 overflow-hidden text-ellipsis whitespace-nowrap text-[#777] text-[11px] max-md:hidden"
-                          data-my-issue-labels=""
-                          title={i.labels.nodes.map((l) => l.name).join(", ")}
-                        >
-                          {i.labels.nodes.map((l) => l.name).join(", ")}
-                        </span>
-                      ) : null}
-                      {showAssignee && (
-                        <span
-                          className="grid place-items-center w-5.5 h-5.5 rounded-[50%] bg-[#e5e5e7] text-[#46464b] text-[10px] flex-none"
-                          data-my-issue-assignee=""
-                          title={i.assignee?.name || "Unassigned"}
-                        >
-                          {i.assignee?.name?.slice(0, 1) || "·"}
-                        </span>
-                      )}
-                      {showDue && i.dueDate && (
-                        <span
-                          className="whitespace-nowrap text-[#ad5757] text-[11px] max-md:hidden"
-                          data-my-issue-due=""
-                        >
-                          {new Date(i.dueDate).toLocaleDateString(undefined, {
-                            month: "short",
-                            day: "numeric",
-                          })}
-                        </span>
-                      )}
-                      {showProject && (
-                        <span
-                          className="overflow-hidden text-ellipsis whitespace-nowrap text-muted text-[11px] max-md:hidden max-w-37.5"
-                          data-my-issue-project=""
-                        >
-                          {i.project?.name || i.team?.name || ""}
-                        </span>
-                      )}
-                      {showDate && (
-                        <span
-                          className="text-right whitespace-nowrap text-[11px] text-muted min-w-11.5"
-                          data-my-issue-date=""
-                        >
-                          {tab === "Activity"
-                            ? new Date(
-                                dayEvents[index]?.createdAt || "",
-                              ).toLocaleDateString(undefined, {
-                                month: "short",
-                                day: "numeric",
-                              })
-                            : i.createdAt
-                              ? new Date(i.createdAt).toLocaleDateString(
-                                  undefined,
-                                  { month: "short", day: "numeric" },
-                                )
-                              : ""}
-                        </span>
-                      )}
-                    </div>
-                  ))}
+                        {showLabels && i.labels?.nodes.length ? (
+                          <span
+                            className="max-w-25 overflow-hidden text-ellipsis whitespace-nowrap text-[#777] text-[11px] max-md:hidden"
+                            data-my-issue-labels=""
+                            title={i.labels.nodes.map((l) => l.name).join(", ")}
+                          >
+                            {i.labels.nodes.map((l) => l.name).join(", ")}
+                          </span>
+                        ) : null}
+                        {showAssignee && (
+                          <span
+                            className="grid place-items-center w-5.5 h-5.5 rounded-[50%] bg-[#e5e5e7] text-[#46464b] text-[10px] flex-none"
+                            data-my-issue-assignee=""
+                            title={i.assignee?.name || "Unassigned"}
+                          >
+                            {i.assignee?.name?.slice(0, 1) || "·"}
+                          </span>
+                        )}
+                        {showDue && i.dueDate && (
+                          <span
+                            className="whitespace-nowrap text-[#ad5757] text-[11px] max-md:hidden"
+                            data-my-issue-due=""
+                          >
+                            {new Date(i.dueDate).toLocaleDateString(undefined, {
+                              month: "short",
+                              day: "numeric",
+                            })}
+                          </span>
+                        )}
+                        {showProject && (
+                          <span
+                            className="overflow-hidden text-ellipsis whitespace-nowrap text-muted text-[11px] max-md:hidden max-w-37.5"
+                            data-my-issue-project=""
+                          >
+                            {i.project?.name || i.team?.name || ""}
+                          </span>
+                        )}
+                        {showDate && (
+                          <span
+                            className="text-right whitespace-nowrap text-[11px] text-muted min-w-11.5"
+                            data-my-issue-date=""
+                          >
+                            {tab === "Activity"
+                              ? new Date(
+                                  dayEvents[index]?.createdAt || "",
+                                ).toLocaleDateString(undefined, {
+                                  month: "short",
+                                  day: "numeric",
+                                })
+                              : i.createdAt
+                                ? new Date(i.createdAt).toLocaleDateString(
+                                    undefined,
+                                    { month: "short", day: "numeric" },
+                                  )
+                                : ""}
+                          </span>
+                        )}
+                      </div>
+                    ),
+                  )}
                   {end < n && (
                     <div
                       aria-hidden="true"
@@ -11619,6 +11632,10 @@ function ProjectDetails({
               </b>
             </div>
             <div className="grid items-start gap-2 grid-cols-2">
+              <span className="text-muted">Members</span>
+              <ProjectMembers projectId={project.id} people={members} />
+            </div>
+            <div className="grid items-start gap-2 grid-cols-2">
               <span className="text-muted">Start date</span>
               <b className="text-[12px] font-medium wrap-break-word">
                 {project.startDate || "Not set"}
@@ -15511,6 +15528,11 @@ const NOTIFICATION_GROUPS = [
         "projectLeadAssigned",
         "Made project lead",
         "Someone makes you the lead of a project.",
+      ],
+      [
+        "projectMemberAdded",
+        "Added to a project",
+        "Someone adds you as a member of a project.",
       ],
       [
         "projectMention",

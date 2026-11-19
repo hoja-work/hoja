@@ -37,7 +37,7 @@ from hoja_server.db import (
 KINDS = ("issueAssigned", "issueMention", "issueComment", "issueStatusChanged",
          "issueUpdated", "issueDecision", "issueCreated",
          "projectUpdatePosted", "projectUpdateReply", "projectMention", "projectLeadAssigned",
-         "projectUpdated", "initiativeUpdatePosted", "initiativeOwnerAssigned",
+         "projectUpdated", "projectMemberAdded", "initiativeUpdatePosted", "initiativeOwnerAssigned",
          "initiativeUpdated", "cycleStarted", "cycleCompleted")
 
 # subject type -> (subscriber table, its subject column, the inbox column)
@@ -257,6 +257,18 @@ def on_project_created(conn, org_id: str, project_id: str, actor_id: str | None,
                        "projectLeadAssigned", ts, data={})
 
 
+def on_project_members_added(conn, org_id: str, project_id: str, actor_id: str | None,
+                             added, ts: str) -> None:
+    """New project members follow the project and are told they were added (the
+    creator adding themself hears nothing; nobody notifies themself)."""
+    added = [uid for uid in added if uid]
+    if not added:
+        return
+    subscribe_subject(conn, org_id, "project", project_id, added)
+    notify_subject(conn, org_id, "project", project_id, actor_id, added,
+                   "projectMemberAdded", ts, data={})
+
+
 def on_project_updated(conn, org_id: str, before: dict, after: dict, actor_id: str | None,
                        ts: str) -> None:
     """A state, target date or lead change reaches the project's subscribers; the new
@@ -358,23 +370,48 @@ def on_initiative_update_posted(conn, org_id: str, initiative_id: str, update_id
 
 # -------------------------------------------------------------------- cycles
 
-def on_cycle_started(conn, org_id: str, cycle_row: dict, team_key: str | None, ts: str) -> None:
+def claim_cycle_event(conn, cycle_id: str, edge: str, ts: str) -> bool:
+    """Stamp a cycle's start or end as announced; True only for the caller that stamped it.
+
+    The cadence rollover and the scheduled sweep (``cycle_events``) can both reach the
+    same edge. The conditional UPDATE lets exactly one of them notify, on both SQLite
+    and PostgreSQL, without a lock held across the two paths.
+    """
+    from hoja_server.db import cycle
+
+    column = {"start": cycle.c.start_notified_at, "end": cycle.c.end_notified_at}[edge]
+    result = conn.execute(cycle.update().where(and_(
+        cycle.c.id == cycle_id, column.is_(None))).values({column.key: ts}))
+    return result.rowcount == 1
+
+
+def on_cycle_started(conn, org_id: str, cycle_row: dict, team_key: str | None, ts: str) -> bool:
     cid = cycle_row["id"]
+    if not claim_cycle_event(conn, cid, "start", ts):
+        return False
     notify_subject(conn, org_id, "cycle", cid, None, subject_subscribers(conn, "cycle", cid),
                    "cycleStarted", ts, data={
                        "name": cycle_row.get("name"), "number": cycle_row.get("number"),
                        "teamKey": team_key, "startsAt": cycle_row.get("starts_at"),
                        "endsAt": cycle_row.get("ends_at")})
+    return True
 
 
 def on_cycle_completed(conn, org_id: str, cycle_row: dict, team_key: str | None,
-                       completed: int, total: int, carried_over: int, ts: str) -> None:
+                       completed: int, total: int, carried_over: int, ts: str,
+                       unfinished: int | None = None) -> bool:
+    """``carried_over`` counts issues the rollover moved on; a cycle that simply ends
+    (no cadence) moves nothing and reports its open issues as ``unfinished``."""
     cid = cycle_row["id"]
+    if not claim_cycle_event(conn, cid, "end", ts):
+        return False
     notify_subject(conn, org_id, "cycle", cid, None, subject_subscribers(conn, "cycle", cid),
                    "cycleCompleted", ts, data={
                        "name": cycle_row.get("name"), "number": cycle_row.get("number"),
                        "teamKey": team_key, "completed": completed, "total": total,
-                       "carriedOver": carried_over})
+                       "carriedOver": carried_over,
+                       "unfinished": total - completed if unfinished is None else unfinished})
+    return True
 
 
 def subject_of(row: dict) -> tuple[str, str] | tuple[None, None]:
