@@ -6249,13 +6249,15 @@ function PulsePage({
     const t = Date.parse(date);
     if (!Number.isFinite(t)) return "Date unavailable";
     const days = Math.max(0, Math.floor((Date.now() - t) / 86400000));
+    const ago = (n: number, unit: string) =>
+      `${n} ${unit}${n === 1 ? "" : "s"} ago`;
     return days < 1
       ? "Today"
       : days < 7
-        ? `${days} day${days === 1 ? "" : "s"} ago`
+        ? ago(days, "day")
         : days < 35
-          ? `${Math.floor(days / 7)} weeks ago`
-          : `${Math.floor(days / 30)} months ago`;
+          ? ago(Math.floor(days / 7), "week")
+          : ago(Math.floor(days / 30), "month");
   };
   const health = (post: PulsePost) => post.health || post.status;
   const views = [
@@ -6450,7 +6452,7 @@ function PulsePage({
                   post.project.targetDate ||
                   post.project.lead?.name) && (
                   <dl
-                    className="grid gap-1.75 mt-0 mr-0 mb-6 ml-0 pl-3 text-(length:--ds-feed-meta-size) border-l-2 border-line shell-wide:col-start-2 shell-wide:row-start-2 shell-wide:self-start shell-wide:mt-0 shell-wide:mb-0 shell-wide:border-l-0 shell-wide:pl-0"
+                    className="grid gap-1.75 mt-0 mr-0 mb-6 ml-0 pl-3 text-(length:--ds-feed-meta-size) border-l-2 border-line shell-wide:col-start-2 shell-wide:row-start-2 shell-wide:self-start shell-wide:mt-4.5 shell-wide:mb-0 shell-wide:border-l-0 shell-wide:pl-0 shell-wide:[&_dt]:w-auto shell-wide:[&_dt]:flex-[0_0_auto]"
                     data-pulse-changes=""
                   >
                     {post.project.lead?.name && (
