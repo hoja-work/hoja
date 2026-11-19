@@ -3980,11 +3980,13 @@ function App() {
       <AgentsSurface
         workspaceName={workspace.name}
         viewerName={viewer.name || viewer.email || "You"}
+        canEnable={Boolean(viewer.admin)}
       />
     ) : view === "Agent detail" ? (
       <AgentsSurface
         workspaceName={workspace.name}
         viewerName={viewer.name || viewer.email || "You"}
+        canEnable={Boolean(viewer.admin)}
       />
     ) : view === "Board" ? (
       <BoardPage
@@ -4699,7 +4701,10 @@ function App() {
                           ))}
                         {[
                           ...items,
-                          ...(section === "primary" && agentsOn
+                          /* Admins always see the entry, so the screens can be found and turned on
+                           * from where they live; the page offers the switch while it is off. */
+                          ...(section === "primary" &&
+                          (agentsOn || viewer.admin)
                             ? ([["Agents", GitBranch]] as [
                                 string,
                                 typeof GitBranch,

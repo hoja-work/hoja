@@ -20,7 +20,8 @@
  */
 
 import { useEffect, useState } from "react";
-import { agentsSurfaceEnabled } from "./flag";
+import { getAgentsAdapter } from "./adapter";
+import { setWorkspaceAgentsEnabled, useAgentsSurfaceEnabled } from "./flag";
 import { AgentDetailPage } from "./AgentDetail";
 import { AgentsPane } from "./AgentsPane";
 import { AuditPane } from "./AuditPane";
@@ -59,11 +60,16 @@ export function parseAgentsRoute(pathname: string): AgentsRoute {
 export function AgentsSurface({
   workspaceName,
   viewerName,
+  canEnable = false,
 }: {
   workspaceName: string;
   viewerName: string;
+  /** The viewer is a workspace admin, so the off page can turn the screens on in place. */
+  canEnable?: boolean;
 }) {
   const [path, setPath] = useState(() => window.location.pathname);
+  // Subscribed, so turning the switch on below redraws this surface at once.
+  const enabled = useAgentsSurfaceEnabled();
 
   useEffect(() => {
     const onPop = () => setPath(window.location.pathname);
@@ -79,7 +85,7 @@ export function AgentsSurface({
 
   /* Fail closed. The flag is read on every render so the geometry test can flip it with one
    * localStorage write, but the default is off and the page says so rather than 404ing. */
-  if (!agentsSurfaceEnabled()) {
+  if (!enabled) {
     return (
       <section
         className="flex flex-col min-w-0 h-full bg-panel"
@@ -104,9 +110,11 @@ export function AgentsSurface({
               Agents are not enabled
             </h2>
             <p>
-              This workspace has not turned the agent surface on. Nothing here
-              reads or writes until it is enabled.
+              {canEnable
+                ? "Turn them on to add agents that take tasks you delegate, run on your own machines and ask you when they need to."
+                : "This workspace has not turned the agent surface on. A workspace admin can turn it on."}
             </p>
+            {canEnable && <EnableAgents />}
           </div>
         </div>
       </section>
@@ -197,5 +205,39 @@ export function AgentsSurface({
       onTab={onTab}
       onOpen={(agent) => go(`${AGENTS_ROOT}/${encodeURIComponent(agent.id)}`)}
     />
+  );
+}
+
+/** One click from "not enabled" to the Agents list: the same switch as Settings -> Workspace. */
+function EnableAgents() {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  return (
+    <div className="mt-4 flex flex-col items-center gap-2">
+      <button
+        type="button"
+        className="inline-flex items-center gap-2 rounded-md bg-foreground px-4 py-2 text-sm font-medium text-panel disabled:opacity-50"
+        disabled={busy}
+        onClick={() => {
+          setBusy(true);
+          setError("");
+          getAgentsAdapter()
+            .enableAgents()
+            .then(() => setWorkspaceAgentsEnabled(true))
+            .catch((e: Error) => setError(e.message))
+            .finally(() => setBusy(false));
+        }}
+      >
+        {busy ? "Turning on…" : "Turn on Agents"}
+      </button>
+      <span className="text-xs text-muted">
+        You can turn them off again in Settings → Workspace.
+      </span>
+      {error && (
+        <span className="text-sm text-danger" role="alert">
+          {error}
+        </span>
+      )}
+    </div>
   );
 }

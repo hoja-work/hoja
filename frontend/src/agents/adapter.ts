@@ -99,6 +99,8 @@ export type AgentsAdapter = {
   answerSession(sessionId: string, body: string, response?: AgentAnswer): Promise<void>;
   /** The run policy fields the setup checklist needs, plus the workspace's teams and secret names. */
   getRunAccess(agentId: string): Promise<RunAccess>;
+  /** Turn the workspace's Agents switch on (admin only; the same mutation as Settings). */
+  enableAgents(): Promise<void>;
   updateRunAccess(agentId: string, patch: {teams?: string[]; secrets?: string[]}): Promise<void>;
   /** Store a named workspace secret. The value is sealed server-side and never read back. */
   setSecret(name: string, value: string): Promise<void>;
@@ -866,6 +868,14 @@ function createGraphqlAdapter(fallback: AgentsAdapter): AgentsAdapter {
       }
     },
 
+    async enableAgents() {
+      const data = await request<{workspaceFeaturesUpdate: {agentsEnabled: boolean}}>(
+        `mutation { workspaceFeaturesUpdate(agentsEnabled: true) { agentsEnabled } }`);
+      if (!data.workspaceFeaturesUpdate?.agentsEnabled) {
+        throw new AgentApiError('ERROR', 'Agents were not turned on.');
+      }
+    },
+
     async getRunAccess(agentId: string) {
       const data = await request<{
         agentPolicy: {teams: string[]; projects: string[]; secrets: string[]} | null;
@@ -1172,6 +1182,7 @@ function createFallbackAdapter(): AgentsAdapter {
     async stopSession() { return serverOnly('stopping a session'); },
     async answerSession() { return serverOnly('answering a session'); },
     async getRunAccess() { return serverOnly('the run policy'); },
+    async enableAgents() { return serverOnly('turning Agents on'); },
     async updateRunAccess() { return serverOnly('saving the run policy'); },
     async setSecret() { return serverOnly('storing a key'); },
     async createSetupTask() { return serverOnly('a setup task'); },

@@ -212,9 +212,10 @@ function AgentRow({
   );
 }
 
-/* `agentMemberCreate`. The form asks for the columns WP04 stores and nothing else — no harness, no
- * owner, no status, because a create that accepted them would be inventing a write the server
- * drops. Errors are the server's own text (name collisions are a real BAD_USER_INPUT). */
+/* `agentMemberCreate`, with the one thing a person must decide: a name. Everything else (where it
+ * works, how it runs, the model and key, a machine) is the setup checklist the agent's page opens
+ * on, which writes each choice where the server keeps it. Capacity, budget, pool and timezone stay
+ * editable on that page; their defaults are the server's. */
 function NewAgentDialog({
   onClose,
   onCreated,
@@ -223,17 +224,17 @@ function NewAgentDialog({
   onCreated: (agent: Agent) => void;
 }) {
   const [name, setName] = useState("");
-  const [capacity, setCapacity] = useState("1");
-  const [credits, setCredits] = useState("");
-  const [model, setModel] = useState("");
-  const [pool, setPool] = useState("");
-  const [timezone, setTimezone] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     nameRef.current?.focus();
-  }, []);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -242,15 +243,16 @@ function NewAgentDialog({
     setBusy(true);
     setError("");
     try {
-      const agent = await getAgentsAdapter().createAgent({
-        name: trimmed,
-        capacity: Number(capacity) || 1,
-        monthlyBudgetCredits: credits.trim() === "" ? null : Number(credits),
-        model: model.trim() || null,
-        runnerPool: pool.trim() || null,
-        timezone: timezone.trim() || null,
-      });
-      onCreated(agent);
+      onCreated(
+        await getAgentsAdapter().createAgent({
+          name: trimmed,
+          capacity: 1,
+          monthlyBudgetCredits: null,
+          model: null,
+          runnerPool: null,
+          timezone: null,
+        }),
+      );
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -260,115 +262,54 @@ function NewAgentDialog({
 
   return (
     <div
-      className="fixed inset-0 overflow-y-auto p-4 z-10 bg-[#0008]"
+      className="fixed inset-0 z-10 flex items-start justify-center overflow-y-auto bg-black/50 p-4"
       role="presentation"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
       <form
-        className="relative mx-auto mt-12 max-w-xl border border-line absolute top-[12%] left-[50%] transform-[translateX(-50%)] w-[min(570px,calc(100%-32px))] pt-6.25 pr-6.25 pb-6.25 pl-6.25 border-solid rounded-[10px] bg-panel shadow-(--shadow)"
+        className="mt-24 flex w-full max-w-md flex-col gap-4 rounded-xl border border-line bg-panel p-6 shadow-lg"
         role="dialog"
         aria-modal="true"
         aria-label="New agent"
         onSubmit={submit}
       >
-        <h2 className="mt-0 mr-0 mb-1 ml-0 text-[15px]">New agent</h2>
-        <p className="text-[12px] text-muted mt-0 mr-0 mb-3 ml-0">
-          An agent is a workspace principal, not a seat: it gets a name and the
-          four limits below.
-        </p>
-        <label className="grid block gap-1.75 mt-3.75 text-[12px] font-semibold mb-2.5">
-          <span className="text-[12px] text-muted">Name</span>
-          <input
-            ref={nameRef}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            required
-            aria-label="Agent name"
-            className="resize-y border border-line text-[13px] shell-phone:min-h-11 pointer-coarse:min-h-11 w-full border-solid rounded-md bg-bg text-foreground pt-1.5 pr-2 pb-1.5 pl-2"
-          />
-        </label>
-        <label className="grid block gap-1.75 mt-3.75 text-[12px] font-semibold mb-2.5">
-          <span className="text-[12px] text-muted">
-            Capacity (concurrent turns)
-          </span>
-          <input
-            type="number"
-            min={1}
-            step={1}
-            value={capacity}
-            onChange={(e) => setCapacity(e.target.value)}
-            aria-label="Capacity"
-            className="resize-y border border-line text-[13px] shell-phone:min-h-11 pointer-coarse:min-h-11 w-full border-solid rounded-md bg-bg text-foreground pt-1.5 pr-2 pb-1.5 pl-2"
-          />
-        </label>
-        <label className="grid block gap-1.75 mt-3.75 text-[12px] font-semibold mb-2.5">
-          <span className="text-[12px] text-muted">
-            Monthly budget (credits, blank for the workspace default)
-          </span>
-          <input
-            type="number"
-            min={0}
-            step={1}
-            value={credits}
-            onChange={(e) => setCredits(e.target.value)}
-            aria-label="Monthly budget credits"
-            className="resize-y border border-line text-[13px] shell-phone:min-h-11 pointer-coarse:min-h-11 w-full border-solid rounded-md bg-bg text-foreground pt-1.5 pr-2 pb-1.5 pl-2"
-          />
-        </label>
-        <label className="grid block gap-1.75 mt-3.75 text-[12px] font-semibold mb-2.5">
-          <span className="text-[12px] text-muted">Model</span>
-          <input
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-            aria-label="Model"
-            placeholder="claude-sonnet-4"
-            className="resize-y border border-line text-[13px] shell-phone:min-h-11 pointer-coarse:min-h-11 w-full border-solid rounded-md bg-bg text-foreground pt-1.5 pr-2 pb-1.5 pl-2"
-          />
-        </label>
-        <label className="grid block gap-1.75 mt-3.75 text-[12px] font-semibold mb-2.5">
-          <span className="text-[12px] text-muted">Runner pool</span>
-          <input
-            value={pool}
-            onChange={(e) => setPool(e.target.value)}
-            aria-label="Runner pool"
-            placeholder="linux-x64"
-            className="resize-y border border-line text-[13px] shell-phone:min-h-11 pointer-coarse:min-h-11 w-full border-solid rounded-md bg-bg text-foreground pt-1.5 pr-2 pb-1.5 pl-2"
-          />
-        </label>
-        <label className="grid block gap-1.75 mt-3.75 text-[12px] font-semibold mb-3">
-          <span className="text-[12px] text-muted">Timezone</span>
-          <input
-            value={timezone}
-            onChange={(e) => setTimezone(e.target.value)}
-            aria-label="Timezone"
-            placeholder="UTC"
-            className="resize-y border border-line text-[13px] shell-phone:min-h-11 pointer-coarse:min-h-11 w-full border-solid rounded-md bg-bg text-foreground pt-1.5 pr-2 pb-1.5 pl-2"
-          />
-        </label>
+        <div className="flex flex-col gap-1">
+          <h2 className="m-0 text-base font-semibold">New agent</h2>
+          <p className="m-0 text-sm text-muted">
+            Give it a name. Next you pick where it works, the model, and the
+            machine it runs on: about two minutes.
+          </p>
+        </div>
+        <input
+          ref={nameRef}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          required
+          aria-label="Agent name"
+          placeholder="e.g. Builder, Triage, Docs"
+          className="w-full rounded-md border border-line bg-bg px-3 py-2 text-base text-foreground shell-phone:min-h-11 pointer-coarse:min-h-11"
+        />
         {error && (
-          <p
-            className="border border-danger/40 mt-4 mr-6 mb-4 ml-6 pt-3 pr-4 pb-3 pl-4 border-solid border-[color-mix(in_srgb,var(--danger)_40%,var(--line))] rounded-lg text-danger text-[13px] bg-[color-mix(in_srgb,var(--danger)_6%,var(--panel))]"
-            role="alert"
-          >
+          <p className="m-0 text-sm text-danger" role="alert">
             {error}
           </p>
         )}
         <div className="flex justify-end gap-2">
           <button
             type="button"
-            className="inline-flex items-center border border-line hover:bg-subtle disabled:cursor-default disabled:opacity-50 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 gap-2 border-solid bg-panel text-foreground rounded-[7px] pt-2 pr-3.5 pb-2 pl-3.5 text-[13px] font-[550] shell-phone:min-w-11! shell-phone:min-h-11!"
+            className="rounded-md border border-line bg-panel px-3 py-2 text-sm text-foreground hover:bg-subtle shell-phone:min-h-11 pointer-coarse:min-h-11"
             onClick={onClose}
           >
             Cancel
           </button>
           <button
             type="submit"
-            className="inline-flex items-center border border-foreground hover:bg-foreground/90 disabled:cursor-default disabled:opacity-50 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 justify-center gap-2 rounded-none bg-[#1b1b1f] text-white pt-2 pr-3.5 pb-2 pl-3.5 font-[650] shadow-none hover:filter-[brightness(1.08)] min-h-11 [transition:background-color_.15s_ease,color_.15s_ease,transform_.15s_ease] tracking-[.01em] hover:not-disabled:bg-[color-mix(in_srgb,var(--accent)_84%,var(--text))] hover:not-disabled:filter-none active:not-disabled:transform-[translateY(1px)] disabled:cursor-wait disabled:opacity-65 [html[data-theme=dark]_&]:text-[#171719] border-solid border-line text-[13px] hover:bg-[#333] border-[#1b1b1f] shell-phone:min-w-11! shell-phone:min-h-11!"
+            className="rounded-md bg-foreground px-4 py-2 text-sm font-medium text-panel disabled:opacity-50 shell-phone:min-h-11 pointer-coarse:min-h-11"
             disabled={busy || !name.trim()}
           >
-            {busy ? "Creating…" : "Create agent"}
+            {busy ? "Creating…" : "Create and set up"}
           </button>
         </div>
       </form>

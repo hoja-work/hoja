@@ -723,12 +723,12 @@ const focusStop = page => page.evaluate(() => {
   await page.getByRole('button', { name: /New agent/ }).first().click();
   await page.waitForSelector('[role="dialog"][aria-label="New agent"]', { timeout: 5000 });
   await page.fill('[role="dialog"][aria-label="New agent"] input[aria-label="Agent name"]', 'Release scribe');
-  await page.fill('[role="dialog"][aria-label="New agent"] input[aria-label="Capacity"]', '3');
   await page.click('[role="dialog"][aria-label="New agent"] button[type="submit"]');
   await page.waitForSelector('[data-surface="agent-detail"] [data-style-hooks~="lin-detail-main"]', { timeout: 15000 });
   const created = (await apiMembers()).find(m => m.user?.name === 'Release scribe');
   ok(Boolean(created), 'create agent: the form wrote an agentMemberCreate the API can read back');
-  ok(created && created.capacity === 3, 'create agent: capacity travelled with the write', String(created && created.capacity));
+  /* The dialog asks only for a name (HOJA-602); limits are set on the agent page afterwards. */
+  ok(created && created.capacity === 1, 'create agent: a new agent starts with the server default capacity', String(created && created.capacity));
   ok(created && created.userId && created.id, 'create agent: the row has its own identity and a delegate target id');
 
   /* Edit through the sidebar, then read it back. */
@@ -1444,7 +1444,10 @@ const focusStop = page => page.evaluate(() => {
   await offPage.waitForTimeout(500);
   ok(await offPage.evaluate(() => Boolean(document.querySelector('[data-surface="agents-disabled"]'))), 'unflagged production build: the surface renders the disabled notice');
   ok(await offPage.evaluate(() => !document.querySelector('[data-surface="agents-list"]')), 'unflagged production build: no agent rows are rendered');
-  ok(await offPage.evaluate(() => ![...document.querySelectorAll('[data-nav-item]')].some(b => b.textContent?.trim() === 'Agents')), 'unflagged production build: no Agents entry in the sidebar');
+  /* An admin keeps the entry while the switch is off, so the screens can be found and turned on
+   * (scripts/test-agents-first-run.cjs proves a member does not get it). */
+  ok(await offPage.evaluate(() => [...document.querySelectorAll('[data-nav-item]')].some(b => b.textContent?.trim() === 'Agents')), 'unflagged production build: an admin still finds Agents in the sidebar');
+  ok(await offPage.evaluate(() => [...document.querySelectorAll('[data-surface="agents-disabled"] button')].some(b => /Turn on Agents/.test(b.textContent || ''))), 'unflagged production build: the off page offers the switch to an admin');
   await offPage.screenshot({ path: path.join(shots, `agents-disabled-${W}.png`) });
   await offCtx.close();
 
