@@ -42,8 +42,9 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
+from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -52,6 +53,7 @@ from starlette.routing import Route
 from hoja_server import agent_policy, audit, tenant_context, usage_ledger
 from hoja_server.db import (
     agent_lease,
+    agent_member,
     agent_session,
     agent_side_effect,
     comment,
@@ -96,6 +98,10 @@ ERROR_UNAUTHORIZED = "unauthorized"
 ERROR_BAD_PARAMS = "bad_params"
 ERROR_FENCE_MISMATCH = "fence_mismatch"
 ERROR_HARNESS_NOT_ALLOWED = "harness_not_allowed"
+# HOJA-712: the attempt names a runner pool this runner is not in. Reported rather
+# than silently skipped, for the same reason ``harness_not_allowed`` is: an empty
+# queue with no explanation is a support ticket.
+ERROR_POOL_NOT_ALLOWED = "pool_not_allowed"
 # WP12: the heartbeat cancel reason when a policy changed under a live lease.
 POLICY_CHANGED = "policy_changed"
 ERROR_CANCEL_NOT_REQUESTED = "cancel_not_requested"
@@ -110,6 +116,11 @@ MIN_LEASE_TTL_S = 4 * HEARTBEAT_INTERVAL_S
 MAX_LEASE_TTL_S = 3600
 REAP_GRACE_S = 20
 REAP_INTERVAL_S = 10
+# HOJA-712: how many reaper ticks pass between automatic-verification sweeps. The
+# finish route schedules verification directly; this is the catch-up for a process
+# that died in between, so a minute of extra latency is affordable and a cross-tenant
+# scan every ten seconds is not.
+VERIFY_SWEEP_TICKS = 6
 
 # Bounded long-poll (T031 step 1) and bounded batches: both are attacker-supplied.
 MAX_POLL_MS = 60_000
@@ -514,20 +525,70 @@ def request_cancel(engine, *, organization_id: str, task_id: str, reason: str = 
 # Granting a lease (T030, T031)
 # ---------------------------------------------------------------------------
 
+# Runner pools (HOJA-712). ``agent_member.runner_pool`` says *where* an agent's work
+# may run; a runner says where it is through the labels it already registers, so no
+# column is added and an operator who already labels a host keeps doing what they do:
+# ``labels = {"pool": "gpu"}``, the same free-form object the schema documents as
+# "pool, host, region". A list of names is accepted for a host that serves two pools.
+# Pool names are compared trimmed and case-insensitively.
+POOL_LABEL = "pool"
 
-def _grantable(conn, org_id: str, harnesses: Sequence[str]) -> dict[str, Any] | None:
+
+def runner_pools(runner_row: Mapping[str, Any]) -> frozenset[str]:
+    """The pools this runner declared at registration. Empty means "no pool declared"."""
+    raw = _json_dict(runner_row.get("labels")).get(POOL_LABEL)
+    names = [raw] if isinstance(raw, str) else (
+        list(raw) if isinstance(raw, (list, tuple)) else [])
+    return frozenset(str(name).strip().lower() for name in names if str(name).strip())
+
+
+def _agent_pool():
+    """Scalar subquery: the pool of the agent member a lease's task is delegated to.
+
+    NULL when the task is not delegated to an agent member, or the member declares no
+    pool. Both mean "any runner", which is the behaviour that existed before pools and
+    is deliberately unchanged — a pool is an extra restriction, never a precondition.
+    """
+    return select(agent_member.c.runner_pool).join(
+        issue, issue.c.delegate_id == agent_member.c.user_id).where(and_(
+            issue.c.id == agent_lease.c.task_id,
+            agent_member.c.organization_id == agent_lease.c.organization_id,
+        )).limit(1).scalar_subquery()
+
+
+def _agent_pool_name():
+    """``_agent_pool`` normalized the way runner labels are: trimmed, folded, empty→NULL."""
+    return func.lower(func.nullif(func.trim(_agent_pool()), ""))
+
+
+def _pool_grantable(pools: frozenset[str]):
+    """Grant only when the agent's pool is unset or matches one this runner declares."""
+    pool = _agent_pool_name()
+    if not pools:
+        return pool.is_(None)
+    return or_(pool.is_(None), pool.in_(sorted(pools)))
+
+
+def _grantable(conn, org_id: str, harnesses: Sequence[str],
+               pools: frozenset[str] = frozenset()) -> dict[str, Any] | None:
     """One queued attempt for a harness this runner declared, or None.
 
     Postgres takes the row lock with ``SKIP LOCKED`` so two runners claiming at
     the same instant take two different tasks instead of colliding; SQLite is
     the single-tenant local mode and serializes on its write lock anyway.
+
+    A pooled agent's attempt is only visible to a runner inside that pool, and that
+    restriction rides on the same statement as the harness filter: it narrows the
+    candidate set *before* the lock, so an out-of-pool runner never holds a row it
+    may not take and ``SKIP LOCKED`` keeps its meaning.
     """
     stmt = select(agent_lease.c.id, agent_lease.c.task_id, agent_lease.c.fence,
                   agent_lease.c.ttl_seconds).where(and_(
         agent_lease.c.organization_id == org_id,
         agent_lease.c.state == LEASE_QUEUED,
         agent_lease.c.harness.in_(list(harnesses)),
-    )).order_by(agent_lease.c.created_at, agent_lease.c.fence).limit(1)
+    )).where(_pool_grantable(pools)
+    ).order_by(agent_lease.c.created_at, agent_lease.c.fence).limit(1)
     if conn.dialect.name == "postgresql":
         stmt = stmt.with_for_update(skip_locked=True)
     return _row(conn, stmt)
@@ -541,6 +602,29 @@ def _refused(conn, org_id: str, harnesses: Sequence[str]) -> list[dict[str, Any]
         agent_lease.c.harness.notin_(list(harnesses)),
     )).limit(10))
     return [{"task_id": row[0], "harness": row[1], "reason": ERROR_HARNESS_NOT_ALLOWED}
+            for row in rows]
+
+
+def _pool_refused(conn, org_id: str, harnesses: Sequence[str],
+                  pools: frozenset[str]) -> list[dict[str, Any]]:
+    """Queued attempts whose agent's pool this runner is not in (HOJA-712).
+
+    Same reason ``_harness_not_allowed`` exists: without it a runner that is one
+    label away from the work sees a permanently empty queue and nothing to read.
+    """
+    if not harnesses:
+        return []
+    pool = _agent_pool_name()
+    conditions = [agent_lease.c.organization_id == org_id,
+                  agent_lease.c.state == LEASE_QUEUED,
+                  agent_lease.c.harness.in_(list(harnesses)),
+                  pool.is_not(None)]
+    if pools:
+        conditions.append(pool.notin_(sorted(pools)))
+    rows = conn.execute(select(agent_lease.c.task_id, agent_lease.c.harness,
+                               pool.label("pool")).where(and_(*conditions)).limit(10)).all()
+    return [{"task_id": row[0], "harness": row[1],
+             "reason": ERROR_POOL_NOT_ALLOWED, "pool": row[2]}
             for row in rows]
 
 
@@ -684,11 +768,12 @@ def _claim_locked(engine, runner_row: Mapping[str, Any]) -> tuple[dict[str, Any]
 
     org_id = runner_row["organization_id"]
     harnesses = _json_list(runner_row.get("harnesses"))
+    pools = runner_pools(runner_row)
     stamp = _now()
     with tenant_context.scoped(org_id), engine.begin() as conn:
         if not harnesses:
             return None, None
-        candidate = _grantable(conn, org_id, harnesses)
+        candidate = _grantable(conn, org_id, harnesses, pools)
         if not candidate:
             return None, None
         verdict = agent_policy.check_lease(conn, org_id, candidate)
@@ -1518,6 +1603,7 @@ def finish_lease(engine, runner_row: Mapping[str, Any], body: Mapping[str, Any],
                 result=json.dumps({"state": state, "summary": summary,
                                    "evidence": dict(evidence),
                                    "session_state": session_state,
+                                   "session_id": session_row["id"] if session_row else None,
                                    "external_ref": ack_effect.get("external_ref")},
                                   sort_keys=True, default=str),
             ))
@@ -1541,7 +1627,8 @@ def finish_lease(engine, runner_row: Mapping[str, Any], body: Mapping[str, Any],
         engine, lease, reason=(connect_api.CLOSE_LEASE_CANCELED if state == "canceled"
                               else connect_api.CLOSE_LEASE_FINISHED))
     return _finish_ack({**lease, "finish_state": state, "finish_key": key},
-                       ack_effect, duplicate=False, key=key, session_state=session_state)
+                       ack_effect, duplicate=False, key=key, session_state=session_state,
+                       session_id=session_row["id"] if session_row else None)
 
 
 def _lease_actor_of(engine, lease: Mapping[str, Any]) -> tuple[str, str]:
@@ -1550,7 +1637,8 @@ def _lease_actor_of(engine, lease: Mapping[str, Any]) -> tuple[str, str]:
 
 
 def _finish_ack(lease: Mapping[str, Any], effect: Mapping[str, Any], *, duplicate: bool,
-                key: str, session_state: str | None = None) -> dict[str, Any]:
+                key: str, session_state: str | None = None,
+                session_id: str | None = None) -> dict[str, Any]:
     stored = _json_dict(lease.get("result"))
     return {
         "accepted": True,
@@ -1561,6 +1649,9 @@ def _finish_ack(lease: Mapping[str, Any], effect: Mapping[str, Any], *, duplicat
         # replayed finish whose primary effect (the claim) carries no reference.
         "external_ref": effect.get("external_ref") or stored.get("external_ref"),
         "session_state": session_state or stored.get("session_state"),
+        # Additive: the session this claim opened, so the caller can name the run it
+        # just finished. A runner that ignores it is unaffected.
+        "session_id": session_id or stored.get("session_id"),
     }
 
 
@@ -1693,8 +1784,34 @@ def reap_expired_leases(engine, *, now: datetime | None = None,
 
 
 async def run_reaper_forever(engine, *, interval_s: int = REAP_INTERVAL_S) -> None:
-    """The scheduled reaper, run in system context like the webhook worker."""
+    """The scheduled reaper, run in system context like the webhook worker.
+
+    HOJA-712 adds the second half of a tick: a claim under verification with nobody
+    judging it. The same loop is the right home for it — this is the one task that
+    already runs on Hoja's own clock in every deployment, whatever else is configured,
+    so a verdict does not depend on a runner retrying anything or on the optional DBOS
+    process existing. Verification goes first: a claim being judged is not a lost run,
+    and judging it before the expiry sweep keeps the two from describing the same
+    attempt differently.
+
+    The sweep is a catch-up, not the primary trigger (the finish route schedules the
+    same idempotent call directly), so it runs once every ``VERIFY_SWEEP_TICKS`` ticks
+    rather than on every one: it looks for rows across every tenant and nothing
+    indexes "verifying and unjudged", which is the one thing a 60-second cadence can
+    pay for and a 10-second one cannot.
+    """
+    from hoja_server import agent_autoverify
+
+    tick = 0
     while True:
+        if tick % VERIFY_SWEEP_TICKS == 0:
+            try:
+                judged = await run_in_threadpool(agent_autoverify.verify_pending, engine)
+                if judged:
+                    LOG.info("judged %d unverified claim(s)", len(judged))
+            except Exception:
+                LOG.warning("automatic verification sweep failed", exc_info=True)
+        tick += 1
         try:
             reaped = await run_in_threadpool(reap_expired_leases, engine)
             if reaped:
@@ -1828,8 +1945,24 @@ def runner_routes(engine) -> list[Route]:
         except LeaseRequestError as rejected:
             return rejected.response()
         body = await _json_body(request)
-        return await run_in_threadpool(_run, lambda: JSONResponse(
-            finish_lease(engine, runner_row, body, request)))
+        ack = await run_in_threadpool(
+            _run, lambda: finish_lease(engine, runner_row, body, request))
+        if not isinstance(ack, Mapping):
+            # ``_run`` answered with a refusal response; it is already the answer.
+            return ack
+        response = JSONResponse(ack)
+        # HOJA-712: the verifier runs *after* this response is written, so a runner's
+        # finish never waits on a verdict. The reaper's sweep is the retry if this
+        # process dies first; both entries call the same idempotent function.
+        from hoja_server import agent_autoverify, agent_sessions
+
+        if (ack.get("session_id")
+                and ack.get("session_state") == agent_sessions.VERIFYING
+                and agent_autoverify.enabled()):
+            response.background = BackgroundTask(
+                agent_autoverify.verify_after_finish, engine,
+                runner_row["organization_id"], str(ack["session_id"]))
+        return response
 
     async def effect(request: Request) -> JSONResponse:
         try:
@@ -1883,4 +2016,6 @@ def _refused_for(engine, runner_row: Mapping[str, Any]) -> list[dict[str, Any]]:
     harnesses = _json_list(runner_row.get("harnesses"))
     with tenant_context.scoped(runner_row["organization_id"]), engine.connect() as conn:
         return _refused(conn, runner_row["organization_id"], harnesses) + \
+            _pool_refused(conn, runner_row["organization_id"], harnesses,
+                          runner_pools(runner_row)) + \
             _policy_refused(conn, runner_row["organization_id"], harnesses)

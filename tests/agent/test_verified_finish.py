@@ -82,6 +82,12 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setenv("HOJA_SECRET_KEY", "verified-finish-master")
     monkeypatch.setenv("HOJA_LEASE_REAPER", "0")
     monkeypatch.setenv("HOJA_WEBHOOK_WORKER", "0")
+    # HOJA-712 made the platform run the verifier itself when a claim arrives. These
+    # tests are about the *mutation* path — one person's verdict, its separation rules
+    # and the one row it writes — so the automatic path is switched off here for the
+    # same reason the reaper and the webhook worker are: each test measures one thing.
+    # tests/agent/test_auto_verify_and_pools.py covers the automatic path with it on.
+    monkeypatch.setenv("HOJA_AUTO_VERIFY", "0")
     monkeypatch.delenv(agent_verify.LIVE_REVISION_ENV, raising=False)
     engine, kwargs = rls_mode.workspace(tmp_path, "verified-finish")
     seeded = seed_tenant(engine, org_name="Verifying", org_url_key="verifying",

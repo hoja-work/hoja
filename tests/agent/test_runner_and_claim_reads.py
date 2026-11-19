@@ -63,6 +63,10 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setenv("HOJA_SECRET_KEY", "runner-read-master")
     monkeypatch.setenv("HOJA_LEASE_REAPER", "0")
     monkeypatch.setenv("HOJA_WEBHOOK_WORKER", "0")
+    # These tests read the claim queue and then sign a claim by hand; HOJA-712's
+    # automatic verifier would have signed it first and the queue would no longer show
+    # an unjudged row. Its own behaviour is covered by test_auto_verify_and_pools.py.
+    monkeypatch.setenv("HOJA_AUTO_VERIFY", "0")
     engine, kwargs = rls_mode.workspace(tmp_path, "runner-read")
     alpha = seed_tenant(engine, org_name="Alpha", org_url_key="alpha",
                         user_email="admin@alpha.test", token="alpha-tok", demo_issues=False)
