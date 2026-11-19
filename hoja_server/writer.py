@@ -30,7 +30,6 @@ from hoja_server.db import (
     issue_label_link,
     issue_subscriber,
     org_links,
-    meeting,
     new_id,
     now_iso,
     organization,
@@ -578,9 +577,6 @@ class Writer:
             conn.execute(cycle.delete().where(cycle.c.team_id == team_id))
             # Projects are workspace-level: deleting a team only drops its link to them.
             conn.execute(project_team.delete().where(project_team.c.team_id == team_id))
-            # Meetings belong to their host, so they survive with their team scope cleared.
-            conn.execute(meeting.update().where(meeting.c.team_id == team_id)
-                         .values(team_id=None, updated_at=now_iso()))
             conn.execute(team_member.delete().where(team_member.c.team_id == team_id))
             conn.execute(issue_label.delete().where(issue_label.c.team_id == team_id))
             conn.execute(workflow_state.delete().where(workflow_state.c.team_id == team_id))

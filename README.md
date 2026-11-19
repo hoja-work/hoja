@@ -233,7 +233,7 @@ Contributor and agent operations are in
 - [Design](https://github.com/hoja-work/hoja/blob/main/docs/DESIGN.md) — product and architecture.
 - [Deployment](https://github.com/hoja-work/hoja/blob/main/docs/DEPLOYMENT.md) — databases, migrations, readiness, tokens and release publishing.
 - [Remote MCP](https://github.com/hoja-work/hoja/blob/main/docs/hoja-mcp.md) — the experimental OAuth-protected remote server; the stdio server is covered above.
-- [Cycle metrics](https://github.com/hoja-work/hoja/blob/main/docs/cycle-metrics.md) and [meetings](https://github.com/hoja-work/hoja/blob/main/docs/meetings.md).
+- [Cycle metrics](https://github.com/hoja-work/hoja/blob/main/docs/cycle-metrics.md).
 - [Changelog](https://github.com/hoja-work/hoja/blob/main/CHANGELOG.md) — release-level behavior changes.
 
 ## First run in the browser

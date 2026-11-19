@@ -1,6 +1,0 @@
-/* Keyframes and global mobile font guard; component styles live in JSX utilities. */
-@keyframes mt-slide{from{transform:translateX(24px);opacity:0}to{transform:none;opacity:1}}
-@keyframes mt-rise{from{transform:translateY(10px);opacity:0}to{transform:none;opacity:1}}
-@keyframes mt-drop{from{transform:translate(-50%,-14px);opacity:0}to{transform:translate(-50%,0);opacity:1}}
-@keyframes mt-pulse{0%{box-shadow:0 0 0 0 #16a34a66}100%{box-shadow:0 0 0 14px #16a34a00}}
-@media (max-width:700px),(max-width:1000px) and (max-height:500px){input,select,textarea{font-size:16px!important}}

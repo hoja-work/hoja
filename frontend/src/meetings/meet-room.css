@@ -1,2 +1,0 @@
-/* Keyframes and global mobile font guard; component styles live in JSX utilities. */
-@keyframes mr-float{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(-52vh)}}

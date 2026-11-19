@@ -69,7 +69,6 @@ import {
   List as ListIcon,
   PanelLeftClose,
   PanelLeftOpen,
-  Video,
 } from "lucide-react";
 import { MorphIcon } from "morphicons/react";
 import { layoutIcon, listIcon } from "./icons";
@@ -162,7 +161,6 @@ import {
   useIssueSelect,
   useSyncMeta,
 } from "./sync";
-import { MeetingsPage } from "./meetings/MeetingsPage";
 import { SignupPage } from "./signup/SignupPage";
 import { SetupWizard } from "./setup/SetupWizard";
 import { createCloudAdapter } from "./setup/cloudAdapter";
@@ -170,11 +168,10 @@ import { loadDraft } from "./setup/draft";
 import { BillingUsageSettings } from "./settings/billing/usage";
 
 const setupAdapter = createCloudAdapter();
-import { MeetingNotifier, MeetingBadge } from "./meetings/Notifier";
 import { InboxPage } from "./inbox/InboxPage";
 import { FollowButton } from "./inbox/follow";
 import { useInboxUnread, useInboxUnreadSync } from "./inbox/model";
-/** Unread task notifications beside the sidebar's Inbox item, styled like the Meetings badge. */
+/** Unread task notifications beside the sidebar's Inbox item, styled like the Inbox badge. */
 function InboxBadge() {
   const n = useInboxUnread();
   if (!n) return null;
@@ -184,7 +181,6 @@ function InboxBadge() {
     </em>
   );
 }
-import { MeetStandalone } from "./meetings/MeetRoom";
 import {
   GraphTeamCycles,
   GraphCycleDetail,
@@ -443,7 +439,6 @@ const sections = [
       ["Reviews", MessageCircle],
       ["Pulse", Zap],
       ["Inbox", Inbox],
-      ["Meetings", Video],
       ["Agent", Bot],
     ],
   ],
@@ -480,7 +475,6 @@ const SHELL_VIEWS = new Set([
   "My issues",
   "Pulse",
   "Inbox",
-  "Meetings",
   "Agent",
   "Agents",
   "Reviews",
@@ -3886,8 +3880,6 @@ function App() {
           Back to projects
         </button>
       </section>
-    ) : view === "Meetings" ? (
-      <MeetingsPage key={workspace.id} viewer={viewer} onNavigate={navigate} />
     ) : view === "Inbox" ? (
       <InboxPage
         key={workspace.id}
@@ -4725,7 +4717,6 @@ function App() {
                                 ? "Saved views"
                                 : label}
                             </span>
-                            {label === "Meetings" && <MeetingBadge />}
                             {label === "Inbox" && <InboxBadge />}
                           </button>
                         ))}
@@ -4832,7 +4823,6 @@ function App() {
             )}
           </main>
         </div>
-        <MeetingNotifier />
         {projectOpen && (
           <NewProject
             teams={teams}
@@ -10547,7 +10537,7 @@ function NewIssue({
 }
 createRoot(document.getElementById("root")!).render(
   <>
-    {/^\/meet(\/|$)/.test(location.pathname) ? <MeetStandalone /> : <App />}
+    <App />
     <DialogHost />
     <ReactGrabDev />
   </>,

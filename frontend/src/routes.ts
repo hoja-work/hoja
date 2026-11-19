@@ -10,7 +10,7 @@
 export const KNOWN_WORKSPACE_PAGES = [
   'my-issues', 'inbox', 'pulse', 'agent', 'initiatives', 'projects', 'views', 'board',
   'cycles', 'members', 'team', 'settings', 'issue', 'task', 'project', 'cycle', 'favorite-views',
-  'more', 'meetings',, 'reviews', 'agents',
+  'more', 'reviews', 'agents',
 ];
 
 export function routeView(path: string): string {
@@ -29,7 +29,6 @@ export function routeView(path: string): string {
   // Workspace settings. Only reached when no team-scoped route matched.
   if (p.includes('/settings')) return 'Settings';
 
-  if (p.startsWith('/workspace/meetings')) return 'Meetings';
   if (p.includes('/issue/') || p.includes('/task/')) return 'Issue detail';
   if (p.includes('/project/') && p.includes('/view/')) return 'Project view';
   if (p.includes('/project/')) return 'Project detail';

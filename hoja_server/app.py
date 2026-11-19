@@ -61,7 +61,6 @@ from hoja_server import (
     tenant_hosts,
     uploads,
 )
-from hoja_server.cloudflare_realtime import CloudflareRealtime
 from hoja_server.connect_api import connect_routes
 from hoja_server.connectors_api import connector_binding_for, connector_routes
 from hoja_server.db import (
@@ -93,8 +92,6 @@ from hoja_server.db import (
 )
 from hoja_server.denials import DENY_HINT, READ_ONLY_HINT, hint_for, read_only_violation
 from hoja_server.deployment import single_org_mode
-from hoja_server.meetings import MeetingService
-from hoja_server.meetings_api import MeetingHub, meeting_routes
 from hoja_server.resolvers import build_schema
 from hoja_server.runner_api import runner_routes
 from hoja_server.secrets_box import SecretBoxError
@@ -453,7 +450,6 @@ def create_app(
     open_mode: bool | None = None,
     trusted_proxy_cidrs: str | None = None,
     trusted_public_host: str | None = None,
-    meeting_sfu: object = "env",
 ) -> Starlette:
     target = resolve_database_target(database_url=database_url, db_path=db_path, tenant=tenant)
     engine = make_engine(target)
@@ -475,9 +471,6 @@ def create_app(
     default_slots = 8 if engine.dialect.name == "sqlite" else 24
     gql_slots = asyncio.Semaphore(int(os.environ.get("HOJA_GRAPHQL_CONCURRENCY", default_slots)))
     hub = realtime.RealtimeHub(store)
-    meeting_service = MeetingService(engine)
-    meeting_hub = MeetingHub(meeting_service)
-    sfu = CloudflareRealtime.from_env() if meeting_sfu == "env" else meeting_sfu
     issue_snapshots = sync.SingleFlightCache(8)
     body_snapshots = sync.SingleFlightCache(32)
     org_slots = org_limits.OrgConcurrency()
@@ -3277,7 +3270,6 @@ def create_app(
         asyncio.get_running_loop().set_default_executor(
             ThreadPoolExecutor(max_workers=32, thread_name_prefix="hoja"))
         await hub.ensure_started()
-        meeting_hub.start()
         maintenance = asyncio.create_task(_sqlite_maintenance()) if engine.dialect.name == "sqlite" else None
         # The lease reaper (WP07 T033): Hoja's own clock decides when a run is
         # lost. It never asks a runner or the DBOS process whether it is alive,
@@ -3324,9 +3316,6 @@ def create_app(
             else:
                 yield
         await hub.stop()
-        await meeting_hub.close_all()
-        if sfu is not None:
-            await sfu.aclose()
         if maintenance is not None:
             maintenance.cancel()
         if lease_reaper is not None:
@@ -3361,10 +3350,6 @@ def create_app(
             # token and the same lease fence as the routes above; a separate
             # module only so the two work packages do not edit one file.
             *connect_routes(engine),
-            *meeting_routes(
-                engine, meeting_service, meeting_hub, auth=_auth,
-                csrf=lambda request: _cookie_csrf_error(request, json_only=True),
-                read_json=_read_json_object, client_ip=_client_ip, same_origin=_same_origin, sfu=sfu),
             WebSocketRoute("/ws", realtime_socket),
             Route("/signin", sign_in_entry, methods=["GET"]),
             Route("/signin/signout", sign_in_signout, methods=["GET"]),
@@ -3428,7 +3413,6 @@ def create_app(
         lifespan=lifespan,
     )
     app.state.realtime = hub
-    app.state.meetings = meeting_hub
     app.add_middleware(_SecurityHeaders)
     # Compress JSON and static assets; SSE streams are excluded by Starlette.
     app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)

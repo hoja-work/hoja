@@ -361,7 +361,7 @@ def test_revision_78_rebuilds_a_revision_77_sqlite_table_and_keeps_its_triggers(
     assert not {c["name"]: c for c in inspect(engine).get_columns("inbox_notification")}["issue_id"]["nullable"]
     for _ in range(2):  # a replayed deploy is a no-op
         migrate(engine)
-        assert db_module.applied_schema_revision(engine) == db_module.CURRENT_SCHEMA_REVISION == 78
+        assert db_module.applied_schema_revision(engine) == db_module.CURRENT_SCHEMA_REVISION == 79
     columns = {c["name"]: c for c in inspect(engine).get_columns("inbox_notification")}
     assert columns["issue_id"]["nullable"] and set(db_module._INBOX_SUBJECT_COLUMNS) <= set(columns)
     index_names = {i["name"] for i in inspect(engine).get_indexes("inbox_notification")}

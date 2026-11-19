@@ -25,7 +25,7 @@ describe real deltas rather than a greenfield design:
 | Surface | What exists now | Gap |
 | --- | --- | --- |
 | Web Inbox | `/workspace/inbox` lists `inboxNotifications`, shows unread counts, marks one/all read, archives, paginates, and has empty and error states (`app/frontend/src/main.tsx`, `InboxPage`) | No workspace/project grouping, no swipe actions, no undo, no archived view |
-| Notification records | `inbox_notification` rows with `kind`, `issue_id`, `actor_id`, `read_at`, `archived_at` (`app/hoja_server/db.py`) | Only `issueCreated` and `issueUpdated` are written; no comment, mention, due-date, or meeting events |
+| Notification records | `inbox_notification` rows with `kind`, `issue_id`, `actor_id`, `read_at`, `archived_at` (`app/hoja_server/db.py`) | Only `issueCreated` and `issueUpdated` are written; no comment, mention, or due-date events |
 | Recipients | Assignee and creator of a task, excluding the actor (`_notify_issue_recipients`, `app/hoja_server/writer.py`) | No follower/subscriber model in the notification path |
 | Preferences | `myNotificationPreferences` with two global booleans, `issueCreated` and `issueUpdated` (`app/hoja_server/resolvers.py`, `store.py`) | No per-workspace scope, no push/email columns, no quiet hours |
 | Mobile app | Expo app with a connection screen, task list, task detail, status sheet, and account screen (`mobile/app/`); the credential is a workspace-scoped API key and there is no workspace switcher (`mobile/docs/vertical-slice-contract.md`) | No Inbox, no preference UI, no notification client; cross-workspace grouping has nothing to group yet |
@@ -148,7 +148,6 @@ heads-up), `low` (no sound, no status bar), `silent` (in-app only).
 | `issue.status_changed` | Status changes on a task I follow | Assignee, creator, followers | Yes | Yes, `updates` | Off | Normal, 24 hours |
 | `issue.priority_changed` | Priority becomes urgent or high on a task I follow | Assignee, creator | Yes | Yes, `updates` | Off | Normal, 24 hours |
 | `issue.due_soon` | Due date is within 24 hours or has passed | Assignee | Yes | Yes, `reminders` | Off | Normal, until due + 1 day |
-| `meeting.invite` | I am invited to a meeting | Invitee | Yes | Yes, `reminders` | Opt-in | Urgent, until meeting start |
 | `project.update` | A project I follow gets a status update | Project members | Yes | No; digest | Off | Low, daily digest |
 | `cycle.boundary` | A team cycle starts or ends | Team members | Yes | No; digest | Off | Low, daily digest |
 | `security.new_device` | A new device or API key is used for my account | Account owner | Yes | Yes, `security` | Yes | Urgent, 1 hour |
@@ -191,7 +190,7 @@ versioned contract.
 | `assignments` | Assignments | `IMPORTANCE_HIGH` | Candidate | `issue.assigned`, `issue.created_for_me` |
 | `mentions` | Mentions and replies | `IMPORTANCE_HIGH` | Candidate | `comment.mention` |
 | `updates` | Task updates | `IMPORTANCE_DEFAULT` | No | Comments on followed tasks, status and priority changes |
-| `reminders` | Reminders and meetings | `IMPORTANCE_DEFAULT` | No | Due-soon and meeting invitations; time-sensitive escalation needs a separate product decision |
+| `reminders` | Reminders | `IMPORTANCE_DEFAULT` | No | Due-soon reminders; time-sensitive escalation needs a separate product decision |
 | `digests` | Digests | `IMPORTANCE_LOW` | No, no status bar | Project updates and cycle boundaries |
 | `security` | Account security | `IMPORTANCE_HIGH` | Candidate | New device or API key |
 

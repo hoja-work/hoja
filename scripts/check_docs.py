@@ -43,7 +43,6 @@ DURABLE_DOCS = {
     "docs/hoja-mcp.md",
     "docs/extensions.md",
     "docs/webhooks.md",
-    "docs/meetings.md",
     "docs/decisions.md",
     "docs/github-linking.md",
     "docs/hierarchy-rendering.md",

@@ -109,6 +109,6 @@ def test_revision_76_adds_the_column_to_a_revision_75_database_and_replays(tmp_p
     assert "agents_enabled" not in {c["name"] for c in inspect(engine).get_columns("organization")}
     for _ in range(2):
         db_module.migrate(engine)
-        assert db_module.applied_schema_revision(engine) == db_module.CURRENT_SCHEMA_REVISION == 78
+        assert db_module.applied_schema_revision(engine) == db_module.CURRENT_SCHEMA_REVISION == 79
     with engine.connect() as conn:
         assert conn.execute(text("SELECT agents_enabled FROM organization WHERE id='o1'")).scalar() is None
