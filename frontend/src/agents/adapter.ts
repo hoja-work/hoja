@@ -230,7 +230,7 @@ async function request<T>(query: string, variables?: Record<string, unknown>): P
 const AGENT_FIELDS = `{
   id userId capacity monthlyBudgetCredits workingHours timezone model runnerPool
   archivedAt createdAt updatedAt
-  user { id name displayName }
+  user { id name avatarSeed displayName }
 }`;
 
 type ServerAgent = {
@@ -426,7 +426,7 @@ function fromSession(row: ServerSession, agent?: {id: string; name: string}): Ag
  * read per page, not one per row. */
 async function membersByUserId(): Promise<Map<string, {id: string; name: string}>> {
   const data = await request<{agentMembers: {id: string; userId: string; user: {name: string | null; displayName: string | null} | null}[]}>(
-    `query SessionAgents { agentMembers { id userId user { id name displayName } } }`);
+    `query SessionAgents { agentMembers { id userId user { id name avatarSeed displayName } } }`);
   const byUser = new Map<string, {id: string; name: string}>();
   for (const row of data.agentMembers || []) {
     byUser.set(row.userId, {id: row.id, name: row.user?.name || row.user?.displayName || row.userId});
@@ -770,7 +770,7 @@ function createGraphqlAdapter(fallback: AgentsAdapter): AgentsAdapter {
 
     async listAgentChoices() {
       const data = await request<{agentMembers: ServerAgent[]}>(
-        `query AgentChoices { agentMembers { id userId archivedAt user { id name displayName } } }`);
+        `query AgentChoices { agentMembers { id userId archivedAt user { id name avatarSeed displayName } } }`);
       return (data.agentMembers || [])
         .filter(row => !row.archivedAt)
         .map(row => ({id: row.userId, name: row.user?.name || row.user?.displayName || row.userId}));

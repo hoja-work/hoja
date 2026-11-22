@@ -144,7 +144,7 @@ export type LinIssue = Omit<Issue, "subscribers"> & {
   branchName?: string | null;
   url?: string | null;
   parent?: { id: string; identifier: string; title: string } | null;
-  subscribers?: { nodes: { id: string; name?: string; avatarUrl?: string }[] };
+  subscribers?: { nodes: { id: string; name?: string; avatarUrl?: string; avatarSeed?: string | null }[] };
   attachments?: { nodes: LinAttachment[] };
   githubLinks?: LinGithubLink[];
   activity?: { nodes: IssueActivityEvent[] };
@@ -152,7 +152,7 @@ export type LinIssue = Omit<Issue, "subscribers"> & {
   decisions?: IssueDecision[];
 };
 
-export const linIssueFields = `{ id identifier title description createdAt updatedAt stateChangedAt dueDate priority priorityLabel estimate branchName url decisionNeeded sla { state resolutionDueAt firstResponseDueAt firstRespondedAt breachedAt overdueMinutes pausedMinutes cycleEndsAt } state { id name color type } team { id key name } project { id name } assignee { id name } creator { id name } cycle { id name number } parent { id identifier title } labels { nodes { id name color } } }`;
+export const linIssueFields = `{ id identifier title description createdAt updatedAt stateChangedAt dueDate priority priorityLabel estimate branchName url decisionNeeded sla { state resolutionDueAt firstResponseDueAt firstRespondedAt breachedAt overdueMinutes pausedMinutes cycleEndsAt } state { id name color type } team { id key name } project { id name } assignee { id name avatarSeed } creator { id name avatarSeed } cycle { id name number } parent { id identifier title } labels { nodes { id name color } } }`;
 
 /* ---------------- filter + display models ---------------- */
 
@@ -406,7 +406,7 @@ const FILTER_UNAVAILABLE = [
 export type FilterTeam = {
   id: string;
   states: { nodes: IssueState[] };
-  members?: { nodes: { id: string; name: string; email?: string }[] };
+  members?: { nodes: { id: string; name: string; email?: string; avatarSeed?: string | null }[] };
 };
 
 export function FilterMenu({
@@ -730,7 +730,7 @@ export function FilterMenu({
                         gap: 8,
                       }}
                     >
-                      <Avatar name={m.name} size={18} />
+                      <Avatar name={m.name} seed={m.avatarSeed} size={18} />
                       {m.name || m.email}
                     </span>,
                   ),
@@ -749,7 +749,7 @@ export function FilterMenu({
                       gap: 8,
                     }}
                   >
-                    <Avatar name={m.name} size={18} />
+                    <Avatar name={m.name} seed={m.avatarSeed} size={18} />
                     {m.name || m.email}
                   </span>,
                 ),
@@ -809,7 +809,7 @@ export function FilterMenu({
                       gap: 8,
                     }}
                   >
-                    <Avatar name={m.name} size={18} />
+                    <Avatar name={m.name} seed={m.avatarSeed} size={18} />
                     {m.name || m.email}
                   </span>,
                 ),
@@ -1554,7 +1554,7 @@ export type IssueRowModel = {
   project?: { id: string; name: string } | null;
   cycle?: { id: string; name?: string; number?: number } | null;
   dueDate?: string | null;
-  assignee?: { id: string; name?: string } | null;
+  assignee?: { id: string; name?: string; avatarSeed?: string | null } | null;
   createdAt?: string | null;
   updatedAt?: string | null;
   /** The clock this row's task runs against, when a policy covers it. */
@@ -1806,7 +1806,7 @@ export const IssueRow = memo(function IssueRow({
         {p.dueDate && issue.dueDate && <DueChip iso={issue.dueDate} />}
         {p.assignee &&
           (issue.assignee ? (
-            <Avatar name={issue.assignee.name} />
+            <Avatar name={issue.assignee.name} seed={issue.assignee.avatarSeed} />
           ) : (
             <span
               className={styleClasses(
@@ -1969,7 +1969,7 @@ const BoardCard = memo(function BoardCard({
             aria-label={`Assignee of ${issue.identifier}: ${issue.assignee?.name || "Unassigned"}`}
             onClick={toggle("assignee")}
           >
-            <Avatar name={issue.assignee?.name} size={18} />
+            <Avatar name={issue.assignee?.name} seed={issue.assignee?.avatarSeed} size={18} />
           </button>
           {menu === "assignee" && (
             <LinMenu
@@ -1995,7 +1995,7 @@ const BoardCard = memo(function BoardCard({
                 ...members.map((m) => ({
                   key: m.id,
                   label: m.name || m.email || "Member",
-                  icon: <Avatar name={m.name} size={16} />,
+                  icon: <Avatar name={m.name} seed={m.avatarSeed} size={16} />,
                   onSelect: () => void run({ assigneeId: m.id }),
                 })),
               ]}
@@ -2894,7 +2894,7 @@ function BulkBar({
                           title={m.name || m.email}
                           onClick={() => void run(() => ({ assigneeId: m.id }))}
                         >
-                          <Avatar name={m.name} size={18} />
+                          <Avatar name={m.name} seed={m.avatarSeed} size={18} />
                           <span
                             className={styleClasses(
                               "flex-1 overflow-hidden text-ellipsis whitespace-nowrap",
@@ -4218,15 +4218,15 @@ export function attachmentKind(a: {
 }
 
 // canEdit/canDelete come from the server's comment policy; the UI never re-derives them.
-const commentFields = `{id body createdAt editedAt canEdit canDelete user{id name}}`;
+const commentFields = `{id body createdAt editedAt canEdit canDelete user{id name avatarSeed}}`;
 const detailFields = `{ id identifier title description createdAt updatedAt dueDate priority priorityLabel estimate branchName url
-  state{id name color type} team{id key name} project{id name} assignee{id name} delegate{id name} delegateId creator{id name}
+  state{id name color type} team{id key name} project{id name} assignee{id name avatarSeed} delegate{id name avatarSeed} delegateId creator{id name avatarSeed}
   cycle{id name number} parent{id identifier title}
   sla{state resolutionDueAt firstResponseDueAt firstRespondedAt breachedAt overdueMinutes pausedMinutes cycleEndsAt retargetedAt startedAt policy{id name}}
-  labels{nodes{id name color}} subscribers{nodes{id name}}
+  labels{nodes{id name color}} subscribers{nodes{id name avatarSeed}}
   attachments{nodes{id url title subtitle contentType createdAt}}
   githubLinks{id kind externalId url title state author sha environment createdAt}
-  activity(first:50){nodes{id eventType createdAt actor{name} changes}}
+  activity(first:50){nodes{id eventType createdAt actor{name avatarSeed} changes}}
   decisionNeeded
   decisions(first:20){${decisionFields}}
   comments{nodes${commentFields}} }`;
@@ -4472,7 +4472,7 @@ function mergeIssueView(
 function describeEvent(
   e: {
     eventType: string;
-    actor?: { name?: string };
+    actor?: { name?: string; avatarSeed?: string | null };
     changes?: Record<string, unknown>;
   },
   states: IssueState[],
@@ -6006,7 +6006,7 @@ export function GraphIssueDetail({
                         <LabelChip key={l.id} label={l} />
                       ))}
                       {s.assignee && (
-                        <Avatar name={s.assignee.name} size={18} />
+                        <Avatar name={s.assignee.name} seed={s.assignee.avatarSeed} size={18} />
                       )}
                       <IconBtn
                         label={`Open sub-task ${s.identifier}`}
@@ -6396,7 +6396,7 @@ export function GraphIssueDetail({
                     )}
                   >
                     {(detail.subscribers?.nodes || []).slice(0, 5).map((s) => (
-                      <Avatar key={s.id} name={s.name} size={20} />
+                      <Avatar key={s.id} name={s.name} seed={s.avatarSeed} size={20} />
                     ))}
                   </span>
                 </header>
@@ -6411,7 +6411,7 @@ export function GraphIssueDetail({
                         "lin-event flex gap-[10px] items-start text-[13px] text-muted py-[7px] px-0 [&_b]:text-foreground [&_b]:font-semibold [&_time]:ml-auto [&_time]:flex-none [&_time]:text-[12px]",
                       )}
                     >
-                      <Avatar name={e.actor?.name} size={18} />
+                      <Avatar name={e.actor?.name} seed={e.actor?.avatarSeed} size={18} />
                       <span>
                         <b>{e.actor?.name || "Someone"}</b>{" "}
                         {describeEvent(e, states).replace(
@@ -6456,7 +6456,7 @@ export function GraphIssueDetail({
                       }
                     >
                       <header>
-                        <Avatar name={c.user?.name} size={18} />
+                        <Avatar name={c.user?.name} seed={c.user?.avatarSeed} size={18} />
                         <b>{c.user?.name || "User"}</b>
                         <time>
                           {editedComments[c.id] !== undefined
@@ -6596,7 +6596,7 @@ export function GraphIssueDetail({
                       aria-busy="true"
                     >
                       <header>
-                        <Avatar name={viewer.name} size={18} />
+                        <Avatar name={viewer.name} seed={viewer.avatarSeed} size={18} />
                         <b>{viewer.name || "You"}</b>
                         <time>Sending…</time>
                       </header>
@@ -6792,7 +6792,7 @@ export function GraphIssueDetail({
           />
           <PropDropdown
             label="Assignee"
-            icon={<Avatar name={detail.assignee?.name} size={16} />}
+            icon={<Avatar name={detail.assignee?.name} seed={detail.assignee?.avatarSeed} size={16} />}
             value={detail.assignee?.name || "Unassigned"}
             onPick={(id) => void change({ assigneeId: id })}
             options={[
@@ -6814,7 +6814,7 @@ export function GraphIssueDetail({
                       gap: 8,
                     }}
                   >
-                    <Avatar name={m.name} size={18} />
+                    <Avatar name={m.name} seed={m.avatarSeed} size={18} />
                     {m.name || m.email}
                   </span>
                 ),
@@ -7339,7 +7339,7 @@ export function GraphIssueDetail({
             data-style-hooks={styleHooks("lin-sublist flex gap-[6px] mt-[8px]")}
           >
             {(detail.subscribers?.nodes || []).map((s) => (
-              <Avatar key={s.id} name={s.name} size={22} />
+              <Avatar key={s.id} name={s.name} seed={s.avatarSeed} size={22} />
             ))}
             {!detail.subscribers?.nodes.length && (
               <span

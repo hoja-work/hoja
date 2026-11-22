@@ -307,7 +307,7 @@ export function cachedStats(issues: LinIssue[]): CycleStats {
 /* Closed issues older than the store's window are not synced. A cycle that
  * started before that window may own some; fetch them once and adopt them so
  * the store (and its deltas) keeps them fresh from then on. */
-const historyFields = `{ id identifier title createdAt updatedAt stateChangedAt dueDate priority priorityLabel state { id name color type } team { id key name } project { id name } assignee { id name } creator { id name } cycle { id name number } labels { nodes { id name color } } }`;
+const historyFields = `{ id identifier title createdAt updatedAt stateChangedAt dueDate priority priorityLabel state { id name color type } team { id key name } project { id name } assignee { id name avatarSeed } creator { id name avatarSeed } cycle { id name number } labels { nodes { id name color } } }`;
 const historyRequested = new Set<string>();
 // Session markers survive reloads (module state does not); storage may be unavailable.
 const sessionGet = (k: string) => {
@@ -1284,7 +1284,7 @@ function CyclePreview({
                   >
                     {issue.title}
                   </span>
-                  <Avatar name={issue.assignee?.name} size={20} />
+                  <Avatar name={issue.assignee?.name} seed={issue.assignee?.avatarSeed} size={20} />
                 </li>
               ))}
             </ul>

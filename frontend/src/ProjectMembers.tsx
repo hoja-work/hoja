@@ -14,7 +14,7 @@ import {
   PopoverTrigger,
 } from "./components/ui/popover";
 
-type Person = { id: string; name: string };
+type Person = { id: string; name: string; avatarSeed?: string | null };
 
 export function ProjectMembers({
   projectId,
@@ -30,7 +30,7 @@ export function ProjectMembers({
   const [error, setError] = useState("");
   useEffect(() => {
     let live = true;
-    gql(`query($id:String!){project(id:$id){id members{nodes{id name}}}}`, {
+    gql(`query($id:String!){project(id:$id){id members{nodes{id name avatarSeed}}}}`, {
       id: projectId,
     })
       .then((d) => {
@@ -81,7 +81,7 @@ export function ProjectMembers({
           <span className="text-xs text-muted">No members</span>
         )}
         {members?.map((m) => (
-          <Avatar key={m.id} name={m.name} size={20} title={m.name} />
+          <Avatar key={m.id} name={m.name} seed={m.avatarSeed} size={20} title={m.name} />
         ))}
         <UIPopover open={open} onOpenChange={setOpen}>
           <PopoverTrigger asChild>

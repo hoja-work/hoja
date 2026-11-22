@@ -101,7 +101,7 @@ export type InboxNotification = {
   cycle?: CycleRef | null;
   projectUpdate?: UpdateRef | null;
   initiativeUpdate?: UpdateRef | null;
-  actor?: { id?: string; name?: string } | null;
+  actor?: { id?: string; name?: string; avatarSeed?: string | null } | null;
 };
 
 export type InboxGroup = {
@@ -130,7 +130,7 @@ export const DIRECT_KINDS = new Set<string>([
   "initiativeOwnerAssigned",
 ]);
 
-export const NOTIFICATION_FIELDS = `id kind createdAt readAt archivedAt snoozedUntil data subjectType subjectId comment{id body} issue{id identifier title priority priorityLabel state{id name type color} team{id key name} assignee{id name}} project{id name icon color state health progress targetDate lead{id name}} initiative{id name status summary targetDate owner{id name}} cycle{id name number startsAt endsAt completedAt progress team{id key name}} projectUpdate{id body health createdAt} initiativeUpdate{id body health createdAt} actor{id name}`;
+export const NOTIFICATION_FIELDS = `id kind createdAt readAt archivedAt snoozedUntil data subjectType subjectId comment{id body} issue{id identifier title priority priorityLabel state{id name type color} team{id key name} assignee{id name avatarSeed}} project{id name icon color state health progress targetDate lead{id name}} initiative{id name status summary targetDate owner{id name avatarSeed}} cycle{id name number startsAt endsAt completedAt progress team{id key name}} projectUpdate{id body health createdAt} initiativeUpdate{id body health createdAt} actor{id name avatarSeed}`;
 
 export function subjectOf(n: InboxNotification): {
   type: SubjectType;

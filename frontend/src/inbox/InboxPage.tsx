@@ -802,7 +802,7 @@ export function InboxPage({
                         <SubjectIcon size={13} />
                       </span>
                     ) : (
-                      <Avatar name={n.actor?.name || null} size={24} />
+                      <Avatar name={n.actor?.name || null} seed={n.actor?.avatarSeed} size={24} />
                     )}
                     <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                       <span className="flex min-w-0 items-center gap-1.5">

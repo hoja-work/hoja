@@ -38,7 +38,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 84
+CURRENT_SCHEMA_REVISION = 85
 
 log = logging.getLogger(__name__)
 
@@ -49,6 +49,11 @@ def now_iso() -> str:
 
 def new_id() -> str:
     return str(uuid.uuid4())
+
+
+def new_avatar_seed() -> str:
+    """A random blobatar seed: 64 bits, fixed per user once stored (revision 85)."""
+    return secrets.token_hex(8)
 
 
 def token_hash(token: str) -> str:
@@ -596,6 +601,9 @@ user = Table(
     Column("active", Boolean, default=True),
     Column("admin", Boolean, default=False),
     Column("avatar_url", String),
+    # The blobatar every user is drawn as when no picture is set. Random, stored
+    # once, and never derived from the name, so renaming a user keeps their face.
+    Column("avatar_seed", String, default=new_avatar_seed),
     Column("url", String),
     Column("timezone", String),
     Column("status_emoji", String),
@@ -3394,6 +3402,25 @@ def _apply_tailnet(conn):
     tailnet_machine.create(conn, checkfirst=True)
 
 
+def _apply_user_avatar_seed(conn):
+    """``user.avatar_seed``: a random blobatar per user, stored once (revision 85).
+
+    The column is a nullable ADD COLUMN, so it runs before any UPDATE in this
+    transaction (PostgreSQL refuses DDL after pending trigger events). Every row
+    that has no seed gets its own random one; a row that already has one keeps it,
+    so a replay is a no-op.
+    """
+    existing = {column["name"] for column in inspect(conn).get_columns("user")}
+    if "avatar_seed" not in existing:
+        conn.exec_driver_sql('ALTER TABLE "user" ADD COLUMN avatar_seed VARCHAR')
+    unseeded = conn.execute(text('SELECT id FROM "user" WHERE avatar_seed IS NULL')).fetchall()
+    for (user_id,) in unseeded:
+        conn.execute(
+            text('UPDATE "user" SET avatar_seed = :seed WHERE id = :id AND avatar_seed IS NULL'),
+            {"seed": new_avatar_seed(), "id": user_id},
+        )
+
+
 def _apply_agent_run_log(conn):
     """``agent_run_log``: the per-run timeline GraphQL serves (HOJA-602)."""
     agent_run_log.create(conn, checkfirst=True)
@@ -3748,6 +3775,8 @@ _MIGRATIONS = {
     # 83: a project can name the repository its agent tasks are worked on in.
     83: _apply_project_repository,
     84: _apply_tailnet,
+    # 85: every user has a random blobatar seed (backfilled for existing rows).
+    85: _apply_user_avatar_seed,
 }
 
 

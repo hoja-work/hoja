@@ -4,7 +4,7 @@
 import { useState, type KeyboardEvent, type RefObject } from "react";
 import { Avatar } from "../graph/shared";
 
-export type Mentionable = { id: string; name: string; email?: string };
+export type Mentionable = { id: string; name: string; email?: string; avatarSeed?: string | null };
 
 const HANDLE = /^[A-Za-z0-9._-]+$/;
 export function mentionHandle(m: Mentionable): string {
@@ -112,7 +112,7 @@ export function MentionMenu({
             onClick={() => pick(m)}
             className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-subtle ${i === index ? "bg-subtle" : "bg-transparent"}`}
           >
-            <Avatar name={m.name} size={18} />
+            <Avatar name={m.name} seed={m.avatarSeed} size={18} />
             <span className="truncate">{m.name}</span>
             <span className="ml-auto truncate text-xs text-muted">
               @{mentionHandle(m)}

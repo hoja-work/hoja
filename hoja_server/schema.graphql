@@ -300,6 +300,7 @@ type User {
   isMe: Boolean
   admin: Boolean
   avatarUrl: String
+  avatarSeed: String
   url: String
   timezone: String
   statusEmoji: String

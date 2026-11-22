@@ -142,7 +142,7 @@ import { SettingsSelect } from "./SettingsSelect";
 import { GraphIssueDetail } from "./graph/tasks";
 import { Avatar, AvatarFallback, AvatarGroup } from "./components/ui/avatar";
 import { ProjectActivity } from "./ProjectActivity";
-import { dueIsOverdue, SubIssuePill } from "./graph/shared";
+import { blobatarSrc, dueIsOverdue, SubIssuePill } from "./graph/shared";
 import {
   orderTree,
   railLeft,
@@ -215,13 +215,13 @@ export type Team = {
   states: {
     nodes: { id: string; name: string; color: string; type: string }[];
   };
-  members?: { nodes: { id: string; name: string; email?: string }[] };
+  members?: { nodes: { id: string; name: string; email?: string; avatarSeed?: string | null }[] };
   activeCycle?: Cycle;
 };
 export type Comment = {
   id: string;
   body: string;
-  user?: { id?: string; name?: string };
+  user?: { id?: string; name?: string; avatarSeed?: string | null };
   createdAt?: string;
   editedAt?: string | null;
   canEdit?: boolean;
@@ -232,7 +232,7 @@ export type IssueActivityEvent = {
   eventType: string;
   createdAt: string;
   issue: Issue;
-  actor?: { name?: string };
+  actor?: { name?: string; avatarSeed?: string | null };
   changes?: Record<string, unknown>;
 };
 export type IssueLabel = { id: string; name: string; color?: string };
@@ -252,10 +252,10 @@ export type Issue = {
   state?: { id: string; name: string; color: string; type: string };
   team?: { id: string; key: string; name: string };
   project?: { id: string; name: string };
-  assignee?: { id: string; name: string };
-  delegate?: { id: string; name?: string } | null;
+  assignee?: { id: string; name: string; avatarSeed?: string | null };
+  delegate?: { id: string; name?: string; avatarSeed?: string | null } | null;
   delegateId?: string | null;
-  creator?: { id: string; name?: string };
+  creator?: { id: string; name?: string; avatarSeed?: string | null };
   subscribers?: { nodes: { id: string }[] };
   cycle?: { id: string; name?: string; number?: number };
   labels?: { nodes: IssueLabel[] };
@@ -296,6 +296,7 @@ export type Viewer = {
   name?: string;
   email?: string;
   admin?: boolean;
+  avatarSeed?: string | null;
 };
 export type Project = {
   id: string;
@@ -337,7 +338,7 @@ export type PulseComment = {
   id: string;
   body: string;
   createdAt?: string;
-  user?: { id?: string; name?: string };
+  user?: { id?: string; name?: string; avatarSeed?: string | null };
 };
 
 export type PulsePost = {
@@ -347,7 +348,7 @@ export type PulsePost = {
   createdAt: string;
   progress?: number;
   health?: string;
-  actor?: { id: string; name?: string };
+  actor?: { id: string; name?: string; avatarSeed?: string | null };
   project: {
     id: string;
     name: string;
@@ -358,8 +359,8 @@ export type PulsePost = {
   };
   comments?: { nodes: PulseComment[] };
 };
-export const issueFields = `{ id identifier title description createdAt updatedAt stateChangedAt dueDate priority priorityLabel state { id name color type } team { id key name } githubLinks { id kind externalId url title state author } project{id name} assignee { id name } delegate { id name } delegateId creator { id name } subscribers { nodes { id } } cycle { id name number } parent { id identifier title } labels { nodes { id name color } } }`;
-const query = `query Dashboard { viewer { id name email admin } teams { nodes { id name key description states { nodes { id name color type } } members { nodes { id name email } } activeCycle { id name number startsAt endsAt progress } } } issues(first:100, orderBy:createdAt) { nodes ${issueFields} pageInfo { hasNextPage endCursor } } }`;
+export const issueFields = `{ id identifier title description createdAt updatedAt stateChangedAt dueDate priority priorityLabel state { id name color type } team { id key name } githubLinks { id kind externalId url title state author } project{id name} assignee { id name avatarSeed } delegate { id name avatarSeed } delegateId creator { id name avatarSeed } subscribers { nodes { id } } cycle { id name number } parent { id identifier title } labels { nodes { id name color } } }`;
+const query = `query Dashboard { viewer { id name avatarSeed email admin } teams { nodes { id name key description states { nodes { id name color type } } members { nodes { id name avatarSeed email } } activeCycle { id name number startsAt endsAt progress } } } issues(first:100, orderBy:createdAt) { nodes ${issueFields} pageInfo { hasNextPage endCursor } } }`;
 export function storedApiToken(): string | null {
   const t = localStorage.getItem("hoja_token");
   return t && t !== "session" ? t : null;
@@ -561,7 +562,7 @@ function StatusPicker({
     const intent = window.setTimeout(
       () =>
         gql(
-          `query IssueStatusHistory($id:String!){issue(id:$id){activity(first:30){nodes{id eventType createdAt actor{name} changes}}}}`,
+          `query IssueStatusHistory($id:String!){issue(id:$id){activity(first:30){nodes{id eventType createdAt actor{name avatarSeed} changes}}}}`,
           { id: issue.identifier },
         )
           .then((d) => {
@@ -575,7 +576,7 @@ function StatusPicker({
                 (e: {
                   id: string;
                   createdAt: string;
-                  actor?: { name?: string };
+                  actor?: { name?: string; avatarSeed?: string | null };
                   changes: {
                     stateId: { from?: string | null; to?: string | null };
                   };
@@ -1958,7 +1959,7 @@ function App() {
     setActivityError("");
     try {
       const d = await gql(
-        `query MyIssueActivity($after:String){myIssueActivity(first:50,after:$after){nodes{id eventType createdAt actor{name} changes issue ${issueFields}} pageInfo{hasNextPage endCursor}}}`,
+        `query MyIssueActivity($after:String){myIssueActivity(first:50,after:$after){nodes{id eventType createdAt actor{name avatarSeed} changes issue ${issueFields}} pageInfo{hasNextPage endCursor}}}`,
         { after },
       );
       if (generation !== activityGeneration.current) return;
@@ -2496,7 +2497,7 @@ function App() {
         onRetry={() => setIssueRetry((r) => r + 1)}
         onComment={async (body) => {
           const d = await gql(
-            `mutation($input:CommentCreateInput!){commentCreate(input:$input){success comment{id body createdAt user{name}}}}`,
+            `mutation($input:CommentCreateInput!){commentCreate(input:$input){success comment{id body createdAt user{name avatarSeed}}}}`,
             { input: { issueId: activeIssue?.id, body } },
           );
           if (!d.commentCreate.success) throw Error("Comment was rejected");
@@ -3935,8 +3936,8 @@ import {
 } from "./projectStore";
 import "./mobile-touch.css";
 const PROJECT_FIELDS = `id name description state progress startDate targetDate health lead{name} teams{nodes{id name key}}`;
-const INITIATIVE_FIELDS = `id name summary status priority targetDate createdAt viewerSubscribed owner{id name} creator{id} projects{nodes{id name}}`;
-const PULSE_FIELDS = `id status body createdAt progress health actor{id name} project{id name health progress targetDate lead{name}} comments(first:20){nodes{id body createdAt user{id name}}}`;
+const INITIATIVE_FIELDS = `id name summary status priority targetDate createdAt viewerSubscribed owner{id name avatarSeed} creator{id} projects{nodes{id name}}`;
+const PULSE_FIELDS = `id status body createdAt progress health actor{id name avatarSeed} project{id name health progress targetDate lead{name}} comments(first:20){nodes{id body createdAt user{id name avatarSeed}}}`;
 const pulseKey = (meta: SyncMeta | null) =>
   meta ? `pulse:${meta.workspace.id}:${meta.viewer.id || ""}` : null;
 const upsertFirst = <T extends { id: string }>(rows: T[], row: T) =>
@@ -4841,7 +4842,7 @@ function PulsePage({
     setCommentStatus((s) => ({ ...s, [post.id]: { pending: true } }));
     try {
       const d = await gql(
-        `mutation($input:CommentCreateInput!){commentCreate(input:$input){success comment{id body createdAt user{id name}}}}`,
+        `mutation($input:CommentCreateInput!){commentCreate(input:$input){success comment{id body createdAt user{id name avatarSeed}}}}`,
         { input: { projectUpdateId: post.id, body } },
       );
       if (!d.commentCreate?.success || !d.commentCreate.comment)
@@ -6607,7 +6608,7 @@ function KanbanAssignee({
   onChange,
 }: {
   issue: Issue;
-  members: { id: string; name?: string; email?: string }[];
+  members: { id: string; name?: string; email?: string; avatarSeed?: string | null }[];
   busy: boolean;
   onChange: (assigneeId: string | null) => void;
 }) {
@@ -6632,9 +6633,12 @@ function KanbanAssignee({
             {issue.assignee ? (
               <AvatarGroup>
                 <Avatar size="sm" title={issue.assignee.name || "Assigned"}>
-                  <AvatarFallback>
-                    {(issue.assignee.name || "?").slice(0, 1).toUpperCase()}
-                  </AvatarFallback>
+                  <img
+                    src={blobatarSrc(issue.assignee.avatarSeed || issue.assignee.name || issue.assignee.id)}
+                    alt=""
+                    draggable={false}
+                    className="aspect-square size-full"
+                  />
                 </Avatar>
               </AvatarGroup>
             ) : (
@@ -6676,9 +6680,12 @@ function KanbanAssignee({
               onClick={() => assign(m.id)}
             >
               <Avatar size="sm">
-                <AvatarFallback>
-                  {(m.name || m.email || "?").slice(0, 1).toUpperCase()}
-                </AvatarFallback>
+                <img
+                  src={blobatarSrc(m.avatarSeed || m.name || m.email || m.id)}
+                  alt=""
+                  draggable={false}
+                  className="aspect-square size-full"
+                />
               </Avatar>
               <span className="min-w-0 flex-1 truncate">
                 {m.name || m.email || "Member"}
@@ -8619,7 +8626,7 @@ function IssueDrawer({
     setLocal((l) => ({ ...l, ...optimistic }));
     try {
       const d = await gql(
-        `mutation($id:String!,$input:IssueUpdateInput!){issueUpdate(id:$id,input:$input){success issue{id identifier title description priority priorityLabel state{id name color type} team{id key name} project{id name} assignee{id name} comments{nodes{id body createdAt user{name}}}}}}`,
+        `mutation($id:String!,$input:IssueUpdateInput!){issueUpdate(id:$id,input:$input){success issue{id identifier title description priority priorityLabel state{id name color type} team{id key name} project{id name} assignee{id name avatarSeed} comments{nodes{id body createdAt user{name avatarSeed}}}}}}`,
         { id: detail.id, input },
       );
       if (!d.issueUpdate.success) throw Error("Update was rejected");
@@ -8653,7 +8660,7 @@ function IssueDrawer({
     setError("");
     try {
       const d = await gql(
-        `mutation($input:CommentCreateInput!){commentCreate(input:$input){success comment{id body createdAt user{name}}}}`,
+        `mutation($input:CommentCreateInput!){commentCreate(input:$input){success comment{id body createdAt user{name avatarSeed}}}}`,
         { input: { issueId: detail.id, body: text } },
       );
       if (!d.commentCreate.success) throw Error("Comment was rejected");
@@ -10173,7 +10180,7 @@ function ProjectDetails({
   const fetchUpdates = React.useCallback(
     (first: number, after: string | null) =>
       gql(
-        `query ProjectActivity($first:Int,$after:String,$filter:ProjectUpdateFilter){projectUpdates(first:$first,after:$after,filter:$filter){nodes{id body status createdAt actor{id name} progress project{id name}} pageInfo{hasNextPage endCursor}}}`,
+        `query ProjectActivity($first:Int,$after:String,$filter:ProjectUpdateFilter){projectUpdates(first:$first,after:$after,filter:$filter){nodes{id body status createdAt actor{id name avatarSeed} progress project{id name}} pageInfo{hasNextPage endCursor}}}`,
         { first, after, filter: { project: { id: { eq: project.id } } } },
       ).then((d) => d.projectUpdates as PageOf<PulsePost>),
     [project.id],
@@ -13034,7 +13041,7 @@ function LegacyWorkspaceSettings({
     setTeamMessage("");
     try {
       const d = await gql(
-        `mutation($input:TeamCreateInput!){teamCreate(input:$input){success team{id name key description states{nodes{id name color type}} members{nodes{id name email}} activeCycle{id name number startsAt endsAt progress}}}}`,
+        `mutation($input:TeamCreateInput!){teamCreate(input:$input){success team{id name key description states{nodes{id name color type}} members{nodes{id name avatarSeed email}} activeCycle{id name number startsAt endsAt progress}}}}`,
         { input: { name: teamName, key: teamKey } },
       );
       if (!d.teamCreate?.success || !d.teamCreate?.team)
@@ -14319,7 +14326,7 @@ function ProfileSettings({
     onSaved(next);
     try {
       const d = await gql(
-        `mutation($name:String!){profileNameUpdate(name:$name){success user{id name displayName email admin}}}`,
+        `mutation($name:String!){profileNameUpdate(name:$name){success user{id name avatarSeed displayName email admin}}}`,
         { name: next },
       );
       if (!d.profileNameUpdate.success)
@@ -17255,7 +17262,7 @@ type OrgMember = {
   admin?: boolean;
   active?: boolean;
 };
-const TEAMS_QUERY = `query Teams{teams{nodes{id name key description states{nodes{id name color type}} members{nodes{id name email}} activeCycle{id name number startsAt endsAt progress}}}}`;
+const TEAMS_QUERY = `query Teams{teams{nodes{id name key description states{nodes{id name color type}} members{nodes{id name avatarSeed email}} activeCycle{id name number startsAt endsAt progress}}}}`;
 /* Teams come from the synced workspace metadata (falls back to the App prop before the first sync).
    After a team mutation the overlay stays until a sync pull (or a GraphQL reload without sync) has the server's version. */
 function useSyncedTeams(teams: Team[], onTeamsChanged?: (t: Team[]) => void) {
@@ -17296,7 +17303,7 @@ function MembersPage({
   const memberVersion = useEntityVersion(["member", "user"]);
   useEffect(() => {
     let live = true;
-    gql(`query Members{organizationMembers{nodes{id name email admin active}}}`)
+    gql(`query Members{organizationMembers{nodes{id name avatarSeed email admin active}}}`)
       .then((d) => {
         if (!live) return;
         setBase(d.organizationMembers.nodes);
@@ -17500,7 +17507,7 @@ function MembersPage({
     setInviting(true);
     try {
       const d = await gql(
-        `mutation($input:MemberInviteInput!){memberInvite(input:$input){success user{id name email}}}`,
+        `mutation($input:MemberInviteInput!){memberInvite(input:$input){success user{id name avatarSeed email}}}`,
         {
           input: { name: inviteName, email: inviteEmail, teamIds: inviteTeams },
         },

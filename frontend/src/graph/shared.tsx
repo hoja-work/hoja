@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import type { IssueLabel } from "../main";
+import { blobatarUri } from "blobatar/uri";
 import { statusAgeLabel, type StatusAgeIssue } from "./statusAge";
 import {
   Popover,
@@ -37,19 +38,35 @@ export function avatarColor(name?: string | null): string {
   return palette[h % palette.length];
 }
 
+/* A blobatar is the picture for anybody without an uploaded one. Users are drawn
+ * from their stored random seed; anything else (a project, an agent, a GitHub
+ * login) from its name, which is deterministic and needs no storage. */
+const blobatarUris = new Map<string, string>();
+export function blobatarSrc(source: string): string {
+  let uri = blobatarUris.get(source);
+  if (uri === undefined) {
+    uri = blobatarUri(source);
+    blobatarUris.set(source, uri);
+  }
+  return uri;
+}
+
 export function Avatar({
   name,
+  seed,
   size = 20,
   title,
   className,
   "data-style-hooks": inheritedHooks,
 }: {
   name?: string | null;
+  seed?: string | null;
   size?: number;
   title?: string;
   className?: string;
   "data-style-hooks"?: string;
 }) {
+  const source = seed || name || null;
   return (
     <span
       className={styleClasses(
@@ -72,11 +89,23 @@ export function Avatar({
         width: size,
         height: size,
         fontSize: Math.max(8, size * 0.42),
-        background: name ? avatarColor(name) : "var(--subtle)",
-        color: name ? "#5b4a52" : "var(--muted)",
+        background: "var(--subtle)",
+        color: "var(--muted)",
+        overflow: "hidden",
       }}
     >
-      {name ? initials(name) : "?"}
+      {source ? (
+        <img
+          src={blobatarSrc(source)}
+          alt=""
+          width={size}
+          height={size}
+          draggable={false}
+          className="block size-full"
+        />
+      ) : (
+        "?"
+      )}
     </span>
   );
 }

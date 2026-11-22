@@ -59,7 +59,7 @@ const HEALTH = ["on track", "at risk", "off track"] as const;
 const PRIORITY = ["No priority", "Urgent", "High", "Medium", "Low"];
 const STALE_DAYS = 7;
 const EVENT_FIELDS =
-  "id eventType changes createdAt actor{id name} issue{id identifier title}";
+  "id eventType changes createdAt actor{id name avatarSeed} issue{id identifier title}";
 
 const dayKey = (iso: string) => iso.slice(0, 10);
 function dayLabel(iso: string, now = new Date()): string {

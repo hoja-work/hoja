@@ -155,7 +155,7 @@ export function SubjectPanel({
           aria-label={reply ? "Reply" : "Update"}
         >
           <div className="flex items-center gap-2 text-xs text-muted">
-            <Avatar name={latest.actor?.name || null} size={20} />
+            <Avatar name={latest.actor?.name || null} seed={latest.actor?.avatarSeed} size={20} />
             <span className="text-foreground">
               {latest.actor?.name || "Someone"}
             </span>
@@ -198,7 +198,7 @@ export function SubjectPanel({
                 {isSystemEvent(n) ? (
                   <CalendarDays size={14} className="flex-none text-muted" />
                 ) : (
-                  <Avatar name={n.actor?.name || null} size={18} />
+                  <Avatar name={n.actor?.name || null} seed={n.actor?.avatarSeed} size={18} />
                 )}
                 <span className="min-w-0 flex-1 truncate">
                   {!isSystemEvent(n) && (

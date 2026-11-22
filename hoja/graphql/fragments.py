@@ -13,6 +13,7 @@ fragment UserCore on User {
   active
   isMe
   avatarUrl
+  avatarSeed
 }
 """
 
