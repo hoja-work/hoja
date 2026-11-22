@@ -1342,6 +1342,43 @@ function App() {
     return () => observer.disconnect();
   }, [orgMenu]);
   const [commandOpen, setCommandOpen] = useState(false);
+  /* The app-level "New initiative" dialog: N then I, the command palette and the list. */
+  const [initiativeCreate, setInitiativeCreate] = useState<Record<
+    string,
+    unknown
+  > | null>(null);
+  const [initiativeOptions, setInitiativeOptions] = useState<InitiativeRef[]>(
+    [],
+  );
+  useEffect(() => {
+    if (initiativeCreate)
+      fetchAllInitiatives()
+        .then(setInitiativeOptions)
+        .catch(() => undefined);
+  }, [initiativeCreate]);
+  /* N then I opens it from anywhere outside a text field, as on Linear. */
+  useEffect(() => {
+    let armed = 0;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (
+        e.metaKey ||
+        e.ctrlKey ||
+        e.altKey ||
+        t?.closest("input,textarea,select,[contenteditable=true],[role=dialog]")
+      )
+        return;
+      const key = e.key.toLowerCase();
+      if (key === "n") armed = Date.now();
+      else if (key === "i" && Date.now() - armed < 1200) {
+        e.preventDefault();
+        armed = 0;
+        setInitiativeCreate({});
+      } else armed = 0;
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const [commandQuery, setCommandQuery] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [collapsedSections, setCollapsedSections] = useState<
@@ -1440,6 +1477,11 @@ function App() {
     setActiveProject(null);
     setActiveCycle(null);
   };
+  const openInitiative = (id: string) =>
+    navigate(
+      "Initiative detail",
+      `/workspace/initiative/${encodeURIComponent(id)}`,
+    );
   const openIssue = (issue: Issue, returnProjectId?: string) => {
     if (returnProjectId) {
       setIssueReturn({
@@ -2904,22 +2946,12 @@ function App() {
         }}
       />
     ) : view === "Initiatives" ? (
-      <InitiativesPage
+      <InitiativesList
         key={workspace.id}
         viewer={viewer}
         path={window.location.pathname}
-        projects={projects}
-        onOpenProject={(p) => {
-          navigate("Project detail", `/workspace/project/${p.id}`);
-          setActiveProject(p);
-        }}
-        onOpenInitiative={(id) =>
-          navigate(
-            "Initiative detail",
-            `/workspace/initiative/${encodeURIComponent(id)}`,
-          )
-        }
-        revision={revision}
+        onNew={() => setInitiativeCreate({})}
+        onOpenInitiative={openInitiative}
       />
     ) : view === "Favorite views" ? (
       <ViewsPage
@@ -3850,6 +3882,19 @@ function App() {
             }}
           />
         )}
+        {initiativeCreate && (
+          <CreateInitiativeDialog
+            defaults={initiativeCreate}
+            initiatives={initiativeOptions}
+            projects={projects}
+            onClose={() => setInitiativeCreate(null)}
+            onCreated={(row, more) => {
+              if (more) return;
+              setInitiativeCreate(null);
+              openInitiative(row.identifier || row.id);
+            }}
+          />
+        )}
         {commandOpen && (
           <CommandPalette
             query={commandQuery}
@@ -3866,6 +3911,14 @@ function App() {
             onNavigate={(v) => {
               navigate(v);
               setCommandOpen(false);
+            }}
+            onCreateInitiative={() => {
+              setCommandOpen(false);
+              setInitiativeCreate({});
+            }}
+            onOpenInitiative={(id) => {
+              setCommandOpen(false);
+              openInitiative(id);
             }}
           />
         )}
@@ -3955,12 +4008,10 @@ function IssueDetailPage({
     />
   );
 }
-import {
-  HealthBadge,
-  InitiativeRoute,
-  InitiativeStatusIcon,
-  initiativeStatusLabel,
-} from "./initiatives/InitiativeDetail";
+import { InitiativeRoute } from "./initiatives/InitiativeDetail";
+import { InitiativesList } from "./initiatives/InitiativesList";
+import { CreateInitiativeDialog } from "./initiatives/CreateInitiativeDialog";
+import { fetchAllInitiatives, type InitiativeRef } from "./initiatives/api";
 // Local-first helpers for the projects / initiatives / pulse pages (see projectStore.ts).
 import {
   addPendingProject,
@@ -3983,7 +4034,6 @@ import {
 } from "./projectStore";
 import "./mobile-touch.css";
 const PROJECT_FIELDS = `id name description state progress startDate targetDate health lead{name} teams{nodes{id name key}}`;
-const INITIATIVE_FIELDS = `id name summary status priority targetDate createdAt viewerSubscribed owner{id name avatarSeed} creator{id} projects{nodes{id name progress health}}`;
 const PULSE_FIELDS = `id status body createdAt progress health actor{id name avatarSeed} project{id name health progress targetDate lead{name}} comments(first:20){nodes{id body createdAt user{id name avatarSeed}}}`;
 const pulseKey = (meta: SyncMeta | null) =>
   meta ? `pulse:${meta.workspace.id}:${meta.viewer.id || ""}` : null;
@@ -4002,695 +4052,6 @@ function useMemberOptions() {
     [meta],
   );
 }
-function InitiativesPage({
-  path,
-  projects,
-  onOpenInitiative,
-  viewer,
-}: {
-  path: string;
-  projects: Project[];
-  onOpenProject: (p: Project) => void;
-  onOpenInitiative: (id: string) => void;
-  revision: number;
-  viewer: Viewer;
-}) {
-  const [tab, setTab] = useState<"active" | "planned" | "all">(() =>
-    path.endsWith("/active")
-      ? "active"
-      : path.endsWith("/planned")
-        ? "planned"
-        : "all",
-  );
-  const meta = useProjectSyncMeta();
-  const members = useMemberOptions();
-  const allProjects = useProjects(projects);
-  const projectById = useMemo(
-    () => new Map(allProjects.map((p) => [p.id, p])),
-    [allProjects],
-  );
-  // Initiative rows embed project names only; those are read live from the store, so only initiative changes refetch.
-  const version = useProjectEntityVersion(["initiative"]);
-  const key = meta
-    ? `initiatives:${meta.workspace.id}:${meta.viewer.id || ""}`
-    : null;
-  const fetchPage = React.useCallback(
-    (first: number, after: string | null) =>
-      gql(
-        `query InitiativeList($first:Int,$after:String){initiatives(first:$first,after:$after){nodes{${INITIATIVE_FIELDS}} pageInfo{hasNextPage endCursor}}}`,
-        { first, after },
-      ).then((d) => d.initiatives as PageOf<Initiative>),
-    [],
-  );
-  const list = usePagedCache<Initiative>(
-    key,
-    fetchPage,
-    version,
-    50,
-    "Initiative",
-  );
-  const rows = list.rows,
-    hasMore = list.more;
-  // Initiative health is the health of its latest update, as on Linear's list.
-  const [healthById, setHealthById] = useState<Record<string, string>>({});
-  useEffect(() => {
-    let live = true;
-    gql(
-      `query InitiativeHealth{initiativeUpdates(first:200){nodes{health createdAt initiative{id}}}}`,
-    )
-      .then((d) => {
-        if (!live) return;
-        const latest: Record<string, { at: string; health: string }> = {};
-        for (const u of (d.initiativeUpdates?.nodes || []) as {
-          health?: string;
-          createdAt: string;
-          initiative?: { id: string };
-        }[]) {
-          const iid = u.initiative?.id;
-          if (iid && u.health && (!latest[iid] || u.createdAt > latest[iid].at))
-            latest[iid] = { at: u.createdAt, health: u.health };
-        }
-        setHealthById(
-          Object.fromEntries(
-            Object.entries(latest).map(([k, v]) => [k, v.health]),
-          ),
-        );
-      })
-      .catch(() => undefined);
-    return () => {
-      live = false;
-    };
-  }, [version]);
-  const [actionError, setActionError] = useState("");
-  const error = actionError || list.error;
-  // The inbox opens an initiative as ?initiative=<id>: that row is scrolled to and marked.
-  const highlightedInitiative = new URLSearchParams(location.search).get(
-    "initiative",
-  );
-  const [createOpen, setCreateOpen] = useState(false),
-    [name, setName] = useState(""),
-    [summary, setSummary] = useState(""),
-    [status, setStatus] = useState<"active" | "planned">("active"),
-    [priority, setPriority] = useState(0),
-    [ownerId, setOwnerId] = useState(""),
-    [targetDate, setTargetDate] = useState(""),
-    [projectIds, setProjectIds] = useState<string[]>([]),
-    [formError, setFormError] = useState("");
-  const creating = false;
-  const [filterOpen, setFilterOpen] = useState(false),
-    [displayOpen, setDisplayOpen] = useState(false),
-    [statusFilter, setStatusFilter] = useState(""),
-    [showDescription, setShowDescription] = useState(true);
-  useEffect(() => {
-    const onPop = () =>
-      setTab(
-        location.pathname.endsWith("/active")
-          ? "active"
-          : location.pathname.endsWith("/planned")
-            ? "planned"
-            : "all",
-      );
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, []);
-  const openCreate = () => {
-    setFormError("");
-    setCreateOpen(true);
-    void 0;
-  };
-  const create = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!key || !name.trim()) return;
-    const draft = {
-      name,
-      summary,
-      status,
-      priority,
-      ownerId,
-      targetDate,
-      projectIds,
-    };
-    const temp: Initiative = {
-      id: `optimistic:${crypto.randomUUID()}`,
-      name: name.trim(),
-      summary: summary.trim() || undefined,
-      status,
-      priority,
-      targetDate: targetDate || undefined,
-      createdAt: new Date().toISOString(),
-      owner: ownerId
-        ? { id: ownerId, name: members.find((m) => m.id === ownerId)?.name }
-        : undefined,
-      creator: viewer.id ? { id: viewer.id } : undefined,
-      projects: {
-        nodes: projectIds.map((id) => ({
-          id,
-          name: projectById.get(id)?.name || "",
-        })),
-      },
-    };
-    const settle = optimisticPage<Initiative>(key, (r) => [temp, ...r]);
-    setCreateOpen(false);
-    setName("");
-    setSummary("");
-    setProjectIds([]);
-    setFormError("");
-    try {
-      const d = await gql(
-        `mutation($input:InitiativeCreateInput!){initiativeCreate(input:$input){success initiative{${INITIATIVE_FIELDS}}}}`,
-        {
-          input: {
-            name: temp.name,
-            summary: summary.trim() || null,
-            status,
-            priority,
-            ownerId: ownerId || null,
-            targetDate: targetDate || null,
-            projectIds,
-          },
-        },
-      );
-      if (!d.initiativeCreate?.success || !d.initiativeCreate.initiative)
-        throw Error("Could not create initiative");
-      const created: Initiative = d.initiativeCreate.initiative;
-      settle((r) => upsertFirst(r, created));
-    } catch (err) {
-      settle();
-      setName(draft.name);
-      setSummary(draft.summary);
-      setStatus(draft.status);
-      setPriority(draft.priority);
-      setOwnerId(draft.ownerId);
-      setTargetDate(draft.targetDate);
-      setProjectIds(draft.projectIds);
-      setFormError((err as Error).message);
-      setCreateOpen(true);
-    }
-  };
-  const visible = useMemo(
-    () =>
-      rows.filter(
-        (i) =>
-          (tab === "all" || i.status === tab) &&
-          (!statusFilter || i.status === statusFilter),
-      ),
-    [rows, tab, statusFilter],
-  );
-  const retry = () => {
-    setActionError("");
-    list.retry();
-  };
-  return (
-    <section
-      className="relative min-h-[calc(100dvh-16px)] min-w-0"
-      data-initiatives-page=""
-    >
-      <header
-        className="border-b border-line flex items-center justify-between h-11.25 pt-0 pr-4.5 pb-0 pl-4.5"
-        data-initiatives-head=""
-      >
-        <h1 className="text-(length:--hoja-title-size) font-(--hoja-title-weight) mt-0 mr-0 mb-0 ml-0 leading-[normal] tracking-normal ">
-          Initiatives
-        </h1>
-        <button
-          className="flex items-center gap-1.25 pt-1.5 pr-2 pb-1.5 pl-2 rounded-[5px] bg-transparent text-[12px] hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-          type="button"
-          onClick={openCreate}
-        >
-          <Plus size={14} /> New initiative
-        </button>
-      </header>
-      <div
-        className="h-11 flex justify-between items-center pt-0 pr-2.25 pb-0 pl-2.25 gap-2 shell-phone:gap-1.25"
-        data-initiatives-toolbar=""
-      >
-        <nav
-          className="flex gap-1.25 overflow-x-auto scrollbar-none"
-          aria-label="Initiative views"
-        >
-          {(
-            [
-              ["Active", "active"],
-              ["Planned", "planned"],
-              ["All initiatives", "all"],
-            ] as const
-          ).map(([label, slug]) => (
-            <a
-              className="inline-flex items-center h-7 flex-none pt-0 pr-2.75 pb-0 pl-2.75 border border-line rounded-[99px] bg-panel text-muted no-underline text-[12px] font-[450] aria-[current=page]:bg-subtle hover:bg-subtle aria-[current=page]:text-foreground hover:text-foreground aria-[current=page]:font-medium focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
-              key={slug}
-              href={
-                slug === "all"
-                  ? "/workspace/initiatives"
-                  : `/workspace/initiatives/${slug}`
-              }
-              aria-current={tab === slug ? "page" : undefined}
-              onClick={(e) => {
-                e.preventDefault();
-                history.pushState({}, "", e.currentTarget.href);
-                setTab(slug);
-              }}
-            >
-              {label}
-            </a>
-          ))}
-        </nav>
-        <div className="flex gap-1.25 flex-none">
-          <UIPopover
-            open={filterOpen}
-            onOpenChange={(open) => {
-              setFilterOpen(open);
-              if (open) setDisplayOpen(false);
-            }}
-          >
-            <PopoverTrigger asChild>
-              <button
-                className="inline-flex min-h-7 min-w-7 flex-none items-center justify-center gap-1.5 rounded-[50%] border border-line bg-panel px-2 py-1 text-sm text-muted hover:bg-subtle aria-expanded:bg-accent-soft aria-expanded:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 pointer-coarse:min-h-11"
-                aria-label="Add filter"
-                aria-expanded={filterOpen}
-              >
-                <ListFilter size={15} />
-              </button>
-            </PopoverTrigger>
-            <PopoverContent
-              align="end"
-              sideOffset={6}
-              className="z-50 w-auto border shadow-(--shadow) grid gap-2.5 pt-3 pr-3 pb-3 pl-3 border-line rounded-lg bg-panel text-[12px] font-(family-name:--hoja-font-ui) w-[min(245px,calc(100vw-30px))]"
-              data-initiatives-popover=""
-            >
-              <label className="grid gap-1.25">
-                Status
-                <select
-                  className="w-full border border-line rounded-md bg-panel text-foreground pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                  value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value)}
-                >
-                  <option value="">All statuses</option>
-                  <option value="active">Active</option>
-                  <option value="planned">Planned</option>
-                  <option value="completed">Completed</option>
-                  <option value="canceled">Canceled</option>
-                </select>
-              </label>
-              <button
-                className="justify-self-start pt-1.25 pr-1.25 pb-1.25 pl-1.25 bg-transparent text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                type="button"
-                onClick={() => setStatusFilter("")}
-              >
-                Clear filter
-              </button>
-              <p className="mt-0 mr-0 mb-0 ml-0 text-muted text-[11px]">
-                Other the upstream API filters require additional local data.
-              </p>
-            </PopoverContent>
-          </UIPopover>
-          <UIPopover
-            open={displayOpen}
-            onOpenChange={(open) => {
-              setDisplayOpen(open);
-              if (open) setFilterOpen(false);
-            }}
-          >
-            <PopoverTrigger asChild>
-              <button
-                className="inline-flex min-h-7 min-w-7 flex-none items-center justify-center gap-1.5 rounded-[50%] border border-line bg-panel px-2 py-1 text-sm text-muted hover:bg-subtle aria-expanded:bg-accent-soft aria-expanded:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 pointer-coarse:min-h-11"
-                aria-label="Display options"
-                aria-expanded={displayOpen}
-              >
-                <Settings size={15} />
-              </button>
-            </PopoverTrigger>
-            <PopoverContent
-              align="end"
-              sideOffset={6}
-              className="z-50 w-auto border shadow-(--shadow) grid gap-2.5 pt-3 pr-3 pb-3 pl-3 border-line rounded-lg bg-panel text-[12px] font-(family-name:--hoja-font-ui) w-[min(245px,calc(100vw-30px))]"
-              data-initiatives-popover=""
-            >
-              <label className="grid gap-1.25">
-                <input
-                  className="max-md:text-base placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:text-[16px]"
-                  type="checkbox"
-                  checked={showDescription}
-                  onChange={(e) => setShowDescription(e.target.checked)}
-                />{" "}
-                Description
-              </label>
-              <p className="mt-0 mr-0 mb-0 ml-0 text-muted text-[11px]">
-                Manual ordering and grouping are not available in Hoja.
-              </p>
-            </PopoverContent>
-          </UIPopover>
-        </div>
-      </div>
-
-      <div
-        className="pt-5.5 pr-4.5 pb-15 pl-4.5 shell-phone:pt-4.5 shell-phone:pr-2.5 shell-phone:pb-11.25 shell-phone:pl-2.5 min-h-[calc(100dvh-105px)]"
-        data-initiatives-content=""
-      >
-        {visible.length > 0 && (
-          <div className="max-w-262.5 mt-0 mr-auto mb-0 ml-auto">
-            <div
-              className="hidden grid-cols-12 items-center gap-3 border-b border-line px-4 py-2 text-xs font-medium text-muted md:grid"
-              data-initiatives-list-head=""
-            >
-              <span className="col-span-4">Name</span>
-              <span className="col-span-2">Health</span>
-              <span className="col-span-2">Owner</span>
-              <span className="col-span-1">Target</span>
-              <span className="col-span-1">Progress</span>
-              <span className="col-span-2">Status</span>
-            </div>
-            {visible.map((i) => {
-              const linked = i.projects?.nodes || [];
-              const progress = linked.length
-                ? linked.reduce((sum, p) => sum + (p.progress || 0), 0) /
-                  linked.length
-                : 0;
-              const pending = i.id.startsWith("optimistic:");
-              return (
-                <article
-                  className="group relative flex items-center gap-3 border-b border-line px-4 py-3 text-sm transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none data-highlighted:bg-subtle md:grid md:grid-cols-12"
-                  data-initiative-row=""
-                  data-highlighted={
-                    i.id === highlightedInitiative ? "true" : undefined
-                  }
-                  ref={
-                    i.id === highlightedInitiative
-                      ? (el) => el?.scrollIntoView({ block: "center" })
-                      : undefined
-                  }
-                  key={i.id}
-                  aria-busy={pending || undefined}
-                >
-                  <div className="flex min-w-0 flex-1 items-center gap-2 md:col-span-4">
-                    <Target
-                      size={14}
-                      className="flex-none text-muted"
-                      aria-hidden
-                    />
-                    <div className="min-w-0">
-                      <a
-                        className="block truncate font-medium text-foreground no-underline after:absolute after:inset-0 focus-visible:outline-2 focus-visible:outline-accent"
-                        href={`/workspace/initiative/${encodeURIComponent(i.id)}`}
-                        aria-disabled={pending || undefined}
-                        onClick={(e) => {
-                          if (e.metaKey || e.ctrlKey || e.shiftKey) return;
-                          e.preventDefault();
-                          if (!pending) onOpenInitiative(i.id);
-                        }}
-                      >
-                        {i.name}
-                      </a>
-                      {showDescription && i.summary && (
-                        <p className="m-0 truncate text-xs text-muted">
-                          {i.summary}
-                        </p>
-                      )}
-                    </div>
-                    {!pending && (
-                      <span className="relative ml-auto hidden md:inline-flex">
-                        <FollowButton
-                          type="initiative"
-                          id={i.id}
-                          known={i.viewerSubscribed}
-                          compact
-                          onError={setActionError}
-                        />
-                      </span>
-                    )}
-                  </div>
-                  <span className="flex-none md:col-span-2">
-                    <HealthBadge health={healthById[i.id]} />
-                  </span>
-                  <span className="hidden min-w-0 items-center gap-1.5 md:col-span-2 md:flex">
-                    {i.owner?.name ? (
-                      <>
-                        <GraphAvatar
-                          name={i.owner.name}
-                          seed={i.owner.avatarSeed}
-                          size={16}
-                        />
-                        <span className="truncate">{i.owner.name}</span>
-                      </>
-                    ) : (
-                      <span className="text-muted">No owner</span>
-                    )}
-                  </span>
-                  <time className="hidden text-muted md:col-span-1 md:block">
-                    {i.targetDate ? fmtDate(i.targetDate) : "—"}
-                  </time>
-                  <span
-                    className="hidden items-center gap-1.5 md:col-span-1 md:flex"
-                    title={`${linked.length} ${linked.length === 1 ? "project" : "projects"}`}
-                  >
-                    <Ring frac={progress} size={14} />
-                    <span>{Math.round(progress * 100)}%</span>
-                  </span>
-                  <span
-                    className="relative flex min-w-0 flex-none items-center gap-1.5 md:col-span-2"
-                    title={initiativeStatusLabel(i.status)}
-                  >
-                    <InitiativeStatusIcon status={i.status} />
-                    <span className="hidden truncate md:inline">
-                      {initiativeStatusLabel(i.status)}
-                    </span>
-                  </span>
-                </article>
-              );
-            })}
-          </div>
-        )}
-        {!list.hasData && !error && (
-          <p
-            className="max-w-120 mt-20 mr-auto mb-20 ml-auto text-center text-muted text-[13px]"
-            data-initiatives-state=""
-            role="status"
-          >
-            Loading initiatives…
-          </p>
-        )}
-        {list.hasData && !visible.length && !error && (
-          <div
-            className="grid content-center justify-center gap-x-2 mt-auto mr-auto mb-auto ml-auto text-muted w-[min(380px,100%)] max-w-sm grid-cols-2 min-h-[calc(100dvh-170px)]"
-            data-initiatives-empty=""
-          >
-            <Layers3 size={49} strokeWidth={1.3} className="col-span-full" />
-            <h2 className="mt-0 mr-0 mb-2.25 ml-0 text-foreground text-[16px] font-semibold col-span-full">
-              {tab === "planned" ? "Upcoming initiatives" : "Initiatives"}
-            </h2>
-            <p className="mt-0 mr-0 mb-5.5 ml-0 text-[13px] leading-normal col-span-full">
-              {statusFilter
-                ? "No initiatives match this filter."
-                : "Initiatives are larger, strategic product efforts that set the direction of your company. They are comprised of projects that align with the goals of the initiative and allow you to monitor progress at scale."}
-            </p>
-            <button
-              className="inline-flex min-h-7.5 items-center justify-center gap-1.75 rounded-[99px] bg-accent pl-3 pr-3 pt-1.5 pb-1.5 text-white font-[650] shadow-[none] transition-colors duration-150 ease-out hover:brightness-110 hover:transition-none active:translate-y-px disabled:cursor-wait disabled:opacity-65 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 text-[11px] shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.65]"
-              data-control-primary=""
-              type="button"
-              onClick={openCreate}
-            >
-              Create new initiative
-            </button>
-            <a
-              className="self-center pt-1.5 pr-2.75 pb-1.5 pl-2.75 border border-line rounded-[99px] bg-panel text-foreground no-underline text-[11px] justify-self-start w-auto focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
-              href="https://linear.app/docs/initiatives"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Documentation
-            </a>
-          </div>
-        )}
-        {error && (
-          <div
-            className="max-w-120 mt-20 mr-auto mb-20 ml-auto text-center text-muted text-[13px]"
-            data-initiatives-state=""
-            role="alert"
-          >
-            {error}{" "}
-            <button
-              className="pt-1.75 pr-2.75 pb-1.75 pl-2.75 border border-line rounded-md bg-panel focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-              type="button"
-              onClick={retry}
-            >
-              Retry
-            </button>
-          </div>
-        )}
-        {hasMore && (
-          <button
-            className="block mt-4.5 mr-auto mb-4.5 ml-auto pt-1.75 pr-2.75 pb-1.75 pl-2.75 border border-line rounded-md bg-panel focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-            data-initiatives-load=""
-            type="button"
-            disabled={list.loadingMore}
-            onClick={list.loadMore}
-          >
-            {list.loadingMore ? "Loading…" : "Load more initiatives"}
-          </button>
-        )}
-      </div>
-      {createOpen && (
-        <div
-          className="fixed inset-0 z-10 bg-[#0008] has-data-issue-create-modal:p-[clamp(60px,13vh,118px)_12px_12px] [&:has(>[data-issue-create-modal])]:animate-[issue-backdrop-in_var(--motion-overlay)_var(--ease-standard)_both] [&:has(>[data-issue-create-modal][data-is-closing])]:animate-[issue-backdrop-out_var(--motion-fast)_var(--ease-standard)_both] [@supports_(backdrop-filter:blur(2px))_or_(-webkit-backdrop-filter:blur(2px))]:[&:has(>[data-issue-create-modal])]:[background:rgba(9,9,11,.42)] [@supports_(backdrop-filter:blur(2px))_or_(-webkit-backdrop-filter:blur(2px))]:[&:has(>[data-issue-create-modal])]:[backdrop-filter:blur(2px)] [@supports_(backdrop-filter:blur(2px))_or_(-webkit-backdrop-filter:blur(2px))]:[&:has(>[data-issue-create-modal])]:[-webkit-backdrop-filter:blur(2px)]"
-          data-modal-backdrop=""
-          role="presentation"
-          onClick={(e) => {
-            if (e.target === e.currentTarget && !creating) setCreateOpen(false);
-          }}
-        >
-          <form
-            className="border shadow-(--shadow) relative mt-auto mr-auto mb-auto ml-auto overflow-y-auto pt-5.5 pr-5.5 pb-5.5 pl-5.5 border-line rounded-[10px] bg-panel leading-normal font-(family-name:--hoja-font-ui) w-[min(590px,calc(100vw-24px))] max-w-xl max-h-[90dvh] shell-phone:max-h-[calc(100dvh-24px)]"
-            data-initiative-create=""
-            onSubmit={create}
-          >
-            <header className="flex items-center justify-between gap-2.5">
-              <h2 className="mt-0 mr-0 mb-3 ml-0 text-[16px] font-semibold">
-                New initiative
-              </h2>
-              <button
-                className="bg-transparent font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                type="button"
-                aria-label="Close"
-                onClick={() => setCreateOpen(false)}
-                disabled={creating}
-              >
-                <X size={16} />
-              </button>
-            </header>
-            <label className="grid gap-1.25 mt-3 mr-0 mb-3 ml-0 text-[12px] font-semibold">
-              Name
-              <input
-                className="max-md:text-base font-sans placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                aria-label="Initiative name"
-                required
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-            </label>
-            <label className="grid gap-1.25 mt-3 mr-0 mb-3 ml-0 text-[12px] font-semibold">
-              Summary
-              <textarea
-                className="resize-y w-full min-w-0 pt-2 pr-2.5 pb-2 pl-2.5 border border-line rounded-md bg-bg text-foreground font-sans placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                aria-label="Initiative summary"
-                value={summary}
-                onChange={(e) => setSummary(e.target.value)}
-                rows={3}
-              />
-            </label>
-            <div
-              className="grid grid-cols-1 gap-x-3 md:grid-cols-2"
-              data-initiative-create-fields=""
-            >
-              <label className="grid gap-1.25 mt-3 mr-0 mb-3 ml-0 text-[12px] font-semibold">
-                Status
-                <select
-                  className="max-md:text-base border border-line rounded-md bg-bg text-foreground pt-2 pr-2.5 pb-2 pl-2.5 w-full min-w-0 font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                  value={status}
-                  onChange={(e) =>
-                    setStatus(e.target.value as "active" | "planned")
-                  }
-                >
-                  <option value="active">Active</option>
-                  <option value="planned">Planned</option>
-                </select>
-              </label>
-              <label className="grid gap-1.25 mt-3 mr-0 mb-3 ml-0 text-[12px] font-semibold">
-                Priority
-                <select
-                  className="max-md:text-base border border-line rounded-md bg-bg text-foreground pt-2 pr-2.5 pb-2 pl-2.5 w-full min-w-0 font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                  value={priority}
-                  onChange={(e) => setPriority(Number(e.target.value))}
-                >
-                  <option value={0}>No priority</option>
-                  <option value={1}>Urgent</option>
-                  <option value={2}>High</option>
-                  <option value={3}>Medium</option>
-                  <option value={4}>Low</option>
-                </select>
-              </label>
-              <label className="grid gap-1.25 mt-3 mr-0 mb-3 ml-0 text-[12px] font-semibold">
-                Owner
-                <select
-                  className="max-md:text-base border border-line rounded-md bg-bg text-foreground pt-2 pr-2.5 pb-2 pl-2.5 w-full min-w-0 font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                  value={ownerId}
-                  onChange={(e) => setOwnerId(e.target.value)}
-                >
-                  <option value="">No owner</option>
-                  {members.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name || m.id}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="grid gap-1.25 mt-3 mr-0 mb-3 ml-0 text-[12px] font-semibold">
-                Target date
-                <input
-                  className="max-md:text-base font-sans placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                  type="date"
-                  value={targetDate}
-                  onChange={(e) => setTargetDate(e.target.value)}
-                />
-              </label>
-            </div>
-            <fieldset className="max-h-32.5 overflow-auto border border-line rounded-md">
-              <legend>Projects</legend>
-              {allProjects.length ? (
-                allProjects
-                  .filter((p) => !isPendingProject(p))
-                  .map((p) => (
-                    <label
-                      className="flex gap-1.75 mt-3 mr-0 mb-3 ml-0 text-[12px] font-semibold items-center"
-                      key={p.id}
-                    >
-                      <input
-                        className="max-md:text-base font-sans placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:text-[16px]"
-                        type="checkbox"
-                        checked={projectIds.includes(p.id)}
-                        onChange={(e) =>
-                          setProjectIds((v) =>
-                            e.target.checked
-                              ? [...v, p.id]
-                              : v.filter((id) => id !== p.id),
-                          )
-                        }
-                      />
-                      {p.name}
-                    </label>
-                  ))
-              ) : (
-                <span>No projects available</span>
-              )}
-            </fieldset>
-            {formError && (
-              <p className="text-danger text-xs" role="alert">
-                {formError}
-              </p>
-            )}
-            <footer className="flex items-center justify-end gap-2.5 mt-4">
-              <button
-                type="button"
-                className="inline-flex items-center justify-center gap-1.75 rounded-md border border-line bg-panel pl-2.75 pr-2.75 pt-2 pb-2 text-inherit transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 font-sans shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                data-control-outline=""
-                onClick={() => setCreateOpen(false)}
-                disabled={creating}
-              >
-                Cancel
-              </button>
-              <button
-                className="inline-flex min-h-11 items-center justify-center gap-1.75 rounded-none bg-accent pl-3.5 pr-3.5 pt-2.25 pb-2.25 text-white font-[650] shadow-[none] transition-colors duration-150 ease-out hover:brightness-110 hover:transition-none active:translate-y-px disabled:cursor-wait disabled:opacity-65 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 font-sans shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.65]"
-                data-control-primary=""
-                disabled={creating || !name.trim()}
-              >
-                {creating ? "Creating…" : "Create"}
-              </button>
-            </footer>
-          </form>
-        </div>
-      )}
-    </section>
-  );
-}
-
 /* The task pane inside the inbox: the same task view as the full page, loaded by identifier and kept
    live from the sync store, with archive and delete closing the pane instead of navigating. */
 function InboxIssueDetail({
@@ -12248,6 +11609,8 @@ function CommandPalette({
   onClose,
   onIssue,
   onNavigate,
+  onCreateInitiative,
+  onOpenInitiative,
 }: {
   query: string;
   setQuery: (q: string) => void;
@@ -12255,7 +11618,15 @@ function CommandPalette({
   onClose: () => void;
   onIssue: (i: Issue) => void;
   onNavigate: (view: string) => void;
+  onCreateInitiative: () => void;
+  onOpenInitiative: (id: string) => void;
 }) {
+  const [initiativeRows, setInitiativeRows] = useState<InitiativeRef[]>([]);
+  useEffect(() => {
+    fetchAllInitiatives()
+      .then(setInitiativeRows)
+      .catch(() => undefined);
+  }, []);
   const [query, setQuery] = useState(initialQuery),
     [active, setActive] = useState(0),
     [remote, setRemote] = useState<Issue[]>([]);
@@ -12285,11 +11656,30 @@ function CommandPalette({
         : [],
     [meta, terms],
   );
+  const initiativeHits = useMemo(
+    () =>
+      terms.length
+        ? initiativeRows
+            .filter((i) => matchesTerms(`${i.identifier} ${i.name}`, terms))
+            .slice(0, 4)
+        : [],
+    [initiativeRows, terms],
+  );
+  const actions = [
+    {
+      key: "a:new-initiative",
+      label: "Create new initiative",
+      hint: "N then I",
+    },
+  ].filter(
+    (a) => !terms.length || matchesTerms(`${a.label} initiative`, terms),
+  );
   const pages = [
     "Inbox",
     "My issues",
     "Board",
     "Projects",
+    "Initiatives",
     "Cycles",
     "Home",
   ].filter((x) => !terms.length || matchesTerms(x, terms));
@@ -12335,6 +11725,11 @@ function CommandPalette({
       key: `t:${t.id}`,
       run: () => go(`/workspace/team/${t.key.toLowerCase()}/active`),
     })),
+    ...initiativeHits.map((i) => ({
+      key: `in:${i.id}`,
+      run: () => onOpenInitiative(i.identifier || i.id),
+    })),
+    ...actions.map((a) => ({ key: a.key, run: onCreateInitiative })),
     ...pages.map((x) => ({ key: `n:${x}`, run: () => onNavigate(x) })),
   ];
   useEffect(() => setActive(0), [deferred]);
@@ -12563,6 +11958,60 @@ function CommandPalette({
                   <span className="last:text-muted last:overflow-hidden last:text-ellipsis">
                     {t.name}
                   </span>
+                </button>
+              ))}
+            </div>
+          )}
+          {initiativeHits.length > 0 && (
+            <div
+              className="pt-1.75 pr-1.75 pb-1.75 pl-1.75"
+              data-command-results=""
+              role="group"
+            >
+              <p
+                role="presentation"
+                className="pt-1.25 pr-2 pb-1.25 pl-2 text-muted text-[10px] normal-case tracking-widest"
+              >
+                Initiatives
+              </p>
+              {initiativeHits.map((i) => (
+                <button
+                  className="flex items-center gap-2.25 w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 rounded-md bg-transparent text-left text-[12px] hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                  key={i.id}
+                  {...row(`in:${i.id}`)}
+                  onClick={() => onOpenInitiative(i.identifier || i.id)}
+                >
+                  <Target size={14} />
+                  <b>{i.identifier}</b>
+                  <span className="last:text-muted last:overflow-hidden last:text-ellipsis">
+                    {i.name}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+          {actions.length > 0 && (
+            <div
+              className="pt-1.75 pr-1.75 pb-1.75 pl-1.75"
+              data-command-results=""
+              role="group"
+            >
+              <p
+                role="presentation"
+                className="pt-1.25 pr-2 pb-1.25 pl-2 text-muted text-[10px] normal-case tracking-widest"
+              >
+                Actions
+              </p>
+              {actions.map((a) => (
+                <button
+                  className="flex items-center gap-2.25 w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 rounded-md bg-transparent text-left text-[12px] hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                  key={a.key}
+                  {...row(a.key)}
+                  onClick={onCreateInitiative}
+                >
+                  <Plus size={14} />
+                  <span className="flex-1">{a.label}</span>
+                  <kbd className="text-[10px] text-muted">{a.hint}</kbd>
                 </button>
               ))}
             </div>

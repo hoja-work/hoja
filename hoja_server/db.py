@@ -39,7 +39,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 87
+CURRENT_SCHEMA_REVISION = 88
 
 log = logging.getLogger(__name__)
 
@@ -1193,6 +1193,8 @@ comment = Table(
     # Pulse: a comment may hang off a project update instead of an issue. Both
     # parents are nullable and the writer sets exactly one; see revision 75.
     Column("project_update_id", String, ForeignKey("project_update.id"), index=True),
+    # Revision 88: a reply to an initiative update (no FK: the table is defined later).
+    Column("initiative_update_id", String, index=True),
     Column("body", Text, nullable=False),
     Column("user_id", String, ForeignKey("user.id")),
     Column("url", String),
@@ -1624,6 +1626,53 @@ initiative = Table(
     Column("created_at", String, nullable=False),
     Column("updated_at", String, nullable=False),
     Column("archived_at", String),
+    # Revision 88: structure and identity.
+    # ``parent_id`` nests a sub-initiative under another (no cycles, enforced on write).
+    Column("parent_id", String, index=True),
+    Column("icon", String),
+    Column("color", String),
+    Column("lead_team_id", String, index=True),
+    # The readable id is ``I-<number>``, numbered per workspace in creation order.
+    Column("number", Integer),
+    # Manual order in the list; smaller first, NULL after every ordered row.
+    Column("sort_order", Float),
+    # How often the owner is reminded to post an update: never, weekly, biweekly, monthly.
+    Column("update_reminder", String),
+    # When the owner was last reminded, so one overdue period sends one reminder.
+    Column("reminder_sent_at", String),
+)
+
+# Revision 88: workspace-wide initiative labels, and which initiatives carry them.
+initiative_label = Table(
+    "initiative_label",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("name", String, nullable=False),
+    Column("color", String),
+    Column("created_at", String, nullable=False),
+    Column("archived_at", String),
+)
+
+initiative_label_link = Table(
+    "initiative_label_link",
+    metadata,
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("initiative_id", String, ForeignKey("initiative.id"), primary_key=True),
+    Column("label_id", String, ForeignKey("initiative_label.id"), primary_key=True),
+)
+
+# Revision 88: documents and links pinned to an initiative ("Resources").
+initiative_resource = Table(
+    "initiative_resource",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("initiative_id", String, ForeignKey("initiative.id"), nullable=False, index=True),
+    Column("title", String, nullable=False),
+    Column("url", String, nullable=False),
+    Column("creator_id", String, ForeignKey("user.id")),
+    Column("created_at", String, nullable=False),
 )
 
 initiative_project = Table(
@@ -1940,6 +1989,17 @@ initiative_update = Table(
     Column("created_at", String, nullable=False),
     Column("updated_at", String, nullable=False),
     Column("actor_id", String, ForeignKey("user.id")),
+)
+
+# Revision 88: emoji reactions on initiative updates, one row per person per emoji.
+initiative_update_reaction = Table(
+    "initiative_update_reaction",
+    metadata,
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("update_id", String, ForeignKey("initiative_update.id"), primary_key=True),
+    Column("user_id", String, ForeignKey("user.id"), primary_key=True),
+    Column("emoji", String, primary_key=True),
+    Column("created_at", String, nullable=False),
 )
 
 project_member = Table(
@@ -3437,6 +3497,40 @@ def _apply_initiative_description(conn):
         conn.exec_driver_sql("ALTER TABLE initiative ADD COLUMN description TEXT")
 
 
+def _apply_initiative_structure(conn):
+    """Revision 88: sub-initiatives, icon/colour, lead team, readable numbers, manual
+    order, update reminders, labels, resources, update reactions and replies."""
+    existing = {column["name"] for column in inspect(conn).get_columns("initiative")}
+    for name, sql_type in (("parent_id", "VARCHAR"), ("icon", "VARCHAR"), ("color", "VARCHAR"),
+                           ("lead_team_id", "VARCHAR"), ("number", "INTEGER"),
+                           ("sort_order", "FLOAT"), ("update_reminder", "VARCHAR"),
+                           ("reminder_sent_at", "VARCHAR")):
+        if name not in existing:
+            conn.exec_driver_sql(f"ALTER TABLE initiative ADD COLUMN {name} {sql_type}")
+    conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_initiative_parent_id ON initiative (parent_id)")
+    conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_initiative_lead_team_id ON initiative (lead_team_id)")
+    # Backfill readable numbers per workspace in creation order.
+    rows = conn.execute(select(initiative.c.id, initiative.c.organization_id).where(
+        initiative.c.number.is_(None)).order_by(initiative.c.organization_id, initiative.c.created_at,
+                                                initiative.c.id)).all()
+    taken: dict[str, int] = {}
+    for org_id, top in conn.execute(select(initiative.c.organization_id, func.max(initiative.c.number))
+                                    .group_by(initiative.c.organization_id)):
+        taken[org_id] = top or 0
+    for ident, org_id in rows:
+        taken[org_id] = taken.get(org_id, 0) + 1
+        conn.execute(initiative.update().where(initiative.c.id == ident).values(number=taken[org_id]))
+    initiative_label.create(conn, checkfirst=True)
+    initiative_label_link.create(conn, checkfirst=True)
+    initiative_resource.create(conn, checkfirst=True)
+    initiative_update_reaction.create(conn, checkfirst=True)
+    comment_columns = {column["name"] for column in inspect(conn).get_columns("comment")}
+    if "initiative_update_id" not in comment_columns:
+        conn.exec_driver_sql("ALTER TABLE comment ADD COLUMN initiative_update_id VARCHAR")
+    conn.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_comment_initiative_update_id ON comment (initiative_update_id)")
+
+
 def _apply_tailnet(conn):
     """``tailnet`` and ``tailnet_machine``: Tailscale-connected machines (HOJA-602)."""
     tailnet.create(conn, checkfirst=True)
@@ -3847,6 +3941,9 @@ _MIGRATIONS = {
     86: _apply_user_avatar_hue,
     # 87: an initiative has a Markdown description as well as its summary.
     87: _apply_initiative_description,
+    # 88: sub-initiatives, labels, resources, icon/colour, lead team, readable ids,
+    # manual order, update reminders, and reactions and replies on updates.
+    88: _apply_initiative_structure,
 }
 
 

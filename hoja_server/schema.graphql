@@ -79,8 +79,8 @@ type UserPayload {
   emailQueued: Boolean
 }
 
-input InitiativeCreateInput { name: String! summary: String description: String status: String priority: Int ownerId: String targetDate: TimelessDate projectIds: [String!] }
-input InitiativeUpdateInput { name: String summary: String description: String status: String priority: Int ownerId: String targetDate: TimelessDate projectIds: [String!] }
+input InitiativeCreateInput { name: String! summary: String description: String status: String priority: Int ownerId: String targetDate: TimelessDate projectIds: [String!] parentId: String icon: String color: String leadTeamId: String labelIds: [String!] updateReminder: String sortOrder: Float }
+input InitiativeUpdateInput { name: String summary: String description: String status: String priority: Int ownerId: String targetDate: TimelessDate projectIds: [String!] parentId: String icon: String color: String leadTeamId: String labelIds: [String!] updateReminder: String sortOrder: Float }
 
 input WorkspaceUpdateInput {
   name: String
@@ -741,7 +741,7 @@ input IssueUpdateInput {
   dueDate: DateTime
   labelIds: [String!]
 }
-input CommentCreateInput { issueId: String projectUpdateId: String body: String! }
+input CommentCreateInput { issueId: String projectUpdateId: String initiativeUpdateId: String body: String! }
 input CommentUpdateInput { body: String }
 input IssueLabelUpdateInput { name: String color: String description: String }
 input IssueLabelCreateInput { name: String! teamId: String color: String description: String }

@@ -55,6 +55,6 @@ def test_migration_adds_the_column_to_an_existing_database(tmp_path):
     migrate(engine)
     with engine.begin() as conn:
         conn.exec_driver_sql("ALTER TABLE initiative DROP COLUMN description")
-        conn.exec_driver_sql("DELETE FROM schema_revision WHERE revision = 87")
+        conn.exec_driver_sql("DELETE FROM schema_revision WHERE revision >= 87")
     migrate(engine)
     assert "description" in {c["name"] for c in inspect(engine).get_columns("initiative")}

@@ -23,6 +23,8 @@ export type InboxKind =
   | "projectUpdated"
   | "projectMemberAdded"
   | "initiativeUpdatePosted"
+  | "initiativeUpdateReply"
+  | "initiativeUpdateDue"
   | "initiativeOwnerAssigned"
   | "initiativeUpdated"
   | "cycleStarted"
@@ -304,6 +306,10 @@ export function describe(n: InboxNotification): string {
       return "added you to the project";
     case "initiativeOwnerAssigned":
       return "made you the initiative owner";
+    case "initiativeUpdateReply":
+      return "replied to an update";
+    case "initiativeUpdateDue":
+      return "An update on this initiative is due";
     case "projectUpdated":
       return changesText(data, "updated the project");
     case "initiativeUpdated":

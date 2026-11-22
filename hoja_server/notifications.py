@@ -368,6 +368,33 @@ def on_initiative_update_posted(conn, org_id: str, initiative_id: str, update_id
                    initiative_update_id=update_id)
 
 
+def on_initiative_update_reply(conn, org_id: str, update_row: dict, comment_id: str,
+                               actor_id: str | None, body: str | None, ts: str) -> None:
+    """A reply on an initiative update reaches its author and everyone who replied before."""
+    initiative_id, update_id = update_row["initiative_id"], update_row["id"]
+    mentioned = mentioned_user_ids(conn, org_id, body) - {actor_id}
+    subscribe_subject(conn, org_id, "initiative", initiative_id, [actor_id, *mentioned])
+    earlier = set(conn.execute(select(comment.c.user_id).where(and_(
+        comment.c.organization_id == org_id, comment.c.initiative_update_id == update_id,
+        comment.c.id != comment_id, comment.c.archived_at.is_(None)))).scalars())
+    participants = ({update_row.get("actor_id")} | earlier | mentioned) - {None}
+    notify_subject(conn, org_id, "initiative", initiative_id, actor_id, participants,
+                   "initiativeUpdateReply", ts,
+                   data={"updateId": update_id, "commentId": comment_id, "snippet": snippet(body)},
+                   initiative_update_id=update_id, comment_id=comment_id)
+
+
+def on_initiative_update_due(conn, org_id: str, initiative_row: dict, ts: str) -> set[str]:
+    """Remind the owner that an update is due (the reminder sweep claims the period first)."""
+    owner = initiative_row.get("owner_id")
+    if not owner:
+        return set()
+    return notify_subject(conn, org_id, "initiative", initiative_row["id"], None, [owner],
+                          "initiativeUpdateDue", ts,
+                          data={"name": initiative_row.get("name"),
+                                "cadence": initiative_row.get("update_reminder")})
+
+
 # -------------------------------------------------------------------- cycles
 
 def claim_cycle_event(conn, cycle_id: str, edge: str, ts: str) -> bool:

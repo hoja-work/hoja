@@ -263,7 +263,14 @@ def v_initiatives(obj, info, first=None):
     limit = _page(first)
     filters = obj.get("filters") or {}
     statuses = viewdocs.initiative_statuses(filters) if filters else None
-    rows = store.initiatives(org, statuses=statuses, limit=limit + 1)
+    extra = {k: v for k, v in filters.items() if k != "status"}
+    if extra:
+        from hoja_server import initiative_api
+
+        rows = [r for r in initiative_api.with_filter_fields(store, org, store.initiatives(org, statuses=statuses, limit=500))
+                if viewdocs.initiative_matches(extra, r)][:limit + 1]
+    else:
+        rows = store.initiatives(org, statuses=statuses, limit=limit + 1)
     nodes = rows[:limit]
     if (obj.get("display") or {}).get("reverse"):
         nodes.reverse()

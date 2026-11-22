@@ -164,6 +164,11 @@ _PROJECT_PROPERTIES = {
 }
 _INITIATIVE_PROPERTIES = {
     "status": (("is", "isEitherOf"), "text"),
+    # Revision 88: the initiatives list filters. Applied by ``initiative_matches``.
+    "health": (("is", "isEitherOf"), "text"),
+    "owner": (("is", "isEitherOf"), "text"),
+    "leadTeam": (("is", "isEitherOf"), "text"),
+    "label": (("is", "isEitherOf"), "text"),
 }
 _PROPERTIES = {"issue": _ISSUE_PROPERTIES, "project": _PROJECT_PROPERTIES,
                "initiative": _INITIATIVE_PROPERTIES}
@@ -291,17 +296,37 @@ def compile_filter(kind: str, filters: dict) -> dict:
     return _compile_group(kind, filters)
 
 
-def initiative_statuses(filters: dict) -> list[str]:
-    """The status list an initiative view selects, from its top-level status predicate."""
+def initiative_statuses(filters: dict) -> list[str] | None:
+    """The status list an initiative view selects; None when it does not narrow status."""
     for key, value in filters.items():
         if key == "status":
             op, operand = next(iter(value.items()))
             if op == "is":
                 return [operand]
             return list(operand)
-    raise ViewError(
-        "An initiative view needs one status predicate, for example {\"status\": {\"is\": \"active\"}}.",
-        "filters")
+    if not any(key in _INITIATIVE_PROPERTIES for key in filters):
+        raise ViewError(
+            "An initiative view filters on status, health, owner, leadTeam or label, for "
+            "example {\"status\": {\"is\": \"active\"}}.", "filters")
+    return None
+
+
+def initiative_matches(filters: dict, row: dict) -> bool:
+    """Whether a serialized initiative (with health, ownerId, leadTeamId, labelIds
+    resolved by the caller) passes the non-status predicates of a view."""
+    def wanted(value: dict) -> list:
+        op, operand = next(iter(value.items()))
+        return [operand] if op == "is" else list(operand)
+    for key, value in filters.items():
+        if key == "health" and (row.get("health") or "none") not in wanted(value):
+            return False
+        if key == "owner" and (row.get("ownerId") or "none") not in wanted(value):
+            return False
+        if key == "leadTeam" and (row.get("leadTeamId") or "none") not in wanted(value):
+            return False
+        if key == "label" and not set(row.get("labelIds") or []) & set(wanted(value)):
+            return False
+    return True
 
 
 def display_order(display: dict) -> tuple[str, bool]:
@@ -325,6 +350,27 @@ _DISPLAY_FIELDS = frozenset({"layout", "grouping", "subGrouping", "ordering", "r
                              "boardColumnOrder", "showEmptyGroups"})
 
 
+# The initiatives list groups and orders by initiative properties, nests sub-initiatives
+# under their parent and can hide summaries; its display document is its own.
+INITIATIVE_GROUPINGS = ("none", "status", "health", "owner", "leadTeam")
+INITIATIVE_ORDERINGS = ("manual", "name", "targetDate", "created", "health", "priority")
+
+
+_INITIATIVE_DISPLAY = ("grouping", "ordering", "nested", "summary")
+
+
+def _parse_initiative_display(document: dict) -> dict:
+    out: dict[str, Any] = {}
+    if "grouping" in document:
+        out["grouping"] = _enum(document["grouping"], INITIATIVE_GROUPINGS, "display.grouping")
+    if "ordering" in document:
+        out["ordering"] = _enum(document["ordering"], INITIATIVE_ORDERINGS, "display.ordering")
+    for name in ("nested", "summary"):
+        if name in document:
+            out[name] = _boolean(document[name], f"display.{name}")
+    return out
+
+
 def _enum(value: Any, allowed: tuple, field: str) -> str:
     if not isinstance(value, str) or value not in allowed:
         raise ViewError(f"{field} must be one of {list(allowed)}.", field)
@@ -336,6 +382,10 @@ def parse_display(kind: str, raw: Any) -> dict:
     if kind not in KINDS:
         raise ViewError(f"kind must be one of {list(KINDS)}.", "kind")
     document = parse_json_document(raw, "display")
+    if kind == "initiative":
+        own = {k: document[k] for k in _INITIATIVE_DISPLAY if k in document}
+        rest = {k: v for k, v in document.items() if k not in _INITIATIVE_DISPLAY}
+        return {**(parse_display("project", rest) if rest else {}), **_parse_initiative_display(own)}
     unknown = sorted(set(document) - _DISPLAY_FIELDS)
     if unknown:
         raise ViewError(f"Unknown display fields: {unknown}.", f"display.{unknown[0]}")

@@ -12,7 +12,7 @@ import {
   AccordionTrigger,
 } from "../components/motion-primitives/accordion";
 import { Markdown } from "../markdown";
-import { cx } from "./shared";
+import { cx, LinPopover } from "./shared";
 
 type DataAttributes = {
   [name: `data-${string}`]: string | number | boolean | null | undefined;
@@ -576,5 +576,166 @@ export function ActivityLine({
       <span>{children}</span>
       {time}
     </div>
+  );
+}
+
+export type PickerOption = {
+  id: string | null;
+  label: React.ReactNode;
+  /** Text matched by the search box; defaults to the label when it is a string. */
+  keywords?: string;
+  selected?: boolean;
+};
+
+/** A searchable option list for a popover: single pick closes, multi pick toggles,
+ * and `onCreate` offers the typed text as a new option (labels). */
+export function PickerMenu({
+  label,
+  options,
+  multi,
+  onPick,
+  onCreate,
+  onClose,
+  placeholder = "Search…",
+  footer,
+}: {
+  label: string;
+  options: PickerOption[];
+  multi?: boolean;
+  onPick: (id: string | null) => void;
+  onCreate?: (text: string) => void;
+  onClose: () => void;
+  placeholder?: string;
+  footer?: React.ReactNode;
+}) {
+  const [query, setQuery] = useState("");
+  const [active, setActive] = useState(0);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => inputRef.current?.focus(), []);
+  const q = query.trim().toLowerCase();
+  const shown = options.filter((o) =>
+    (o.keywords ?? (typeof o.label === "string" ? o.label : ""))
+      .toLowerCase()
+      .includes(q),
+  );
+  const canCreate =
+    onCreate &&
+    q &&
+    !options.some((o) => (o.keywords ?? String(o.label)).toLowerCase() === q);
+  const choose = (o: PickerOption) => {
+    onPick(o.id);
+    if (!multi) onClose();
+  };
+  return (
+    <div className="grid gap-1" role="presentation">
+      <input
+        ref={inputRef}
+        className="rounded-md border border-line bg-bg px-2 py-1.5 text-sm text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent"
+        placeholder={placeholder}
+        aria-label={`Search ${label.toLowerCase()}`}
+        value={query}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setActive(0);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setActive((a) => Math.min(a + 1, shown.length - 1));
+          } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setActive((a) => Math.max(a - 1, 0));
+          } else if (e.key === "Enter") {
+            e.preventDefault();
+            if (shown[active]) choose(shown[active]);
+            else if (canCreate) onCreate!(query.trim());
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            onClose();
+          }
+        }}
+      />
+      <div
+        role="listbox"
+        aria-label={label}
+        aria-multiselectable={multi || undefined}
+        className="grid max-h-64 gap-0.5 overflow-y-auto"
+      >
+        {shown.map((o, i) => (
+          <button
+            key={String(o.id)}
+            type="button"
+            role="option"
+            aria-selected={Boolean(o.selected)}
+            data-active={i === active || undefined}
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground hover:bg-subtle data-active:bg-subtle aria-selected:font-semibold"
+            onMouseEnter={() => setActive(i)}
+            onClick={() => choose(o)}
+          >
+            <span className="min-w-0 flex-1 truncate">{o.label}</span>
+            {o.selected && <span aria-hidden>✓</span>}
+          </button>
+        ))}
+        {canCreate && (
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted hover:bg-subtle"
+            onClick={() => onCreate!(query.trim())}
+          >
+            Create “{query.trim()}”
+          </button>
+        )}
+        {!shown.length && !canCreate && (
+          <p className="m-0 p-2 text-sm text-muted">No matches.</p>
+        )}
+      </div>
+      {footer}
+    </div>
+  );
+}
+
+/** A property shown as a chip (Linear's row under the summary and its create dialog).
+ * The chip opens whatever `menu` renders, anchored below it. */
+export function PropertyChip({
+  icon,
+  children,
+  label,
+  menu,
+  disabled,
+  ...data
+}: DataAttributes & {
+  icon?: React.ReactNode;
+  children: React.ReactNode;
+  /** Accessible name, for example "Status: Active". */
+  label: string;
+  menu?: (close: () => void) => React.ReactNode;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="relative inline-flex" {...data}>
+      <button
+        type="button"
+        aria-label={label}
+        aria-haspopup={menu ? "dialog" : undefined}
+        aria-expanded={menu ? open : undefined}
+        disabled={disabled || !menu}
+        className="inline-flex h-7 max-w-full items-center gap-1.5 rounded-md border border-line bg-panel px-2 text-xs font-medium text-foreground transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none disabled:cursor-default disabled:hover:bg-panel focus-visible:outline-2 focus-visible:outline-accent"
+        onClick={() => setOpen((v) => !v)}
+      >
+        {icon}
+        <span className="truncate">{children}</span>
+      </button>
+      {open && menu && (
+        <LinPopover
+          onClose={() => setOpen(false)}
+          className="absolute top-full left-0 z-50 mt-1 w-64 max-w-xs rounded-lg border border-line bg-panel p-1 shadow-lg"
+          role="dialog"
+          aria-label={label}
+        >
+          {menu(() => setOpen(false))}
+        </LinPopover>
+      )}
+    </span>
   );
 }

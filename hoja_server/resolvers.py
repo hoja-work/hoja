@@ -2068,6 +2068,8 @@ def build_schema():
     from hoja_server.agent_conversations import query as conversation_query
     from hoja_server.model_providers import SDL as PROVIDER_SDL
     from hoja_server.task_aliases import bind_task_surface
+    from hoja_server import initiative_api
+    initiative_api.bind(Initiative, InitiativeUpdate, Project)
     tasks_sdl = (Path(__file__).parent / "schema_tasks.graphql").read_text()
     # HOJA-491: bind Issue.sla before the alias surface copies Issue's resolvers
     # onto Task, so the agent-facing vocabulary carries the clock too.
@@ -2089,7 +2091,7 @@ def build_schema():
          views_api.SDL, decisions_api.SDL, project_settings.SDL, permissions.SDL,
          task_templates.SDL, sla.SDL, agent_members.SDL, agent_sessions.SDL,
          agent_policy.SDL, agent_runners.SDL, agent_runner_admin.SDL,
-         agent_claims.SDL, usage_ledger.SDL, connect_endpoints.SDL, agent_ops.SDL, project_repos.SDL, tailnet_ops.SDL, tasks_sdl],
+         agent_claims.SDL, usage_ledger.SDL, connect_endpoints.SDL, agent_ops.SDL, project_repos.SDL, tailnet_ops.SDL, initiative_api.SDL, tasks_sdl],
         query, mutation, *task_bindables,
         model_providers.query, model_providers.mutation,
         project_settings.query, project_settings.mutation,
@@ -2100,6 +2102,7 @@ def build_schema():
         webhooks_api.query, webhooks_api.mutation, webhooks_api.webhook_type,
         extensions_api.query, extensions_api.mutation, extensions_api.extension_type,
         views_api.query, views_api.mutation, views_api.view_type,
+        initiative_api.query, initiative_api.mutation,
         decisions_api.query, decisions_api.mutation, decisions_api.decision_type,
         conversation_query,
         model_providers.model_provider_type, project_settings.project_status_type,

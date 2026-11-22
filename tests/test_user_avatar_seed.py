@@ -33,7 +33,8 @@ def test_new_seeds_are_random_hex_and_not_the_name():
 
 
 def test_the_current_revision_includes_the_avatar_seed_work():
-    assert CURRENT_SCHEMA_REVISION == 86
+    # Later revisions build on it; what matters is that 85 and 86 are applied.
+    assert CURRENT_SCHEMA_REVISION >= 86
 
 
 def test_backfill_gives_each_existing_user_a_distinct_seed_and_keeps_it(tmp_path):

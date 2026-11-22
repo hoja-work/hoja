@@ -3306,6 +3306,13 @@ def create_app(
             from hoja_server import cycle_events
 
             cycle_sweeper = asyncio.create_task(tenant_context.as_system(cycle_events.run_forever(engine)))
+        # Owners of active initiatives are reminded when an update is overdue (initiative_api.py).
+        reminder_sweeper = None
+        if os.environ.get("HOJA_INITIATIVE_REMINDERS", "1").strip().lower() not in ("0", "false", "no"):
+            from hoja_server import initiative_api
+
+            reminder_sweeper = asyncio.create_task(
+                tenant_context.as_system(initiative_api.run_reminders_forever(engine)))
         async with runtime_app.router.lifespan_context(runtime_app):
             if agent_dbos_url := os.environ.get("HOJA_AGENT_DBOS_URL"):
                 missing = _missing_packages(("dbos", *_AGENT_REQUIRED_PACKAGES))
@@ -3349,6 +3356,10 @@ def create_app(
             cycle_sweeper.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await cycle_sweeper
+        if reminder_sweeper is not None:
+            reminder_sweeper.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await reminder_sweeper
         if pinned_mcp is not None:
             pinned_mcp.cancel()
             with contextlib.suppress(asyncio.CancelledError):

@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -2731,13 +2732,16 @@ class Store:
             return [self.ser_initiative(conn, row) for row in rows]
 
     def initiative_by_id(self, org_id: str, ident: str) -> dict | None:
+        """By id, or by the readable ``I-<number>``."""
+        match = re.fullmatch(r"[Ii]-(\d+)", ident or "")
         with self.engine.connect() as conn:
-            row = _one(conn, select(initiative).where(and_(initiative.c.organization_id == org_id, initiative.c.id == ident, initiative.c.archived_at.is_(None))))
+            key = initiative.c.number == int(match.group(1)) if match else initiative.c.id == ident
+            row = _one(conn, select(initiative).where(and_(initiative.c.organization_id == org_id, key, initiative.c.archived_at.is_(None))))
             return self.ser_initiative(conn, row) if row else None
 
     @staticmethod
     def ser_initiative(conn, row) -> dict:
-        result = {"id": row["id"], "name": row["name"], "summary": row["summary"], "description": row.get("description"), "status": row["status"], "priority": row["priority"], "targetDate": row["target_date"], "createdAt": row["created_at"], "updatedAt": row["updated_at"], "_owner_id": row["owner_id"], "_creator_id": row["creator_id"], "_org_id": row["organization_id"], "owner": None, "creator": None}
+        result = {"id": row["id"], "name": row["name"], "summary": row["summary"], "description": row.get("description"), "status": row["status"], "priority": row["priority"], "targetDate": row["target_date"], "createdAt": row["created_at"], "updatedAt": row["updated_at"], "number": row.get("number") or 0, "identifier": f"I-{row.get('number') or 0}", "icon": row.get("icon"), "color": row.get("color"), "sortOrder": row.get("sort_order"), "updateReminder": row.get("update_reminder"), "_parent_id": row.get("parent_id"), "_lead_team_id": row.get("lead_team_id"), "_reminder_sent_at": row.get("reminder_sent_at"), "_owner_id": row["owner_id"], "_creator_id": row["creator_id"], "_org_id": row["organization_id"], "owner": None, "creator": None}
         for field in ("owner", "creator"):
             uid = row[f"{field}_id"]
             if uid:

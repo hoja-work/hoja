@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import logging
 from urllib.parse import urlparse
 
@@ -21,8 +22,11 @@ from hoja_server.db import (
     entity_url,
     inbox_notification,
     initiative,
+    initiative_label,
+    initiative_label_link,
     initiative_project,
     initiative_update,
+    initiative_update_reaction,
     issue,
     issue_activity,
     issue_decision,
@@ -656,10 +660,97 @@ class Writer:
         with self.engine.begin() as conn:
             if owner_id and not conn.execute(select(user.c.id).where(and_(user.c.id == owner_id, user.c.organization_id == org_id))).first():
                 raise ValueError("Owner must belong to the current organization.")
-            conn.execute(initiative.insert().values(id=ident, organization_id=org_id, name=name, summary=inp.get("summary"), description=inp.get("description"), status=status, priority=priority, owner_id=owner_id, creator_id=actor_id, target_date=inp.get("targetDate"), created_at=ts, updated_at=ts))
+            structure = self._initiative_structure(conn, org_id, None, inp)
+            number = (conn.execute(select(func.max(initiative.c.number)).where(
+                initiative.c.organization_id == org_id)).scalar() or 0) + 1
+            conn.execute(initiative.insert().values(id=ident, organization_id=org_id, name=name, summary=inp.get("summary"), description=inp.get("description"), status=status, priority=priority, owner_id=owner_id, creator_id=actor_id, target_date=inp.get("targetDate"), created_at=ts, updated_at=ts, number=number, **structure))
             self._initiative_projects(conn, org_id, ident, inp.get("projectIds", []))
+            if inp.get("labelIds"):
+                self._initiative_labels(conn, org_id, ident, inp["labelIds"])
             notifications.on_initiative_created(conn, org_id, ident, actor_id, owner_id, ts)
         return ident
+
+    INITIATIVE_REMINDERS = ("never", "weekly", "biweekly", "monthly")
+
+    @staticmethod
+    def resolve_initiative_id(conn, org_id: str, ref: str) -> str:
+        """An initiative reference is its id or its readable ``I-<number>``."""
+        match = re.fullmatch(r"[Ii]-(\d+)", ref or "")
+        if not match:
+            return ref
+        found = conn.execute(select(initiative.c.id).where(and_(
+            initiative.c.organization_id == org_id,
+            initiative.c.number == int(match.group(1))))).scalar()
+        return found or ref
+
+    def _initiative_structure(self, conn, org_id: str, ident: str | None, inp: dict) -> dict:
+        """Validate the revision-88 fields an input carries and return their columns."""
+        values: dict = {}
+        if "parentId" in inp:
+            parent = inp["parentId"]
+            if parent:
+                parent = self.resolve_initiative_id(conn, org_id, parent)
+                if parent == ident:
+                    raise ValueError("An initiative cannot be its own parent.")
+                if not conn.execute(select(initiative.c.id).where(and_(
+                        initiative.c.id == parent, initiative.c.organization_id == org_id,
+                        initiative.c.archived_at.is_(None)))).first():
+                    raise ValueError("Parent initiative must belong to the current organization.")
+                # Walk up from the new parent: meeting this initiative would close a loop.
+                seen, cursor, depth = set(), parent, 0
+                while cursor and ident:
+                    if cursor == ident:
+                        raise ValueError("That parent would nest the initiative inside itself.")
+                    if cursor in seen:
+                        break
+                    seen.add(cursor)
+                    depth += 1
+                    cursor = conn.execute(select(initiative.c.parent_id).where(and_(
+                        initiative.c.id == cursor, initiative.c.organization_id == org_id))).scalar()
+                if depth > 5:
+                    raise ValueError("Initiatives nest at most five levels deep.")
+            values["parent_id"] = parent or None
+        if "icon" in inp:
+            icon = (inp["icon"] or "").strip() or None
+            if icon and len(icon) > 32:
+                raise ValueError("Initiative icon must be a short name or emoji.")
+            values["icon"] = icon
+        if "color" in inp:
+            color = (inp["color"] or "").strip() or None
+            if color and not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+                raise ValueError("Initiative colour must be a hex colour like #5e6ad2.")
+            values["color"] = color
+        if "leadTeamId" in inp:
+            team_id = inp["leadTeamId"] or None
+            if team_id and not conn.execute(select(team.c.id).where(and_(
+                    team.c.id == team_id, team.c.organization_id == org_id))).first():
+                raise ValueError("Lead team must belong to the current organization.")
+            values["lead_team_id"] = team_id
+        if "updateReminder" in inp:
+            reminder = inp["updateReminder"] or None
+            if reminder and reminder not in self.INITIATIVE_REMINDERS:
+                raise ValueError("Update reminders are never, weekly, biweekly or monthly.")
+            values["update_reminder"] = reminder
+            values["reminder_sent_at"] = None
+        if "sortOrder" in inp:
+            order = inp["sortOrder"]
+            if order is not None and not isinstance(order, (int, float)):
+                raise ValueError("sortOrder must be a number.")
+            values["sort_order"] = float(order) if order is not None else None
+        return values
+
+    @staticmethod
+    def _initiative_labels(conn, org_id: str, ident: str, label_ids: list[str]) -> None:
+        conn.execute(initiative_label_link.delete().where(and_(
+            initiative_label_link.c.organization_id == org_id,
+            initiative_label_link.c.initiative_id == ident)))
+        for lid in dict.fromkeys(label_ids):
+            if not conn.execute(select(initiative_label.c.id).where(and_(
+                    initiative_label.c.id == lid, initiative_label.c.organization_id == org_id,
+                    initiative_label.c.archived_at.is_(None)))).first():
+                raise ValueError("Label must belong to the current organization.")
+            conn.execute(initiative_label_link.insert().values(
+                organization_id=org_id, initiative_id=ident, label_id=lid))
 
     @staticmethod
     def _initiative_projects(conn, org_id: str, ident: str, project_ids: list[str]) -> None:
@@ -670,6 +761,7 @@ class Writer:
 
     def initiative_update(self, org_id: str, viewer_id: str, ident: str, inp: dict) -> bool:
         with self.engine.begin() as conn:
+            ident = self.resolve_initiative_id(conn, org_id, ident)
             row = conn.execute(select(initiative.c.creator_id).where(and_(
                 initiative.c.id == ident, initiative.c.organization_id == org_id,
                 initiative.c.archived_at.is_(None)))).first()
@@ -697,6 +789,9 @@ class Writer:
             if "projectIds" in inp:
                 conn.execute(initiative_project.delete().where(and_(initiative_project.c.organization_id == org_id, initiative_project.c.initiative_id == ident)))
                 self._initiative_projects(conn, org_id, ident, inp["projectIds"])
+            if "labelIds" in inp:
+                self._initiative_labels(conn, org_id, ident, inp["labelIds"] or [])
+            values.update(self._initiative_structure(conn, org_id, ident, inp))
             values["updated_at"] = now_iso()
             conn.execute(initiative.update().where(and_(initiative.c.id == ident, initiative.c.organization_id == org_id)).values(**values))
             notifications.on_initiative_updated(conn, org_id, before, values, viewer_id, values["updated_at"])
@@ -704,6 +799,7 @@ class Writer:
 
     def initiative_archive(self, org_id: str, viewer_id: str, ident: str) -> bool:
         with self.engine.begin() as conn:
+            ident = self.resolve_initiative_id(conn, org_id, ident)
             row = conn.execute(select(initiative.c.creator_id).where(and_(
                 initiative.c.id == ident, initiative.c.organization_id == org_id,
                 initiative.c.archived_at.is_(None)))).first()
@@ -1231,13 +1327,26 @@ class Writer:
         """
         issue_ref = inp.get("issueId")
         update_ref = inp.get("projectUpdateId")
-        if bool(issue_ref) == bool(update_ref):
+        initiative_update_ref = inp.get("initiativeUpdateId")
+        if sum(bool(x) for x in (issue_ref, update_ref, initiative_update_ref)) != 1:
             # Two parents would leave the reply with no single owner; none would
             # leave it unreachable once the mutation returns.
             raise GraphQLError(
-                "A comment needs exactly one parent: pass issueId or projectUpdateId.",
+                "A comment needs exactly one parent: pass issueId, projectUpdateId or initiativeUpdateId.",
                 extensions={"code": "BAD_USER_INPUT", "field": "issueId"})
         with self.engine.begin() as conn:
+            if initiative_update_ref:
+                urow = self._pulse_update_row(conn, initiative_update, org_id, initiative_update_ref)
+                if not urow:
+                    return None
+                ts = now_iso()
+                cid = new_id()
+                conn.execute(comment.insert().values(
+                    id=cid, organization_id=org_id, initiative_update_id=urow["id"],
+                    body=inp["body"], user_id=viewer_id, created_at=ts, updated_at=ts))
+                notifications.on_initiative_update_reply(
+                    conn, org_id, dict(urow), cid, viewer_id, inp["body"], ts)
+                return cid
             if update_ref:
                 urow = self._pulse_update_row(conn, project_update, org_id, update_ref)
                 if not urow:
@@ -1749,6 +1858,12 @@ class Writer:
             conn.execute(inbox_notification.delete().where(and_(
                 inbox_notification.c.organization_id == org_id,
                 inbox_notification.c.initiative_update_id == update_id)))
+            # Replies and reactions hang off the update and go with it.
+            conn.execute(comment.delete().where(and_(
+                comment.c.organization_id == org_id, comment.c.initiative_update_id == update_id)))
+            conn.execute(initiative_update_reaction.delete().where(and_(
+                initiative_update_reaction.c.organization_id == org_id,
+                initiative_update_reaction.c.update_id == update_id)))
             conn.execute(initiative_update.delete().where(and_(
                 initiative_update.c.organization_id == org_id, initiative_update.c.id == update_id)))
             return True
