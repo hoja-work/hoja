@@ -141,7 +141,8 @@ export function CrumbCurrent({
   );
 }
 
-/** Main column plus properties sidebar; stacks below 900px. */
+/** Main column plus properties sidebar. Below 900px they stack and the page scrolls
+ * as one, so the sidebar never squeezes the main column into a sliver. */
 export function DetailColumns({
   toolbar,
   main,
@@ -156,10 +157,13 @@ export function DetailColumns({
 }) {
   return (
     <div
-      className="flex min-h-0 flex-1 [@media_(max-width:900px)]:flex-col"
+      className="flex min-h-0 flex-1 [@media_(max-width:900px)]:flex-col [@media_(max-width:900px)]:overflow-y-auto"
       data-style-hooks="lin-detail"
     >
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col" {...data}>
+      <div
+        className="flex min-h-0 min-w-0 flex-1 flex-col [@media_(max-width:900px)]:flex-none"
+        {...data}
+      >
         {toolbar && (
           <div
             className="flex items-center justify-end gap-1.5 py-2 px-5 border-b border-b-line flex-none"
@@ -169,7 +173,7 @@ export function DetailColumns({
           </div>
         )}
         <main
-          className="flex-1 min-w-0 overflow-y-auto pt-6.5 px-10 pb-20 max-w-none [@media_(max-width:900px)]:p-5"
+          className="flex-1 min-w-0 overflow-y-auto pt-6.5 px-10 pb-20 max-w-none [@media_(max-width:900px)]:p-5 [@media_(max-width:900px)]:flex-none [@media_(max-width:900px)]:overflow-visible"
           data-style-hooks="lin-detail-main"
           aria-label={mainLabel}
         >
@@ -193,7 +197,7 @@ export function PropertiesPanel({
 }) {
   return (
     <aside
-      className="w-72.5 flex-none border-l border-l-line overflow-y-auto pt-5.5 px-5 pb-15 [&_h3]:text-[12px] [&_h3]:font-semibold [&_h3]:text-muted [&_h3]:mt-0 [&_h3]:mx-0 [&_h3]:mb-2.5 [@media_(max-width:1100px)]:w-62.5 [@media_(max-width:900px)]:w-auto [@media_(max-width:900px)]:border-l-0 [@media_(max-width:900px)]:border-t [@media_(max-width:900px)]:border-t-line"
+      className="w-72.5 flex-none border-l border-l-line overflow-y-auto pt-5.5 px-5 pb-15 [&_h3]:text-[12px] [&_h3]:font-semibold [&_h3]:text-muted [&_h3]:mt-0 [&_h3]:mx-0 [&_h3]:mb-2.5 [@media_(max-width:1100px)]:w-62.5 [@media_(max-width:900px)]:w-auto [@media_(max-width:900px)]:overflow-visible [@media_(max-width:900px)]:border-l-0 [@media_(max-width:900px)]:border-t [@media_(max-width:900px)]:border-t-line"
       data-style-hooks="lin-props"
       aria-label={label}
     >

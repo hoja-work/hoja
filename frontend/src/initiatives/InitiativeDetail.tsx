@@ -651,9 +651,13 @@ export function InitiativeDetailPage({
             <div className="flex min-h-8 flex-wrap items-center gap-1">
               {(data.subscribers?.nodes || []).length ? (
                 (data.subscribers?.nodes || []).map((s) => (
-                  <span key={s.id} title={s.name}>
-                    <Avatar name={s.name} seed={s.avatarSeed} size={20} />
-                  </span>
+                  <Avatar
+                    key={s.id}
+                    name={s.name}
+                    seed={s.avatarSeed}
+                    title={s.name}
+                    size={20}
+                  />
                 ))
               ) : (
                 <span className="text-sm text-muted">No followers</span>
@@ -1016,11 +1020,11 @@ function ProjectTable({
         <div
           role="row"
           key={p.id}
-          className="group grid grid-cols-2 items-center gap-3 rounded-md px-2 py-2 transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none md:grid-cols-12"
+          className="group flex items-center gap-3 rounded-md px-2 py-2 transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none md:grid md:grid-cols-12"
         >
           <span
             role="cell"
-            className="col-span-2 flex min-w-0 items-center gap-2 md:col-span-5"
+            className="flex min-w-0 flex-1 items-center gap-2 md:col-span-5"
           >
             <Box size={14} className="flex-none text-muted" aria-hidden />
             <button
@@ -1042,12 +1046,12 @@ function ProjectTable({
               </span>
             )}
           </span>
-          <span role="cell" className="md:col-span-2">
+          <span role="cell" className="flex-none md:col-span-2">
             <HealthBadge health={p.health} />
           </span>
           <span
             role="cell"
-            className="flex min-w-0 items-center gap-1.5 md:col-span-2"
+            className="hidden min-w-0 items-center gap-1.5 md:col-span-2 md:flex"
           >
             {p.lead?.name ? (
               <>
@@ -1058,10 +1062,16 @@ function ProjectTable({
               <span className="text-muted">No lead</span>
             )}
           </span>
-          <span role="cell" className="text-muted md:col-span-2">
+          <span
+            role="cell"
+            className="hidden text-muted md:col-span-2 md:block"
+          >
             {p.targetDate ? fmtDate(p.targetDate) : "—"}
           </span>
-          <span role="cell" className="flex items-center gap-1.5 md:col-span-1">
+          <span
+            role="cell"
+            className="flex flex-none items-center gap-1.5 md:col-span-1"
+          >
             <Ring frac={p.progress || 0} size={14} />
             {Math.round((p.progress || 0) * 100)}%
           </span>

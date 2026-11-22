@@ -4368,7 +4368,7 @@ function InitiativesPage({
               const pending = i.id.startsWith("optimistic:");
               return (
                 <article
-                  className="group relative grid grid-cols-2 items-center gap-3 border-b border-line px-4 py-3 text-sm transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none data-highlighted:bg-subtle md:grid-cols-12"
+                  className="group relative flex items-center gap-3 border-b border-line px-4 py-3 text-sm transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none data-highlighted:bg-subtle md:grid md:grid-cols-12"
                   data-initiative-row=""
                   data-highlighted={
                     i.id === highlightedInitiative ? "true" : undefined
@@ -4381,7 +4381,7 @@ function InitiativesPage({
                   key={i.id}
                   aria-busy={pending || undefined}
                 >
-                  <div className="col-span-2 flex min-w-0 items-center gap-2 md:col-span-4">
+                  <div className="flex min-w-0 flex-1 items-center gap-2 md:col-span-4">
                     <Target
                       size={14}
                       className="flex-none text-muted"
@@ -4407,7 +4407,7 @@ function InitiativesPage({
                       )}
                     </div>
                     {!pending && (
-                      <span className="relative ml-auto">
+                      <span className="relative ml-auto hidden md:inline-flex">
                         <FollowButton
                           type="initiative"
                           id={i.id}
@@ -4418,10 +4418,10 @@ function InitiativesPage({
                       </span>
                     )}
                   </div>
-                  <span className="md:col-span-2">
+                  <span className="flex-none md:col-span-2">
                     <HealthBadge health={healthById[i.id]} />
                   </span>
-                  <span className="flex min-w-0 items-center gap-1.5 md:col-span-2">
+                  <span className="hidden min-w-0 items-center gap-1.5 md:col-span-2 md:flex">
                     {i.owner?.name ? (
                       <>
                         <GraphAvatar
@@ -4435,19 +4435,22 @@ function InitiativesPage({
                       <span className="text-muted">No owner</span>
                     )}
                   </span>
-                  <time className="text-muted md:col-span-1">
+                  <time className="hidden text-muted md:col-span-1 md:block">
                     {i.targetDate ? fmtDate(i.targetDate) : "—"}
                   </time>
                   <span
-                    className="flex items-center gap-1.5 md:col-span-1"
+                    className="hidden items-center gap-1.5 md:col-span-1 md:flex"
                     title={`${linked.length} ${linked.length === 1 ? "project" : "projects"}`}
                   >
                     <Ring frac={progress} size={14} />
                     <span>{Math.round(progress * 100)}%</span>
                   </span>
-                  <span className="relative flex min-w-0 items-center gap-1.5 md:col-span-2">
+                  <span
+                    className="relative flex min-w-0 flex-none items-center gap-1.5 md:col-span-2"
+                    title={initiativeStatusLabel(i.status)}
+                  >
                     <InitiativeStatusIcon status={i.status} />
-                    <span className="truncate">
+                    <span className="hidden truncate md:inline">
                       {initiativeStatusLabel(i.status)}
                     </span>
                   </span>
