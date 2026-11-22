@@ -89,6 +89,20 @@ export function ProgressGraph({ series }: { series: ProgressSeries[] }) {
       .map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`)
       .join("");
   const labelled = lines.length <= 4;
+  /* End labels sit just above each line's last point. Labels that would collide are
+   * stacked upward, 16px apart, so none of them is drawn across a line. */
+  const labelTop = new Map<string, number>();
+  if (labelled) {
+    let ceiling = Infinity;
+    [...lines]
+      .map((l) => ({ id: l.id, top: y(l.values[weeks.length - 1]) - 4 }))
+      .sort((a, b) => b.top - a.top)
+      .forEach((l) => {
+        const top = Math.min(l.top, ceiling - 16);
+        labelTop.set(l.id, top);
+        ceiling = top;
+      });
+  }
   const at = hover ?? weeks.length - 1;
 
   return (
@@ -273,10 +287,10 @@ export function ProgressGraph({ series }: { series: ProgressSeries[] }) {
               {lines.map((l) => (
                 <li
                   key={l.id}
-                  className="absolute -translate-y-1/2 truncate pr-1 text-right text-xs text-muted"
+                  className="absolute -translate-y-full truncate text-right text-xs text-muted"
                   style={{
-                    right: width - x(weeks.length - 1) + 8,
-                    top: y(l.values[weeks.length - 1]),
+                    right: width - x(weeks.length - 1),
+                    top: labelTop.get(l.id),
                     maxWidth: innerW / 2,
                   }}
                 >
