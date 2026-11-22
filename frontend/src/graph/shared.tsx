@@ -77,7 +77,7 @@ export function UserBlobatar({
       src={blobatarSrc(userSource(user))}
       alt=""
       draggable={false}
-      className={cx("block size-full", className)}
+      className={cx("block size-full scale-[1.2]", className)}
     />
   );
 }
@@ -123,7 +123,6 @@ export function Avatar({
         // A blobatar sits on the surface with no ring, so it reads at full size.
         background: source ? "transparent" : "var(--subtle)",
         color: "var(--muted)",
-        overflow: "hidden",
       }}
     >
       {source ? (
@@ -133,7 +132,7 @@ export function Avatar({
           width={size}
           height={size}
           draggable={false}
-          className="block size-full"
+          className="block size-full scale-[1.2]"
         />
       ) : (
         "?"

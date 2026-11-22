@@ -6643,7 +6643,7 @@ function KanbanAssignee({
                     src={blobatarSrc(issue.assignee.avatarSeed || issue.assignee.name || issue.assignee.id)}
                     alt=""
                     draggable={false}
-                    className="aspect-square size-full"
+                    className="aspect-square size-full scale-[1.2]"
                   />
                 </Avatar>
               </AvatarGroup>
@@ -6690,7 +6690,7 @@ function KanbanAssignee({
                   src={blobatarSrc(m.avatarSeed || m.name || m.email || m.id)}
                   alt=""
                   draggable={false}
-                  className="aspect-square size-full"
+                  className="aspect-square size-full scale-[1.2]"
                 />
               </Avatar>
               <span className="min-w-0 flex-1 truncate">
