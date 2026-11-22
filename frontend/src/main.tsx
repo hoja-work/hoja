@@ -3762,7 +3762,7 @@ function App() {
             )}
             {SHELL_VIEWS.has(view) ? (
               <div
-                className="bg-bg overflow-y-auto overscroll-contain mt-2 mr-2 mb-2 flex min-h-0 flex-1 flex-col rounded-xl border-[0.5px] border-neutral-300/70 has-data-settings-page:py-6 has-data-settings-page:px-4 md:has-data-settings-page:py-8 has-data-my-issues-view:p-0 has-data-pulse-page:p-0 has-data-inbox-page:p-0 has-data-initiatives-page:p-0 has-data-workspace-views-page:p-0 has-data-projects-reference:p-0 has-data-surface:p-0 has-data-my-issues-view:overflow-hidden has-data-surface:overflow-hidden [font-optical-sizing:auto]"
+                className="bg-bg shadow-sm overflow-y-auto overscroll-contain m-1 flex min-h-0 flex-1 flex-col rounded-2xl border-[0.5px] border-neutral-300/70 has-data-settings-page:py-6 has-data-settings-page:px-4 md:has-data-settings-page:py-8 has-data-my-issues-view:p-0 has-data-pulse-page:p-0 has-data-inbox-page:p-0 has-data-initiatives-page:p-0 has-data-workspace-views-page:p-0 has-data-projects-reference:p-0 has-data-surface:p-0 has-data-my-issues-view:overflow-hidden has-data-surface:overflow-hidden [font-optical-sizing:auto]"
                 data-workspace-page=""
               >
                 {pageContent}
@@ -6916,10 +6916,10 @@ function KanbanCard({
   const stack = (
     <motion.div
       ref={stackRef}
-      className="relative isolate min-w-0"
+      className="relative isolate min-w-0 rounded-2xl"
       style={{
         perspective: "1000px",
-        overflow: stackMounted ? "visible" : "clip",
+        overflow: stackMounted || !subtasks.length ? "visible" : "clip",
       }}
       animate={subtasks.length ? { height: stackHeight } : undefined}
       transition={spring}
@@ -6929,7 +6929,7 @@ function KanbanCard({
     >
       {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- drag surface only; the keyboard path (alt+arrow) lives on the inner button */}
       <div
-        className="relative z-10 border flex flex-col gap-2.25 text-left cursor-grab touch-none rounded-2xl border-line bg-panel p-3 hover:border-line active:cursor-grabbing focus-visible:relative focus-visible:z-1 data-dragging:opacity-45 [&[data-depth]:not([data-depth=0])]:relative [&[data-depth]:not([data-depth=0])::before]:absolute [&[data-depth]:not([data-depth=0])::before]:-left-2 [&[data-depth]:not([data-depth=0])::before]:top-1.5 [&[data-depth]:not([data-depth=0])::before]:bottom-1.5 [&[data-depth]:not([data-depth=0])::before]:w-0.5 [&[data-depth]:not([data-depth=0])::before]:rounded-sm [&[data-depth]:not([data-depth=0])::before]:bg-line focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 pointer-coarse:touch-pan-y pointer-coarse:cursor-auto [&[data-depth]:not([data-depth=0])]:before:content-['']"
+        className="relative z-10 border flex flex-col gap-2.25 text-left cursor-grab touch-none rounded-2xl shadow-sm border-line bg-panel p-4 hover:border-line active:cursor-grabbing focus-visible:relative focus-visible:z-1 data-dragging:opacity-45 [&[data-depth]:not([data-depth=0])]:relative [&[data-depth]:not([data-depth=0])::before]:absolute [&[data-depth]:not([data-depth=0])::before]:-left-2 [&[data-depth]:not([data-depth=0])::before]:top-1.5 [&[data-depth]:not([data-depth=0])::before]:bottom-1.5 [&[data-depth]:not([data-depth=0])::before]:w-0.5 [&[data-depth]:not([data-depth=0])::before]:rounded-sm [&[data-depth]:not([data-depth=0])::before]:bg-line focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 pointer-coarse:touch-pan-y pointer-coarse:cursor-auto [&[data-depth]:not([data-depth=0])]:before:content-['']"
         data-stack-layer=""
         data-kanban-card=""
         data-issue-id={issue.id}
@@ -6967,7 +6967,7 @@ function KanbanCard({
             <small className="flex min-w-0 items-center gap-1 text-muted text-xs">
               {parentIdent ? (
                 <span
-                  className="border text-[10px] text-muted border-line rounded-sm pt-0 pr-1 pb-0 pl-1 mr-1.25"
+                  className="border text-xs text-muted border-line rounded-full  px-1.25  bg-neutral-50 inset-shadow-sm inset-shadow-bg-white"
                   title={`Parent ${parentIdent}`}
                 >{`↳${parentIdent}`}</span>
               ) : null}
@@ -7570,7 +7570,7 @@ function Kanban({
   return (
     <div className="kanban flex min-h-0 min-w-0 flex-1 flex-col w-full">
       <div
-        className="grid grid-flow-col auto-cols-[minmax(260px,1fr)] flex-1 overflow-x-auto overflow-y-hidden min-w-0 w-full items-stretch min-h-0 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-subtle [&::-webkit-scrollbar-thumb]:rounded-lg [&::-webkit-scrollbar-thumb]:bg-muted overscroll-x-contain focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 scrollbar-thin [scrollbar-color:var(--muted)_var(--subtle)] [&::-webkit-scrollbar-thumb]:border-[2px_solid_var(--subtle)]"
+        className="grid grid-flow-col auto-cols-[minmax(260px,1fr)] gap-x-3 bg-bg flex-1 overflow-x-auto overflow-y-hidden min-w-0 w-full items-stretch min-h-0 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-subtle [&::-webkit-scrollbar-thumb]:rounded-lg [&::-webkit-scrollbar-thumb]:bg-muted overscroll-x-contain focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 scrollbar-thin [scrollbar-color:var(--muted)_var(--subtle)] [&::-webkit-scrollbar-thumb]:border-[2px_solid_var(--subtle)]"
         data-kanban-columns=""
         ref={columnsRef}
       >
@@ -7578,7 +7578,7 @@ function Kanban({
           <section
             role="presentation"
             className={
-              ` flex flex-col min-w-0 border-line not-last:border-r ${dragged ? "" : ""}` +
+              ` flex flex-col min-w-0 inset-shadow-neutral-50 shadow-md  inset-shadow-sm rounded-xl border border-neutral-200 bg-neutral-100 overflow-hidden ${dragged ? "" : ""}` +
               " flex flex-col min-h-0 max-h-full" +
               " data-drop-ready:bg-[color-mix(in_srgb,var(--accent-soft)_18%,transparent)]"
             }
@@ -7621,7 +7621,7 @@ function Kanban({
               <b className="text-foreground">{group.state.name}</b>
               <span className="mr-auto">{group.items.length}</span>
               <button
-                className="grid place-items-center w-6.25 h-6.25 rounded-[5px] bg-transparent text-muted hover:bg-subtle hover:text-foreground focus-visible:relative focus-visible:z-1 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                className="grid place-items-center w-6.25 h-6.25 rounded-full hover:inset-shadow-sm hover:inset-shadow-neutral-50 border-neutral-200 hover:border-[0.5px] hover:shadow-sm hover:shadow active:scale-[0.95]    bg-transparent text-muted  hover:text-foreground shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
                 aria-label={`Create task in ${group.state.name}`}
                 onClick={() =>
                   onNew(
@@ -7634,7 +7634,7 @@ function Kanban({
             </header>
             <KanbanScrollFade>
               <div
-                className="flex flex-col gap-2 pt-1 pr-2.5 pb-2 pl-2.5 overflow-y-auto flex-auto min-h-0 overscroll-contain [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-subtle [&::-webkit-scrollbar-thumb]:rounded-lg [&::-webkit-scrollbar-thumb]:bg-muted max-h-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 scrollbar-thin [&::-webkit-scrollbar-thumb]:border-[2px_solid_var(--subtle)]"
+                className="flex flex-col gap-1 p-1 overflow-y-auto flex-auto min-h-0 overscroll-contain [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-subtle [&::-webkit-scrollbar-thumb]:rounded-lg [&::-webkit-scrollbar-thumb]:bg-muted max-h-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 scrollbar-thin [&::-webkit-scrollbar-thumb]:border-[2px_solid_var(--subtle)]"
                 data-kanban-cards=""
                 onScroll={
                   group.items.length > (limits[group.state.id] || KANBAN_PAGE)
@@ -7651,7 +7651,7 @@ function Kanban({
               >
                 {group.items.length === 0 && (
                   <p
-                    className="mt-1 mr-0 mb-1 ml-0 pt-3 pr-3 pb-3 pl-3 rounded-[7px] text-muted text-[12px] text-center border border-dashed border-line"
+                    className="mt-1 mr-0 mb-1 ml-0 pt-3 pr-3 pb-3 pl-3 rounded-lg text-muted text-[12px] text-center border  border-dashed border-neutral-300"
                     data-kanban-empty=""
                   >
                     No tasks in {group.state.name}.
@@ -11349,7 +11349,7 @@ function IssueBoard({
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div
-        className="border flex min-h-0 min-w-0 flex-1 flex-col border-line rounded-lg overflow-hidden bg-panel "
+        className="flex min-h-0 min-w-0 flex-1 flex-col  overflow-hidden bg-panel "
         data-issues-board=""
       >
         <Kanban
@@ -11455,7 +11455,7 @@ function TaskViewTabs<T extends string>({
           key={view}
           role="tab"
           aria-selected={active === view}
-          className="inline-flex  min-h-7 flex-none items-center rounded-full border-0 outline outline-1 outline-line -outline-offset-1 bg-panel pl-2.75 pr-2.75 text-[12px] text-foreground transition-none aria-selected:bg-subtle aria-selected:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 [@media_(max-width:650px)]:h-7.75 [@media_(max-width:650px)]:pt-0 [@media_(max-width:650px)]:pr-2.75 [@media_(max-width:650px)]:pb-0 [@media_(max-width:650px)]:pl-2.75 [@media_(max-width:650px)]:text-[12px]"
+          className="inline-flex  min-h-7 flex-none items-center rounded-full border-0 outline outline-1 outline-line -outline-offset-1 bg-panel pl-2.75 pr-2.75 text-[12px] text-foreground transition-none aria-selected:bg-subtle aria-selected:inset-shadow-sm aria-selected:inset-shadow-neutral-50 aria-selected:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 [@media_(max-width:650px)]:h-7.75 [@media_(max-width:650px)]:pt-0 [@media_(max-width:650px)]:pr-2.75 [@media_(max-width:650px)]:pb-0 [@media_(max-width:650px)]:pl-2.75 [@media_(max-width:650px)]:text-[12px]"
           onClick={() => onChange(view)}
         >
           {displayLabel(view)}
