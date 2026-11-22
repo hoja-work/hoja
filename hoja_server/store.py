@@ -2737,7 +2737,7 @@ class Store:
 
     @staticmethod
     def ser_initiative(conn, row) -> dict:
-        result = {"id": row["id"], "name": row["name"], "summary": row["summary"], "status": row["status"], "priority": row["priority"], "targetDate": row["target_date"], "createdAt": row["created_at"], "updatedAt": row["updated_at"], "_owner_id": row["owner_id"], "_creator_id": row["creator_id"], "_org_id": row["organization_id"], "owner": None, "creator": None}
+        result = {"id": row["id"], "name": row["name"], "summary": row["summary"], "description": row.get("description"), "status": row["status"], "priority": row["priority"], "targetDate": row["target_date"], "createdAt": row["created_at"], "updatedAt": row["updated_at"], "_owner_id": row["owner_id"], "_creator_id": row["creator_id"], "_org_id": row["organization_id"], "owner": None, "creator": None}
         for field in ("owner", "creator"):
             uid = row[f"{field}_id"]
             if uid:

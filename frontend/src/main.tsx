@@ -142,7 +142,15 @@ import { SettingsSelect } from "./SettingsSelect";
 import { GraphIssueDetail } from "./graph/tasks";
 import { Avatar, AvatarFallback, AvatarGroup } from "./components/ui/avatar";
 import { ProjectActivity } from "./ProjectActivity";
-import { blobatarSrc, dueIsOverdue, SubIssuePill, UserBlobatar } from "./graph/shared";
+import {
+  Avatar as GraphAvatar,
+  blobatarSrc,
+  dueIsOverdue,
+  fmtDate,
+  Ring,
+  SubIssuePill,
+  UserBlobatar,
+} from "./graph/shared";
 import {
   orderTree,
   railLeft,
@@ -215,7 +223,14 @@ export type Team = {
   states: {
     nodes: { id: string; name: string; color: string; type: string }[];
   };
-  members?: { nodes: { id: string; name: string; email?: string; avatarSeed?: string | null }[] };
+  members?: {
+    nodes: {
+      id: string;
+      name: string;
+      email?: string;
+      avatarSeed?: string | null;
+    }[];
+  };
   activeCycle?: Cycle;
 };
 export type Comment = {
@@ -329,9 +344,11 @@ export type Initiative = {
   status: string;
   priority?: number;
   targetDate?: string;
-  owner?: { id: string; name?: string };
+  owner?: { id: string; name?: string; avatarSeed?: string | null };
   creator?: { id: string };
-  projects?: { nodes: { id: string; name: string }[] };
+  projects?: {
+    nodes: { id: string; name: string; progress?: number; health?: string }[];
+  };
   createdAt?: string;
 };
 export type PulseComment = {
@@ -501,9 +518,11 @@ const SHELL_VIEWS = new Set([
   "Members",
   "Settings",
   "Issue detail",
+  "Initiative detail",
 ]);
 const HEADERLESS_VIEWS = new Set([
   "Issue detail",
+  "Initiative detail",
   "Reviews",
   "Agent",
   "Agents",
@@ -2838,8 +2857,8 @@ function App() {
             : type === "cycle"
               ? navigate("Cycle detail", `/workspace/cycle/${id}`)
               : navigate(
-                  "Initiatives",
-                  `/workspace/initiatives/all?initiative=${encodeURIComponent(id)}`,
+                  "Initiative detail",
+                  `/workspace/initiative/${encodeURIComponent(id)}`,
                 )
         }
         onOpenSettings={() =>
@@ -2872,6 +2891,18 @@ function App() {
         }}
         revision={revision}
       />
+    ) : view === "Initiative detail" ? (
+      <InitiativeRoute
+        key={`${workspace.id}:${window.location.pathname.split("/")[3] || ""}`}
+        viewer={viewer}
+        projects={projects}
+        onBack={() => navigate("Initiatives", "/workspace/initiatives")}
+        onArchived={() => navigate("Initiatives", "/workspace/initiatives")}
+        onOpenProject={(id) => {
+          navigate("Project detail", `/workspace/project/${id}`);
+          setActiveProject(projects.find((p) => p.id === id) || null);
+        }}
+      />
     ) : view === "Initiatives" ? (
       <InitiativesPage
         key={workspace.id}
@@ -2882,6 +2913,12 @@ function App() {
           navigate("Project detail", `/workspace/project/${p.id}`);
           setActiveProject(p);
         }}
+        onOpenInitiative={(id) =>
+          navigate(
+            "Initiative detail",
+            `/workspace/initiative/${encodeURIComponent(id)}`,
+          )
+        }
         revision={revision}
       />
     ) : view === "Favorite views" ? (
@@ -3918,6 +3955,12 @@ function IssueDetailPage({
     />
   );
 }
+import {
+  HealthBadge,
+  InitiativeRoute,
+  InitiativeStatusIcon,
+  initiativeStatusLabel,
+} from "./initiatives/InitiativeDetail";
 // Local-first helpers for the projects / initiatives / pulse pages (see projectStore.ts).
 import {
   addPendingProject,
@@ -3940,7 +3983,7 @@ import {
 } from "./projectStore";
 import "./mobile-touch.css";
 const PROJECT_FIELDS = `id name description state progress startDate targetDate health lead{name} teams{nodes{id name key}}`;
-const INITIATIVE_FIELDS = `id name summary status priority targetDate createdAt viewerSubscribed owner{id name avatarSeed} creator{id} projects{nodes{id name}}`;
+const INITIATIVE_FIELDS = `id name summary status priority targetDate createdAt viewerSubscribed owner{id name avatarSeed} creator{id} projects{nodes{id name progress health}}`;
 const PULSE_FIELDS = `id status body createdAt progress health actor{id name avatarSeed} project{id name health progress targetDate lead{name}} comments(first:20){nodes{id body createdAt user{id name avatarSeed}}}`;
 const pulseKey = (meta: SyncMeta | null) =>
   meta ? `pulse:${meta.workspace.id}:${meta.viewer.id || ""}` : null;
@@ -3962,12 +4005,13 @@ function useMemberOptions() {
 function InitiativesPage({
   path,
   projects,
-  onOpenProject,
+  onOpenInitiative,
   viewer,
 }: {
   path: string;
   projects: Project[];
   onOpenProject: (p: Project) => void;
+  onOpenInitiative: (id: string) => void;
   revision: number;
   viewer: Viewer;
 }) {
@@ -4007,6 +4051,36 @@ function InitiativesPage({
   );
   const rows = list.rows,
     hasMore = list.more;
+  // Initiative health is the health of its latest update, as on Linear's list.
+  const [healthById, setHealthById] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let live = true;
+    gql(
+      `query InitiativeHealth{initiativeUpdates(first:200){nodes{health createdAt initiative{id}}}}`,
+    )
+      .then((d) => {
+        if (!live) return;
+        const latest: Record<string, { at: string; health: string }> = {};
+        for (const u of (d.initiativeUpdates?.nodes || []) as {
+          health?: string;
+          createdAt: string;
+          initiative?: { id: string };
+        }[]) {
+          const iid = u.initiative?.id;
+          if (iid && u.health && (!latest[iid] || u.createdAt > latest[iid].at))
+            latest[iid] = { at: u.createdAt, health: u.health };
+        }
+        setHealthById(
+          Object.fromEntries(
+            Object.entries(latest).map(([k, v]) => [k, v.health]),
+          ),
+        );
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [version]);
   const [actionError, setActionError] = useState("");
   const error = actionError || list.error;
   // The inbox opens an initiative as ?initiative=<id>: that row is scrolled to and marked.
@@ -4113,55 +4187,6 @@ function InitiativesPage({
       setCreateOpen(true);
     }
   };
-  const archive = async (i: Initiative) => {
-    if (
-      !key ||
-      !(await confirmDialog(`Archive initiative ${i.name}?`, { danger: true }))
-    )
-      return;
-    const without = (r: Initiative[]) => r.filter((x) => x.id !== i.id);
-    const settle = optimisticPage<Initiative>(key, without);
-    setActionError("");
-    gql(`mutation($id:String!){initiativeArchive(id:$id){success}}`, {
-      id: i.id,
-    })
-      .then((d) => {
-        if (!d.initiativeArchive?.success)
-          throw Error("Initiative could not be archived.");
-        settle(without);
-      })
-      .catch((e) => {
-        settle();
-        setActionError((e as Error).message);
-      });
-  };
-  const changeStatus = (i: Initiative, next: string) => {
-    if (!key || next === i.status) return;
-    const settle = optimisticPage<Initiative>(key, (r) =>
-      r.map((x) => (x.id === i.id ? { ...x, status: next } : x)),
-    );
-    setActionError("");
-    gql(
-      `mutation($id:String!,$input:InitiativeUpdateInput!){initiativeUpdate(id:$id,input:$input){success initiative{${INITIATIVE_FIELDS}}}}`,
-      { id: i.id, input: { status: next } },
-    )
-      .then((d) => {
-        if (!d.initiativeUpdate?.success)
-          throw Error("Initiative could not be updated.");
-        const saved: Initiative = d.initiativeUpdate.initiative || {
-          ...i,
-          status: next,
-        };
-        settle((r) => r.map((x) => (x.id === saved.id ? saved : x)));
-      })
-      .catch((e) => {
-        settle();
-        setActionError((e as Error).message);
-      });
-  };
-  const canEdit = (i: Initiative) =>
-    !i.id.startsWith("optimistic:") &&
-    Boolean(viewer.admin || (viewer.id && i.creator?.id === viewer.id));
   const visible = useMemo(
     () =>
       rows.filter(
@@ -4324,104 +4349,111 @@ function InitiativesPage({
         {visible.length > 0 && (
           <div className="max-w-262.5 mt-0 mr-auto mb-0 ml-auto">
             <div
-              className="border-b border-line grid items-center gap-3.5 pt-2.75 pr-3.75 pb-2.75 pl-3.75 text-muted text-[12px] font-medium grid-cols-1 md:grid-cols-4"
+              className="hidden grid-cols-12 items-center gap-3 border-b border-line px-4 py-2 text-xs font-medium text-muted md:grid"
               data-initiatives-list-head=""
             >
-              <span>Initiative</span>
-              <span>Status</span>
-              <span>Projects</span>
-              <span>Target</span>
+              <span className="col-span-4">Name</span>
+              <span className="col-span-2">Health</span>
+              <span className="col-span-2">Owner</span>
+              <span className="col-span-1">Target</span>
+              <span className="col-span-1">Progress</span>
+              <span className="col-span-2">Status</span>
             </div>
-            {visible.map((i) => (
-              <article
-                className="data-highlighted:bg-subtle border-b border-line grid items-center gap-3.5 pt-2.75 pr-3.75 pb-2.75 pl-3.75 min-h-14.25 text-[12px] leading-normal grid-cols-1 md:grid-cols-4 shell-phone:gap-2"
-                data-initiative-row=""
-                data-highlighted={
-                  i.id === highlightedInitiative ? "true" : undefined
-                }
-                ref={
-                  i.id === highlightedInitiative
-                    ? (el) => el?.scrollIntoView({ block: "center" })
-                    : undefined
-                }
-                key={i.id}
-                aria-busy={i.id.startsWith("optimistic:") || undefined}
-              >
-                <div className="max-md:first:col-span-full">
-                  <div className="flex items-center justify-between gap-2">
-                    <strong className="text-[13px] wrap-break-word font-medium">
-                      {i.name}
-                    </strong>
-                    {!i.id.startsWith("optimistic:") && (
-                      <FollowButton
-                        type="initiative"
-                        id={i.id}
-                        known={i.viewerSubscribed}
-                        compact
-                        onError={setActionError}
-                      />
+            {visible.map((i) => {
+              const linked = i.projects?.nodes || [];
+              const progress = linked.length
+                ? linked.reduce((sum, p) => sum + (p.progress || 0), 0) /
+                  linked.length
+                : 0;
+              const pending = i.id.startsWith("optimistic:");
+              return (
+                <article
+                  className="group relative grid grid-cols-2 items-center gap-3 border-b border-line px-4 py-3 text-sm transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none data-highlighted:bg-subtle md:grid-cols-12"
+                  data-initiative-row=""
+                  data-highlighted={
+                    i.id === highlightedInitiative ? "true" : undefined
+                  }
+                  ref={
+                    i.id === highlightedInitiative
+                      ? (el) => el?.scrollIntoView({ block: "center" })
+                      : undefined
+                  }
+                  key={i.id}
+                  aria-busy={pending || undefined}
+                >
+                  <div className="col-span-2 flex min-w-0 items-center gap-2 md:col-span-4">
+                    <Target
+                      size={14}
+                      className="flex-none text-muted"
+                      aria-hidden
+                    />
+                    <div className="min-w-0">
+                      <a
+                        className="block truncate font-medium text-foreground no-underline after:absolute after:inset-0 focus-visible:outline-2 focus-visible:outline-accent"
+                        href={`/workspace/initiative/${encodeURIComponent(i.id)}`}
+                        aria-disabled={pending || undefined}
+                        onClick={(e) => {
+                          if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+                          e.preventDefault();
+                          if (!pending) onOpenInitiative(i.id);
+                        }}
+                      >
+                        {i.name}
+                      </a>
+                      {showDescription && i.summary && (
+                        <p className="m-0 truncate text-xs text-muted">
+                          {i.summary}
+                        </p>
+                      )}
+                    </div>
+                    {!pending && (
+                      <span className="relative ml-auto">
+                        <FollowButton
+                          type="initiative"
+                          id={i.id}
+                          known={i.viewerSubscribed}
+                          compact
+                          onError={setActionError}
+                        />
+                      </span>
                     )}
                   </div>
-                  {showDescription && i.summary && (
-                    <p className="mt-1 mr-0 mb-0 ml-0 text-muted wrap-break-word text-[12px] leading-normal">
-                      {i.summary}
-                    </p>
-                  )}
-                  {canEdit(i) && (
-                    <button
-                      type="button"
-                      className="inline-flex items-center justify-center gap-1.75 rounded-[5px] border border-line bg-subtle pl-1.5 pr-1.5 pt-1 pb-1 text-inherit transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 text-[11px] shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                      data-control-outline=""
-                      onClick={() => archive(i)}
-                    >
-                      Archive
-                    </button>
-                  )}
-                </div>
-                <span>
-                  {canEdit(i) ? (
-                    <select
-                      className="w-full max-w-full min-w-0 pt-0.75 pr-1.5 pb-0.75 pl-1.5 border border-line rounded-[5px] bg-bg text-foreground text-[11px] normal-case focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                      data-initiative-status-select=""
-                      aria-label={`Status of ${i.name}`}
-                      value={i.status}
-                      onChange={(e) => changeStatus(i, e.target.value)}
-                    >
-                      {["planned", "active", "completed", "canceled"].map(
-                        (s) => (
-                          <option key={s} value={s}>
-                            {s}
-                          </option>
-                        ),
-                      )}
-                    </select>
-                  ) : (
-                    i.status
-                  )}
-                </span>
-                <div className="max-md:first:col-span-full">
-                  {i.projects?.nodes.length
-                    ? i.projects.nodes.map((p) => {
-                        const known = projectById.get(p.id);
-                        return (
-                          <button
-                            className="pt-1 pr-1.5 pb-1 pl-1.5 rounded-[5px] bg-subtle text-[11px] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                            type="button"
-                            key={p.id}
-                            onClick={() => {
-                              if (known) onOpenProject(known);
-                            }}
-                            disabled={!known}
-                          >
-                            {known?.name || p.name}
-                          </button>
-                        );
-                      })
-                    : "—"}
-                </div>
-                <time className="text-muted">{i.targetDate || "—"}</time>
-              </article>
-            ))}
+                  <span className="md:col-span-2">
+                    <HealthBadge health={healthById[i.id]} />
+                  </span>
+                  <span className="flex min-w-0 items-center gap-1.5 md:col-span-2">
+                    {i.owner?.name ? (
+                      <>
+                        <GraphAvatar
+                          name={i.owner.name}
+                          seed={i.owner.avatarSeed}
+                          size={16}
+                        />
+                        <span className="truncate">{i.owner.name}</span>
+                      </>
+                    ) : (
+                      <span className="text-muted">No owner</span>
+                    )}
+                  </span>
+                  <time className="text-muted md:col-span-1">
+                    {i.targetDate ? fmtDate(i.targetDate) : "—"}
+                  </time>
+                  <span
+                    className="flex items-center gap-1.5 md:col-span-1"
+                    title={`${linked.length} ${linked.length === 1 ? "project" : "projects"}`}
+                  >
+                    <Ring frac={progress} size={14} />
+                    <span>{Math.round(progress * 100)}%</span>
+                  </span>
+                  <span className="relative flex min-w-0 items-center gap-1.5 md:col-span-2">
+                    <InitiativeStatusIcon status={i.status} />
+                    <span className="truncate">
+                      {initiativeStatusLabel(i.status)}
+                    </span>
+                  </span>
+                </article>
+              );
+            })}
           </div>
         )}
         {!list.hasData && !error && (
@@ -6430,7 +6462,11 @@ function MyIssuesContent({
                             data-my-issue-assignee=""
                             title={i.assignee?.name || "Unassigned"}
                           >
-                            {i.assignee ? <UserBlobatar user={i.assignee} /> : "·"}
+                            {i.assignee ? (
+                              <UserBlobatar user={i.assignee} />
+                            ) : (
+                              "·"
+                            )}
                           </span>
                         )}
                         {showDue && i.dueDate && (
@@ -6614,7 +6650,12 @@ function KanbanAssignee({
   onChange,
 }: {
   issue: Issue;
-  members: { id: string; name?: string; email?: string; avatarSeed?: string | null }[];
+  members: {
+    id: string;
+    name?: string;
+    email?: string;
+    avatarSeed?: string | null;
+  }[];
   busy: boolean;
   onChange: (assigneeId: string | null) => void;
 }) {
@@ -6640,7 +6681,11 @@ function KanbanAssignee({
               <AvatarGroup>
                 <Avatar size="sm" title={issue.assignee.name || "Assigned"}>
                   <img
-                    src={blobatarSrc(issue.assignee.avatarSeed || issue.assignee.name || issue.assignee.id)}
+                    src={blobatarSrc(
+                      issue.assignee.avatarSeed ||
+                        issue.assignee.name ||
+                        issue.assignee.id,
+                    )}
                     alt=""
                     draggable={false}
                     className="aspect-square size-full scale-[1.2]"
@@ -17309,7 +17354,9 @@ function MembersPage({
   const memberVersion = useEntityVersion(["member", "user"]);
   useEffect(() => {
     let live = true;
-    gql(`query Members{organizationMembers{nodes{id name avatarSeed email admin active}}}`)
+    gql(
+      `query Members{organizationMembers{nodes{id name avatarSeed email admin active}}}`,
+    )
       .then((d) => {
         if (!live) return;
         setBase(d.organizationMembers.nodes);

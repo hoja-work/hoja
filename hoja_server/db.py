@@ -39,7 +39,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 86
+CURRENT_SCHEMA_REVISION = 87
 
 log = logging.getLogger(__name__)
 
@@ -1614,6 +1614,8 @@ initiative = Table(
     Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
     Column("name", String, nullable=False),
     Column("summary", Text),
+    # Revision 87: the initiative's long-form Markdown body, beside the one-line summary.
+    Column("description", Text),
     Column("status", String, nullable=False),
     Column("priority", Integer, nullable=False, default=0),
     Column("owner_id", String, ForeignKey("user.id")),
@@ -3428,6 +3430,13 @@ def _apply_project_repository(conn):
         conn.exec_driver_sql("ALTER TABLE project ADD COLUMN repository VARCHAR")
 
 
+def _apply_initiative_description(conn):
+    """``initiative.description``: the long-form Markdown body of an initiative page."""
+    existing = {column["name"] for column in inspect(conn).get_columns("initiative")}
+    if "description" not in existing:
+        conn.exec_driver_sql("ALTER TABLE initiative ADD COLUMN description TEXT")
+
+
 def _apply_tailnet(conn):
     """``tailnet`` and ``tailnet_machine``: Tailscale-connected machines (HOJA-602)."""
     tailnet.create(conn, checkfirst=True)
@@ -3836,6 +3845,8 @@ _MIGRATIONS = {
     85: _apply_user_avatar_seed,
     # 86: each seed carries a hue, distinct within its workspace (backfilled).
     86: _apply_user_avatar_hue,
+    # 87: an initiative has a Markdown description as well as its summary.
+    87: _apply_initiative_description,
 }
 
 

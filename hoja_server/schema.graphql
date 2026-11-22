@@ -79,8 +79,8 @@ type UserPayload {
   emailQueued: Boolean
 }
 
-input InitiativeCreateInput { name: String! summary: String status: String priority: Int ownerId: String targetDate: TimelessDate projectIds: [String!] }
-input InitiativeUpdateInput { name: String summary: String status: String priority: Int ownerId: String targetDate: TimelessDate projectIds: [String!] }
+input InitiativeCreateInput { name: String! summary: String description: String status: String priority: Int ownerId: String targetDate: TimelessDate projectIds: [String!] }
+input InitiativeUpdateInput { name: String summary: String description: String status: String priority: Int ownerId: String targetDate: TimelessDate projectIds: [String!] }
 
 input WorkspaceUpdateInput {
   name: String
@@ -497,7 +497,7 @@ type IssueConnection { nodes: [Issue!]! pageInfo: PageInfo! }
 type IssueLabelConnection { nodes: [IssueLabel!]! pageInfo: PageInfo! }
 type ProjectConnection { nodes: [Project!]! pageInfo: PageInfo! }
 type InitiativeConnection { nodes: [Initiative!]! pageInfo: PageInfo! }
-type Initiative { id: ID! name: String! summary: String status: String! priority: Int! owner: User creator: User targetDate: TimelessDate createdAt: DateTime! updatedAt: DateTime! projects: ProjectConnection! subscribers(first: Int = 50): UserConnection "Whether the signed-in user follows this initiative." viewerSubscribed: Boolean! }
+type Initiative { id: ID! name: String! summary: String "Long-form Markdown body of the initiative page." description: String status: String! priority: Int! owner: User creator: User targetDate: TimelessDate createdAt: DateTime! updatedAt: DateTime! projects: ProjectConnection! subscribers(first: Int = 50): UserConnection "Whether the signed-in user follows this initiative." viewerSubscribed: Boolean! }
 type InitiativePayload { success: Boolean! initiative: Initiative }
 type ProjectUpdateConnection { nodes: [ProjectUpdate!]! pageInfo: PageInfo! }
 type CycleConnection { nodes: [Cycle!]! pageInfo: PageInfo! }

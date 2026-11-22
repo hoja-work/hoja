@@ -5,6 +5,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { HEALTH, healthColors, healthDot } from "./graph/health";
 import { gql, relTime, StatusIcon } from "./main";
 import type { Issue, IssueState, Project, PulsePost, Team } from "./main";
 import {
@@ -55,7 +56,6 @@ const EVENT_TYPES: Record<ActivityFilter, string[] | null> = {
   Comments: ["commentCreated", "commentUpdated"],
   "New tasks": ["issueCreated"],
 };
-const HEALTH = ["on track", "at risk", "off track"] as const;
 const PRIORITY = ["No priority", "Urgent", "High", "Medium", "Low"];
 const STALE_DAYS = 7;
 const EVENT_FIELDS =
@@ -76,22 +76,6 @@ function dayLabel(iso: string, now = new Date()): string {
     year: d.getFullYear() === now.getFullYear() ? undefined : "numeric",
   });
 }
-const healthColors = (health?: string) =>
-  health === "on track"
-    ? "bg-green-100 text-green-800"
-    : health === "at risk"
-      ? "bg-amber-100 text-amber-800"
-      : health === "off track"
-        ? "bg-red-100 text-red-800"
-        : "bg-subtle text-muted";
-const healthDot = (health?: string) =>
-  health === "on track"
-    ? "bg-green-600"
-    : health === "at risk"
-      ? "bg-amber-500"
-      : health === "off track"
-        ? "bg-red-600"
-        : "bg-line";
 
 function Time({ iso }: { iso: string }) {
   return (

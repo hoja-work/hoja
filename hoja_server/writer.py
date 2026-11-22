@@ -656,7 +656,7 @@ class Writer:
         with self.engine.begin() as conn:
             if owner_id and not conn.execute(select(user.c.id).where(and_(user.c.id == owner_id, user.c.organization_id == org_id))).first():
                 raise ValueError("Owner must belong to the current organization.")
-            conn.execute(initiative.insert().values(id=ident, organization_id=org_id, name=name, summary=inp.get("summary"), status=status, priority=priority, owner_id=owner_id, creator_id=actor_id, target_date=inp.get("targetDate"), created_at=ts, updated_at=ts))
+            conn.execute(initiative.insert().values(id=ident, organization_id=org_id, name=name, summary=inp.get("summary"), description=inp.get("description"), status=status, priority=priority, owner_id=owner_id, creator_id=actor_id, target_date=inp.get("targetDate"), created_at=ts, updated_at=ts))
             self._initiative_projects(conn, org_id, ident, inp.get("projectIds", []))
             notifications.on_initiative_created(conn, org_id, ident, actor_id, owner_id, ts)
         return ident
@@ -675,7 +675,7 @@ class Writer:
                 initiative.c.archived_at.is_(None)))).first()
             if row:
                 self._require_creator_or_admin(conn, org_id, viewer_id, row[0])
-        fields = {"name", "summary", "status", "priority", "ownerId", "targetDate"}
+        fields = {"name", "summary", "description", "status", "priority", "ownerId", "targetDate"}
         values = {k: v for k, v in inp.items() if k in fields}
         if "name" in values:
             values["name"] = str(values["name"]).strip()
