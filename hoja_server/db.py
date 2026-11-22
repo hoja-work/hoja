@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import re
 import secrets
 import time
 import uuid
@@ -38,7 +39,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 85
+CURRENT_SCHEMA_REVISION = 86
 
 log = logging.getLogger(__name__)
 
@@ -52,8 +53,39 @@ def new_id() -> str:
 
 
 def new_avatar_seed() -> str:
-    """A random blobatar seed: 64 bits, fixed per user once stored (revision 85)."""
+    """A random blobatar token: 64 bits, fixed per user once stored (revision 85)."""
     return secrets.token_hex(8)
+
+
+# A stored avatar seed is "<hue>:<token>". The hue is locked when the blobatar is
+# drawn, so two users in one workspace get visibly different colours. Hues step
+# every 15 degrees (24 candidates); the token is the random part.
+_AVATAR_HUE_STEP = 15
+_AVATAR_SEED_RE = re.compile(r"^(\d{1,3}):([0-9a-f]+)$")
+
+
+def avatar_hue_of(seed: str | None) -> int | None:
+    match = _AVATAR_SEED_RE.match(seed or "")
+    return int(match.group(1)) % 360 if match else None
+
+
+def pick_avatar_hue(taken: list[int]) -> int:
+    """The hue furthest (around the colour wheel) from every hue already taken."""
+    def gap(hue: int) -> int:
+        return min((min(abs(hue - t) % 360, 360 - abs(hue - t) % 360) for t in taken), default=360)
+
+    candidates = range(0, 360, _AVATAR_HUE_STEP)
+    best = max(gap(hue) for hue in candidates)
+    return secrets.choice([hue for hue in candidates if gap(hue) == best])
+
+
+def _new_user_avatar_seed(context) -> str:
+    """Column default for user.avatar_seed: a random token and a hue unused in the workspace."""
+    org = context.get_current_parameters().get("organization_id")
+    scope = user.c.organization_id.is_(None) if org is None else user.c.organization_id == org
+    stored = context.connection.execute(select(user.c.avatar_seed).where(scope)).scalars().all()
+    taken = [hue for hue in (avatar_hue_of(seed) for seed in stored) if hue is not None]
+    return f"{pick_avatar_hue(taken)}:{new_avatar_seed()}"
 
 
 def token_hash(token: str) -> str:
@@ -603,7 +635,7 @@ user = Table(
     Column("avatar_url", String),
     # The blobatar every user is drawn as when no picture is set. Random, stored
     # once, and never derived from the name, so renaming a user keeps their face.
-    Column("avatar_seed", String, default=new_avatar_seed),
+    Column("avatar_seed", String, default=_new_user_avatar_seed),
     Column("url", String),
     Column("timezone", String),
     Column("status_emoji", String),
@@ -3402,6 +3434,31 @@ def _apply_tailnet(conn):
     tailnet_machine.create(conn, checkfirst=True)
 
 
+def _apply_user_avatar_hue(conn):
+    """``user.avatar_seed`` gets a hue: "<hue>:<token>" (revision 86).
+
+    Walks each workspace oldest-first and gives every seed without a hue the hue
+    furthest from the hues already taken there, keeping its random token. A seed
+    that already has a hue is left alone, so a replay is a no-op.
+    """
+    rows = conn.execute(text(
+        'SELECT id, organization_id, avatar_seed FROM "user" ORDER BY created_at, id')).fetchall()
+    taken: dict[str | None, list[int]] = {}
+    for _, org, seed in rows:
+        hue = avatar_hue_of(seed)
+        if hue is not None:
+            taken.setdefault(org, []).append(hue)
+    for user_id, org, seed in rows:
+        if avatar_hue_of(seed) is not None or seed is None:
+            continue
+        hue = pick_avatar_hue(taken.setdefault(org, []))
+        taken[org].append(hue)
+        conn.execute(
+            text('UPDATE "user" SET avatar_seed = :seed WHERE id = :id'),
+            {"seed": f"{hue}:{seed}", "id": user_id},
+        )
+
+
 def _apply_user_avatar_seed(conn):
     """``user.avatar_seed``: a random blobatar per user, stored once (revision 85).
 
@@ -3777,6 +3834,8 @@ _MIGRATIONS = {
     84: _apply_tailnet,
     # 85: every user has a random blobatar seed (backfilled for existing rows).
     85: _apply_user_avatar_seed,
+    # 86: each seed carries a hue, distinct within its workspace (backfilled).
+    86: _apply_user_avatar_hue,
 }
 
 

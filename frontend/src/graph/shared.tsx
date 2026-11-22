@@ -42,13 +42,44 @@ export function avatarColor(name?: string | null): string {
  * from their stored random seed; anything else (a project, an agent, a GitHub
  * login) from its name, which is deterministic and needs no storage. */
 const blobatarUris = new Map<string, string>();
+/* A stored seed is "<hue>:<token>": the hue is locked so that users in one
+ * workspace never draw in the same colour; a plain seed hashes its hue. */
+const HUE_SEED = /^(\d{1,3}):([0-9a-f]+)$/;
 export function blobatarSrc(source: string): string {
   let uri = blobatarUris.get(source);
   if (uri === undefined) {
-    uri = blobatarUri(source);
+    const locked = HUE_SEED.exec(source);
+    uri = locked ? blobatarUri(source, { hue: Number(locked[1]) }) : blobatarUri(source);
     blobatarUris.set(source, uri);
   }
   return uri;
+}
+
+/** The blobatar for a Hoja user; falls back to the name for anyone without a seed. */
+export function userSource(user?: {
+  id?: string;
+  name?: string | null;
+  email?: string | null;
+  avatarSeed?: string | null;
+} | null): string {
+  return user?.avatarSeed || user?.name || user?.email || user?.id || "?";
+}
+
+export function UserBlobatar({
+  user,
+  className,
+}: {
+  user?: Parameters<typeof userSource>[0];
+  className?: string;
+}) {
+  return (
+    <img
+      src={blobatarSrc(userSource(user))}
+      alt=""
+      draggable={false}
+      className={cx("block size-full", className)}
+    />
+  );
 }
 
 export function Avatar({
@@ -89,7 +120,8 @@ export function Avatar({
         width: size,
         height: size,
         fontSize: Math.max(8, size * 0.42),
-        background: "var(--subtle)",
+        // A blobatar sits on the surface with no ring, so it reads at full size.
+        background: source ? "transparent" : "var(--subtle)",
         color: "var(--muted)",
         overflow: "hidden",
       }}

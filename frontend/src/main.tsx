@@ -142,7 +142,7 @@ import { SettingsSelect } from "./SettingsSelect";
 import { GraphIssueDetail } from "./graph/tasks";
 import { Avatar, AvatarFallback, AvatarGroup } from "./components/ui/avatar";
 import { ProjectActivity } from "./ProjectActivity";
-import { blobatarSrc, dueIsOverdue, SubIssuePill } from "./graph/shared";
+import { blobatarSrc, dueIsOverdue, SubIssuePill, UserBlobatar } from "./graph/shared";
 import {
   orderTree,
   railLeft,
@@ -852,11 +852,15 @@ function AssigneePicker({
             disabled={disabled}
           >
             <span
-              className="grid place-items-center w-5.5 h-5.5 rounded-[50%] bg-accent-soft text-accent text-[10px]"
+              className={
+                issue.assignee
+                  ? "grid place-items-center w-5.5 h-5.5"
+                  : "grid place-items-center w-5.5 h-5.5 rounded-[50%] bg-accent-soft text-accent text-[10px]"
+              }
               data-my-issue-assignee=""
               aria-hidden="true"
             >
-              {issue.assignee?.name?.slice(0, 1) || "·"}
+              {issue.assignee ? <UserBlobatar user={issue.assignee} /> : "·"}
             </span>
           </button>
         </PopoverTrigger>
@@ -898,11 +902,11 @@ function AssigneePicker({
                     onClick={() => void pick(m.id)}
                   >
                     <span
-                      className="grid place-items-center w-5.5 h-5.5 rounded-[50%] bg-accent-soft text-accent text-[10px]"
+                      className="grid place-items-center w-5.5 h-5.5"
                       data-my-issue-assignee=""
                       aria-hidden="true"
                     >
-                      {m.name?.slice(0, 1) || "·"}
+                      <UserBlobatar user={m} />
                     </span>
                     {m.name || m.email}
                   </button>
@@ -5047,11 +5051,11 @@ function PulsePage({
                           {post.actor?.name && (
                             <>
                               <span
-                                className="inline-grid place-items-center leading-none rounded-[50%] bg-accent-soft text-accent w-(--ds-feed-avatar-size) h-(--ds-feed-avatar-size)"
+                                className="inline-grid place-items-center leading-none w-(--ds-feed-avatar-size) h-(--ds-feed-avatar-size)"
                                 data-pulse-avatar=""
                                 aria-hidden="true"
                               >
-                                {post.actor.name.slice(0, 1).toUpperCase()}
+                                <UserBlobatar user={post.actor} />
                               </span>
                               <span>{post.actor.name}</span>
                             </>
@@ -5148,12 +5152,10 @@ function PulsePage({
                                 className="flex items-start gap-2"
                               >
                                 <span
-                                  className="inline-grid place-items-center leading-none flex-none rounded-[50%] bg-accent-soft text-accent w-(--ds-feed-avatar-size) h-(--ds-feed-avatar-size)"
+                                  className="inline-grid place-items-center leading-none flex-none w-(--ds-feed-avatar-size) h-(--ds-feed-avatar-size)"
                                   aria-hidden="true"
                                 >
-                                  {(reply.user?.name || "?")
-                                    .slice(0, 1)
-                                    .toUpperCase()}
+                                  <UserBlobatar user={reply.user} />
                                 </span>
                                 <div className="min-w-0">
                                   <p className="flex items-center gap-(--ds-group-bar-gap) mt-0 mr-0 mb-1 ml-0 text-(length:--ds-feed-meta-size) text-muted">
@@ -6420,11 +6422,15 @@ function MyIssuesContent({
                         ) : null}
                         {showAssignee && (
                           <span
-                            className="grid place-items-center w-5.5 h-5.5 rounded-[50%] bg-[#e5e5e7] text-[#46464b] text-[10px] flex-none"
+                            className={
+                              i.assignee
+                                ? "grid place-items-center w-5.5 h-5.5 flex-none"
+                                : "grid place-items-center w-5.5 h-5.5 rounded-[50%] bg-[#e5e5e7] text-[#46464b] text-[10px] flex-none"
+                            }
                             data-my-issue-assignee=""
                             title={i.assignee?.name || "Unassigned"}
                           >
-                            {i.assignee?.name?.slice(0, 1) || "·"}
+                            {i.assignee ? <UserBlobatar user={i.assignee} /> : "·"}
                           </span>
                         )}
                         {showDue && i.dueDate && (
@@ -12044,12 +12050,12 @@ function TeamHome({
         <div className="flex pl-2.5 max-md:hidden" data-team-member-stack="">
           {(team?.members?.nodes || []).slice(0, 5).map((m, i) => (
             <span
-              className="grid place-items-center w-7.5 h-7.5 -ml-2 rounded-[50%] bg-accent-soft text-accent text-[11px] font-bold border-2 border-bg"
+              className="grid place-items-center w-7.5 h-7.5 -ml-2 rounded-[50%] border-2 border-bg"
               key={m.id}
               title={m.name || m.email}
               style={{ zIndex: 6 - i }}
             >
-              {(m.name || m.email || "?").slice(0, 1).toUpperCase()}
+              <UserBlobatar user={m} />
             </span>
           ))}
         </div>
@@ -12900,11 +12906,11 @@ function SettingsSidebar({
           data-sidebar-bottom=""
         >
           <span
-            className="grid w-7.25 h-7.25 flex-none place-items-center rounded-[9px] bg-[#e5e5e5] text-[11px] font-bold text-[#171717]"
+            className="grid w-7.25 h-7.25 flex-none place-items-center rounded-[9px]"
             data-settings-user-avatar=""
             aria-hidden="true"
           >
-            {(viewer.name || viewer.email || "A").slice(0, 1).toUpperCase()}
+            <UserBlobatar user={viewer} />
           </span>
           <span
             className="grid min-w-0 flex-1 gap-px"
@@ -13522,11 +13528,11 @@ function TeamEditor({
               data-team-member=""
             >
               <span
-                className="grid w-4.5 h-4.5 flex-none place-items-center rounded-[50%] bg-[#e7e7e7] text-[9px] font-bold text-[#171717]"
+                className="grid w-4.5 h-4.5 flex-none place-items-center rounded-[50%]"
                 data-team-member-avatar=""
                 aria-hidden="true"
               >
-                {(m.name || m.email || "?").slice(0, 1).toUpperCase()}
+                <UserBlobatar user={m} />
               </span>
               <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
                 {m.name || m.email}
@@ -14369,11 +14375,11 @@ function ProfileSettings({
           data-profile-summary=""
         >
           <span
-            className="grid w-10.75 h-10.75 flex-none place-items-center rounded-[50%] bg-(--settings-accent-soft) text-[16px] font-bold text-(--settings-accent-strong)"
+            className="grid w-10.75 h-10.75 flex-none place-items-center rounded-[50%]"
             data-profile-avatar=""
             aria-hidden="true"
           >
-            {(viewer.name || viewer.email || "A").slice(0, 1).toUpperCase()}
+            <UserBlobatar user={viewer} />
           </span>
           <div className="min-w-0 flex-1">
             <b className="font-semibold">{viewer.name || "Your profile"}</b>
@@ -17787,11 +17793,11 @@ function MembersPage({
             key={m.id}
           >
             <span
-              className="grid w-7.75 h-7.75 flex-none place-items-center rounded-[50%] bg-[#e7e7e7] text-[11px] font-bold text-[#171717]"
+              className="grid w-7.75 h-7.75 flex-none place-items-center rounded-[50%]"
               data-member-avatar=""
               aria-hidden="true"
             >
-              {(m.name || m.email || "?").slice(0, 1).toUpperCase()}
+              <UserBlobatar user={m} />
             </span>
             <span className="grid gap-1 flex-1" data-issue-copy="">
               <b className="font-[550]">{m.name || m.email}</b>
