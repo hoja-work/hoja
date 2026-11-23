@@ -293,7 +293,7 @@ html.hoja-modal-open{overflow:hidden;scrollbar-gutter:stable}
 /* Full-bleed roots size to the shell, not the viewport, so the shell border never clips a composer or column. */
 @media(min-width:881px) and (min-height:501px),(min-width:1001px){.app:has([data-workspace-page]){grid-template-rows:minmax(0,1fr)}}
 
-/* Meetings owns the full workspace height like the other feed surfaces: no app header on desktop. */
+/* Feed surfaces own the full workspace height: no app header on desktop. */
 @media(min-width:881px) and (min-height:501px),(min-width:1001px){.app{grid-template-columns:var(--sidebar-width,244px) minmax(0,1fr);grid-template-rows:minmax(100dvh,auto)}.app[data-sidebar-collapsed]{grid-template-columns:44px minmax(0,1fr)}.app:has([data-settings-sidebar]){grid-template-columns:var(--ds-settings-nav-width,244px) minmax(0,1fr)}}
 
 /* Phones: a popover never grows past the room Radix measured beside its trigger, whatever its own cap, so it can always scroll. */

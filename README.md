@@ -179,10 +179,10 @@ Honest boundaries keep the product predictable:
 
 - Hoja does not run or monitor agents. Your harness does that; Hoja holds the
   work record they read and update.
-- The MCP server is read-only. Mutations belong to the CLI and the API, where a
-  token and its permissions are explicit.
-- No prebuilt GitHub, Slack or meeting sync connectors are included. Use the CLI
-  or API for your own integrations.
+- MCP writes need an explicit write grant (`hoja:write`); a read-only token or
+  key can only read.
+- Bundled connectors (GitHub, Slack, Notion, Google Workspace, Grafana, Sentry,
+  Zoom, Calendly) are read-only. Use the CLI or API to write elsewhere.
 - the upstream API compatibility covers the GraphQL surface Hoja implements, not every
   the upstream API feature. Unsupported screens say so instead of pretending to work.
 - Saved Views live in the browser, not in the shared workspace.
@@ -211,8 +211,8 @@ machine's `100.x` Tailscale address so another device on the same tailnet can op
 it; the backend stays on `127.0.0.1` and keeps proxying through Vite. If the host
 firewall is active, allow the UI port on the tailnet interface once:
 `sudo ufw allow in on tailscale0 to any port 5173 proto tcp`. Plain HTTP on a
-`100.x` address is not a secure browser context, so clipboard copy, local view
-creation and camera/microphone meetings may be unavailable there.
+`100.x` address is not a secure browser context, so clipboard copy and local view
+creation may be unavailable there.
 
 - `bash scripts/e2e-local-backend.sh` runs the backend integration pass against a
   disposable local database.
@@ -228,7 +228,7 @@ Contributor and agent operations are in
 - [Design](https://github.com/hoja-work/hoja/blob/main/docs/DESIGN.md) — product and architecture.
 - [Deployment](https://github.com/hoja-work/hoja/blob/main/docs/DEPLOYMENT.md) — databases, migrations, readiness, tokens and release publishing.
 - [Remote MCP](https://github.com/hoja-work/hoja/blob/main/docs/hoja-mcp.md) — the experimental OAuth-protected remote server; the stdio server is covered above.
-- [Cycle metrics](https://github.com/hoja-work/hoja/blob/main/docs/cycle-metrics.md) and [meetings](https://github.com/hoja-work/hoja/blob/main/docs/meetings.md).
+- [Cycle metrics](https://github.com/hoja-work/hoja/blob/main/docs/cycle-metrics.md).
 - [Changelog](https://github.com/hoja-work/hoja/blob/main/CHANGELOG.md) — release-level behavior changes.
 
 ## First run in the browser
