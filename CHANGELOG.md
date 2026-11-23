@@ -37,7 +37,7 @@ the releases in which those words were the product's own.
 - A clean `pip install 'hoja-cli[server]'` answers `/graphql` again. Every GraphQL request imported
   `hoja_server.agent_chat` for the read-only key check, which needs the optional `agent` extra
   (openai, fastmcp, pydantic-ai), so the server returned HTTP 500 without it. The check moved to
-  `hoja_server/readonly.py` (HOJA-757-A-2).
+  `hoja_server/denials.py`, as in Hoja Cloud (HOJA-757-A-2).
 - `/api/uploads` accepts `application/json`, so Hoja plugin session traces (`*.trace.json`) attach to
   tasks on a self-hosted server. JSON files are stored under a name that cannot collide with their
   metadata sidecar (HOJA-757-A-2).

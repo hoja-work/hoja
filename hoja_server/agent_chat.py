@@ -28,9 +28,8 @@ from hoja_server.agent_prompt import compose_prompt, workspace_snapshot
 from hoja_server.agent_threads import _owned as _owned_thread
 from hoja_server.agent_threads import _title_from
 from hoja_server.db import model_provider
-from hoja_server.denials import DENY_HINT, READ_ONLY_HINT
+from hoja_server.denials import DENY_HINT, READ_ONLY_HINT, read_only_violation
 from hoja_server.model_providers import validate_model_base_url
-from hoja_server.readonly import read_only_violation
 from hoja_server.secrets_box import decrypt_secret
 
 INSTRUCTIONS = """You are the Hoja workspace agent for Clover. Hoja is a wire-compatible issue tracker.

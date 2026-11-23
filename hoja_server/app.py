@@ -977,7 +977,7 @@ def create_app(
             problem = _query_problem(query)
             if problem:
                 return _bad_request(problem)
-            from hoja_server.readonly import read_only_violation
+            from hoja_server.denials import read_only_violation
 
             if read_only_violation(query, access):
                 return JSONResponse(
