@@ -487,7 +487,7 @@ const sections = [
   ["Favorites", [["Favorite views", Layers3]]],
   ["Your teams", []],
   [
-    "More",
+    "Manage",
     [
       ["Board", LayoutDashboard],
       ["Cycles", CalendarDays],
@@ -1400,6 +1400,32 @@ function App() {
   useEffect(() => {
     localStorage.setItem("hoja_sidebar_collapsed", String(sidebarCollapsed));
   }, [sidebarCollapsed]);
+  useEffect(() => {
+    const appName = workspace.name || "Hoja";
+    if (!token) {
+      document.title = appName;
+      return;
+    }
+    const pageTitle =
+      view === "Issue" && activeIssue
+        ? `${activeIssue.identifier} · ${activeIssue.title}`
+        : view === "Project" && activeProject
+          ? activeProject.name
+          : view === "Cycle detail" && activeCycle
+            ? activeCycle.name || `Cycle ${activeCycle.number ?? ""}`
+            : view === "Settings"
+              ? `Settings · ${settingsSection}`
+              : displayLabel(view);
+    document.title = pageTitle ? `${pageTitle} — ${appName}` : appName;
+  }, [
+    token,
+    view,
+    activeIssue,
+    activeProject,
+    activeCycle,
+    settingsSection,
+    workspace.name,
+  ]);
   const [collapsedTeams, setCollapsedTeams] = useState<Record<string, boolean>>(
     {},
   );
@@ -1503,7 +1529,10 @@ function App() {
       `/workspace/initiative/${encodeURIComponent(id)}`,
     );
   const openMember = (userId: string) =>
-    navigate("Member profile", `/workspace/member/${encodeURIComponent(userId)}`);
+    navigate(
+      "Member profile",
+      `/workspace/member/${encodeURIComponent(userId)}`,
+    );
   const openTaskByRef = (identifier: string, title: string) => {
     const existing = issues.find(
       (i) => i.identifier.toLowerCase() === identifier.toLowerCase(),
@@ -2889,7 +2918,9 @@ function App() {
         }
         viewerId={viewer.id}
         onBack={() => navigate("Members", "/workspace/members")}
-        onOpenLeaderboard={() => navigate("Leaderboard", "/workspace/leaderboard")}
+        onOpenLeaderboard={() =>
+          navigate("Leaderboard", "/workspace/leaderboard")
+        }
         onOpenTask={openTaskByRef}
         onOpenSettingsProfile={() =>
           navigate("Settings", "/workspace/settings/profile")
@@ -3550,6 +3581,17 @@ function App() {
                   )}
                 </div>
                 <button
+                  type="button"
+                  className="grid w-7 h-7 flex-none place-items-center rounded-[7px] border-0 bg-transparent text-muted hover:bg-subtle hover:text-foreground focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-desktop:rail-collapsed:flex-none shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:size-11"
+                  data-sidebar-icon=""
+                  data-sidebar-search=""
+                  aria-label="Search workspace"
+                  title="Search (Ctrl+K)"
+                  onClick={() => setCommandOpen(true)}
+                >
+                  <Search size={15} aria-hidden="true" />
+                </button>
+                <button
                   className="grid w-7 h-7 flex-none place-items-center rounded-[7px] border-0 bg-[#f9f9fa] pt-1.5 pr-1.5 pb-1.5 pl-1.5 text-[#2e2e30] hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-foreground focus-visible:outline-offset-2 focus-visible:outline-accent shell-desktop:rail-collapsed:flex-none shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:size-11 hover:bg-[#efeff0] focus-visible:bg-[#efeff0]"
                   data-sidebar-icon=""
                   data-sidebar-create=""
@@ -3920,7 +3962,7 @@ function App() {
                       >
                         Members
                       </button>
-                      <p>
+                      <p className="m-0 px-2 py-1.5 text-xs leading-relaxed text-muted">
                         Customers, team administration and sidebar customization
                         are not available yet.
                       </p>
@@ -6597,94 +6639,94 @@ function KanbanCard({
           </strong>
         </button>
         {!compact && (
-        <div
-          className="flex flex-col min-w-0 mt-1 text-[12px] text-muted [&>label]:gap-2 [&>div]:gap-2 [&>label]:h-7 [&>div]:h-7 [&>label]:px-2.25 [&>div]:px-2.25 [&>label]:rounded-lg [&>div]:rounded-lg **:data-status-picker:min-w-0 **:data-status-picker:self-center **:data-status-picker-trigger:w-auto **:data-status-picker-trigger:max-w-full **:data-status-picker-trigger:h-auto **:data-status-picker-trigger:p-0 **:data-status-picker-trigger:border-0 **:data-status-picker-trigger:bg-transparent **:data-status-picker-trigger:text-inherit **:data-status-picker-trigger:gap-2 [&>label:hover]:[transition:none] [&>div:hover]:[transition:none] [&>label:focus-within]:[transition:none]"
-          data-kanban-card-props=""
-          aria-busy={busy || undefined}
-        >
-          {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- pointer shortcut; the nested status button is the keyboard and screen-reader target. */}
           <div
-            className="cursor-pointer flex items-center gap-2 h-7 min-w-0 pt-0 pr-2 pb-0 pl-2 rounded-lg hover:bg-subtle [transition:background-color_120ms_ease-out]"
-            onClick={(e) => {
-              if (!(e.target as HTMLElement).closest("button"))
-                e.currentTarget
-                  .querySelector<HTMLButtonElement>(
-                    "[data-status-picker-trigger]",
-                  )
-                  ?.click();
-            }}
+            className="flex flex-col min-w-0 mt-1 text-[12px] text-muted [&>label]:gap-2 [&>div]:gap-2 [&>label]:h-7 [&>div]:h-7 [&>label]:px-2.25 [&>div]:px-2.25 [&>label]:rounded-lg [&>div]:rounded-lg **:data-status-picker:min-w-0 **:data-status-picker:self-center **:data-status-picker-trigger:w-auto **:data-status-picker-trigger:max-w-full **:data-status-picker-trigger:h-auto **:data-status-picker-trigger:p-0 **:data-status-picker-trigger:border-0 **:data-status-picker-trigger:bg-transparent **:data-status-picker-trigger:text-inherit **:data-status-picker-trigger:gap-2 [&>label:hover]:[transition:none] [&>div:hover]:[transition:none] [&>label:focus-within]:[transition:none]"
+            data-kanban-card-props=""
+            aria-busy={busy || undefined}
           >
-            <StatusPicker
-              compact
-              showLabel
-              iconClassName="size-4 shrink-0"
-              issue={issue}
-              teams={teams}
-              disabled={busy}
-              onChange={(stateId) => {
-                const st = teams
-                  .find((t) => t.id === issue.team?.id)
-                  ?.states.nodes.find((x) => x.id === stateId);
-                if (!st) throw Error("Status not found");
-                return onUpdate(issue.id, { stateId: st.id });
-              }}
-            />
-          </div>
-          <label
-            className={
-              (overdue ? "relative text-danger" : "relative") +
-              " flex items-center gap-2 h-7 min-w-0 pt-0 pr-2.25 pb-0 pl-2.25 rounded-lg hover:bg-subtle focus-within:bg-subtle" +
-              " hover:bg-subtle focus-within:bg-subtle" +
-              " [transition:background-color_120ms_ease-out]"
-            }
-            title={due ? `Due ${due}` : "Set due date"}
-          >
-            <CalendarDays
-              aria-hidden="true"
-              size={16}
-              className="size-4 shrink-0"
-            />
-            <span className="truncate">
-              {due
-                ? new Date(due).toLocaleDateString(undefined, {
-                    month: "short",
-                    day: "numeric",
-                  })
-                : "Set due date"}
-            </span>
-            <input
-              type="date"
-              value={due}
-              disabled={busy}
-              aria-label={`Due date of ${issue.identifier}`}
-              className="absolute inset-0 h-full w-full cursor-pointer opacity-0 max-md:text-base placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+            {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- pointer shortcut; the nested status button is the keyboard and screen-reader target. */}
+            <div
+              className="cursor-pointer flex items-center gap-2 h-7 min-w-0 pt-0 pr-2 pb-0 pl-2 rounded-lg hover:bg-subtle [transition:background-color_120ms_ease-out]"
               onClick={(e) => {
-                try {
-                  e.currentTarget.showPicker?.();
-                } catch {
-                  /* the native picker is unavailable in this browser */
-                }
+                if (!(e.target as HTMLElement).closest("button"))
+                  e.currentTarget
+                    .querySelector<HTMLButtonElement>(
+                      "[data-status-picker-trigger]",
+                    )
+                    ?.click();
               }}
-              onChange={(e) => void edit({ dueDate: e.target.value || null })}
-            />
-          </label>
-          {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- pointer shortcut; the nested priority button is the keyboard and screen-reader target. */}
-          <div
-            className="cursor-pointer flex items-center gap-2 h-7 min-w-0 pt-0 pr-2.25 pb-0 pl-2.25 rounded-lg hover:bg-subtle [transition:background-color_120ms_ease-out]"
-            onClick={(e) => {
-              if (!(e.target as HTMLElement).closest("button"))
-                e.currentTarget
-                  .querySelector<HTMLButtonElement>("button")
-                  ?.click();
-            }}
-          >
-            <KanbanPriority
-              issue={issue}
-              busy={busy}
-              onChange={(priority) => void edit({ priority })}
-            />
+            >
+              <StatusPicker
+                compact
+                showLabel
+                iconClassName="size-4 shrink-0"
+                issue={issue}
+                teams={teams}
+                disabled={busy}
+                onChange={(stateId) => {
+                  const st = teams
+                    .find((t) => t.id === issue.team?.id)
+                    ?.states.nodes.find((x) => x.id === stateId);
+                  if (!st) throw Error("Status not found");
+                  return onUpdate(issue.id, { stateId: st.id });
+                }}
+              />
+            </div>
+            <label
+              className={
+                (overdue ? "relative text-danger" : "relative") +
+                " flex items-center gap-2 h-7 min-w-0 pt-0 pr-2.25 pb-0 pl-2.25 rounded-lg hover:bg-subtle focus-within:bg-subtle" +
+                " hover:bg-subtle focus-within:bg-subtle" +
+                " [transition:background-color_120ms_ease-out]"
+              }
+              title={due ? `Due ${due}` : "Set due date"}
+            >
+              <CalendarDays
+                aria-hidden="true"
+                size={16}
+                className="size-4 shrink-0"
+              />
+              <span className="truncate">
+                {due
+                  ? new Date(due).toLocaleDateString(undefined, {
+                      month: "short",
+                      day: "numeric",
+                    })
+                  : "Set due date"}
+              </span>
+              <input
+                type="date"
+                value={due}
+                disabled={busy}
+                aria-label={`Due date of ${issue.identifier}`}
+                className="absolute inset-0 h-full w-full cursor-pointer opacity-0 max-md:text-base placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                onClick={(e) => {
+                  try {
+                    e.currentTarget.showPicker?.();
+                  } catch {
+                    /* the native picker is unavailable in this browser */
+                  }
+                }}
+                onChange={(e) => void edit({ dueDate: e.target.value || null })}
+              />
+            </label>
+            {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- pointer shortcut; the nested priority button is the keyboard and screen-reader target. */}
+            <div
+              className="cursor-pointer flex items-center gap-2 h-7 min-w-0 pt-0 pr-2.25 pb-0 pl-2.25 rounded-lg hover:bg-subtle [transition:background-color_120ms_ease-out]"
+              onClick={(e) => {
+                if (!(e.target as HTMLElement).closest("button"))
+                  e.currentTarget
+                    .querySelector<HTMLButtonElement>("button")
+                    ?.click();
+              }}
+            >
+              <KanbanPriority
+                issue={issue}
+                busy={busy}
+                onChange={(priority) => void edit({ priority })}
+              />
+            </div>
           </div>
-        </div>
         )}
       </div>
       {subtasks.map((child, index) => {
@@ -10064,7 +10106,9 @@ function ProjectDetails({
             }`}
             type="button"
             aria-expanded={propsOpen}
-            aria-label={propsOpen ? "Hide project properties" : "Show project properties"}
+            aria-label={
+              propsOpen ? "Hide project properties" : "Show project properties"
+            }
             onClick={togglePropsOpen}
           >
             <SlidersHorizontal size={13} aria-hidden="true" />
@@ -10165,68 +10209,68 @@ function ProjectDetails({
             </div>
           </header>
           {propsOpen && (
-          <div
-            className="border absolute right-2.75 top-22.5 min-w-65 max-w-96.25 grid content-start gap-4 pt-4 pr-3.25 pb-4 pl-3.25 border-line rounded-[10px] bg-panel max-lg:static max-lg:w-auto max-lg:max-w-none max-lg:min-w-0 max-lg:mt-5 max-lg:mr-3.5 max-lg:mb-5 max-lg:ml-3.5 shell-phone:mt-0 shell-phone:mb-4 shell-phone:pt-3 shell-phone:pb-3 shell-phone:order-2 md:col-start-2 md:row-start-3 md:row-span-6 [@media_(max-width:900px)]:w-auto [@media_(max-width:900px)]:max-w-none [@media_(max-width:900px)]:min-w-0 [@media_(max-width:900px)]:mt-5 [@media_(max-width:900px)]:mr-3.5 [@media_(max-width:900px)]:mb-5 [@media_(max-width:900px)]:ml-3.5 shell-phone:mr-2.5 shell-phone:mb-4.5 shell-phone:ml-2.5 shell-phone:pt-3.25 shell-phone:pr-3.25 shell-phone:pb-3.25 shell-phone:pl-3.25 w-[calc(38%-11px)]"
-            data-project-reference-properties=""
-          >
-            <h2 className="mt-0 mr-0 mb-0.5 ml-0 text-[12px] font-semibold">
-              Properties
-            </h2>
-            <div className="grid items-start gap-2 grid-cols-2">
-              <span className="text-muted">Status</span>
-              <b className="text-[12px] font-medium wrap-break-word">
-                {(
-                  {
-                    started: "In Progress",
-                    backlog: "Backlog",
-                    planned: "Planned",
-                    paused: "Paused",
-                    completed: "Completed",
-                    canceled: "Canceled",
-                  } as Record<string, string>
-                )[project.state || "backlog"] || project.state}
-              </b>
-            </div>
-            <div className="grid items-start gap-2 grid-cols-2">
-              <span className="text-muted">Lead</span>
-              <b className="text-[12px] font-medium wrap-break-word">
-                {project.lead?.name || "No lead"}
-              </b>
-            </div>
-            <div className="grid items-start gap-2 grid-cols-2">
-              <span className="text-muted">Members</span>
-              <ProjectMembers projectId={project.id} people={members} />
-            </div>
-            <div className="grid items-start gap-2 grid-cols-2">
-              <span className="text-muted">Start date</span>
-              <b className="text-[12px] font-medium wrap-break-word">
-                {project.startDate || "Not set"}
-              </b>
-            </div>
-            <div className="grid items-start gap-2 grid-cols-2">
-              <span className="text-muted">Target date</span>
-              <b className="text-[12px] font-medium wrap-break-word">
-                {project.targetDate || "Not set"}
-              </b>
-            </div>
-            <div className="grid items-start gap-2 grid-cols-2">
-              <span className="text-muted">Teams</span>
-              <b className="text-[12px] font-medium wrap-break-word">
-                {project.teams?.nodes.map((t) => t.name).join(", ") ||
-                  "No teams"}
-              </b>
-            </div>
-            <ProjectRepository projectId={project.id} />
-            <button
-              type="button"
-              className="inline-flex items-center justify-center gap-1.75 rounded-md border border-line bg-panel pl-2.75 pr-2.75 pt-2 pb-2 text-inherit transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 w-full text-[12px] max-w-full font-sans shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 group"
-              data-control-outline=""
-              aria-expanded={editOpen}
-              onClick={() => setEditOpen((v) => !v)}
+            <div
+              className="border absolute right-2.75 top-22.5 min-w-65 max-w-96.25 grid content-start gap-4 pt-4 pr-3.25 pb-4 pl-3.25 border-line rounded-[10px] bg-panel max-lg:static max-lg:w-auto max-lg:max-w-none max-lg:min-w-0 max-lg:mt-5 max-lg:mr-3.5 max-lg:mb-5 max-lg:ml-3.5 shell-phone:mt-0 shell-phone:mb-4 shell-phone:pt-3 shell-phone:pb-3 shell-phone:order-2 md:col-start-2 md:row-start-3 md:row-span-6 [@media_(max-width:900px)]:w-auto [@media_(max-width:900px)]:max-w-none [@media_(max-width:900px)]:min-w-0 [@media_(max-width:900px)]:mt-5 [@media_(max-width:900px)]:mr-3.5 [@media_(max-width:900px)]:mb-5 [@media_(max-width:900px)]:ml-3.5 shell-phone:mr-2.5 shell-phone:mb-4.5 shell-phone:ml-2.5 shell-phone:pt-3.25 shell-phone:pr-3.25 shell-phone:pb-3.25 shell-phone:pl-3.25 w-[calc(38%-11px)]"
+              data-project-reference-properties=""
             >
-              {editOpen ? "Close editor" : "Edit project"}
-            </button>
-          </div>
+              <h2 className="mt-0 mr-0 mb-0.5 ml-0 text-[12px] font-semibold">
+                Properties
+              </h2>
+              <div className="grid items-start gap-2 grid-cols-2">
+                <span className="text-muted">Status</span>
+                <b className="text-[12px] font-medium wrap-break-word">
+                  {(
+                    {
+                      started: "In Progress",
+                      backlog: "Backlog",
+                      planned: "Planned",
+                      paused: "Paused",
+                      completed: "Completed",
+                      canceled: "Canceled",
+                    } as Record<string, string>
+                  )[project.state || "backlog"] || project.state}
+                </b>
+              </div>
+              <div className="grid items-start gap-2 grid-cols-2">
+                <span className="text-muted">Lead</span>
+                <b className="text-[12px] font-medium wrap-break-word">
+                  {project.lead?.name || "No lead"}
+                </b>
+              </div>
+              <div className="grid items-start gap-2 grid-cols-2">
+                <span className="text-muted">Members</span>
+                <ProjectMembers projectId={project.id} people={members} />
+              </div>
+              <div className="grid items-start gap-2 grid-cols-2">
+                <span className="text-muted">Start date</span>
+                <b className="text-[12px] font-medium wrap-break-word">
+                  {project.startDate || "Not set"}
+                </b>
+              </div>
+              <div className="grid items-start gap-2 grid-cols-2">
+                <span className="text-muted">Target date</span>
+                <b className="text-[12px] font-medium wrap-break-word">
+                  {project.targetDate || "Not set"}
+                </b>
+              </div>
+              <div className="grid items-start gap-2 grid-cols-2">
+                <span className="text-muted">Teams</span>
+                <b className="text-[12px] font-medium wrap-break-word">
+                  {project.teams?.nodes.map((t) => t.name).join(", ") ||
+                    "No teams"}
+                </b>
+              </div>
+              <ProjectRepository projectId={project.id} />
+              <button
+                type="button"
+                className="inline-flex items-center justify-center gap-1.75 rounded-md border border-line bg-panel pl-2.75 pr-2.75 pt-2 pb-2 text-inherit transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 w-full text-[12px] max-w-full font-sans shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 group"
+                data-control-outline=""
+                aria-expanded={editOpen}
+                onClick={() => setEditOpen((v) => !v)}
+              >
+                {editOpen ? "Close editor" : "Edit project"}
+              </button>
+            </div>
           )}
           {editOpen && (
             <form
@@ -12313,14 +12357,14 @@ function SettingsSidebar({
       ],
     ],
     [
-      "Issues",
+      "Tasks",
       [
         ["issue-labels", "Labels", Tags],
         ["issue-templates", "Task templates", LayoutTemplate],
         ["slas", "SLAs", Clock],
+        ["cycles", "Cycles", CalendarDays],
       ],
     ],
-    ["Tasks", [["cycles", "Cycles", CalendarDays]]],
     [
       "Projects",
       [

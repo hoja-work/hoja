@@ -747,7 +747,7 @@ const CycleOverviewRow = React.memo(function CycleOverviewRow({
       <div
         className={styleClasses(
           cx(
-            "relative text-right pt-4 pr-7.5 pb-0 pl-0 text-[11px] text-muted leading-[1.35] whitespace-pre-line [&_i]:absolute [&_i]:right-5.5 [&_i]:top-4.5 [&_i]:w-2.5 [&_i]:h-2.5 [&_i]:rounded-[50%] [&_i]:bg-panel [&_i]:border-2 [&_i]:border-solid [&_i]:border-muted [&_i]:not-italic [&_i]:[transition:transform_.16s_ease,border-color_.16s_ease,background-color_.16s_ease] [[data-style-hooks~='lin-cycle-row'][data-style-hooks~='selected']_&_i]:border-[#5e6ad2] [[data-style-hooks~='lin-cycle-row'][data-style-hooks~='selected']_&_i]:transform-[scale(1.25)] shell-phone:hidden motion-reduce:[&_i]:[transition:none]",
+            "relative text-right pt-4 pr-10 pb-0 pl-0 text-[11px] text-muted leading-[1.35] whitespace-pre-line [&_i]:absolute [&_i]:right-4 [&_i]:top-4.5 [&_i]:w-2.5 [&_i]:h-2.5 [&_i]:rounded-[50%] [&_i]:bg-panel [&_i]:border-2 [&_i]:border-solid [&_i]:border-muted [&_i]:not-italic [&_i]:[transition:transform_.16s_ease,border-color_.16s_ease,background-color_.16s_ease] [[data-style-hooks~='lin-cycle-row'][data-style-hooks~='selected']_&_i]:border-[#5e6ad2] [[data-style-hooks~='lin-cycle-row'][data-style-hooks~='selected']_&_i]:transform-[scale(1.25)] shell-phone:hidden motion-reduce:[&_i]:[transition:none]",
             state === "current" &&
               "[[data-style-hooks~='lin-cycle-tmark']&_i]:bg-[#5e6ad2] [[data-style-hooks~='lin-cycle-tmark']&_i]:border-[#5e6ad2]",
           ),
@@ -969,7 +969,7 @@ export function CycleOverviewRows({
     return (
       <div
         className={styleClasses(
-          "py-15 px-5 text-center text-muted [&_h2]:text-foreground [&_h2]:text-[15px] [&_h2]:mt-3 [&_h2]:mx-0 [&_h2]:mb-1.5",
+          "flex flex-col items-center py-15 px-5 text-center text-muted [&_h2]:text-foreground [&_h2]:text-[15px] [&_h2]:mt-3 [&_h2]:mx-0 [&_h2]:mb-1.5",
         )}
         data-style-hooks={styleHooks(
           "lin-empty py-[60px] px-[20px] text-center text-muted [&_h2]:text-foreground [&_h2]:text-[15px] [&_h2]:mt-[12px] [&_h2]:mx-0 [&_h2]:mb-[6px]",
@@ -997,10 +997,10 @@ export function CycleOverviewRows({
       >
         <div
           className={styleClasses(
-            "flex items-center justify-between gap-3 pt-0 pr-0 pb-3 pl-22 text-muted text-[10px] font-semibold tracking-[.07em] uppercase [&_span:last-child]:text-[10px] [&_span:last-child]:font-[450] [&_span:last-child]:tracking-normal [&_span:last-child]:normal-case shell-phone:pt-0 shell-phone:px-1 shell-phone:pb-2.25 shell-phone:[&_span:last-child]:hidden",
+            "flex items-center justify-between gap-3 pt-0 pr-0 pb-3 pl-22 text-muted text-xs font-medium [&_span:last-child]:text-xs [&_span:last-child]:font-normal shell-phone:pt-0 shell-phone:px-1 shell-phone:pb-2.25 shell-phone:[&_span:last-child]:hidden",
           )}
           data-style-hooks={styleHooks(
-            "lin-cycle-nav-head flex items-center justify-between gap-[12px] pt-0 pr-0 pb-[12px] pl-[88px] text-muted text-[10px] font-semibold tracking-[.07em] uppercase [&_span:last-child]:text-[10px] [&_span:last-child]:font-[450] [&_span:last-child]:tracking-normal [&_span:last-child]:normal-case shell-phone:pt-0 shell-phone:px-[4px] shell-phone:pb-[9px] shell-phone:[&_span:last-child]:hidden",
+            "lin-cycle-nav-head flex items-center justify-between gap-[12px] pt-0 pr-0 pb-[12px] pl-[88px] text-muted text-xs font-medium shell-phone:pt-0 shell-phone:px-[4px] shell-phone:pb-[9px] shell-phone:[&_span:last-child]:hidden",
           )}
         >
           <span>Iteration timeline</span>
@@ -1019,7 +1019,7 @@ export function CycleOverviewRows({
         >
           <div
             className={styleClasses(
-              "absolute top-0 bottom-0 left-15.25 w-0.5 bg-line shell-phone:hidden",
+              "absolute top-0 bottom-0 left-16.5 w-0.5 bg-line shell-phone:hidden",
             )}
             data-style-hooks={styleHooks(
               "lin-cycles-spine absolute top-0 bottom-0 left-[61px] w-[2px] bg-line shell-phone:hidden",
@@ -1111,10 +1111,10 @@ function CyclePreview({
         >
           <div
             className={styleClasses(
-              "flex items-center gap-1.75 mb-2.25 text-muted text-[10px] font-[650] tracking-[.08em] uppercase",
+              "flex items-center gap-1.75 mb-2.25 text-muted text-xs font-medium",
             )}
             data-style-hooks={styleHooks(
-              "lin-cycle-preview-kicker flex items-center gap-[7px] mb-[9px] text-muted text-[10px] font-[650] tracking-[.08em] uppercase",
+              "lin-cycle-preview-kicker flex items-center gap-[7px] mb-[9px] text-muted text-xs font-medium",
             )}
           >
             <span
@@ -1255,7 +1255,7 @@ function CyclePreview({
           <header>
             <h3>Work snapshot</h3>
             <span>
-              {issues.length} {issues.length === 1 ? "issue" : "issues"}
+              {issues.length} {issues.length === 1 ? "task" : "tasks"}
             </span>
           </header>
           {shown.length ? (
@@ -1284,7 +1284,11 @@ function CyclePreview({
                   >
                     {issue.title}
                   </span>
-                  <Avatar name={issue.assignee?.name} seed={issue.assignee?.avatarSeed} size={20} />
+                  <Avatar
+                    name={issue.assignee?.name}
+                    seed={issue.assignee?.avatarSeed}
+                    size={20}
+                  />
                 </li>
               ))}
             </ul>

@@ -63,9 +63,9 @@ export function AgentsListShell({
         >
           <span>{workspaceName}</span>
           <span className="text-muted opacity-70">›</span>
-          <span className="truncate text-foreground font-semibold overflow-hidden text-ellipsis whitespace-nowrap">
+          <h1 className="m-0 truncate text-[13px] font-semibold text-foreground overflow-hidden text-ellipsis whitespace-nowrap">
             {trail}
-          </span>
+          </h1>
         </nav>
       </header>
       <div

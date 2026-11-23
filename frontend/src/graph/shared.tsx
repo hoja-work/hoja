@@ -1322,7 +1322,6 @@ const legacyStyleHooks = new Set([
   "nm",
   "pc",
   "axis",
-  "grid",
   "lin-csettings",
   "desc",
   "card",
