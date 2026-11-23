@@ -252,6 +252,18 @@ IDEMPOTENT_PREFIXES = ("notificationMark", "notificationArchive", "notificationU
                        "cycleUnsubscribe")
 
 FIELD_HINTS = {
+    # Text fields are Markdown that people read as rendered and agents read raw (hoja_task), so the
+    # guidance asks for prose that reads the same both ways and nothing a field already records.
+    "description": (
+        "Markdown, shown as written. Open with one or two sentences on the outcome; use ## headings "
+        "for sections and a \"- [ ] \" checklist for acceptance criteria. Do not add tracking lines, "
+        "session or run ids, signatures or HTML comments: state, assignee and links are already fields."
+    ),
+    "body": (
+        "Markdown, shown as written. Lead with the result in one sentence, then short paragraphs or a "
+        "list; put paths, commands and identifiers in `inline code`. Do not add signatures, session or "
+        "run ids, or HTML comments."
+    ),
     "teamId": "Team key (e.g. \"ENG\") or id.",
     "teamIds": "Team keys or ids.",
     "stateId": "Workflow state name (e.g. \"In Progress\") or id. States belong to the issue's team.",

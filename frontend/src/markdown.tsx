@@ -18,6 +18,11 @@ import remarkGfm from "remark-gfm";
  *
  * What is deliberately NOT rendered: raw HTML. react-markdown drops it by default (no
  * rehype-raw), so `<img onerror=…>` stays inert text. Do not add rehype-raw here.
+ *
+ * HTML comments are the one exception to "inert text": they are removed. Agents and
+ * integrations keep machine markers in them (`<!-- hoja-task:… -->`, the
+ * `<!-- hoja-managed:start/end -->` block bounds), and every other Markdown renderer hides
+ * them, so showing them as text only puts noise at the end of a description or comment.
  */
 
 export type MarkdownDensity = "compact" | "block";
@@ -202,9 +207,12 @@ const COMPONENTS: Components = {
       {children}
     </ol>
   ),
+  // A loose list (items made of paragraphs, e.g. question / answer / evidence) needs paragraph
+  // spacing between its items, not the tight .2em of a one-line list. Task items hang their text
+  // off the checkbox so a wrapped line lines up with the first one.
   li: ({ children, className }) => (
     <li
-      className={`[li+&]:mt-[.2em] ${className === "task-list-item" ? "list-none" : ""}`}
+      className={`[li+&]:mt-[.2em] [li:has(>p)+&]:mt-[.8em] ${className === "task-list-item" ? "relative ml-[-1.3em] list-none pl-[1.55em]" : ""}`}
     >
       {children}
     </li>
@@ -253,7 +261,7 @@ const COMPONENTS: Components = {
   input: ({ type, checked }) =>
     type === "checkbox" ? (
       <input
-        className="mt-0 mr-[.45em] mb-0 ml-[-1.2em] accent-accent align-[-1px]"
+        className="absolute top-[.3em] left-0 m-0 accent-accent"
         type="checkbox"
         checked={!!checked}
         disabled
@@ -271,7 +279,23 @@ function urlTransform(url: string): string {
   return url.startsWith(ISSUE_SCHEME) ? url : defaultUrlTransform(url);
 }
 
-const GFM = [remarkGfm];
+/* An `html` node that is nothing but comments (`<!-- … -->`, possibly several). Any other raw
+ * HTML keeps its inert-text rendering. */
+const COMMENT_ONLY = /^(?:\s*<!--[\s\S]*?-->)+\s*$/;
+type MdNode = { type: string; value?: string; children?: MdNode[] };
+function dropComments(node: MdNode): void {
+  if (!node.children) return;
+  node.children = node.children.filter(
+    (child) => !(child.type === "html" && COMMENT_ONLY.test(child.value ?? "")),
+  );
+  node.children.forEach(dropComments);
+}
+/** Remark plugin: removes HTML comments from the tree before it is rendered. */
+function remarkDropHtmlComments() {
+  return (tree: MdNode) => dropComments(tree);
+}
+
+const GFM = [remarkGfm, remarkDropHtmlComments];
 
 type Stats = { parses: number; hits: number };
 const stats: Stats = { parses: 0, hits: 0 };
