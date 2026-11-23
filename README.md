@@ -39,7 +39,7 @@ at $15 per organization each month. Neither path is priced per seat.
 | Surface | What it gives you |
 | --- | --- |
 | **Workspace** | Inbox, My tasks, Projects, Cycles, Teams and saved Views in the browser. Create, assign, discuss and review tasks; group them into projects; use cycles as time-bounded reviews of what shipped, what is open and what was canceled. |
-| **CLI** | `me`, `auth`, `init`, `team`, `issue`, `project`, `cycle`, `comment`, `label`, `memory`, `raw` and `update` — enough to drive real work from a terminal or a script. |
+| **CLI** | `me`, `auth`, `init`, `team`, `task`, `project`, `cycle`, `comment`, `label`, `memory`, `raw` and `update` — enough to drive real work from a terminal or a script. |
 | **API** | A GraphQL endpoint with wire-compatible names. Point your own tools at `HOJA_API_URL` with a workspace token. |
 | **Agents** | An optional stdio MCP server with one guide tool, seven read-only resources and six workflow prompts. It has no mutation tools; changes go through the CLI or API. |
 
@@ -69,9 +69,9 @@ default_account = "local"
 
 ```bash
 hoja me
-hoja issue list --assignee me
-hoja issue create --team ENG --title "Review onboarding flow"
-hoja -o json issue list --state Todo
+hoja task list --assignee me
+hoja task create --team ENG --title "Review onboarding flow"
+hoja -o json task list --state Todo
 hoja <command> --help          # current flags for every command
 ```
 

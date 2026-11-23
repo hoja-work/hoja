@@ -1,5 +1,5 @@
 // Issue surface parity: My issues, team issues and project issues render the same list and board.
-// Run from the repo root after `cd frontend && npm run build`: node scripts/test-issue-surface-parity.cjs
+// Run from the repo root after `cd frontend && npm run build`: node scripts/test-task-surface-parity.cjs
 // (WIDTH=390 HEIGHT=844 for a phone viewport; SHOTS=dir to save screenshots).
 const { chromium } = require('../local-e2e/node_modules/playwright');
 const { spawn, spawnSync } = require('node:child_process');

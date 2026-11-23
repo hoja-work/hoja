@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## Renamed: issues are tasks
+
+Hoja calls its unit of work a **task**. The UI, the CLI, the MCP tools and this
+documentation say task from HOJA-288 onward; the `issue*` GraphQL fields, the
+`hoja_issue*` MCP tools, the `/issue/` URLs and webhook payload keys keep working
+as deprecated aliases, and `HOJA-123` identifiers are unchanged.
+
+Entries below this heading are left as they were written, because they describe
+the releases in which those words were the product's own.
+
 ## [0.21.5] — 2026-11-07
 
 ### Changed
@@ -162,7 +172,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Testing
 
-- Added `scripts/test-issue-modal-polish.cjs` (`npm run test:modal`), a browser
+- Added `scripts/test-task-modal-polish.cjs` (`npm run test:modal`), a browser
   suite that measures the dialog instead of screenshotting it: animation
   durations and animated properties, reduced-motion collapse, hover/press/focus
   deltas, focus trap and focus restore, layout shift during interaction, WCAG

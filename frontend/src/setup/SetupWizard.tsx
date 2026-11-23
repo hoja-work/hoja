@@ -569,7 +569,7 @@ export function SetupWizard({adapter, mode, initial, onFinish}: Props) {
                 ) : (
                   <>
                     <label htmlFor="setup-project-name">Project name<input id="setup-project-name" value={draft.projectName} onChange={(event) => persist({projectName: event.target.value})} placeholder="Website refresh" {...fieldProps('projectName')}/></label>
-                    <p className="setup-hint">Optional. A project groups issues across teams; you can add one any time from Projects.</p>
+                    <p className="setup-hint">Optional. A project groups tasks across teams; you can add one any time from Projects.</p>
                     {fieldError && <p className="setup-field-error" id={`setup-${fieldError.field}-error`} role="alert">{fieldError.message}</p>}
                   </>
                 )}
@@ -679,7 +679,7 @@ export function SetupWizard({adapter, mode, initial, onFinish}: Props) {
                 <b>{row.value}</b>
               </li>
             ))}
-            <li><span>First issue</span><b>{preview.issueExample}</b></li>
+            <li><span>First task</span><b>{preview.issueExample}</b></li>
           </ul>
           <p className="setup-preview-note">This preview is built from what you type and from the server’s confirmations. It never shows a resource that has not been created.</p>
         </aside>
@@ -705,7 +705,7 @@ function introFor(step: StepId, input: {mode: FlowMode; boot: Boot; draft: Setup
     case 'account': return 'You’ll be the workspace admin. This account signs you in and owns the workspace.';
     case 'workspace': return 'The name is for people; the address is what they type.';
     case 'team': return 'Teams own tasks and give them their identifier prefix.';
-    case 'project': return 'Optional. Projects group issues across teams.';
+    case 'project': return 'Optional. Projects group tasks across teams.';
     case 'invitations': return 'Optional. Add one person at a time; skip and do it later from Members.';
     case 'integrations': return 'Optional, and only shown because this deployment is configured for it.';
     case 'ready': return 'Here is exactly what exists now.';

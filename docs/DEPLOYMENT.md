@@ -108,7 +108,7 @@ different organization.
 
 ## Application and API URLs
 
-`HOJA_APP_URL` is the browser-facing base used for generated issue and
+`HOJA_APP_URL` is the browser-facing base used for generated task and
 project URLs. Its sensible local default is `http://localhost:8787`. Set it to
 the public application origin in hosted environments; generated URLs do
 not require `linear.app`.

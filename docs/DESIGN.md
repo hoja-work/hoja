@@ -33,14 +33,14 @@ v1 covers the 8 highest-value domains. v2+ expands.
 
 | Tier | Domain | Queries | Mutations | v1? |
 |------|--------|---------|-----------|-----|
-| Core | issue | 17 | 34 | ✅ |
+| Core | `issue` | 17 | 34 | ✅ |
 | Core | team | 3 | 9 | ✅ |
 | Core | user (viewer/me) | 3 | 12 | ✅ |
 | Core | workflow (states) | 2 | 3 | ✅ |
 | High | project | 13 | 31 | ✅ |
 | High | cycle | 1 | 5 | ✅ |
 | High | comment | 1 | 5 | ✅ |
-| High | label | (under issue) | - | ✅ |
+| High | label | (under `issue`) | - | ✅ |
 | Med  | initiative | 7 | 17 | v2 |
 | Med  | document | 3 | 4 | v2 |
 | Med  | customer | 7 | 18 | v2 |
@@ -181,7 +181,7 @@ cascaded.
 
 ---
 
-## Filter DSL (Issue list example)
+## Filter DSL (Task list example)
 
 the upstream contract's GraphQL has powerful filter inputs. We expose them ergonomically:
 
@@ -436,7 +436,7 @@ hoja/
 - [ ] `hoja me` returns viewer info
 - [ ] `hoja team list` works
 - [ ] `hoja issue list` with `--team`, `--state`, `--assignee`, `--label` filters
-- [ ] `hoja issue get <id>` shows full issue detail
+- [ ] `hoja task get <id>` shows full task detail
 - [ ] `hoja issue create` with all common flags
 - [ ] `hoja issue update <id>` for state/assignee/priority/labels
 - [ ] `hoja cycle current` returns current cycle for a team
