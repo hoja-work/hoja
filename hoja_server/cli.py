@@ -72,8 +72,17 @@ def _cmd_serve(args):
     print(f"  db     : {display_database_target(target)}")
     print(f"  url    : http://{args.host}:{args.port}/graphql")
     print(f"  open   : {args.open}")
-    options = {"host": args.host, "port": args.port, "log_level": args.log_level,
-               "ws_per_message_deflate": args.ws_deflate, "backlog": 4096}
+    options = {
+        "host": args.host,
+        "port": args.port,
+        "log_level": args.log_level,
+        "ws_per_message_deflate": args.ws_deflate,
+        "backlog": 4096,
+        # Strictly above Traefik's serversTransport.forwardingTimeouts.idleConnTimeout (30s)
+        # so Traefik closes idle backend sockets first instead of hitting EOF/502/520.
+        "timeout_keep_alive": args.timeout_keep_alive,
+        "timeout_graceful_shutdown": args.timeout_graceful_shutdown,
+    }
     if args.workers > 1:
         # Realtime fan-out is per process; workers share change events through the
         # database (PostgreSQL LISTEN/NOTIFY, or polling the SQLite change log).
@@ -379,7 +388,14 @@ def _cmd_connector_mcp(args):
         raise SystemExit(2) from exc
     print(f"  db  : {display_database_target(target)}")
     print(f"  url : http://{args.host}:{args.port}/mcp")
-    uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level)
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=args.port,
+        log_level=args.log_level,
+        timeout_keep_alive=65,
+        timeout_graceful_shutdown=30,
+    )
 
 
 def main(argv=None):
@@ -406,6 +422,10 @@ def main(argv=None):
                    help="server processes; realtime clients are spread across them")
     s.add_argument("--no-ws-deflate", dest="ws_deflate", action="store_false",
                    help="disable WebSocket compression (less CPU per client on large fan-outs)")
+    s.add_argument("--timeout-keep-alive", type=int, default=65,
+                   help="HTTP keep-alive timeout in seconds (must exceed reverse-proxy backend idle timeout)")
+    s.add_argument("--timeout-graceful-shutdown", type=int, default=30,
+                   help="seconds to wait for in-flight requests to finish on SIGTERM")
     s.set_defaults(func=_cmd_serve)
 
     mg = sub.add_parser("migrate", help="apply outstanding database schema revisions")
