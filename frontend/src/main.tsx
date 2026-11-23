@@ -75,6 +75,7 @@ import {
   PanelLeftOpen,
   PanelRight,
   Star,
+  EyeOff,
 } from "lucide-react";
 import { MorphIcon } from "morphicons/react";
 import { MobileNavProvider, MobileNavTrigger, useMobileNav } from "./mobileNav";
@@ -6499,15 +6500,17 @@ function MyIssuesContent({
         display.grouping === "none" ? "status" : display.grouping;
       const status = grouping === "status";
       const groups = groupTasks(items, grouping, groupCtx, {
-        // Workflow columns stay as drop targets; other groupings follow "Show empty columns".
-        showEmpty: status || display.showEmptyGroups,
+        showEmpty: true,
         totals,
       }).filter(
         (g) =>
-          !status ||
           g.items.length > 0 ||
-          stateByName.get(g.key)?.type !== "canceled" ||
-          display.showEmptyGroups,
+          display.showEmptyGroups ||
+          // Workflow columns stay as drop targets (canceled only when it has tasks); other
+          // groupings follow "Show empty columns". A hidden column is kept even when empty,
+          // so the "Hidden columns" lane can always bring it back.
+          (status && stateByName.get(g.key)?.type !== "canceled") ||
+          display.hiddenColumns.includes(g.key),
       );
       return groups.map((g) => {
         const state = status ? stateByName.get(g.key) : undefined;
@@ -6550,31 +6553,48 @@ function MyIssuesContent({
       }
     />
   );
-  const trailing = hiddenLane.length ? (
-    <section
-      className="flex min-h-0 min-w-0 flex-col gap-1 rounded-xl border border-dashed border-line p-3 text-sm text-muted"
-      data-kanban-hidden-lane=""
-      aria-label="Hidden columns"
-    >
-      <b className="font-medium text-foreground">Hidden columns</b>
-      {hiddenLane.map((g) => (
-        <button
-          key={g.state.id}
-          type="button"
-          className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left hover:bg-subtle shell-phone:min-h-11"
-          aria-label={`Show column ${g.state.name}`}
-          onClick={() =>
-            prefs.update({
-              hiddenColumns: hiddenColumns.filter((k) => k !== columnKey(g)),
-            })
-          }
-        >
-          <span className="truncate">{g.state.name}</span>
-          <span className="text-xs">{g.items.length}</span>
-        </button>
-      ))}
-    </section>
-  ) : undefined;
+  const showColumn = (g: KanbanGroup) =>
+    prefs.update({
+      hiddenColumns: hiddenColumns.filter((k) => k !== columnKey(g)),
+    });
+  /* Linear's "Hidden columns": every hidden column with its count, one click from showing. */
+  const hiddenColumnsLane = (horizontal: boolean) =>
+    hiddenLane.length ? (
+      <section
+        className={
+          "flex min-w-0 flex-none gap-1 rounded-xl border border-dashed border-line p-2 text-sm text-muted " +
+          (horizontal
+            ? "flex-wrap items-center justify-self-start"
+            : "w-48 flex-col self-start max-sm:w-auto max-sm:flex-row max-sm:flex-wrap max-sm:items-center max-sm:self-stretch")
+        }
+        data-kanban-hidden-lane=""
+        aria-label="Hidden columns"
+      >
+        <h3 className="flex items-center gap-2 px-2 py-1 text-sm font-medium text-foreground">
+          <EyeOff size={14} className="text-muted" aria-hidden="true" />
+          Hidden columns
+        </h3>
+        {hiddenLane.map((g) => (
+          <button
+            key={g.state.id}
+            type="button"
+            className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-subtle hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
+            aria-label={`Show column ${g.state.name}`}
+            title={`Show ${g.state.name}`}
+            data-kanban-hidden-column={columnKey(g)}
+            onClick={() => showColumn(g)}
+          >
+            <span
+              data-status-mark=""
+              style={{ borderColor: g.state.color }}
+              className="flex-none border-2"
+            ></span>
+            <span className="min-w-0 flex-1 truncate">{g.state.name}</span>
+            <span className="tabular-nums">{g.items.length}</span>
+          </button>
+        ))}
+      </section>
+    ) : undefined;
   const moveSelected = async (target: KanbanGroup) => {
     const ids = [...selected];
     setSelected(NO_SELECTION);
@@ -7298,6 +7318,7 @@ function MyIssuesContent({
           {board && tab !== "Activity" ? (
             subGrouping ? (
               <div className="grid gap-4" data-board-rows="">
+                {hiddenColumnsLane(true)}
                 {groupTasks(shown, subGrouping, groupCtx).map((lane) => (
                   <section
                     key={lane.key}
@@ -7329,7 +7350,7 @@ function MyIssuesContent({
                 issues={shown}
                 columns={shownColumns}
                 columnMenu={columnMenu}
-                trailing={trailing}
+                trailing={hiddenColumnsLane(false)}
                 selected={selected}
                 states={states}
                 teams={teams}
@@ -8425,13 +8446,11 @@ function Kanban({
   onUpdate,
   teams = [],
   columnMenu,
-  trailing,
   selected,
 }: {
   allIssues: Issue[];
   grouped: KanbanGroup[];
   columnMenu?: (group: KanbanGroup) => React.ReactNode;
-  trailing?: React.ReactNode;
   selected?: ReadonlySet<string>;
   onSelect: (issue: Issue) => void;
   onNew: (stateId?: string) => void;
@@ -8638,14 +8657,19 @@ function Kanban({
               }
             }}
           >
-            <header className="flex items-center gap-2 h-12 pt-0 pr-3.5 pb-0 pl-3.5 text-muted text-[12px] flex-none basis-12">
+            <header className="flex items-center gap-2 h-12 pt-0 pr-3.5 pb-0 pl-3.5 text-sm text-muted flex-none basis-12">
               <span
                 data-status-mark=""
                 style={{ borderColor: group.state.color }}
-                className="border-2"
+                className="flex-none border-2"
               ></span>
-              <b className="text-foreground">{group.state.name}</b>
-              <span className="mr-auto" data-kanban-count="">
+              <span
+                className="min-w-0 truncate font-medium text-foreground"
+                data-kanban-column-name=""
+              >
+                {group.state.name}
+              </span>
+              <span className="mr-auto tabular-nums" data-kanban-count="">
                 {group.total !== undefined && group.total !== group.items.length
                   ? `${group.items.length} / ${group.total}`
                   : group.items.length}
@@ -8774,7 +8798,6 @@ function Kanban({
             </KanbanScrollFade>
           </section>
         ))}
-        {trailing}
       </div>
       {dropLine && (
         <div
@@ -12545,15 +12568,16 @@ function IssueBoard({
   }, [issues, states]);
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col [@media(max-height:500px)]:flex-none">
+      {/* The "Hidden columns" lane sits beside the board, not in its scroller, so it stays in
+          view however many columns there are. */}
       <div
-        className="flex min-h-0 min-w-0 flex-1 flex-col  overflow-hidden bg-panel [@media(max-height:500px)]:flex-none"
+        className="flex min-h-0 min-w-0 flex-1 gap-3 overflow-hidden bg-panel max-sm:flex-col [@media(max-height:500px)]:flex-none"
         data-issues-board=""
       >
         <Kanban
           teams={teams}
           grouped={columns || grouped}
           columnMenu={columnMenu}
-          trailing={trailing}
           selected={selected}
           allIssues={allIssues}
           onSelect={onSelect}
@@ -12561,6 +12585,7 @@ function IssueBoard({
           onMoved={onMoved}
           onUpdate={onUpdate}
         />
+        {trailing}
       </div>
     </div>
   );
