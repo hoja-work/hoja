@@ -60,6 +60,7 @@ import type {
   Viewer,
 } from "../main";
 import { Markdown } from "../markdown";
+import { MobileNavTrigger } from "../mobileNav";
 import { isTraceAttachment } from "../traces/trace";
 import { TraceViewer } from "../traces/TraceViewer";
 import {
@@ -3413,6 +3414,7 @@ export function GraphTeamIssues({
           "lin-head flex items-center gap-[8px] min-h-[49px] py-0 px-[20px] border-b border-b-line flex-none",
         )}
       >
+        <MobileNavTrigger />
         <nav
           className={styleClasses(
             "flex items-center gap-1.75 text-[13px] text-muted min-w-0 flex-1 flex-nowrap overflow-hidden [&_a]:[background:none] [&_a]:border-0 [&_a]:p-0 [&_a]:text-muted [&_a]:[font:inherit] [&_a]:cursor-pointer [&_a]:inline-flex [&_a]:items-center [&_a]:gap-1.5 [&_a]:whitespace-nowrap [&_a:hover]:text-foreground",

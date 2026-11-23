@@ -8,6 +8,7 @@ import {
 } from "@openuidev/react-ui";
 import { useThread, useThreadList } from "@openuidev/react-headless";
 import { Markdown } from "./markdown";
+import { MobileNavTrigger } from "./mobileNav";
 import { DelegationCard, splitDelegations } from "./DelegationCard";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { History, SquarePen } from "lucide-react";
@@ -360,6 +361,7 @@ function ChatToolbar() {
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <div className="relative flex items-center border-b border-line sm:px-6 gap-1.5 h-12 pt-0 pr-[clamp(12px,4vw,24px)] pb-0 pl-[clamp(12px,4vw,24px)] border-b-line">
+        <MobileNavTrigger />
         <span className="flex-1 truncate min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[13px] font-medium text-foreground">
           {title || "New chat"}
         </span>
@@ -494,24 +496,9 @@ const STARTERS = [
 
 export function AgentChatPage({ workspaceName }: { workspaceName: string }) {
   const name = workspaceName || "Hoja";
-  const [mode, setMode] = useState<"light" | "dark">(() =>
-    document.documentElement.dataset.theme === "dark" ? "dark" : "light",
-  );
-  useEffect(() => {
-    const sync = () =>
-      setMode(
-        document.documentElement.dataset.theme === "dark" ? "dark" : "light",
-      );
-    const observer = new MutationObserver(sync);
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["data-theme"],
-    });
-    return () => observer.disconnect();
-  }, []);
   return (
     <section
-      className="agent-chat-page flex-1 h-dvh min-h-0 shell-phone:h-[calc(100dvh-60px)] text-[15px] text-foreground"
+      className="agent-chat-page flex-1 h-dvh min-h-0 shell-phone:h-dvh text-[15px] text-foreground"
       aria-label="Agent chat"
     >
       <AgentInterface
@@ -519,7 +506,7 @@ export function AgentChatPage({ workspaceName }: { workspaceName: string }) {
         storage={storage}
         components={{ AssistantMessage, UserMessage }}
         agentName={`${name} agent`}
-        theme={{ mode }}
+        theme={{ mode: "light" }}
         starters={STARTERS}
         scrollOnLoad={false}
       >

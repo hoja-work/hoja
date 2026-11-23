@@ -10,6 +10,7 @@
 import type { ReactNode } from "react";
 import { Search } from "lucide-react";
 import { cx } from "../graph/shared";
+import { MobileNavTrigger } from "../mobileNav";
 
 export type AgentsTab = { id: string; name: string };
 
@@ -57,15 +58,16 @@ export function AgentsListShell({
         className="flex flex-none items-center border-b border-line gap-2 min-h-12.25 pt-0 pr-5 pb-0 pl-5 border-b-line shell-phone:flex-wrap shell-phone:gap-y-1"
         data-style-hooks="lin-head"
       >
+        <MobileNavTrigger />
         <nav
           className="flex flex-1 items-center gap-1.75 text-[13px] text-muted min-w-0 shell-phone:min-w-0 shell-phone:flex-wrap shell-phone:gap-y-0.5"
           aria-label="Breadcrumb"
         >
           <span>{workspaceName}</span>
           <span className="text-muted opacity-70">›</span>
-          <h1 className="m-0 truncate text-[13px] font-semibold text-foreground overflow-hidden text-ellipsis whitespace-nowrap">
+          <span className="truncate text-foreground font-semibold overflow-hidden text-ellipsis whitespace-nowrap">
             {trail}
-          </h1>
+          </span>
         </nav>
       </header>
       <div

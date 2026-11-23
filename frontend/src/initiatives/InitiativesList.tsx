@@ -18,6 +18,7 @@ import {
 import { confirmDialog, promptDialog } from "../dialogs";
 import { useMenuDismiss } from "../menu";
 import { FollowButton } from "../inbox/follow";
+import { MobileNavTrigger } from "../mobileNav";
 import type { Viewer } from "../main";
 import { useProjectEntityVersion } from "../projectStore";
 import { Avatar, fmtDate, IconBtn, LinPopover, Ring } from "../graph/shared";
@@ -482,10 +483,13 @@ export function InitiativesList({
       className="relative flex min-h-0 min-w-0 flex-1 flex-col"
       data-initiatives-page=""
     >
-      <header className="flex h-11 flex-none items-center justify-between border-b border-line px-4">
-        <h1 className="m-0 text-sm font-medium">
-          {team ? `${team.name} · Initiatives` : "Initiatives"}
-        </h1>
+      <header className="flex h-11 flex-none items-center justify-between gap-2 border-b border-line px-4">
+        <div className="flex min-w-0 items-center gap-1">
+          <MobileNavTrigger />
+          <h1 className="m-0 text-sm font-medium">
+            {team ? `${team.name} · Initiatives` : "Initiatives"}
+          </h1>
+        </div>
         <button
           type="button"
           className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted hover:bg-subtle hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent"

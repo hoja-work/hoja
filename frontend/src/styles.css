@@ -17,7 +17,7 @@ body{background:var(--bg)}
 
 /* Projects reference layouts: compact controls, quiet rows, and contained boards. */
 /* Linear-inspired information hierarchy: distinct stat cards and a compact workspace menu. */
-@media(max-width:700px),(max-width:1000px) and (max-height:500px){.workspace-menu{min-width:min(280px,calc(100vw - 24px))}}
+@media(max-width:880px),(max-width:1000px) and (max-height:500px){.workspace-menu{min-width:min(280px,calc(100vw - 24px))}}
 /* Issue creation follows the reference hierarchy: title canvas, compact metadata, anchored actions. */
 /* Keep form fields inline with native buttons; prevent global modal label rules from grid-expanding metadata pills. */
 /* Linear-like My Issues landing and segmented views. */
@@ -37,45 +37,51 @@ body{background:var(--bg)}
 
 /* Linear sidebar comparison: the compact navigation owns the entire left rail.
    Desktop-only: wide AND tall enough not to be a landscape phone (see the phone comment). */
-@media(min-width:701px) and (min-height:501px),(min-width:1001px){.app{grid-template-columns:244px minmax(0,1fr);grid-template-rows:48px minmax(calc(100dvh - 48px),auto)}}
+@media(min-width:881px) and (min-height:501px),(min-width:1001px){.app{grid-template-columns:var(--sidebar-width,244px) minmax(0,1fr);grid-template-rows:minmax(100dvh,auto)}}
 /* Keep the sticky sidebar header from chaining overscroll; leave touch devices alone so pull-to-refresh still works. */
 
 /* My issues: compact Linear-like list canvas; controls operate on loaded issues. */
-@media(min-width:701px) and (min-height:501px),(min-width:1001px){[data-workspace-content]:has([data-my-issues-view]) .main{min-height:calc(100dvh - 18px)}}
+@media(min-width:881px) and (min-height:501px),(min-width:1001px){[data-workspace-content]:has([data-my-issues-view]) .main{min-height:calc(100dvh - 18px)}}
 /* Filter/display popovers can contain many fields. Keep their final actions
    scrollable within the available viewport instead of clipping below it. */
-@media(min-width:701px) and (min-height:501px),(min-width:1001px){[data-workspace-content]:has([data-my-issues-view]) .main{width:calc(100% - 16px);min-height:calc(100dvh - 18px)}}
-@media(max-width:700px),(max-width:1000px) and (max-height:500px){.main:has([data-my-issues-view]) [data-my-issue-tabs]{scrollbar-width:none}}
+@media(min-width:881px) and (min-height:501px),(min-width:1001px){[data-workspace-content]:has([data-my-issues-view]) .main{width:calc(100% - 16px);min-height:calc(100dvh - 18px)}}
+@media(max-width:880px),(max-width:1000px) and (max-height:500px){.main:has([data-my-issues-view]) [data-my-issue-tabs]{scrollbar-width:none}}
 /* Flexible My issues metadata cells mirror the configurable reference columns without a fixed grid. */
 
 /* Reference-matched compose control: icon-only, no circular border, neutral hover. */
 /* Keep route-specific neutral surfaces in sync with the global light/dark palette. */
-/* Sidebar rows use a neutral-200 hover that eases in; leaving is instant. */
-/* The workspace trigger heads that same list, so it takes the row hover color. It snaps in and
- * eases back out, so the press target never lags the pointer. */
-/* Neutral action fills need legible text in both themes. */
+/* Sidebar rows snap in on hover and ease out when leaving (DESIGN.md). */
+[data-workspace-sidebar] :is([data-nav-item],[data-nav-group-toggle],[data-team-name],[data-workspace-trigger],[data-sidebar-icon]),[data-settings-sidebar] :is([data-nav-item],[data-settings-back],[data-logout-button]){transition:background-color 120ms ease-out,color 120ms ease-out}
+[data-workspace-sidebar] :is([data-nav-item],[data-nav-group-toggle],[data-team-name],[data-workspace-trigger],[data-sidebar-icon]):hover,[data-settings-sidebar] :is([data-nav-item],[data-settings-back],[data-logout-button]):hover{transition:none}
+/* Quiet hover-revealed scrollbar for both sidebars so Linux native bars do not steal rail width. */
+[data-workspace-sidebar] nav,[data-settings-sidebar] nav{scrollbar-width:thin;scrollbar-color:transparent transparent}
+[data-workspace-sidebar]:hover nav,[data-settings-sidebar]:hover nav{scrollbar-color:var(--line) transparent}
+[data-workspace-sidebar] nav::-webkit-scrollbar,[data-settings-sidebar] nav::-webkit-scrollbar{width:6px}
+[data-workspace-sidebar] nav::-webkit-scrollbar-track,[data-settings-sidebar] nav::-webkit-scrollbar-track{background:transparent}
+[data-workspace-sidebar] nav::-webkit-scrollbar-thumb,[data-settings-sidebar] nav::-webkit-scrollbar-thumb{border-radius:9999px;background:transparent}
+[data-workspace-sidebar]:hover nav::-webkit-scrollbar-thumb,[data-settings-sidebar]:hover nav::-webkit-scrollbar-thumb{background:var(--line)}
 /* The rail is a distinct surface, not a border-colored panel. */
-:root{--sidebar-bg:#f1f1f1}
-:root[data-theme=dark]{--sidebar-bg:#242427}
+:root{--sidebar-bg:#f1f1f1;--sidebar-drawer-bg:#f9f9fa;--sidebar-hover:#e5e5e7;--sidebar-active:#e1e1e2;--sidebar-icon:#59595b;--sidebar-width:244px}
+:root[data-theme=dark]{--sidebar-bg:#242427;--sidebar-drawer-bg:#1f1f22;--sidebar-hover:#2f2f34;--sidebar-active:#38383e;--sidebar-icon:#9e9ea7}
 /* Pulse: quiet project-update feed, distinct from issue activity. */
 [data-workspace-content]:has([data-pulse-page]) .main{width:calc(100% - 16px);min-height:calc(100dvh - 18px)}
 [data-pulse-era]:after{content:''}
 /* The era band is the separator for the first post of a group; a top border there would be a second rule 46px below it. */
 [data-pulse-era] + article{border-top-width:0}
-@media(max-width:700px),(max-width:1000px) and (max-height:500px){[data-workspace-content]:has([data-pulse-page]) .main{min-height:calc(100dvh - 60px)}}
+@media(max-width:880px),(max-width:1000px) and (max-height:500px){[data-workspace-content]:has([data-pulse-page]) .main{min-height:100dvh}}
 /* Project editor belongs to document flow, never the fixed overlay modal. */
 /* The state selector and save controls are peers; do not squeeze actions into a grid column. */
 /* Publish a project update without confusing it with metadata edits. */
 /* Project issue rows are full-width keyboard-accessible navigation targets. */
 /* Inbox notifications are recipient-scoped events, not the generic issue dashboard. */
 [data-workspace-content]:has([data-inbox-page]) .main{width:calc(100% - 16px);min-height:calc(100dvh - 18px)}
-@media(max-width:700px),(max-width:1000px) and (max-height:500px){[data-workspace-content]:has([data-inbox-page]) .main{min-height:calc(100dvh - 60px)}}
+@media(max-width:880px),(max-width:1000px) and (max-height:500px){[data-workspace-content]:has([data-inbox-page]) .main{min-height:100dvh}}
 /* Initiatives: compact reference header and a real scoped list/empty state. */
 [data-workspace-content]:has([data-initiatives-page]) .main{width:calc(100% - 16px);min-height:calc(100dvh - 18px)}
-@media(max-width:700px),(max-width:1000px) and (max-height:500px){[data-workspace-content]:has([data-initiatives-page]) .main{min-height:calc(100dvh - 60px)}}
+@media(max-width:880px),(max-width:1000px) and (max-height:500px){[data-workspace-content]:has([data-initiatives-page]) .main{min-height:100dvh}}
 /* Projects reference layout: app-contained list/board and compact responsive controls. */
 [data-workspace-content]:has([data-projects-reference]) .main,[data-workspace-content]:has([data-project-reference]) .main{width:calc(100% - 16px);min-height:calc(100dvh - 18px)}
-@media(max-width:700px),(max-width:1000px) and (max-height:500px){[data-workspace-content]:has([data-projects-reference]) .main,[data-workspace-content]:has([data-project-reference]) .main{min-height:calc(100dvh - 60px)}}
+@media(max-width:880px),(max-width:1000px) and (max-height:500px){[data-workspace-content]:has([data-projects-reference]) .main,[data-workspace-content]:has([data-project-reference]) .main{min-height:100dvh}}
 /* Measured Projects typography: Inter Variable is self-hosted; the rest of Hoja keeps its existing font stack. */
 [data-workspace-content]:has([data-projects-reference]) .main,[data-workspace-content]:has([data-project-reference]) .main{width:calc(100% - 8px)}
 /* The right properties column must not cover long project text. */
@@ -88,7 +94,7 @@ body{background:var(--bg)}
 
 /* Narrow Projects detail keeps the observed reference properties-first reading order. */
 /* Project Issues uses the same Inter/type tokens, compact rows and quiet grouping as the project shell. */[data-workspace-content]:has([data-workspace-views-page]) .main{width:calc(100% - 8px);min-height:calc(100dvh - 18px)}
-@media(max-width:700px),(max-width:1000px) and (max-height:500px){[data-workspace-content]:has([data-workspace-views-page]) .main{min-height:calc(100dvh - 60px)}}
+@media(max-width:880px),(max-width:1000px) and (max-height:500px){[data-workspace-content]:has([data-workspace-views-page]) .main{min-height:100dvh}}
 /* Keep the issue composer centered and typographically aligned with the observed reference. */
 [data-modal-backdrop]:has([data-issue-create-modal]){padding:clamp(60px,13vh,118px) 12px 12px}
 /* Keep the mobile navigation opener visible on shell-less project and Views screens. */
@@ -98,7 +104,7 @@ body{background:var(--bg)}
 :where([data-initiatives-page],[data-pulse-page],[data-inbox-page],[data-workspace-views-page],[data-projects-reference],[data-project-reference],[data-my-issues-view]) :is(h1,h2,h3,p,button,a,span){overflow-wrap:break-word}
 /* Legacy page selectors had higher specificity than the shared header role. */
 /* Match the reference's 8px right gutter without altering narrow-screen scroll areas. */
-@media(min-width:701px) and (min-height:501px),(min-width:1001px){[data-workspace-content]:has([data-initiatives-page]) .main,[data-workspace-content]:has([data-pulse-page]) .main,[data-workspace-content]:has([data-inbox-page]) .main{width:calc(100% - 8px)}}
+@media(min-width:881px) and (min-height:501px),(min-width:1001px){[data-workspace-content]:has([data-initiatives-page]) .main,[data-workspace-content]:has([data-pulse-page]) .main,[data-workspace-content]:has([data-inbox-page]) .main{width:calc(100% - 8px)}}
 .main:has([data-my-issues-view]) [data-my-issues-head],.main:has([data-my-issues-view]) [data-my-issue-tabs]{font-optical-sizing:auto}
 /* Initiatives keep their distinct empty/list semantics while adopting the shared work-surface rhythm. */.sidebar-popover{top:calc(100% + 6px);width:min(260px,calc(100vw - 24px),100%);max-width:calc(100vw - 24px)}
 
@@ -107,7 +113,7 @@ html{font-size:calc(16px * var(--font-scale,1))}
 
 /* Settings shares the work-surface type, card and navigation scales. Keep the
    36px form fields for editing and the issue detail's larger editable title. */
-@media(min-width:701px) and (min-height:501px),(min-width:1001px){.app:has([data-settings-sidebar]){grid-template-columns:244px minmax(0,1fr)}}
+@media(min-width:881px) and (min-height:501px),(min-width:1001px){.app:has([data-settings-sidebar]){grid-template-columns:var(--ds-settings-nav-width,244px) minmax(0,1fr)}}
 
 /* Personal API keys: create, one-time secret, searchable list. */
 [data-issues-board] [data-kanban-column]{flex:1 0 260px}
@@ -119,7 +125,7 @@ html{font-size:calc(16px * var(--font-scale,1))}
    icon, which navigates to the team's home; the team sub-links (Home/Issues/
    Cycles/Current/Upcoming/Projects/Views) stay expanded-only by decision, since
    44px cannot hold them and a flyout would be a second navigation surface. */
-@media(min-width:701px) and (min-height:501px),(min-width:1001px){
+@media(min-width:881px) and (min-height:501px),(min-width:1001px){
   .app[data-sidebar-collapsed]{grid-template-columns:44px minmax(0,1fr)}
 }
 
@@ -128,7 +134,7 @@ html{font-size:calc(16px * var(--font-scale,1))}
 /* Team pages reuse the global list/board layouts; the board fills the viewport like My issues. */
 
 /* Full-height views: cap the app grid row at the viewport so board columns scroll inside the page instead of growing it. */
-@media(min-width:701px) and (min-height:501px),(min-width:1001px){.app:has([data-my-issues-view]),.app:has(.team-scoped-page--board){grid-template-rows:48px minmax(0,1fr)}}
+@media(min-width:881px) and (min-height:501px),(min-width:1001px){.app:has([data-my-issues-view]),.app:has(.team-scoped-page--board){grid-template-rows:minmax(0,1fr)}}
 
 /* Mobile board views: fill the viewport below the 60px topbar; columns and cards scroll inside the board. */
 [data-status-menu] button{font:inherit}
@@ -166,7 +172,7 @@ html{font-size:calc(16px * var(--font-scale,1))}
 
 /* Agent chat: sit in the app grid like the other full-height pages, with the thread filling the content column. */
 .agent-chat-page{height:100dvh;min-height:0}
-@media(max-width:700px),(max-width:1000px) and (max-height:500px){[data-workspace-content]:has(.agent-chat-page) .main{min-height:calc(100dvh - 60px)}.agent-chat-page{height:calc(100dvh - 60px)}}
+@media(max-width:880px),(max-width:1000px) and (max-height:500px){[data-workspace-content]:has(.agent-chat-page) .main{min-height:100dvh}.agent-chat-page{height:100dvh}}
 /* Agent chat history lives in the toolbar panel, not a second sidebar beside the app navigation. */
 .agent-chat-page .openui-agent-sidebar-container,.agent-chat-page .openui-agent-sidebar-container__overlay{display:none}
 .agent-chat-page .openui-agent-container:not(.openui-agent-container--mobile) .openui-agent-thread-header,.agent-chat-page .openui-agent-container--mobile .openui-agent-mobile-header{display:block;padding:0;background:var(--bg)}
@@ -391,7 +397,7 @@ html.hoja-modal-open{overflow:hidden;scrollbar-gutter:stable}
 /* Sidebar destinations share the main content container shell from DESIGN.md. */
 /* Full-bleed surfaces provide their own header inset and scrolling. */
 /* Full-bleed roots size to the shell, not the viewport, so the shell border never clips a composer or column. */
-@media(min-width:701px) and (min-height:501px),(min-width:1001px){.app:has([data-workspace-page]){grid-template-rows:48px minmax(0,1fr)}}
+@media(min-width:881px) and (min-height:501px),(min-width:1001px){.app:has([data-workspace-page]){grid-template-rows:minmax(0,1fr)}}
 
 /* Meetings owns the full workspace height like the other feed surfaces: no app header on desktop. */
-@media(min-width:701px) and (min-height:501px),(min-width:1001px){.app{grid-template-columns:244px minmax(0,1fr);grid-template-rows:48px minmax(calc(100dvh - 48px),auto)}}
+@media(min-width:881px) and (min-height:501px),(min-width:1001px){.app{grid-template-columns:var(--sidebar-width,244px) minmax(0,1fr);grid-template-rows:minmax(100dvh,auto)}.app[data-sidebar-collapsed]{grid-template-columns:44px minmax(0,1fr)}.app:has([data-settings-sidebar]){grid-template-columns:var(--ds-settings-nav-width,244px) minmax(0,1fr)}}

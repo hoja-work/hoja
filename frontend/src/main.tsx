@@ -39,6 +39,7 @@ import {
   GitBranch,
   GitMerge,
   GitPullRequest,
+  Home,
   Inbox,
   KeyRound,
   LayoutDashboard,
@@ -73,6 +74,7 @@ import {
   PanelLeftOpen,
 } from "lucide-react";
 import { MorphIcon } from "morphicons/react";
+import { MobileNavProvider, MobileNavTrigger, useMobileNav } from "./mobileNav";
 import { layoutIcon, listIcon } from "./icons";
 import { ConnectedAppsSettings } from "./ConnectedAppsSettings";
 import { ExtensionsSettings } from "./ExtensionsSettings";
@@ -470,10 +472,10 @@ const sections = [
   [
     "primary",
     [
+      ["Inbox", Inbox],
       ["My issues", CircleDot],
       ["Reviews", MessageCircle],
       ["Pulse", Zap],
-      ["Inbox", Inbox],
       ["Agent", Bot],
     ],
   ],
@@ -488,15 +490,6 @@ const sections = [
   ],
   ["Favorites", [["Favorite views", Layers3]]],
   ["Your teams", []],
-  [
-    "Manage",
-    [
-      ["Board", LayoutDashboard],
-      ["Cycles", CalendarDays],
-      ["Members", Users],
-      ["Settings", Settings],
-    ],
-  ],
 ] as const;
 import {
   KNOWN_WORKSPACE_PAGES,
@@ -1402,6 +1395,43 @@ function App() {
   useEffect(() => {
     localStorage.setItem("hoja_sidebar_collapsed", String(sidebarCollapsed));
   }, [sidebarCollapsed]);
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    const saved = Number(localStorage.getItem("hoja_sidebar_width"));
+    return Number.isFinite(saved) && saved >= 200 && saved <= 340 ? saved : 244;
+  });
+  const [sidebarResizing, setSidebarResizing] = useState(false);
+  useEffect(() => {
+    localStorage.setItem("hoja_sidebar_width", String(sidebarWidth));
+  }, [sidebarWidth]);
+  const startSidebarResize = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (sidebarCollapsed) return;
+      e.preventDefault();
+      const startX = e.clientX;
+      const startWidth = sidebarWidth;
+      setSidebarResizing(true);
+      document.body.style.userSelect = "none";
+      document.body.style.cursor = "col-resize";
+      const onMove = (ev: PointerEvent) => {
+        const next = Math.round(
+          Math.min(340, Math.max(200, startWidth + (ev.clientX - startX))),
+        );
+        setSidebarWidth(next);
+      };
+      const onUp = () => {
+        setSidebarResizing(false);
+        document.body.style.userSelect = "";
+        document.body.style.cursor = "";
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onUp);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onUp);
+    },
+    [sidebarCollapsed, sidebarWidth],
+  );
   useEffect(() => {
     const appName = workspace.name || "Hoja";
     if (!token) {
@@ -1584,16 +1614,84 @@ function App() {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setCommandOpen((v) => !v);
+        return;
       }
       if (e.key === "Escape") {
         setCommandOpen(false);
         setFiltersOpen(false);
         setNewOpen(false);
+        return;
+      }
+      if (
+        e.key === "[" &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !(
+          e.target instanceof HTMLElement &&
+          (e.target.isContentEditable ||
+            ["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName))
+        )
+      ) {
+        e.preventDefault();
+        const isDrawerViewport = window.matchMedia(
+          "(max-width: 880px), (max-width: 1000px) and (max-height: 500px)",
+        ).matches;
+        if (isDrawerViewport) {
+          setMobile((v) => !v);
+        } else if (view !== "Settings") {
+          setSidebarCollapsed((v) => !v);
+        }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [view]);
+  // Touch swipe-to-open (from left edge) and swipe-to-close on mobile/tablet drawer viewports.
+  useEffect(() => {
+    const drawerMq = window.matchMedia(
+      "(max-width: 880px), (max-width: 1000px) and (max-height: 500px)",
+    );
+    let startX = 0;
+    let startY = 0;
+    let tracking = false;
+    let startedOpen = false;
+    const onTouchStart = (e: TouchEvent) => {
+      if (!drawerMq.matches || e.touches.length !== 1) return;
+      const t = e.touches[0];
+      const target = e.target instanceof Element ? e.target : null;
+      if (
+        !mobile &&
+        (t.clientX > 28 ||
+          target?.closest(
+            "[data-kanban-columns],[data-my-issue-tabs],[data-reviews-diff-patch]",
+          ))
+      ) {
+        tracking = false;
+        return;
+      }
+      startX = t.clientX;
+      startY = t.clientY;
+      startedOpen = mobile;
+      tracking = true;
+    };
+    const onTouchEnd = (e: TouchEvent) => {
+      if (!tracking || !e.changedTouches.length) return;
+      tracking = false;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - startX;
+      const dy = t.clientY - startY;
+      if (Math.abs(dx) < 48 || Math.abs(dx) < Math.abs(dy) * 1.4) return;
+      if (!startedOpen && dx > 0) setMobile(true);
+      else if (startedOpen && dx < 0) closeMobileNav();
+    };
+    window.addEventListener("touchstart", onTouchStart, { passive: true });
+    window.addEventListener("touchend", onTouchEnd, { passive: true });
+    return () => {
+      window.removeEventListener("touchstart", onTouchStart);
+      window.removeEventListener("touchend", onTouchEnd);
+    };
+  }, [mobile, closeMobileNav]);
   // The workspace drawer is the shared shell's phone navigation: Escape and a backdrop tap close it,
   // focus moves into the open drawer and returns to the toggle, so it matches the settings drawer.
   useEffect(() => {
@@ -3176,12 +3274,13 @@ function App() {
     ) : view === "My issues" ? (
       <>
         <div
-          className="m-0 flex h-11 min-h-11 flex-none items-center border-b border-line bg-bg px-4 py-0 text-foreground max-md:px-3 [@media_(max-width:560px)]:gap-3.75 shell-phone:gap-3.5"
+          className="m-0 flex h-11 min-h-11 flex-none items-center gap-1 border-b border-line bg-bg px-4 py-0 text-foreground"
           data-page-head=""
           data-my-issues-head=""
         >
+          <MobileNavTrigger />
           <div>
-            <h1 className=" text-sm tracking-[-.045em] font-medium leading-normal text-foreground ">
+            <h1 className="text-sm font-medium leading-normal tracking-[-.045em] text-foreground">
               {displayLabel("My issues")}
             </h1>
             <p className="mt-1.5 mr-0 mb-0 ml-0 text-muted max-sm:text-xs hidden [@media_(max-width:560px)]:text-[12px]">
@@ -4523,12 +4622,15 @@ function PulsePage({
         data-pulse-column=""
       >
         <header
-          className="border-b border-line flex flex-none items-center justify-between h-(--ds-tabstrip-height)"
+          className="border-b border-line flex flex-none items-center justify-between gap-2 h-(--ds-tabstrip-height)"
           data-pulse-heading=""
         >
-          <h1 className="mt-0 mr-0 mb-0 ml-0 text-(length:--hoja-title-size) font-(--hoja-title-weight) tracking-normal leading-[normal] ">
-            Pulse
-          </h1>
+          <div className="flex min-w-0 items-center gap-1">
+            <MobileNavTrigger />
+            <h1 className="mt-0 mr-0 mb-0 ml-0 text-(length:--hoja-title-size) font-(--hoja-title-weight) tracking-normal leading-[normal]">
+              Pulse
+            </h1>
+          </div>
           <button
             className="flex items-center pt-1.25 pr-1.75 pb-1.25 pl-1.75 bg-transparent text-muted hover:bg-subtle cursor-not-allowed opacity-50 gap-(--ds-group-bar-gap) rounded-(--ds-tab-radius) focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 text-(length:--ds-feed-meta-size)"
             data-pulse-subscription=""
@@ -9390,15 +9492,18 @@ function ProjectsPage({
       aria-labelledby="projects-title"
     >
       <header
-        className="border-b border-line h-11.25 min-h-11.25 flex items-center justify-between gap-2.5 pt-0 pr-4.5 pb-0 pl-4.5 leading-normal shell-phone:pt-0 shell-phone:pr-3 shell-phone:pb-0 shell-phone:pl-3"
+        className="border-b border-line h-11.25 min-h-11.25 flex items-center justify-between gap-2.5 pt-0 pr-4.5 pb-0 pl-4.5 leading-normal shell-phone:pt-0 shell-phone:pr-3 shell-phone:pb-0 shell-phone:pl-4"
         data-projects-reference-head=""
       >
-        <h1
-          className="mt-0 mr-0 mb-0 ml-0 text-(length:--hoja-title-size) font-(--hoja-title-weight) tracking-normal leading-[normal] "
-          id="projects-title"
-        >
-          Projects
-        </h1>
+        <div className="flex min-w-0 items-center gap-1">
+          <MobileNavTrigger />
+          <h1
+            className="mt-0 mr-0 mb-0 ml-0 text-(length:--hoja-title-size) font-(--hoja-title-weight) tracking-normal leading-[normal]"
+            id="projects-title"
+          >
+            Projects
+          </h1>
+        </div>
         <button
           className="inline-flex items-center gap-1.5 pt-0 pr-3 pb-0 pl-3 rounded-[7px] bg-panel text-[12px] hover:bg-subtle h-7.5 border border-line text-foreground font-[550] cursor-pointer max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 [font:inherit]"
           type="button"
@@ -10123,9 +10228,10 @@ function ProjectDetails({
       data-project-reference=""
     >
       <div
-        className="border-b border-line h-11.25 min-h-11.25 flex items-center justify-between gap-2.5 pt-0 pr-4.5 pb-0 pl-4.5 relative shell-phone:order-0 md:col-span-full leading-normal shell-phone:pt-0 shell-phone:pr-3 shell-phone:pb-0 shell-phone:pl-3"
+        className="border-b border-line h-11.25 min-h-11.25 flex items-center justify-between gap-2.5 pt-0 pr-4.5 pb-0 pl-4.5 relative shell-phone:order-0 md:col-span-full leading-normal shell-phone:pt-0 shell-phone:pr-3 shell-phone:pb-0 shell-phone:pl-4"
         data-project-reference-head=""
       >
+        <MobileNavTrigger />
         <button
           className="flex-none pt-1.25 pr-1.25 pb-1.25 pl-1.25 rounded-[5px] bg-transparent text-[12px] text-muted max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
           data-back-link=""
@@ -11225,10 +11331,11 @@ function TeamIssuesPage({
   return (
     <>
       <div
-        className="m-0 flex h-11 min-h-11 flex-none items-center border-b border-line bg-bg px-4 py-0 text-foreground max-md:px-3  [@media_(max-width:560px)]:gap-3.75 shell-phone:gap-3.5"
+        className="m-0 flex h-11 min-h-11 flex-none items-center gap-1 border-b border-line bg-bg px-4 py-0 text-foreground"
         data-page-head=""
         data-my-issues-head=""
       >
+        <MobileNavTrigger />
         <div>
           <h1 className="text-sm font-medium leading-normal tracking-[-.045em] text-foreground">
             {team.name}
@@ -11316,12 +11423,13 @@ function BoardPage({
   return (
     <>
       <div
-        className="m-0 flex h-11 min-h-11 flex-none items-center border-b border-line bg-bg py-0 text-foreground max-md: [@media_(max-width:560px)]:gap-3.75 shell-phone:gap-3.5"
+        className="m-0 flex h-11 min-h-11 flex-none items-center gap-1 border-b border-line bg-bg px-4 py-0 text-foreground"
         data-page-head=""
         data-my-issues-head=""
       >
+        <MobileNavTrigger />
         <div>
-          <h1 className="mt-2.25 mr-0 mb-1 ml-0 text-[30px] tracking-[-.045em] max-sm:text-2xl max-md:text-3xl font-semibold leading-normal text-foreground [@media_(max-width:560px)]:text-[24px] shell-phone:text-[25px] [@media_(max-width:420px)]:text-[23px]">
+          <h1 className="text-sm font-medium leading-normal tracking-[-.045em] text-foreground">
             Board
           </h1>
           <p className="mt-1.5 mr-0 mb-0 ml-0 text-muted max-sm:text-xs hidden [@media_(max-width:560px)]:text-[12px]">
@@ -11717,13 +11825,14 @@ function TeamHome({
   return (
     <section className="max-w-7xl mx-auto w-full p-4">
       <header
-        className="flex items-center gap-3.75 mb-6.5 [&>div:nth-child(2)]:flex-1"
+        className="flex items-center gap-3.75 mb-6.5"
         data-team-home-head=""
       >
-        <div className="grid place-items-center w-12.5 h-12.5 rounded-xl bg-accent-soft text-accent font-extrabold">
+        <MobileNavTrigger />
+        <div className="grid place-items-center w-12.5 h-12.5 flex-none rounded-xl bg-accent-soft text-accent font-extrabold">
           {team?.key.slice(0, 2) || "TM"}
         </div>
-        <div>
+        <div className="min-w-0 flex-1">
           <div className="flex gap-2 text-[12px] text-muted">
             <span>Your teams</span>
             <span>/</span>
@@ -12387,7 +12496,7 @@ function SettingsSidebar({
    * Hoja sub-issue describing the backend it needs. */
   const groups: [
     string,
-    [string, string, React.ComponentType<{ size?: number }>][],
+    [string, string, React.ComponentType<{ size?: number; className?: string }>][],
   ][] = [
     [
       "Personal",
@@ -12438,7 +12547,7 @@ function SettingsSidebar({
           [id, label, Blocks] as [
             string,
             string,
-            React.ComponentType<{ size?: number }>,
+            React.ComponentType<{ size?: number; className?: string }>,
           ],
       ),
     ],
@@ -12473,7 +12582,7 @@ function SettingsSidebar({
             ),
         ] as [
           string,
-          [string, string, React.ComponentType<{ size?: number }>][],
+          [string, string, React.ComponentType<{ size?: number; className?: string }>][],
         ],
     )
     .filter(([, items]) => items.length);
@@ -12514,24 +12623,16 @@ function SettingsSidebar({
     <>
       <button
         type="button"
-        className={
-          `fixed inset-x-0 top-14 bottom-0 z-30 bg-black/40 lg:hidden ${mobile ? "visible opacity-100" : "invisible opacity-0"}` +
-          " focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2" +
-          " shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11" +
-          " [@media_(max-width:_700px)]:z-34 [@media_(max-width:_700px)]:bg-[#14141466] [@media_(max-width:_700px)]:opacity-[1]"
-        }
+        className="fixed inset-0 z-40 bg-black/30 opacity-0 pointer-events-none transition-opacity duration-150 motion-reduce:transition-none data-visible:opacity-100 data-visible:pointer-events-auto focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-desktop:hidden"
         data-settings-drawer-scrim=""
+        data-visible={mobile || undefined}
         aria-label="Close settings navigation"
         tabIndex={mobile ? 0 : -1}
         onClick={onCloseMobile}
       />
       <aside
         ref={panel}
-        className={
-          `[--settings-accent:#171717] [--settings-accent-strong:#171717] [--settings-accent-soft:#e8e8e8] [--settings-on-accent:#fff] [--settings-ink:#171717] [--settings-muted:#6a6a6a] [--settings-line:#dfdfdf] [--settings-card:#fff] [--settings-subtle:#ededed] [--settings-danger:#242424] [--settings-success:#242424] [:root[data-theme=dark]_&]:[--settings-accent:#eee] [:root[data-theme=dark]_&]:[--settings-accent-strong:#eee] [:root[data-theme=dark]_&]:[--settings-accent-soft:#2c2c2c] [:root[data-theme=dark]_&]:[--settings-on-accent:#171717] [:root[data-theme=dark]_&]:[--settings-ink:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-muted:#aaa] [:root[data-theme=dark]_&]:[--settings-line:#383838] [:root[data-theme=dark]_&]:[--settings-card:#1d1d1d] [:root[data-theme=dark]_&]:[--settings-subtle:#262626] [:root[data-theme=dark]_&]:[--settings-danger:#eee] [:root[data-theme=dark]_&]:[--settings-success:#d8d8d8] [font-optical-sizing:auto] [:root[data-theme=dark]_&]:bg-[#121212] sidebar flex w-64 flex-none flex-col overflow-y-auto border-line bg-subtle p-4 text-foreground max-lg:w-80 max-lg:max-w-full ${mobile ? "open" : ""}` +
-          " flex flex-col w-(--ds-settings-nav-width) flex-none p-(--ds-settings-nav-padding) border-r-0 bg-[#f5f5f5] max-md:sticky max-md:z-35 max-md:top-14 max-md:bottom-0 max-md:left-0 min-w-0 overflow-y-auto min-h-0 overflow-x-hidden overscroll-contain sticky top-17 max-lg:w-56 max-md:shadow-sm max-md:w-60 max-md:h-dvh max-md:max-h-dvh max-md:flex-none text-(--settings-ink)" +
-          " [@media_(max-width:850px)]:z-20 [@media_(max-width:850px)]:top-15.5 [@media_(max-width:850px)]:bottom-0 [@media_(max-width:850px)]:-left-62.5 [@media_(max-width:900px)]:w-55 shell-phone:z-36 shell-phone:top-15 shell-phone:bottom-0 shell-phone:left-0 shell-phone:w-[min(290px,85vw)] shell-phone:h-[calc(100dvh-60px)] shell-phone:shadow-(--shadow) shell-desktop:top-0 shell-desktop:w-61 shell-desktop:h-dvh shell-desktop:max-h-dvh [@media_(max-width:_700px)]:w-(--ds-settings-nav-drawer-width) [@media_(max-width:_700px)]:pt-3.5 [@media_(max-width:_880px)]:w-(--ds-settings-nav-drawer-width) [@media_(max-width:_880px)]:max-w-(--ds-settings-nav-drawer-width) shell-phone:fixed! shell-phone:top-15! shell-phone:bottom-0! shell-phone:left-0! shell-phone:w-[min(290px,85vw)]! shell-phone:max-w-full! shell-phone:-translate-x-full shell-phone:data-open:translate-x-0 shell-desktop:col-start-1 shell-desktop:row-span-2"
-        }
+        className="flex min-h-0 min-w-0 flex-none flex-col overflow-x-hidden overflow-y-hidden bg-sidebar px-3 pt-3 pb-2 text-foreground [font-optical-sizing:auto] shell-desktop:sticky shell-desktop:top-0 shell-desktop:col-start-1 shell-desktop:row-start-1 shell-desktop:h-dvh shell-desktop:max-h-dvh shell-desktop:w-(--ds-settings-nav-width) shell-phone:fixed shell-phone:inset-y-0 shell-phone:left-0 shell-phone:z-50 shell-phone:w-(--ds-settings-nav-drawer-width) shell-phone:max-w-[calc(100vw-3.5rem)] shell-phone:rounded-r-xl shell-phone:bg-sidebar-drawer shell-phone:-translate-x-full shell-phone:shadow-none shell-phone:data-open:translate-x-0 shell-phone:data-open:shadow-2xl shell-phone:transition-transform shell-phone:duration-200 shell-phone:ease-out motion-reduce:transition-none"
         data-settings-sidebar=""
         data-open={mobile || undefined}
         aria-label="Settings navigation"
@@ -12539,139 +12640,120 @@ function SettingsSidebar({
         aria-modal={mobile || undefined}
       >
         <div
-          className="mb-5.5 flex items-center gap-1.5"
+          className="mb-2.5 flex flex-none items-center gap-1"
           data-settings-sidebar-top=""
         >
           <button
             type="button"
-            className="mt-0 mr-0 mb-0 ml-0 flex h-(--ds-settings-back-height) min-h-(--ds-settings-back-height) w-full items-center gap-2 rounded-lg bg-transparent pl-2.25 pr-2.25 pt-0 pb-0 text-left text-[#555] text-(length:--ds-settings-nav-font-size) [:root[data-theme=dark]_&]:text-[#aaa] font-(--ds-settings-nav-font-weight) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:h-auto hover:bg-subtle hover:text-foreground"
+            className="flex h-(--ds-settings-back-height) min-h-(--ds-settings-back-height) flex-1 items-center gap-1.5 rounded-lg bg-transparent px-2 text-left text-(length:--ds-settings-nav-font-size) font-(--ds-settings-nav-font-weight) text-muted hover:bg-sidebar-hover hover:text-foreground focus-visible:bg-sidebar-hover focus-visible:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11"
             data-settings-back=""
             onClick={onBack}
           >
-            <ArrowLeft size={15} />
+            <ArrowLeft size={14} aria-hidden="true" />
             <span>Back to app</span>
           </button>
           <button
-            className="ml-auto hidden w-8 h-8 place-items-center rounded-lg bg-transparent text-(--settings-muted) max-lg:grid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:size-11"
+            className="hidden size-11 flex-none place-items-center rounded-lg bg-transparent text-muted hover:bg-sidebar-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:grid"
             ref={close}
             type="button"
             data-settings-drawer-close=""
             aria-label="Close settings navigation"
             onClick={onCloseMobile}
           >
-            <X size={17} />
+            <X size={16} aria-hidden="true" />
           </button>
         </div>
-        <div
-          className="flex items-center gap-2.75 pl-2 pr-2 pb-5 font-[650]"
-          data-settings-workspace-name=""
-        >
-          <span
-            className="grid w-9.25 h-9.25 flex-none place-items-center rounded-[11px] border border-line bg-[#e8e8e8] text-[14px] font-[750] text-[#171717] last:gap-0.5 last:min-w-0"
-            data-settings-workspace-mark=""
-            aria-hidden="true"
-          >
-            {(workspace.name || "W").slice(0, 1).toUpperCase()}
-          </span>
-          <span className="grid min-w-0 gap-0.5 last:gap-0.5 last:min-w-0">
-            <b className="font-[650] truncate text-[14px]">
-              {workspace.name || "Workspace"}
-            </b>
-            <small className="text-[12px] leading-normal text-[#6a6a6a]">
-              Workspace settings
-            </small>
-          </span>
-        </div>
         <label
-          className="ml-0.5 mr-0.5 mb-4.5 flex min-h-(--ds-settings-search-height) items-center gap-2 rounded-[9px] border border-line bg-white pl-2.25 pr-2.25 pt-0 pb-0 text-muted"
+          className="mb-4 flex min-h-(--ds-settings-search-height) flex-none items-center gap-2 rounded-lg border border-line bg-panel px-2.5 text-muted focus-within:border-foreground/30"
           data-settings-search=""
         >
-          <Search size={14} />
+          <Search size={14} className="flex-none text-sidebar-icon" aria-hidden="true" />
           <input
-            className="h-(--ds-settings-search-height) text-(length:--ds-settings-nav-font-size) min-w-0 w-full border-0 bg-transparent p-0 text-[#171717] outline-none placeholder:text-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+            className="h-(--ds-settings-search-height) min-w-0 w-full border-0 bg-transparent p-0 text-(length:--ds-settings-nav-font-size) text-foreground outline-none placeholder:text-muted shell-phone:min-h-11 shell-phone:text-[16px]"
             aria-label="Search settings"
-            placeholder="Find a setting…"
+            placeholder="Search…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
           {query && (
             <button
-              className="grid w-6 h-6 flex-none place-items-center rounded-md bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-muted) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+              className="grid size-6 flex-none place-items-center rounded-md bg-transparent text-muted hover:bg-sidebar-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:size-11"
               type="button"
               aria-label="Clear settings search"
               onClick={() => setQuery("")}
             >
-              <X size={13} />
+              <X size={13} aria-hidden="true" />
             </button>
           )}
         </label>
         <nav
-          className="block min-h-0 flex-1 overflow-y-auto overscroll-contain"
+          className="block min-h-0 flex-1 overflow-y-auto overscroll-contain pb-2"
           id="settings-navigation"
           aria-label="Settings sections"
         >
           {filtered.map(([group, items]) => (
             <div
-              className="m-(--ds-settings-group-gap) mt-0 mr-0 ml-0"
+              className="mb-4 last:mb-0"
               data-nav-group=""
               key={group}
             >
-              <p className="ml-2.5 mr-2.5 mt-0 mb-1.5 text-(--settings-muted) text-(length:--ds-settings-group-label-size) leading-(--ds-settings-group-label-height) font-(--ds-settings-nav-font-weight) normal-case tracking-normal flex items-center h-auto pt-0 pr-1.25 pb-0 pl-1.25">
+              <p className="mb-1 flex items-center px-2 text-xs font-(--ds-settings-nav-font-weight) leading-(--ds-settings-group-label-height) text-muted">
                 {group}
               </p>
-              {items.map(([id, label, Icon]) => (
-                <button
-                  type="button"
-                  key={id}
-                  className="group relative flex h-(--ds-settings-nav-row-height) min-h-(--ds-settings-nav-row-height) w-full items-center gap-2 overflow-hidden rounded-(--ds-settings-nav-row-radius) border border-transparent m-[var(--ds-settings-nav-row-gap)_0] p-(--ds-settings-nav-row-padding) bg-transparent text-left text-(--settings-muted) text-(length:--ds-settings-nav-font-size) font-(--ds-settings-nav-font-weight) whitespace-nowrap hover:bg-[#e9e9e9] hover:text-[#171717] aria-[current=page]:border-[#171717] aria-[current=page]:bg-[#171717] aria-[current=page]:text-white aria-[current=page]:font-[620] [:root[data-theme=dark]_&]:hover:bg-[#252525] [:root[data-theme=dark]_&]:hover:text-white [:root[data-theme=dark]_&]:aria-[current=page]:border-[#eee] [:root[data-theme=dark]_&]:aria-[current=page]:bg-[#eee] [:root[data-theme=dark]_&]:aria-[current=page]:text-[#171717] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 pointer-coarse:min-h-11 data-[availability=unavailable]:cursor-not-allowed data-[availability=unavailable]:opacity-[.72] data-[availability=unavailable]:hover:bg-transparent data-[availability=unavailable]:hover:text-(--settings-muted)"
-                  data-nav-item=""
-                  aria-current={section === id ? "page" : undefined}
-                  data-nav-id={id}
-                  data-availability={
-                    isUnavailable(id) ? "unavailable" : undefined
-                  }
-                  title={
-                    isUnavailable(id)
-                      ? `${label}: no backend yet (${SETTINGS_UNAVAILABLE.find(([u]) => u === id)?.[3]})`
-                      : "undefined"
-                  }
-                  onClick={() => {
-                    onNavigate(id);
-                    onCloseMobile();
-                  }}
-                >
-                  <Icon size={15} />
-                  <span className="flex-1 overflow-hidden text-ellipsis shell-desktop:rail-collapsed:hidden">
-                    {label}
-                  </span>
-                  {isUnavailable(id) ? (
-                    <span
-                      className="flex-none text-xs font-semibold overflow-hidden text-ellipsis shell-desktop:rail-collapsed:hidden"
-                      data-settings-nav-state=""
-                    >
-                      Not&nbsp;yet
-                    </span>
-                  ) : (
-                    <ChevronRight
-                      className="opacity-0 -translate-x-0.75 transition-[opacity,transform] duration-150 group-aria-[current=page]:translate-x-0 group-aria-[current=page]:opacity-[.65] motion-reduce:transition-none size-4 flex-none"
-                      data-settings-nav-chevron=""
-                      size={13}
+              <div className="grid gap-px">
+                {items.map(([id, label, Icon]) => (
+                  <button
+                    type="button"
+                    key={id}
+                    className="group relative flex h-(--ds-settings-nav-row-height) min-h-(--ds-settings-nav-row-height) w-full items-center gap-2 overflow-hidden rounded-(--ds-settings-nav-row-radius) border-0 bg-transparent px-2 text-left text-(length:--ds-settings-nav-font-size) font-(--ds-settings-nav-font-weight) text-foreground/85 whitespace-nowrap hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground focus-visible:bg-sidebar-hover focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 data-[availability=unavailable]:cursor-not-allowed data-[availability=unavailable]:opacity-65 data-[availability=unavailable]:hover:bg-transparent data-[availability=unavailable]:hover:text-foreground/85"
+                    data-nav-item=""
+                    aria-current={section === id ? "page" : undefined}
+                    data-nav-id={id}
+                    data-availability={
+                      isUnavailable(id) ? "unavailable" : undefined
+                    }
+                    title={
+                      isUnavailable(id)
+                        ? `${label}: no backend yet (${SETTINGS_UNAVAILABLE.find(([u]) => u === id)?.[3]})`
+                        : undefined
+                    }
+                    onClick={() => {
+                      onNavigate(id);
+                      onCloseMobile();
+                    }}
+                  >
+                    <Icon
+                      size={15}
+                      className="flex-none text-sidebar-icon group-hover:text-foreground group-aria-[current=page]:text-foreground"
                     />
-                  )}
-                </button>
-              ))}
+                    <span className="min-w-0 flex-1 truncate">{label}</span>
+                    {isUnavailable(id) && (
+                      <span
+                        className="flex-none text-xs font-medium text-muted"
+                        data-settings-nav-state=""
+                      >
+                        Not&nbsp;yet
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
             </div>
           ))}
           {!filtered.length && (
             <div
-              className="ml-2 mr-2 mt-8 mb-8 grid justify-items-center gap-1.75 text-center text-(--settings-muted)"
+              className="mx-2 my-8 grid justify-items-center gap-1.75 text-center text-muted"
               data-settings-search-empty=""
             >
-              <Search size={18} />
-              <b className="font-semibold">No matching settings</b>
-              <p>Try a different name or clear your search.</p>
+              <Search size={18} aria-hidden="true" />
+              <b className="font-semibold text-foreground">
+                No matching settings
+              </b>
+              <p className="text-xs">
+                Try a different name or clear your search.
+              </p>
               <button
-                className="bg-transparent pl-2 pr-2 pt-1 pb-1 text-[11px] text-(--settings-accent-strong) underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                className="bg-transparent px-2 py-1 text-xs text-foreground underline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11"
                 type="button"
                 onClick={() => setQuery("")}
               >
@@ -12681,7 +12763,7 @@ function SettingsSidebar({
           )}
         </nav>
         <div
-          className="sticky bottom-0 mt-auto -mx-3.5 -mb-3.5 flex flex-none items-center gap-2.25 border-t-0 bg-transparent pl-4 pr-4 pt-3.25 pb-3.25 text-[12px] text-foreground shell-phone:bottom-0"
+          className="mt-auto flex flex-none items-center gap-2 border-t border-line pt-2.5 px-1 text-xs text-foreground"
           data-sidebar-bottom=""
         >
           <span
@@ -12695,20 +12777,21 @@ function SettingsSidebar({
             className="grid min-w-0 flex-1 gap-px"
             data-settings-user-copy=""
           >
-            <b className="font-semibold truncate text-[12px]">
+            <b className="truncate text-xs font-medium text-foreground">
               {viewer.name || "Account"}
             </b>
-            <small className="text-[12px] leading-normal text-(--settings-muted) block font-normal overflow-hidden text-ellipsis whitespace-nowrap">
-              {viewer.email}
+            <small className="block truncate text-[11px] font-normal text-muted">
+              {viewer.email || workspace.name}
             </small>
           </span>
           <button
-            className="grid place-items-center w-8.5 h-8.5 rounded-lg bg-transparent text-[#52525b] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 hover:bg-subtle hover:text-foreground focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:size-11"
+            className="grid size-7 flex-none place-items-center rounded-lg bg-transparent text-sidebar-icon hover:bg-sidebar-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:size-11"
             data-logout-button=""
             onClick={onLogout}
             aria-label="Log out"
+            title="Log out"
           >
-            <LogOut size={16} />
+            <LogOut size={15} aria-hidden="true" />
           </button>
         </div>
       </aside>
@@ -18249,12 +18332,15 @@ function ViewsPage({
       aria-label={favoriteOnly ? "Favorite views" : "Workspace views"}
     >
       <header
-        className="border-b border-line h-11.25 flex items-center justify-between pt-0 pr-4.5 pb-0 pl-4.5"
+        className="border-b border-line h-11.25 flex items-center justify-between gap-2 pt-0 pr-4.5 pb-0 pl-4.5"
         data-workspace-views-head=""
       >
-        <h1 className="text-(length:--hoja-title-size) font-(--hoja-title-weight) mt-0 mr-0 mb-0 ml-0 leading-[normal] tracking-normal ">
-          {title || (favoriteOnly ? "Favorite views" : "Views")}
-        </h1>
+        <div className="flex min-w-0 items-center gap-1">
+          <MobileNavTrigger />
+          <h1 className="text-(length:--hoja-title-size) font-(--hoja-title-weight) mt-0 mr-0 mb-0 ml-0 leading-[normal] tracking-normal">
+            {title || (favoriteOnly ? "Favorite views" : "Views")}
+          </h1>
+        </div>
         {!favoriteOnly && (
           <button
             className="flex gap-1.25 items-center pt-1.25 pr-1.25 pb-1.25 pl-1.25 bg-transparent text-[12px] font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"

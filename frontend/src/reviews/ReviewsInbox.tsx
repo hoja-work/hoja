@@ -11,7 +11,6 @@ import { useState, type ReactNode } from "react";
 import {
   ArrowLeft,
   ExternalLink,
-  Menu,
   LayoutGrid,
   List as ListIcon,
   Activity as ActivityIcon,
@@ -21,6 +20,7 @@ import { Avatar, fmtDate } from "../graph/shared";
 import { Markdown } from "../markdown";
 import { reviewGlyphPaths } from "../reviews-glyphs";
 import { reviewGroupsOf } from "../reviews-gate";
+import { MobileNavTrigger } from "../mobileNav";
 import { ConnectionMap } from "./ConnectionMap";
 import { ReviewActions } from "./ReviewActions";
 import { ReviewsActivity, ReviewsBoard } from "./ReviewsBoard";
@@ -647,7 +647,7 @@ export function ReviewsInbox({
       hint: "",
       count: inbox.items.length,
     },
-    ...REVIEW_SOURCES.filter((s) => s.connected).map((s) => ({
+    ...REVIEW_SOURCES.map((s) => ({
       id: s.id as InboxFilter,
       label: s.label,
       connected: s.connected,
@@ -658,14 +658,7 @@ export function ReviewsInbox({
 
   const header = (
     <div className="flex h-12 flex-none items-center gap-2 border-b border-line px-4">
-      <button
-        type="button"
-        onClick={onOpenNav}
-        aria-label="Open navigation"
-        className="grid size-7 flex-none place-items-center rounded-md text-muted hover:bg-subtle md:hidden"
-      >
-        <Menu size={16} aria-hidden="true" />
-      </button>
+      <MobileNavTrigger />
       <h1 className="m-0 text-[15px] font-semibold">Reviews</h1>
       <span className="text-xs text-muted tabular-nums">
         {inbox.items.length}

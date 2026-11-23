@@ -12,6 +12,7 @@ import {
   AccordionTrigger,
 } from "../components/motion-primitives/accordion";
 import { Markdown } from "../markdown";
+import { MobileNavTrigger } from "../mobileNav";
 import { cx, LinPopover } from "./shared";
 
 type DataAttributes = {
@@ -60,6 +61,7 @@ export function DetailHeader({
       className="flex items-center gap-2 min-h-12.25 py-0 px-5 border-b border-b-line flex-none shell-phone:flex-wrap shell-phone:gap-y-1"
       data-style-hooks="lin-head"
     >
+      <MobileNavTrigger />
       <nav
         className="flex items-center gap-1.75 text-[13px] text-muted min-w-0 flex-1 shell-phone:flex-wrap shell-phone:gap-y-0.5 [&_a]:[background:none] [&_a]:border-0 [&_a]:p-0 [&_a]:text-muted [&_a]:[font:inherit] [&_a]:cursor-pointer [&_a]:inline-flex [&_a]:items-center [&_a]:gap-1.5 [&_a]:whitespace-nowrap [&_a:hover]:text-foreground"
         data-style-hooks="lin-crumb"

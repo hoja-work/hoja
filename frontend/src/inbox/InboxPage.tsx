@@ -23,6 +23,7 @@ import {
   X,
 } from "lucide-react";
 import { gql, StatusIcon } from "../main";
+import { MobileNavTrigger } from "../mobileNav";
 import type { Issue } from "../main";
 import { errorText } from "../localFirst";
 import { useEntityVersion, useIssues } from "../sync";
@@ -631,17 +632,20 @@ export function InboxPage({
   const list = (
     <div className="flex min-h-0 flex-1 flex-col">
       <header
-        className="flex flex-none items-center justify-between gap-2 border-b border-line px-4 py-2"
+        className="flex h-11 min-h-11 flex-none items-center justify-between gap-2 border-b border-line px-4 py-0"
         data-inbox-head=""
       >
-        <h1 className="m-0 flex items-baseline gap-2 text-sm font-semibold">
-          Inbox
-          {unreadTotal > 0 && tab !== "archived" && (
-            <span className="text-xs font-normal text-muted">
-              {unreadTotal} unread
-            </span>
-          )}
-        </h1>
+        <div className="flex min-w-0 items-center gap-1">
+          <MobileNavTrigger />
+          <h1 className="m-0 flex items-baseline gap-2 text-sm font-semibold">
+            Inbox
+            {unreadTotal > 0 && tab !== "archived" && (
+              <span className="text-xs font-normal text-muted">
+                {unreadTotal} unread
+              </span>
+            )}
+          </h1>
+        </div>
         <div className="flex items-center gap-1" data-inbox-head-actions="">
           <button
             className={iconButton}
@@ -802,7 +806,7 @@ export function InboxPage({
                         <SubjectIcon size={13} />
                       </span>
                     ) : (
-                      <Avatar name={n.actor?.name || null} seed={n.actor?.avatarSeed} size={24} />
+                      <Avatar name={n.actor?.name || null} size={24} />
                     )}
                     <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                       <span className="flex min-w-0 items-center gap-1.5">

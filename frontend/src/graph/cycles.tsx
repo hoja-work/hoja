@@ -1,4 +1,5 @@
 import { styleClasses, styleHooks } from "./shared";
+import { MobileNavTrigger } from "../mobileNav";
 import React, {
   useCallback,
   useEffect,
@@ -307,7 +308,7 @@ export function cachedStats(issues: LinIssue[]): CycleStats {
 /* Closed issues older than the store's window are not synced. A cycle that
  * started before that window may own some; fetch them once and adopt them so
  * the store (and its deltas) keeps them fresh from then on. */
-const historyFields = `{ id identifier title createdAt updatedAt stateChangedAt dueDate priority priorityLabel state { id name color type } team { id key name } project { id name } assignee { id name avatarSeed } creator { id name avatarSeed } cycle { id name number } labels { nodes { id name color } } }`;
+const historyFields = `{ id identifier title createdAt updatedAt stateChangedAt dueDate priority priorityLabel state { id name color type } team { id key name } project { id name } assignee { id name } creator { id name } cycle { id name number } labels { nodes { id name color } } }`;
 const historyRequested = new Set<string>();
 // Session markers survive reloads (module state does not); storage may be unavailable.
 const sessionGet = (k: string) => {
@@ -747,7 +748,7 @@ const CycleOverviewRow = React.memo(function CycleOverviewRow({
       <div
         className={styleClasses(
           cx(
-            "relative text-right pt-4 pr-10 pb-0 pl-0 text-[11px] text-muted leading-[1.35] whitespace-pre-line [&_i]:absolute [&_i]:right-4 [&_i]:top-4.5 [&_i]:w-2.5 [&_i]:h-2.5 [&_i]:rounded-[50%] [&_i]:bg-panel [&_i]:border-2 [&_i]:border-solid [&_i]:border-muted [&_i]:not-italic [&_i]:[transition:transform_.16s_ease,border-color_.16s_ease,background-color_.16s_ease] [[data-style-hooks~='lin-cycle-row'][data-style-hooks~='selected']_&_i]:border-[#5e6ad2] [[data-style-hooks~='lin-cycle-row'][data-style-hooks~='selected']_&_i]:transform-[scale(1.25)] shell-phone:hidden motion-reduce:[&_i]:[transition:none]",
+            "relative text-right pt-4 pr-7.5 pb-0 pl-0 text-[11px] text-muted leading-[1.35] whitespace-pre-line [&_i]:absolute [&_i]:right-5.5 [&_i]:top-4.5 [&_i]:w-2.5 [&_i]:h-2.5 [&_i]:rounded-[50%] [&_i]:bg-panel [&_i]:border-2 [&_i]:border-solid [&_i]:border-muted [&_i]:not-italic [&_i]:[transition:transform_.16s_ease,border-color_.16s_ease,background-color_.16s_ease] [[data-style-hooks~='lin-cycle-row'][data-style-hooks~='selected']_&_i]:border-[#5e6ad2] [[data-style-hooks~='lin-cycle-row'][data-style-hooks~='selected']_&_i]:transform-[scale(1.25)] shell-phone:hidden motion-reduce:[&_i]:[transition:none]",
             state === "current" &&
               "[[data-style-hooks~='lin-cycle-tmark']&_i]:bg-[#5e6ad2] [[data-style-hooks~='lin-cycle-tmark']&_i]:border-[#5e6ad2]",
           ),
@@ -969,7 +970,7 @@ export function CycleOverviewRows({
     return (
       <div
         className={styleClasses(
-          "flex flex-col items-center py-15 px-5 text-center text-muted [&_h2]:text-foreground [&_h2]:text-[15px] [&_h2]:mt-3 [&_h2]:mx-0 [&_h2]:mb-1.5",
+          "py-15 px-5 text-center text-muted [&_h2]:text-foreground [&_h2]:text-[15px] [&_h2]:mt-3 [&_h2]:mx-0 [&_h2]:mb-1.5",
         )}
         data-style-hooks={styleHooks(
           "lin-empty py-[60px] px-[20px] text-center text-muted [&_h2]:text-foreground [&_h2]:text-[15px] [&_h2]:mt-[12px] [&_h2]:mx-0 [&_h2]:mb-[6px]",
@@ -997,10 +998,10 @@ export function CycleOverviewRows({
       >
         <div
           className={styleClasses(
-            "flex items-center justify-between gap-3 pt-0 pr-0 pb-3 pl-22 text-muted text-xs font-medium [&_span:last-child]:text-xs [&_span:last-child]:font-normal shell-phone:pt-0 shell-phone:px-1 shell-phone:pb-2.25 shell-phone:[&_span:last-child]:hidden",
+            "flex items-center justify-between gap-3 pt-0 pr-0 pb-3 pl-22 text-muted text-[10px] font-semibold tracking-[.07em] uppercase [&_span:last-child]:text-[10px] [&_span:last-child]:font-[450] [&_span:last-child]:tracking-normal [&_span:last-child]:normal-case shell-phone:pt-0 shell-phone:px-1 shell-phone:pb-2.25 shell-phone:[&_span:last-child]:hidden",
           )}
           data-style-hooks={styleHooks(
-            "lin-cycle-nav-head flex items-center justify-between gap-[12px] pt-0 pr-0 pb-[12px] pl-[88px] text-muted text-xs font-medium shell-phone:pt-0 shell-phone:px-[4px] shell-phone:pb-[9px] shell-phone:[&_span:last-child]:hidden",
+            "lin-cycle-nav-head flex items-center justify-between gap-[12px] pt-0 pr-0 pb-[12px] pl-[88px] text-muted text-[10px] font-semibold tracking-[.07em] uppercase [&_span:last-child]:text-[10px] [&_span:last-child]:font-[450] [&_span:last-child]:tracking-normal [&_span:last-child]:normal-case shell-phone:pt-0 shell-phone:px-[4px] shell-phone:pb-[9px] shell-phone:[&_span:last-child]:hidden",
           )}
         >
           <span>Iteration timeline</span>
@@ -1019,7 +1020,7 @@ export function CycleOverviewRows({
         >
           <div
             className={styleClasses(
-              "absolute top-0 bottom-0 left-16.5 w-0.5 bg-line shell-phone:hidden",
+              "absolute top-0 bottom-0 left-15.25 w-0.5 bg-line shell-phone:hidden",
             )}
             data-style-hooks={styleHooks(
               "lin-cycles-spine absolute top-0 bottom-0 left-[61px] w-[2px] bg-line shell-phone:hidden",
@@ -1111,10 +1112,10 @@ function CyclePreview({
         >
           <div
             className={styleClasses(
-              "flex items-center gap-1.75 mb-2.25 text-muted text-xs font-medium",
+              "flex items-center gap-1.75 mb-2.25 text-muted text-[10px] font-[650] tracking-[.08em] uppercase",
             )}
             data-style-hooks={styleHooks(
-              "lin-cycle-preview-kicker flex items-center gap-[7px] mb-[9px] text-muted text-xs font-medium",
+              "lin-cycle-preview-kicker flex items-center gap-[7px] mb-[9px] text-muted text-[10px] font-[650] tracking-[.08em] uppercase",
             )}
           >
             <span
@@ -1255,7 +1256,7 @@ function CyclePreview({
           <header>
             <h3>Work snapshot</h3>
             <span>
-              {issues.length} {issues.length === 1 ? "task" : "tasks"}
+              {issues.length} {issues.length === 1 ? "issue" : "issues"}
             </span>
           </header>
           {shown.length ? (
@@ -1284,11 +1285,7 @@ function CyclePreview({
                   >
                     {issue.title}
                   </span>
-                  <Avatar
-                    name={issue.assignee?.name}
-                    seed={issue.assignee?.avatarSeed}
-                    size={20}
-                  />
+                  <Avatar name={issue.assignee?.name} size={20} />
                 </li>
               ))}
             </ul>
@@ -1396,6 +1393,7 @@ export function GraphTeamCycles({
           "lin-head flex items-center gap-[8px] min-h-[49px] py-0 px-[20px] border-b border-b-line flex-none",
         )}
       >
+        <MobileNavTrigger />
         <nav
           className={styleClasses(
             "flex items-center gap-1.75 text-[13px] text-muted min-w-0 flex-1 [&_a]:[background:none] [&_a]:border-0 [&_a]:p-0 [&_a]:text-muted [&_a]:[font:inherit] [&_a]:cursor-pointer [&_a]:inline-flex [&_a]:items-center [&_a]:gap-1.5 [&_a]:whitespace-nowrap [&_a:hover]:text-foreground",
@@ -1611,6 +1609,7 @@ export function GraphWorkspaceCycles({
           "lin-head flex items-center gap-[8px] min-h-[49px] py-0 px-[20px] border-b border-b-line flex-none",
         )}
       >
+        <MobileNavTrigger />
         <nav
           className={styleClasses(
             "flex items-center gap-1.75 text-[13px] text-muted min-w-0 flex-1 [&_a]:[background:none] [&_a]:border-0 [&_a]:p-0 [&_a]:text-muted [&_a]:[font:inherit] [&_a]:cursor-pointer [&_a]:inline-flex [&_a]:items-center [&_a]:gap-1.5 [&_a]:whitespace-nowrap [&_a:hover]:text-foreground",
@@ -2470,6 +2469,7 @@ export function GraphCycleDetail({
           "lin-head flex items-center gap-[8px] min-h-[49px] py-0 px-[20px] border-b border-b-line flex-none",
         )}
       >
+        <MobileNavTrigger />
         <nav
           className={styleClasses(
             "flex items-center gap-1.75 text-[13px] text-muted min-w-0 flex-1 [&_a]:[background:none] [&_a]:border-0 [&_a]:p-0 [&_a]:text-muted [&_a]:[font:inherit] [&_a]:cursor-pointer [&_a]:inline-flex [&_a]:items-center [&_a]:gap-1.5 [&_a]:whitespace-nowrap [&_a:hover]:text-foreground",
@@ -3171,6 +3171,7 @@ export function GraphTeamCycle({
             "lin-head flex items-center gap-[8px] min-h-[49px] py-0 px-[20px] border-b border-b-line flex-none",
           )}
         >
+          <MobileNavTrigger />
           <nav
             className={styleClasses(
               "flex items-center gap-1.75 text-[13px] text-muted min-w-0 flex-1 [&_a]:[background:none] [&_a]:border-0 [&_a]:p-0 [&_a]:text-muted [&_a]:[font:inherit] [&_a]:cursor-pointer [&_a]:inline-flex [&_a]:items-center [&_a]:gap-1.5 [&_a]:whitespace-nowrap [&_a:hover]:text-foreground",
