@@ -24,6 +24,7 @@ import {
   ArrowUp,
   Bell,
   Blocks,
+  BookOpen,
   Bot,
   Building2,
   CalendarDays,
@@ -102,6 +103,7 @@ import { AgentChatPage } from "./AgentChatPage";
 import { ModelProvidersSettings } from "./ModelProvidersSettings";
 import { ConnectorsSettings } from "./ConnectorsSettings";
 import { AgentConversationsSettings } from "./AgentConversationsSettings";
+import { KnowledgeSettings } from "./KnowledgeSettings";
 import { AgentsSurface } from "./agents/AgentsSurface";
 import { ProjectRepository } from "./agents/ProjectRepository";
 import { LeaderboardPage } from "./profiles/LeaderboardPage";
@@ -12396,6 +12398,7 @@ function SettingsSidebar({
         ["api-keys", "Connected apps", KeyRound],
         ["agent-conversations", "Agent conversations", MessageCircle],
         ["connections", "Connections", Plug],
+        ["knowledge", "Knowledge", BookOpen],
       ],
     ],
     [
@@ -14012,6 +14015,7 @@ function WorkspaceSettings({
   if (section === "agent-conversations") return <AgentConversationsSettings />;
   if (section === "connections")
     return <ConnectorsSettings isAdmin={!!viewer.admin} />;
+  if (section === "knowledge") return <KnowledgeSettings />;
   if (section === "teams")
     return (
       <TeamsSettings

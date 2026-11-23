@@ -40,7 +40,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 90
+CURRENT_SCHEMA_REVISION = 91
 
 log = logging.getLogger(__name__)
 
@@ -1941,6 +1941,27 @@ task_template = Table(
     UniqueConstraint("organization_id", "team_id", "name", name="uq_task_template_org_team_name"),
 )
 
+# Revision 91: Company Knowledge Brain — hierarchical context and standards
+# scoped to workspace, team, or project and automatically fed to Agent Chat,
+# delegated runners, and MCP clients. Carries organization_id NOT NULL so
+# rls_policy classifies it as a direct tenant-scoped table automatically.
+workspace_knowledge = Table(
+    "workspace_knowledge",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("scope", String, nullable=False),
+    Column("scope_id", String, index=True),
+    Column("title", String, nullable=False),
+    Column("body", Text, nullable=False),
+    Column("enabled", Boolean, nullable=False, default=True),
+    Column("created_by", String, ForeignKey("user.id")),
+    Column("updated_by", String, ForeignKey("user.id")),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+    Index("ix_workspace_knowledge_org_scope", "organization_id", "scope", "scope_id"),
+)
+
 # HOJA-491: SLA policies and the per-task clock they start. A NULL team_id is a
 # workspace-wide policy; a team id scopes it, and a team's policy wins over the
 # workspace one for the same priority. The clock is a row of its own so a task
@@ -3727,6 +3748,15 @@ def _apply_user_avatar_seed(conn):
         )
 
 
+def _apply_workspace_knowledge(conn):
+    """``workspace_knowledge``: hierarchical company/team/project context docs (revision 91).
+
+    Additive and idempotent. Carries ``organization_id`` directly, so ``rls_policy``
+    classifies it as a direct tenant table and binds it with ``hoja_tenant``.
+    """
+    workspace_knowledge.create(conn, checkfirst=True)
+
+
 def _apply_agent_run_log(conn):
     """``agent_run_log``: the per-run timeline GraphQL serves (HOJA-602)."""
     agent_run_log.create(conn, checkfirst=True)
@@ -4096,6 +4126,9 @@ _MIGRATIONS = {
     # 90: several parents per initiative, label groups, the update schedule with
     # follow-ups, an initiative Slack channel, and team initiatives.
     90: _apply_initiative_enterprise,
+    # 91: Company Knowledge Brain — hierarchical workspace/team/project context
+    # docs auto-fed to Agent Chat, delegated runners, and MCP clients.
+    91: _apply_workspace_knowledge,
 }
 
 

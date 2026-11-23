@@ -99,6 +99,14 @@ READ_TOOLS: dict[str, str] = {
         "human's answer: an answered row carries answer, chosenOption, answeredBy and answeredAt."
     ),
     "taskDecision": "One decision by id - the poll target for a single question.",
+    "knowledgeDocs": (
+        "List workspace, team, and project knowledge documents (company standards, architecture notes, "
+        "and conventions). Optionally filter by scope ('workspace', 'team', or 'project') and scopeId."
+    ),
+    "knowledgeContext": (
+        "Return the merged Markdown company knowledge context in hierarchy order "
+        "(workspace -> team -> project). Pass teamId and/or projectId to include scoped standards."
+    ),
 }
 
 WRITE_TOOLS: dict[str, str] = {
@@ -206,7 +214,15 @@ WRITE_TOOLS: dict[str, str] = {
         "optional options [{key,label,description}] and context. Returns the decision id to poll."
     ),
     "taskDecisionAnswer": "Answer a decision by id (or option key). Idempotent.",
-    "taskDecisionCancel": "Withdraw an open decision (asker or admin only)."
+    "taskDecisionCancel": "Withdraw an open decision (asker or admin only).",
+    "knowledgeDocCreate": (
+        "Create a workspace, team, or project knowledge document (Markdown). "
+        "Enabled documents are automatically fed to Agent Chat, delegated runners, and MCP clients."
+    ),
+    "knowledgeDocUpdate": (
+        "Update a workspace, team, or project knowledge document by id "
+        "(title, body, scope, scopeId, or enabled)."
+    ),
 }
 
 DESTRUCTIVE = {"issueDelete", "commentDelete", "issueLabelDelete", "teamMemberRemove",

@@ -2073,7 +2073,7 @@ def _get_comment(store, org, cid):
 def build_schema():
     from pathlib import Path
     sdl = (Path(__file__).parent / "schema.graphql").read_text()
-    from hoja_server import authorized_apps, decisions_api, extensions_api, model_providers, permissions, profile_metrics, project_settings, sla, task_templates, usage_ledger, views_api, webhooks_api
+    from hoja_server import authorized_apps, decisions_api, extensions_api, knowledge, model_providers, permissions, profile_metrics, project_settings, sla, task_templates, usage_ledger, views_api, webhooks_api
     # HOJA-602-A-16 slice 5: the read-only runner/lease and claim/verdict surfaces the
     # review screens need. Both are admin-gated and org-scoped, and neither adds a table.
     from hoja_server import agent_claims, agent_runners, connect_endpoints
@@ -2108,8 +2108,9 @@ def build_schema():
          views_api.SDL, decisions_api.SDL, project_settings.SDL, permissions.SDL,
          task_templates.SDL, sla.SDL, agent_members.SDL, agent_sessions.SDL,
          agent_policy.SDL, agent_runners.SDL, agent_runner_admin.SDL,
-         agent_claims.SDL, usage_ledger.SDL, profile_metrics.SDL, connect_endpoints.SDL, authorized_apps.SDL, agent_ops.SDL, project_repos.SDL, tailnet_ops.SDL, initiative_api.SDL, tasks_sdl],
+         agent_claims.SDL, usage_ledger.SDL, profile_metrics.SDL, connect_endpoints.SDL, authorized_apps.SDL, agent_ops.SDL, project_repos.SDL, tailnet_ops.SDL, initiative_api.SDL, knowledge.SDL, tasks_sdl],
         query, mutation, *task_bindables,
+        knowledge.query, knowledge.mutation, knowledge.knowledge_doc_type,
         model_providers.query, model_providers.mutation,
         project_settings.query, project_settings.mutation,
         permissions.query, permissions.mutation,

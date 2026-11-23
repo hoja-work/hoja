@@ -204,51 +204,104 @@ def _serialize(row) -> dict:
     }
 
 
-def connector_binding_for(engine: Engine, org: str, uid: str):
-    """Return the MCP binding for this user when they have an active connector account.
+CONNECTOR_PROVIDERS: tuple[tuple[str, str], ...] = (
+    (PROVIDER, "HOJA_GOOGLE_WORKSPACE_MCP_URL"),
+    (GITHUB_PROVIDER, "HOJA_GITHUB_MCP_URL"),
+    (SLACK_PROVIDER, "HOJA_SLACK_MCP_URL"),
+    (NOTION_PROVIDER, "HOJA_NOTION_MCP_URL"),
+    (SENTRY_PROVIDER, "HOJA_SENTRY_MCP_URL"),
+    (GRAFANA_PROVIDER, "HOJA_GRAFANA_MCP_URL"),
+    (CALENDLY_PROVIDER, "HOJA_CALENDLY_MCP_URL"),
+    (ZOOM_PROVIDER, "HOJA_ZOOM_MCP_URL"),
+)
 
-    The connector MCP service registers the Google, Notion and Slack tools on one server, so one
-    binding covers any provider (or several).
+
+def connector_bindings_for(store_or_engine, org_id: str, user_id: str) -> list:
+    """Return MCP bindings for ALL active connectors configured in this workspace.
+
+    Checks each supported connector's dedicated MCP URL environment variable
+    (e.g. ``HOJA_GITHUB_MCP_URL``, ``HOJA_SLACK_MCP_URL``) as well as the unified
+    ``HOJA_CONNECTOR_MCP_URL`` service fallback, and emits a ``ConnectorBinding``
+    only when the org or user has an active account for that provider.
+
+    Accepts either a ``Store`` instance (using ``store.engine``) or a SQLAlchemy ``Engine``.
     """
-    url = os.environ.get("HOJA_CONNECTOR_MCP_URL", "").strip()
     key = os.environ.get("HOJA_CONNECTOR_SIGNING_KEY", "").strip()
-    if not url or not key:
-        return None
+    if not key:
+        return []
+    shared_url = os.environ.get("HOJA_CONNECTOR_MCP_URL", "").strip()
+    engine = store_or_engine.engine if hasattr(store_or_engine, "engine") else store_or_engine
+    all_providers = tuple(provider for provider, _env in CONNECTOR_PROVIDERS)
     with engine.connect() as conn:
-        active = conn.execute(
-            select(connector_account.c.id)
-            .where(
-                and_(
-                    connector_account.c.organization_id == org,
-                    connector_account.c.provider.in_(
-                        (
-                            PROVIDER,
-                            NOTION_PROVIDER,
-                            SLACK_PROVIDER,
-                            CALENDLY_PROVIDER,
-                            SENTRY_PROVIDER,
-                            ZOOM_PROVIDER,
-                            GRAFANA_PROVIDER,
-                            GITHUB_PROVIDER,
-                        )
-                    ),
-                    connector_account.c.status == "active",
-                    or_(
-                        connector_account.c.owner_user_id == uid,
-                        connector_account.c.owner_user_id.is_(None),
-                    ),
+        active_providers = {
+            row[0]
+            for row in conn.execute(
+                select(connector_account.c.provider)
+                .where(
+                    and_(
+                        connector_account.c.organization_id == org_id,
+                        connector_account.c.provider.in_(all_providers),
+                        connector_account.c.status == "active",
+                        or_(
+                            connector_account.c.owner_user_id == user_id,
+                            connector_account.c.owner_user_id.is_(None),
+                        ),
+                    )
                 )
-            )
-            .limit(1)
-        ).first()
-    if active is None:
-        return None
+                .distinct()
+            ).all()
+        }
+    if not active_providers:
+        return []
+
     from hoja_server.agent_chat import ConnectorBinding
 
-    return ConnectorBinding(
-        url=url,
-        principal=sign_principal(uid, org, "read", key=key),
-    )
+    principal = sign_principal(user_id, org_id, "read", key=key)
+    bindings: list[ConnectorBinding] = []
+    seen_urls: set[str] = set()
+    shared_providers: list[str] = []
+
+    for provider, env_var in CONNECTOR_PROVIDERS:
+        if provider not in active_providers:
+            continue
+        dedicated_url = os.environ.get(env_var, "").strip()
+        if dedicated_url:
+            if dedicated_url not in seen_urls:
+                seen_urls.add(dedicated_url)
+                bindings.append(
+                    ConnectorBinding(
+                        url=dedicated_url,
+                        principal=principal,
+                        provider=provider,
+                        toolset_id=provider.replace("_", "-"),
+                    )
+                )
+        elif shared_url:
+            shared_providers.append(provider)
+
+    if shared_providers and shared_url and shared_url not in seen_urls:
+        # One unified MCP server serves all providers without a dedicated URL;
+        # mount it once to avoid duplicate tool registration.
+        first_provider = PROVIDER if PROVIDER in shared_providers else shared_providers[0]
+        bindings.append(
+            ConnectorBinding(
+                url=shared_url,
+                principal=principal,
+                provider=first_provider,
+                toolset_id="google-workspace",
+            )
+        )
+
+    return bindings
+
+
+def connector_binding_for(engine: Engine, org: str, uid: str):
+    """Return the primary MCP binding for this user when they have an active connector account.
+
+    Backward-compatible single-binding wrapper over ``connector_bindings_for``.
+    """
+    bindings = connector_bindings_for(engine, org, uid)
+    return bindings[0] if bindings else None
 
 
 def make_write_executor(engine: Engine, http: httpx.AsyncClient, config: GoogleOAuthConfig):

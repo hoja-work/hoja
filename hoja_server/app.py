@@ -65,7 +65,7 @@ from hoja_server import (
     workspace_directory,
 )
 from hoja_server.connect_api import connect_routes
-from hoja_server.connectors_api import connector_binding_for, connector_routes
+from hoja_server.connectors_api import connector_binding_for, connector_bindings_for, connector_routes
 from hoja_server.db import (
     _seed_demo_issues,
     api_key,
@@ -1456,11 +1456,35 @@ def create_app(
         }
         try:
             thread_id = body.get("threadId") if isinstance(body, dict) else None
-            connector = connector_binding_for(engine, org, uid)
+            connectors = connector_bindings_for(store, org, uid)
+            connector = connectors[0] if connectors else None
             if durable_agent is not None:
                 gen = durable_agent.stream_reply(store, org, uid, messages, base_context, thread_id, connector)
+            elif len(connectors) > 1:
+                gen = stream_reply(
+                    store,
+                    org,
+                    uid,
+                    messages,
+                    _schema,
+                    SCHEMA_SDL,
+                    base_context,
+                    thread_id,
+                    connector,
+                    connectors=connectors,
+                )
             else:
-                gen = stream_reply(store, org, uid, messages, _schema, SCHEMA_SDL, base_context, thread_id, connector)
+                gen = stream_reply(
+                    store,
+                    org,
+                    uid,
+                    messages,
+                    _schema,
+                    SCHEMA_SDL,
+                    base_context,
+                    thread_id,
+                    connector,
+                )
             first = await gen.__anext__()
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)

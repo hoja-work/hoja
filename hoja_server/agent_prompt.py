@@ -112,6 +112,9 @@ async def workspace_snapshot(fetch: SnapshotFetch, viewer_id: str | None) -> str
     return _snapshot_text(data)
 
 
-def compose_prompt(base: str, snapshot: str) -> str:
-    """Assemble the system prompt: base rules, worked examples, then the live snapshot."""
-    return "\n\n".join([base, WORKING_EXAMPLES, "## Live workspace snapshot\n" + snapshot])
+def compose_prompt(base: str, snapshot: str, knowledge: str = "") -> str:
+    """Assemble the system prompt: base rules, worked examples, live snapshot, and workspace knowledge."""
+    sections = [base, WORKING_EXAMPLES, "## Live workspace snapshot\n" + snapshot]
+    if knowledge and knowledge.strip():
+        sections.append("## Workspace knowledge & standards\n" + knowledge.strip())
+    return "\n\n".join(sections)

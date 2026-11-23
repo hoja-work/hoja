@@ -67,6 +67,10 @@ const ALLOWED_LINES = new Map([
 ]);
 
 function walk(dir, out = []) {
+  if (!statSync(dir).isDirectory()) {
+    out.push(dir);
+    return out;
+  }
   for (const name of readdirSync(dir)) {
     if (name === 'node_modules' || name === 'dist' || name === '__tests__') continue;
     const p = join(dir, name);

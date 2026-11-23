@@ -895,6 +895,8 @@ def _claim_locked(engine, runner_row: Mapping[str, Any]) -> tuple[dict[str, Any]
         # What the run is about, as data: the verifier answers these acceptance items one
         # by one, so a harness that is given them can answer them verbatim.
         "task": run_spec["task"],
+        # Company, team, and project knowledge standards auto-fed to delegated runs.
+        "knowledgeContext": run_spec["knowledgeContext"],
         # The repository to work in, from the agent's repo grant: {repo, url, branch,
         # base}. Null when the policy grants no repo; the runner then gives the run an
         # empty scratch directory, never the daemon's own working directory.
@@ -917,16 +919,30 @@ def _clone_url(repo: str) -> str:
 
 def _run_spec(conn, org_id: str, lease: Mapping[str, Any], agent_member_id: str | None,
               view: Any) -> dict[str, Any]:
-    """The model, the task facts and the repository a granted lease runs with."""
-    from hoja_server import agent_verify
+    """The model, the task facts, knowledge context, and the repository a granted lease runs with."""
+    from hoja_server import agent_verify, knowledge
 
-    found = _row(conn, select(issue.c.identifier, issue.c.title, issue.c.description).where(
-        and_(issue.c.id == lease["task_id"], issue.c.organization_id == org_id)))
+    found = _row(
+        conn,
+        select(
+            issue.c.identifier,
+            issue.c.title,
+            issue.c.description,
+            issue.c.team_id,
+            issue.c.project_id,
+        ).where(and_(issue.c.id == lease["task_id"], issue.c.organization_id == org_id)),
+    )
     task = None
     if found:
         task = {"id": lease["task_id"], "identifier": found["identifier"],
                 "title": found["title"],
                 "acceptance": agent_verify.acceptance_items(found["description"])}
+    knowledge_context = knowledge.resolve_knowledge_context(
+        conn,
+        org_id,
+        team_id=found["team_id"] if found else None,
+        project_id=found["project_id"] if found else None,
+    )
     model = None
     if agent_member_id:
         model = conn.execute(select(agent_member.c.model).where(and_(
@@ -956,7 +972,7 @@ def _run_spec(conn, org_id: str, lease: Mapping[str, Any], agent_member_id: str 
             branch = f"{branch}{str(task['identifier']).lower()}"
         repo = {"repo": grant.repo, "url": _clone_url(grant.repo), "branch": branch,
                 "source": "agent"}
-    return {"model": model, "task": task, "repo": repo}
+    return {"model": model, "task": task, "repo": repo, "knowledgeContext": knowledge_context}
 
 
 def _audit_lease(engine, action: str, lease: Mapping[str, Any], runner_row: Mapping[str, Any],

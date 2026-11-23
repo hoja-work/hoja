@@ -31,6 +31,7 @@ from hoja_server.agent_threads import _owned as _owned_thread
 from hoja_server.agent_threads import _title_from
 from hoja_server.db import model_provider
 from hoja_server.denials import DENY_HINT, READ_ONLY_HINT, read_only_violation
+from hoja_server.knowledge import resolve_knowledge_context
 from hoja_server.model_providers import validate_model_base_url
 from hoja_server.secrets_box import decrypt_secret
 
@@ -110,6 +111,7 @@ class AgentDeps:
         self.schema = schema
         self.context = context
         self.snapshot: str | None = None
+        self.knowledge: str | None = None
         # Durable runs route the graphql tool through a checkpointed step and stream text to a sink.
         self.graphql_runner = graphql_runner
         self.sink = sink
@@ -128,10 +130,39 @@ async def _run_graphql(deps: AgentDeps, query: str, variables: dict) -> dict:
     return result
 
 
-def build_agent(model, schema_sdl: str, connector: ConnectorBinding | None = None, *,
-                name: str | None = None, capabilities: list | None = None, toolsets: list | None = None) -> Agent:
+def _merge_connector_bindings(
+    connector: ConnectorBinding | None,
+    connectors: list[ConnectorBinding] | None,
+) -> list[ConnectorBinding]:
+    combined: list[ConnectorBinding] = []
+    seen_keys: set[tuple[str, str]] = set()
+    candidates: list[ConnectorBinding] = []
+    if connectors:
+        candidates.extend(connectors)
+    if connector is not None:
+        candidates.append(connector)
+    for binding in candidates:
+        key = (binding.url, binding.id)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        combined.append(binding)
+    return combined
+
+
+def build_agent(
+    model,
+    schema_sdl: str,
+    connector: ConnectorBinding | None = None,
+    *,
+    connectors: list[ConnectorBinding] | None = None,
+    name: str | None = None,
+    capabilities: list | None = None,
+    toolsets: list | None = None,
+) -> Agent:
     if toolsets is None:
-        toolsets = [connector_toolset(connector)] if connector is not None else []
+        bindings = _merge_connector_bindings(connector, connectors)
+        toolsets = [connector_toolset(binding) for binding in bindings]
     # ask_user is an output tool: it ends the run and never receives deps, so it cannot read or change workspace data.
     agent = Agent(
         model,
@@ -145,15 +176,23 @@ def build_agent(model, schema_sdl: str, connector: ConnectorBinding | None = Non
 
     @agent.instructions
     async def workspace_instructions(ctx: RunContext[AgentDeps]) -> str:
-        """Compose the system prompt per run from the fixed working examples and the user's live workspace state."""
-        # Instructions are re-evaluated on every model step; load the snapshot once per run.
+        """Compose the system prompt per run from the fixed working examples, live workspace state, and company knowledge."""
+        # Instructions are re-evaluated on every model step; load snapshot & knowledge once per run.
         if ctx.deps.snapshot is None:
             async def fetch(query: str, variables: dict) -> dict:
                 _ok, result = await graphql_run(ctx.deps.schema, query, variables, ctx.deps.context)
                 return result.get("data") or {}
 
             ctx.deps.snapshot = await workspace_snapshot(fetch, ctx.deps.context.get("user_id"))
-        return compose_prompt(INSTRUCTIONS, ctx.deps.snapshot)
+        if ctx.deps.knowledge is None:
+            store = ctx.deps.context.get("store")
+            org_id = ctx.deps.context.get("org_id")
+            if store is not None and org_id:
+                with store.engine.connect() as conn:
+                    ctx.deps.knowledge = resolve_knowledge_context(conn, org_id)
+            else:
+                ctx.deps.knowledge = ""
+        return compose_prompt(INSTRUCTIONS, ctx.deps.snapshot, knowledge=ctx.deps.knowledge)
 
     @agent.tool
     async def schema(ctx: RunContext[AgentDeps]) -> str:
@@ -192,10 +231,18 @@ def build_agent(model, schema_sdl: str, connector: ConnectorBinding | None = Non
 
 @dataclass(frozen=True)
 class ConnectorBinding:
-    """Where the Google Workspace MCP server lives and the signed principal for this request."""
+    """Where a connector MCP server lives and the signed principal for this request."""
 
     url: str
     principal: str
+    provider: str = "google_workspace"
+    toolset_id: str | None = None
+
+    @property
+    def id(self) -> str:
+        if self.toolset_id:
+            return self.toolset_id
+        return self.provider.replace("_", "-")
 
 
 def connector_toolset(binding: ConnectorBinding) -> MCPToolset:
@@ -203,7 +250,7 @@ def connector_toolset(binding: ConnectorBinding) -> MCPToolset:
         binding.url,
         headers={PRINCIPAL_HEADER: binding.principal},
     )
-    return MCPToolset(transport, id="google-workspace")
+    return MCPToolset(transport, id=binding.id)
 
 
 async def graphql_run(schema, query: str, variables: dict, context: dict):
@@ -249,7 +296,19 @@ def _chunk(completion_id: str, delta: dict, finish: str | None = None) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
 
-async def stream_reply(store, org_id: str, uid: str, messages: list[dict], schema, schema_sdl: str, base_context: dict, thread_id: str | None = None, connector: ConnectorBinding | None = None) -> AsyncIterator[str]:
+async def stream_reply(
+    store,
+    org_id: str,
+    uid: str,
+    messages: list[dict],
+    schema,
+    schema_sdl: str,
+    base_context: dict,
+    thread_id: str | None = None,
+    connector: ConnectorBinding | None = None,
+    *,
+    connectors: list[ConnectorBinding] | None = None,
+) -> AsyncIterator[str]:
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     prompt, history = _history(messages)
     row = _enabled_provider(store, org_id)
@@ -275,7 +334,12 @@ async def stream_reply(store, org_id: str, uid: str, messages: list[dict], schem
             http_client=http_client,
         )
     )
-    agent = build_agent(OpenAIChatModel(row["model_id"], provider=provider), schema_sdl, connector)
+    agent = build_agent(
+        OpenAIChatModel(row["model_id"], provider=provider),
+        schema_sdl,
+        connector,
+        connectors=connectors,
+    )
     deps = AgentDeps(schema, dict(base_context))
     with store.engine.begin() as conn:
         if thread_id and _owned_thread(conn, org_id, uid, thread_id):
