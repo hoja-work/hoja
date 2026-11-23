@@ -413,3 +413,129 @@ def test_cross_tenant_isolation(world):
     )
     assert "errors" not in tu_resp, tu_resp
     assert tu_resp["data"]["taskUsage"] is None
+
+
+# --- HOJA-748: the token-burner ranking must reconcile with what it is built from ---
+
+
+def _run(conn, org_id, *, run_id, agent_id, session_id, tokens, at):
+    usage_ledger.record_report(
+        conn,
+        organization_id=org_id,
+        run_id=run_id,
+        agent_user_id=agent_id,
+        session_id=session_id,
+        usage={
+            "model": "anthropic/claude-sonnet-4-5",
+            "input_tokens": tokens,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "run_seconds": 60,
+            "auth_mode": "byo-key",
+            "compute": "customer",
+        },
+        at=at,
+    )
+
+
+def test_archived_task_burn_stays_in_task_tables(world):
+    """A run on a task that was archived afterwards still counts toward the person's
+    total, so it must also appear in the task leaderboard and the profile's
+    "Top token tasks"; otherwise the "#1 token burner" badge points at tokens that no
+    breakdown on the page can explain (live: 43.7k tokens, top task showing 0)."""
+    from hoja_server.profile_metrics import compute_leaderboard, compute_member_profile
+
+    seeded = _seed_usage_and_activity(world)
+    alpha = world["alpha"]
+    engine = world["engine"]
+    with engine.begin() as conn:
+        conn.execute(
+            issue.update()
+            .where(issue.c.id == seeded["i1"]["id"])
+            .values(archived_at=datetime.now(timezone.utc).isoformat())
+        )
+        lb = compute_leaderboard(conn, alpha["org_id"], days=30, heatmap_days=30, limit=50)
+        prof = compute_member_profile(conn, alpha["org_id"], alpha["user_id"], days=30)
+        agent_prof = compute_member_profile(conn, alpha["org_id"], seeded["agent_id"], days=30)
+
+    assert lb["people"][0]["userId"] == alpha["user_id"]
+    assert lb["people"][0]["tokens"] == 150_000
+    assert sum(t["tokens"] for t in lb["tasks"]) == lb["totalTokens"]
+    assert lb["tasks"][0]["issueId"] == seeded["i1"]["id"]
+    assert lb["tasks"][0]["tokens"] == 150_000
+
+    assert prof["totalTokens"] == 150_000
+    assert [t["issueId"] for t in prof["topTasks"]] == [seeded["i1"]["id"]]
+    assert prof["topTasks"][0]["tokens"] == 150_000
+    assert sum(t["tokens"] for t in agent_prof["topTasks"]) == agent_prof["totalTokens"]
+
+
+def test_agent_delegated_run_is_booked_to_the_task_owner(world):
+    """When an agent opens the session (an orchestrator delegating to a worker), the
+    session creator is not a person. The burn must fall back to the task's human owner
+    instead of vanishing from the people ranking."""
+    from hoja_server.profile_metrics import compute_leaderboard, compute_member_profile
+
+    seeded = _seed_usage_and_activity(world)
+    alpha = world["alpha"]
+    engine = world["engine"]
+    orchestrator = _create_agent(world, name="Orchestrator")
+    now = datetime.now(timezone.utc).isoformat()
+    with engine.begin() as conn:
+        sid = new_id()
+        conn.execute(
+            agent_session.insert().values(
+                id=sid,
+                organization_id=alpha["org_id"],
+                issue_id=seeded["i2"]["id"],
+                agent_user_id=seeded["agent_id"],
+                creator_id=orchestrator,
+                status="active",
+                state="running",
+                trigger="delegation",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        _run(conn, alpha["org_id"], run_id="run-sub", agent_id=seeded["agent_id"],
+             session_id=sid, tokens=500_000, at=now)
+        lb = compute_leaderboard(conn, alpha["org_id"], days=30, heatmap_days=30, limit=50)
+        prof = compute_member_profile(conn, alpha["org_id"], seeded["member_id"], days=30)
+
+    # i2 is Kevin's task: 15k from his own delegation + 500k from the sub-run.
+    assert lb["people"][0]["userId"] == seeded["member_id"]
+    assert lb["people"][0]["tokens"] == 515_000
+    assert sum(p["tokens"] for p in lb["people"]) == lb["totalTokens"]
+    assert prof["totalTokens"] == 515_000
+    assert prof["rankByTokens"] == 1
+
+
+def test_agent_rows_use_the_agent_display_name(world):
+    """An agent's ``name`` is its handle (``a19-probe-pi-122803``); the label people set
+    is ``display_name`` ("Same as the name" when empty). Leaderboard rows must show it."""
+    from hoja_server.profile_metrics import (
+        compute_leaderboard,
+        compute_member_profile,
+        compute_task_usage,
+    )
+
+    seeded = _seed_usage_and_activity(world)
+    alpha = world["alpha"]
+    engine = world["engine"]
+    with engine.begin() as conn:
+        conn.execute(
+            user.update().where(user.c.id == seeded["agent_id"]).values(
+                name="coder-probe-122803", display_name="Coder Bot"
+            )
+        )
+        lb = compute_leaderboard(conn, alpha["org_id"], days=30, heatmap_days=30, limit=50)
+        agent_prof = compute_member_profile(conn, alpha["org_id"], seeded["agent_id"], days=30)
+        tu = compute_task_usage(conn, alpha["org_id"], seeded["i1"]["id"])
+
+    row = next(a for a in lb["agents"] if a["agentUserId"] == seeded["agent_id"])
+    assert row["name"] == "Coder Bot"
+    assert lb["tasks"][0]["delegateName"] == "Coder Bot"
+    assert agent_prof["user"]["name"] == "Coder Bot"
+    assert tu["breakdown"][0]["agentName"] == "Coder Bot"
+    # People keep their full name.
+    assert lb["people"][0]["name"] == "Luis"

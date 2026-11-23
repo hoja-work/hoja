@@ -381,46 +381,76 @@ def _load_workspace_context(conn, org_id: str) -> dict[str, Any]:
             select(workflow_state).where(workflow_state.c.organization_id == org_id)
         ).mappings().all()
     }
-    issues = {
+    # Every issue, archived included: a run's tokens stay in a member's total after its
+    # task is archived, so the task tables and the human fallback must still resolve it.
+    # ``issues`` is the live subset used for open/completed counts.
+    all_issues = {
         str(r["id"]): dict(r)
         for r in conn.execute(
-            select(issue).where(
-                and_(issue.c.organization_id == org_id, issue.c.archived_at.is_(None))
-            )
+            select(issue).where(issue.c.organization_id == org_id)
         ).mappings().all()
     }
+    issues = {iid: row for iid, row in all_issues.items() if row.get("archived_at") is None}
     sessions = {
         str(r["id"]): dict(r)
         for r in conn.execute(
             select(agent_session).where(agent_session.c.organization_id == org_id)
         ).mappings().all()
     }
-    return {"users": users, "states": states, "issues": issues, "sessions": sessions}
+    return {
+        "users": users,
+        "states": states,
+        "issues": issues,
+        "all_issues": all_issues,
+        "sessions": sessions,
+    }
+
+
+def _is_human(row: dict[str, Any] | None) -> bool:
+    return bool(row) and (row.get("kind") or "human") == "human"
 
 
 def _display_name(row: dict[str, Any] | None, fallback: str) -> str:
+    """The label a row is shown under.
+
+    A person's ``name`` is their full name. An agent's ``name`` is its handle (for example
+    ``a19-probe-pi-122803``) and ``display_name`` is the label set in its settings, which
+    falls back to the handle when empty, so agents prefer ``display_name``.
+    """
     if not row:
         return fallback
-    return str(row.get("name") or row.get("display_name") or row.get("email") or fallback)
+    if (row.get("kind") or "human") == "agent":
+        order = (row.get("display_name"), row.get("name"))
+    else:
+        order = (row.get("name"), row.get("display_name"))
+    return str(next((v for v in order if v), None) or row.get("email") or fallback)
 
 
 def _usage_human_owner(
     ev: dict[str, Any],
     sessions: dict[str, dict[str, Any]],
     issues: dict[str, dict[str, Any]],
+    users: dict[str, dict[str, Any]],
 ) -> tuple[str | None, str | None]:
-    """Return (issue_id, human_user_id) for one usage_event row."""
+    """Return (issue_id, human_user_id) for one usage_event row.
+
+    The person a run is booked to is the first *human* among the session's creator, the
+    task's assignee and the task's creator. A session an agent opened (an orchestrator
+    delegating to a worker) therefore lands on the task's owner instead of on the agent,
+    which the people ranking cannot hold. ``issues`` must include archived issues.
+    """
     sess = sessions.get(str(ev["session_id"])) if ev.get("session_id") else None
     issue_id = str(sess["issue_id"]) if sess and sess.get("issue_id") else None
     iss = issues.get(issue_id) if issue_id else None
-    human_id = None
-    if sess and sess.get("creator_id"):
-        human_id = str(sess["creator_id"])
-    elif iss and iss.get("assignee_id"):
-        human_id = str(iss["assignee_id"])
-    elif iss and iss.get("creator_id"):
-        human_id = str(iss["creator_id"])
-    return issue_id, human_id
+    candidates = (
+        sess.get("creator_id") if sess else None,
+        iss.get("assignee_id") if iss else None,
+        iss.get("creator_id") if iss else None,
+    )
+    for candidate in candidates:
+        if candidate and _is_human(users.get(str(candidate))):
+            return issue_id, str(candidate)
+    return issue_id, None
 
 
 def compute_leaderboard(
@@ -442,6 +472,7 @@ def compute_leaderboard(
     users = ctx["users"]
     states = ctx["states"]
     issues = ctx["issues"]
+    all_issues = ctx["all_issues"]
     sessions = ctx["sessions"]
 
     usage_rows = conn.execute(
@@ -580,7 +611,7 @@ def compute_leaderboard(
         cred = max(0, int(ev["credits"] or 0))
         mins = max(0, int(ev["run_minutes"] or 0))
         run_key = str(ev["run_id"] or ev["session_id"] or ev["id"])
-        issue_id, human_id = _usage_human_owner(dict(ev), sessions, issues)
+        issue_id, human_id = _usage_human_owner(dict(ev), sessions, all_issues, users)
 
         if day and day >= heatmap_start:
             db = daily_map[day]
@@ -623,8 +654,8 @@ def compute_leaderboard(
                 person["runIds"].add(run_key)
                 person["activeDaySet"].add(day)
 
-        if issue_id and issue_id in issues:
-            iss = issues[issue_id]
+        if issue_id and issue_id in all_issues:
+            iss = all_issues[issue_id]
             t = tasks_map.get(issue_id)
             if t is None:
                 st = states.get(str(iss.get("state_id") or ""))
@@ -785,6 +816,7 @@ def compute_member_profile(
 
     states = ctx["states"]
     issues = ctx["issues"]
+    all_issues = ctx["all_issues"]
     sessions = ctx["sessions"]
 
     team_rows = conn.execute(
@@ -848,7 +880,7 @@ def compute_member_profile(
         cred = max(0, int(ev["credits"] or 0))
         mins = max(0, int(ev["run_minutes"] or 0))
         run_key = str(ev["run_id"] or ev["session_id"] or ev["id"])
-        issue_id, human_id = _usage_human_owner(dict(ev), sessions, issues)
+        issue_id, human_id = _usage_human_owner(dict(ev), sessions, all_issues, users)
 
         if issue_id:
             all_task_usage[issue_id]["tokens"] += toks
@@ -879,8 +911,8 @@ def compute_member_profile(
         run_ids.add(run_key)
         active_days_window.add(day)
 
-        if issue_id and issue_id in issues:
-            iss = issues[issue_id]
+        if issue_id and issue_id in all_issues:
+            iss = all_issues[issue_id]
             t = task_usage_map.get(issue_id)
             if t is None:
                 st = states.get(str(iss.get("state_id") or ""))
@@ -1118,7 +1150,8 @@ def compute_task_usage(conn, org_id: str, issue_ref: str) -> dict[str, Any] | No
     users = {}
     if agent_ids:
         for row in conn.execute(
-            select(user.c.id, user.c.name, user.c.display_name, user.c.email, user.c.avatar_seed)
+            select(user.c.id, user.c.name, user.c.display_name, user.c.email, user.c.avatar_seed,
+                   user.c.kind)
             .where(and_(user.c.organization_id == org_id, user.c.id.in_(agent_ids)))
         ).mappings().all():
             users[str(row["id"])] = dict(row)
