@@ -4264,6 +4264,47 @@ def create_app(
     async def health(request: Request):
         return JSONResponse({"status": "ok"})
 
+    async def perf_rum_ingest(request: Request):
+        """Accept bounded, schema-validated browser RUM beacons into hoja_server.ops.
+
+        Writes to journald via ``hoja_server.ops`` rather than Postgres so client
+        telemetry adds zero database write load. Suppresses the edge ``rest`` line
+        so each accepted event writes one clean ``transport=rum`` line.
+        """
+        observability.suppress(request.scope)
+        raw = await request.body()
+        if len(raw) > 8192:
+            return JSONResponse({"error": "payload too large"}, status_code=413)
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except Exception:
+            return JSONResponse({"error": "invalid json"}, status_code=400)
+        events = payload.get("events") if isinstance(payload, dict) else None
+        if not isinstance(events, list) or len(events) > 20:
+            return JSONResponse({"error": "expected events list (max 20)"}, status_code=400)
+        org = None
+        actor_kind = None
+        actor_id = None
+        try:
+            auth_ctx = _auth(request)
+            if auth_ctx is not None:
+                org = auth_ctx.org_id
+                actor_kind = getattr(auth_ctx, "actor_kind", None)
+                actor_id = getattr(auth_ctx, "user_id", None)
+        except Exception:
+            pass
+        accepted = 0
+        for ev in events:
+            if isinstance(ev, dict) and observability.log_rum_event(
+                ev,
+                host=request.headers.get("host"),
+                org=org,
+                actor_kind=actor_kind,
+                actor_id=actor_id,
+            ):
+                accepted += 1
+        return JSONResponse({"accepted": accepted}, status_code=202)
+
     async def build_version(request: Request):
         # Which build this instance is running. A phone install and the site
         # drift invisibly without it: the APK names a version, and until now
@@ -4658,6 +4699,7 @@ def create_app(
             Route("/api/uploads", upload_create, methods=["POST"]),
             Route("/api/uploads/{file_id}", upload_serve, methods=["GET"]),
             Route("/api/traces", trace_ingest, methods=["POST"]),
+            Route("/api/perf/rum", perf_rum_ingest, methods=["POST"]),
             Route("/api/views/{view_id}/export.csv", view_export_csv, methods=["GET"]),
             Route("/sync/bootstrap", sync_bootstrap, methods=["GET"]),
             Route("/sync/delta", sync_delta, methods=["GET"]),

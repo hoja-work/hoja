@@ -2422,6 +2422,9 @@ def make_engine(target: str | Path) -> Engine:
             # Behind a transaction pooler a server-side prepared statement may land on another backend.
             kwargs["connect_args"] = {"prepare_threshold": None}
     eng = create_engine(url, **kwargs)
+    from hoja_server.observability import install_sqlalchemy_timing
+
+    install_sqlalchemy_timing(eng)
     if backend == "postgresql":
         from hoja_server.tenant_context import install
 

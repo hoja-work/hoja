@@ -47,6 +47,8 @@ from starlette.datastructures import Headers, MutableHeaders
 
 #: The header a client may send to have its own correlation id echoed back.
 REQUEST_ID_HEADER = "X-Request-Id"
+#: Standard W3C Server-Timing header emitted on HTTP responses.
+SERVER_TIMING_HEADER = "Server-Timing"
 #: Bounded so a hostile header cannot become a log-flooding field.
 MAX_REQUEST_ID_LENGTH = 128
 
@@ -58,11 +60,45 @@ _REQUEST_ID = re.compile(rf"[A-Za-z0-9._:-]{{1,{MAX_REQUEST_ID_LENGTH}}}")
 #: Every operations line is written here and nowhere else.
 LOG = logging.getLogger("hoja_server.ops")
 
+
+class RequestPerf:
+    """Per-request SQL and connection-pool accumulator bound in a ``ContextVar``.
+
+    Tracks counts and durations only — never SQL text, bind parameters, or
+    values — so the operations log keeps its zero-payload guarantee.
+    """
+
+    __slots__ = ("pool_checkouts", "pool_wait_ms", "sql_count", "sql_max_ms", "sql_ms")
+
+    def __init__(self) -> None:
+        self.sql_count: int = 0
+        self.sql_ms: float = 0.0
+        self.sql_max_ms: float = 0.0
+        self.pool_wait_ms: float = 0.0
+        self.pool_checkouts: int = 0
+
+    def record_sql(self, duration_ms: float) -> None:
+        if duration_ms < 0:
+            duration_ms = 0.0
+        self.sql_count += 1
+        self.sql_ms += duration_ms
+        if duration_ms > self.sql_max_ms:
+            self.sql_max_ms = duration_ms
+
+    def record_pool_wait(self, duration_ms: float) -> None:
+        if duration_ms < 0:
+            duration_ms = 0.0
+        self.pool_checkouts += 1
+        self.pool_wait_ms += duration_ms
+
+
 #: The id of the operation being served. Read-only for everyone below the edge.
 _CURRENT: ContextVar[str | None] = ContextVar("hoja_request_id", default=None)
 #: The request's Host header, for the paths that log without a ``scope`` — the
 #: MCP tool dispatcher runs in the SDK's own task and only has context.
 _HOST: ContextVar[str | None] = ContextVar("hoja_request_host", default=None)
+#: Per-request DB/pool timing accumulator.
+_PERF: ContextVar[RequestPerf | None] = ContextVar("hoja_request_perf", default=None)
 
 #: ``scope`` key holding what the endpoint learned about this operation.
 _ANNOTATION = "hoja_ops"
@@ -111,6 +147,158 @@ def current_request_id() -> str | None:
 def current_host() -> str | None:
     """The Host of the request being served, or ``None`` outside a request."""
     return _HOST.get()
+
+
+def current_perf() -> RequestPerf | None:
+    """The per-request DB/pool timing accumulator, or ``None`` outside a request."""
+    return _PERF.get()
+
+
+def install_sqlalchemy_timing(engine: Any) -> None:
+    """Attach per-request SQL and pool-wait timing hooks to a SQLAlchemy Engine.
+
+    Idempotent: calling twice on the same engine is a no-op. Captures counts
+    and elapsed milliseconds only — never SQL strings, bind parameters, or
+    result values.
+    """
+    from sqlalchemy import event
+
+    if getattr(engine, "_hoja_perf_installed", False):
+        return
+    engine._hoja_perf_installed = True
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def _before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+        stack = conn.info.setdefault("_hoja_sql_t0", [])
+        stack.append(time.perf_counter())
+
+    @event.listens_for(engine, "after_cursor_execute")
+    def _after_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+        stack = conn.info.get("_hoja_sql_t0")
+        if not stack:
+            return
+        t0 = stack.pop()
+        perf = _PERF.get()
+        if perf is not None:
+            perf.record_sql((time.perf_counter() - t0) * 1000.0)
+
+    @event.listens_for(engine, "handle_error")
+    def _handle_error(exception_context):
+        conn = getattr(exception_context, "connection", None)
+        if conn is None:
+            return
+        stack = conn.info.get("_hoja_sql_t0")
+        if not stack:
+            return
+        t0 = stack.pop()
+        perf = _PERF.get()
+        if perf is not None:
+            perf.record_sql((time.perf_counter() - t0) * 1000.0)
+
+    # Wrap pool.connect() (public Pool API) to measure checkout wait time,
+    # including QueuePool saturation when all connections are busy.
+    pool = engine.pool
+    orig_connect = pool.connect
+
+    def _timed_pool_connect(*args: Any, **kwargs: Any) -> Any:
+        perf = _PERF.get()
+        if perf is None:
+            return orig_connect(*args, **kwargs)
+        t0 = time.perf_counter()
+        try:
+            return orig_connect(*args, **kwargs)
+        finally:
+            perf.record_pool_wait((time.perf_counter() - t0) * 1000.0)
+
+    pool.connect = _timed_pool_connect
+
+
+def format_server_timing(total_ms: float, perf: RequestPerf | None) -> str:
+    """Format a W3C ``Server-Timing`` header value for the current response."""
+    parts = [f"app;dur={max(0.0, total_ms):.1f}"]
+    if perf is not None:
+        parts.append(f'db;dur={perf.sql_ms:.1f};desc="q={perf.sql_count}"')
+        if perf.pool_wait_ms > 0 or perf.pool_checkouts > 0:
+            parts.append(f"pool;dur={perf.pool_wait_ms:.1f}")
+    return ", ".join(parts)
+
+
+#: Allowed RUM event kinds and route characters (no query strings or PII).
+_RUM_KINDS = frozenset({"nav", "route", "longtask"})
+_RUM_ROUTE = re.compile(r"^/[A-Za-z0-9._:/-]{0,120}$")
+_RUM_NUMERIC_FIELDS = (
+    "duration_ms",
+    "ttfb_ms",
+    "fcp_ms",
+    "lcp_ms",
+    "dom_interactive_ms",
+    "route_ms",
+    "longtask_ms",
+    "longtask_count",
+    "server_app_ms",
+    "server_db_ms",
+    "server_pool_ms",
+    "js_transfer_kb",
+)
+
+
+def log_rum_event(
+    event_data: dict[str, Any],
+    *,
+    host: str | None = None,
+    org: str | None = None,
+    actor_kind: str | None = None,
+    actor_id: str | None = None,
+) -> bool:
+    """Validate and log one browser RUM event to ``hoja_server.ops``.
+
+    Writes to journald (via ``hoja_server.ops``) rather than Postgres so client
+    telemetry never adds primary DB write load. Returns True if logged.
+    """
+    kind = event_data.get("kind")
+    route = event_data.get("route")
+    if kind not in _RUM_KINDS or not isinstance(route, str) or not _RUM_ROUTE.fullmatch(route):
+        return False
+    # Strip any accidental raw UUIDs or issue numbers to keep routes low-cardinality.
+    norm_route = re.sub(
+        r"/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+        "/:uuid",
+        route,
+    )
+    norm_route = re.sub(r"/[A-Z]{2,10}-\d+", "/:issue", norm_route)
+    actor = f"{actor_kind}:{actor_id}" if actor_kind and actor_id else (actor_kind or actor_id)
+    slowest_req = valid_request_id(event_data.get("slowest_request_id"))
+    fields: list[tuple[str, Any]] = [
+        ("request_id", slowest_req or current_request_id()),
+        ("host", host or current_host()),
+        ("org", org),
+        ("actor", actor),
+        ("transport", "rum"),
+        ("operation", f"{kind} {norm_route}"),
+        ("status", 200),
+        ("outcome", "ok"),
+    ]
+    for key in _RUM_NUMERIC_FIELDS:
+        raw = event_data.get(key)
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool) and 0 <= raw <= 600_000:
+            if key == "longtask_count":
+                fields.append((key, int(raw)))
+            else:
+                fields.append((key, f"{float(raw):.1f}"))
+    if not any(k == "duration_ms" for k, _ in fields):
+        primary = (
+            event_data.get("route_ms")
+            or event_data.get("lcp_ms")
+            or event_data.get("longtask_ms")
+            or event_data.get("ttfb_ms")
+            or 0.0
+        )
+        if isinstance(primary, (int, float)) and not isinstance(primary, bool) and 0 <= primary <= 600_000:
+            fields.append(("duration_ms", f"{float(primary):.1f}"))
+        else:
+            fields.append(("duration_ms", "0.0"))
+    LOG.info("op %s", " ".join(f"{key}={_value(value)}" for key, value in fields))
+    return True
 
 
 def bind(request_id: str) -> Token:
@@ -206,6 +394,7 @@ def log_operation(
     org: str | None = None,
     actor_kind: str | None = None,
     actor_id: str | None = None,
+    perf: RequestPerf | None = None,
 ) -> None:
     """Write one ``key=value`` operations line.
 
@@ -214,8 +403,10 @@ def log_operation(
     """
     if duration_ms is None:
         duration_ms = (time.perf_counter() - started) * 1000 if started is not None else 0.0
+    if perf is None:
+        perf = _PERF.get()
     actor = f"{actor_kind}:{actor_id}" if actor_kind and actor_id else (actor_kind or actor_id)
-    fields = (
+    fields: list[tuple[str, Any]] = [
         ("request_id", request_id or current_request_id()),
         ("host", host or current_host()),
         ("org", org),
@@ -225,7 +416,14 @@ def log_operation(
         ("status", status),
         ("outcome", outcome),
         ("duration_ms", f"{duration_ms:.1f}"),
-    )
+    ]
+    if perf is not None:
+        fields.extend([
+            ("db_ms", f"{perf.sql_ms:.1f}"),
+            ("db_queries", perf.sql_count),
+            ("db_max_ms", f"{perf.sql_max_ms:.1f}"),
+            ("pool_ms", f"{perf.pool_wait_ms:.1f}"),
+        ])
     LOG.info("op %s", " ".join(f"{key}={_value(value)}" for key, value in fields))
 
 
@@ -263,14 +461,20 @@ class RequestIdMiddleware:
         headers = Headers(scope=scope)
         host = headers.get("host")
         request_id = valid_request_id(headers.get(REQUEST_ID_HEADER)) or new_request_id()
+        perf = RequestPerf()
         token = bind(request_id)
         host_token = _HOST.set(host)
+        perf_token = _PERF.set(perf)
         started = time.perf_counter()
         responded: dict[str, int | None] = {"status": None}
 
         async def send_with_request_id(message: dict) -> None:
             if message["type"] == "http.response.start":
-                MutableHeaders(scope=message)[REQUEST_ID_HEADER] = request_id
+                resp_headers = MutableHeaders(scope=message)
+                resp_headers[REQUEST_ID_HEADER] = request_id
+                if SERVER_TIMING_HEADER not in resp_headers:
+                    elapsed_ms = (time.perf_counter() - started) * 1000.0
+                    resp_headers[SERVER_TIMING_HEADER] = format_server_timing(elapsed_ms, perf)
                 responded["status"] = message["status"]
             await send(message)
 
@@ -298,7 +502,9 @@ class RequestIdMiddleware:
                         status=status,
                         outcome=outcome,
                         started=started,
+                        perf=perf,
                     )
             finally:
+                _PERF.reset(perf_token)
                 _HOST.reset(host_token)
                 reset(token)

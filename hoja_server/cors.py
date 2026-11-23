@@ -26,7 +26,8 @@ CORS_ORIGINS_ENV = "HOJA_CORS_ORIGINS"
 #: client can report the id of a request it wants investigated.
 ALLOWED_HEADERS = ["Authorization", "Content-Type", "Accept", "If-None-Match", "X-Request-Id"]
 #: ETag is read by the sync client to make conditional bootstrap requests.
-EXPOSED_HEADERS = ["ETag", "X-Request-Id"]
+#: Server-Timing exposes app/db/pool breakdown to PerformanceResourceTiming.
+EXPOSED_HEADERS = ["ETag", "X-Request-Id", "Server-Timing"]
 ALLOWED_METHODS = ["GET", "POST", "OPTIONS"]
 
 

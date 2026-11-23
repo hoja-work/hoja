@@ -10,6 +10,7 @@ import React, {
   useState,
 } from "react";
 import { createRoot } from "react-dom/client";
+import { initPerfTracking } from "./perf";
 import { lazyRoute } from "./lazyRoute";
 import { cn } from "cn";
 import { Dialog as StackDialog } from "radix-ui";
@@ -10620,6 +10621,7 @@ function NewIssue({
     </div>
   );
 }
+initPerfTracking();
 createRoot(document.getElementById("root")!).render(
   <>
     <App />

@@ -241,3 +241,71 @@ def test_the_streamed_mcp_response_carries_the_request_id(mcp_world):  # noqa: F
     )
     assert response.status_code == 200, response.text
     assert response.headers["x-request-id"] == request_id
+
+
+def test_server_timing_and_db_fields_maintain_closure(world):
+    """Every DB-backed request emits Server-Timing and db_ms/db_queries/pool_ms with closure."""
+    client, _engine, _seeded = world
+    with ops_lines() as lines:
+        response = client.post(
+            "/graphql",
+            headers=_auth({"X-Request-Id": "req-timing-1"}),
+            json={"query": "query ViewerTiming { viewer { id email } }"},
+        )
+    assert response.status_code == 200, response.text
+    st = response.headers.get("server-timing", "")
+    assert "app;dur=" in st, st
+    assert "db;dur=" in st, st
+    assert 'desc="q=' in st, st
+    assert len(lines) == 1
+    fields = _fields(lines[0].getMessage())
+    duration_ms = float(fields["duration_ms"])
+    db_ms = float(fields["db_ms"])
+    db_queries = int(fields["db_queries"])
+    db_max_ms = float(fields["db_max_ms"])
+    pool_ms = float(fields["pool_ms"])
+    assert db_queries >= 1
+    assert db_ms >= 0
+    assert db_max_ms <= db_ms + 0.2
+    # Closure: wall-clock app duration must cover SQL execution (allow 1ms rounding).
+    assert duration_ms + 1.0 >= db_ms
+    assert pool_ms >= 0
+
+
+def test_rum_ingest_logs_normalized_route_and_rejects_bad_payloads(world):
+    """Browser RUM beacons write normalized transport=rum lines without PII."""
+    client, _engine, _seeded = world
+    with ops_lines() as lines:
+        ok_resp = client.post(
+            "/api/perf/rum",
+            headers=_auth(),
+            json={
+                "events": [
+                    {
+                        "kind": "nav",
+                        "route": "/workspace/issue/HOJA-754",
+                        "ttfb_ms": 42.3,
+                        "lcp_ms": 510.7,
+                        "server_app_ms": 38.1,
+                        "server_db_ms": 12.4,
+                        "slowest_request_id": "req-timing-1",
+                        "secret_extra": "must-not-appear",
+                    }
+                ]
+            },
+        )
+    assert ok_resp.status_code == 202, ok_resp.text
+    assert ok_resp.json()["accepted"] == 1
+    assert len(lines) == 1
+    msg = lines[0].getMessage()
+    fields = _fields(msg)
+    assert fields["transport"] == "rum"
+    assert fields["operation"] == "nav /workspace/issue/:issue"
+    assert fields["request_id"] == "req-timing-1"
+    assert fields["lcp_ms"] == "510.7"
+    assert "must-not-appear" not in msg
+    assert "HOJA-754" not in msg
+
+    # Oversized payload rejected cleanly
+    big = client.post("/api/perf/rum", headers=_auth(), content=b"x" * 9000)
+    assert big.status_code == 413

@@ -57,8 +57,99 @@ type IssueSummary = {
   title: string;
   state?: { name?: string; type?: string; color?: string } | null;
 };
-const ISSUE_CHIP_QUERY =
-  "query AgentIssueChip($id:String!){issue(id:$id){identifier title state{name type color}}}";
+
+const ISSUE_CHIP_TTL_MS = 60_000;
+const ISSUE_CHIP_CACHE_MAX = 500;
+const ISSUE_CHIP_BATCH_MAX = 25;
+
+const issueChipCache = new Map<
+  string,
+  { value: IssueSummary | null; expiresAt: number }
+>();
+const issueChipInflight = new Map<string, Promise<IssueSummary | null>>();
+let pendingChipBatch: Array<{
+  identifier: string;
+  resolve: (value: IssueSummary | null) => void;
+}> = [];
+let chipFlushScheduled = false;
+
+function readCachedIssueChip(identifier: string): IssueSummary | null | undefined {
+  const entry = issueChipCache.get(identifier);
+  if (!entry) return undefined;
+  if (Date.now() > entry.expiresAt) {
+    issueChipCache.delete(identifier);
+    return undefined;
+  }
+  return entry.value;
+}
+
+function writeCachedIssueChip(identifier: string, value: IssueSummary | null): void {
+  if (issueChipCache.size >= ISSUE_CHIP_CACHE_MAX) {
+    const oldest = issueChipCache.keys().next().value;
+    if (oldest !== undefined) issueChipCache.delete(oldest);
+  }
+  issueChipCache.set(identifier, {
+    value,
+    expiresAt: Date.now() + ISSUE_CHIP_TTL_MS,
+  });
+}
+
+function flushIssueChipBatch(): void {
+  chipFlushScheduled = false;
+  const queued = pendingChipBatch;
+  pendingChipBatch = [];
+  for (let start = 0; start < queued.length; start += ISSUE_CHIP_BATCH_MAX) {
+    const chunk = queued.slice(start, start + ISSUE_CHIP_BATCH_MAX);
+    const varDefs = chunk.map((_, i) => `$id${i}:String!`).join(",");
+    const selections = chunk
+      .map(
+        (_, i) =>
+          `i${i}:issue(id:$id${i}){identifier title state{name type color}}`,
+      )
+      .join(" ");
+    const variables: Record<string, string> = {};
+    chunk.forEach((item, i) => {
+      variables[`id${i}`] = item.identifier;
+    });
+    const query = `query AgentIssueChipBatch(${varDefs}){${selections}}`;
+    fetch("/graphql", {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ query, variables }),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        const data = (d?.data ?? {}) as Record<string, IssueSummary | null>;
+        chunk.forEach((item, i) => {
+          const val = data[`i${i}`] ?? null;
+          if (val) writeCachedIssueChip(item.identifier, val);
+          item.resolve(val);
+        });
+      })
+      .catch(() => {
+        chunk.forEach((item) => item.resolve(null));
+      });
+  }
+}
+
+function loadIssueChip(identifier: string): Promise<IssueSummary | null> {
+  const cached = readCachedIssueChip(identifier);
+  if (cached !== undefined) return Promise.resolve(cached);
+  const existing = issueChipInflight.get(identifier);
+  if (existing) return existing;
+  const promise = new Promise<IssueSummary | null>((resolve) => {
+    pendingChipBatch.push({ identifier, resolve });
+    if (!chipFlushScheduled) {
+      chipFlushScheduled = true;
+      queueMicrotask(flushIssueChipBatch);
+    }
+  }).finally(() => {
+    issueChipInflight.delete(identifier);
+  });
+  issueChipInflight.set(identifier, promise);
+  return promise;
+}
 
 export function IssueChip({ identifier }: { identifier: string }) {
   const [open, setOpen] = useState(false);
@@ -69,24 +160,19 @@ export function IssueChip({ identifier }: { identifier: string }) {
     closeTimer.current = setTimeout(() => setOpen(false), 180);
   };
   useEffect(() => () => clearTimeout(closeTimer.current), []);
-  const [issue, setIssue] = useState<IssueSummary | null>(null);
+  const [issue, setIssue] = useState<IssueSummary | null>(
+    () => readCachedIssueChip(identifier) ?? null,
+  );
   useEffect(() => {
+    const cached = readCachedIssueChip(identifier);
+    if (cached !== undefined) {
+      setIssue(cached);
+      return;
+    }
     let cancelled = false;
-    fetch("/graphql", {
-      method: "POST",
-      credentials: "include",
-      headers: { "content-type": "application/json", ...authHeaders() },
-      body: JSON.stringify({
-        query: ISSUE_CHIP_QUERY,
-        variables: { id: identifier },
-      }),
-    })
-      .then((r) => r.json())
-      .then((d) => {
-        if (!cancelled && d?.data?.issue)
-          setIssue(d.data.issue as IssueSummary);
-      })
-      .catch(() => {});
+    void loadIssueChip(identifier).then((summary) => {
+      if (!cancelled && summary) setIssue(summary);
+    });
     return () => {
       cancelled = true;
     };
