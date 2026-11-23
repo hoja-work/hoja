@@ -88,13 +88,38 @@ def _e(value: object) -> str:
     return html.escape(str(value if value is not None else ""), quote=True)
 
 
-def _page(title: str, body: str, *, style: str = "") -> str:
+def _page(
+    title: str,
+    body: str,
+    *,
+    style: str = "",
+    description: str = "Sign in with Google to open your Hoja Cloud workspace.",
+    image_url: str = "https://app.hoja.work/og-image.png",
+) -> str:
     """One server-rendered Hoja page. ``style`` adds page-specific rules after the shared ones."""
     return (
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
         "<meta name=\"robots\" content=\"noindex\">"
-        f"<title>{_e(title)}</title><style>{_STYLE}{style}</style></head>"
+        "<meta name=\"theme-color\" content=\"#ffffff\">"
+        "<link rel=\"icon\" type=\"image/svg+xml\" href=\"/hoja-clover.8371400e.svg\">"
+        "<link rel=\"icon\" type=\"image/png\" sizes=\"32x32\" href=\"/favicon-32x32.png\">"
+        "<link rel=\"apple-touch-icon\" sizes=\"180x180\" href=\"/apple-touch-icon.png\">"
+        f"<title>{_e(title)}</title>"
+        f"<meta name=\"description\" content=\"{_e(description)}\">"
+        "<meta property=\"og:site_name\" content=\"Hoja\">"
+        "<meta property=\"og:type\" content=\"website\">"
+        f"<meta property=\"og:title\" content=\"{_e(title)}\">"
+        f"<meta property=\"og:description\" content=\"{_e(description)}\">"
+        f"<meta property=\"og:image\" content=\"{_e(image_url)}\">"
+        "<meta property=\"og:image:type\" content=\"image/png\">"
+        "<meta property=\"og:image:width\" content=\"1200\">"
+        "<meta property=\"og:image:height\" content=\"630\">"
+        "<meta name=\"twitter:card\" content=\"summary_large_image\">"
+        f"<meta name=\"twitter:title\" content=\"{_e(title)}\">"
+        f"<meta name=\"twitter:description\" content=\"{_e(description)}\">"
+        f"<meta name=\"twitter:image\" content=\"{_e(image_url)}\">"
+        f"<style>{_STYLE}{style}</style></head>"
         "<body><main>"
         "<div class=\"brand\"><span class=\"mark\" aria-hidden=\"true\"></span>Hoja</div>"
         f"{body}</main></body></html>"

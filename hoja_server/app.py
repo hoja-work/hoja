@@ -145,6 +145,22 @@ def _missing_packages(names: tuple[str, ...]) -> list[str]:
 # Content-hashed brand mark: the URL changes with the bytes, so CDN caches cannot pin an old response.
 BRAND_MARK = "hoja-clover.8371400e.svg"
 
+# Public root assets copied from app/frontend/public into _WEB_ROOT. Served
+# explicitly before the SPA catch-all so crawlers and mobile browsers receive
+# real images and metadata instead of index.html.
+_WEB_PUBLIC_FILES: dict[str, str] = {
+    BRAND_MARK: "image/svg+xml",
+    "og-image.png": "image/png",
+    "og-signup.png": "image/png",
+    "apple-touch-icon.png": "image/png",
+    "favicon-32x32.png": "image/png",
+    "icon-192.png": "image/png",
+    "site.webmanifest": "application/manifest+json",
+    "robots.txt": "text/plain; charset=utf-8",
+}
+
+_SEO_MARKER_RE = re.compile(r"<!-- SEO:START -->.*?<!-- SEO:END -->", re.DOTALL)
+
 #: The shape ``secrets.token_urlsafe(32)`` produces. Anything else is not an
 #: invitation code and must never be reflected into a link or a cookie.
 _INVITE_CODE_RE = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
@@ -4223,11 +4239,76 @@ def create_app(
             return JSONResponse({"status": "unavailable"}, status_code=503)
         return JSONResponse({"status": "ready"})
 
-    async def web_index(request: Request):
+    def _public_origin(request: Request) -> str:
+        raw_host = _signup_host(request).strip()
+        if raw_host and _valid_public_host(raw_host):
+            scheme = (
+                request.headers.get("x-forwarded-proto")
+                if _request_from_trusted_proxy(request)
+                else None
+            ) or request.url.scheme or "https"
+            if scheme not in ("http", "https"):
+                scheme = "https"
+            return f"{scheme}://{raw_host}"
+        return signup_config.control_plane_url or "https://app.hoja.work"
+
+    def _render_web_index(request: Request) -> Response:
+        import html as _html
+
         index = _WEB_ROOT / "index.html"
         if not index.is_file():
             return HTMLResponse(_UNBUILT_HTML, status_code=503)
-        return FileResponse(index)
+        raw_html = index.read_text(encoding="utf-8")
+        if not _SEO_MARKER_RE.search(raw_html):
+            return FileResponse(index)
+
+        origin = _public_origin(request)
+        path = request.url.path or "/"
+        is_signup = path == "/signup" or path.startswith("/signup/")
+        title = (
+            "Request a workspace — Hoja Cloud"
+            if is_signup
+            else "Hoja Cloud — One shared workspace for people and agents"
+        )
+        description = (
+            "Get a managed Hoja Cloud workspace on hoja.work for a flat $15/organization/month. "
+            "No per-seat pricing."
+            if is_signup
+            else "Collaborate on issues, projects, weekly cycles, reviews, and coding agent workflows in Hoja."
+        )
+        image_url = f"{origin}/og-signup.png" if is_signup else f"{origin}/og-image.png"
+        image_alt = (
+            "Hoja Cloud workspace signup preview"
+            if is_signup
+            else "Hoja Cloud workspace board and agent activity preview"
+        )
+        page_url = f"{origin}{path}"
+        e = lambda value: _html.escape(value, quote=True)
+        seo_block = "\n".join([
+            f"<title>{_html.escape(title)}</title>",
+            f'    <meta name="description" content="{e(description)}" />',
+            '    <meta property="og:site_name" content="Hoja" />',
+            '    <meta property="og:type" content="website" />',
+            f'    <meta property="og:title" content="{e(title)}" />',
+            f'    <meta property="og:description" content="{e(description)}" />',
+            f'    <meta property="og:url" content="{e(page_url)}" />',
+            f'    <meta property="og:image" content="{e(image_url)}" />',
+            f'    <meta property="og:image:secure_url" content="{e(image_url)}" />',
+            '    <meta property="og:image:type" content="image/png" />',
+            '    <meta property="og:image:width" content="1200" />',
+            '    <meta property="og:image:height" content="630" />',
+            f'    <meta property="og:image:alt" content="{e(image_alt)}" />',
+            '    <meta name="twitter:card" content="summary_large_image" />',
+            f'    <meta name="twitter:title" content="{e(title)}" />',
+            f'    <meta name="twitter:description" content="{e(description)}" />',
+            f'    <meta name="twitter:image" content="{e(image_url)}" />',
+            f'    <meta name="twitter:image:alt" content="{e(image_alt)}" />',
+        ])
+        rendered = _SEO_MARKER_RE.sub(lambda _m: seo_block, raw_html, count=1)
+        return HTMLResponse(rendered)
+
+    async def web_index(request: Request):
+        return _render_web_index(request)
 
     async def web_asset(request: Request):
         name = request.path_params["name"]
@@ -4236,12 +4317,15 @@ def create_app(
             return JSONResponse({"error": "Not found"}, status_code=404)
         return FileResponse(asset)
 
-    async def web_brand_mark(request: Request):
-        root = _WEB_ROOT.resolve()
-        asset = (root / BRAND_MARK).resolve()
-        if root not in asset.parents or not asset.is_file():
-            return JSONResponse({"error": "Not found"}, status_code=404)
-        return FileResponse(asset, media_type="image/svg+xml")
+    def _make_web_public_handler(filename: str, media_type: str):
+        async def _handler(request: Request):
+            root = _WEB_ROOT.resolve()
+            asset = (root / filename).resolve()
+            if root not in asset.parents or not asset.is_file():
+                return JSONResponse({"error": "Not found"}, status_code=404)
+            return FileResponse(asset, media_type=media_type)
+
+        return _handler
 
     async def web_fallback(request: Request):
         # A retired flat identifier still loads: /<workspace>/issue/HOJA-517
@@ -4251,10 +4335,7 @@ def create_app(
         retired = _retired_identifier_target(request)
         if retired is not None:
             return RedirectResponse(retired, status_code=302)
-        index = _WEB_ROOT / "index.html"
-        if not index.is_file():
-            return HTMLResponse(_UNBUILT_HTML, status_code=503)
-        return FileResponse(index)
+        return _render_web_index(request)
 
     def _retired_identifier_target(request: Request) -> str | None:
         parts = [part for part in request.url.path.split("/") if part]
@@ -4512,7 +4593,10 @@ def create_app(
             Mount("/mcp", app=mcp_endpoint),
             Route("/", web_index, methods=["GET"]),
             Route("/assets/{name:path}", web_asset, methods=["GET"]),
-            Route(f"/{BRAND_MARK}", web_brand_mark, methods=["GET"]),
+            *[
+                Route(f"/{filename}", _make_web_public_handler(filename, media_type), methods=["GET"])
+                for filename, media_type in _WEB_PUBLIC_FILES.items()
+            ],
             Route("/{path:path}", web_fallback, methods=["GET"]),
         ],
         lifespan=lifespan,
