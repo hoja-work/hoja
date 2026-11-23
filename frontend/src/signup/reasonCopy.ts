@@ -25,7 +25,7 @@ export const REASON_COPY = {
   not_authenticated: {
     title: 'Sign in with Google again',
     message:
-      'Your Google sign-in is missing or has expired. Start again with “Continue with Google”.',
+      'Your Google sign-in is missing or has expired. Start again with “Sign up with Google”.',
   },
   // -- policy ---------------------------------------------------------------
   already_member: {

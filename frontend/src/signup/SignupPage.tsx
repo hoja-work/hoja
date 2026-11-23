@@ -24,6 +24,7 @@ type PublicConfig = {
   available: boolean;
   sitekey: string | null;
   signInUrl: string | null;
+  loginUrl?: string | null;
   widgetScriptUrl: string;
 };
 
@@ -326,10 +327,7 @@ export function SignupPage() {
   const liveCheck = typed ? checkSlug(slug) : null;
   const liveIssue =
     liveCheck && !liveCheck.ok ? describeReason(liveCheck.reason).message : "";
-  const preview =
-    typed && (!liveCheck || !liveCheck.ok)
-      ? typed.toLowerCase()
-      : "your-workspace";
+  const preview = typed && liveCheck?.ok ? liveCheck.slug : "your-workspace";
 
   const signedIn = Boolean(session?.googleVerified);
   const heading = request
@@ -348,7 +346,7 @@ export function SignupPage() {
         : "You already have workspaces"
       : signedIn
         ? "Name your workspace"
-        : "Sign up with your identity provider";
+        : "Create your Hoja workspace";
   const sub = request
     ? request.status === "active"
       ? "Opening it now. You will sign in there with the same Google account."
@@ -525,9 +523,23 @@ export function SignupPage() {
                 className="max-w-md mt-2 mx-auto mb-8 text-[#666] text-[12.8px] tracking-[-0.01em] leading-[1.45]"
                 data-fidelity-state="signin-legal"
               >
-                By continuing you agree to the Hoja terms. We use Google to
-                verify who you are and Cloudflare Turnstile to check that a
-                person is asking — your Google password is never shared with us.
+                By continuing you agree to the{" "}
+                <a
+                  href="https://hoja.work/terms"
+                  className="text-[#242424] underline underline-offset-2"
+                >
+                  Hoja terms
+                </a>{" "}
+                and{" "}
+                <a
+                  href="https://hoja.work/privacy"
+                  className="text-[#242424] underline underline-offset-2"
+                >
+                  Privacy Policy
+                </a>
+                . We use Google to verify who you are and a quick human
+                verification check — your Google password is never shared with
+                us.
               </p>
               <div
                 className="grid gap-2.5 w-[94%] max-w-[320px] my-0 mx-auto"
@@ -543,79 +555,16 @@ export function SignupPage() {
                   </span>
                   <span>Sign up with Google</span>
                 </a>
-                <button
-                  type="button"
-                  className="flex items-center justify-center w-full py-2 px-3 border border-solid border-[#d8d6d4] rounded-sm bg-white shadow-[0_2px_4px_rgba(0,0,0,0.05)] text-[#242424] font-[inherit] text-[16px] font-normal leading-[inherit] no-underline cursor-pointer appearance-none transition-[color,border-color,background-color,box-shadow] duration-200 ease-[ease] [&:hover]:border-[#a9a8a6] [&:hover]:shadow-[0_1px_2px_rgba(0,0,0,0.08)] data-[fidelity-state~=is-pending]:cursor-not-allowed data-[fidelity-state~=is-pending]:text-[#6b6b6b] [&[data-fidelity-state~=is-pending]:hover]:border-[#d8d6d4] [&[data-fidelity-state~=is-pending]:hover]:shadow-[0_2px_4px_rgba(0,0,0,0.05)] shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                  data-fidelity-state="signin-provider is-pending"
-                  disabled
-                  aria-disabled="true"
-                >
-                  <span className="mr-3 shrink-0 opacity-50">
-                    <MicrosoftMark />
-                  </span>
-                  <span>Sign up with Microsoft</span>
-                  <em
-                    className="ml-[8.8px] text-[#8a8a8a] text-[9.92px] not-italic font-medium tracking-[0.08em] uppercase"
-                    data-fidelity-state="signin-pending"
-                  >
-                    Pending
-                  </em>
-                </button>
-                <button
-                  type="button"
-                  className="flex items-center justify-center w-full py-2 px-3 border border-solid border-[#d8d6d4] rounded-sm bg-white shadow-[0_2px_4px_rgba(0,0,0,0.05)] text-[#242424] font-[inherit] text-[16px] font-normal leading-[inherit] no-underline cursor-pointer appearance-none transition-[color,border-color,background-color,box-shadow] duration-200 ease-[ease] [&:hover]:border-[#a9a8a6] [&:hover]:shadow-[0_1px_2px_rgba(0,0,0,0.08)] data-[fidelity-state~=is-pending]:cursor-not-allowed data-[fidelity-state~=is-pending]:text-[#6b6b6b] [&[data-fidelity-state~=is-pending]:hover]:border-[#d8d6d4] [&[data-fidelity-state~=is-pending]:hover]:shadow-[0_2px_4px_rgba(0,0,0,0.05)] shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                  data-fidelity-state="signin-provider is-pending"
-                  disabled
-                  aria-disabled="true"
-                >
-                  <span className="mr-3 shrink-0 opacity-50">
-                    <GitHubMark />
-                  </span>
-                  <span>Sign up with GitHub</span>
-                  <em
-                    className="ml-[8.8px] text-[#8a8a8a] text-[9.92px] not-italic font-medium tracking-[0.08em] uppercase"
-                    data-fidelity-state="signin-pending"
-                  >
-                    Pending
-                  </em>
-                </button>
-                <button
-                  type="button"
-                  className="flex items-center justify-center w-full py-2 px-3 border border-solid border-[#d8d6d4] rounded-sm bg-white shadow-[0_2px_4px_rgba(0,0,0,0.05)] text-[#242424] font-[inherit] text-[16px] font-normal leading-[inherit] no-underline cursor-pointer appearance-none transition-[color,border-color,background-color,box-shadow] duration-200 ease-[ease] [&:hover]:border-[#a9a8a6] [&:hover]:shadow-[0_1px_2px_rgba(0,0,0,0.08)] data-[fidelity-state~=is-pending]:cursor-not-allowed data-[fidelity-state~=is-pending]:text-[#6b6b6b] [&[data-fidelity-state~=is-pending]:hover]:border-[#d8d6d4] [&[data-fidelity-state~=is-pending]:hover]:shadow-[0_2px_4px_rgba(0,0,0,0.05)] shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                  data-fidelity-state="signin-provider is-pending"
-                  disabled
-                  aria-disabled="true"
-                >
-                  <span className="mr-3 shrink-0 opacity-50">
-                    <AppleMark />
-                  </span>
-                  <span>Sign up with Apple</span>
-                  <em
-                    className="ml-[8.8px] text-[#8a8a8a] text-[9.92px] not-italic font-medium tracking-[0.08em] uppercase"
-                    data-fidelity-state="signin-pending"
-                  >
-                    Pending
-                  </em>
-                </button>
-                <button
-                  type="button"
-                  className="flex items-center justify-center w-full py-2 px-3 border border-solid border-[#d8d6d4] rounded-sm bg-white shadow-[0_2px_4px_rgba(0,0,0,0.05)] text-[#242424] font-[inherit] text-[16px] font-normal leading-[inherit] no-underline cursor-pointer appearance-none transition-[color,border-color,background-color,box-shadow] duration-200 ease-[ease] [&:hover]:border-[#a9a8a6] [&:hover]:shadow-[0_1px_2px_rgba(0,0,0,0.08)] data-[fidelity-state~=is-pending]:cursor-not-allowed data-[fidelity-state~=is-pending]:text-[#6b6b6b] [&[data-fidelity-state~=is-pending]:hover]:border-[#d8d6d4] [&[data-fidelity-state~=is-pending]:hover]:shadow-[0_2px_4px_rgba(0,0,0,0.05)] shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                  data-fidelity-state="signin-provider is-pending"
-                  disabled
-                  aria-disabled="true"
-                >
-                  <span className="mr-3 shrink-0 opacity-50">
-                    <OidcMark />
-                  </span>
-                  <span>Sign up with OIDC</span>
-                  <em
-                    className="ml-[8.8px] text-[#8a8a8a] text-[9.92px] not-italic font-medium tracking-[0.08em] uppercase"
-                    data-fidelity-state="signin-pending"
-                  >
-                    Pending
-                  </em>
-                </button>
               </div>
+              <p className="mt-6 text-center text-[13px] text-[#666]">
+                Already have a workspace?{" "}
+                <a
+                  href={config.loginUrl || "/signin"}
+                  className="font-medium text-[#242424] underline underline-offset-2"
+                >
+                  Sign in
+                </a>
+              </p>
             </>
           ) : (
             <form
@@ -816,74 +765,6 @@ function GoogleMark() {
       <path
         fill="#EA4335"
         d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"
-      />
-    </svg>
-  );
-}
-
-function MicrosoftMark() {
-  return (
-    <svg
-      width="17"
-      height="17"
-      viewBox="0 0 17 17"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <rect x="1" y="1" width="7" height="7" fill="#f25022" />
-      <rect x="9" y="1" width="7" height="7" fill="#7fba00" />
-      <rect x="1" y="9" width="7" height="7" fill="#00a4ef" />
-      <rect x="9" y="9" width="7" height="7" fill="#ffb900" />
-    </svg>
-  );
-}
-
-function GitHubMark() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 16 16"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <path
-        fill="currentColor"
-        d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"
-      />
-    </svg>
-  );
-}
-
-function AppleMark() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <path
-        fill="currentColor"
-        d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"
-      />
-    </svg>
-  );
-}
-
-function OidcMark() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <path
-        fill="currentColor"
-        d="M14 6a5 5 0 1 0-4.9 6.5L11 14v2h2v2h2v2h4v-3.2l-4.1-4.1A5 5 0 0 0 14 6zm-6 4a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"
       />
     </svg>
   );

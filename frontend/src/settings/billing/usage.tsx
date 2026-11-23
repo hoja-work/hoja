@@ -1,25 +1,9 @@
 /* Settings → Billing (HOJA-602-A-12, WP14).
  *
  * The usage ledger, in the issue list's layout: `usageSummary` rows are grouped by agent,
- * model or month and drawn as `.lin-group` / `.lin-row`, the same 36 px group header and
- * 42 px row rhythm a task list uses (WP13's AuditPane composes the same pieces). Nothing
- * about the geometry is restated here — the classes are `graph/styles.css`, and the
- * grouping control is the shared `DisplayPanel`, so a change to the list proportions
- * moves this screen with it instead of leaving it behind.
- *
- * Two things this screen states rather than hides:
- *
- *   - every money figure is a decimal STRING from the server and is printed as the server
- *     gave it; nothing here does arithmetic on a price, because the ledger's rule is that
- *     a float never touches money;
- *   - the ledger is admin-only. A refusal is the state of the screen, not an empty list:
- *     "you may not read this" and "nothing has been spent" are different facts and the
- *     screen must not confuse them.
- *
- * Credits, run-minutes and budget used are the three numbers the acceptance names, and
- * each is read from the ledger rather than inferred: credits are 1 per 1,000 processed
- * tokens, run-minutes are the run's minutes with managed compute floored at 15, and the
- * budget is WP12's policy ceiling against this month's credits for that agent.
+ * model or month. Every money figure is a decimal STRING from the server and is printed
+ * verbatim (no floats ever touch money); the ledger is admin-only so a permission refusal
+ * renders as an explicit refusal state rather than an empty list.
  */
 import { useEffect, useMemo, useState } from "react";
 import { SlidersHorizontal } from "lucide-react";
@@ -145,58 +129,78 @@ function UsageRowLine({
       ? Math.min(1, row.credits / Math.max(1, row.limitCredits))
       : 0;
   return (
-    <div className="lin-row" data-usage-row={row.key} data-grouping={groupBy}>
-      {groupBy === "agent" ? (
-        <Avatar name={label} size={16} title={label} />
-      ) : (
-        <span className="lin-chip" aria-hidden="true">
-          {groupBy === "model" ? "model" : "month"}
-        </span>
-      )}
-      <span className="title" title={label}>
-        {label}
-      </span>
-      <span className="meta">
-        {row.limitCredits != null && (
+    <div
+      className="flex min-h-11 min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-line px-4 py-2.5 text-sm text-foreground transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none"
+      data-usage-row={row.key}
+      data-grouping={groupBy}
+    >
+      <div className="flex min-w-0 flex-1 items-center gap-2.5">
+        {groupBy === "agent" ? (
+          <Avatar name={label} size={18} title={label} />
+        ) : (
           <span
-            className="lin-chip"
+            className="inline-flex shrink-0 items-center rounded-md border border-line bg-subtle px-2 py-0.5 text-xs text-muted"
+            aria-hidden="true"
+          >
+            {groupBy === "model" ? "model" : "month"}
+          </span>
+        )}
+        <span
+          className="min-w-0 flex-1 truncate font-medium text-foreground"
+          title={label}
+        >
+          {label}
+        </span>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+        {row.limitCredits != null ? (
+          <span
+            className="inline-flex items-center gap-1.5 rounded-full border border-line bg-bg px-2.5 py-0.5 text-foreground"
             title={`${row.credits} of ${row.limitCredits} credits used this month`}
           >
             <Ring frac={spent} size={12} />
-            {row.credits} / {row.limitCredits} credits
+            <span>
+              {row.credits} / {row.limitCredits} credits
+            </span>
           </span>
-        )}
-        {row.limitCredits == null && (
-          <span className="lin-chip" title="Credits this month">
+        ) : (
+          <span
+            className="inline-flex items-center rounded-full border border-line bg-bg px-2.5 py-0.5 text-foreground"
+            title="Credits this month"
+          >
             {row.credits} credits
           </span>
         )}
-        <span className="lin-chip" title="Wall minutes this run held compute">
+        <span
+          className="inline-flex items-center rounded-full border border-line bg-bg px-2.5 py-0.5"
+          title="Wall minutes this run held compute"
+        >
           {row.runMinutes} min
         </span>
         {show.cost && (
           <span
-            className="date"
+            className="font-mono text-foreground"
             title={`tokens ${usd(row.costUsd)} · compute ${usd(row.computeCostUsd)}`}
           >
             {usd(row.costUsd)}
           </span>
         )}
         {show.runs && (
-          <span className="date hidden sm:inline">
+          <span className="hidden sm:inline">
             {row.runs} {row.runs === 1 ? "run" : "runs"}
           </span>
         )}
         {show.tokens && (
           <span
-            className="date hidden md:inline"
+            className="hidden md:inline"
             title="fresh input / output / cache read"
           >
             {tokens(row.inputTokens)} in · {tokens(row.outputTokens)} out ·{" "}
             {tokens(row.cacheReadTokens)} cached
           </span>
         )}
-      </span>
+      </div>
     </div>
   );
 }
@@ -212,6 +216,7 @@ export function BillingUsageSettings() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [refused, setRefused] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   /* A new month or grouping is a new request: the grouping is the server's argument, not
    * a pass over whatever happens to be loaded, so a month with more grouped rows than one
@@ -241,7 +246,7 @@ export function BillingUsageSettings() {
     return () => {
       live = false;
     };
-  }, [month, grouping]);
+  }, [month, grouping, reloadKey]);
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -258,11 +263,14 @@ export function BillingUsageSettings() {
   const filtered = (summary?.rows.length ?? 0) !== visible.length;
 
   return (
-    <section className="settings-page" data-settings-pane="billing">
-      <header className="settings-page-heading">
-        <span className="eyebrow">Administration</span>
-        <h1>Billing</h1>
-        <p>
+    <section
+      className="mx-auto flex w-full max-w-4xl min-w-0 flex-col gap-6 p-4 text-foreground"
+      data-settings-page=""
+      data-settings-pane="billing"
+    >
+      <header className="flex flex-col gap-2">
+        <h1 className="m-0 text-xl font-semibold text-foreground">Billing</h1>
+        <p className="m-0 max-w-2xl text-sm leading-relaxed text-muted">
           What agents spent. One credit is 1,000 processed tokens — fresh input,
           cache reads and output — and money is computed from those tokens at a
           versioned price card, never from a cost the harness reported. Managed
@@ -271,49 +279,77 @@ export function BillingUsageSettings() {
         </p>
       </header>
 
-      <div className="settings-group">
-        <span className="settings-section-kicker">This month</span>
-        <h2>{monthLabel(month)}</h2>
-        {loading && <p role="status">Loading usage…</p>}
+      <div className="flex min-w-0 flex-col gap-4 rounded-xl border border-line bg-panel p-4 sm:p-5">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="m-0 text-base font-semibold text-foreground">
+            {monthLabel(month)}
+          </h2>
+          <span className="text-xs text-muted">Monthly summary</span>
+        </div>
+
+        {loading && (
+          <p role="status" className="m-0 text-sm text-muted">
+            Loading usage…
+          </p>
+        )}
+
         {!loading && refused && (
-          <div role="alert" data-refusal="forbidden">
-            <b>Only workspace admins can read the usage ledger</b>
-            <p>
+          <div
+            role="alert"
+            data-refusal="forbidden"
+            className="rounded-lg border border-line bg-bg p-4"
+          >
+            <b className="block text-sm font-semibold text-foreground">
+              Only workspace admins can read the usage ledger
+            </b>
+            <p className="mt-1 mb-0 text-sm text-muted">
               Spend for the whole workspace is billing data. An empty list would
               say something false, so this screen says why it is empty instead.
             </p>
           </div>
         )}
+
         {!loading && !refused && error && (
-          <p role="alert" className="error">
-            {error}
-          </p>
+          <div
+            role="alert"
+            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-danger/30 bg-bg p-4 text-sm text-danger"
+          >
+            <span className="min-w-0 flex-1">{error}</span>
+            <button
+              type="button"
+              className="inline-flex min-h-9 items-center rounded-md border border-line bg-panel px-3 py-1.5 text-sm font-medium text-foreground hover:bg-subtle"
+              onClick={() => setReloadKey((k) => k + 1)}
+            >
+              Retry
+            </button>
+          </div>
         )}
+
         {!loading && !refused && !error && summary && (
           <>
-            <div className="settings-form-grid" data-usage-totals>
-              <div>
-                <b>{summary.credits}</b>
-                <p>credits</p>
-              </div>
-              <div>
-                <b>{summary.runMinutes}</b>
-                <p>run-minutes</p>
-              </div>
-              <div>
-                <b>{usd(summary.costUsd)}</b>
-                <p>tokens</p>
-              </div>
-              <div>
-                <b>{usd(summary.computeCostUsd)}</b>
-                <p>compute</p>
-              </div>
-              <div>
-                <b>{usd(summary.totalUsd)}</b>
-                <p>total</p>
-              </div>
+            <div
+              className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5"
+              data-usage-totals
+            >
+              {[
+                { value: String(summary.credits), label: "Credits" },
+                { value: String(summary.runMinutes), label: "Run-minutes" },
+                { value: usd(summary.costUsd), label: "Tokens" },
+                { value: usd(summary.computeCostUsd), label: "Compute" },
+                { value: usd(summary.totalUsd), label: "Total" },
+              ].map((metric) => (
+                <div
+                  key={metric.label}
+                  className="flex min-w-0 flex-col gap-1 rounded-lg border border-line bg-bg p-3"
+                >
+                  <b className="truncate font-mono text-base font-semibold text-foreground">
+                    {metric.value}
+                  </b>
+                  <p className="m-0 text-xs text-muted">{metric.label}</p>
+                </div>
+              ))}
             </div>
-            <p className="settings-section-intro">
+            <p className="m-0 text-xs leading-relaxed text-muted">
               {summary.events === 0
                 ? "No runner has reported usage this month yet."
                 : `${summary.events} ${summary.events === 1 ? "report" : "reports"} from ${tokens(summary.inputTokens)} input, ${tokens(summary.outputTokens)} output and ${tokens(summary.cacheReadTokens)} cache-read tokens. Priced at card ${summary.priceCard}.`}
@@ -323,26 +359,27 @@ export function BillingUsageSettings() {
       </div>
 
       {!loading && !refused && !error && summary && (
-        <div className="settings-group">
-          <div className="settings-section-head">
-            <div>
-              <span className="settings-section-kicker">Ledger</span>
-              <h2>Usage by {grouping}</h2>
-            </div>
-            <span className="settings-badge">
+        <div className="flex min-w-0 flex-col gap-4 rounded-xl border border-line bg-panel p-4 sm:p-5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="m-0 text-base font-semibold text-foreground">
+              Usage by {grouping}
+            </h2>
+            <span className="rounded-full border border-line bg-bg px-2.5 py-0.5 text-xs text-muted">
               {summary.rows.length} {summary.rows.length === 1 ? "row" : "rows"}
             </span>
           </div>
-          <div className="api-key-toolbar">
+
+          <div className="flex flex-wrap items-center gap-3">
             <input
               type="search"
               aria-label="Search usage"
               placeholder="Search agent or model"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
+              className="min-h-9 min-w-0 flex-1 rounded-md border border-line bg-bg px-3 py-1.5 text-sm text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
             />
-            <label className="settings-field">
-              <span className="settings-field-label">Month</span>
+            <label className="flex items-center gap-2 text-xs text-muted">
+              <span>Month</span>
               <input
                 type="month"
                 aria-label="Usage month"
@@ -350,9 +387,10 @@ export function BillingUsageSettings() {
                 onChange={(event) =>
                   setMonth(event.target.value || monthValue())
                 }
+                className="min-h-9 rounded-md border border-line bg-bg px-2.5 py-1.5 text-sm text-foreground focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
               />
             </label>
-            <span style={{ position: "relative", marginLeft: "auto" }}>
+            <div className="relative ml-auto">
               <IconBtn
                 label="Display options"
                 title="Display options"
@@ -417,38 +455,42 @@ export function BillingUsageSettings() {
                   ]}
                 />
               )}
-            </span>
+            </div>
           </div>
 
-          <div className="lin-list" aria-label={`Usage by ${grouping}`}>
-            {visible.length === 0 && (
-              <div className="lin-empty" data-state="empty">
-                <h2>
+          <div
+            className="overflow-hidden rounded-lg border border-line bg-bg"
+            aria-label={`Usage by ${grouping}`}
+          >
+            {visible.length === 0 ? (
+              <div
+                className="flex flex-col items-center justify-center gap-1 p-8 text-center"
+                data-state="empty"
+              >
+                <h3 className="m-0 text-sm font-semibold text-foreground">
                   {summary.rows.length
                     ? "No usage matches this search"
                     : "Nothing spent this month"}
-                </h2>
-                <p>
+                </h3>
+                <p className="m-0 max-w-md text-xs text-muted">
                   {summary.rows.length
                     ? "The search box narrows the rows this month returned; clear it to see them all."
                     : "No runner has reported a run this month. A run that reports no tokens records no row."}
                 </p>
               </div>
-            )}
-            {visible.length > 0 && (
-              <section className="lin-group">
-                <header className="lin-group-head">
-                  <b>
+            ) : (
+              <section className="flex flex-col">
+                <header className="flex flex-wrap items-center gap-3 bg-subtle px-4 py-2 text-xs text-muted">
+                  <b className="font-semibold text-foreground">
                     {summary.rows.length}{" "}
                     {grouping === "month" ? "months" : `${grouping}s`}
                   </b>
-                  <span className="count">
+                  <span>
                     {filtered
                       ? `${showing} of ${summary.credits} credits shown`
                       : `${summary.credits} credits`}
                   </span>
-                  <span className="grow" />
-                  <span className="count">{summary.runMinutes} min</span>
+                  <span className="ml-auto">{summary.runMinutes} min</span>
                 </header>
                 {visible.map((row) => (
                   <UsageRowLine
@@ -461,7 +503,8 @@ export function BillingUsageSettings() {
               </section>
             )}
           </div>
-          <p className="settings-section-intro">
+
+          <p className="m-0 text-xs leading-relaxed text-muted">
             Rows are appended, never edited: a correction is a new row, so a
             figure that changed stays visible next to the number that replaced
             it.

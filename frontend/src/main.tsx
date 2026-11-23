@@ -3357,6 +3357,42 @@ function App() {
         sidebarCollapsed && view !== "Settings" ? "" : undefined
       }
     >
+      {view !== "Reviews" && (
+        <header
+          data-topbar
+          className="hidden h-15 flex-none items-center gap-2 border-b border-line bg-panel px-3 text-foreground shell-phone:relative shell-phone:z-40 shell-phone:flex"
+        >
+          <button
+            type="button"
+            className="inline-flex min-h-11 min-w-11 flex-none items-center justify-center rounded-lg bg-transparent text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent"
+            aria-label={mobile ? "Close navigation" : "Open navigation"}
+            aria-expanded={mobile}
+            aria-controls="workspace-sidebar"
+            onClick={() => setMobile((open) => !open)}
+          >
+            <Menu size={18} aria-hidden="true" />
+          </button>
+          <span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
+            {workspace.name || "Hoja"}
+          </span>
+          <button
+            type="button"
+            className="inline-flex min-h-11 min-w-11 flex-none items-center justify-center rounded-lg bg-transparent text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent"
+            aria-label="Search workspace"
+            onClick={() => setCommandOpen(true)}
+          >
+            <Search size={18} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="inline-flex min-h-11 min-w-11 flex-none items-center justify-center rounded-lg bg-transparent text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent"
+            aria-label="Create new task"
+            onClick={() => openNewIssue()}
+          >
+            <Plus size={18} aria-hidden="true" />
+          </button>
+        </header>
+      )}
       <div
         className="flex shell-phone:flex shell-phone:flex-1 shell-phone:min-h-0 shell-phone:overflow-hidden shell-desktop:contents shell-phone:min-h-[calc(100dvh-60px)] min-h-[calc(100dvh-68px)]"
         data-app-body=""
@@ -5276,7 +5312,7 @@ function MyIssuesContent({
       data-my-issues-view=""
     >
       <div
-        className="flex min-w-0 shrink-0 items-center gap-2"
+        className="flex min-w-0 shrink-0 flex-wrap items-center gap-2"
         data-my-issue-header=""
       >
         {tabs}
@@ -5816,7 +5852,7 @@ function MyIssuesContent({
                       parentOutside,
                     }) => (
                       <div
-                        className="relative flex w-full min-w-0 min-h-9 items-center gap-2 bg-transparent py-0 pr-6 text-left text-foreground hover:bg-subtle cursor-pointer max-md:gap-1 [@media_(max-width:650px)]:gap-1.25"
+                        className="relative flex w-full min-w-0 min-h-9 items-center gap-2 bg-transparent py-0 pr-6 text-left text-foreground hover:bg-subtle cursor-pointer max-md:gap-1.5 shell-phone:pr-3 [@media_(max-width:650px)]:gap-1.5"
                         style={{
                           paddingLeft: ROW_INSET + depth * SIBLING_STEP,
                         }}
@@ -5903,7 +5939,7 @@ function MyIssuesContent({
                             ≡
                           </span>
                         )}
-                        <code className="text-muted text-[12px] font-[inherit]">
+                        <code className="shrink-0 whitespace-nowrap text-muted text-[12px] font-[inherit]">
                           {i.identifier}
                         </code>
                         {i.decisionNeeded ? (
@@ -5943,7 +5979,7 @@ function MyIssuesContent({
                           orphan. The board does the same. */}
                         {parentOutside && i.parent?.identifier ? (
                           <span
-                            className="shrink-0 rounded border border-line py-0 px-1 text-[10px] text-muted"
+                            className="shrink-0 rounded border border-line py-0 px-1 text-[10px] text-muted shell-phone:hidden"
                             data-my-issue-parent=""
                             title={i.parent.title}
                           >
@@ -6022,7 +6058,7 @@ function MyIssuesContent({
                         )}
                         {showDate && (
                           <span
-                            className="text-right whitespace-nowrap text-[11px] text-muted min-w-11.5"
+                            className="text-right whitespace-nowrap text-[11px] text-muted min-w-11.5 shell-phone:hidden"
                             data-my-issue-date=""
                           >
                             {tab === "Activity"
@@ -8098,7 +8134,7 @@ function Login({
             </button>
             <button
               type="button"
-              className="mt-2.5 block bg-panel text-[12px] text-muted hover:bg-accent-soft hover:text-accent disabled:opacity-50 rounded-none min-h-11 w-full mr-0 mb-0 ml-0 border border-line font-[550] hover:border-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+              className="mt-3 block w-full bg-transparent py-2 text-center text-xs text-muted underline underline-offset-2 hover:text-foreground disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11"
               onClick={() => {
                 setMode("setup");
                 setAuthError("");
@@ -8178,10 +8214,16 @@ function Login({
           </small>
         )}
         <p
-          className="text-muted text-[11px] text-center mt-5 mr-0 mb-0 ml-0"
+          className="mt-5 mb-0 text-center text-xs text-muted"
           data-login-help=""
         >
-          Sessions are securely stored in an HttpOnly cookie.
+          New to Hoja?{" "}
+          <a
+            href="/signup"
+            className="font-medium text-foreground underline underline-offset-2"
+          >
+            Request a workspace
+          </a>
         </p>
       </div>
     </div>
@@ -11110,7 +11152,7 @@ function TaskViewTabs<T extends string>({
 }) {
   return (
     <nav
-      className="flex min-w-0 flex-1 items-center gap-1.5 border-0 bg-bg  text-foreground overflow-x-auto [@media_(max-width:650px)]:gap-1 "
+      className="flex min-w-0 flex-1 items-center gap-1.5 border-0 bg-bg  text-foreground overflow-x-auto shell-phone:basis-full [@media_(max-width:650px)]:gap-1 "
       data-my-issue-tabs=""
       aria-label={label}
     >
