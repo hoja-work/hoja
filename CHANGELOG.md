@@ -11,6 +11,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Views now work like Linear's (see `docs/views.md`). Views run on the server, so the web
+  client, the CLI, the CSV export and Linear-shaped clients all get the same rows.
+  - Filters: labels, team/project/initiative scope, `"me"` and `"myTeams"`, relative dates
+    stored as ISO-8601 durations (`-P7D`, `today`, `overdue`), started/completed/canceled
+    dates, parent/sub-task relations, estimate, subscribers, and project status, lead,
+    members, health, dates and initiative. A predicate Hoja cannot run is refused by path,
+    never ignored.
+  - Execution: every ordering runs in SQL, `reverse` flips the sort rather than the page,
+    keyset cursors page past the first 250 rows, `totalCount` is returned, and
+    `View.issues` takes a query-time `filter`, `display` and `sort`. `viewPreview` runs a
+    view before it is saved.
+  - Display preferences in layers (revision 89, `view_preference`): each view or built-in
+    page has a default, and each person can set their own. Use `viewPreferences`,
+    `viewPreferencesSet` (`scope: "default"` is "Set default for everyone") and
+    `viewPreferencesReset`.
+  - View subscriptions (revision 89, `view_subscription`). `viewSubscribe` sends
+    `viewIssueAdded` and `viewIssueCompleted` to the inbox.
+  - Pinned team and project views appear as tabs (revision 90, `saved_view.pinned` and
+    `sort_order`, set with `viewPin`).
+  - New mutations: `viewDuplicate`, owner hand-over and "Move to" through `viewUpdate`.
+    Views have a slug link (`View.url`), and `GET /api/views/<id>/export.csv` exports
+    a view.
+  - Linear-compatible aliases: `customView`, `customViews`, `customViewCreate`,
+    `customViewUpdate`, `customViewDelete` and `customViewHasSubscribers`, with
+    `filterData` and `projectFilterData` translated both ways.
+  - Web: one filter bar (chips, `F`, Advanced filter, filters in the URL) and one Display
+    panel (`Shift V`) on every task list. Adds a full-page view editor, saved-view pages
+    (rename, star, the "…" menu, details panel, Clear and Save ▾ for unsaved edits), a
+    views list grouped by Personal, Workspace, team and project, favorites in the
+    sidebar, views in the command palette, and `O` `V`, `Alt V`, `Alt S`, `Cmd/Ctrl B`
+    and `T` shortcuts.
+  - CLI: `hoja issue list --view <name|slug|id>` runs a saved view on the server. Other
+    list flags narrow it, `--cycle current|next|<name>` included.
 - Project members can be managed. `memberIds` on `projectCreate` and `projectUpdate`
   (Linear's field), and a Members picker on the project page. Anyone added follows the
   project and gets "added you to the project" in their inbox (`projectMemberAdded`).
@@ -64,6 +97,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Views: a label filter no longer returns every task. A view's team or project scope now
+  applies to its results. `assignee isNot X` keeps unassigned tasks. A date-only `is` on
+  `createdAt` or `updatedAt` matches the whole day.
+- Views: a filter chip holding an empty value ("No estimate", "No labels", "No due
+  date") offers only the identity operators, and an "Overdue" date chip only "is"; both
+  are saved with those operators, so a chip can no longer write a filter the server refuses.
 - Entity links named the canonical host instead of the workspace's own. In a
   workspace with a `vanity_host` (Core on `core.hoja.work`), every issue, project
   and profile link was rendered from the process-wide `HOJA_APP_URL`, so it

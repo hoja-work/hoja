@@ -10,7 +10,7 @@ from graphql import GraphQLError
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.engine import Engine
 
-from hoja_server import activity, comment_policy, identifiers, notifications, uploads
+from hoja_server import activity, comment_policy, identifiers, notifications, uploads, view_subscriptions
 from hoja_server import decisions as decisiondocs
 from hoja_server import views as viewdocs
 from hoja_server.db import (
@@ -47,6 +47,8 @@ from hoja_server.db import (
     saved_view,
     saved_view_favorite,
     seed_states_for_team,
+    view_preference,
+    view_subscription,
     team,
     team_member,
     user,
@@ -1051,6 +1053,8 @@ class Writer:
                 conn.execute(issue_label_link.insert().values(issue_id=iid, label_id=lid))
             self._record_activity(conn, org_id, iid, viewer_id, "issueCreated", {"title": inp["title"]}, ts)
             notifications.on_issue_created(conn, org_id, iid, viewer_id, inp.get("assigneeId"), ts)
+            view_subscriptions.after_change(conn, org_id, iid, viewer_id, ts,
+                                            view_subscriptions.snapshot(conn, org_id, None))
             session = self._open_delegation_session(
                 conn, org_id, iid, inp.get("delegateId"), viewer_id, ts)
         self._dispatch_admitted(session)
@@ -1238,6 +1242,8 @@ class Writer:
                 self._require_team_visible(conn, org_id, actor_id, issue_row["team_id"])
                 if inp.get("teamId") is not None:
                     raise InvalidReferenceError("teamId")
+            # Which followed views the task matches before the edit (None: nobody follows one).
+            view_before = view_subscriptions.snapshot(conn, org_id, iid)
             if inp.get("parentId"):
                 # PostgreSQL: serialize reparenting per team so two transactions cannot
                 # independently validate opposite edges and commit a cycle. SQLite ignores
@@ -1315,6 +1321,7 @@ class Writer:
             # something the people following the task hear about.
             notifications.on_issue_updated(
                 conn, org_id, issue_row, {**issue_row, **values}, actor_id, ts)
+            view_subscriptions.after_change(conn, org_id, iid, actor_id, ts, view_before)
         self._dispatch_admitted(session)
         return iid
 
@@ -2080,6 +2087,14 @@ class Writer:
             raise InvalidReferenceError("initiativeId")
         return {"initiative_id": target}
 
+    def view_scope_target(self, org_id: str, viewer_id: str, scope: str, inp: dict) -> dict:
+        """Validate an unsaved view's scope exactly as ``view_create`` would (viewPreview)."""
+        if scope not in viewdocs.SCOPES:
+            raise GraphQLError(f"scope must be one of {list(viewdocs.SCOPES)}.",
+                               extensions={"code": "BAD_USER_INPUT", "field": "scope"})
+        with self.engine.connect() as conn:
+            return self._view_scope_target(conn, org_id, viewer_id, scope, inp)
+
     @staticmethod
     def _view_slug(name: str, view_id: str) -> str:
         """A URL fragment that stays unique per organization even for duplicate names."""
@@ -2107,20 +2122,69 @@ class Writer:
         view_id, ts = new_id(), now_iso()
         with self.engine.begin() as conn:
             target = self._view_scope_target(conn, org_id, viewer_id, scope, inp)
+            owner_id = viewer_id
+            if inp.get("ownerId") and inp["ownerId"] != viewer_id:
+                # Linear's customViewCreate(ownerId): made on someone's behalf, in the same
+                # transaction, so a bad owner leaves no half-made view behind.
+                owner_id = self._new_view_owner(conn, org_id, inp["ownerId"], scope,
+                                                target.get("team_id"), target.get("project_id"))
             conn.execute(saved_view.insert().values(
                 id=view_id, organization_id=org_id, kind=kind, name=name.strip(),
                 description=inp.get("description"), icon=inp.get("icon"),
                 color=inp.get("color"), slug_id=self._view_slug(name.strip(), view_id),
-                owner_id=viewer_id, creator_id=viewer_id, updated_by_id=viewer_id,
+                owner_id=owner_id, creator_id=viewer_id, updated_by_id=viewer_id,
                 scope=scope, visibility=visibility,
                 filters=viewdocs.dump(filters), display=viewdocs.dump(display),
                 created_at=ts, updated_at=ts, **target))
         return view_id
 
-    def _view_row(self, conn, org_id: str, view_id: str) -> dict | None:
-        row = conn.execute(select(saved_view).where(and_(
-            saved_view.c.organization_id == org_id, saved_view.c.id == view_id))).mappings().first()
-        return dict(row) if row else None
+    def _view_row(self, conn, org_id: str, view_id: str,
+                  viewer_id: str | None = None) -> dict | None:
+        """The view by id or slug. With ``viewer_id``, a view that viewer cannot read (a
+        private view of someone else, a team view of a team they cannot see) is None, so a
+        write answers NOT_FOUND rather than FORBIDDEN and never confirms it exists. Admins
+        keep reaching every view, as ``_require_view_owner`` lets them change any."""
+        from hoja_server.store import _scope_views
+
+        stmt = select(saved_view).where(and_(
+            saved_view.c.organization_id == org_id,
+            or_(saved_view.c.id == view_id, saved_view.c.slug_id == view_id)))
+        row = conn.execute(stmt).mappings().first()
+        if not row:
+            return None
+        if viewer_id is not None and not self._is_admin(conn, org_id, viewer_id):
+            visible = select(saved_view.c.id).where(saved_view.c.id == row["id"])
+            if not conn.execute(_scope_views(conn, visible, org_id, viewer_id)).first():
+                return None
+        return dict(row)
+
+    @staticmethod
+    def _is_admin(conn, org_id: str, viewer_id: str) -> bool:
+        return conn.execute(select(user.c.id).where(and_(
+            user.c.id == viewer_id, user.c.organization_id == org_id,
+            user.c.active.is_(True), user.c.archived_at.is_(None), user.c.admin.is_(True),
+        ))).first() is not None
+
+    def _new_view_owner(self, conn, org_id: str, owner_id, scope: str | None,
+                        team_id: str | None, project_id: str | None) -> str:
+        """Validate a view's new owner: an active member of this workspace who can see the
+        team or project the view is placed in (a view handed to someone who cannot read
+        its rows would be an owner locked out of their own view)."""
+        if not isinstance(owner_id, str) or not owner_id:
+            raise InvalidReferenceError("ownerId")
+        owner = conn.execute(select(user.c.id).where(and_(
+            user.c.id == owner_id, user.c.organization_id == org_id,
+            user.c.active.is_(True), user.c.archived_at.is_(None)))).first()
+        if not owner:
+            raise InvalidReferenceError("ownerId")
+        if scope == "team" and team_id and not team_visible(conn, org_id, owner_id, team_id):
+            raise InvalidReferenceError("ownerId")
+        if scope == "project" and project_id:
+            stmt = select(project.c.id).where(and_(
+                project.c.id == project_id, project.c.organization_id == org_id))
+            if not conn.execute(_scope_projects(conn, stmt, org_id, owner_id)).first():
+                raise InvalidReferenceError("ownerId")
+        return owner_id
 
     def _require_view_owner(self, conn, org_id: str, viewer_id: str, owner_id: str) -> None:
         if owner_id == viewer_id:
@@ -2139,9 +2203,10 @@ class Writer:
             raise GraphQLError("A view's kind cannot change.",
                                extensions={"code": "BAD_USER_INPUT", "field": "kind"})
         with self.engine.begin() as conn:
-            row = self._view_row(conn, org_id, view_id)
+            row = self._view_row(conn, org_id, view_id, viewer_id)
             if not row:
                 return False
+            view_id = row["id"]  # the caller may have named it by slug
             self._require_view_owner(conn, org_id, viewer_id, row["owner_id"])
             kind = row["kind"]
             values: dict = {"updated_at": now_iso(), "updated_by_id": viewer_id}
@@ -2165,6 +2230,9 @@ class Writer:
                 values.update({"scope": scope, "team_id": None, "project_id": None,
                                "initiative_id": None})
                 values.update(target)
+                if (target.get("team_id"), target.get("project_id")) != (
+                        row["team_id"], row["project_id"]):
+                    values["pinned"] = False  # a tab of the old page does not follow the move
             if "visibility" in inp:
                 visibility = inp["visibility"]
                 if visibility not in viewdocs.VISIBILITIES:
@@ -2181,6 +2249,13 @@ class Writer:
                 values["filters"] = viewdocs.dump(viewdocs.parse_filters(kind, inp["filters"]))
             if "display" in inp:
                 values["display"] = viewdocs.dump(viewdocs.parse_display(kind, inp["display"]))
+            if inp.get("ownerId") and inp["ownerId"] != row["owner_id"]:
+                # Handing a view over is an owner's or admin's act (checked above); the new
+                # owner must be an active member who can see where the view now lives.
+                values["owner_id"] = self._new_view_owner(
+                    conn, org_id, inp["ownerId"], values.get("scope", row["scope"]),
+                    values.get("team_id", row["team_id"]),
+                    values.get("project_id", row["project_id"]))
             if "archived" in inp:
                 archived = inp["archived"]
                 if not isinstance(archived, bool):
@@ -2192,16 +2267,242 @@ class Writer:
                 saved_view.c.id == view_id)).values(**values))
         return True
 
+    def view_pin(self, org_id: str, viewer_id: str, ident: str, pinned: bool,
+                 sort_order: float | None = None) -> str:
+        """Pin a team or project view as a tab on that page, or unpin it.
+
+        Tabs belong to the page, not to the view's owner (Linear lets members manage pinned
+        views), so any member who can read the view may pin it. A workspace view has no page
+        to pin onto and is refused. Without ``sort_order`` a new pin goes after the others.
+        """
+        with self.engine.begin() as conn:
+            row = self._visible_view_row(conn, org_id, viewer_id, ident)
+            if row["scope"] not in ("team", "project"):
+                raise GraphQLError("Only a team or project view can be pinned as a tab.",
+                                   extensions={"code": "BAD_USER_INPUT", "field": "id"})
+            if sort_order is not None and not isinstance(sort_order, (int, float)):
+                raise GraphQLError("sortOrder must be a number.",
+                                   extensions={"code": "BAD_USER_INPUT", "field": "sortOrder"})
+            values: dict = {"pinned": pinned}
+            if sort_order is not None:
+                values["sort_order"] = float(sort_order)
+            elif pinned and not row.get("pinned"):
+                owner_col = saved_view.c.team_id if row["scope"] == "team" else saved_view.c.project_id
+                owner_val = row["team_id"] if row["scope"] == "team" else row["project_id"]
+                top = conn.execute(select(func.max(saved_view.c.sort_order)).where(and_(
+                    saved_view.c.organization_id == org_id, owner_col == owner_val,
+                    saved_view.c.pinned.is_(True)))).scalar()
+                values["sort_order"] = (top or 0.0) + 1.0
+            conn.execute(saved_view.update().where(and_(
+                saved_view.c.organization_id == org_id,
+                saved_view.c.id == row["id"])).values(**values))
+        return row["id"]
+
+    def _visible_view_row(self, conn, org_id: str, viewer_id: str, ident: str) -> dict:
+        """The view by id or slug if the viewer may read it; NOT_FOUND otherwise."""
+        from hoja_server.store import _scope_views
+
+        stmt = select(saved_view).where(and_(
+            saved_view.c.organization_id == org_id,
+            or_(saved_view.c.id == ident, saved_view.c.slug_id == ident)))
+        row = conn.execute(_scope_views(conn, stmt, org_id, viewer_id)).mappings().first()
+        if not row:
+            raise GraphQLError("View not found.", extensions={"code": "NOT_FOUND"})
+        return dict(row)
+
+    def view_duplicate(self, org_id: str, viewer_id: str, view_id: str, inp: dict) -> str:
+        """Copy a view the caller can read: same documents and look, the caller as owner,
+        private unless ``visibility`` says otherwise, archived state not copied."""
+        with self.engine.connect() as conn:
+            row = self._visible_view_row(conn, org_id, viewer_id, view_id)
+        name = inp.get("name") or f"{row['name']} (copy)"[:80]
+        visibility = inp.get("visibility") or "private"
+        if visibility == "team" and row["scope"] != "team":
+            visibility = "workspace"
+        return self.view_create(org_id, viewer_id, {
+            "name": name, "description": row.get("description"), "icon": row.get("icon"),
+            "color": row.get("color"), "kind": row["kind"], "scope": row["scope"],
+            "teamId": row.get("team_id"), "projectId": row.get("project_id"),
+            "initiativeId": row.get("initiative_id"), "visibility": visibility,
+            "filters": viewdocs.load(row.get("filters")),
+            "display": viewdocs.load(row.get("display"))})
+
+    # ------------------------------------------------------- view preferences
+
+    def _preference_target(self, conn, org_id: str, viewer_id: str, view_id: str | None,
+                           view_type: str | None) -> dict:
+        """Resolve ``viewId`` xor ``viewType`` to what its preferences are stored against.
+
+        A built-in page that names a team or project is readable by whoever can see that
+        team or project, so a private team's page id reveals nothing to anyone else.
+        """
+        if bool(view_id) == bool(view_type):
+            raise GraphQLError("Pass exactly one of viewId and viewType.",
+                               extensions={"code": "BAD_USER_INPUT", "field": "viewId"})
+        if view_id:
+            row = self._visible_view_row(conn, org_id, viewer_id, view_id)
+            return {"view": row, "view_id": row["id"], "view_type": None, "kind": row["kind"]}
+        view_type = viewdocs.parse_view_type(view_type)
+        segments = view_type.split(":")
+        if segments[0] == "team" and len(segments) > 1 and (
+                not conn.execute(select(team.c.id).where(and_(
+                    team.c.id == segments[1], team.c.organization_id == org_id))).first()
+                or not team_visible(conn, org_id, viewer_id, segments[1])):
+            raise InvalidReferenceError("viewType")
+        if segments[0] == "project" and len(segments) > 1:
+            stmt = select(project.c.id).where(and_(
+                project.c.id == segments[1], project.c.organization_id == org_id))
+            if not conn.execute(_scope_projects(conn, stmt, org_id, viewer_id)).first():
+                raise InvalidReferenceError("viewType")
+        return {"view": None, "view_id": None, "view_type": view_type,
+                "kind": viewdocs.view_type_kind(view_type)}
+
+    @staticmethod
+    def _preference_row(conn, org_id: str, user_id: str | None, target: dict) -> dict | None:
+        clauses = [view_preference.c.organization_id == org_id,
+                   view_preference.c.user_id.is_(None) if user_id is None
+                   else view_preference.c.user_id == user_id]
+        if target["view_id"]:
+            clauses.append(view_preference.c.view_id == target["view_id"])
+        else:
+            clauses += [view_preference.c.view_id.is_(None),
+                        view_preference.c.view_type == target["view_type"]]
+        row = conn.execute(select(view_preference).where(and_(*clauses))
+                           .order_by(view_preference.c.created_at)).mappings().first()
+        return dict(row) if row else None
+
+    def _store_preference(self, conn, org_id: str, user_id: str | None, target: dict,
+                          values: dict, ts: str) -> None:
+        existing = self._preference_row(conn, org_id, user_id, target)
+        if existing and not values:
+            conn.execute(view_preference.delete().where(view_preference.c.id == existing["id"]))
+        elif existing:
+            conn.execute(view_preference.update().where(
+                view_preference.c.id == existing["id"]).values(
+                    values=viewdocs.dump(values), updated_at=ts))
+        elif values:
+            conn.execute(view_preference.insert().values(
+                id=new_id(), organization_id=org_id, user_id=user_id,
+                view_id=target["view_id"], view_type=target["view_type"],
+                values=viewdocs.dump(values), created_at=ts, updated_at=ts))
+
+    def _require_default_editor(self, conn, org_id: str, viewer_id: str, target: dict) -> None:
+        """Who may "Set default for everyone": a saved view's owner or an admin; for a
+        team's or project's built-in page anyone who can see it (checked when the target
+        resolved); for any other built-in page an admin."""
+        if target["view"] is not None:
+            self._require_view_owner(conn, org_id, viewer_id, target["view"]["owner_id"])
+            return
+        if target["view_type"].split(":")[0] in ("team", "project"):
+            return
+        admin = conn.execute(select(user.c.id).where(and_(
+            user.c.id == viewer_id, user.c.organization_id == org_id,
+            user.c.admin.is_(True)))).first()
+        if not admin:
+            raise GraphQLError("Only a workspace admin can set this page's default for "
+                               "everyone.", extensions={"code": "FORBIDDEN"})
+
+    def view_preferences_set(self, org_id: str, viewer_id: str, view_id: str | None,
+                             view_type: str | None, values, scope: str | None) -> dict:
+        """Lay ``values`` over the caller's layer (``user``) or the default (``default``).
+
+        Setting the default also drops those keys from the caller's own layer, so after
+        "Set default for everyone" the caller sees exactly the new default. Returns the
+        resolved target.
+        """
+        scope = scope or "user"
+        if scope not in viewdocs.PREFERENCE_SCOPES:
+            raise GraphQLError(f"scope must be one of {list(viewdocs.PREFERENCE_SCOPES)}.",
+                               extensions={"code": "BAD_USER_INPUT", "field": "scope"})
+        ts = now_iso()
+        with self.engine.begin() as conn:
+            target = self._preference_target(conn, org_id, viewer_id, view_id, view_type)
+            parsed, cleared = viewdocs.parse_preference_values(target["kind"], values)
+            mine = self._preference_row(conn, org_id, viewer_id, target)
+            mine_values = viewdocs.load(mine["values"]) if mine else {}
+            if scope == "user":
+                self._store_preference(conn, org_id, viewer_id, target,
+                                       viewdocs.layer(mine_values, parsed, cleared), ts)
+                return target
+            self._require_default_editor(conn, org_id, viewer_id, target)
+            if target["view"] is not None:
+                display = viewdocs.layer(viewdocs.load(target["view"]["display"]), parsed, cleared)
+                conn.execute(saved_view.update().where(and_(
+                    saved_view.c.organization_id == org_id,
+                    saved_view.c.id == target["view_id"])).values(
+                        display=viewdocs.dump(viewdocs.parse_display(target["kind"], display)),
+                        updated_at=ts, updated_by_id=viewer_id))
+            else:
+                default = self._preference_row(conn, org_id, None, target)
+                self._store_preference(conn, org_id, None, target, viewdocs.layer(
+                    viewdocs.load(default["values"]) if default else {}, parsed, cleared), ts)
+            touched = [*parsed, *cleared]
+            self._store_preference(conn, org_id, viewer_id, target,
+                                   viewdocs.layer(mine_values, {}, touched), ts)
+        return target
+
+    def view_preferences_reset(self, org_id: str, viewer_id: str, view_id: str | None,
+                               view_type: str | None) -> dict:
+        """Drop the caller's layer: they see the default again."""
+        with self.engine.begin() as conn:
+            target = self._preference_target(conn, org_id, viewer_id, view_id, view_type)
+            self._store_preference(conn, org_id, viewer_id, target, {}, now_iso())
+        return target
+
+    # ------------------------------------------------------ view subscriptions
+
+    def view_subscribe(self, org_id: str, viewer_id: str, view_id: str,
+                       on_added: bool | None, on_completed: bool | None) -> str:
+        """Follow a task view the caller can read; both events when neither is named.
+        Subscribing with both events off unsubscribes."""
+        with self.engine.begin() as conn:
+            row = self._visible_view_row(conn, org_id, viewer_id, view_id)
+            if row["kind"] != "issue":
+                raise GraphQLError("Only task views can be subscribed to.",
+                                   extensions={"code": "BAD_USER_INPUT", "field": "viewId"})
+            if on_added is None and on_completed is None:
+                on_added = on_completed = True
+            existing = conn.execute(select(view_subscription).where(and_(
+                view_subscription.c.organization_id == org_id,
+                view_subscription.c.view_id == row["id"],
+                view_subscription.c.user_id == viewer_id))).mappings().first()
+            added = bool(on_added if on_added is not None else (existing or {}).get("on_added"))
+            completed = bool(on_completed if on_completed is not None
+                             else (existing or {}).get("on_completed"))
+            ts = now_iso()
+            if not added and not completed:
+                conn.execute(view_subscription.delete().where(and_(
+                    view_subscription.c.view_id == row["id"],
+                    view_subscription.c.user_id == viewer_id)))
+            elif existing:
+                conn.execute(view_subscription.update().where(
+                    view_subscription.c.id == existing["id"]).values(
+                        on_added=added, on_completed=completed, updated_at=ts))
+            else:
+                conn.execute(view_subscription.insert().values(
+                    id=new_id(), organization_id=org_id, view_id=row["id"], user_id=viewer_id,
+                    on_added=added, on_completed=completed, created_at=ts, updated_at=ts))
+            return row["id"]
+
+    def view_unsubscribe(self, org_id: str, viewer_id: str, view_id: str) -> str:
+        with self.engine.begin() as conn:
+            row = self._visible_view_row(conn, org_id, viewer_id, view_id)
+            conn.execute(view_subscription.delete().where(and_(
+                view_subscription.c.organization_id == org_id,
+                view_subscription.c.view_id == row["id"],
+                view_subscription.c.user_id == viewer_id)))
+            return row["id"]
+
     def view_delete(self, org_id: str, viewer_id: str, view_id: str) -> bool:
         """Archive, the recorded inverse of create: nothing is erased, so it can be restored."""
         with self.engine.begin() as conn:
-            row = self._view_row(conn, org_id, view_id)
+            row = self._view_row(conn, org_id, view_id, viewer_id)
             if not row:
                 return False
             self._require_view_owner(conn, org_id, viewer_id, row["owner_id"])
             conn.execute(saved_view.update().where(and_(
                 saved_view.c.organization_id == org_id,
-                saved_view.c.id == view_id)).values(archived_at=now_iso(), updated_at=now_iso()))
+                saved_view.c.id == row["id"])).values(archived_at=now_iso(), updated_at=now_iso()))
         return True
 
     def view_favorite_toggle(self, org_id: str, viewer_id: str, view_id: str) -> bool:
@@ -2249,6 +2550,7 @@ def move_issue_to_state(conn, org_id: str, issue_id: str, state_id: str,
     if issue_row.get("state_id") == state_id:
         return {"moved": False, "stateId": state_id, "from": issue_row.get("state_id")}
     writer = Writer(conn.engine)
+    view_before = view_subscriptions.snapshot(conn, org_id, issue_id)
     values: dict = {"state_id": state_id, "state_changed_at": ts, "updated_at": ts}
     team_row = conn.execute(select(team).where(and_(
         team.c.organization_id == org_id,
@@ -2270,4 +2572,5 @@ def move_issue_to_state(conn, org_id: str, issue_id: str, state_id: str,
     writer._record_activity(conn, org_id, issue_id, actor_id, "issueUpdated",
                             {"stateId": {"from": issue_row.get("state_id"), "to": state_id}}, ts)
     notifications.on_issue_updated(conn, org_id, issue_row, {**issue_row, **values}, actor_id, ts)
+    view_subscriptions.after_change(conn, org_id, issue_id, actor_id, ts, view_before)
     return {"moved": True, "stateId": state_id, "from": issue_row.get("state_id")}

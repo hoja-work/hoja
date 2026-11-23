@@ -14,7 +14,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 from graphql import GraphQLError
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import String, and_, case, false, func, or_, select, true, update
 from sqlalchemy.engine import Engine
 
 from hoja_server import activity, addresses, identifiers
@@ -69,6 +69,8 @@ from hoja_server.db import (
     token_hash,
     user,
     user_preference,
+    view_preference,
+    view_subscription,
     workspace_security_policy,
     workflow_state,
 )
@@ -277,6 +279,7 @@ class Store:
             "filters": viewdocs.load(row.get("filters")),
             "display": viewdocs.load(row.get("display")),
             "favorite": favorite,
+            "pinned": bool(row.get("pinned")), "sortOrder": row.get("sort_order"),
             "archivedAt": row.get("archived_at"),
             "createdAt": row.get("created_at"), "updatedAt": row.get("updated_at"),
             "_owner_id": row.get("owner_id"), "_creator_id": row.get("creator_id"),
@@ -325,6 +328,126 @@ class Store:
                 return None
             favorites = self._favorite_ids(conn, org_id, viewer_id)
             return self.ser_view(row, favorite=row["id"] in favorites)
+
+    def view_preference_layers(self, org_id: str, viewer_id: str, view_id: str | None,
+                               view_type: str | None, *,
+                               view_display: dict | None = None) -> dict:
+        """The three preference layers: ``default`` (the view's display, or the built-in
+        page's organization row), the caller's ``user`` layer (None when unset), and
+        ``effective`` (default with the user layer over it). The caller has already
+        checked that ``view_id``/``view_type`` is visible."""
+        with self.engine.connect() as conn:
+            clauses = [view_preference.c.organization_id == org_id]
+            if view_id:
+                clauses.append(view_preference.c.view_id == view_id)
+            else:
+                clauses += [view_preference.c.view_id.is_(None),
+                            view_preference.c.view_type == view_type]
+            rows = _conn_rows(conn, select(view_preference).where(and_(
+                *clauses, or_(view_preference.c.user_id.is_(None),
+                              view_preference.c.user_id == viewer_id)))
+                .order_by(view_preference.c.created_at))
+        org_row = next((r for r in rows if r["user_id"] is None), None)
+        user_row = next((r for r in rows if r["user_id"] == viewer_id), None)
+        default = dict(view_display or {}) if view_id else viewdocs.load(
+            (org_row or {}).get("values"))
+        mine = viewdocs.load(user_row["values"]) if user_row else None
+        return {"viewId": view_id, "viewType": view_type, "default": default,
+                "user": mine, "effective": viewdocs.layer(default, mine or {}),
+                "hasUserOverrides": bool(mine),
+                "_org_row": org_row, "_user_row": user_row}
+
+    def view_user_preference_rows(self, org_id: str, viewer_id: str) -> dict[str, dict]:
+        """The viewer's own preference row of every saved view, keyed by view id: one query
+        for a whole ``views`` list instead of one per view."""
+        with self.engine.connect() as conn:
+            rows = _conn_rows(conn, select(view_preference).where(and_(
+                view_preference.c.organization_id == org_id,
+                view_preference.c.user_id == viewer_id,
+                view_preference.c.view_id.is_not(None))).order_by(
+                    view_preference.c.created_at.desc()))
+        return {r["view_id"]: r for r in rows}  # the oldest row wins, as in the writer
+
+    def view_subscriptions_of(self, org_id: str, viewer_id: str) -> dict[str, dict]:
+        """The viewer's subscriptions keyed by view id (one query per request)."""
+        with self.engine.connect() as conn:
+            rows = _conn_rows(conn, select(view_subscription).where(and_(
+                view_subscription.c.organization_id == org_id,
+                view_subscription.c.user_id == viewer_id)))
+        return {r["view_id"]: {"id": r["id"], "onAdded": bool(r["on_added"]),
+                               "onCompleted": bool(r["on_completed"]),
+                               "createdAt": r["created_at"], "updatedAt": r["updated_at"],
+                               "_view_id": r["view_id"]} for r in rows}
+
+    def view_subscriber_counts(self, org_id: str) -> dict[str, int]:
+        """Followers per view in the organization, one grouped query."""
+        with self.engine.connect() as conn:
+            return dict(conn.execute(select(view_subscription.c.view_id, func.count())
+                                     .where(view_subscription.c.organization_id == org_id)
+                                     .group_by(view_subscription.c.view_id)).all())
+
+    def org_link_parts(self, org_id: str) -> tuple[str, str]:
+        """(url_key, origin) the workspace's links are built from (db.org_links)."""
+        from hoja_server.db import org_links
+
+        with self.engine.connect() as conn:
+            return org_links(conn, org_id)
+
+    def view_subscription_for(self, org_id: str, viewer_id: str, view_id: str) -> dict | None:
+        with self.engine.connect() as conn:
+            row = _one(conn, select(view_subscription).where(and_(
+                view_subscription.c.organization_id == org_id,
+                view_subscription.c.view_id == view_id,
+                view_subscription.c.user_id == viewer_id)))
+        if not row:
+            return None
+        return {"id": row["id"], "onAdded": bool(row["on_added"]),
+                "onCompleted": bool(row["on_completed"]), "createdAt": row["created_at"],
+                "updatedAt": row["updated_at"], "_view_id": view_id}
+
+    def view_subscriber_count(self, org_id: str, view_id: str) -> int:
+        with self.engine.connect() as conn:
+            return conn.execute(select(func.count()).select_from(view_subscription).where(and_(
+                view_subscription.c.organization_id == org_id,
+                view_subscription.c.view_id == view_id))).scalar() or 0
+
+    def view_export_rows(self, org_id: str, issues: list[dict]) -> list[dict]:
+        """CSV columns for a view's issues, every name resolved in one query per table."""
+        def names(table, ids, column):
+            ids = sorted({i for i in ids if i})
+            if not ids:
+                return {}
+            with self.engine.connect() as conn:
+                return dict(conn.execute(select(table.c.id, column).where(and_(
+                    table.c.organization_id == org_id, table.c.id.in_(ids)))).all())
+
+        states = names(workflow_state, [i["_state_id"] for i in issues], workflow_state.c.name)
+        people = names(user, [i["_assignee_id"] for i in issues],
+                       func.coalesce(user.c.display_name, user.c.name, user.c.email))
+        projects = names(project, [i["_project_id"] for i in issues], project.c.name)
+        cycles = names(cycle, [i["_cycle_id"] for i in issues],
+                       func.coalesce(cycle.c.name, func.cast(cycle.c.number, String)))
+        labels: dict[str, list[str]] = {}
+        ids = [i["id"] for i in issues]
+        if ids:
+            with self.engine.connect() as conn:
+                for issue_id, name in conn.execute(select(
+                        issue_label_link.c.issue_id, issue_label.c.name).select_from(
+                        issue_label_link.join(issue_label,
+                                              issue_label.c.id == issue_label_link.c.label_id))
+                        .where(issue_label_link.c.issue_id.in_(ids))
+                        .order_by(issue_label.c.name)).all():
+                    labels.setdefault(issue_id, []).append(name)
+        return [{"identifier": i["identifier"], "title": i["title"],
+                 "status": states.get(i["_state_id"], ""),
+                 "priority": i.get("priorityLabel") or "",
+                 "assignee": people.get(i["_assignee_id"], ""),
+                 "labels": ", ".join(labels.get(i["id"], [])),
+                 "project": projects.get(i["_project_id"], ""),
+                 "cycle": cycles.get(i["_cycle_id"], "") or "",
+                 "dueDate": i.get("dueDate") or "", "createdAt": i.get("createdAt") or "",
+                 "updatedAt": i.get("updatedAt") or "", "url": i.get("url") or ""}
+                for i in issues]
 
     # ------------------------------------------------------------- decisions
     def ser_decision(self, row: dict) -> dict:
@@ -2992,6 +3115,229 @@ class Store:
             return [self.ser_issue(r) for r in _conn_rows(conn, stmt)]
 
 
+    # ------------------------------------------------------------ view execution
+    # Views run on the same predicate compiler as ``issues`` but order by any of the
+    # display orderings and page with a keyset cursor over the full sort key, so a page
+    # boundary never drops or repeats a row whatever the ordering (docs/views.md).
+
+    def view_scope_filter(self, org_id: str, kind: str, scope: str | None,
+                          team_id: str | None = None, project_id: str | None = None,
+                          initiative_id: str | None = None) -> dict:
+        """The compiled predicate a view's scope adds to its results.
+
+        A team scope covers the team and its sub-teams; an initiative scope covers the
+        projects of the initiative and of its sub-initiatives.
+        """
+        if kind not in ("issue", "project") or scope in (None, "workspace"):
+            return {}
+        with self.engine.connect() as conn:
+            return self.view_scope_filter_on(conn, org_id, kind, scope, team_id, project_id,
+                                             initiative_id)
+
+    @classmethod
+    def view_scope_filter_on(cls, conn, org_id: str, kind: str, scope: str | None,
+                             team_id: str | None = None, project_id: str | None = None,
+                             initiative_id: str | None = None) -> dict:
+        """``view_scope_filter`` on the caller's connection (a writer's transaction)."""
+        if kind not in ("issue", "project") or scope in (None, "workspace"):
+            return {}
+        if scope == "team" and team_id:
+            teams = team_descendant_ids(conn, org_id, team_id)
+            return {"team": {"id": {"in": teams}}}
+        if scope == "project" and project_id:
+            return ({"project": {"id": {"eq": project_id}}} if kind == "issue"
+                    else {"id": {"eq": project_id}})
+        if scope == "initiative" and initiative_id:
+            initiatives = cls._initiative_descendants(conn, org_id, initiative_id)
+            projects = sorted(set(conn.execute(select(initiative_project.c.project_id).where(and_(
+                initiative_project.c.organization_id == org_id,
+                initiative_project.c.initiative_id.in_(initiatives)))).scalars())) or ["__none__"]
+            return ({"project": {"id": {"in": projects}}} if kind == "issue"
+                    else {"id": {"in": projects}})
+        return {}
+
+    def view_initiative_rows(self, org_id: str, statuses: list[str] | None = None,
+                             within: list[str] | None = None,
+                             viewer_id: str | None = None) -> list[dict]:
+        """The columns an initiative view filters and sorts on, one query, unserialized.
+
+        ``ser_initiative`` costs several queries per row (owner, creator, projects), so a
+        view filters and orders these light rows and serializes only the page it returns.
+        """
+        stmt = select(initiative.c.id, initiative.c.name, initiative.c.status,
+                      initiative.c.priority, initiative.c.target_date, initiative.c.created_at,
+                      initiative.c.sort_order, initiative.c.owner_id,
+                      initiative.c.lead_team_id).where(and_(
+                          initiative.c.organization_id == org_id,
+                          initiative.c.archived_at.is_(None)))
+        if statuses:
+            stmt = stmt.where(initiative.c.status.in_(statuses))
+        if within is not None:
+            stmt = stmt.where(initiative.c.id.in_(within or ["__none__"]))
+        with self.engine.connect() as conn:
+            stmt = _scope_teams(conn, stmt, org_id, viewer_id, initiative.c.lead_team_id, nullable=True)
+            return [{"id": r["id"], "name": r["name"], "status": r["status"],
+                     "priority": r["priority"], "targetDate": r["target_date"],
+                     "createdAt": r["created_at"], "sortOrder": r["sort_order"],
+                     "_owner_id": r["owner_id"], "_lead_team_id": r["lead_team_id"]}
+                    for r in _conn_rows(conn, stmt)]
+
+    def initiatives_by_ids(self, org_id: str, ids: list[str]) -> list[dict]:
+        """Serialized initiatives in the order of ``ids``."""
+        if not ids:
+            return []
+        with self.engine.connect() as conn:
+            rows = {r["id"]: r for r in _conn_rows(conn, select(initiative).where(and_(
+                initiative.c.organization_id == org_id, initiative.c.id.in_(ids))))}
+            return [self.ser_initiative(conn, rows[i]) for i in ids if i in rows]
+
+    def initiative_descendants(self, org_id: str, initiative_id: str) -> list[str]:
+        with self.engine.connect() as conn:
+            return self._initiative_descendants(conn, org_id, initiative_id)
+
+    @staticmethod
+    def _initiative_descendants(conn, org_id: str, initiative_id: str) -> list[str]:
+        seen, queue = [initiative_id], [initiative_id]
+        while queue:
+            children = conn.execute(select(initiative.c.id).where(and_(
+                initiative.c.organization_id == org_id,
+                initiative.c.parent_id == queue.pop(0)))).scalars().all()
+            for child in children:
+                if child not in seen:
+                    seen.append(child)
+                    queue.append(child)
+        return seen
+
+    @staticmethod
+    def _issue_sort_keys(org_id: str, ordering: str) -> list[tuple]:
+        """(expression, descending, follows reverse) for each sort key, id last.
+
+        Empty values (no priority, no due date, no estimate) sort last in both
+        directions, which is what Linear does; ``manual`` has no per-issue rank yet and
+        falls back to creation order, oldest first.
+        """
+        def last_if_empty(col):
+            return (case((col.is_(None), 1), else_=0), False, False)
+
+        if ordering == "priority":
+            empty = or_(issue.c.priority.is_(None), issue.c.priority == 0)
+            keys = [(case((empty, 1), else_=0), False, False),
+                    (func.coalesce(issue.c.priority, 0), False, True),
+                    (issue.c.updated_at, True, True)]
+        elif ordering in ("title", "name"):
+            keys = [(func.lower(issue.c.title), False, True)]
+        elif ordering in ("dueDate", "targetDate"):
+            keys = [last_if_empty(issue.c.due_date),
+                    (func.coalesce(issue.c.due_date, ""), False, True)]
+        elif ordering == "estimate":
+            keys = [last_if_empty(issue.c.estimate),
+                    (func.coalesce(issue.c.estimate, 0), True, True)]
+        elif ordering == "status":
+            rank = case(*[(workflow_state.c.type == t, i) for i, t in enumerate(
+                ("triage", "started", "unstarted", "backlog", "completed", "canceled"))],
+                else_=6)
+            state_rank = select(rank * 100000 + func.coalesce(workflow_state.c.position, 0)) \
+                .where(workflow_state.c.id == issue.c.state_id).scalar_subquery()
+            keys = [(func.coalesce(state_rank, 999999), False, True),
+                    (issue.c.updated_at, True, True)]
+        elif ordering == "created":
+            keys = [(issue.c.created_at, True, True)]
+        elif ordering == "manual":
+            keys = [(issue.c.created_at, False, True)]
+        else:  # updated
+            keys = [(issue.c.updated_at, True, True)]
+        return [*keys, (issue.c.id, keys[-1][1], True)]
+
+    @staticmethod
+    def _project_sort_keys(ordering: str) -> list[tuple]:
+        if ordering in ("title", "name"):
+            keys = [(func.lower(project.c.name), False, True)]
+        elif ordering == "startDate":
+            keys = [(case((project.c.start_date.is_(None), 1), else_=0), False, False),
+                    (func.coalesce(project.c.start_date, ""), False, True)]
+        elif ordering in ("dueDate", "targetDate"):
+            keys = [(case((project.c.target_date.is_(None), 1), else_=0), False, False),
+                    (func.coalesce(project.c.target_date, ""), False, True)]
+        elif ordering == "status":
+            rank = case(*[(project.c.state == t, i) for i, t in enumerate(
+                ("started", "planned", "paused", "backlog", "completed", "canceled"))], else_=6)
+            keys = [(rank, False, True), (func.coalesce(project.c.updated_at, ""), True, True)]
+        elif ordering == "updated":
+            keys = [(func.coalesce(project.c.updated_at, ""), True, True)]
+        elif ordering == "created":
+            keys = [(func.coalesce(project.c.created_at, ""), True, True)]
+        else:  # manual, and orderings a project has no column for (priority, estimate)
+            keys = [(func.coalesce(project.c.created_at, ""), False, True)]
+        return [*keys, (project.c.id, keys[-1][1], True)]
+
+    @staticmethod
+    def _keyset_page(conn, stmt, keys: list[tuple], reverse: bool, after: list | None,
+                     limit: int) -> tuple[list[dict], list[list], int]:
+        """Order ``stmt`` by ``keys``, resume after the cursor, and count the whole set."""
+        total = conn.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0
+        directions = [desc != reverse if follows else desc for _e, desc, follows in keys]
+        labelled = [expr.label(f"_view_k{i}") for i, (expr, _d, _f) in enumerate(keys)]
+        stmt = stmt.add_columns(*labelled)
+        if after is not None:
+            if len(after) != len(keys):
+                raise viewdocs.ViewError("after belongs to a different ordering.", "after")
+            alternatives = []
+            for i, (expr, _d, _f) in enumerate(keys):
+                prefix = [keys[j][0] == after[j] for j in range(i)]
+                beyond = expr < after[i] if directions[i] else expr > after[i]
+                alternatives.append(and_(*prefix, beyond))
+            stmt = stmt.where(or_(*alternatives))
+        stmt = stmt.order_by(*[(expr.desc() if d else expr.asc())
+                               for (expr, _d, _f), d in zip(keys, directions, strict=True)]).limit(limit)
+        rows, cursors = [], []
+        for row in _conn_rows(conn, stmt):
+            cursors.append([row.pop(f"_view_k{i}") for i in range(len(keys))])
+            rows.append(row)
+        return rows, cursors, total
+
+    def view_issues(self, org_id: str, viewer_id: str, flt: dict | None, *,
+                    ordering: str = "updated", reverse: bool = False,
+                    after: list | None = None, limit: int = 50,
+                    completed_since: str | None = None,
+                    show_sub_issues: bool = True) -> dict:
+        """One page of a view's issues: ``nodes``, per-row sort ``keys``, ``total``.
+
+        ``completed_since`` keeps completed/canceled issues finished at or after that
+        instant; ``""`` hides them all and None keeps them all.
+        """
+        with self.engine.connect() as conn:
+            stmt = select(issue).where(and_(
+                issue.c.organization_id == org_id, issue.c.archived_at.is_(None)))
+            stmt = _scope_teams(conn, stmt, org_id, viewer_id, issue.c.team_id)
+            stmt = _apply_issue_filter(conn, stmt, org_id, viewer_id, flt)
+            if completed_since is not None:
+                closed = select(workflow_state.c.id).where(and_(
+                    workflow_state.c.organization_id == org_id,
+                    workflow_state.c.type.in_(("completed", "canceled"))))
+                recent = false() if completed_since == "" else func.coalesce(
+                    issue.c.completed_at, issue.c.canceled_at, issue.c.state_changed_at,
+                    issue.c.updated_at) >= completed_since
+                stmt = stmt.where(or_(issue.c.state_id.is_(None),
+                                      issue.c.state_id.notin_(closed), recent))
+            if not show_sub_issues:
+                stmt = stmt.where(issue.c.parent_id.is_(None))
+            rows, keys, total = self._keyset_page(
+                conn, stmt, self._issue_sort_keys(org_id, ordering), reverse, after, limit)
+            return {"nodes": [self.ser_issue(r) for r in rows], "keys": keys, "total": total}
+
+    def view_projects(self, org_id: str, viewer_id: str | None, flt: dict | None, *,
+                      ordering: str = "manual", reverse: bool = False,
+                      after: list | None = None, limit: int = 50) -> dict:
+        with self.engine.connect() as conn:
+            stmt = select(project).where(and_(
+                project.c.organization_id == org_id, project.c.archived_at.is_(None)))
+            stmt = _apply_project_filter(stmt, flt, conn, org_id)
+            stmt = _scope_projects(conn, stmt, org_id, viewer_id)
+            rows, keys, total = self._keyset_page(
+                conn, stmt, self._project_sort_keys(ordering), reverse, after, limit)
+            return {"nodes": [self.ser_project(r) for r in rows], "keys": keys, "total": total}
+
+
 # ============================================================ filter compilers
 def _apply_str_cmp(col, cmp: dict):
     clauses = []
@@ -3036,6 +3382,8 @@ def _apply_num_cmp(col, cmp: dict):
 def _apply_date_cmp(col, cmp: dict):
     # ISO strings sort lexicographically → string comparison is correct
     clauses = []
+    if "null" in cmp:
+        clauses.append(col.is_(None) if cmp["null"] else col.is_not(None))
     if "eq" in cmp:
         clauses.append(col == cmp["eq"])
     if "gt" in cmp:
@@ -3052,6 +3400,10 @@ def _apply_date_cmp(col, cmp: dict):
 def _apply_project_filter(stmt, flt: dict | None, conn, org_id: str):
     if not flt:
         return stmt
+    if "id" in flt:
+        c = _apply_str_cmp(project.c.id, flt["id"])
+        if c is not None:
+            stmt = stmt.where(c)
     if "slugId" in flt:
         c = _apply_str_cmp(project.c.slug_id, flt["slugId"])
         if c is not None:
@@ -3064,16 +3416,85 @@ def _apply_project_filter(stmt, flt: dict | None, conn, org_id: str):
         c = _apply_str_cmp(project.c.state, flt["state"])
         if c is not None:
             stmt = stmt.where(c)
+    if "description" in flt:
+        c = _apply_str_cmp(project.c.description, flt["description"])
+        if c is not None:
+            stmt = stmt.where(c)
+    if "status" in flt:
+        # Configured statuses are matched by name, case-insensitively (project_settings).
+        c = _apply_str_cmp(func.lower(func.coalesce(project.c.state, "")), flt["status"])
+        if c is not None:
+            stmt = stmt.where(c)
+    for who, col in (("lead", project.c.lead_id), ("creator", project.c.creator_id)):
+        if who in flt:
+            c = _nullable_ref_clause(col, flt[who], ("id", "email", "displayName"),
+                                     lambda cmp: _resolve_user_ids(conn, org_id, cmp))
+            if c is not None:
+                stmt = stmt.where(c)
+    if flt.get("members"):
+        c = _collection_clause(project.c.id, flt["members"], select(project_member.c.project_id),
+                               lambda f: _member_project_ids(conn, org_id, f))
+        if c is not None:
+            stmt = stmt.where(c)
+    if flt.get("initiatives"):
+        c = _collection_clause(
+            project.c.id, flt["initiatives"],
+            select(initiative_project.c.project_id).where(
+                initiative_project.c.organization_id == org_id),
+            lambda f: _initiative_project_ids(conn, org_id, f))
+        if c is not None:
+            stmt = stmt.where(c)
+    if "health" in flt:
+        c = _project_health_clause(conn, org_id, flt["health"])
+        if c is not None:
+            stmt = stmt.where(c)
+    for datef, col in (("startDate", project.c.start_date), ("targetDate", project.c.target_date)):
+        if datef in flt:
+            c = _apply_date_cmp(col, flt[datef])
+            if c is not None:
+                stmt = stmt.where(c)
     if "team" in flt:
-        team_ids = _resolve_team_ids(conn, org_id, flt["team"])
-        project_ids = select(project_team.c.project_id).where(
-            project_team.c.team_id.in_(team_ids or ["__none__"]))
-        stmt = stmt.where(project.c.id.in_(project_ids))
+        cmp = flt["team"] or {}
+        if _negative_only(cmp, ("id", "key", "name", "memberOf")):
+            # A project links to many teams: "team is not X" drops every project linked to
+            # X (not just keeps those linked to some other team), and keeps teamless ones,
+            # as Linear's exclusive filters do.
+            excluded = _resolve_team_ids(conn, org_id, {
+                c: {_NEGATIVE_CMPS[k]: v for k, v in cmp[c].items()}
+                for c in ("id", "key", "name", "memberOf") if c in cmp})
+            stmt = stmt.where(project.c.id.notin_(select(project_team.c.project_id).where(
+                project_team.c.team_id.in_(excluded or ["__none__"]))))
+        else:
+            team_ids = _resolve_team_ids(conn, org_id, cmp)
+            project_ids = select(project_team.c.project_id).where(
+                project_team.c.team_id.in_(team_ids or ["__none__"]))
+            stmt = stmt.where(project.c.id.in_(project_ids))
+    for sub_filter in flt.get("and") or []:
+        stmt = _apply_project_filter(stmt, sub_filter, conn, org_id)
+    if flt.get("or"):
+        alternatives = []
+        for sub_filter in flt["or"]:
+            subquery = _apply_project_filter(select(project.c.id).where(and_(
+                project.c.organization_id == org_id, project.c.archived_at.is_(None))),
+                sub_filter, conn, org_id)
+            alternatives.append(project.c.id.in_(subquery))
+        stmt = stmt.where(or_(*alternatives))
     return stmt
 
 
 def _resolve_team_ids(conn, org_id: str, cmp: dict) -> list[str]:
     stmt = select(team.c.id).where(team.c.organization_id == org_id)
+    if "memberOf" in cmp:
+        # A view's "my teams": the teams a user belongs to (views.MY_TEAMS), compared by
+        # the member's id, so ``neq`` is "teams they are not in".
+        member_cmp = cmp["memberOf"] or {}
+        users = [v for k in ("eq", "neq") if k in member_cmp for v in [member_cmp[k]]] + \
+            [v for k in ("in", "nin") if k in member_cmp for v in member_cmp[k]]
+        joined = select(team_member.c.team_id).where(team_member.c.user_id.in_(users or ["__none__"]))
+        if set(member_cmp) & {"neq", "nin"}:
+            stmt = stmt.where(team.c.id.notin_(joined))
+        else:
+            stmt = stmt.where(team.c.id.in_(joined))
     if "key" in cmp:
         kc = _apply_str_cmp(team.c.key, cmp["key"])
         if kc is not None:
@@ -3091,6 +3512,14 @@ def _resolve_team_ids(conn, org_id: str, cmp: dict) -> list[str]:
 
 def _resolve_state_ids(conn, org_id: str, cmp: dict) -> list[str]:
     stmt = select(workflow_state.c.id).where(workflow_state.c.organization_id == org_id)
+    if "id" in cmp:
+        c = _apply_str_cmp(workflow_state.c.id, cmp["id"])
+        if c is not None:
+            stmt = stmt.where(c)
+    if "key" in cmp:  # the web client's "Name|type" state key
+        c = _apply_str_cmp(workflow_state.c.name + "|" + workflow_state.c.type, cmp["key"])
+        if c is not None:
+            stmt = stmt.where(c)
     if "name" in cmp:
         c = _apply_str_cmp(workflow_state.c.name, cmp["name"])
         if c is not None:
@@ -3174,6 +3603,168 @@ def _resolve_cycle_ids(conn, org_id: str, cmp: dict) -> list[str] | None:
     return sorted(matches or [])
 
 
+_NEGATIVE_CMPS = {"neq": "eq", "nin": "in"}
+
+
+def _negative_only(cmp: dict, columns: tuple[str, ...]) -> bool:
+    """Whether every comparator on the reference columns is ``neq``/``nin``."""
+    comparators = [cmp[c] for c in columns if c in cmp]
+    return bool(comparators) and all(
+        isinstance(v, dict) and v and set(v) <= set(_NEGATIVE_CMPS) for v in comparators)
+
+
+def _nullable_ref_clause(col, cmp: dict | None, columns: tuple[str, ...], resolve):
+    """One nullable reference predicate (assignee, creator, project, cycle).
+
+    ``null: true`` selects empty rows. A purely negative predicate ("is not Alice")
+    resolves the excluded rows and keeps the empty ones, as Linear does; a positive one
+    resolves the matching rows. ``resolve`` maps a column comparator to ids.
+    """
+    cmp = cmp or {}
+    clauses = []
+    if "null" in cmp:
+        clauses.append(col.is_(None) if cmp["null"] else col.is_not(None))
+    if any(c in cmp for c in columns):
+        if _negative_only(cmp, columns):
+            excluded: set[str] = set()
+            for c in columns:
+                if c in cmp:
+                    excluded.update(resolve({c: {_NEGATIVE_CMPS[k]: v for k, v in cmp[c].items()}}))
+            clauses.append(or_(col.is_(None), col.notin_(sorted(excluded))) if excluded else true())
+        else:
+            clauses.append(col.in_(resolve({c: cmp[c] for c in columns if c in cmp}) or ["__none__"]))
+    return and_(*clauses) if clauses else None
+
+
+def _resolve_project_ids(conn, org_id: str, cmp: dict) -> list[str]:
+    stmt = select(project.c.id).where(project.c.organization_id == org_id)
+    for field, column in (("id", project.c.id), ("name", project.c.name)):
+        if field in cmp:
+            c = _apply_str_cmp(column, cmp[field])
+            if c is not None:
+                stmt = stmt.where(c)
+    return [r[0] for r in conn.execute(stmt)]
+
+
+def _resolve_cycle_name_ids(conn, org_id: str, cmp: dict) -> list[str]:
+    stmt = select(cycle.c.id).where(cycle.c.organization_id == org_id)
+    for field, column in (("id", cycle.c.id), ("name", cycle.c.name)):
+        if field in cmp:
+            c = _apply_str_cmp(column, cmp[field])
+            if c is not None:
+                stmt = stmt.where(c)
+    return [r[0] for r in conn.execute(stmt)]
+
+
+def _label_issue_ids(org_id: str, label_filter: dict):
+    """Issue ids carrying at least one label that matches ``label_filter`` (id/name)."""
+    sub = select(issue_label_link.c.issue_id).select_from(
+        issue_label_link.join(issue_label, issue_label.c.id == issue_label_link.c.label_id)
+    ).where(issue_label.c.organization_id == org_id)
+    for field, column in (("id", issue_label.c.id), ("name", issue_label.c.name)):
+        if field in (label_filter or {}):
+            c = _apply_str_cmp(column, label_filter[field])
+            if c is not None:
+                sub = sub.where(c)
+    return sub
+
+
+def _label_clause(org_id: str, cmp: dict):
+    """``labels`` in Linear's collection grammar: ``some``/``none`` take a label filter,
+    ``null`` selects rows with no label, and a bare ``id``/``name`` means ``some``."""
+    clauses = []
+    if "null" in cmp:
+        labelled = select(issue_label_link.c.issue_id)
+        clauses.append(issue.c.id.notin_(labelled) if cmp["null"] else issue.c.id.in_(labelled))
+    if "some" in cmp:
+        clauses.append(issue.c.id.in_(_label_issue_ids(org_id, cmp["some"])))
+    if "none" in cmp:
+        clauses.append(issue.c.id.notin_(_label_issue_ids(org_id, cmp["none"])))
+    direct = {k: cmp[k] for k in ("id", "name") if k in cmp}
+    if direct:
+        clauses.append(issue.c.id.in_(_label_issue_ids(org_id, direct)))
+    return and_(*clauses) if clauses else None
+
+
+def _collection_clause(id_col, cmp: dict, linked, resolve):
+    """A to-many predicate (subscribers, members, initiatives) in the collection grammar:
+    ``some``/``none`` take a filter of the related row, ``null`` means "has none".
+    ``linked`` selects every owner id with at least one related row; ``resolve`` maps a
+    related-row filter to the owner ids that have a matching one."""
+    clauses = []
+    if "null" in cmp:
+        clauses.append(id_col.notin_(linked) if cmp["null"] else id_col.in_(linked))
+    if "some" in cmp:
+        clauses.append(id_col.in_(resolve(cmp["some"])))
+    if "none" in cmp:
+        clauses.append(id_col.notin_(resolve(cmp["none"])))
+    return and_(*clauses) if clauses else None
+
+
+def _user_filter_ids(conn, org_id: str, flt: dict, viewer_id: str | None = None) -> list[str]:
+    """Users matching a related-user filter: ``id``/``email``/``displayName`` comparators and
+    Linear's ``isMe`` (``{"eq": true}`` is the viewer, ``false`` everyone else). An empty
+    filter is "any user"."""
+    flt = flt or {}
+    ids = _resolve_user_ids(conn, org_id, {k: flt[k] for k in ("id", "email", "displayName")
+                                           if k in flt})
+    if isinstance(flt.get("isMe"), dict) and "eq" in flt["isMe"]:
+        me = bool(flt["isMe"]["eq"])
+        ids = [i for i in ids if (i == viewer_id) == me]
+    return ids
+
+
+def _subscriber_issue_ids(conn, org_id: str, flt: dict, viewer_id: str | None = None):
+    return select(issue_subscriber.c.issue_id).where(issue_subscriber.c.user_id.in_(
+        _user_filter_ids(conn, org_id, flt, viewer_id) or ["__none__"]))
+
+
+def _member_project_ids(conn, org_id: str, flt: dict):
+    return select(project_member.c.project_id).where(
+        project_member.c.user_id.in_(_user_filter_ids(conn, org_id, flt) or ["__none__"]))
+
+
+def _initiative_project_ids(conn, org_id: str, flt: dict):
+    stmt = select(initiative.c.id).where(initiative.c.organization_id == org_id)
+    for field, column in (("id", initiative.c.id), ("name", initiative.c.name)):
+        if field in (flt or {}):
+            c = _apply_str_cmp(column, flt[field])
+            if c is not None:
+                stmt = stmt.where(c)
+    return select(initiative_project.c.project_id).where(and_(
+        initiative_project.c.organization_id == org_id,
+        initiative_project.c.initiative_id.in_(stmt)))
+
+
+def _project_health_clause(conn, org_id: str, cmp: dict):
+    """Health is the latest project update's, so it is resolved to project ids here."""
+    from hoja_server.initiative_api import latest_project_health
+
+    ids = list(conn.execute(select(project.c.id).where(and_(
+        project.c.organization_id == org_id, project.c.archived_at.is_(None)))).scalars())
+    health = {pid: (h or "none") for pid, h in latest_project_health(conn, org_id, ids).items()}
+    wanted = set(cmp.get("in") or []) | ({cmp["eq"]} if "eq" in cmp else set())
+    unwanted = set(cmp.get("nin") or []) | ({cmp["neq"]} if "neq" in cmp else set())
+    clauses = []
+    if wanted:
+        clauses.append(project.c.id.in_([p for p, h in health.items() if h in wanted]
+                                        or ["__none__"]))
+    if unwanted:
+        clauses.append(project.c.id.notin_([p for p, h in health.items() if h in unwanted]
+                                           or ["__none__"]))
+    return and_(*clauses) if clauses else None
+
+
+def _apply_nullable_num_cmp(col, cmp: dict):
+    clauses = []
+    if "null" in cmp:
+        clauses.append(col.is_(None) if cmp["null"] else col.is_not(None))
+    rest = _apply_num_cmp(col, {k: v for k, v in cmp.items() if k != "null"})
+    if rest is not None:
+        clauses.append(rest)
+    return and_(*clauses) if clauses else None
+
+
 def _apply_issue_filter(conn, stmt, org_id, viewer_id, flt: dict | None):
     if not flt:
         return stmt
@@ -3185,22 +3776,26 @@ def _apply_issue_filter(conn, stmt, org_id, viewer_id, flt: dict | None):
         stmt = stmt.where(issue.c.state_id.in_(ids or ["__none__"]))
     for who, col in (("assignee", issue.c.assignee_id), ("creator", issue.c.creator_id)):
         if who in flt:
-            ids = _resolve_user_ids(conn, org_id, flt[who])
-            stmt = stmt.where(col.in_(ids or ["__none__"]))
-    if "project" in flt:
-        cmp = flt["project"]
-        if "id" in cmp:
-            c = _apply_str_cmp(issue.c.project_id, cmp["id"])
+            c = _nullable_ref_clause(col, flt[who], ("id", "email", "displayName"),
+                                     lambda cmp: _resolve_user_ids(conn, org_id, cmp))
             if c is not None:
                 stmt = stmt.where(c)
-        elif "name" in cmp:
-            sub = select(project.c.id).where(project.c.organization_id == org_id)
-            nc = _apply_str_cmp(project.c.name, cmp["name"])
-            if nc is not None:
-                sub = sub.where(nc)
-            stmt = stmt.where(issue.c.project_id.in_([r[0] for r in conn.execute(sub)] or ["__none__"]))
-    if "cycle" in flt:
-        cycle_filter = flt["cycle"]
+    if "project" in flt:
+        c = _nullable_ref_clause(issue.c.project_id, flt["project"], ("id", "name"),
+                                 lambda cmp: _resolve_project_ids(conn, org_id, cmp))
+        if c is not None:
+            stmt = stmt.where(c)
+    cycle_filter = flt.get("cycle")
+    if cycle_filter is not None and ("null" in cycle_filter or (
+            _negative_only(cycle_filter, ("id", "name"))
+            and not {"isActive", "isNext"}.intersection(cycle_filter))):
+        c = _nullable_ref_clause(issue.c.cycle_id, cycle_filter, ("id", "name"),
+                                 lambda cmp: _resolve_cycle_name_ids(conn, org_id, cmp))
+        if c is not None:
+            stmt = stmt.where(c)
+        cycle_filter = {k: v for k, v in cycle_filter.items()
+                        if k in ("isActive", "isNext")} or None
+    if cycle_filter:
         sub = select(cycle.c.id).where(cycle.c.organization_id == org_id)
         for field, column in (("id", cycle.c.id), ("name", cycle.c.name)):
             if field in cycle_filter:
@@ -3216,12 +3811,15 @@ def _apply_issue_filter(conn, stmt, org_id, viewer_id, flt: dict | None):
         cmp = flt["parent"] or {}
         # `isNull` is a Hoja extension: GraphQL cannot express `eq: null`, and
         # clients strip nulls from variables, so orphans need a boolean.
-        if cmp.get("isNull") is True:
+        is_null = cmp.get("isNull", cmp.get("null"))
+        if is_null is True:
             stmt = stmt.where(issue.c.parent_id.is_(None))
-        elif cmp.get("isNull") is False:
+        elif is_null is False:
             stmt = stmt.where(issue.c.parent_id.is_not(None))
         if "id" in cmp:
             c = _apply_str_cmp(issue.c.parent_id, cmp["id"])
+            if c is not None and _negative_only(cmp, ("id",)):
+                c = or_(issue.c.parent_id.is_(None), c)
             if c is not None:
                 stmt = stmt.where(c)
     if "priority" in flt:
@@ -3232,6 +3830,23 @@ def _apply_issue_filter(conn, stmt, org_id, viewer_id, flt: dict | None):
         c = _apply_num_cmp(issue.c.number, flt["number"])
         if c is not None:
             stmt = stmt.where(c)
+    if "estimate" in flt:
+        c = _apply_nullable_num_cmp(issue.c.estimate, flt["estimate"] or {})
+        if c is not None:
+            stmt = stmt.where(c)
+    if flt.get("subscribers"):
+        c = _collection_clause(issue.c.id, flt["subscribers"], select(issue_subscriber.c.issue_id),
+                               lambda f: _subscriber_issue_ids(conn, org_id, f, viewer_id))
+        if c is not None:
+            stmt = stmt.where(c)
+    if flt.get("hasChildren") is not None:
+        # "Has sub-issues": a live child points at the row.
+        child = issue.alias("child_issue")
+        children = select(child.c.parent_id).where(and_(
+            child.c.organization_id == org_id, child.c.parent_id.is_not(None),
+            child.c.archived_at.is_(None)))
+        stmt = stmt.where(issue.c.id.in_(children) if flt["hasChildren"]
+                          else issue.c.id.notin_(children))
     if "identifier" in flt:
         c = _apply_str_cmp(issue.c.identifier, flt["identifier"])
         # Issues(filter:{identifier}) is what a client asks when it was handed
@@ -3259,19 +3874,17 @@ def _apply_issue_filter(conn, stmt, org_id, viewer_id, flt: dict | None):
         if c is not None:
             stmt = stmt.where(c)
     for datef, col in (("updatedAt", issue.c.updated_at), ("createdAt", issue.c.created_at),
-                       ("dueDate", issue.c.due_date)):
+                       ("dueDate", issue.c.due_date), ("startedAt", issue.c.started_at),
+                       ("completedAt", issue.c.completed_at),
+                       ("canceledAt", issue.c.canceled_at)):
         if datef in flt:
             c = _apply_date_cmp(col, flt[datef])
             if c is not None:
                 stmt = stmt.where(c)
-    if "labels" in flt and "name" in flt["labels"]:
-        sub = select(issue_label_link.c.issue_id).select_from(
-            issue_label_link.join(issue_label, issue_label.c.id == issue_label_link.c.label_id)
-        ).where(issue_label.c.organization_id == org_id)
-        nc = _apply_str_cmp(issue_label.c.name, flt["labels"]["name"])
-        if nc is not None:
-            sub = sub.where(nc)
-        stmt = stmt.where(issue.c.id.in_([r[0] for r in conn.execute(sub)] or ["__none__"]))
+    if flt.get("labels"):
+        c = _label_clause(org_id, flt["labels"])
+        if c is not None:
+            stmt = stmt.where(c)
     for sub_filter in flt.get("and") or []:
         stmt = _apply_issue_filter(conn, stmt, org_id, viewer_id, sub_filter)
     if flt.get("or"):

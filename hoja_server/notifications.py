@@ -38,7 +38,10 @@ KINDS = ("issueAssigned", "issueMention", "issueComment", "issueStatusChanged",
          "issueUpdated", "issueDecision", "issueCreated",
          "projectUpdatePosted", "projectUpdateReply", "projectMention", "projectLeadAssigned",
          "projectUpdated", "projectMemberAdded", "initiativeUpdatePosted", "initiativeOwnerAssigned",
-         "initiativeUpdated", "cycleStarted", "cycleCompleted")
+         "initiativeUpdated", "cycleStarted", "cycleCompleted",
+         # A followed view gained a task, or a task in it was completed or canceled
+         # (hoja_server.view_subscriptions).
+         "viewIssueAdded", "viewIssueCompleted")
 
 # subject type -> (subscriber table, its subject column, the inbox column)
 SUBJECTS = {

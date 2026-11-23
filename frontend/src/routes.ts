@@ -15,6 +15,7 @@ export const KNOWN_WORKSPACE_PAGES = [
   "initiatives",
   "projects",
   "views",
+  "view",
   "board",
   "cycles",
   "members",
@@ -65,6 +66,9 @@ export function routeView(path: string): string {
 
   if (p.includes("/issue/") || p.includes("/task/")) return "Issue detail";
   if (p.includes("/project/") && p.includes("/view/")) return "Project view";
+  // A saved view's page: /workspace/view/<slug>, or the stable /<workspace>/view/<slug> link
+  // its `url` carries (redirectLegacyViewPath moves that one onto /workspace/view/).
+  if (/^\/[^/]+\/view\/[^/]+\/?$/.test(p)) return "View";
   if (p.includes("/project/")) return "Project detail";
   // '/initiative/<id>' is the detail page; the list lives under '/initiatives'.
   if (p.includes("/initiative/")) return "Initiative detail";

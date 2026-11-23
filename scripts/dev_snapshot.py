@@ -24,7 +24,8 @@ TABLES = (
     "issue_subscriber", "comment", "project", "project_status", "project_member",
     "project_team", "project_subscriber", "cycle", "cycle_subscriber", "initiative",
     "initiative_project", "initiative_subscriber", "project_update",
-    "initiative_update", "saved_view", "saved_view_favorite",
+    "initiative_update", "saved_view", "saved_view_favorite", "view_preference",
+    "view_subscription",
 )
 
 

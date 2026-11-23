@@ -242,7 +242,10 @@ def test_scope_and_visibility_are_validated(world):
     ({"nope": {"is": 1}}, "nope"),
     ({"priority": {"isGreaterThanOrEqual": 2}}, None),
     ({"state": {"before": "2026-01-01"}}, "state.before"),
-    ({"labels": {"includesAll": ["bug"]}}, "labels.includesAll"),
+    ({"labels": {"includesAll": ["bug"]}}, None),
+    ({"labels": {"includesAll": [None]}}, "labels.includesAll[0]"),
+    ({"stateType": {"is": "doing"}}, "stateType.is"),
+    ({"title": {"is": None}}, "title.is"),
     ({"title": {"is": 3}}, "title.is"),
     ({"priority": {"is": "urgent"}}, "priority.is"),
     ({"dueDate": {"before": "next tuesday"}}, "dueDate.before"),
@@ -391,3 +394,33 @@ def test_views_are_tenant_scoped(world, tmp_path):
             assert ok(other_client, "views-other-token", VIEWS)["views"] == []
             assert err(other_client, "views-other-token", VIEW,
                        {"id": created["id"]})["extensions"]["code"] == "NOT_FOUND"
+
+
+PREVIEW_ISSUES = """query($f: JSON, $s: String, $t: String) {
+  viewPreview(kind: "issue", filters: $f, display: {completedWindow: "all"}, scope: $s, teamId: $t) {
+    issues(first: 250) { nodes { title } totalCount } } }"""
+
+
+def test_view_execution_never_returns_issues_from_a_team_the_viewer_cannot_see(world):
+    with TestClient(world["app"]) as client:
+        ok(client, MEMBER, CREATE_ISSUE, {"i": {"teamId": world["sec"], "title": "Secret plan"}})
+        ok(client, ADMIN, CREATE_ISSUE, {"i": {"teamId": world["ops"], "title": "Public chore"}})
+        shared = view(client, MEMBER, name="Everything", kind="issue", visibility="workspace",
+                      display={"completedWindow": "all"})
+        query = """query($id: String!) { view(id: $id) { issues { nodes { title } totalCount } } }"""
+
+        def seen(token, q, variables):
+            (data,) = ok(client, token, q, variables).values()
+            return {n["title"] for n in data["issues"]["nodes"]}
+
+        assert seen(MEMBER, query, {"id": shared["id"]}) == {"Secret plan", "Public chore"}
+        # The same shared view run by someone outside the private team hides its rows, and
+        # totalCount does not count them either.
+        assert seen(OUTSIDER, query, {"id": shared["id"]}) == {"Public chore"}
+        assert ok(client, OUTSIDER, query, {"id": shared["id"]})["view"]["issues"]["totalCount"] == 1
+        # Naming the private team in a filter or a preview scope does not reach it.
+        assert seen(OUTSIDER, PREVIEW_ISSUES, {"f": {"team": {"is": "SEC"}}}) == set()
+        assert seen(OUTSIDER, PREVIEW_ISSUES, {"f": {"team": {"isNot": "OPS"}}}) == set()
+        error = err(client, OUTSIDER, PREVIEW_ISSUES, {"s": "team", "t": world["sec"]})
+        assert error["extensions"]["field"] == "teamId"
+        assert seen(MEMBER, PREVIEW_ISSUES, {"s": "team", "t": world["sec"]}) == {"Secret plan"}

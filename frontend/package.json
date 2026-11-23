@@ -24,6 +24,7 @@
     "test:project-activity": "node ../scripts/test-project-activity.cjs",
     "test:markdown": "node ../scripts/test-markdown-conformance.cjs && node ../scripts/test-markdown-surfaces.cjs",
     "test:markdown:spec": "node ../scripts/test-markdown-conformance.cjs",
+    "test:views": "node --experimental-strip-types --no-warnings --import ./scripts/ts-resolve.mjs scripts/test-view-filters.mjs",
     "test:cycles": "node ../scripts/test-cycle-metrics.mjs && node ../scripts/test-cycle-selection.mjs",
     "test:status-age": "node ../scripts/test-status-age.mjs",
     "test:setup": "node ../scripts/test-setup-wizard.cjs",

@@ -207,7 +207,7 @@ hoja issue list --not-state "Done"
 # Free-text within structured filter
 hoja issue list --team ENG --contains "auth bug"
 
-# Saved views (named filters in config)
+# Saved views (server-side; name, slug or id — see docs/views.md)
 hoja issue list --view "my-open-bugs"
 ```
 

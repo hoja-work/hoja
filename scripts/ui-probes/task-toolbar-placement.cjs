@@ -149,6 +149,12 @@ const ok = (c, m) => {
           `${tag}: ${name} closes with Escape`,
         );
       }
+      // The layout is a display preference saved on the server, so an earlier pass that switched
+      // to the list wins over the localStorage seed; start from the board explicitly.
+      if (!(await p.evaluate(() => !!document.querySelector("[data-kanban-columns]")))) {
+        await p.locator("[data-layout-switch]").click();
+        await p.waitForTimeout(700);
+      }
       const before = await p.evaluate(
         () => !!document.querySelector("[data-kanban-columns]"),
       );

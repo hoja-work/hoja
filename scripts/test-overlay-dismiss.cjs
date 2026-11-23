@@ -123,7 +123,7 @@ const ok = (cond, label, detail = '') => { cond ? pass++ : fail++; console.log(`
 
     await closePanels();
     await filterTrigger.click(); await wait(150);
-    await filterPanel.getByRole('button', { name: 'All statuses' }).click(); await wait(150);
+    await filterPanel.getByRole('menuitem', { name: 'Status', exact: true }).click(); await wait(150);
     ok(await filterPanel.count() === 1, 'filter panel stays open for an inside press');
 
     await closePanels();
@@ -146,7 +146,7 @@ const ok = (cond, label, detail = '') => { cond ? pass++ : fail++; console.log(`
     if (!(await displayPanel.count())) { await displayTrigger.click(); await wait(150); }
 
     // A press on a control inside the panel must not dismiss it.
-    await displayPanel.locator('small').first().click(); await wait(150);
+    await displayPanel.getByText('Display properties', { exact: true }).click(); await wait(150);
     ok(await displayPanel.count() === 1, 'display panel survives a press on non-interactive text inside it');
 
     // --- meetings call popover ---

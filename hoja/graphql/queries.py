@@ -272,3 +272,37 @@ ISSUE_DECISION = (
     }
     """
 )
+
+# ---------------------------------------------------------------------------
+# Saved views (docs/views.md)
+# ---------------------------------------------------------------------------
+
+ISSUE_VIEWS = """
+query IssueViews {
+  views(kind: "issue") { id name slugId kind }
+}
+"""
+
+# The cycles a ``CycleFilter`` selects, so ``--view --cycle current`` can name them by id.
+CYCLE_IDS = """
+query CycleIds($filter: CycleFilter, $first: Int) {
+  cycles(filter: $filter, first: $first) { nodes { id } }
+}
+"""
+
+# ``customView.issues`` takes an ``IssueFilter``-shaped ``filter`` (the shape
+# ``hoja.filters`` builds) and ANDs it with the saved view's filters, scope and
+# display; the server translates it to the view grammar or refuses it by path.
+VIEW_ISSUES = (
+    """
+    query ViewIssues($id: String!, $first: Int, $after: String, $filter: JSON) {
+      customView(id: $id) {
+        issues(first: $first, after: $after, filter: $filter) {
+          nodes { ...IssueCore }
+          pageInfo { ...PageInfoCore }
+        }
+      }
+    }
+    """
+    + assemble(ISSUE_CORE, USER_CORE, STATE_CORE, PAGE_INFO)
+)

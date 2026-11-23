@@ -119,6 +119,7 @@ hoja issue list --cycle current --team ENG
 hoja issue list --contains "auth"            # title/description full-text
 hoja issue list --created-after 2026-05-01
 hoja issue list -n 20                         # limit
+hoja issue list --view "Urgent tasks"         # run a saved view (name, slug or id) on the server
 
 # Read one issue (returns title, description, state, assignee, labels, comments)
 hoja issue get ENG-35

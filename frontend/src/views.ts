@@ -8,25 +8,38 @@
 
 export type ViewDocument = Record<string, unknown>;
 
+export type ViewUser = {id: string; name?: string | null; avatarSeed?: string | null};
+
 export type ServerView = {
   id: string;
   name: string;
   description?: string | null;
+  icon?: string | null;
+  color?: string | null;
+  slugId?: string;
   kind: 'issue' | 'project' | 'initiative';
   scope: string;
   visibility: string;
   favorite: boolean;
+  pinned?: boolean;
+  sortOrder?: number | null;
   filters: ViewDocument;
   display: ViewDocument;
-  team?: {id: string; key: string} | null;
-  project?: {id: string} | null;
+  team?: {id: string; key: string; name?: string} | null;
+  project?: {id: string; name?: string} | null;
+  initiative?: {id: string} | null;
+  owner?: ViewUser | null;
+  subscription?: {onAdded: boolean; onCompleted: boolean} | null;
+  url?: string;
   createdAt?: string;
   updatedAt?: string;
 };
 
 export type ViewInput = {
   name: string;
-  description?: string;
+  description?: string | null;
+  icon?: string | null;
+  color?: string | null;
   kind?: 'issue' | 'project' | 'initiative';
   scope?: 'workspace' | 'team' | 'project' | 'initiative';
   teamId?: string;
@@ -35,9 +48,10 @@ export type ViewInput = {
   visibility?: 'private' | 'workspace' | 'team';
   filters?: ViewDocument;
   display?: ViewDocument;
+  ownerId?: string;
 };
 
-const FIELDS = 'id name description kind scope visibility favorite filters display team{id key} project{id} createdAt updatedAt';
+const FIELDS = 'id name description icon color slugId kind scope visibility favorite pinned sortOrder filters display team{id key name} project{id name} initiative{id} owner{id name avatarSeed} subscription{onAdded onCompleted} url createdAt updatedAt';
 
 async function request<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
   const stored = localStorage.getItem('hoja_token');
@@ -53,6 +67,19 @@ async function request<T>(query: string, variables?: Record<string, unknown>): P
   return body.data as T;
 }
 
+/** Fired after any write that changes which views exist or how they are listed (favorites,
+ * names, pins), so the sidebar, palette and lists re-read without a page reload. */
+export const VIEWS_CHANGED = 'hoja:views-changed';
+
+function changed<T>(value: T): T {
+  try {
+    window.dispatchEvent(new Event(VIEWS_CHANGED));
+  } catch {
+    /* no window (tests) */
+  }
+  return value;
+}
+
 export async function listViews(kind?: 'issue' | 'project' | 'initiative', scope?: string): Promise<ServerView[]> {
   const data = await request<{views: ServerView[]}>(
     `query Views($kind:String,$scope:String){views(kind:$kind,scope:$scope){${FIELDS}}}`,
@@ -65,7 +92,7 @@ export async function createView(input: ViewInput): Promise<ServerView> {
     `mutation CreateView($input:ViewCreateInput!){viewCreate(input:$input){success view{${FIELDS}}}}`,
     {input});
   if (!data.viewCreate.success || !data.viewCreate.view) throw new Error('The view was not created.');
-  return data.viewCreate.view;
+  return changed(data.viewCreate.view);
 }
 
 export async function updateView(id: string, input: Partial<ViewInput> & {archived?: boolean; kind?: string}): Promise<ServerView> {
@@ -73,34 +100,125 @@ export async function updateView(id: string, input: Partial<ViewInput> & {archiv
     `mutation UpdateView($id:String!,$input:ViewUpdateInput!){viewUpdate(id:$id,input:$input){success view{${FIELDS}}}}`,
     {id, input});
   if (!data.viewUpdate.success || !data.viewUpdate.view) throw new Error('The view was not updated.');
-  return data.viewUpdate.view;
+  return changed(data.viewUpdate.view);
 }
 
 export async function deleteView(id: string): Promise<void> {
   const data = await request<{viewDelete: {success: boolean}}>(
     'mutation DeleteView($id:String!){viewDelete(id:$id){success}}', {id});
   if (!data.viewDelete.success) throw new Error('The view was not deleted.');
+  changed(null);
+}
+
+export async function getView(ident: string): Promise<ServerView> {
+  const data = await request<{view: ServerView}>(
+    `query View($id:String!){view(id:$id){${FIELDS}}}`, {id: ident});
+  return data.view;
+}
+
+export async function duplicateView(id: string, name?: string, visibility?: string): Promise<ServerView> {
+  const data = await request<{viewDuplicate: {success: boolean; view: ServerView | null}}>(
+    `mutation DuplicateView($id:String!,$name:String,$visibility:String){viewDuplicate(id:$id,name:$name,visibility:$visibility){success view{${FIELDS}}}}`,
+    {id, name: name ?? null, visibility: visibility ?? null});
+  if (!data.viewDuplicate.success || !data.viewDuplicate.view) throw new Error('The view was not duplicated.');
+  return changed(data.viewDuplicate.view);
+}
+
+/** Pin a team or project view as a tab on that page, or unpin it. */
+export async function pinView(id: string, pinned: boolean, sortOrder?: number): Promise<ServerView> {
+  const data = await request<{viewPin: {success: boolean; view: ServerView | null}}>(
+    `mutation PinView($id:String!,$pinned:Boolean!,$sortOrder:Float){viewPin(id:$id,pinned:$pinned,sortOrder:$sortOrder){success view{${FIELDS}}}}`,
+    {id, pinned, sortOrder: sortOrder ?? null});
+  if (!data.viewPin.view) throw new Error('The view was not pinned.');
+  return changed(data.viewPin.view);
+}
+
+/** Follow a view: `onAdded` a task starts matching, `onCompleted` a matching task closes.
+ * Both off unfollows it. */
+export async function setViewSubscription(id: string, onAdded: boolean, onCompleted: boolean): Promise<ServerView['subscription']> {
+  if (!onAdded && !onCompleted) {
+    await request('mutation Unsubscribe($id:String!){viewUnsubscribe(viewId:$id){success}}', {id});
+    return null;
+  }
+  const data = await request<{viewSubscribe: {subscription: ServerView['subscription']}}>(
+    'mutation Subscribe($id:String!,$a:Boolean,$c:Boolean){viewSubscribe(viewId:$id,onAdded:$a,onCompleted:$c){subscription{onAdded onCompleted}}}',
+    {id, a: onAdded, c: onCompleted});
+  return data.viewSubscribe.subscription;
+}
+
+/** Download the view's tasks as CSV (GET /api/views/<id>/export.csv), with the same credentials
+ * as every other call, then hand the file to the browser. */
+export async function exportViewCsv(id: string, fallbackName = 'view'): Promise<void> {
+  const stored = localStorage.getItem('hoja_token');
+  const token = stored && stored !== 'session' ? stored : null;
+  const response = await fetch(`/api/views/${encodeURIComponent(id)}/export.csv`, {
+    credentials: 'include',
+    headers: token ? {authorization: `Bearer ${token}`} : {},
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(text.slice(0, 200) || `Export failed (${response.status}).`);
+  }
+  const disposition = response.headers.get('content-disposition') || '';
+  const name = /filename="?([^";]+)"?/.exec(disposition)?.[1] || `${fallbackName}.csv`;
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export type ViewPage<T> = {
+  nodes: T[];
+  pageInfo: {hasNextPage: boolean; endCursor: string | null};
+  totalCount?: number | null;
+};
+
+/** One page of a view's rows, run on the server: a saved view (`viewId`, optionally with unsaved
+ * `filters`/`display` overrides) or an unsaved draft (`preview`). `fields` is the row selection
+ * the caller renders, so this module does not have to know the task or project shape. */
+export async function runView<T>(args: {
+  kind: 'issue' | 'project';
+  fields: string;
+  first?: number;
+  after?: string | null;
+  viewId?: string;
+  filter?: ViewDocument | null;
+  display?: ViewDocument | null;
+  preview?: {filters: ViewDocument; display?: ViewDocument; scope?: string; teamId?: string; projectId?: string; initiativeId?: string};
+}): Promise<ViewPage<T>> {
+  const connection = args.kind === 'issue' ? 'issues' : 'projects';
+  const page = `${connection}(first:$first,after:$after,display:$display){nodes ${args.fields} pageInfo{hasNextPage endCursor} totalCount}`;
+  if (args.preview) {
+    const data = await request<{viewPreview: Record<string, ViewPage<T>>}>(
+      `query RunPreview($kind:String!,$filters:JSON,$display:JSON,$scope:String,$teamId:String,$projectId:String,$initiativeId:String,$first:Int,$after:String){viewPreview(kind:$kind,filters:$filters,display:$display,scope:$scope,teamId:$teamId,projectId:$projectId,initiativeId:$initiativeId){${page}}}`,
+      {kind: args.kind, filters: args.preview.filters, display: args.preview.display ?? args.display ?? null,
+        scope: args.preview.scope ?? null, teamId: args.preview.teamId ?? null, projectId: args.preview.projectId ?? null,
+        initiativeId: args.preview.initiativeId ?? null,
+        first: args.first ?? 50, after: args.after ?? null});
+    return data.viewPreview[connection];
+  }
+  /* `View.issues(filter:)` ANDs onto the saved tree, so a caller with edited filters (which may
+     drop saved chips) runs them as a preview in the view's own scope instead. */
+  const data = await request<{view: Record<string, ViewPage<T>>}>(
+    `query RunView($id:String!,$first:Int,$after:String,$display:JSON){view(id:$id){${page}}}`,
+    {id: args.viewId, first: args.first ?? 50, after: args.after ?? null, display: args.display ?? null});
+  return data.view[connection];
 }
 
 export async function toggleViewFavorite(id: string): Promise<boolean> {
   const data = await request<{viewFavoriteToggle: {success: boolean; favorite: boolean}}>(
     'mutation FavoriteView($id:String!){viewFavoriteToggle(id:$id){success favorite}}', {id});
-  return data.viewFavoriteToggle.favorite;
+  return changed(data.viewFavoriteToggle.favorite);
 }
 
-/* ------------------------------ filter translation ------------------------------
- * Saved views map form fields onto the canonical filter tree the server validates
- * (hoja_server/views.py): text search, status, and (for tasks) priority, assignee,
- * and project predicates.
+/* ------------------------------ legacy filter translation ------------------------------
+ * A browser-local view (before views lived on the server) stored only a text box and a status
+ * picker; migrateLegacyViews maps those two fields onto the canonical filter tree.
  */
-
-export type ViewFilterFields = {
-  query: string;
-  state: string;
-  priority: string;
-  assignee: string;
-  project: string;
-};
 
 export type ViewFilterExtras = {
   priority?: string;
@@ -134,31 +252,6 @@ export function filtersFromFields(
   }
   if (!predicates.length) return {};
   return predicates.length === 1 ? predicates[0] : {and: predicates};
-}
-
-export function fieldsFromFilters(filters: ViewDocument): ViewFilterFields {
-  const predicates = [filters, ...((filters.and as ViewDocument[] | undefined) || [])];
-  let query = '';
-  let state = '';
-  let priority = '';
-  let assignee = '';
-  let project = '';
-  for (const predicate of predicates) {
-    if (!predicate || typeof predicate !== 'object') continue;
-    const title = predicate.title as {contains?: string} | undefined;
-    const name = predicate.name as {contains?: string} | undefined;
-    if (title?.contains) query = title.contains;
-    if (name?.contains) query = name.contains;
-    const status = predicate.state as {is?: string} | undefined;
-    if (status?.is) state = status.is;
-    const prio = predicate.priority as {is?: number} | undefined;
-    if (typeof prio?.is === 'number' && Number.isInteger(prio.is)) priority = String(prio.is);
-    const asgn = predicate.assignee as {is?: string} | undefined;
-    if (asgn?.is) assignee = asgn.is;
-    const proj = predicate.project as {is?: string} | undefined;
-    if (proj?.is) project = proj.is;
-  }
-  return {query, state, priority, assignee, project};
 }
 
 /* --------------------------- one-time local migration --------------------------- */
@@ -223,4 +316,83 @@ export async function migrateLegacyViews(orgId: string): Promise<number> {
   }
   localStorage.setItem(MIGRATED_KEY(orgId), new Date().toISOString());
   return migrated;
+}
+
+/* ------------------------------ display preferences ------------------------------
+ * A page's display options are layered on the server (docs/views.md, "Display preferences"):
+ * the default everyone starts from, the caller's own layer, and the effective result. Built-in
+ * pages address theirs by `viewType` ("team:<id>:active", "my-issues:assigned"), saved views
+ * by `viewId`.
+ */
+
+export type ViewPreferenceState = {
+  default: ViewDocument;
+  user: ViewDocument | null;
+  effective: ViewDocument;
+  hasUserOverrides: boolean;
+};
+
+export type PreferenceTarget = {viewId?: string; viewType?: string};
+
+const PREFERENCE_FIELDS = 'default user effective hasUserOverrides';
+
+export async function getViewPreferences(target: PreferenceTarget): Promise<ViewPreferenceState> {
+  const data = await request<{viewPreferences: ViewPreferenceState}>(
+    `query ViewPreferences($viewId:String,$viewType:String){viewPreferences(viewId:$viewId,viewType:$viewType){${PREFERENCE_FIELDS}}}`,
+    {viewId: target.viewId ?? null, viewType: target.viewType ?? null});
+  return data.viewPreferences;
+}
+
+/** Lay `values` over the caller's layer (`scope: "user"`) or the default for everyone
+ * (`scope: "default"`); a null value clears that key. */
+export async function setViewPreferences(target: PreferenceTarget, values: ViewDocument,
+  scope: 'user' | 'default' = 'user'): Promise<ViewPreferenceState> {
+  const data = await request<{viewPreferencesSet: ViewPreferenceState}>(
+    `mutation SetViewPreferences($viewId:String,$viewType:String,$values:JSON!,$scope:String){viewPreferencesSet(viewId:$viewId,viewType:$viewType,values:$values,scope:$scope){${PREFERENCE_FIELDS}}}`,
+    {viewId: target.viewId ?? null, viewType: target.viewType ?? null, values, scope});
+  return data.viewPreferencesSet;
+}
+
+export async function resetViewPreferences(target: PreferenceTarget): Promise<ViewPreferenceState> {
+  const data = await request<{viewPreferencesReset: ViewPreferenceState}>(
+    `mutation ResetViewPreferences($viewId:String,$viewType:String){viewPreferencesReset(viewId:$viewId,viewType:$viewType){${PREFERENCE_FIELDS}}}`,
+    {viewId: target.viewId ?? null, viewType: target.viewType ?? null});
+  return data.viewPreferencesReset;
+}
+
+/* ------------------------------ "Save as view" drafts ------------------------------
+ * A list hands its current filters and display to the new-view editor through session
+ * storage, so the editor opens prefilled (Alt V) without the URL carrying the display.
+ */
+
+export type ViewDraft = {
+  kind: 'issue' | 'project';
+  filters: ViewDocument;
+  display: ViewDocument;
+  teamId?: string;
+  projectId?: string;
+  name?: string;
+  /** The "Save to" the editor starts on (a section's "+" on the views list). */
+  saveTo?: 'personal' | 'workspace';
+};
+
+const DRAFT_KEY = 'hoja_view_draft';
+
+export function stashViewDraft(draft: ViewDraft): void {
+  try {
+    sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+  } catch {
+    /* private mode: the editor opens empty instead */
+  }
+}
+
+export function takeViewDraft(): ViewDraft | null {
+  try {
+    const raw = sessionStorage.getItem(DRAFT_KEY);
+    sessionStorage.removeItem(DRAFT_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === 'object' && parsed.filters && typeof parsed.filters === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
 }

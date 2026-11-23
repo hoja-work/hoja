@@ -8,19 +8,21 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import typer
 
 from hoja.auth import get_viewer
 from hoja.cli_state import build_client, get_state
-from hoja.errors import APIError, NotFoundError, UsageError
+from hoja.client import GraphClient
+from hoja.errors import APIError, NotFoundError, UsageError, ValidationError
 from hoja.filters import build_issue_filter
 from hoja.graphql import mutations, queries
 from hoja.models.enums import OutputFormat
 from hoja.models.task import Issue
 from hoja.models.project import Project
 from hoja.models.team import Team
+from hoja.models.view import SavedView
 from hoja.output import console, err_console, render
 from hoja.similarity import Corpus, Document
 
@@ -56,16 +58,20 @@ def list_issues(
     updated_before: Optional[str] = typer.Option(None, "--updated-before", help="ISO date"),
     due_before: Optional[str] = typer.Option(None, "--due-before", help="ISO date"),
     due_after: Optional[str] = typer.Option(None, "--due-after", help="ISO date"),
+    view: str | None = typer.Option(
+        None, "--view",
+        help="Run a saved task view (name, slug or id) on the server. Other filters narrow it.",
+    ),
     limit: int = typer.Option(50, "--limit", "-n", help="Max issues to return"),
 ) -> None:
-    """List issues, optionally filtered."""
+    """List issues, optionally filtered or through a saved view."""
     asyncio.run(_run_list(
         team=team, state=state, not_state=not_state, state_type=state_type,
         assignee=assignee, creator=creator, project=project, cycle=cycle,
         parent=parent, no_parent=no_parent,
         label=label, priority=priority, contains=contains,
         updated_after=updated_after, updated_before=updated_before,
-        due_before=due_before, due_after=due_after, limit=limit,
+        due_before=due_before, due_after=due_after, view=view, limit=limit,
     ))
 
 
@@ -265,6 +271,7 @@ def similar_issues(
 async def _run_list(**kwargs) -> None:
     state = get_state()
     limit = kwargs.pop("limit", 50)
+    view_ref = kwargs.pop("view", None)
     async with build_client(state) as client:
         viewer_id: str | None = None
         if (kwargs.get("assignee") or "").lower() == "me" or (
@@ -284,7 +291,24 @@ async def _run_list(**kwargs) -> None:
         elif no_parent:
             kwargs["no_parent"] = True
 
+        if view_ref is not None and kwargs.get("project"):
+            # The view grammar matches a project by id or exact name, not by a
+            # substring, so resolve the flag to one project first.
+            kwargs["project"] = await _resolve_project_id(client, kwargs["project"])
         filt = build_issue_filter(viewer_id=viewer_id, **kwargs)
+        if view_ref is not None:
+            saved = await _resolve_view(client, view_ref)
+            if "cycle" in filt:
+                # The view grammar names a cycle by id; "current", "next" and part of a
+                # name are resolved by the server's own cycles query first.
+                cycle_ids = await _resolve_cycle_ids(client, filt["cycle"])
+                if not cycle_ids:
+                    render([], fmt=state.output, title=saved.name)
+                    return
+                filt["cycle"] = {"id": {"in": cycle_ids}}
+            issues = await _run_view_issues(client, saved, filt, limit)
+            render(issues, fmt=state.output, title=saved.name)
+            return
         try:
             issues = await client.execute_list(
                 Issue,
@@ -304,6 +328,95 @@ async def _run_list(**kwargs) -> None:
                 ) from e
             raise
         render(issues, fmt=state.output, title="Issues")
+
+
+# Page size the server allows for one ``View.issues`` page.
+_VIEW_PAGE = 250
+
+
+async def _resolve_cycle_ids(client: GraphClient, cycle_filter: dict[str, Any]) -> list[str]:
+    """The ids of the cycles a ``CycleFilter`` selects (active, next, by name or id).
+
+    Run through the server's ``cycles`` query, so the ids are exactly the cycles the
+    plain ``issues`` path would match, limited to teams the caller can see.
+    """
+    if set(cycle_filter) == {"id"}:
+        cmp = cycle_filter["id"]
+        if set(cmp) == {"eq"}:
+            return [cmp["eq"]]
+        if set(cmp) == {"in"}:
+            return list(cmp["in"])
+    data = await client.execute(
+        queries.CYCLE_IDS, {"filter": cycle_filter, "first": _VIEW_PAGE},
+        operation="CycleIds",
+    )
+    nodes = ((data.get("cycles") or {}).get("nodes")) or []
+    return [node["id"] for node in nodes if node.get("id")]
+
+
+async def _resolve_view(client: GraphClient, ref: str) -> SavedView:
+    """Find a task view the caller can read by id, slug, or name (case-insensitive)."""
+    wanted = ref.strip()
+    if not wanted:
+        raise UsageError("--view needs a view name, slug or id")
+    data = await client.execute(queries.ISSUE_VIEWS, operation="IssueViews")
+    try:
+        views = [SavedView.model_validate(row) for row in data.get("views") or []]
+    except Exception as e:  # pydantic.ValidationError
+        raise ValidationError(f"Response did not match SavedView: {e}") from e
+    for view in views:
+        if wanted in (view.id, view.slug_id):
+            return view
+    named = [view for view in views if view.name.casefold() == wanted.casefold()]
+    if len(named) == 1:
+        return named[0]
+    if len(named) > 1:
+        raise UsageError(
+            f"{len(named)} task views are named {wanted!r}",
+            hint="Pass the slug or id instead: " + ", ".join(v.slug_id for v in named),
+        )
+    raise NotFoundError(
+        f"No task view {wanted!r} that you can read",
+        hint="List views in the web app, or pass the view's slug or id.",
+    )
+
+
+async def _run_view_issues(client: GraphClient, view: SavedView, filt: dict[str, Any], limit: int) -> list[Issue]:
+    """Run the saved view on the server, page by page, until ``limit`` rows."""
+    out: list[Issue] = []
+    after: str | None = None
+    while len(out) < limit:
+        try:
+            data = await client.execute(
+                queries.VIEW_ISSUES,
+                {"id": view.id, "first": min(_VIEW_PAGE, limit - len(out)),
+                 "after": after, "filter": filt or None},
+                operation="ViewIssues",
+            )
+        except APIError as e:
+            bad = [err for err in e.errors
+                   if (err.get("extensions") or {}).get("code") == "BAD_USER_INPUT"]
+            if bad:
+                # A refusal is the flags' fault only when flags were sent and the server
+                # did not name paging; otherwise the saved view itself cannot run.
+                field = str((bad[0].get("extensions") or {}).get("field") or "")
+                if filt and field not in ("first", "after"):
+                    raise UsageError(
+                        f"These filters cannot be combined with --view: {e.message}",
+                        hint="Drop the flag the message names, or save it into the view.",
+                    ) from e
+                raise UsageError(f"View {view.name!r} cannot run: {e.message}") from e
+            raise
+        conn = ((data.get("customView") or {}).get("issues")) or {}
+        try:
+            out.extend(Issue.model_validate(node) for node in conn.get("nodes") or [])
+        except Exception as e:  # pydantic.ValidationError
+            raise ValidationError(f"List items did not match Issue: {e}") from e
+        page = conn.get("pageInfo") or {}
+        after = page.get("endCursor")
+        if not page.get("hasNextPage") or not after:
+            break
+    return out[:limit]
 
 
 async def _run_get(id: str) -> None:

@@ -40,7 +40,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 92
+CURRENT_SCHEMA_REVISION = 94
 
 log = logging.getLogger(__name__)
 
@@ -2184,6 +2184,9 @@ saved_view = Table(
     Column("archived_at", String),
     Column("created_at", String, nullable=False),
     Column("updated_at", String, nullable=False),
+    # Revision 94: a team or project view pinned as a tab on its page, in ``sort_order``.
+    Column("pinned", Boolean, nullable=False, default=False),
+    Column("sort_order", Float),
     UniqueConstraint("organization_id", "slug_id", name="uq_saved_view_org_slug"),
 )
 
@@ -2196,6 +2199,43 @@ saved_view_favorite = Table(
     Column("user_id", String, ForeignKey("user.id"), nullable=False, index=True),
     Column("created_at", String, nullable=False),
     UniqueConstraint("view_id", "user_id", name="uq_saved_view_favorite"),
+)
+
+# Display preferences, layered like Linear's ViewPreferences (revision 93). A row with a
+# user_id is that member's override; a row without one is the organization default of a
+# built-in page. ``view_id`` names a saved view, ``view_type`` a built-in page such as
+# ``my-issues`` or ``team:<id>:active``; exactly one is set. A saved view's own default is
+# its ``display``, so it never has an organization row here. ``values`` is a display
+# document validated by hoja_server.views.parse_display. Uniqueness of the (org, user,
+# view, type) key is kept by the writer: the nullable columns cannot carry a portable
+# unique constraint.
+view_preference = Table(
+    "view_preference",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("user_id", String, ForeignKey("user.id"), index=True),
+    Column("view_id", String, ForeignKey("saved_view.id"), index=True),
+    Column("view_type", String),
+    Column("values", Text, nullable=False, default="{}"),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+)
+
+# Following a view (revision 93): its subscribers hear when a task starts matching it
+# and/or when a matching task is completed or canceled.
+view_subscription = Table(
+    "view_subscription",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("view_id", String, ForeignKey("saved_view.id"), nullable=False, index=True),
+    Column("user_id", String, ForeignKey("user.id"), nullable=False, index=True),
+    Column("on_added", Boolean, nullable=False, default=True),
+    Column("on_completed", Boolean, nullable=False, default=False),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+    UniqueConstraint("view_id", "user_id", name="uq_view_subscription"),
 )
 
 
@@ -3611,6 +3651,15 @@ def _apply_initiative_description(conn):
         conn.exec_driver_sql("ALTER TABLE initiative ADD COLUMN description TEXT")
 
 
+def _apply_view_pins(conn):
+    """Revision 94: ``saved_view.pinned`` and ``saved_view.sort_order`` (view tabs)."""
+    existing = {column["name"] for column in inspect(conn).get_columns("saved_view")}
+    if "pinned" not in existing:
+        conn.exec_driver_sql("ALTER TABLE saved_view ADD COLUMN pinned BOOLEAN NOT NULL DEFAULT FALSE")
+    if "sort_order" not in existing:
+        conn.exec_driver_sql("ALTER TABLE saved_view ADD COLUMN sort_order FLOAT")
+
+
 def _apply_initiative_structure(conn):
     """Revision 88: sub-initiatives, icon/colour, lead team, readable numbers, manual
     order, update reminders, labels, resources, update reactions and replies."""
@@ -4140,6 +4189,15 @@ _MIGRATIONS = {
     # 92: persisted tool-call trace JSON on assistant chat messages, so collapsed
     # tool calls survive thread reload without mutating message content.
     92: _apply_agent_message_tool_calls,
+    # 93: per-user view display preferences and view subscriptions. Additive: two new
+    # tables, nothing reads them until a member saves a preference or follows a view.
+    93: lambda conn: (
+        view_preference.create(conn, checkfirst=True),
+        view_subscription.create(conn, checkfirst=True),
+    ),
+    # 94: a team or project view can be pinned as a tab, in a stored order. Additive columns
+    # with a false/null default, so every existing view stays unpinned.
+    94: _apply_view_pins,
 }
 
 

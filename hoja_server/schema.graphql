@@ -57,6 +57,10 @@ type NotificationPreferencesPayload {
   initiativeUpdated: Boolean!
   cycleStarted: Boolean!
   cycleCompleted: Boolean!
+  "A followed view gained a task."
+  viewIssueAdded: Boolean!
+  "A task in a followed view was completed or canceled."
+  viewIssueCompleted: Boolean!
 }
 
 type WorkspaceMembership {

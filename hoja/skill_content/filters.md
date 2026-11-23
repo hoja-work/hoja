@@ -24,6 +24,7 @@ Filters are applied server-side via the upstream contract's `IssueFilter` GraphQ
 --due-before <DATE>
 --has-due-date                Only issues with a due date set.
 --include-archived            Include archived issues (default: false).
+--view <NAME|SLUG|ID>         Run a saved task view on the server; other flags narrow it.
 -n, --limit <N>               Max issues (default 50).
 --sort-by <FIELD>             Sort field: createdAt|updatedAt|priority.
 --order <asc|desc>            Sort order.
@@ -90,6 +91,19 @@ hoja issue list --no-parent --team ENG   # issues not nested under anything
 
 `--parent` accepts an identifier or a UUID and returns direct children only;
 walk the tree level by level. `--parent` and `--no-parent` are mutually exclusive.
+
+### Saved views
+```bash
+hoja issue list --view "Urgent tasks"             # by name (case-insensitive)
+hoja issue list --view urgent-tasks-3f2a9c1b --assignee me -n 20
+```
+
+`--view` runs the view on the server (`customView.issues`): its saved filters, scope and
+ordering, for you ("me" in a view is you). Other flags are ANDed with it. `--cycle current`,
+`--cycle next` and `--cycle <part of a name>` are resolved to cycle ids first, so they select
+what they select without `--view`. A flag the view grammar cannot express (`--assignee` or
+`--creator` given as part of a display name) is refused rather than dropped, and `--project`
+must name one project. When two views share a name, pass the slug.
 
 ## When filters aren't enough
 

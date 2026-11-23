@@ -28,7 +28,9 @@ export type InboxKind =
   | "initiativeOwnerAssigned"
   | "initiativeUpdated"
   | "cycleStarted"
-  | "cycleCompleted";
+  | "cycleCompleted"
+  | "viewIssueAdded"
+  | "viewIssueCompleted";
 
 export type SubjectType = "issue" | "project" | "initiative" | "cycle";
 export type ProjectRef = {
@@ -69,6 +71,9 @@ export type UpdateRef = {
 
 type StateRef = { id?: string; name?: string; type?: string };
 export type NotificationData = {
+  /** The followed view a viewIssueAdded / viewIssueCompleted row is about. */
+  view?: { id: string; name: string; slugId?: string };
+  stateType?: string;
   from?: StateRef;
   to?: StateRef;
   changes?: Record<string, { from?: unknown; to?: unknown }>;
@@ -324,6 +329,14 @@ export function describe(n: InboxNotification): string {
         typeof data?.total === "number"
         ? `ended · ${data.completed} of ${data.total} done${cycleLeftover(data)}`
         : "ended";
+    case "viewIssueAdded":
+      return data?.view?.name
+        ? `added it to ${data.view.name}`
+        : "added it to a view you follow";
+    case "viewIssueCompleted":
+      return data?.view?.name
+        ? `${data.stateType === "canceled" ? "canceled" : "completed"} it in ${data.view.name}`
+        : "completed it in a view you follow";
     default:
       return "updated the task";
   }

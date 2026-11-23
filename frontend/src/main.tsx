@@ -72,6 +72,8 @@ import {
   List as ListIcon,
   PanelLeftClose,
   PanelLeftOpen,
+  PanelRight,
+  Star,
 } from "lucide-react";
 import { MorphIcon } from "morphicons/react";
 import { MobileNavProvider, MobileNavTrigger, useMobileNav } from "./mobileNav";
@@ -95,13 +97,21 @@ import {
 import {
   createView,
   deleteView,
-  fieldsFromFilters,
-  filtersFromFields,
+  duplicateView,
+  exportViewCsv,
+  getView,
   listViews,
   migrateLegacyViews,
+  pinView,
+  runView,
+  setViewSubscription,
+  stashViewDraft,
+  takeViewDraft,
   toggleViewFavorite,
   updateView,
+  VIEWS_CHANGED,
   type ServerView,
+  type ViewInput,
 } from "./views";
 import { AgentChatPage } from "./AgentChatPage";
 import { ModelProvidersSettings } from "./ModelProvidersSettings";
@@ -167,8 +177,11 @@ import {
   SIBLING_STEP,
 } from "./graph/hierarchy";
 import { StateGlyph } from "./graph/stateGlyph";
-import { formatDuration, statusAgeLabel } from "./graph/statusAge";
-import { useScrollWindow, visibleRange } from "./graph/taskStore";
+import {
+  formatDuration,
+  statusAgeLabel,
+  timeInStatus,
+} from "./graph/statusAge";
 import { useIssues as useSyncIssues, useSyncStatus } from "./sync";
 import {
   cachedIssueDetail,
@@ -273,6 +286,7 @@ export type Issue = {
   dueDate?: string;
   priority: number;
   priorityLabel?: string;
+  estimate?: number | null;
   decisionNeeded?: boolean;
   parent?: { id: string; identifier: string; title: string } | null;
   state?: { id: string; name: string; color: string; type: string };
@@ -315,7 +329,6 @@ export type OlderState = {
 export type OlderMine = Partial<Record<OlderField, OlderState>>;
 const NO_EVENTS: IssueActivityEvent[] = [];
 const noop = () => {};
-type CompletedRange = "none" | "week" | "month" | "all";
 export type MyIssuesTab = "Assigned" | "Created" | "Subscribed" | "Activity";
 export type Viewer = {
   id?: string;
@@ -492,7 +505,8 @@ const sections = [
       ["Leaderboard", Trophy],
     ],
   ],
-  ["Favorites", [["Favorite views", Layers3]]],
+  // Filled per person: each favorited view (and task favorites kept in this browser).
+  ["Favorites", []],
   ["Your teams", []],
 ] as const;
 import {
@@ -501,6 +515,89 @@ import {
   redirectLegacyTaskPath,
 } from "./routes";
 import { displayLabel } from "./labels";
+import {
+  chipCount,
+  chipsToFilterTree,
+  decodeFilterParam,
+  emptyGroup,
+  filterTreeToChips,
+  hasFilters,
+  ISSUE_FIELDS,
+  PROJECT_FIELDS as PROJECT_FILTER_FIELDS,
+  toggleValue,
+  withFilterParam,
+  type FilterGroup,
+  type FilterTree,
+} from "./views/filterModel";
+import {
+  countBy,
+  matchesFilter,
+  parentIdsOf,
+  type EvalContext,
+} from "./views/filterEval";
+import {
+  applyCompletedWindow,
+  groupKeysOf,
+  groupTasks,
+  mergeDisplay,
+  PRIORITY_LABELS,
+  PROJECT_DEFAULTS,
+  PROJECT_PAGE_GROUPS,
+  PROJECT_PAGE_ORDERINGS,
+  projectPageOptions,
+  projectPagePatch,
+  sortTasks,
+  withSubIssues,
+  type DisplayDoc,
+  type GroupCtx,
+  type ProjectPageOptions,
+} from "./views/displayModel";
+import {
+  AddFilterButton,
+  FilterChips,
+  ISSUE_MENU,
+  PROJECT_MENU,
+  type FilterCatalog,
+  type ValueOption,
+} from "./views/FilterBar";
+import { suggestViewIdentity } from "./views/filterLabels";
+import { DisplayButton, DisplayPanel } from "./views/DisplayPanel";
+import {
+  useViewPreferences,
+  type ViewPreferences,
+} from "./views/useViewPreferences";
+import { ViewIcon, ViewIconPicker } from "./views/ViewIcon";
+import {
+  SaveToPicker,
+  UnsavedActions,
+  ViewDetailsPanel,
+  ViewIdentityCard,
+  ViewMenu,
+  ViewsListDisplay,
+  ViewsTable,
+  type BreakdownRow,
+  type ListColumn,
+} from "./views/ViewChrome";
+import {
+  canEditView,
+  displayChanges,
+  loadViewEdits,
+  redirectLegacyViewPath,
+  sameDocument,
+  saveViewEdits,
+  pinnedTabs,
+  reorderPinned,
+  sortViews,
+  targetInput,
+  targetOf,
+  viewIdentOf,
+  viewPath,
+  viewSections,
+  visibilityLabel,
+  type SaveTarget,
+  type ViewOrdering,
+} from "./views/viewModel";
+import { setViewListIdentity, useViewList } from "./views/useViewList";
 // Sidebar destinations share the main content container shell from DESIGN.md.
 const SHELL_VIEWS = new Set([
   "My issues",
@@ -513,6 +610,7 @@ const SHELL_VIEWS = new Set([
   "Initiatives",
   "Projects",
   "Views",
+  "View",
   "Favorite views",
   "Team Home",
   "Team issues",
@@ -1092,7 +1190,7 @@ function IssueList({
 function applyLegacyTaskRedirect(): string {
   const href =
     window.location.pathname + window.location.search + window.location.hash;
-  const next = redirectLegacyTaskPath(href);
+  const next = redirectLegacyViewPath(redirectLegacyTaskPath(href));
   if (next !== href) {
     history.replaceState({}, "", next);
   }
@@ -1354,6 +1452,11 @@ function App() {
     return () => observer.disconnect();
   }, [orgMenu]);
   const [commandOpen, setCommandOpen] = useState(false);
+  /* O then V opens the palette as a view switcher. */
+  const [commandViews, setCommandViews] = useState(false);
+  useEffect(() => {
+    if (!commandOpen) setCommandViews(false);
+  }, [commandOpen]);
   /* The app-level "New initiative" dialog: N then I, the command palette and the list. */
   const [initiativeCreate, setInitiativeCreate] = useState<Record<
     string,
@@ -1370,7 +1473,8 @@ function App() {
   }, [initiativeCreate]);
   /* N then I opens it from anywhere outside a text field, as on Linear. */
   useEffect(() => {
-    let armed = 0;
+    let armed = 0,
+      openArmed = 0;
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       if (
@@ -1381,12 +1485,24 @@ function App() {
       )
         return;
       const key = e.key.toLowerCase();
+      if (e.shiftKey) {
+        armed = 0;
+        openArmed = 0;
+        return;
+      }
       if (key === "n") armed = Date.now();
       else if (key === "i" && Date.now() - armed < 1200) {
         e.preventDefault();
         armed = 0;
         setInitiativeCreate({});
       } else armed = 0;
+      if (key === "o") openArmed = Date.now();
+      else if (key === "v" && Date.now() - openArmed < 1200) {
+        e.preventDefault();
+        openArmed = 0;
+        setCommandViews(true);
+        setCommandOpen(true);
+      } else openArmed = 0;
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -1738,6 +1854,7 @@ function App() {
 
   useEffect(() => {
     const onPop = () => {
+      applyLegacyTaskRedirect();
       if (routeView(window.location.pathname) === "Team cycle")
         setTeamCycleRoute(window.location.pathname);
       if (routeView(window.location.pathname) === "Settings")
@@ -2366,6 +2483,33 @@ function App() {
     const mine = view === "My issues" && myIssuesTab === "Assigned";
     return base.filter((i) => !mine || i.assignee?.id === viewer.id);
   }, [issues, search, filter, view, viewer.id, myIssuesTab]);
+  /* Sidebar favorites: each favorited view, then the tasks starred in this browser (Alt F on a
+     task page). Views come from the shared list, refreshed after any view write. The list
+     belongs to this person in this workspace: a switch or a new sign-in drops it. */
+  setViewListIdentity(`${workspace.id}:${viewer.id || ""}`);
+  const { views: allViews } = useViewList(Boolean(workspace.id));
+  const favoriteViews = useMemo(
+    () =>
+      allViews
+        .filter((v) => v.favorite)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [allViews],
+  );
+  const favoriteTasks = useMemo(() => {
+    void view; // re-read when the page changes: a star on a task page writes storage only
+    let ids: string[] = [];
+    try {
+      const parsed = JSON.parse(
+        localStorage.getItem("hoja_favorites_v1") || "null",
+      );
+      ids = Array.isArray(parsed?.issues) ? parsed.issues : [];
+    } catch {
+      ids = [];
+    }
+    if (!ids.length) return [];
+    const byId = new Map(issues.map((i) => [i.id, i]));
+    return ids.map((id) => byId.get(id)).filter((i): i is Issue => !!i);
+  }, [issues, view]);
   // /signup is its own screen, outside the workspace shell: a person signing up has no workspace yet, and it must render for both an anonymous browser (the Google button) and a google_verified one (choosing an address). Checked before the auth gates so a Google callback that returns to /signup lands on the page rather than on /login.
   if (
     location.pathname === "/signup" ||
@@ -2613,6 +2757,15 @@ function App() {
         old.map((i) => (i.id === issueId ? { ...i, ...updated } : i)),
       );
   };
+  /* What the views pages need to act on the tasks they render. */
+  const issueActions: IssueActions = {
+    onOpen: (issue) => openIssue(issue),
+    onMoved: moveIssueState,
+    onUpdate: updateIssue,
+    onNew: (stateId?: string) => openNewIssue(stateId),
+    layout: issueLayout,
+    onLayoutChange: changeIssueLayout,
+  };
   /* The generic workspace pages (Inbox, Pulse fallbacks) list the recent issues under their head. */
   const issueListContent =
     dataLoading && !issues.length ? (
@@ -2854,6 +3007,7 @@ function App() {
         onMoved={moveIssueState}
         onUpdate={updateIssue}
         onNew={(stateId?: string) => openNewIssue(stateId)}
+        onNavigate={navigate}
       />
     ) : view === "Team cycle settings" ? (
       <TeamCycleSettings
@@ -2935,13 +3089,24 @@ function App() {
             t.key.toLowerCase() ===
             location.pathname.split("/")[3]?.toLowerCase(),
         )}
-        onIssue={openIssue}
-        onOpenProject={(p) => {
-          setActiveProject(p);
-          navigate("Project detail", `/workspace/project/${p.id}`);
-        }}
-        onNavigate={navigate}
+        projects={projects}
+        actions={issueActions}
         revision={revision}
+      />
+    ) : view === "View" ? (
+      <SavedViewPage
+        key={viewIdentOf(location.pathname) || "view"}
+        ident={viewIdentOf(location.pathname) || ""}
+        projects={projects}
+        actions={issueActions}
+        revision={revision}
+        onDeleted={(v) =>
+          navigateTo(
+            v.scope === "team" && v.team?.key
+              ? `/workspace/team/${v.team.key.toLowerCase()}/views/issues`
+              : `/workspace/views/${v.kind === "project" ? "projects" : "issues"}`,
+          )
+        }
       />
     ) : view === "Create workspace" ? (
       <CreateWorkspacePage
@@ -3068,7 +3233,11 @@ function App() {
             `/workspace/project/${activeProject.id}/issues`,
           )
         }
-        onOpenIssue={(issue) => openIssue(issue, activeProject.id)}
+        actions={{
+          ...issueActions,
+          onOpen: (issue) => openIssue(issue, activeProject.id),
+        }}
+        projects={projects}
         revision={revision}
       />
     ) : view === "Project view" ? (
@@ -3198,16 +3367,8 @@ function App() {
     ) : view === "Favorite views" ? (
       <ViewsPage
         key={`favorites-${workspace.id}`}
-        orgId={workspace.id}
-        issues={issues}
         projects={projects}
-        path={window.location.pathname}
-        onNavigate={navigate}
-        onSelect={openIssue}
-        onOpenProject={(p) => {
-          setActiveProject(p);
-          navigate("Project detail", `/workspace/project/${p.id}`);
-        }}
+        actions={issueActions}
         favoriteOnly
         revision={revision}
       />
@@ -3216,16 +3377,8 @@ function App() {
     ) : view === "Views" ? (
       <ViewsPage
         key={workspace.id}
-        orgId={workspace.id}
-        issues={issues}
         projects={projects}
-        path={window.location.pathname}
-        onNavigate={navigate}
-        onSelect={openIssue}
-        onOpenProject={(p) => {
-          setActiveProject(p);
-          navigate("Project detail", `/workspace/project/${p.id}`);
-        }}
+        actions={issueActions}
         revision={revision}
       />
     ) : view === "Reviews" ? (
@@ -3358,6 +3511,16 @@ function App() {
                   : filtered
           }
           tab={myIssuesTab}
+          viewKey={["my-issues", myIssuesTab.toLowerCase()].join(":")}
+          pageDefaults={
+            myIssuesTab === "Created" || myIssuesTab === "Subscribed"
+              ? EVERY_COMPLETED
+              : NO_DISPLAY
+          }
+          onSaveAsView={(draft) => {
+            stashViewDraft({ kind: "issue", ...draft });
+            navigate("Views", "/workspace/views/issues/new");
+          }}
           activityEvents={activityEvents}
           activityHasMore={activityHasMore}
           activityLoading={activityLoading}
@@ -3801,280 +3964,333 @@ function App() {
                 className="relative z-0 min-h-0 flex-1 overflow-x-hidden overflow-y-auto"
                 aria-label="Workspace navigation"
               >
-                {sections.map(([section, items]) => (
-                  <div
-                    className={
-                      ` mb-4.25` + " mt-0 mr-0 mb-4.25 ml-0" + "" + " mb-4.25"
-                    }
-                    data-nav-group=""
-                    key={section}
-                  >
-                    {section !== "primary" && (
-                      <button
-                        type="button"
-                        className="flex items-center justify-between w-full h-7 mt-0 mr-1 mb-0.5 ml-1 pt-0 pr-1.25 pb-0 pl-1.25 rounded-md bg-transparent text-muted text-[13px] font-normal text-left hover:bg-subtle focus-visible:bg-subtle hover:text-foreground focus-visible:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:h-auto group shell-desktop:rail-collapsed:hidden"
-                        data-nav-group-toggle=""
-                        aria-expanded={!collapsedSections[section]}
-                        onClick={() =>
-                          setCollapsedSections((c) => ({
-                            ...c,
-                            [section]: !c[section],
-                          }))
-                        }
-                      >
-                        <span>{section}</span>
-                        <ChevronDown
-                          size={12}
-                          className="transition-transform duration-150 motion-reduce:transition-none group-aria-[expanded=false]:-rotate-90"
-                        />
-                      </button>
-                    )}
-                    {!collapsedSections[section] && (
-                      <>
-                        {section === "Your teams" &&
-                          teams.map((team) => (
-                            <div
-                              data-team-block=""
-                              key={team.id}
-                              className="mb-1 first-of-type:mt-2"
-                            >
-                              <div
-                                className="max-md:justify-center flex items-center gap-0"
-                                data-team-row=""
-                              >
+                {sections.map(([section, items]) =>
+                  section === "Favorites" &&
+                  !favoriteViews.length &&
+                  !favoriteTasks.length ? null : (
+                    <div
+                      className={
+                        ` mb-4.25` + " mt-0 mr-0 mb-4.25 ml-0" + "" + " mb-4.25"
+                      }
+                      data-nav-group=""
+                      key={section}
+                    >
+                      {section !== "primary" && (
+                        <button
+                          type="button"
+                          className="flex items-center justify-between w-full h-7 mt-0 mr-1 mb-0.5 ml-1 pt-0 pr-1.25 pb-0 pl-1.25 rounded-md bg-transparent text-muted text-[13px] font-normal text-left hover:bg-subtle focus-visible:bg-subtle hover:text-foreground focus-visible:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:h-auto group shell-desktop:rail-collapsed:hidden"
+                          data-nav-group-toggle=""
+                          aria-expanded={!collapsedSections[section]}
+                          onClick={() =>
+                            setCollapsedSections((c) => ({
+                              ...c,
+                              [section]: !c[section],
+                            }))
+                          }
+                        >
+                          <span>{section}</span>
+                          <ChevronDown
+                            size={12}
+                            className="transition-transform duration-150 motion-reduce:transition-none group-aria-[expanded=false]:-rotate-90"
+                          />
+                        </button>
+                      )}
+                      {!collapsedSections[section] && (
+                        <>
+                          {section === "Favorites" && (
+                            <div className="grid gap-px" data-nav-favorites="">
+                              {favoriteViews.map((v) => (
                                 <button
                                   type="button"
-                                  className="group flex min-h-7  w-full min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-md border-0 bg-transparent px-2 py-1 text-left text-[13px] font-medium text-[#202023] whitespace-nowrap text-ellipsis hover:text-foreground aria-[current=page]:text-foreground aria-[current=page]:font-semibold shell-phone:min-h-11 shell-phone:min-w-11 shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:px-0 hover:bg-transparent hover:text-[#202023]"
-                                  data-team-name=""
-                                  aria-expanded={!collapsedTeams[team.id]}
-                                  onClick={() =>
-                                    setCollapsedTeams((c) => ({
-                                      ...c,
-                                      [team.id]: !c[team.id],
-                                    }))
+                                  key={v.id}
+                                  className="flex w-full items-center gap-2 overflow-hidden rounded-lg bg-transparent px-2.5 py-1 text-left text-[13px] font-normal text-muted whitespace-nowrap hover:bg-neutral-200 aria-[current=page]:bg-subtle aria-[current=page]:font-medium aria-[current=page]:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:px-0"
+                                  data-nav-item=""
+                                  data-nav-favorite-view={v.id}
+                                  aria-current={
+                                    view === "View" &&
+                                    [v.id, v.slugId].includes(
+                                      viewIdentOf(location.pathname) || "",
+                                    )
+                                      ? "page"
+                                      : undefined
                                   }
+                                  onClick={() => {
+                                    navigateTo(viewPath(v));
+                                    setMobile(false);
+                                  }}
                                 >
-                                  <Users
-                                    size={15}
-                                    className="size-4 flex-none"
-                                  />
-                                  <span className=" shell-desktop:rail-collapsed:hidden">
-                                    {team.name}
+                                  <ViewIcon icon={v.icon} color={v.color} />
+                                  <span className="overflow-hidden text-ellipsis shell-desktop:rail-collapsed:hidden">
+                                    {v.name}
                                   </span>
                                 </button>
-                              </div>
-                              {!collapsedTeams[team.id] && (
+                              ))}
+                              {favoriteTasks.map((i) => (
+                                <button
+                                  type="button"
+                                  key={i.id}
+                                  className="flex w-full items-center gap-2 overflow-hidden rounded-lg bg-transparent px-2.5 py-1 text-left text-[13px] font-normal text-muted whitespace-nowrap hover:bg-neutral-200 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:px-0"
+                                  data-nav-item=""
+                                  onClick={() => {
+                                    openIssue(i);
+                                    setMobile(false);
+                                  }}
+                                >
+                                  <CircleDot size={15} />
+                                  <span className="overflow-hidden text-ellipsis shell-desktop:rail-collapsed:hidden">
+                                    {i.identifier} {i.title}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          {section === "Your teams" &&
+                            teams.map((team) => (
+                              <div
+                                data-team-block=""
+                                key={team.id}
+                                className="mb-1 first-of-type:mt-2"
+                              >
                                 <div
-                                  className="border-l border-line grid gap-px mt-px mr-0 mb-2 ml-3.5 pl-2.5 shell-desktop:rail-collapsed:hidden"
-                                  data-team-nav-links=""
+                                  className="max-md:justify-center flex items-center gap-0"
+                                  data-team-row=""
                                 >
                                   <button
-                                    className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
                                     type="button"
-                                    onClick={() => {
-                                      navigate(
-                                        "Team Home",
-                                        `/workspace/team/${team.key.toLowerCase()}/home`,
-                                      );
-                                      setMobile(false);
-                                    }}
-                                    aria-current={
-                                      view === "Team Home" &&
-                                      location.pathname.endsWith("/home")
-                                        ? "page"
-                                        : undefined
+                                    className="group flex min-h-7  w-full min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-md border-0 bg-transparent px-2 py-1 text-left text-[13px] font-medium text-[#202023] whitespace-nowrap text-ellipsis hover:text-foreground aria-[current=page]:text-foreground aria-[current=page]:font-semibold shell-phone:min-h-11 shell-phone:min-w-11 shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:px-0 hover:bg-transparent hover:text-[#202023]"
+                                    data-team-name=""
+                                    aria-expanded={!collapsedTeams[team.id]}
+                                    onClick={() =>
+                                      setCollapsedTeams((c) => ({
+                                        ...c,
+                                        [team.id]: !c[team.id],
+                                      }))
                                     }
                                   >
-                                    Home
+                                    <Users
+                                      size={15}
+                                      className="size-4 flex-none"
+                                    />
+                                    <span className=" shell-desktop:rail-collapsed:hidden">
+                                      {team.name}
+                                    </span>
                                   </button>
-                                  <button
-                                    className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
-                                    type="button"
-                                    onClick={() => {
-                                      navigate(
-                                        "Team issues",
-                                        `/workspace/team/${team.key.toLowerCase()}/active`,
-                                      );
-                                      setMobile(false);
-                                    }}
-                                    aria-current={
-                                      view === "Team issues"
-                                        ? "page"
-                                        : undefined
-                                    }
-                                  >
-                                    Tasks
-                                  </button>
-                                  <button
-                                    className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
-                                    type="button"
-                                    onClick={() => {
-                                      navigate(
-                                        "Team cycles",
-                                        `/workspace/team/${team.key.toLowerCase()}/cycles`,
-                                      );
-                                      setMobile(false);
-                                    }}
-                                    aria-current={
-                                      view === "Team cycles"
-                                        ? "page"
-                                        : undefined
-                                    }
-                                  >
-                                    Cycles
-                                  </button>
+                                </div>
+                                {!collapsedTeams[team.id] && (
                                   <div
-                                    className="border-l border-line grid gap-px mt-px mr-0 mb-1 ml-3 pl-2.25 shell-desktop:rail-collapsed:hidden"
-                                    data-team-cycle-links=""
+                                    className="border-l border-line grid gap-px mt-px mr-0 mb-2 ml-3.5 pl-2.5 shell-desktop:rail-collapsed:hidden"
+                                    data-team-nav-links=""
                                   >
-                                    <button
-                                      className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-1.75 pr-1.75 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
-                                      type="button"
-                                      aria-current={
-                                        view === "Team cycle" &&
-                                        location.pathname.includes(
-                                          `/team/${team.key.toLowerCase()}/cycle/active`,
-                                        )
-                                          ? "page"
-                                          : undefined
-                                      }
-                                      onClick={() => {
-                                        navigate(
-                                          "Team cycle",
-                                          `/workspace/team/${team.key.toLowerCase()}/cycle/active`,
-                                        );
-                                        setTeamCycleRoute(
-                                          `/workspace/team/${team.key.toLowerCase()}/cycle/active`,
-                                        );
-                                        setMobile(false);
-                                      }}
-                                    >
-                                      Current
-                                    </button>
-                                    <button
-                                      className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-1.75 pr-1.75 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
-                                      type="button"
-                                      aria-current={
-                                        view === "Team cycle" &&
-                                        location.pathname.includes(
-                                          `/team/${team.key.toLowerCase()}/cycle/upcoming`,
-                                        )
-                                          ? "page"
-                                          : undefined
-                                      }
-                                      onClick={() => {
-                                        navigate(
-                                          "Team cycle",
-                                          `/workspace/team/${team.key.toLowerCase()}/cycle/upcoming`,
-                                        );
-                                        setTeamCycleRoute(
-                                          `/workspace/team/${team.key.toLowerCase()}/cycle/upcoming`,
-                                        );
-                                        setMobile(false);
-                                      }}
-                                    >
-                                      Upcoming
-                                    </button>
-                                  </div>
-                                  <button
-                                    className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
-                                    type="button"
-                                    onClick={() => {
-                                      navigate(
-                                        "Team projects",
-                                        `/workspace/team/${team.key.toLowerCase()}/projects/all`,
-                                      );
-                                      setMobile(false);
-                                    }}
-                                    aria-current={
-                                      view === "Team projects"
-                                        ? "page"
-                                        : undefined
-                                    }
-                                  >
-                                    Projects
-                                  </button>
-                                  {team.showInitiatives && (
                                     <button
                                       className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
                                       type="button"
-                                      data-team-initiatives=""
                                       onClick={() => {
                                         navigate(
-                                          "Team initiatives",
-                                          `/workspace/team/${team.key.toLowerCase()}/initiatives`,
+                                          "Team Home",
+                                          `/workspace/team/${team.key.toLowerCase()}/home`,
                                         );
                                         setMobile(false);
                                       }}
                                       aria-current={
-                                        view === "Team initiatives" &&
-                                        location.pathname
-                                          .split("/")[3]
-                                          ?.toLowerCase() ===
-                                          team.key.toLowerCase()
+                                        view === "Team Home" &&
+                                        location.pathname.endsWith("/home")
                                           ? "page"
                                           : undefined
                                       }
                                     >
-                                      Initiatives
+                                      Home
                                     </button>
-                                  )}
-                                  <button
-                                    className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
-                                    type="button"
-                                    onClick={() => {
-                                      navigate(
-                                        "Team views",
-                                        `/workspace/team/${team.key.toLowerCase()}/views/issues`,
-                                      );
-                                      setMobile(false);
-                                    }}
-                                    aria-current={
-                                      view === "Team views" ? "page" : undefined
-                                    }
-                                  >
-                                    Views
-                                  </button>
-                                </div>
-                              )}
-                            </div>
+                                    <button
+                                      className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                      type="button"
+                                      onClick={() => {
+                                        navigate(
+                                          "Team issues",
+                                          `/workspace/team/${team.key.toLowerCase()}/active`,
+                                        );
+                                        setMobile(false);
+                                      }}
+                                      aria-current={
+                                        view === "Team issues"
+                                          ? "page"
+                                          : undefined
+                                      }
+                                    >
+                                      Tasks
+                                    </button>
+                                    <button
+                                      className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                      type="button"
+                                      onClick={() => {
+                                        navigate(
+                                          "Team cycles",
+                                          `/workspace/team/${team.key.toLowerCase()}/cycles`,
+                                        );
+                                        setMobile(false);
+                                      }}
+                                      aria-current={
+                                        view === "Team cycles"
+                                          ? "page"
+                                          : undefined
+                                      }
+                                    >
+                                      Cycles
+                                    </button>
+                                    <div
+                                      className="border-l border-line grid gap-px mt-px mr-0 mb-1 ml-3 pl-2.25 shell-desktop:rail-collapsed:hidden"
+                                      data-team-cycle-links=""
+                                    >
+                                      <button
+                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-1.75 pr-1.75 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                        type="button"
+                                        aria-current={
+                                          view === "Team cycle" &&
+                                          location.pathname.includes(
+                                            `/team/${team.key.toLowerCase()}/cycle/active`,
+                                          )
+                                            ? "page"
+                                            : undefined
+                                        }
+                                        onClick={() => {
+                                          navigate(
+                                            "Team cycle",
+                                            `/workspace/team/${team.key.toLowerCase()}/cycle/active`,
+                                          );
+                                          setTeamCycleRoute(
+                                            `/workspace/team/${team.key.toLowerCase()}/cycle/active`,
+                                          );
+                                          setMobile(false);
+                                        }}
+                                      >
+                                        Current
+                                      </button>
+                                      <button
+                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-1.75 pr-1.75 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                        type="button"
+                                        aria-current={
+                                          view === "Team cycle" &&
+                                          location.pathname.includes(
+                                            `/team/${team.key.toLowerCase()}/cycle/upcoming`,
+                                          )
+                                            ? "page"
+                                            : undefined
+                                        }
+                                        onClick={() => {
+                                          navigate(
+                                            "Team cycle",
+                                            `/workspace/team/${team.key.toLowerCase()}/cycle/upcoming`,
+                                          );
+                                          setTeamCycleRoute(
+                                            `/workspace/team/${team.key.toLowerCase()}/cycle/upcoming`,
+                                          );
+                                          setMobile(false);
+                                        }}
+                                      >
+                                        Upcoming
+                                      </button>
+                                    </div>
+                                    <button
+                                      className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                      type="button"
+                                      onClick={() => {
+                                        navigate(
+                                          "Team projects",
+                                          `/workspace/team/${team.key.toLowerCase()}/projects/all`,
+                                        );
+                                        setMobile(false);
+                                      }}
+                                      aria-current={
+                                        view === "Team projects"
+                                          ? "page"
+                                          : undefined
+                                      }
+                                    >
+                                      Projects
+                                    </button>
+                                    {team.showInitiatives && (
+                                      <button
+                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                        type="button"
+                                        data-team-initiatives=""
+                                        onClick={() => {
+                                          navigate(
+                                            "Team initiatives",
+                                            `/workspace/team/${team.key.toLowerCase()}/initiatives`,
+                                          );
+                                          setMobile(false);
+                                        }}
+                                        aria-current={
+                                          view === "Team initiatives" &&
+                                          location.pathname
+                                            .split("/")[3]
+                                            ?.toLowerCase() ===
+                                            team.key.toLowerCase()
+                                            ? "page"
+                                            : undefined
+                                        }
+                                      >
+                                        Initiatives
+                                      </button>
+                                    )}
+                                    <button
+                                      className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                      type="button"
+                                      onClick={() => {
+                                        navigate(
+                                          "Team views",
+                                          `/workspace/team/${team.key.toLowerCase()}/views/issues`,
+                                        );
+                                        setMobile(false);
+                                      }}
+                                      aria-current={
+                                        view === "Team views"
+                                          ? "page"
+                                          : undefined
+                                      }
+                                    >
+                                      Views
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          {[
+                            ...items,
+                            /* Admins always see the entry, so the screens can be found and turned on
+                             * from where they live; the page offers the switch while it is off. */
+                            ...(section === "primary" &&
+                            (agentsOn || viewer.admin)
+                              ? ([["Agents", GitBranch]] as [
+                                  string,
+                                  typeof GitBranch,
+                                ][])
+                              : []),
+                          ].map(([label, Icon]) => (
+                            <button
+                              type="button"
+                              className="flex w-full  items-center gap-2 overflow-hidden rounded-lg bg-transparent px-2.5 py-1 hover:bg-neutral-200  text-left text-[13px] font-normal text-muted whitespace-nowrap text-ellipsis aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 pointer-coarse:min-h-11 shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:px-0  aria-[current=page]:bg-subtle aria-[current=page]:font-medium"
+                              data-nav-item=""
+                              key={label}
+                              onClick={() => {
+                                navigate(label);
+                                setMobile(false);
+                              }}
+                              aria-current={view === label ? "page" : undefined}
+                            >
+                              <Icon size={15} />
+                              <span className="overflow-hidden text-ellipsis shell-desktop:rail-collapsed:hidden">
+                                {label === "Favorite views"
+                                  ? "Saved views"
+                                  : label}
+                              </span>
+                              {label === "Inbox" && <InboxBadge />}
+                            </button>
                           ))}
-                        {[
-                          ...items,
-                          /* Admins always see the entry, so the screens can be found and turned on
-                           * from where they live; the page offers the switch while it is off. */
-                          ...(section === "primary" &&
-                          (agentsOn || viewer.admin)
-                            ? ([["Agents", GitBranch]] as [
-                                string,
-                                typeof GitBranch,
-                              ][])
-                            : []),
-                        ].map(([label, Icon]) => (
-                          <button
-                            type="button"
-                            className="flex w-full  items-center gap-2 overflow-hidden rounded-lg bg-transparent px-2.5 py-1 hover:bg-neutral-200  text-left text-[13px] font-normal text-muted whitespace-nowrap text-ellipsis aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 pointer-coarse:min-h-11 shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:px-0  aria-[current=page]:bg-subtle aria-[current=page]:font-medium"
-                            data-nav-item=""
-                            key={label}
-                            onClick={() => {
-                              navigate(label);
-                              setMobile(false);
-                            }}
-                            aria-current={view === label ? "page" : undefined}
-                          >
-                            <Icon size={15} />
-                            <span className="overflow-hidden text-ellipsis shell-desktop:rail-collapsed:hidden">
-                              {label === "Favorite views"
-                                ? "Saved views"
-                                : label}
-                            </span>
-                            {label === "Inbox" && <InboxBadge />}
-                          </button>
-                        ))}
-                      </>
-                    )}
-                  </div>
-                ))}
+                        </>
+                      )}
+                    </div>
+                  ),
+                )}
                 <div
                   className="mb-4.25 mt-0 mr-0 ml-0"
                   data-nav-group=""
@@ -4225,11 +4441,13 @@ function App() {
         )}
         {commandOpen && (
           <CommandPalette
+            viewsOnly={commandViews}
             query={commandQuery}
             setQuery={setCommandQuery}
             issues={issues}
             onClose={() => {
               setCommandOpen(false);
+              setCommandViews(false);
               setCommandQuery("");
             }}
             onIssue={(i) => {
@@ -5303,7 +5521,279 @@ const activityDayLabel = (day: string) => {
   });
 };
 /* The one issue list + board surface: My issues, team issues and project issues all render this,
- * so rows, groups, toolbar, filters, display options and the Kanban stay identical everywhere. */
+ * so rows, groups, toolbar, filters, display options and the Kanban stay identical everywhere.
+ *
+ * Filters are a chip tree in the view grammar (views/filterModel), mirrored in `?filter=` so a
+ * filtered list can be shared. Display options are layered preferences stored on the server
+ * under `viewKey` ("team:<id>:active", "my-issues:assigned"), so each page keeps its own. */
+type ListBucket = {
+  key: string;
+  label: string;
+  items: Issue[];
+  total: number;
+  state?: IssueState;
+};
+const ISSUE_FILTER_FIELDS = ISSUE_FIELDS;
+const STATUS_TYPE_OPTIONS = [
+  ["triage", "Triage"],
+  ["backlog", "Backlog"],
+  ["unstarted", "Unstarted"],
+  ["started", "Started"],
+  ["completed", "Completed"],
+  ["canceled", "Canceled"],
+] as const;
+function isTypingTarget(target: EventTarget | null) {
+  const t = target as HTMLElement | null;
+  return Boolean(
+    t?.closest(
+      "input,textarea,select,[contenteditable=true],[role=dialog],[role=menu]",
+    ),
+  );
+}
+const NO_DISPLAY: DisplayDoc = {};
+/* Created and Subscribed list closed work whenever it closed, as they did before views parity;
+   Assigned (and team pages) start at Linear's "Past week". */
+const EVERY_COMPLETED: DisplayDoc = { completedWindow: "all" };
+/* A board column a task can be moved into: one that writes its property, or a real workflow
+   state (not a status no loaded team has, nor a label / team / creator column). */
+const canMoveInto = (g: { drop?: unknown; state: { id: string } }): boolean =>
+  Boolean(g.drop) ||
+  (g.state.id !== "unknown" && !g.state.id.startsWith("group:"));
+const NO_SELECTION: ReadonlySet<string> = new Set();
+/* A board column's "…" menu: Select all in column, Hide column. */
+function ColumnMenu({
+  label,
+  onSelectAll,
+  onHide,
+}: {
+  label: string;
+  onSelectAll: () => void;
+  onHide: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const item =
+    "flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm text-foreground hover:bg-subtle shell-phone:min-h-11";
+  return (
+    <UIPopover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="grid size-6 place-items-center rounded-full text-muted hover:bg-subtle hover:text-foreground shell-phone:min-h-11 shell-phone:min-w-11"
+          aria-label={`${label} column options`}
+          data-kanban-column-menu=""
+        >
+          <MoreHorizontal size={15} />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        className="z-50 w-48 rounded-lg border border-line bg-panel p-1 shadow-lg"
+      >
+        <div role="menu" aria-label={`${label} column`}>
+          <button
+            type="button"
+            role="menuitem"
+            className={item}
+            onClick={() => {
+              onSelectAll();
+              setOpen(false);
+            }}
+          >
+            Select all in column
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className={item}
+            onClick={() => {
+              onHide();
+              setOpen(false);
+            }}
+          >
+            Hide column
+          </button>
+        </div>
+      </PopoverContent>
+    </UIPopover>
+  );
+}
+/* Links and pull requests a task carries (GitHub links), as small counts on the row. */
+function RowLinks({
+  issue,
+  links,
+  pullRequests,
+}: {
+  issue: Issue;
+  links: boolean;
+  pullRequests: boolean;
+}) {
+  const all =
+    (issue as { githubLinks?: { kind?: string }[] | null }).githubLinks || [];
+  const prs = all.filter((l) => /pull/i.test(l.kind || "")).length;
+  const other = all.length - prs;
+  return (
+    <>
+      {pullRequests && prs > 0 && (
+        <span
+          className="inline-flex items-center gap-0.5 whitespace-nowrap text-muted text-[11px] max-md:hidden"
+          title={`${prs} pull request${prs === 1 ? "" : "s"}`}
+          data-my-issue-prs=""
+        >
+          <GitPullRequest size={12} />
+          {prs}
+        </span>
+      )}
+      {links && other > 0 && (
+        <span
+          className="inline-flex items-center gap-0.5 whitespace-nowrap text-muted text-[11px] max-md:hidden"
+          title={`${other} link${other === 1 ? "" : "s"}`}
+          data-my-issue-links=""
+        >
+          <ExternalLink size={12} />
+          {other}
+        </span>
+      )}
+    </>
+  );
+}
+/* The filter menu's categories, values and per-value counts over `base` (the rows the list
+ * shows before filters). Shared by every task list and the view editor. */
+function useIssueFilterCatalog({
+  base,
+  issues,
+  states,
+  projects,
+  teams,
+  users,
+  labels,
+  cycles,
+  viewerId,
+  evalCtx,
+}: {
+  base: Issue[];
+  issues: Issue[];
+  states: IssueState[];
+  projects: Project[];
+  teams: Team[];
+  users: { id: string; name: string }[];
+  labels: IssueLabel[];
+  cycles: { id: string; name?: string; number?: number }[];
+  viewerId?: string;
+  evalCtx: EvalContext;
+}): FilterCatalog {
+  return useMemo((): FilterCatalog => {
+    const counted = new Map<string, Map<string, number>>();
+    const server = (field: string) =>
+      ISSUE_FILTER_FIELDS.find((f) => f.key === field)?.server || field;
+    const userOptions = (none?: string): ValueOption[] => [
+      { value: "me", label: "Current user" },
+      ...(none ? [{ value: null, label: none }] : []),
+      ...users
+        .filter((u) => u.id !== viewerId)
+        .map((u) => ({ value: u.id, label: u.name })),
+    ];
+    const uniqueStates = [...new Map(states.map((s) => [s.name, s])).values()];
+    const estimates = [
+      ...new Set(
+        issues
+          .map((i) => i.estimate)
+          .filter((e): e is number => typeof e === "number"),
+      ),
+    ].sort((a, b) => a - b);
+    return {
+      fields: ISSUE_FILTER_FIELDS,
+      menu: ISSUE_MENU,
+      options: (field) => {
+        switch (field) {
+          case "status":
+            return uniqueStates.map((s) => ({
+              value: s.name,
+              label: s.name,
+              icon: <StatusIcon state={s} />,
+            }));
+          case "statusType":
+            return STATUS_TYPE_OPTIONS.map(([value, label]) => ({
+              value,
+              label,
+            }));
+          case "assignee":
+            return userOptions("No assignee");
+          case "creator":
+          case "subscriber":
+            return userOptions();
+          case "priority":
+            return [1, 2, 3, 4, 0].map((p) => ({
+              value: p,
+              label: PRIORITY_LABELS[p],
+            }));
+          case "labels":
+            return [
+              { value: null, label: "No labels" },
+              ...labels.map((l) => ({
+                value: l.id,
+                label: l.name,
+                icon: (
+                  <span
+                    className="block size-2 rounded-full"
+                    style={{ background: l.color || "#a1a1aa" }}
+                  />
+                ),
+              })),
+            ];
+          case "project":
+            return [
+              { value: null, label: "No project" },
+              ...projects.map((p) => ({ value: p.id, label: p.name })),
+            ];
+          case "cycle":
+            return [
+              { value: null, label: "No cycle" },
+              ...cycles.map((c) => ({
+                value: c.id,
+                label: c.name || `Cycle ${c.number ?? ""}`.trim(),
+              })),
+            ];
+          case "estimate":
+            return [
+              { value: null, label: "No estimate" },
+              ...estimates.map((e) => ({
+                value: e,
+                label: `${e} point${e === 1 ? "" : "s"}`,
+              })),
+            ];
+          case "team":
+            return [
+              { value: "myTeams", label: "My teams" },
+              ...teams.map((t) => ({ value: t.id, label: t.name })),
+            ];
+          default:
+            return [];
+        }
+      },
+      count: (field, value) => {
+        if (field === "team" && value === "myTeams") return undefined;
+        const key = server(field);
+        let m = counted.get(key);
+        if (!m) {
+          m = countBy(base, key, evalCtx);
+          counted.set(key, m);
+        }
+        return m.get(value === null ? "null" : String(value)) || 0;
+      },
+    };
+  }, [
+    users,
+    labels,
+    cycles,
+    viewerId,
+    states,
+    issues,
+    projects,
+    teams,
+    base,
+    evalCtx,
+  ]);
+}
 function MyIssuesContent({
   issues,
   onNew,
@@ -5326,7 +5816,37 @@ function MyIssuesContent({
   states,
   onMoved,
   onUpdate,
+  viewKey,
+  pageDefaults = NO_DISPLAY,
+  onSaveAsView,
+  filterState,
+  displayState,
+  canSetDefault = true,
+  serverRows,
+  filterRowEnd,
+  toolbarEnd,
+  onSaveView,
 }: {
+  /** Controlled filters: a view page owns its chips (saved vs. edited) instead of the URL. */
+  filterState?: { root: FilterGroup; onChange: (root: FilterGroup) => void };
+  /** Controlled display options (a saved view's layered preferences, or an editor draft). */
+  displayState?: ViewPreferences;
+  /** Offer "Set default for everyone" in the display panel. */
+  canSetDefault?: boolean;
+  /** The rows were selected by the server (a view run): no client-side filtering, and the
+   * list pages in more rows as it scrolls. */
+  serverRows?: {
+    hasMore: boolean;
+    loading: boolean;
+    error?: string;
+    onLoadMore: () => void;
+  };
+  /** Rendered at the end of the chip row (a view's "Clear" and "Save"). */
+  filterRowEnd?: React.ReactNode;
+  /** Rendered after the display button. */
+  toolbarEnd?: React.ReactNode;
+  /** Alt S: save the edited filters to the view on screen. */
+  onSaveView?: () => void;
   layout: IssueLayout;
   onLayoutChange: (layout: IssueLayout) => void;
   states: IssueState[];
@@ -5338,8 +5858,8 @@ function MyIssuesContent({
   tab: MyIssuesTab;
   tabs?: React.ReactNode;
   /* The page title. When given, the content draws the page's title bar itself and puts the
-   * layout, filter and display buttons on its right, so they sit on the title row instead of
-   * taking a row of their own under the tabs. */
+   * save-as-view, layout, filter and display buttons on its right, so they sit on the title row
+   * instead of taking a row of their own under the tabs. */
   head?: React.ReactNode;
   activityEvents?: IssueActivityEvent[];
   activityHasMore?: boolean;
@@ -5351,183 +5871,230 @@ function MyIssuesContent({
   older?: OlderState;
   onLoadOlder?: (retry?: boolean) => void;
   emptyCopy?: [string, string];
+  /** The `viewPreferences` key of this page; without one the display lives in memory. */
+  viewKey?: string;
+  /** This page's own display defaults, under the shared and the viewer's layers. */
+  pageDefaults?: DisplayDoc;
+  /** "Save as view" (Alt V): hands the current filters and display to the view editor. */
+  onSaveAsView?: (draft: { filters: FilterTree; display: DisplayDoc }) => void;
 }) {
-  const [collapsedTree, setCollapsedTree] = useState<Record<string, boolean>>(
-    {},
+  const meta = useSyncMeta();
+  const viewerId = meta?.viewer?.id;
+  /* ---------------- filters: a chip tree, mirrored in ?filter= ---------------- */
+  const [ownRoot, setOwnRoot] = useState<FilterGroup>(() =>
+    filterState
+      ? emptyGroup()
+      : filterTreeToChips(
+          decodeFilterParam(new URLSearchParams(location.search).get("filter")),
+        ),
   );
-  const [status, setStatus] = useState(""),
-    [priority, setPriority] = useState(""),
-    [teamId, setTeamId] = useState(""),
-    [projectId, setProjectId] = useState(""),
-    [textQuery, setTextQuery] = useState(""),
-    [cycleOnly, setCycleOnly] = useState(false),
-    [labelId, setLabelId] = useState(""),
-    [assigneeId, setAssigneeId] = useState(""),
-    [creatorId, setCreatorId] = useState(""),
-    [subscriberId, setSubscriberId] = useState(""),
-    [dateField, setDateField] = useState(""),
-    [dateFrom, setDateFrom] = useState(""),
-    [dateTo, setDateTo] = useState(""),
-    [showProject, setShowProject] = useState(
-      () => localStorage.getItem("hoja_my_issues_project") !== "false",
-    ),
-    [showDate, setShowDate] = useState(
-      () => localStorage.getItem("hoja_my_issues_date") !== "false",
-    ),
-    [grouping, setGrouping] = useState(
-      () => localStorage.getItem("hoja_my_issues_grouping") || "Focus",
-    ),
+  const controlledFilters = Boolean(filterState);
+  const filterRoot = filterState ? filterState.root : ownRoot;
+  const setFilterRoot = filterState ? filterState.onChange : setOwnRoot;
+  const [advanced, setAdvanced] = useState(false);
+  const filterTree = useMemo(() => chipsToFilterTree(filterRoot), [filterRoot]);
+  const filtering = hasFilters(filterTree);
+  /* A server-run view already holds only matching rows: no client filtering, no "6 / 81". */
+  const clientFiltering = filtering && !serverRows;
+  // Re-run on `viewKey` too: switching tabs pushes a new path without the query, and the chips
+  // that stay on screen must stay in the URL a person copies.
+  useEffect(() => {
+    if (controlledFilters) return;
+    const next = withFilterParam(location.search, filterTree);
+    if (next !== location.search)
+      history.replaceState(
+        history.state,
+        "",
+        `${location.pathname}${next}${location.hash}`,
+      );
+  }, [filterTree, viewKey, controlledFilters]);
+  // Back and forward restore the filter the URL of that entry carries.
+  useEffect(() => {
+    if (controlledFilters) return;
+    const onPop = () => {
+      const tree = decodeFilterParam(
+        new URLSearchParams(location.search).get("filter"),
+      );
+      setOwnRoot((old) =>
+        JSON.stringify(chipsToFilterTree(old)) === JSON.stringify(tree || {})
+          ? old
+          : filterTreeToChips(tree),
+      );
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [controlledFilters]);
+  const clearFilters = useCallback(() => {
+    setFilterRoot(emptyGroup());
+    setAdvanced(false);
+  }, [setFilterRoot]);
+  /* ---------------- display: layered preferences ---------------- */
+  // Follows `pageDefaults`, which differ per tab (My issues keeps one component across tabs).
+  const initialLayout = useRef(layout === "Board" ? "board" : "list").current;
+  const defaults = useMemo<DisplayDoc>(
+    () => ({
+      ...pageDefaults,
+      layout: pageDefaults.layout || (initialLayout as DisplayDoc["layout"]),
+    }),
+    [pageDefaults, initialLayout],
+  );
+  const prefTarget = useMemo(
+    () => (viewKey ? { viewType: viewKey } : null),
+    [viewKey],
+  );
+  const ownPrefs = useViewPreferences(
+    displayState ? null : prefTarget,
+    defaults,
+  );
+  const prefs = displayState || ownPrefs;
+  const display = prefs.display;
+  const board = display.layout === "board";
+  const setLayout = (next: IssueLayout) => {
+    prefs.update({ layout: next === "Board" ? "board" : "list" });
+    onLayoutChange(next);
+  };
+  const [filterOpen, setFilterOpen] = useState(false),
+    [displayOpen, setDisplayOpen] = useState(false),
+    [collapsedLocal, setCollapsedLocal] = useState<string[]>([]),
     /* Collapsed parents, keyed by issue id. Per-surface and deliberately not persisted:
        a collapsed epic in one view must not hide work in another. */
     [treeCollapsed, setTreeCollapsed] = useState<Record<string, boolean>>({}),
-    [showAssignee, setShowAssignee] = useState(
-      () => localStorage.getItem("hoja_my_issues_assignee") !== "false",
-    ),
-    [showPriority, setShowPriority] = useState(
-      () => localStorage.getItem("hoja_my_issues_priority") !== "false",
-    ),
-    [showStatus, setShowStatus] = useState(
-      () => localStorage.getItem("hoja_my_issues_status") !== "false",
-    ),
-    [showLabels, setShowLabels] = useState(
-      () => localStorage.getItem("hoja_my_issues_labels") !== "false",
-    ),
-    [showDue, setShowDue] = useState(
-      () => localStorage.getItem("hoja_my_issues_due") === "true",
-    ),
-    [filterOpen, setFilterOpen] = useState(false),
-    [displayOpen, setDisplayOpen] = useState(false),
-    [collapsed, setCollapsed] = useState<string[]>([]),
-    [completedRange, setCompletedRange] = useState<CompletedRange>(() => {
-      const v = localStorage.getItem("hoja_my_issues_completed");
-      return v === "none" || v === "month" || v === "all" ? v : "week";
-    });
+    [selected, setSelected] = useState<ReadonlySet<string>>(NO_SELECTION);
+  const collapsedKeys =
+    tab === "Activity" ? collapsedLocal : display.collapsedGroups;
+  const toggleCollapsed = (key: string) => {
+    const next = collapsedKeys.includes(key)
+      ? collapsedKeys.filter((k) => k !== key)
+      : [...collapsedKeys, key].slice(-50);
+    if (tab === "Activity") setCollapsedLocal(next);
+    else prefs.update({ collapsedGroups: next });
+  };
+  const has = (property: string) =>
+    display.visibleProperties.includes(property);
+  const saveAsView = useCallback(() => {
+    if (!onSaveAsView) return;
+    const { collapsedGroups: _collapsed, ...rest } = display;
+    void _collapsed;
+    onSaveAsView({ filters: filterTree, display: rest });
+  }, [onSaveAsView, display, filterTree]);
+  /* F opens the filter menu, Shift V the display panel, Alt V saves the list as a view. */
+  const layoutRef = useRef(setLayout);
+  layoutRef.current = setLayout;
+  const collapseAllRef = useRef<() => void>(noop);
   useEffect(() => {
-    localStorage.setItem("hoja_my_issues_project", String(showProject));
-    localStorage.setItem("hoja_my_issues_date", String(showDate));
-    localStorage.setItem("hoja_my_issues_grouping", grouping);
-    localStorage.setItem("hoja_my_issues_assignee", String(showAssignee));
-    localStorage.setItem("hoja_my_issues_priority", String(showPriority));
-    localStorage.setItem("hoja_my_issues_status", String(showStatus));
-    localStorage.setItem("hoja_my_issues_labels", String(showLabels));
-    localStorage.setItem("hoja_my_issues_due", String(showDue));
-  }, [
-    showProject,
-    showDate,
-    grouping,
-    showAssignee,
-    showPriority,
-    showStatus,
-    showLabels,
-    showDue,
-  ]);
-  useEffect(() => {
-    localStorage.setItem("hoja_my_issues_completed", completedRange);
-  }, [completedRange]);
+    const onKey = (e: KeyboardEvent) => {
+      if (isTypingTarget(e.target)) return;
+      // A task dialog or command palette open over the list owns the keyboard, even when
+      // focus fell back to the page body.
+      if (document.querySelector('[aria-modal="true"]')) return;
+      // Cmd/Ctrl B flips list and board, as in Linear.
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.code === "KeyB") {
+        e.preventDefault();
+        layoutRef.current(board ? "List" : "Board");
+        return;
+      }
+      if (e.metaKey || e.ctrlKey) return;
+      if (e.altKey && e.code === "KeyV") {
+        if (!onSaveAsView) return;
+        e.preventDefault();
+        saveAsView();
+      } else if (e.altKey && e.code === "KeyS") {
+        if (!onSaveView) return;
+        e.preventDefault();
+        onSaveView();
+      } else if (
+        !e.altKey &&
+        !e.shiftKey &&
+        e.key.toLowerCase() === "t" &&
+        !board
+      ) {
+        e.preventDefault();
+        collapseAllRef.current();
+      } else if (!e.altKey && !e.shiftKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        setDisplayOpen(false);
+        setFilterOpen(true);
+      } else if (!e.altKey && e.shiftKey && e.key.toLowerCase() === "v") {
+        e.preventDefault();
+        setFilterOpen(false);
+        setDisplayOpen(true);
+      } else if (e.key === "Escape" && selected.size) setSelected(NO_SELECTION);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onSaveAsView, saveAsView, onSaveView, selected, board]);
+  /* ---------------- the rows ---------------- */
   // Closed issues outside the synced window are fetched only when this view can show them.
   const need =
     Boolean(onLoadOlder) &&
-    (tab === "Created" || (tab === "Assigned" && completedRange === "all"));
+    (tab === "Created" || tab === "Assigned") &&
+    display.completedWindow === "all";
   const needStatus = need ? older?.status : undefined;
   useEffect(() => {
     if (need) onLoadOlder?.();
   }, [need, needStatus, onLoadOlder]);
-  // Filter options only depend on the issue set, not on each keystroke.
-  const availableUsers = useMemo(
-    () => [
-      ...new Map(
-        issues
-          .flatMap((i) =>
-            [i.assignee, i.creator].filter(
-              (u): u is { id: string; name?: string } => Boolean(u?.id),
-            ),
-          )
-          .map((u) => [u.id, u]),
-      ).values(),
-    ],
-    [issues],
+  const myTeamIds = useMemo(
+    () =>
+      new Set(
+        teams
+          .filter((t) => t.members?.nodes.some((m) => m.id === viewerId))
+          .map((t) => t.id),
+      ),
+    [teams, viewerId],
   );
-  const availableLabels = useMemo(
-    () => [
-      ...new Map(
-        issues.flatMap((i) => i.labels?.nodes || []).map((l) => [l.id, l]),
-      ).values(),
-    ],
-    [issues],
+  const evalCtx = useMemo<EvalContext>(
+    () => ({ viewerId, myTeamIds, parentIds: parentIdsOf(issues) }),
+    [viewerId, myTeamIds, issues],
   );
-  const clearMyFilters = () => {
-    setStatus("");
-    setPriority("");
-    setTeamId("");
-    setProjectId("");
-    setCycleOnly(false);
-    setTextQuery("");
-    setLabelId("");
-    setAssigneeId("");
-    setCreatorId("");
-    setSubscriberId("");
-    setDateField("");
-    setDateFrom("");
-    setDateTo("");
-  };
+  const groupCtx = useMemo<GroupCtx>(
+    () => ({
+      states,
+      viewerId,
+      users: (meta?.users || [])
+        .map(([id, name]) => ({ id, name: name || "Unknown" }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      projects: projects.map((p) => ({ id: p.id, name: p.name })),
+      cycles: meta?.cycles.nodes || [],
+      labels: meta?.issueLabels.nodes || [],
+      teams: teams.map((t) => ({ id: t.id, name: t.name })),
+    }),
+    [states, viewerId, meta, projects, teams],
+  );
   const scoped = useMemo(
     () =>
       tab === "Activity"
         ? activityEvents.map((e) => e.issue)
-        : tab === "Assigned"
-          ? issues.filter((i) => {
-              if (!["completed", "canceled"].includes(i.state?.type || ""))
-                return true;
-              if (completedRange === "all") return true;
-              if (completedRange === "none") return false;
-              const at = Date.parse(i.stateChangedAt || i.updatedAt || "");
-              return (
-                Number.isFinite(at) &&
-                at >= Date.now() - (completedRange === "week" ? 7 : 30) * 864e5
-              );
-            })
-          : issues,
-    [tab, activityEvents, issues, completedRange],
+        : applyCompletedWindow(issues, display.completedWindow),
+    [tab, activityEvents, issues, display.completedWindow],
   );
-  const deferredQuery = React.useDeferredValue(textQuery);
-  const visible = useMemo(() => {
-    const q = deferredQuery.trim().toLowerCase();
-    const df = dateField as "createdAt" | "updatedAt" | "dueDate" | "";
-    return scoped.filter(
-      (i) =>
-        (!status || (i.state && stateKey(i.state) === status)) &&
-        (!priority || String(i.priority) === priority) &&
-        (!teamId || i.team?.id === teamId) &&
-        (!projectId || i.project?.id === projectId) &&
-        (!cycleOnly || Boolean(i.cycle)) &&
-        (!q || `${i.identifier} ${i.title}`.toLowerCase().includes(q)) &&
-        (!labelId || i.labels?.nodes.some((l) => l.id === labelId)) &&
-        (!assigneeId || i.assignee?.id === assigneeId) &&
-        (!creatorId || i.creator?.id === creatorId) &&
-        (!subscriberId ||
-          i.subscribers?.nodes.some((u) => u.id === subscriberId)) &&
-        (!df ||
-          ((!dateFrom ||
-            (Boolean(i[df]) && (i[df] || "").slice(0, 10) >= dateFrom)) &&
-            (!dateTo ||
-              (Boolean(i[df]) && (i[df] || "").slice(0, 10) <= dateTo)))),
-    );
-  }, [
-    scoped,
-    status,
-    priority,
-    teamId,
-    projectId,
-    cycleOnly,
-    deferredQuery,
-    labelId,
-    assigneeId,
-    creatorId,
-    subscriberId,
-    dateField,
-    dateFrom,
-    dateTo,
-  ]);
+  const deferredTree = React.useDeferredValue(filterTree);
+  const visible = useMemo(
+    () =>
+      hasFilters(deferredTree) && !serverRows
+        ? scoped.filter((i) =>
+            matchesFilter(deferredTree, i, { ...evalCtx, now: Date.now() }),
+          )
+        : scoped,
+    [scoped, deferredTree, evalCtx, serverRows],
+  );
+  // Totals for "6 / 81": the same rows before filters, under the same sub-issue rule.
+  const totalsBase = useMemo(
+    () =>
+      display.showSubIssues === false
+        ? scoped.filter((i) => !i.parent?.id)
+        : scoped,
+    [scoped, display.showSubIssues],
+  );
+  const shown = useMemo(
+    () =>
+      tab === "Activity"
+        ? visible
+        : sortTasks(withSubIssues(visible, scoped, display), display, groupCtx),
+    [tab, visible, scoped, display, groupCtx],
+  );
+  const hiddenCount = clientFiltering
+    ? Math.max(0, totalsBase.length - shown.length)
+    : 0;
   // Activity rows: events grouped by day once, instead of re-filtering every event for every row.
   const eventsByDate = useMemo(() => {
     const visibleIds = new Set(visible.map((i) => i.id));
@@ -5542,68 +6109,182 @@ function MyIssuesContent({
     }
     return m;
   }, [tab, activityEvents, visible]);
-  const buckets = useMemo(() => {
-    const ordered = [...visible].sort((a, b) => {
-      const ak = a.createdAt || "",
-        bk = b.createdAt || "";
-      return ak === bk ? 0 : ak < bk ? 1 : -1;
-    });
-    const out: { name: string; items: Issue[]; state?: IssueState }[] = [];
-    const add = (name: string, items: Issue[]) => {
-      if (items.length) out.push({ name, items });
-    };
-    if (tab === "Assigned" && grouping === "Focus") {
-      const byPriority = [...ordered].sort(
-        (a, b) => (a.priority || 5) - (b.priority || 5),
+  const stateByName = useMemo(
+    () => new Map(states.map((s) => [s.name, s])),
+    [states],
+  );
+  const buckets = useMemo((): ListBucket[] => {
+    if (tab === "Activity")
+      return [...eventsByDate].map(([date, events]) => ({
+        key: date,
+        label: date,
+        items: events.map((e) => e.issue),
+        total: events.length,
+      }));
+    if (display.grouping === "none")
+      return [
+        { key: "all", label: "", items: shown, total: totalsBase.length },
+      ];
+    return groupTasks(shown, display.grouping, groupCtx, {
+      showEmpty: display.showEmptyGroups,
+      totals: totalsBase,
+    }).map((g) => ({
+      ...g,
+      state: display.grouping === "status" ? stateByName.get(g.key) : undefined,
+    }));
+  }, [tab, eventsByDate, display, shown, totalsBase, groupCtx, stateByName]);
+  // T collapses every group, or opens them all again when all are collapsed.
+  collapseAllRef.current = () => {
+    const keys = buckets.filter((b) => b.label).map((b) => b.key);
+    if (!keys.length) return;
+    const next = keys.every((k) => collapsedKeys.includes(k))
+      ? []
+      : keys.slice(-50);
+    if (tab === "Activity") setCollapsedLocal(next);
+    else prefs.update({ collapsedGroups: next });
+  };
+  /* A server-run view pages in more rows as its end scrolls into view. */
+  const serverMoreRef = useRef<HTMLDivElement | null>(null);
+  const serverMore = useRef(serverRows?.onLoadMore);
+  serverMore.current = serverRows?.onLoadMore;
+  const canLoadServer = Boolean(
+    serverRows?.hasMore && !serverRows.loading && !serverRows.error,
+  );
+  useEffect(() => {
+    if (!canLoadServer) return;
+    const el = serverMoreRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    let requested = false;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (requested || !entries.some((e) => e.isIntersecting)) return;
+        requested = true;
+        serverMore.current?.();
+      },
+      { rootMargin: "0px 0px 600px 0px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [canLoadServer]);
+  /* ---------------- board columns ---------------- */
+  const columnDrop = useCallback(
+    (grouping: string, key: string) => {
+      const value = key === "none" ? null : key;
+      if (grouping === "priority")
+        return (id: string) => onUpdate(id, { priority: Number(key) });
+      if (grouping === "assignee")
+        return (id: string) => onUpdate(id, { assigneeId: value });
+      if (grouping === "project")
+        return (id: string) => onUpdate(id, { projectId: value });
+      if (grouping === "cycle")
+        return (id: string) => onUpdate(id, { cycleId: value });
+      return undefined;
+    },
+    [onUpdate],
+  );
+  const columnsFor = useCallback(
+    (items: Issue[], totals: Issue[]): KanbanGroup[] => {
+      const grouping =
+        display.grouping === "none" ? "status" : display.grouping;
+      const status = grouping === "status";
+      const groups = groupTasks(items, grouping, groupCtx, {
+        // Workflow columns stay as drop targets; other groupings follow "Show empty columns".
+        showEmpty: status || display.showEmptyGroups,
+        totals,
+      }).filter(
+        (g) =>
+          !status ||
+          g.items.length > 0 ||
+          stateByName.get(g.key)?.type !== "canceled" ||
+          display.showEmptyGroups,
       );
-      const byState = new Map<string, Issue[]>(
-        states.map((s) => [stateKey(s), []]),
-      );
-      const none: Issue[] = [];
-      for (const i of byPriority) {
-        const list = i.state ? byState.get(stateKey(i.state)) : undefined;
-        if (list) list.push(i);
-        else none.push(i);
+      return groups.map((g) => {
+        const state = status ? stateByName.get(g.key) : undefined;
+        return {
+          state: state || {
+            id: status ? "unknown" : `group:${g.key}`,
+            name: g.label,
+            color: "#a1a1aa",
+            type: status ? "unknown" : "group",
+          },
+          items: g.items,
+          total: clientFiltering ? g.total : undefined,
+          drop: status ? undefined : columnDrop(grouping, g.key),
+        };
+      });
+    },
+    [display, groupCtx, stateByName, clientFiltering, columnDrop],
+  );
+  const columnKey = (g: KanbanGroup) =>
+    g.state.id.startsWith("group:") ? g.state.id.slice(6) : g.state.name;
+  const hiddenColumns = display.hiddenColumns;
+  const boardColumns = useMemo(
+    () => (board && tab !== "Activity" ? columnsFor(shown, totalsBase) : []),
+    [board, tab, columnsFor, shown, totalsBase],
+  );
+  const shownColumns = boardColumns.filter(
+    (g) => !hiddenColumns.includes(columnKey(g)),
+  );
+  const hiddenLane = boardColumns.filter((g) =>
+    hiddenColumns.includes(columnKey(g)),
+  );
+  const columnMenu = (g: KanbanGroup) => (
+    <ColumnMenu
+      label={g.state.name}
+      onSelectAll={() => setSelected(new Set(g.items.map((i) => i.id)))}
+      onHide={() =>
+        prefs.update({
+          hiddenColumns: [...hiddenColumns, columnKey(g)].slice(-50),
+        })
       }
-      const closedLast = (s: IssueState) =>
-        s.type === "completed" || s.type === "canceled" ? 1 : 0;
-      for (const state of [...states].sort(
-        (a, b) => closedLast(a) - closedLast(b),
-      )) {
-        const items = byState.get(stateKey(state)) || [];
-        if (items.length) out.push({ name: state.name, items, state });
-      }
-      add("No status", none);
-    } else if (tab === "Assigned" && grouping !== "Focus") {
-      const groupName = (i: Issue) =>
-        grouping === "Status"
-          ? i.state?.name || "Unknown status"
-          : grouping === "Project"
-            ? i.project?.name || "No project"
-            : grouping === "Priority"
-              ? i.priorityLabel || "No priority"
-              : grouping === "Cycle"
-                ? i.cycle?.name || "No cycle"
-                : grouping === "Label"
-                  ? i.labels?.nodes[0]?.name || "No labels"
-                  : i.team?.name || "No team";
-      const groups = new Map<string, Issue[]>();
-      for (const i of ordered) {
-        const n = groupName(i);
-        const list = groups.get(n);
-        if (list) list.push(i);
-        else groups.set(n, [i]);
-      }
-      for (const [name, items] of groups) add(name, items);
-    } else if (tab === "Activity") {
-      for (const [date, events] of eventsByDate)
-        add(
-          date,
-          events.map((e) => e.issue),
-        );
-    } else add("", ordered);
-    return out;
-  }, [visible, tab, grouping, states, eventsByDate]);
+    />
+  );
+  const trailing = hiddenLane.length ? (
+    <section
+      className="flex min-h-0 min-w-0 flex-col gap-1 rounded-xl border border-dashed border-line p-3 text-sm text-muted"
+      data-kanban-hidden-lane=""
+      aria-label="Hidden columns"
+    >
+      <b className="font-medium text-foreground">Hidden columns</b>
+      {hiddenLane.map((g) => (
+        <button
+          key={g.state.id}
+          type="button"
+          className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left hover:bg-subtle shell-phone:min-h-11"
+          aria-label={`Show column ${g.state.name}`}
+          onClick={() =>
+            prefs.update({
+              hiddenColumns: hiddenColumns.filter((k) => k !== columnKey(g)),
+            })
+          }
+        >
+          <span className="truncate">{g.state.name}</span>
+          <span className="text-xs">{g.items.length}</span>
+        </button>
+      ))}
+    </section>
+  ) : undefined;
+  const moveSelected = async (target: KanbanGroup) => {
+    const ids = [...selected];
+    setSelected(NO_SELECTION);
+    for (const id of ids)
+      if (target.drop) await target.drop(id).catch(() => undefined);
+      else if (canMoveInto(target))
+        await onMoved(id, target.state).catch(() => undefined);
+  };
+  /* ---------------- filter menu catalog ---------------- */
+  const catalog = useIssueFilterCatalog({
+    base: scoped,
+    issues,
+    states,
+    projects,
+    teams,
+    users: groupCtx.users || [],
+    labels: groupCtx.labels || [],
+    cycles: groupCtx.cycles || [],
+    viewerId,
+    evalCtx,
+  });
   const emptyCopy =
     emptyOverride ||
     (tab === "Assigned"
@@ -5616,31 +6297,6 @@ function MyIssuesContent({
               "No recorded activity",
               "New task events will appear here as work happens.",
             ]);
-  // Long lists are windowed: past WINDOW_ROWS rows only the rows near the viewport are mounted (spacers keep the scroll height).
-  const shownTotal = buckets.reduce(
-    (n, g) => n + (collapsed.includes(g.name) ? 0 : g.items.length),
-    0,
-  );
-  const windowed = false;
-  const listRef = useRef<HTMLDivElement>(null);
-  const win = useScrollWindow(listRef, listRef, windowed);
-  const [rowH, setRowH] = useState(36),
-    [headH, setHeadH] = useState(36);
-  useLayoutEffect(() => {
-    if (!windowed) return;
-    const root = listRef.current;
-    const r = root?.querySelector<HTMLElement>("[data-my-issue-row]");
-    if (r && r.offsetHeight && Math.abs(r.offsetHeight - rowH) > 0.5)
-      setRowH(r.offsetHeight);
-    const h = root?.querySelector<HTMLElement>("[data-my-issue-group]>header");
-    if (h) {
-      const cs = getComputedStyle(h);
-      const full =
-        h.offsetHeight + parseFloat(cs.marginTop) + parseFloat(cs.marginBottom);
-      if (Math.abs(full - headH) > 0.5) setHeadH(full);
-    }
-  }, [windowed, rowH, headH, shownTotal]);
-  let y = 0;
   const teamStates = (i: Issue) =>
     teams.find((t) => t.id === i.team?.id)?.states.nodes;
   // Activity paging is lazy: a sentinel after the list requests the next page when it scrolls into
@@ -5674,405 +6330,436 @@ function MyIssuesContent({
     io.observe(el);
     return () => io.disconnect();
   }, [canAutoLoad]);
-  const toolbarRef = useRef<HTMLDivElement>(null),
-    filterPanelRef = useRef<HTMLDivElement>(null),
-    displayPanelRef = useRef<HTMLDivElement>(null);
-  const toolbar = (
-    <div
-      className="ml-auto flex flex-none items-center gap-1.5 bg-bg  text-foreground"
-      data-my-issue-toolbar=""
-      ref={toolbarRef}
-    >
-      <LayoutSwitch layout={layout} onChange={onLayoutChange} />
-      <UIPopover
-        open={filterOpen}
-        onOpenChange={(open) => {
-          setFilterOpen(open);
-          if (open) setDisplayOpen(false);
-        }}
-      >
-        <PopoverTrigger asChild>
-          <button
-            className="inline-flex size-7 flex-none items-center justify-center gap-1.5 rounded-full border border-line bg-panel  text-sm text-foreground hover:bg-subtle aria-expanded:bg-accent-soft aria-expanded:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 pointer-coarse:min-h-11"
-            aria-label="Add filter"
-            aria-expanded={filterOpen}
-          >
-            <ListFilter size={16} />
-          </button>
-        </PopoverTrigger>
-        <PopoverContent
-          align="end"
-          side="bottom"
-          sideOffset={4}
-          collisionPadding={8}
-          className="z-50 grid w-[min(245px,calc(100vw-35px))] max-w-full max-h-[min(calc(100dvh-110px),var(--radix-popover-content-available-height))] content-start gap-2.5 overflow-y-auto overscroll-contain rounded-[9px] border-line bg-panel p-3 text-[12px] text-foreground shadow-[0_12px_32px_#0002] max-sm:w-[calc(100vw-16px)] max-sm:p-4 max-sm:text-sm"
-          data-my-issue-popover=""
-          aria-label="Task filters"
-          onCloseAutoFocus={(event) => event.preventDefault()}
-          onEscapeKeyDown={() =>
-            toolbarRef.current
-              ?.querySelector<HTMLButtonElement>('[aria-label="Add filter"]')
-              ?.focus()
+  /* One group's rows: parent then children, so a sub-task is never rendered above the task
+     that created it, unless nested sub-issues are hidden. Activity rows are events, not a
+     hierarchy, and stay flat. */
+  const rowsFor = (items: Issue[], groupKey: string) => {
+    const dayEvents =
+      tab === "Activity" ? eventsByDate.get(groupKey) || [] : [];
+    const flat = tab === "Activity" || display.nestedSubIssues === "hide";
+    const rows = flat
+      ? items.map((node) => ({
+          node,
+          depth: 0,
+          isLast: true,
+          openRails: [] as number[],
+          childCount: 0,
+          doneCount: 0,
+          parentOutside: tab !== "Activity" && Boolean(node.parent?.id),
+        }))
+      : orderTree(items, treeCollapsed);
+    return rows.map(
+      (
+        {
+          node: i,
+          depth,
+          isLast,
+          openRails,
+          childCount,
+          doneCount,
+          parentOutside,
+        },
+        index,
+      ) => (
+        <div
+          className="relative flex w-full min-w-0 min-h-9 items-center gap-2 bg-transparent py-0 pr-6 text-left text-foreground hover:bg-subtle cursor-pointer max-md:gap-1.5 shell-phone:pr-3 [@media_(max-width:650px)]:gap-1.5 max-sm:flex-wrap max-sm:gap-y-0 max-sm:pb-2 [--row-inset:42px] max-sm:[--row-inset:14px]"
+          style={{
+            paddingLeft: `calc(var(--row-inset) + ${depth * SIBLING_STEP}px)`,
+          }}
+          data-my-issue-row=""
+          data-depth={depth}
+          role="presentation"
+          key={
+            tab === "Activity"
+              ? `${groupKey}-${dayEvents[index]?.id || index}`
+              : i.id
           }
-          ref={filterPanelRef}
+          onClick={() => onOpenIssue(i)}
         >
-          <div
-            className="grid gap-1"
-            data-my-status-filter=""
-            role="group"
-            aria-label="Status"
-          >
-            <span>Status</span>
-            <button
-              type="button"
-              aria-pressed={!status}
-              className="flex w-full items-center rounded-md bg-transparent pl-1.5 pr-1.5 pt-1 pb-1 text-left text-[#4f5d9d] aria-pressed:bg-accent-soft aria-pressed:font-semibold shell-phone:min-h-11 shell-phone:px-2"
-              data-my-status-filter-all=""
-              onClick={() => setStatus("")}
-            >
-              All statuses
-            </button>
-            <div
-              className="grid grid-cols-2 gap-x-2 gap-y-0.5"
-              data-my-status-filter-grid=""
-            >
-              {states.map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  aria-pressed={status === stateKey(s)}
-                  className="flex min-w-0 items-center gap-2 rounded-md bg-transparent pl-1.5 pr-1.5 pt-1 pb-1 text-left text-[#4f5d9d] aria-pressed:bg-accent-soft aria-pressed:font-semibold shell-phone:min-h-11 shell-phone:px-2"
-                  onClick={() =>
-                    setStatus(status === stateKey(s) ? "" : stateKey(s))
-                  }
-                >
-                  <StatusIcon state={s} />
-                  {s.name}
-                </button>
-              ))}
-            </div>
-          </div>
-          <label className="grid gap-1.25">
-            Priority
-            <select
-              className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-              value={priority}
-              onChange={(e) => setPriority(e.target.value)}
-            >
-              <option value="">All priorities</option>
-              <option value="1">Urgent</option>
-              <option value="2">High</option>
-              <option value="3">Medium</option>
-              <option value="4">Low</option>
-            </select>
-          </label>
-          <label className="grid gap-1.25">
-            Team
-            <select
-              className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-              value={teamId}
-              onChange={(e) => setTeamId(e.target.value)}
-            >
-              <option value="">All teams</option>
-              {teams.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="grid gap-1.25">
-            Project
-            <select
-              className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-              value={projectId}
-              onChange={(e) => setProjectId(e.target.value)}
-            >
-              <option value="">All projects</option>
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="grid gap-1.25">
-            Cycle
-            <select
-              className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-              value={cycleOnly ? "current" : ""}
-              onChange={(e) => setCycleOnly(Boolean(e.target.value))}
-            >
-              <option value="">Any cycle</option>
-              <option value="current">Has cycle</option>
-            </select>
-          </label>
-          <label className="grid gap-1.25">
-            Label
-            <select
-              className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-              value={labelId}
-              onChange={(e) => setLabelId(e.target.value)}
-            >
-              <option value="">All labels</option>
-              {availableLabels.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="grid gap-1.25">
-            Assignee
-            <select
-              className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-              value={assigneeId}
-              onChange={(e) => setAssigneeId(e.target.value)}
-            >
-              <option value="">Any assignee</option>
-              {availableUsers.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name || u.id}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="grid gap-1.25">
-            Creator
-            <select
-              className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-              value={creatorId}
-              onChange={(e) => setCreatorId(e.target.value)}
-            >
-              <option value="">Any creator</option>
-              {availableUsers.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name || u.id}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="grid gap-1.25">
-            Subscriber
-            <select
-              className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-              value={subscriberId}
-              onChange={(e) => setSubscriberId(e.target.value)}
-            >
-              <option value="">Any subscriber</option>
-              {availableUsers.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name || u.id}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="grid gap-1.25">
-            Date field
-            <select
-              className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-              value={dateField}
-              onChange={(e) => setDateField(e.target.value)}
-            >
-              <option value="">Any date</option>
-              <option value="createdAt">Created date</option>
-              <option value="updatedAt">Updated date</option>
-              <option value="dueDate">Due date</option>
-            </select>
-          </label>
-          {dateField && (
+          {/* Ancestry rails: one 2px line per open ancestor, then this row's own
+            connector — a T for a middle child, a rounded corner for the last. */}
+          {openRails.map((column) => (
+            <span
+              key={`rail-${column}`}
+              aria-hidden="true"
+              className="absolute top-0 bottom-0 w-0.5 bg-line"
+              style={{ left: railAt(column) }}
+              data-tree-rail=""
+            />
+          ))}
+          {depth > 0 && isLast && (
+            <span
+              aria-hidden="true"
+              className="absolute w-2.5 border-l-2 border-b-2 border-line rounded-bl-[6px]"
+              style={{
+                left: railAt(depth - 1),
+                top: 0,
+                height: 18,
+              }}
+              data-tree-rail="last"
+            />
+          )}
+          {depth > 0 && !isLast && (
             <>
-              <label className="grid gap-1.25">
-                From
-                <input
-                  className="max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 border shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="YYYY-MM-DD"
-                  pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}"
-                  value={dateFrom}
-                  onChange={(e) =>
-                    setDateFrom(
-                      e.target.value.replace(/[^0-9-]/g, "").slice(0, 10),
-                    )
-                  }
-                />
-              </label>
-              <label className="grid gap-1.25">
-                Through
-                <input
-                  className="max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 border shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="YYYY-MM-DD"
-                  pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}"
-                  value={dateTo}
-                  onChange={(e) =>
-                    setDateTo(
-                      e.target.value.replace(/[^0-9-]/g, "").slice(0, 10),
-                    )
-                  }
-                />
-              </label>
+              <span
+                aria-hidden="true"
+                className="absolute top-0 bottom-0 w-0.5 bg-line"
+                style={{ left: railAt(depth - 1) }}
+                data-tree-rail="through"
+              />
+              <span
+                aria-hidden="true"
+                className="absolute h-0.5 w-2.5 bg-line"
+                style={{ left: railAt(depth - 1), top: 18 }}
+              />
             </>
           )}
-          <label className="grid gap-1.25">
-            Content
-            <input
-              className="w-full pt-1.5 pr-1.5 pb-1.5 pl-1.5 rounded-md bg-panel text-foreground max-md:text-base border-line placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 border shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-              type="search"
-              value={textQuery}
-              onChange={(e) => setTextQuery(e.target.value)}
-              placeholder="Title or ID"
-            />
-          </label>
-          <button
-            className="justify-self-start pt-1 pr-0 pb-1 pl-0 bg-transparent text-[#4f5d9d] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-            onClick={clearMyFilters}
-          >
-            Clear filters
-          </button>
-        </PopoverContent>
-      </UIPopover>
-      <UIPopover
-        open={displayOpen}
-        onOpenChange={(open) => {
-          setDisplayOpen(open);
-          if (open) setFilterOpen(false);
-        }}
-      >
-        <PopoverTrigger asChild>
-          <button
-            className="inline-flex size-7 flex-none items-center justify-center gap-1.5 rounded-full border border-line bg-panel  text-sm text-foreground hover:bg-subtle aria-expanded:bg-accent-soft aria-expanded:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 pointer-coarse:min-h-11"
-            aria-label="Display options"
-            aria-expanded={displayOpen}
-          >
-            <Settings size={16} />
-          </button>
-        </PopoverTrigger>
-        <PopoverContent
-          align="end"
-          side="bottom"
-          sideOffset={4}
-          collisionPadding={8}
-          className="z-50 grid w-[min(245px,calc(100vw-35px))] max-w-full max-h-[min(calc(100dvh-110px),var(--radix-popover-content-available-height))] content-start gap-2.5 overflow-y-auto overscroll-contain rounded-[9px] border-line bg-panel p-3 text-[12px] text-foreground shadow-[0_12px_32px_#0002] max-sm:w-[calc(100vw-16px)] max-sm:p-4 max-sm:text-sm"
-          data-my-issue-popover=""
-          aria-label="Display options"
-          onCloseAutoFocus={(event) => event.preventDefault()}
-          onEscapeKeyDown={() =>
-            toolbarRef.current
-              ?.querySelector<HTMLButtonElement>(
-                '[aria-label="Display options"]',
-              )
-              ?.focus()
-          }
-          ref={displayPanelRef}
-        >
-          <label className="grid gap-1.25">
-            Grouping
-            <select
-              className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-              value={grouping}
-              onChange={(e) => setGrouping(e.target.value)}
-              disabled={tab !== "Assigned"}
-            >
-              <option>Focus</option>
-              <option>Status</option>
-              <option>Project</option>
-              <option>Priority</option>
-              <option>Cycle</option>
-              <option>Label</option>
-              <option>Team</option>
-            </select>
-          </label>
-          {tab === "Assigned" && (
-            <label className="grid gap-1.25">
-              Completed tasks
-              <select
-                className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                value={completedRange}
-                onChange={(e) =>
-                  setCompletedRange(e.target.value as CompletedRange)
-                }
+          {/* Reserved 16px so every column lines up whether or not a row has children. */}
+          <span className="relative grid place-items-center w-4 h-4 flex-none">
+            {childCount > 0 && (
+              <button
+                type="button"
+                aria-expanded={!treeCollapsed[i.id]}
+                aria-label={`${treeCollapsed[i.id] ? "Expand" : "Collapse"} ${childCount} sub-tasks of ${i.identifier}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setTreeCollapsed((old) => ({
+                    ...old,
+                    [i.id]: !old[i.id],
+                  }));
+                }}
+                className="relative grid place-items-center w-4 h-4 rounded bg-transparent text-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent before:absolute before:inset-0 pointer-coarse:before:-inset-3.5 shell-phone:before:-inset-3.5"
+                data-tree-toggle=""
               >
-                <option value="none">None</option>
-                <option value="week">Past week</option>
-                <option value="month">Past month</option>
-                <option value="all">All</option>
-              </select>
-            </label>
+                <ChevronDown
+                  size={12}
+                  className={treeCollapsed[i.id] ? "-rotate-90" : ""}
+                />
+              </button>
+            )}
+          </span>
+          {has("priority") && (
+            <span
+              className="text-muted text-[13px] data-[p=1]:text-danger"
+              data-my-issue-priority=""
+              data-p={i.priority}
+              title={PRIORITY_LABELS[i.priority] || "No priority"}
+            >
+              ≡
+            </span>
           )}
-          <label className="flex items-center gap-2 cursor-pointer shell-phone:min-h-11 pointer-coarse:min-h-11">
-            <input
-              className="m-0 size-4 flex-none pointer-coarse:size-5 max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
-              type="checkbox"
-              checked={showProject}
-              onChange={(e) => setShowProject(e.target.checked)}
-            />{" "}
-            Project
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer shell-phone:min-h-11 pointer-coarse:min-h-11">
-            <input
-              className="m-0 size-4 flex-none pointer-coarse:size-5 max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
-              type="checkbox"
-              checked={showDate}
-              onChange={(e) => setShowDate(e.target.checked)}
-            />{" "}
-            Created date
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer shell-phone:min-h-11 pointer-coarse:min-h-11">
-            <input
-              className="m-0 size-4 flex-none pointer-coarse:size-5 max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
-              type="checkbox"
-              checked={showAssignee}
-              onChange={(e) => setShowAssignee(e.target.checked)}
-            />{" "}
-            Assignee
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer shell-phone:min-h-11 pointer-coarse:min-h-11">
-            <input
-              className="m-0 size-4 flex-none pointer-coarse:size-5 max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
-              type="checkbox"
-              checked={showPriority}
-              onChange={(e) => setShowPriority(e.target.checked)}
-            />{" "}
-            Priority
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer shell-phone:min-h-11 pointer-coarse:min-h-11">
-            <input
-              className="m-0 size-4 flex-none pointer-coarse:size-5 max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
-              type="checkbox"
-              checked={showStatus}
-              onChange={(e) => setShowStatus(e.target.checked)}
-            />{" "}
-            Status
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer shell-phone:min-h-11 pointer-coarse:min-h-11">
-            <input
-              className="m-0 size-4 flex-none pointer-coarse:size-5 max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
-              type="checkbox"
-              checked={showLabels}
-              onChange={(e) => setShowLabels(e.target.checked)}
-            />{" "}
-            Labels
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer shell-phone:min-h-11 pointer-coarse:min-h-11">
-            <input
-              className="m-0 size-4 flex-none pointer-coarse:size-5 max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
-              type="checkbox"
-              checked={showDue}
-              onChange={(e) => setShowDue(e.target.checked)}
-            />{" "}
-            Due date
-          </label>
-          <small className="text-[#666]">
-            {tab === "Assigned"
-              ? "Group assigned tasks by focus or status."
-              : "This view uses Linear’s flat or date-grouped layout."}
-          </small>
-        </PopoverContent>
-      </UIPopover>
-    </div>
+          {has("identifier") && (
+            <code className="shrink-0 whitespace-nowrap text-muted text-[12px] font-[inherit]">
+              {i.identifier}
+            </code>
+          )}
+          {i.decisionNeeded ? (
+            <span
+              className="inline-grid place-items-center w-3.75 h-3.75 ml-1.5 rounded-[50%] text-[10px] font-bold leading-none cursor-default bg-[#fdf3cf] text-[#5b4a0f] align-middle border border-amber-400"
+              data-my-issue-decision=""
+              role="img"
+              aria-label="Needs a decision"
+              title="Needs a decision"
+            >
+              ?
+            </span>
+          ) : null}
+          {has("status") && (
+            <span
+              className="text-[12px] text-[#89948d] data-[status=started]:text-foreground max-sm:-my-2"
+              data-my-issue-status=""
+              data-status={i.state?.type}
+            >
+              <StatusPicker
+                compact
+                issue={i}
+                teams={teams}
+                icon={<StateGlyph state={i.state} />}
+                onChange={(stateId) => {
+                  const st = teamStates(i)?.find((x) => x.id === stateId);
+                  if (!st) throw Error("Status not found");
+                  return onMoved(i.id, st);
+                }}
+              />
+            </span>
+          )}
+          {/* A sub-task whose parent sits in another status section cannot nest
+            there, so it carries the parent identifier instead of reading as an
+            orphan. The board does the same. */}
+          {parentOutside && i.parent?.identifier ? (
+            <span
+              className="shrink-0 rounded border border-line py-0 px-1 text-[10px] text-muted shell-phone:hidden"
+              data-my-issue-parent=""
+              title={i.parent.title}
+            >
+              ↳{i.parent.identifier}
+            </span>
+          ) : null}
+          <button
+            type="button"
+            className="overflow-hidden text-ellipsis whitespace-nowrap text-[12px] flex-1 min-w-0 [background:none] border-0 pt-0 pr-0 pb-0 pl-0 mt-0 mr-0 mb-0 ml-0 text-inherit text-left cursor-pointer block font-[inherit] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 max-sm:order-last max-sm:basis-full max-sm:min-h-0! max-sm:pl-6 max-sm:text-sm max-sm:leading-snug max-sm:whitespace-normal max-sm:line-clamp-2 max-sm:wrap-break-word"
+            data-my-issue-title=""
+            data-my-issue-title-open=""
+            aria-label={`Open ${i.identifier}: ${i.title}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenIssue(i);
+            }}
+          >
+            {i.title}
+            {tab === "Activity" && (
+              <small
+                className="text-[11px] font-normal text-[#777]"
+                data-my-activity-kind=""
+              >
+                {" "}
+                · {activityKindLabel(dayEvents[index]?.eventType)}
+              </small>
+            )}
+          </button>
+          {childCount > 0 && (
+            <SubIssuePill done={doneCount} total={childCount} />
+          )}
+          {has("labels") && i.labels?.nodes.length ? (
+            <span
+              className="max-w-25 overflow-hidden text-ellipsis whitespace-nowrap text-[#777] text-[11px] max-md:hidden"
+              data-my-issue-labels=""
+              title={i.labels.nodes.map((l) => l.name).join(", ")}
+            >
+              {i.labels.nodes.map((l) => l.name).join(", ")}
+            </span>
+          ) : null}
+          {(has("links") || has("pullRequests")) && (
+            <RowLinks
+              issue={i}
+              links={has("links")}
+              pullRequests={has("pullRequests")}
+            />
+          )}
+          {has("estimate") && i.estimate != null && (
+            <span
+              className="whitespace-nowrap text-muted text-[11px] max-md:hidden"
+              data-my-issue-estimate=""
+              title="Estimate"
+            >
+              {i.estimate} pt
+            </span>
+          )}
+          {has("timeInStatus") && i.stateChangedAt && (
+            <span
+              className="whitespace-nowrap text-muted text-[11px] max-md:hidden"
+              data-my-issue-time-in-status=""
+              title="Time in status"
+            >
+              {timeInStatus(i)}
+            </span>
+          )}
+          {has("creator") && i.creator && (
+            <span
+              className="grid place-items-center w-5.5 h-5.5 flex-none max-md:hidden"
+              data-my-issue-creator=""
+              title={`Created by ${i.creator.name || "someone"}`}
+            >
+              <UserBlobatar user={i.creator} />
+            </span>
+          )}
+          {has("assignee") && (
+            <span
+              className={
+                i.assignee
+                  ? "grid place-items-center w-5.5 h-5.5 flex-none max-sm:ml-auto"
+                  : "grid place-items-center w-5.5 h-5.5 rounded-[50%] bg-[#e5e5e7] text-[#46464b] text-[10px] flex-none max-sm:ml-auto"
+              }
+              data-my-issue-assignee=""
+              title={i.assignee?.name || "Unassigned"}
+            >
+              {i.assignee ? <UserBlobatar user={i.assignee} /> : "·"}
+            </span>
+          )}
+          {has("dueDate") && i.dueDate && (
+            <span
+              className="whitespace-nowrap text-[#ad5757] text-[11px] max-md:hidden"
+              data-my-issue-due=""
+            >
+              {new Date(i.dueDate).toLocaleDateString(undefined, {
+                month: "short",
+                day: "numeric",
+              })}
+            </span>
+          )}
+          {has("project") && (
+            <span
+              className="overflow-hidden text-ellipsis whitespace-nowrap text-muted text-[11px] max-md:hidden max-w-37.5"
+              data-my-issue-project=""
+            >
+              {i.project?.name || i.team?.name || ""}
+            </span>
+          )}
+          {has("updatedAt") && i.updatedAt && (
+            <span
+              className="text-right whitespace-nowrap text-[11px] text-muted max-md:hidden"
+              data-my-issue-updated=""
+              title="Updated"
+            >
+              {new Date(i.updatedAt).toLocaleDateString(undefined, {
+                month: "short",
+                day: "numeric",
+              })}
+            </span>
+          )}
+          {has("createdAt") && (
+            <span
+              className="text-right whitespace-nowrap text-[11px] text-muted min-w-11.5 shell-phone:hidden"
+              data-my-issue-date=""
+            >
+              {tab === "Activity"
+                ? new Date(
+                    dayEvents[index]?.createdAt || "",
+                  ).toLocaleDateString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                  })
+                : i.createdAt
+                  ? new Date(i.createdAt).toLocaleDateString(undefined, {
+                      month: "short",
+                      day: "numeric",
+                    })
+                  : ""}
+            </span>
+          )}
+        </div>
+      ),
+    );
+  };
+  const groupHeader = (
+    g: { key: string; label: string; items: Issue[]; total: number },
+    open: boolean,
+    state?: IssueState,
+    sub = false,
+  ) => (
+    <header
+      className={
+        sub
+          ? "flex items-center gap-1.75 h-7.5 pt-0 pr-2 pb-0 pl-6 text-muted text-[12px] mt-0 mr-2.5 mb-0.5 ml-2.5"
+          : "flex items-center gap-1.75 h-8.5 pt-0 pr-2 pb-0 pl-2 text-muted text-[12px] mt-0 mr-2.5 mb-0.5 ml-2.5 rounded-[7px] bg-subtle"
+      }
+    >
+      {!sub && (
+        <button
+          className="grid place-items-center w-5.5 h-5.5 ml-0 rounded-md bg-transparent text-[#626269] hover:bg-subtle mt-0 mr-0 mb-0 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 group"
+          aria-label={`${open ? "Collapse" : "Expand"} ${tab === "Activity" ? activityDayLabel(g.label) : g.label}`}
+          aria-expanded={open}
+          onClick={() => toggleCollapsed(g.key)}
+        >
+          <ChevronDown
+            size={14}
+            className="group-aria-[expanded=false]:-rotate-90"
+          />
+        </button>
+      )}
+      {state && <StatusIcon state={state} />}
+      <b className="text-foreground font-medium">
+        {tab === "Activity" ? activityDayLabel(g.label) : g.label}
+      </b>
+      <span className="text-muted text-[11px]" data-my-issue-group-count="">
+        {clientFiltering && tab !== "Activity" && g.total !== g.items.length
+          ? `${g.items.length} / ${g.total}`
+          : g.items.length}
+      </span>
+      {!sub && tab !== "Activity" && (
+        <button
+          className="grid place-items-center w-5.5 h-5.5 ml-0 rounded-md bg-transparent text-[#626269] hover:bg-subtle mt-0 mr-0 mb-0 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+          aria-label={`Create task in ${g.label || "this list"}`}
+          onClick={() => onNew(state?.id)}
+        >
+          <Plus size={14} />
+        </button>
+      )}
+    </header>
+  );
+  const subGrouping =
+    tab !== "Activity" &&
+    display.subGrouping !== "none" &&
+    display.subGrouping !== display.grouping
+      ? display.subGrouping
+      : "";
+  const boardFor = (columns: KanbanGroup[]) => (
+    <IssueBoard
+      issues={columns.flatMap((c) => c.items)}
+      columns={columns.filter((g) => !hiddenColumns.includes(columnKey(g)))}
+      columnMenu={columnMenu}
+      selected={selected}
+      states={states}
+      teams={teams}
+      onSelect={onOpenIssue}
+      onNew={onNew}
+      onMoved={onMoved}
+      onUpdate={onUpdate}
+    />
+  );
+  const toolbar = (
+    <>
+      {onSaveAsView && (
+        <button
+          type="button"
+          className="grid size-7 flex-none place-items-center rounded-full text-muted hover:bg-subtle hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11 shell-phone:min-w-11"
+          aria-label="Save as view"
+          title="Save as view (Alt V)"
+          data-save-as-view=""
+          onClick={saveAsView}
+        >
+          <Layers3 size={15} />
+        </button>
+      )}
+      <div
+        className="ml-auto flex flex-none items-center gap-1.5 bg-bg  text-foreground"
+        data-my-issue-toolbar=""
+      >
+        <LayoutSwitch layout={board ? "Board" : "List"} onChange={setLayout} />
+        <AddFilterButton
+          root={filterRoot}
+          onChange={setFilterRoot}
+          catalog={catalog}
+          open={filterOpen}
+          onOpenChange={(open) => {
+            setFilterOpen(open);
+            if (open) setDisplayOpen(false);
+          }}
+          onAdvanced={() => setAdvanced(true)}
+        />
+        <DisplayButton
+          open={displayOpen}
+          onOpenChange={(open) => {
+            setDisplayOpen(open);
+            if (open) setFilterOpen(false);
+          }}
+          hasOverrides={prefs.hasOverrides}
+        >
+          <DisplayPanel
+            display={display}
+            onChange={(patch) => {
+              prefs.update(patch);
+              if (patch.layout)
+                onLayoutChange(patch.layout === "board" ? "Board" : "List");
+            }}
+            showCompleted={tab !== "Activity"}
+            hasOverrides={prefs.hasOverrides}
+            onReset={prefs.reset}
+            onSetDefault={
+              (viewKey || displayState) && canSetDefault
+                ? () => void prefs.setDefault()
+                : undefined
+            }
+          />
+          {prefs.error && (
+            <p role="alert" className="mt-2 text-sm text-danger">
+              {prefs.error}
+            </p>
+          )}
+        </DisplayButton>
+        {toolbarEnd}
+      </div>
+    </>
   );
   return (
     <>
@@ -6084,7 +6771,9 @@ function MyIssuesContent({
         >
           <MobileNavTrigger />
           <div className="min-w-0">{head}</div>
-          {toolbar}
+          <div className="ml-auto flex min-w-0 flex-none items-center gap-1">
+            {toolbar}
+          </div>
         </div>
       )}
       <div
@@ -6098,398 +6787,195 @@ function MyIssuesContent({
           {tabs}
           {!head && toolbar}
         </div>
-
-        {(status ||
-          priority ||
-          teamId ||
-          projectId ||
-          cycleOnly ||
-          textQuery ||
-          labelId ||
-          assigneeId ||
-          creatorId ||
-          subscriberId ||
-          dateField) && (
-          <p
-            className="mt-0 mr-0 mb-0 ml-0 pt-1.5 pr-3 pb-1.5 pl-3 text-[12px] text-muted"
-            data-my-filter-summary=""
+        {filterRowEnd ? (
+          <div
+            className="flex min-w-0 items-start gap-2 rounded-lg bg-subtle px-2 py-1.5"
+            data-view-filter-row=""
           >
-            Showing {visible.length} of {scoped.length} tasks{" "}
+            <div className="min-w-0 flex-1">
+              {chipCount(filterRoot) || advanced ? (
+                <FilterChips
+                  root={filterRoot}
+                  onChange={setFilterRoot}
+                  catalog={catalog}
+                  advanced={advanced}
+                  onAdvancedChange={setAdvanced}
+                  hideClear
+                />
+              ) : (
+                <span className="inline-flex h-7 items-center text-sm text-muted">
+                  No filters
+                </span>
+              )}
+            </div>
+            {filterRowEnd}
+          </div>
+        ) : (
+          <FilterChips
+            root={filterRoot}
+            onChange={setFilterRoot}
+            catalog={catalog}
+            advanced={advanced}
+            onAdvancedChange={setAdvanced}
+          />
+        )}
+        {selected.size > 0 && board && (
+          <div
+            className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-panel px-3 py-2 text-sm"
+            data-board-selection=""
+            role="status"
+          >
+            <b className="font-medium">{selected.size} selected</b>
+            <label className="flex items-center gap-1.5 text-muted">
+              Move to
+              <select
+                className="rounded-md border border-line bg-panel px-2 py-1 text-sm text-foreground max-md:text-base"
+                value=""
+                onChange={(e) => {
+                  const target = boardColumns.find(
+                    (g) => g.state.id === e.target.value,
+                  );
+                  if (target) void moveSelected(target);
+                }}
+              >
+                <option value="">Column…</option>
+                {boardColumns.filter(canMoveInto).map((g) => (
+                  <option key={g.state.id} value={g.state.id}>
+                    {g.state.name}
+                  </option>
+                ))}
+              </select>
+            </label>
             <button
-              className="justify-self-start pt-1 pr-0 pb-1 pl-0 bg-transparent text-[#4f5d9d] ml-2 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-              onClick={clearMyFilters}
+              type="button"
+              className="ml-auto rounded-md px-2 py-1 text-muted hover:bg-subtle hover:text-foreground shell-phone:min-h-11"
+              onClick={() => setSelected(NO_SELECTION)}
             >
-              Clear filters
+              Clear selection
             </button>
-          </p>
+          </div>
         )}
         <div
           className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overscroll-contain [@media(max-height:500px)]:has-[[data-issues-board]]:flex-none [@media(max-height:500px)]:has-[[data-issues-board]]:overflow-visible"
           data-my-issues-list=""
         >
-          {layout === "Board" ? (
-            <IssueBoard
-              issues={visible}
-              states={states}
-              teams={teams}
-              onSelect={onOpenIssue}
-              onNew={onNew}
-              onMoved={onMoved}
-              onUpdate={onUpdate}
-            />
+          {board && tab !== "Activity" ? (
+            subGrouping ? (
+              <div className="grid gap-4" data-board-rows="">
+                {groupTasks(shown, subGrouping, groupCtx).map((lane) => (
+                  <section
+                    key={lane.key}
+                    className="flex h-96 min-h-0 flex-col gap-2"
+                    data-board-row=""
+                    aria-label={lane.label}
+                  >
+                    <h3 className="flex items-center gap-2 text-sm font-medium text-foreground">
+                      {lane.label}
+                      <span className="text-xs text-muted">
+                        {lane.items.length}
+                      </span>
+                    </h3>
+                    {boardFor(
+                      columnsFor(
+                        lane.items,
+                        totalsBase.filter((i) =>
+                          groupKeysOf(i, subGrouping, groupCtx).some(
+                            (k) => k.key === lane.key,
+                          ),
+                        ),
+                      ),
+                    )}
+                  </section>
+                ))}
+              </div>
+            ) : (
+              <IssueBoard
+                issues={shown}
+                columns={shownColumns}
+                columnMenu={columnMenu}
+                trailing={trailing}
+                selected={selected}
+                states={states}
+                teams={teams}
+                onSelect={onOpenIssue}
+                onNew={onNew}
+                onMoved={onMoved}
+                onUpdate={onUpdate}
+              />
+            )
           ) : (
-            <div className="my-issue-groups shrink-0" ref={listRef}>
+            <div className="my-issue-groups shrink-0">
               {buckets.map((g) => {
-                const open = !collapsed.includes(g.name);
-                const n = open ? g.items.length : 0;
-                const rowsTop = y + (g.name ? headH : 0);
-                const [start, end] = windowed
-                  ? visibleRange(win, rowsTop, rowH, n)
-                  : [0, n];
-                y = rowsTop + n * rowH;
-                /* Parent then children, so a sub-task is never rendered above the task that
-                   created it. Activity rows are events, not a hierarchy, and stay flat. */
-                const treeRows =
-                  tab === "Activity" || !open
-                    ? []
-                    : orderTree(g.items, treeCollapsed);
-                const items =
-                  tab === "Activity"
-                    ? (start > 0 || end < n
-                        ? g.items.slice(start, end)
-                        : g.items
-                      ).map((issue, index) => ({
-                        issue,
-                        index,
-                        depth: 0,
-                        isLast: true,
-                        openRails: [] as number[],
-                        childCount: 0,
-                        doneCount: 0,
-                        parentOutside: false,
-                      }))
-                    : treeRows.slice(start, end).map((row, index) => ({
-                        issue: row.node,
-                        index,
-                        depth: row.depth,
-                        isLast: row.isLast,
-                        openRails: row.openRails,
-                        childCount: row.childCount,
-                        doneCount: row.doneCount,
-                        parentOutside: row.parentOutside,
-                      }));
-                const dayEvents =
-                  tab === "Activity"
-                    ? (eventsByDate.get(g.name) || []).slice(start, end)
-                    : [];
+                const open = !collapsedKeys.includes(g.key);
                 return (
                   <section
                     className="mt-0 mr-0 mb-0 ml-0"
                     data-my-issue-group=""
-                    key={g.name || "flat"}
+                    data-group-key={g.key}
+                    key={g.key}
                   >
-                    {g.name && (
-                      <header className="flex items-center gap-1.75 h-8.5 pt-0 pr-2 pb-0 pl-2 text-muted text-[12px] mt-0 mr-2.5 mb-0.5 ml-2.5 rounded-[7px] bg-subtle">
-                        <button
-                          className="grid place-items-center w-5.5 h-5.5 ml-0 rounded-md bg-transparent text-[#626269] hover:bg-subtle mt-0 mr-0 mb-0 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 group"
-                          aria-label={`${collapsed.includes(g.name) ? "Expand" : "Collapse"} ${tab === "Activity" ? activityDayLabel(g.name) : g.name}`}
-                          aria-expanded={!collapsed.includes(g.name)}
-                          onClick={() =>
-                            setCollapsed((old) =>
-                              old.includes(g.name)
-                                ? old.filter((x) => x !== g.name)
-                                : [...old, g.name],
-                            )
-                          }
-                        >
-                          <ChevronDown
-                            size={14}
-                            className="group-aria-[expanded=false]:-rotate-90"
-                          />
-                        </button>
-                        {g.state && <StatusIcon state={g.state} />}
-                        <b className="text-foreground font-medium">
-                          {tab === "Activity"
-                            ? activityDayLabel(g.name)
-                            : g.name}
-                        </b>
-                        <span className="text-muted text-[11px]">
-                          {g.items.length}
-                        </span>
-                        {tab === "Assigned" && (
-                          <button
-                            className="grid place-items-center w-5.5 h-5.5 ml-0 rounded-md bg-transparent text-[#626269] hover:bg-subtle mt-0 mr-0 mb-0 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                            aria-label={`Create task in ${g.name}`}
-                            onClick={() => onNew(g.state?.id)}
-                          >
-                            <Plus size={14} />
-                          </button>
-                        )}
-                      </header>
-                    )}
-                    {start > 0 && (
-                      <div
-                        aria-hidden="true"
-                        style={{ height: start * rowH }}
-                      />
-                    )}
-                    {items.map(
-                      ({
-                        issue: i,
-                        index,
-                        depth,
-                        isLast,
-                        openRails,
-                        childCount,
-                        doneCount,
-                        parentOutside,
-                      }) => (
-                        <div
-                          className="relative flex w-full min-w-0 min-h-9 items-center gap-2 bg-transparent py-0 pr-6 text-left text-foreground hover:bg-subtle cursor-pointer max-md:gap-1.5 shell-phone:pr-3 [@media_(max-width:650px)]:gap-1.5 max-sm:flex-wrap max-sm:gap-y-0 max-sm:pb-2 [--row-inset:42px] max-sm:[--row-inset:14px]"
-                          style={{
-                            paddingLeft: `calc(var(--row-inset) + ${depth * SIBLING_STEP}px)`,
-                          }}
-                          data-my-issue-row=""
-                          data-depth={depth}
-                          role="presentation"
-                          key={
-                            tab === "Activity"
-                              ? `${g.name}-${dayEvents[index]?.id || index}`
-                              : i.id
-                          }
-                          onClick={() => onOpenIssue(i)}
-                        >
-                          {/* Ancestry rails: one 2px line per open ancestor, then this row's own
-                            connector — a T for a middle child, a rounded corner for the last. */}
-                          {openRails.map((column) => (
-                            <span
-                              key={`rail-${column}`}
-                              aria-hidden="true"
-                              className="absolute top-0 bottom-0 w-0.5 bg-line"
-                              style={{ left: railAt(column) }}
-                              data-tree-rail=""
-                            />
-                          ))}
-                          {depth > 0 && isLast && (
-                            <span
-                              aria-hidden="true"
-                              className="absolute w-2.5 border-l-2 border-b-2 border-line rounded-bl-[6px]"
-                              style={{
-                                left: railAt(depth - 1),
-                                top: 0,
-                                height: 18,
-                              }}
-                              data-tree-rail="last"
-                            />
-                          )}
-                          {depth > 0 && !isLast && (
-                            <>
-                              <span
-                                aria-hidden="true"
-                                className="absolute top-0 bottom-0 w-0.5 bg-line"
-                                style={{ left: railAt(depth - 1) }}
-                                data-tree-rail="through"
-                              />
-                              <span
-                                aria-hidden="true"
-                                className="absolute h-0.5 w-2.5 bg-line"
-                                style={{ left: railAt(depth - 1), top: 18 }}
-                              />
-                            </>
-                          )}
-                          {/* Reserved 16px so every column lines up whether or not a row has children. */}
-                          <span className="relative grid place-items-center w-4 h-4 flex-none">
-                            {childCount > 0 && (
-                              <button
-                                type="button"
-                                aria-expanded={!treeCollapsed[i.id]}
-                                aria-label={`${treeCollapsed[i.id] ? "Expand" : "Collapse"} ${childCount} sub-tasks of ${i.identifier}`}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  setTreeCollapsed((old) => ({
-                                    ...old,
-                                    [i.id]: !old[i.id],
-                                  }));
-                                }}
-                                className="relative grid place-items-center w-4 h-4 rounded bg-transparent text-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent before:absolute before:inset-0 pointer-coarse:before:-inset-3.5 shell-phone:before:-inset-3.5"
-                                data-tree-toggle=""
-                              >
-                                <ChevronDown
-                                  size={12}
-                                  className={
-                                    treeCollapsed[i.id] ? "-rotate-90" : ""
-                                  }
-                                />
-                              </button>
-                            )}
-                          </span>
-                          {showPriority && (
-                            <span
-                              className="text-muted text-[13px] data-[p=1]:text-danger"
-                              data-my-issue-priority=""
-                              data-p={i.priority}
-                            >
-                              ≡
-                            </span>
-                          )}
-                          <code className="shrink-0 whitespace-nowrap text-muted text-[12px] font-[inherit]">
-                            {i.identifier}
-                          </code>
-                          {i.decisionNeeded ? (
-                            <span
-                              className="inline-grid place-items-center w-3.75 h-3.75 ml-1.5 rounded-[50%] text-[10px] font-bold leading-none cursor-default bg-[#fdf3cf] text-[#5b4a0f] align-middle border border-amber-400"
-                              data-my-issue-decision=""
-                              role="img"
-                              aria-label="Needs a decision"
-                              title="Needs a decision"
-                            >
-                              ?
-                            </span>
-                          ) : null}
-                          {showStatus && (
-                            <span
-                              className="text-[12px] text-[#89948d] data-[status=started]:text-foreground max-sm:-my-2"
-                              data-my-issue-status=""
-                              data-status={i.state?.type}
-                            >
-                              <StatusPicker
-                                compact
-                                issue={i}
-                                teams={teams}
-                                icon={<StateGlyph state={i.state} />}
-                                onChange={(stateId) => {
-                                  const st = teamStates(i)?.find(
-                                    (x) => x.id === stateId,
-                                  );
-                                  if (!st) throw Error("Status not found");
-                                  return onMoved(i.id, st);
-                                }}
-                              />
-                            </span>
-                          )}
-                          {/* A sub-task whose parent sits in another status section cannot nest
-                            there, so it carries the parent identifier instead of reading as an
-                            orphan. The board does the same. */}
-                          {parentOutside && i.parent?.identifier ? (
-                            <span
-                              className="shrink-0 rounded border border-line py-0 px-1 text-[10px] text-muted shell-phone:hidden"
-                              data-my-issue-parent=""
-                              title={i.parent.title}
-                            >
-                              ↳{i.parent.identifier}
-                            </span>
-                          ) : null}
-                          <button
-                            type="button"
-                            className="overflow-hidden text-ellipsis whitespace-nowrap text-[12px] flex-1 min-w-0 [background:none] border-0 pt-0 pr-0 pb-0 pl-0 mt-0 mr-0 mb-0 ml-0 text-inherit text-left cursor-pointer block font-[inherit] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 max-sm:order-last max-sm:basis-full max-sm:min-h-0! max-sm:pl-6 max-sm:text-sm max-sm:leading-snug max-sm:whitespace-normal max-sm:line-clamp-2 max-sm:wrap-break-word"
-                            data-my-issue-title=""
-                            data-my-issue-title-open=""
-                            aria-label={`Open ${i.identifier}: ${i.title}`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onOpenIssue(i);
-                            }}
-                          >
-                            {i.title}
-                            {tab === "Activity" && (
-                              <small
-                                className="text-[11px] font-normal text-[#777]"
-                                data-my-activity-kind=""
-                              >
-                                {" "}
-                                ·{" "}
-                                {activityKindLabel(dayEvents[index]?.eventType)}
-                              </small>
-                            )}
-                          </button>
-                          {childCount > 0 && (
-                            <SubIssuePill done={doneCount} total={childCount} />
-                          )}
-                          {showLabels && i.labels?.nodes.length ? (
-                            <span
-                              className="max-w-25 overflow-hidden text-ellipsis whitespace-nowrap text-[#777] text-[11px] max-md:hidden"
-                              data-my-issue-labels=""
-                              title={i.labels.nodes
-                                .map((l) => l.name)
-                                .join(", ")}
-                            >
-                              {i.labels.nodes.map((l) => l.name).join(", ")}
-                            </span>
-                          ) : null}
-                          {showAssignee && (
-                            <span
-                              className={
-                                i.assignee
-                                  ? "grid place-items-center w-5.5 h-5.5 flex-none max-sm:ml-auto"
-                                  : "grid place-items-center w-5.5 h-5.5 rounded-[50%] bg-[#e5e5e7] text-[#46464b] text-[10px] flex-none max-sm:ml-auto"
-                              }
-                              data-my-issue-assignee=""
-                              title={i.assignee?.name || "Unassigned"}
-                            >
-                              {i.assignee ? (
-                                <UserBlobatar user={i.assignee} />
-                              ) : (
-                                "·"
-                              )}
-                            </span>
-                          )}
-                          {showDue && i.dueDate && (
-                            <span
-                              className="whitespace-nowrap text-[#ad5757] text-[11px] max-md:hidden"
-                              data-my-issue-due=""
-                            >
-                              {new Date(i.dueDate).toLocaleDateString(
-                                undefined,
-                                {
-                                  month: "short",
-                                  day: "numeric",
-                                },
-                              )}
-                            </span>
-                          )}
-                          {showProject && (
-                            <span
-                              className="overflow-hidden text-ellipsis whitespace-nowrap text-muted text-[11px] max-md:hidden max-w-37.5"
-                              data-my-issue-project=""
-                            >
-                              {i.project?.name || i.team?.name || ""}
-                            </span>
-                          )}
-                          {showDate && (
-                            <span
-                              className="text-right whitespace-nowrap text-[11px] text-muted min-w-11.5 shell-phone:hidden"
-                              data-my-issue-date=""
-                            >
-                              {tab === "Activity"
-                                ? new Date(
-                                    dayEvents[index]?.createdAt || "",
-                                  ).toLocaleDateString(undefined, {
-                                    month: "short",
-                                    day: "numeric",
-                                  })
-                                : i.createdAt
-                                  ? new Date(i.createdAt).toLocaleDateString(
-                                      undefined,
-                                      { month: "short", day: "numeric" },
-                                    )
-                                  : ""}
-                            </span>
-                          )}
-                        </div>
-                      ),
-                    )}
-                    {end < n && (
-                      <div
-                        aria-hidden="true"
-                        style={{ height: (n - end) * rowH }}
-                      />
-                    )}
+                    {g.label && groupHeader(g, open, g.state)}
+                    {open &&
+                      (subGrouping
+                        ? groupTasks(g.items, subGrouping, groupCtx).map(
+                            (sub) => (
+                              <div key={sub.key} data-my-issue-subgroup="">
+                                {groupHeader(
+                                  { ...sub, total: sub.items.length },
+                                  true,
+                                  undefined,
+                                  true,
+                                )}
+                                {rowsFor(sub.items, g.key)}
+                              </div>
+                            ),
+                          )
+                        : rowsFor(g.items, g.key))}
                   </section>
                 );
               })}
             </div>
           )}
-          {!visible.length && !activityLoading && (
+          {serverRows && (serverRows.hasMore || serverRows.error) && (
+            <div
+              ref={serverMoreRef}
+              className="flex items-center justify-center gap-2 py-3 text-sm text-muted"
+              data-view-load-more=""
+            >
+              {serverRows.error ? (
+                <span role="alert">{serverRows.error}</span>
+              ) : null}
+              <button
+                type="button"
+                className="rounded px-2 py-1 text-accent hover:bg-subtle disabled:text-muted shell-phone:min-h-11"
+                disabled={serverRows.loading}
+                onClick={serverRows.onLoadMore}
+              >
+                {serverRows.loading
+                  ? "Loading…"
+                  : serverRows.error
+                    ? "Retry"
+                    : "Load more"}
+              </button>
+            </div>
+          )}
+          {hiddenCount > 0 && shown.length > 0 && (
+            <p
+              className="flex items-center justify-center gap-1.5 py-3 text-sm text-muted"
+              data-hidden-by-filters=""
+            >
+              {hiddenCount} {hiddenCount === 1 ? "task" : "tasks"} hidden by
+              filters ·
+              <button
+                type="button"
+                className="rounded px-1 text-accent hover:bg-subtle shell-phone:min-h-11"
+                onClick={clearFilters}
+              >
+                Clear filters
+              </button>
+            </p>
+          )}
+          {!shown.length && !activityLoading && (
             <section
               className="flex flex-col items-center gap-3.5 min-h-75 justify-center text-[#65656a] text-[13px] [@media_(max-width:650px)]:min-h-[calc(100dvh-280px)]"
               data-my-issues-empty=""
@@ -6503,11 +6989,19 @@ function MyIssuesContent({
                 {scoped.length ? "No matching tasks" : emptyCopy[0]}
               </h2>
               <p className="mt-0 mr-0 mb-0 ml-0">
-                {scoped.length
-                  ? "Clear filters to see these tasks."
-                  : emptyCopy[1]}
+                {scoped.length ? (
+                  <button
+                    type="button"
+                    className="rounded px-1 text-accent hover:bg-subtle shell-phone:min-h-11"
+                    onClick={clearFilters}
+                  >
+                    Clear filters
+                  </button>
+                ) : (
+                  emptyCopy[1]
+                )}
               </p>
-              {!scoped.length && tab !== "Activity" && (
+              {!scoped.length && tab !== "Activity" && !serverRows?.loading && (
                 <button
                   className="inline-flex min-h-11 items-center justify-center gap-1.75 rounded-[999px] bg-[#6567d8] pl-3.5 pr-3.5 pt-2 pb-2 text-white font-[650] shadow-[none] transition-colors duration-150 ease-out hover:brightness-110 hover:transition-none active:translate-y-px disabled:cursor-wait disabled:opacity-65 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.65]"
                   data-control-primary=""
@@ -7455,6 +7949,16 @@ function KanbanScrollFade({ children }: { children: React.ReactNode }) {
   );
 }
 
+/* A board column. Status columns carry the workflow state a drop moves a card to; columns of
+ * another grouping (priority, assignee, project…) carry `drop`, which writes that property, and
+ * a synthetic state whose id starts with "group:". `total` is the column's count before
+ * filters, shown as "6 / 81" when filters hide some of it. */
+type KanbanGroup = {
+  state: { id: string; name: string; color: string; type: string };
+  items: Issue[];
+  total?: number;
+  drop?: (issueId: string) => Promise<void>;
+};
 function Kanban({
   grouped,
   allIssues,
@@ -7463,12 +7967,15 @@ function Kanban({
   onMoved,
   onUpdate,
   teams = [],
+  columnMenu,
+  trailing,
+  selected,
 }: {
   allIssues: Issue[];
-  grouped: {
-    state: { id: string; name: string; color: string; type: string };
-    items: Issue[];
-  }[];
+  grouped: KanbanGroup[];
+  columnMenu?: (group: KanbanGroup) => React.ReactNode;
+  trailing?: React.ReactNode;
+  selected?: ReadonlySet<string>;
   onSelect: (issue: Issue) => void;
   onNew: (stateId?: string) => void;
   onMoved: (
@@ -7548,7 +8055,7 @@ function Kanban({
   const moveNext = async (issue: Issue, stateId: string) => {
     const idx = grouped.findIndex((g) => g.state.id === stateId),
       next = grouped[idx + 1];
-    if (!next) return;
+    if (!next || next.state.id.startsWith("group:")) return;
     try {
       await onMoved(issue.id, next.state);
     } catch (err) {
@@ -7659,9 +8166,15 @@ function Kanban({
               const id = e.dataTransfer.getData("text/hoja-issue") || dragged;
               setDragged("");
               setDropLine(null);
-              if (id && group.state.id !== "unknown") {
+              if (
+                id &&
+                (group.drop ||
+                  (group.state.id !== "unknown" &&
+                    !group.state.id.startsWith("group:")))
+              ) {
                 try {
-                  await onMoved(id, group.state);
+                  if (group.drop) await group.drop(id);
+                  else await onMoved(id, group.state);
                 } catch (err) {
                   setError((err as Error).message);
                 }
@@ -7675,13 +8188,21 @@ function Kanban({
                 className="border-2"
               ></span>
               <b className="text-foreground">{group.state.name}</b>
-              <span className="mr-auto">{group.items.length}</span>
+              <span className="mr-auto" data-kanban-count="">
+                {group.total !== undefined && group.total !== group.items.length
+                  ? `${group.items.length} / ${group.total}`
+                  : group.items.length}
+              </span>
+              {columnMenu?.(group)}
               <button
                 className="grid place-items-center w-6.25 h-6.25 rounded-full hover:inset-shadow-sm hover:inset-shadow-neutral-50 border-neutral-200 hover:border-[0.5px] hover:shadow-sm hover:shadow active:scale-[0.95]    bg-transparent text-muted  hover:text-foreground shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
                 aria-label={`Create task in ${group.state.name}`}
                 onClick={() =>
                   onNew(
-                    group.state.id === "unknown" ? undefined : group.state.id,
+                    group.state.id === "unknown" ||
+                      group.state.id.startsWith("group:")
+                      ? undefined
+                      : group.state.id,
                   )
                 }
               >
@@ -7726,41 +8247,53 @@ function Kanban({
                   )
                   .slice(0, limits[group.state.id] || KANBAN_PAGE)
                   .map(({ node: issue, depth, parentOutside }) => (
-                    <KanbanCard
+                    <div
                       key={issue.id}
-                      issue={issue}
-                      teams={teams}
-                      dragged={dragged === issue.id}
-                      depth={depth}
-                      parentIdent={
-                        parentOutside ? issue.parent?.identifier : undefined
+                      className={
+                        selected?.has(issue.id)
+                          ? "rounded-xl ring-2 ring-accent"
+                          : "contents"
                       }
-                      rollup={rollups.get(issue.id)}
-                      subtasks={subtasksByParent.get(issue.id)}
-                      compact={group.state.type === "completed"}
-                      onDragStart={(e, task = issue) => {
-                        setDragged(task.id);
-                        setDropLine(null);
-                        e.dataTransfer.effectAllowed = "move";
-                        e.dataTransfer.setData("text/hoja-issue", task.id);
-                      }}
-                      onDragEnd={() => {
-                        setDragged("");
-                        setDropLine(null);
-                      }}
-                      onSelect={onSelect}
-                      onUpdate={update}
-                      onMoveNext={(task = issue) =>
-                        void moveNext(task, task.state?.id || group.state.id)
+                      data-kanban-selected={
+                        selected?.has(issue.id) ? "" : undefined
                       }
-                      canMoveNext={Boolean(
-                        grouped[
-                          grouped.findIndex(
-                            (g) => g.state.id === group.state.id,
-                          ) + 1
-                        ],
-                      )}
-                    />
+                    >
+                      <KanbanCard
+                        issue={issue}
+                        teams={teams}
+                        dragged={dragged === issue.id}
+                        depth={depth}
+                        parentIdent={
+                          parentOutside ? issue.parent?.identifier : undefined
+                        }
+                        rollup={rollups.get(issue.id)}
+                        subtasks={subtasksByParent.get(issue.id)}
+                        compact={group.state.type === "completed"}
+                        onDragStart={(e, task = issue) => {
+                          setDragged(task.id);
+                          setDropLine(null);
+                          e.dataTransfer.effectAllowed = "move";
+                          e.dataTransfer.setData("text/hoja-issue", task.id);
+                        }}
+                        onDragEnd={() => {
+                          setDragged("");
+                          setDropLine(null);
+                        }}
+                        onSelect={onSelect}
+                        onUpdate={update}
+                        onMoveNext={(task = issue) =>
+                          void moveNext(task, task.state?.id || group.state.id)
+                        }
+                        canMoveNext={Boolean(
+                          !group.state.id.startsWith("group:") &&
+                          grouped[
+                            grouped.findIndex(
+                              (g) => g.state.id === group.state.id,
+                            ) + 1
+                          ],
+                        )}
+                      />
+                    </div>
                   ))}
                 {group.items.length >
                   (limits[group.state.id] || KANBAN_PAGE) && (
@@ -7784,6 +8317,7 @@ function Kanban({
             </KanbanScrollFade>
           </section>
         ))}
+        {trailing}
       </div>
       {dropLine && (
         <div
@@ -9582,6 +10116,23 @@ const PROJECT_STATES = [
   "completed",
   "canceled",
 ];
+/* Health columns of the Projects page; a project without an update has no health. */
+const PROJECT_HEALTH_COLUMNS = [
+  { key: "onTrack", label: "On track" },
+  { key: "atRisk", label: "At risk" },
+  { key: "offTrack", label: "Off track" },
+  { key: "none", label: "No updates" },
+];
+function healthKey(health?: string) {
+  const h = (health || "").replace(/[\s_-]+/g, "").toLowerCase();
+  return h === "ontrack"
+    ? "onTrack"
+    : h === "atrisk"
+      ? "atRisk"
+      : h === "offtrack"
+        ? "offTrack"
+        : "none";
+}
 function ProjectsPage({
   projects: given,
   onOpen,
@@ -9603,14 +10154,29 @@ function ProjectsPage({
 }) {
   const [search, setSearch] = useState(""),
     [state, setState] = useState(""),
-    [team, setTeam] = useState(""),
-    [layout, setLayout] = useState<"List" | "Board" | "Timeline">("List");
+    [team, setTeam] = useState("");
   const [filterOpen, setFilterOpen] = useState(false),
-    [displayOpen, setDisplayOpen] = useState(false),
-    [group, setGroup] = useState("No grouping"),
-    [ordering, setOrdering] = useState("Name"),
-    [showClosed, setShowClosed] = useState(true),
-    [summary, setSummary] = useState(false);
+    [displayOpen, setDisplayOpen] = useState(false);
+  /* Layout, grouping, ordering, closed projects and summary persist through viewPreferences
+     ("projects" or "team:<id>:projects"), one layer per viewer over a shared default. */
+  const projectPrefTarget = useMemo(
+    () => ({ viewType: teamId ? `team:${teamId}:projects` : "projects" }),
+    [teamId],
+  );
+  const projectPrefs = useViewPreferences(projectPrefTarget, PROJECT_DEFAULTS);
+  const { layout, group, ordering, showClosed, summary } = projectPageOptions(
+    projectPrefs.display,
+  );
+  const changeProjectDisplay = (change: Partial<ProjectPageOptions>) =>
+    projectPrefs.update(projectPagePatch(change, projectPrefs.display));
+  const setLayout = (v: ProjectPageOptions["layout"]) =>
+    changeProjectDisplay({ layout: v });
+  const setGroup = (v: string) => changeProjectDisplay({ group: v });
+  const setOrdering = (v: string) => changeProjectDisplay({ ordering: v });
+  const setShowClosed = (v: boolean) => {
+    if (v !== showClosed) changeProjectDisplay({ showClosed: v });
+  };
+  const setSummary = (v: boolean) => changeProjectDisplay({ summary: v });
   // Rendered from the local store: sync metadata, extra pages, pending creates and optimistic edits.
   const all = useProjects(given);
   const projects = useMemo(
@@ -9665,10 +10231,13 @@ function ProjectsPage({
           ordering === "Target date"
             ? (a.targetDate || "9999").localeCompare(b.targetDate || "9999") ||
               a.name.localeCompare(b.name)
-            : ordering === "Status"
-              ? (a.state || "").localeCompare(b.state || "") ||
+            : ordering === "Start date"
+              ? (a.startDate || "9999").localeCompare(b.startDate || "9999") ||
                 a.name.localeCompare(b.name)
-              : a.name.localeCompare(b.name),
+              : ordering === "Status"
+                ? (a.state || "").localeCompare(b.state || "") ||
+                  a.name.localeCompare(b.name)
+                : a.name.localeCompare(b.name),
         ),
     [projects, normalized, state, team, showClosed, ordering],
   );
@@ -9689,6 +10258,11 @@ function ProjectsPage({
         paused: "Paused",
       }) as Record<string, string>
     )[v] || v;
+  const leads = [
+    ...new Set(
+      projects.map((p) => p.lead?.name).filter((v): v is string => !!v),
+    ),
+  ].sort((a, b) => a.localeCompare(b));
   const columns =
     group === "Status"
       ? PROJECT_STATES.map((key) => ({ key, label: title(key) }))
@@ -9697,7 +10271,14 @@ function ProjectsPage({
             ...teams.map((t) => ({ key: t.key, label: t.name })),
             { key: "none", label: "No team" },
           ]
-        : [{ key: "all", label: "All projects" }];
+        : group === "Lead"
+          ? [
+              ...leads.map((name) => ({ key: name, label: name })),
+              { key: "none", label: "No lead" },
+            ]
+          : group === "Health"
+            ? PROJECT_HEALTH_COLUMNS
+            : [{ key: "all", label: "All projects" }];
   // One pass buckets every visible project into its columns (no per-column rescans).
   const buckets = useMemo(() => {
     const byState = new Map<string, Project[]>(),
@@ -9715,7 +10296,9 @@ function ProjectsPage({
         else
           for (const t of new Set(p.teams.nodes.map((t) => t.key)))
             add(byGroup, t, p);
-      } else add(byGroup, "all", p);
+      } else if (group === "Lead") add(byGroup, p.lead?.name || "none", p);
+      else if (group === "Health") add(byGroup, healthKey(p.health), p);
+      else add(byGroup, "all", p);
     }
     return { byState, byGroup };
   }, [visible, group]);
@@ -9971,9 +10554,9 @@ function ProjectsPage({
                   value={group}
                   onChange={(e) => setGroup(e.target.value)}
                 >
-                  <option>No grouping</option>
-                  <option>Status</option>
-                  <option>Team</option>
+                  {PROJECT_PAGE_GROUPS.map(([, label]) => (
+                    <option key={label}>{label}</option>
+                  ))}
                 </select>
               </label>
               <label className="grid gap-1.25">
@@ -9984,9 +10567,9 @@ function ProjectsPage({
                   value={ordering}
                   onChange={(e) => setOrdering(e.target.value)}
                 >
-                  <option>Name</option>
-                  <option>Status</option>
-                  <option>Target date</option>
+                  {PROJECT_PAGE_ORDERINGS.map(([, label]) => (
+                    <option key={label}>{label}</option>
+                  ))}
                 </select>
               </label>
               <label className="flex items-center gap-2 pointer-coarse:min-h-11 shell-phone:min-h-11">
@@ -11112,6 +11695,7 @@ function ProjectDetails({
         <MyIssuesContent
           key={project.id}
           tab="Assigned"
+          viewKey={`project:${project.id}`}
           issues={related}
           states={projectStates}
           teams={teams}
@@ -11440,7 +12024,16 @@ function IssueBoard({
   onMoved,
   onUpdate,
   onNew,
+  columns,
+  columnMenu,
+  trailing,
+  selected,
 }: {
+  /** Precomputed columns (any grouping); without them the board groups by status. */
+  columns?: KanbanGroup[];
+  columnMenu?: (group: KanbanGroup) => React.ReactNode;
+  trailing?: React.ReactNode;
+  selected?: ReadonlySet<string>;
   issues: Issue[];
   states: IssueState[];
   teams: Team[];
@@ -11501,7 +12094,10 @@ function IssueBoard({
       >
         <Kanban
           teams={teams}
-          grouped={grouped}
+          grouped={columns || grouped}
+          columnMenu={columnMenu}
+          trailing={trailing}
+          selected={selected}
           allIssues={allIssues}
           onSelect={onSelect}
           onNew={onNew}
@@ -11612,6 +12208,121 @@ function TaskViewTabs<T extends string>({
   );
 }
 
+/** The tab strip of a team's task page: the built-in tabs, the views pinned to the team, and
+ * "Add new view" (Linear's inline team view). Keys 1–9 pick a tab. */
+function TeamTabs({
+  builtIns,
+  pinned,
+  active,
+  creating,
+  onChange,
+  onAdd,
+  onReorder,
+}: {
+  builtIns: readonly TeamIssuesTab[];
+  pinned: ServerView[];
+  active: string;
+  creating: boolean;
+  onChange: (tab: string) => void;
+  onAdd: () => void;
+  /** Move pinned tab `id` to `index` among the pinned tabs (drag, or Alt ←/→ on the tab). */
+  onReorder?: (id: string, index: number) => void;
+}) {
+  const [dragging, setDragging] = useState<string | null>(null);
+  const tab =
+    "inline-flex min-h-7 flex-none items-center gap-1.5 rounded-full border-0 outline outline-1 outline-line -outline-offset-1 bg-panel pl-2.75 pr-2.75 text-[12px] text-foreground transition-none aria-selected:bg-subtle aria-selected:inset-shadow-sm aria-selected:inset-shadow-neutral-50 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11";
+  return (
+    <nav
+      className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto border-0 bg-bg text-foreground [@media_(max-width:650px)]:gap-1"
+      data-my-issue-tabs=""
+      data-team-tabs=""
+      aria-label="Team task views"
+      role="tablist"
+    >
+      {builtIns.map((t, n) => (
+        <button
+          key={t}
+          role="tab"
+          type="button"
+          aria-selected={!creating && active === t}
+          className={tab}
+          title={n < 9 ? `${displayLabel(t)} (${n + 1})` : undefined}
+          onClick={() => onChange(t)}
+        >
+          {displayLabel(t)}
+        </button>
+      ))}
+      {pinned.map((v, n) => (
+        <button
+          key={v.id}
+          role="tab"
+          type="button"
+          aria-selected={!creating && active === `view:${v.id}`}
+          className={tab}
+          title={
+            builtIns.length + n < 9
+              ? `${v.name} (${builtIns.length + n + 1})`
+              : v.name
+          }
+          onClick={() => onChange(`view:${v.id}`)}
+          data-team-view-tab={v.id}
+          draggable={Boolean(onReorder)}
+          aria-keyshortcuts={
+            onReorder ? "Alt+ArrowLeft Alt+ArrowRight" : undefined
+          }
+          onDragStart={(e) => {
+            setDragging(v.id);
+            e.dataTransfer.effectAllowed = "move";
+            e.dataTransfer.setData("text/plain", v.id);
+          }}
+          onDragEnd={() => setDragging(null)}
+          onDragOver={(e) => {
+            if (dragging && dragging !== v.id) e.preventDefault();
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            if (dragging && dragging !== v.id) onReorder?.(dragging, n);
+            setDragging(null);
+          }}
+          onKeyDown={(e) => {
+            if (!onReorder || !e.altKey || e.metaKey || e.ctrlKey) return;
+            const step =
+              e.key === "ArrowLeft" ? -1 : e.key === "ArrowRight" ? 1 : 0;
+            if (!step) return;
+            e.preventDefault();
+            const to = n + step;
+            if (to >= 0 && to < pinned.length) onReorder(v.id, to);
+          }}
+        >
+          <ViewIcon icon={v.icon} color={v.color} size={13} />
+          <span className="max-w-40 truncate">{v.name}</span>
+        </button>
+      ))}
+      {creating && (
+        <span
+          role="tab"
+          aria-selected="true"
+          className={`${tab} border border-dashed text-muted`}
+        >
+          <Layers3 size={13} /> New view
+        </span>
+      )}
+      <button
+        type="button"
+        className="grid size-7 flex-none place-items-center rounded-full text-muted hover:bg-subtle hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11 shell-phone:min-w-11"
+        aria-label="Add new view"
+        title="Add new view"
+        onClick={onAdd}
+        data-team-add-view=""
+      >
+        <Plus size={15} />
+      </button>
+    </nav>
+  );
+}
+
+const TEAM_BUILT_INS = ["All issues", "Active", "Backlog"] as const;
+
 function TeamIssuesPage({
   team,
   teams,
@@ -11622,6 +12333,7 @@ function TeamIssuesPage({
   onMoved,
   onUpdate,
   onNew,
+  onNavigate,
 }: {
   team?: Team;
   teams: Team[];
@@ -11632,10 +12344,85 @@ function TeamIssuesPage({
   onMoved: (issueId: string, state: IssueState) => Promise<void>;
   onUpdate: (issueId: string, input: Record<string, unknown>) => Promise<void>;
   onNew: (stateId?: string) => void;
+  onNavigate?: (view: string, path?: string) => void;
 }) {
   const all = useSyncIssues() as Issue[];
-  const [tab, setTab] = useState<TeamIssuesTab>("All issues");
+  const [active, setActive] = useState<string>("All issues"),
+    [creating, setCreating] = useState(false);
+  const tab: TeamIssuesTab = (TEAM_BUILT_INS as readonly string[]).includes(
+    active,
+  )
+    ? (active as TeamIssuesTab)
+    : "All issues";
   const teamId = team?.id;
+  const { views } = useViewList(Boolean(teamId));
+  /* A view just made from "Add new view" is a tab at once, before the shared list re-reads. */
+  const [fresh, setFresh] = useState<ServerView | null>(null);
+  /* A drag shows the new order at once; the writes land after. */
+  const [moved, setMoved] = useState<Record<string, number>>({}),
+    [reorderError, setReorderError] = useState("");
+  const pinned = useMemo(
+    () =>
+      pinnedTabs(
+        [
+          ...views.map((v) =>
+            fresh && v.id === fresh.id && !v.pinned ? fresh : v,
+          ),
+          ...(fresh && !views.some((v) => v.id === fresh.id) ? [fresh] : []),
+        ]
+          .filter(
+            (v) =>
+              v.scope === "team" && v.team?.id === teamId && v.kind === "issue",
+          )
+          .map((v) => (v.id in moved ? { ...v, sortOrder: moved[v.id] } : v)),
+      ),
+    [views, teamId, fresh, moved],
+  );
+  const reorder = (id: string, index: number) => {
+    const writes = reorderPinned(pinned, id, index);
+    if (!writes.length) return;
+    setReorderError("");
+    setMoved((old) => ({
+      ...old,
+      ...Object.fromEntries(writes.map((w) => [w.id, w.sortOrder])),
+    }));
+    void (async () => {
+      try {
+        for (const w of writes) await pinView(w.id, true, w.sortOrder);
+      } catch (e) {
+        setReorderError((e as Error).message);
+        setMoved({});
+      }
+    })();
+  };
+  const pinnedView = active.startsWith("view:")
+    ? pinned.find((v) => `view:${v.id}` === active)
+    : undefined;
+  // A pinned tab that was unpinned or deleted elsewhere falls back to the first tab.
+  useEffect(() => {
+    if (active.startsWith("view:") && views.length && !pinnedView)
+      setActive("All issues");
+  }, [active, views.length, pinnedView]);
+  const order = useMemo(
+    () => [...TEAM_BUILT_INS, ...pinned.map((v) => `view:${v.id}`)],
+    [pinned],
+  );
+  /* 1–9 switch tabs, as on Linear. */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || isTypingTarget(e.target))
+        return;
+      if (document.querySelector('[aria-modal="true"]')) return;
+      if (!/^[1-9]$/.test(e.key)) return;
+      const next = order[Number(e.key) - 1];
+      if (!next) return;
+      e.preventDefault();
+      setCreating(false);
+      setActive(next);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [order]);
   const rows = useMemo(
     () =>
       all.filter(
@@ -11650,7 +12437,7 @@ function TeamIssuesPage({
   );
   const { older, onLoadOlder } = useOlderClosed(
     "team",
-    tab === "All issues" ? teamId : undefined,
+    tab === "All issues" && !pinnedView ? teamId : undefined,
   );
   if (!team)
     return (
@@ -11661,58 +12448,139 @@ function TeamIssuesPage({
         <p role="alert">Team not found in this workspace.</p>
       </section>
     );
+  const actions: IssueActions = {
+    onOpen: onIssue,
+    onMoved,
+    onUpdate,
+    onNew,
+    layout,
+    onLayoutChange,
+  };
+  const tabs = (
+    <TeamTabs
+      builtIns={TEAM_BUILT_INS}
+      pinned={pinned}
+      active={active}
+      creating={creating}
+      onChange={(t) => {
+        setCreating(false);
+        setActive(t);
+      }}
+      onAdd={() => setCreating(true)}
+      onReorder={reorder}
+    />
+  );
+  const pageTitle = (
+    <>
+      <div>
+        <h1 className="text-sm font-medium leading-normal tracking-[-.045em] text-foreground">
+          {team.name}
+        </h1>
+        <p className="mt-1.5 mr-0 mb-0 ml-0 text-muted max-sm:text-xs hidden [@media_(max-width:560px)]:text-[12px]">
+          Team tasks
+        </p>
+      </div>
+      {reorderError && (
+        <p className="text-xs text-danger" role="alert">
+          {reorderError}
+        </p>
+      )}
+    </>
+  );
   return (
     <>
-      <MyIssuesContent
-        head={
-          <>
-            <div>
-              <h1 className="text-sm font-medium leading-normal tracking-[-.045em] text-foreground">
-                {team.name}
-              </h1>
-              <p className="mt-1.5 mr-0 mb-0 ml-0 text-muted max-sm:text-xs hidden [@media_(max-width:560px)]:text-[12px]">
-                Team tasks
-              </p>
-            </div>
-          </>
-        }
-        tabs={
-          <TaskViewTabs
-            label="Team task views"
-            views={["All issues", "Active", "Backlog"] as const}
-            active={tab}
-            onChange={setTab}
+      {(creating || pinnedView) && (
+        <div
+          className="m-0 flex h-11 min-h-11 flex-none items-center gap-1 border-b border-line bg-bg px-4 py-0 text-foreground"
+          data-page-head=""
+          data-my-issues-head=""
+        >
+          <MobileNavTrigger />
+          {pageTitle}
+        </div>
+      )}
+      {creating ? (
+        <>
+          <div className="flex min-w-0 items-center gap-2 px-4 pt-4">
+            {tabs}
+          </div>
+          <ViewEditorPage
+            key={`new-${team.id}`}
+            initialKind="issue"
+            allowKinds={false}
+            scope={{ team }}
+            projects={projects}
+            actions={actions}
+            pinOnCreate
+            onCancel={() => setCreating(false)}
+            onCreated={(v) => {
+              setCreating(false);
+              // Saved to the workspace instead: it is no tab of this team, so open its page.
+              if (v.scope !== "team" || v.team?.id !== team.id || !v.pinned)
+                return navigateTo(viewPath(v));
+              setFresh(v);
+              setActive(`view:${v.id}`);
+            }}
           />
-        }
-        key={team.id}
-        tab="Assigned"
-        issues={rows}
-        states={team.states.nodes}
-        teams={teams}
-        projects={projects}
-        onOpenIssue={onIssue}
-        onNew={onNew}
-        layout={layout}
-        onLayoutChange={onLayoutChange}
-        onMoved={onMoved}
-        onUpdate={onUpdate}
-        older={older}
-        onLoadOlder={onLoadOlder}
-        emptyCopy={
-          tab === "All issues"
-            ? ["No tasks yet", `Tasks in ${team.name} will show up here.`]
-            : [
-                `No ${tab.toLowerCase()} issues`,
-                `${tab} tasks in ${team.name} will show up here.`,
-              ]
-        }
-      />
+        </>
+      ) : pinnedView ? (
+        <SavedViewBody
+          key={pinnedView.id}
+          view={pinnedView}
+          onView={() => undefined}
+          projects={projects}
+          actions={actions}
+          revision={0}
+          onDeleted={() => setActive("All issues")}
+          tabs={tabs}
+        />
+      ) : (
+        <MyIssuesContent
+          head={pageTitle}
+          tabs={tabs}
+          key={team.id}
+          tab="Assigned"
+          viewKey={`team:${team.id}:${tab === "All issues" ? "all" : tab.toLowerCase()}`}
+          onSaveAsView={
+            onNavigate
+              ? (draft) => {
+                  stashViewDraft({ kind: "issue", teamId: team.id, ...draft });
+                  onNavigate(
+                    "Team views",
+                    `/workspace/team/${team.key.toLowerCase()}/views/issues/new`,
+                  );
+                }
+              : undefined
+          }
+          issues={rows}
+          states={team.states.nodes}
+          teams={teams}
+          projects={projects}
+          onOpenIssue={onIssue}
+          onNew={onNew}
+          layout={layout}
+          onLayoutChange={onLayoutChange}
+          onMoved={onMoved}
+          onUpdate={onUpdate}
+          older={older}
+          onLoadOlder={onLoadOlder}
+          emptyCopy={
+            tab === "All issues"
+              ? ["No tasks yet", `Tasks in ${team.name} will show up here.`]
+              : [
+                  `No ${tab.toLowerCase()} tasks`,
+                  `${tab} tasks in ${team.name} will show up here.`,
+                ]
+          }
+        />
+      )}
     </>
   );
 }
 /* The workspace board is the team-issue surface without a team: the same head, tabs, toolbar and
  * board, over every team's states. It opens as a board whatever the saved list/board preference
  * says, because that is what the page is, while the toolbar switch still offers the list view. */
+const BOARD_DEFAULTS: DisplayDoc = { layout: "board" };
 function BoardPage({
   teams,
   projects,
@@ -11785,6 +12653,8 @@ function BoardPage({
           </nav>
         }
         tab="Assigned"
+        viewKey={`board:${tab === "All issues" ? "all" : tab.toLowerCase()}`}
+        pageDefaults={BOARD_DEFAULTS}
         issues={rows}
         states={states}
         teams={teams}
@@ -11928,38 +12798,15 @@ function TeamProjectsPage({
 }
 function TeamViewsPage({
   team,
-  onIssue,
-  onOpenProject,
-  onNavigate,
+  projects,
+  actions,
   revision,
 }: {
   team?: Team;
-  onIssue: (issue: Issue) => void;
-  onOpenProject?: (project: Project) => void;
-  onNavigate: (view: string, path?: string) => void;
+  projects: Project[];
+  actions: IssueActions;
   revision: number;
 }) {
-  // Issues and projects come from the local-first store: no fetch, live through deltas.
-  const all = useSyncIssues(),
-    meta = useSyncMeta(),
-    { ready } = useSyncStatus();
-  const teamId = team?.id;
-  const issues = useMemo(
-    () => (teamId ? all.filter((i) => i.team?.id === teamId) : []),
-    [all, teamId],
-  );
-  const projects = useMemo(
-    () =>
-      teamId && meta
-        ? meta.projects.nodes.filter((p) =>
-            p.teams?.nodes.some((t) => t.id === teamId),
-          )
-        : [],
-    [meta, teamId],
-  );
-  const notice = meta?.projects.pageInfo?.hasNextPage
-    ? `Only the first ${meta.projects.nodes.length} workspace projects are available.`
-    : "";
   if (!team)
     return (
       <section
@@ -11971,43 +12818,14 @@ function TeamViewsPage({
         </p>
       </section>
     );
-  if (!ready && !meta)
-    return (
-      <section
-        className="max-w-235 mt-0 mr-auto mb-0 ml-auto pt-6.25 pr-5 pb-6.25 pl-5 min-w-0 max-md:pt-4 max-md:pr-2.5 max-md:pb-4 max-md:pl-2.5 font-(family-name:--hoja-font-ui) shell-phone:pt-4 shell-phone:pr-2.5 shell-phone:pb-4 shell-phone:pl-2.5"
-        data-team-scoped-page=""
-      >
-        <p className="text-muted leading-normal" role="status">
-          Loading team views…
-        </p>
-      </section>
-    );
   return (
-    <>
-      {notice && (
-        <p
-          role="alert"
-          className="max-w-235 mt-0 mr-auto mb-0 ml-auto pt-6.25 pr-5 pb-6.25 pl-5 min-w-0 max-md:pt-4 max-md:pr-2.5 max-md:pb-4 max-md:pl-2.5 font-(family-name:--hoja-font-ui) shell-phone:pt-4 shell-phone:pr-2.5 shell-phone:pb-4 shell-phone:pl-2.5"
-          data-team-scoped-page=""
-        >
-          {notice}
-        </p>
-      )}
-      <ViewsPage
-        key={team.id}
-        orgId={team.id}
-        issues={issues}
-        projects={projects}
-        path={location.pathname}
-        onNavigate={onNavigate}
-        onSelect={onIssue}
-        onOpenProject={onOpenProject}
-        basePath={`/workspace/team/${team.key.toLowerCase()}/views`}
-        viewName="Team views"
-        title={`${team.name} views`}
-        revision={revision}
-      />
-    </>
+    <ViewsPage
+      key={team.id}
+      team={team}
+      projects={projects}
+      actions={actions}
+      revision={revision}
+    />
   );
 }
 function TeamCyclePage({
@@ -12336,7 +13154,10 @@ function CommandPalette({
   onNavigate,
   onCreateInitiative,
   onOpenInitiative,
+  viewsOnly = false,
 }: {
+  /** O then V: the palette lists only saved views (the view switcher). */
+  viewsOnly?: boolean;
   query: string;
   setQuery: (q: string) => void;
   issues: Issue[];
@@ -12361,34 +13182,35 @@ function CommandPalette({
   const issuesRef = useRef(issues);
   issuesRef.current = issues;
   useEffect(() => warmSearchIndex(issues), [issues]);
-  const { results } = useIssueSearch(issues, deferred, 8);
+  const { results: issueResults } = useIssueSearch(issues, deferred, 8);
+  const results = viewsOnly ? [] : issueResults;
   const terms = useMemo(() => searchTerms(deferred), [deferred]);
   const projects = useMemo(
     () =>
-      terms.length
+      terms.length && !viewsOnly
         ? (meta?.projects.nodes || [])
             .filter((p) => matchesTerms(p.name, terms))
             .slice(0, 4)
         : [],
-    [meta, terms],
+    [meta, terms, viewsOnly],
   );
   const teams = useMemo(
     () =>
-      terms.length
+      terms.length && !viewsOnly
         ? (meta?.teams.nodes || [])
             .filter((t) => matchesTerms(`${t.name} ${t.key}`, terms))
             .slice(0, 4)
         : [],
-    [meta, terms],
+    [meta, terms, viewsOnly],
   );
   const initiativeHits = useMemo(
     () =>
-      terms.length
+      terms.length && !viewsOnly
         ? initiativeRows
             .filter((i) => matchesTerms(`${i.identifier} ${i.name}`, terms))
             .slice(0, 4)
         : [],
-    [initiativeRows, terms],
+    [initiativeRows, terms, viewsOnly],
   );
   const actions = [
     {
@@ -12397,22 +13219,46 @@ function CommandPalette({
       hint: "N then I",
     },
   ].filter(
-    (a) => !terms.length || matchesTerms(`${a.label} initiative`, terms),
+    (a) =>
+      !viewsOnly &&
+      (!terms.length || matchesTerms(`${a.label} initiative`, terms)),
   );
-  const pages = [
-    "Inbox",
-    "My issues",
-    "Board",
-    "Projects",
-    "Initiatives",
-    "Cycles",
-    "Home",
-  ].filter((x) => !terms.length || matchesTerms(x, terms));
+  const { views: savedViews } = useViewList();
+  const viewHits = useMemo(
+    () =>
+      viewsOnly
+        ? savedViews
+            .filter((v) => !terms.length || matchesTerms(v.name, terms))
+            .sort(
+              (a, b) =>
+                Number(b.favorite) - Number(a.favorite) ||
+                a.name.localeCompare(b.name),
+            )
+            .slice(0, 50)
+        : terms.length
+          ? savedViews.filter((v) => matchesTerms(v.name, terms)).slice(0, 5)
+          : [],
+    [savedViews, terms, viewsOnly],
+  );
+  const pages = (
+    viewsOnly
+      ? []
+      : [
+          "Inbox",
+          "My issues",
+          "Board",
+          "Projects",
+          "Views",
+          "Initiatives",
+          "Cycles",
+          "Home",
+        ]
+  ).filter((x) => !terms.length || matchesTerms(x, terms));
   const localCount = results.length;
   useEffect(() => {
     const term = deferred.trim();
     setRemote([]);
-    if (term.length < 2 || localCount >= 8) return;
+    if (viewsOnly || term.length < 2 || localCount >= 8) return;
     let live = true;
     const timer = window.setTimeout(() => {
       gql(
@@ -12434,29 +13280,35 @@ function CommandPalette({
       live = false;
       window.clearTimeout(timer);
     };
-  }, [deferred, localCount]);
+  }, [deferred, localCount, viewsOnly]);
   const go = (path: string) => {
     onClose();
     navigateTo(path);
   };
-  const entries: { key: string; run: () => void }[] = [
-    ...results.map((i) => ({ key: `i:${i.id}`, run: () => onIssue(i) })),
-    ...remote.map((i) => ({ key: `r:${i.id}`, run: () => onIssue(i) })),
-    ...projects.map((p) => ({
-      key: `p:${p.id}`,
-      run: () => go(`/workspace/project/${p.id}`),
-    })),
-    ...teams.map((t) => ({
-      key: `t:${t.id}`,
-      run: () => go(`/workspace/team/${t.key.toLowerCase()}/active`),
-    })),
-    ...initiativeHits.map((i) => ({
-      key: `in:${i.id}`,
-      run: () => onOpenInitiative(i.identifier || i.id),
-    })),
-    ...actions.map((a) => ({ key: a.key, run: onCreateInitiative })),
-    ...pages.map((x) => ({ key: `n:${x}`, run: () => onNavigate(x) })),
-  ];
+  const entries: { key: string; run: () => void }[] = viewsOnly
+    ? viewHits.map((v) => ({ key: `v:${v.id}`, run: () => go(viewPath(v)) }))
+    : [
+        ...viewHits.map((v) => ({
+          key: `v:${v.id}`,
+          run: () => go(viewPath(v)),
+        })),
+        ...results.map((i) => ({ key: `i:${i.id}`, run: () => onIssue(i) })),
+        ...remote.map((i) => ({ key: `r:${i.id}`, run: () => onIssue(i) })),
+        ...projects.map((p) => ({
+          key: `p:${p.id}`,
+          run: () => go(`/workspace/project/${p.id}`),
+        })),
+        ...teams.map((t) => ({
+          key: `t:${t.id}`,
+          run: () => go(`/workspace/team/${t.key.toLowerCase()}/active`),
+        })),
+        ...initiativeHits.map((i) => ({
+          key: `in:${i.id}`,
+          run: () => onOpenInitiative(i.identifier || i.id),
+        })),
+        ...actions.map((a) => ({ key: a.key, run: onCreateInitiative })),
+        ...pages.map((x) => ({ key: `n:${x}`, run: () => onNavigate(x) })),
+      ];
   useEffect(() => setActive(0), [deferred]);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -12544,8 +13396,10 @@ function CommandPalette({
             className="flex-1 border-0 bg-transparent text-foreground text-[14px] max-md:text-base outline-none placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] pointer-coarse:text-[16px]"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search tasks or navigate..."
-            aria-label="Search tasks or navigate"
+            placeholder={
+              viewsOnly ? "Open a view…" : "Search tasks or navigate..."
+            }
+            aria-label={viewsOnly ? "Open a view" : "Search tasks or navigate"}
             role="combobox"
             aria-expanded="true"
             aria-controls="command-palette-list"
@@ -12573,7 +13427,47 @@ function CommandPalette({
           aria-label="Search results"
           className="max-h-[min(60vh,520px)] overflow-y-auto overscroll-contain shell-phone:max-h-[calc(100dvh-90px)]"
         >
-          {terms.length > 0 && results.length > 0 && (
+          {viewHits.length > 0 && (
+            <div
+              className="pt-1.75 pr-1.75 pb-1.75 pl-1.75"
+              data-command-results=""
+              data-command-views=""
+              role="group"
+            >
+              <p
+                role="presentation"
+                className="pt-1.25 pr-2 pb-1.25 pl-2 text-muted text-[10px] normal-case tracking-widest"
+              >
+                Views
+              </p>
+              {viewHits.map((v) => (
+                <button
+                  className="flex items-center gap-2.25 w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 rounded-md bg-transparent text-left text-[12px] hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                  key={v.id}
+                  {...row(`v:${v.id}`)}
+                  onClick={() => go(viewPath(v))}
+                >
+                  <ViewIcon icon={v.icon} color={v.color} size={14} />
+                  <span className="overflow-hidden text-ellipsis">
+                    {v.name}
+                  </span>
+                  {v.favorite && (
+                    <Star
+                      size={12}
+                      className="text-muted"
+                      fill="currentColor"
+                    />
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+          {viewsOnly && !viewHits.length && (
+            <p className="p-4 text-center text-[12px] text-muted" role="status">
+              No views match.
+            </p>
+          )}
+          {!viewsOnly && terms.length > 0 && results.length > 0 && (
             <div
               className="pt-1.75 pr-1.75 pb-1.75 pl-1.75"
               data-command-results=""
@@ -18182,971 +19076,2044 @@ function MembersPage({
   );
 }
 
-type LocalProjectView = BrowserView;
-function ProjectViewsPage({
-  project: given,
-  onBack,
-  onOpenIssue,
-  revision,
-}: {
-  project: Project;
-  onBack: () => void;
-  onOpenIssue: (issue: Issue) => void;
-  revision: number;
-}) {
-  // Issues come from the local store; closed issues older than the sync window are paged on demand.
-  const project = useProject(given);
-  const projectIssues = useProjectIssues(project.id, gql, issueFields);
-  const issues = projectIssues.issues,
-    loading = !projectIssues.ready,
-    issueError = projectIssues.error;
-  const [rows, setRows] = useState<LocalProjectView[]>([]),
-    [name, setName] = useState("All issues"),
-    [query, setQuery] = useState(""),
-    [state, setState] = useState(""),
-    [active, setActive] = useState<string | null>(null),
-    [error, setError] = useState(""),
-    [editing, setEditing] = useState(location.pathname.endsWith("/new")),
-    [busy, setBusy] = useState(false);
+/* ================================ Views ================================
+ * Saved views run on the server (docs/views.md): the editor previews a draft with viewPreview,
+ * a saved view runs View.issues/projects, and both render through the same list and board as
+ * the team pages (MyIssuesContent) with server paging. The pages here are Linear's: the views
+ * list, the full-page editor, the saved-view page with its menu and details panel, and the
+ * project-scoped versions of each.
+ */
+
+/** What a page needs to act on the tasks it renders. */
+type IssueActions = {
+  onOpen: (issue: Issue) => void;
+  onMoved: (issueId: string, state: IssueState) => Promise<void>;
+  onUpdate: (issueId: string, input: Record<string, unknown>) => Promise<void>;
+  onNew: (stateId?: string) => void;
+  layout: IssueLayout;
+  onLayoutChange: (layout: IssueLayout) => void;
+};
+
+const VIEW_PAGE_SIZE = 50;
+const NO_TEAMS: Team[] = [];
+const NO_LABELS: IssueLabel[] = [];
+const NO_CYCLES: Cycle[] = [];
+
+/** The part of a display document the server applies when it runs a view (which rows, in what
+ * order); the rest (grouping, properties, layout) is applied as the rows render. */
+function runDisplay(
+  display: DisplayDoc,
+  kind: "issue" | "project",
+): DisplayDoc {
+  const out: DisplayDoc = {};
+  if (display.ordering) out.ordering = display.ordering;
+  if (display.reverse !== undefined) out.reverse = display.reverse;
+  if (display.completedWindow) out.completedWindow = display.completedWindow;
+  if (kind === "issue" && display.showSubIssues !== undefined)
+    out.showSubIssues = display.showSubIssues;
+  return out;
+}
+
+type ViewRunTarget = {
+  viewId?: string;
+  preview?: {
+    filters: FilterTree;
+    scope?: string;
+    teamId?: string;
+    projectId?: string;
+    initiativeId?: string;
+  };
+};
+
+type ViewRows<T> = {
+  rows: T[];
+  total: number | null;
+  hasMore: boolean;
+  loading: boolean;
+  error: string;
+  /** The first page for the current documents has arrived. */
+  ready: boolean;
+  loadMore: () => void;
+};
+
+/** A view's rows, page by page from the server. A change of documents starts over (debounced,
+ * so typing a chip value does not fire a request per keystroke); `loadMore` appends the next
+ * keyset page. */
+function useViewRows<T extends { id: string }>(
+  kind: "issue" | "project",
+  fields: string,
+  run: ViewRunTarget | null,
+  display: DisplayDoc,
+  revision = 0,
+): ViewRows<T> {
+  const key = run
+    ? JSON.stringify([kind, fields, run, runDisplay(display, kind), revision])
+    : "";
+  const [state, setState] = useState<{
+    key: string;
+    rows: T[];
+    cursor: string | null;
+    hasMore: boolean;
+    total: number | null;
+    loading: boolean;
+    error: string;
+  }>({
+    key: "",
+    rows: [],
+    cursor: null,
+    hasMore: false,
+    total: null,
+    loading: false,
+    error: "",
+  });
+  const gen = useRef(0);
+  const request = useCallback((k: string, after: string | null) => {
+    const [kd, fd, r, d] = JSON.parse(k) as [
+      "issue" | "project",
+      string,
+      ViewRunTarget,
+      DisplayDoc,
+    ];
+    return runView<T>({
+      kind: kd,
+      fields: fd,
+      first: VIEW_PAGE_SIZE,
+      after,
+      viewId: r.viewId,
+      display: d,
+      preview: r.preview ? { ...r.preview, display: d } : undefined,
+    });
+  }, []);
   useEffect(() => {
-    let live = true;
-    listViews("issue", "project")
-      .then((rows) => {
-        if (!live) return;
-        const scoped = rows.filter((v) => v.project?.id === project.id);
-        setRows(scoped);
-        setError("");
-        const id = location.pathname.split("/view/")[1];
-        const found = scoped.find((v) => v.id === id);
-        if (found) {
-          const f = fieldsFromFilters(found.filters);
-          setActive(found.id);
-          setName(found.name);
-          setQuery(f.query);
-          setState(f.state);
-          setEditing(false);
-        } else if (id && id !== "new") {
-          setError("Project view not found.");
-        }
+    if (!key) return;
+    const g = ++gen.current;
+    setState((s) => ({ ...s, loading: true, error: "" }));
+    const timer = window.setTimeout(() => {
+      request(key, null)
+        .then((page) => {
+          if (g !== gen.current) return;
+          setState({
+            key,
+            rows: page.nodes,
+            cursor: page.pageInfo.endCursor,
+            hasMore: page.pageInfo.hasNextPage && page.nodes.length > 0,
+            total: page.totalCount ?? page.nodes.length,
+            loading: false,
+            error: "",
+          });
+        })
+        .catch((e) => {
+          if (g !== gen.current) return;
+          setState((s) => ({
+            ...s,
+            key,
+            loading: false,
+            error: (e as Error).message,
+          }));
+        });
+    }, 200);
+    return () => window.clearTimeout(timer);
+  }, [key, request]);
+  const loadMore = useCallback(() => {
+    if (state.loading || !state.hasMore || state.key !== key) return;
+    const g = gen.current;
+    const k = state.key,
+      after = state.cursor;
+    setState((s) => ({ ...s, loading: true, error: "" }));
+    request(k, after)
+      .then((page) => {
+        if (g !== gen.current) return;
+        setState((s) => {
+          if (s.key !== k) return s;
+          const seen = new Set(s.rows.map((r) => r.id));
+          const fresh = page.nodes.filter((r) => !seen.has(r.id));
+          return {
+            ...s,
+            rows: [...s.rows, ...fresh],
+            cursor: page.pageInfo.endCursor,
+            // A cursor that did not move ends paging rather than loop.
+            hasMore:
+              page.pageInfo.hasNextPage &&
+              fresh.length > 0 &&
+              page.pageInfo.endCursor !== after,
+            total: page.totalCount ?? s.total,
+            loading: false,
+          };
+        });
       })
       .catch((e) => {
-        if (live) setError((e as Error).message);
+        if (g !== gen.current) return;
+        setState((s) => ({
+          ...s,
+          loading: false,
+          error: (e as Error).message,
+        }));
+      });
+  }, [state, key, request]);
+  return {
+    rows: state.rows,
+    total: state.total,
+    hasMore: state.hasMore,
+    loading: state.loading,
+    error: state.error,
+    ready: state.key === key && !state.loading,
+    loadMore,
+  };
+}
+
+/** Server rows, each replaced by the live store's copy when it has one, so a status change made
+ * on this page shows at once instead of on the next run. */
+function useLiveIssues(rows: Issue[]): Issue[] {
+  const synced = useSyncIssues() as Issue[];
+  const byId = useMemo(() => new Map(synced.map((i) => [i.id, i])), [synced]);
+  return useMemo(() => rows.map((r) => byId.get(r.id) || r), [rows, byId]);
+}
+
+/** The filter menu's catalog for task views, from the workspace the store holds. */
+function useWorkspaceIssueCatalog(projects: Project[], base: Issue[]) {
+  const meta = useSyncMeta();
+  const viewerId = meta?.viewer?.id;
+  const teams = meta?.teams.nodes || NO_TEAMS;
+  const states = useMemo(
+    () => [
+      ...new Map(
+        teams.flatMap((t) => t.states.nodes).map((s) => [stateKey(s), s]),
+      ).values(),
+    ],
+    [teams],
+  );
+  const users = useMemo(
+    () =>
+      (meta?.users || [])
+        .map(([id, n]) => ({ id, name: n || "Unknown" }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [meta],
+  );
+  const evalCtx = useMemo<EvalContext>(
+    () => ({
+      viewerId,
+      myTeamIds: new Set(
+        teams
+          .filter((t) => t.members?.nodes.some((m) => m.id === viewerId))
+          .map((t) => t.id),
+      ),
+      parentIds: parentIdsOf(base),
+    }),
+    [viewerId, teams, base],
+  );
+  const catalog = useIssueFilterCatalog({
+    base,
+    issues: base,
+    states,
+    projects,
+    teams,
+    users,
+    labels: meta?.issueLabels.nodes || NO_LABELS,
+    cycles: meta?.cycles.nodes || NO_CYCLES,
+    viewerId,
+    evalCtx,
+  });
+  return { catalog, states, users, teams, meta };
+}
+
+const HEALTH_OPTIONS: ValueOption[] = [
+  { value: "onTrack", label: "On track" },
+  { value: "atRisk", label: "At risk" },
+  { value: "offTrack", label: "Off track" },
+  { value: null, label: "No updates" },
+];
+
+/** The filter menu's catalog for project views. */
+function useProjectFilterCatalog(projects: Project[]): FilterCatalog {
+  const meta = useSyncMeta();
+  return useMemo((): FilterCatalog => {
+    const viewerId = meta?.viewer?.id;
+    const users: ValueOption[] = (meta?.users || [])
+      .filter(([id]) => id !== viewerId)
+      .map(([id, n]) => ({ value: id, label: n || "Unknown" }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+    const statuses = [
+      ...new Set(projects.map((p) => p.state).filter((s): s is string => !!s)),
+    ].sort();
+    return {
+      fields: PROJECT_FILTER_FIELDS,
+      menu: PROJECT_MENU,
+      options: (field) => {
+        switch (field) {
+          case "status":
+            return statuses.map((s) => ({ value: s, label: displayLabel(s) }));
+          case "lead":
+          case "members":
+            return [
+              { value: "me", label: "Current user" },
+              {
+                value: null,
+                label: field === "lead" ? "No lead" : "No members",
+              },
+              ...users,
+            ];
+          case "creator":
+            return [{ value: "me", label: "Current user" }, ...users];
+          case "health":
+            return HEALTH_OPTIONS;
+          case "team":
+            return (meta?.teams.nodes || []).map((t) => ({
+              value: t.id,
+              label: t.name,
+            }));
+          case "initiative":
+            return [{ value: null, label: "No initiative" }];
+          default:
+            return [];
+        }
+      },
+    };
+  }, [meta, projects]);
+}
+
+/* ------------------------------------------------------ project rows */
+
+const PROJECT_VIEW_FIELDS = `{ ${PROJECT_FIELDS} }`;
+
+/** A project view's rows: the projects list's columns, run on the server, with its own filter
+ * bar and display panel (the project variant). */
+function ViewProjectList({
+  rows,
+  filterRoot,
+  onFilterChange,
+  catalog,
+  prefs,
+  canSetDefault,
+  filterRowEnd,
+  toolbarEnd,
+  tabs,
+  onOpen,
+}: {
+  rows: ViewRows<Project>;
+  filterRoot: FilterGroup;
+  onFilterChange: (root: FilterGroup) => void;
+  catalog: FilterCatalog;
+  prefs: ReturnType<typeof useViewPreferences>;
+  canSetDefault: boolean;
+  filterRowEnd?: React.ReactNode;
+  toolbarEnd?: React.ReactNode;
+  tabs?: React.ReactNode;
+  onOpen: (project: Project) => void;
+}) {
+  const [advanced, setAdvanced] = useState(false),
+    [displayOpen, setDisplayOpen] = useState(false);
+  const display = prefs.display;
+  const has = (p: string) => display.visibleProperties.includes(p);
+  const sentinel = useRef<HTMLDivElement | null>(null);
+  const more = useRef(rows.loadMore);
+  more.current = rows.loadMore;
+  const canLoad = rows.hasMore && !rows.loading && !rows.error;
+  useEffect(() => {
+    if (!canLoad) return;
+    const el = sentinel.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) more.current();
+      },
+      { rootMargin: "0px 0px 600px 0px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [canLoad]);
+  return (
+    <div
+      className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 p-4"
+      data-view-project-results=""
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        {tabs}
+        <div className="ml-auto flex flex-none items-center gap-1.5">
+          <AddFilterButton
+            root={filterRoot}
+            onChange={onFilterChange}
+            catalog={catalog}
+            onAdvanced={() => setAdvanced(true)}
+          />
+          <DisplayButton
+            open={displayOpen}
+            onOpenChange={setDisplayOpen}
+            hasOverrides={prefs.hasOverrides}
+          >
+            <DisplayPanel
+              variant="project"
+              layouts={["list"]}
+              display={display}
+              onChange={prefs.update}
+              hasOverrides={prefs.hasOverrides}
+              onReset={prefs.reset}
+              onSetDefault={
+                canSetDefault ? () => void prefs.setDefault() : undefined
+              }
+            />
+          </DisplayButton>
+          {toolbarEnd}
+        </div>
+      </div>
+      {filterRowEnd ? (
+        <div className="flex min-w-0 items-start gap-2 rounded-lg bg-subtle px-2 py-1.5">
+          <div className="min-w-0 flex-1">
+            <FilterChips
+              root={filterRoot}
+              onChange={onFilterChange}
+              catalog={catalog}
+              advanced={advanced}
+              onAdvancedChange={setAdvanced}
+              hideClear
+            />
+          </div>
+          {filterRowEnd}
+        </div>
+      ) : (
+        <FilterChips
+          root={filterRoot}
+          onChange={onFilterChange}
+          catalog={catalog}
+          advanced={advanced}
+          onAdvancedChange={setAdvanced}
+        />
+      )}
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        {rows.rows.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            className="flex min-h-10 w-full min-w-0 items-center gap-3 border-b border-line px-3 text-left text-sm hover:bg-subtle"
+            onClick={() => onOpen(p)}
+            data-view-project-row=""
+          >
+            <FolderKanban size={15} className="flex-none text-muted" />
+            <span className="min-w-0 flex-1 truncate font-medium">
+              {p.name}
+            </span>
+            {has("status") && p.state && (
+              <span className="text-muted">{displayLabel(p.state)}</span>
+            )}
+            {has("health") && p.health && (
+              <span className="text-muted max-md:hidden">
+                {displayLabel(p.health)}
+              </span>
+            )}
+            {has("lead") && p.lead?.name && (
+              <span className="max-w-32 truncate text-muted max-md:hidden">
+                {p.lead.name}
+              </span>
+            )}
+            {has("targetDate") && p.targetDate && (
+              <span className="text-muted max-md:hidden">
+                {new Date(p.targetDate).toLocaleDateString(undefined, {
+                  month: "short",
+                  day: "numeric",
+                })}
+              </span>
+            )}
+            {has("progress") && typeof p.progress === "number" && (
+              <span className="w-10 text-right text-muted tabular-nums">
+                {Math.round(p.progress * 100)}%
+              </span>
+            )}
+          </button>
+        ))}
+        {rows.ready && !rows.rows.length && !rows.error && (
+          <p className="py-16 text-center text-muted" role="status">
+            No projects match this view.
+          </p>
+        )}
+        {(rows.hasMore || rows.error) && (
+          <div
+            ref={sentinel}
+            className="flex items-center justify-center gap-2 py-3 text-sm text-muted"
+          >
+            {rows.error && <span role="alert">{rows.error}</span>}
+            <button
+              type="button"
+              className="rounded px-2 py-1 text-accent hover:bg-subtle shell-phone:min-h-11"
+              disabled={rows.loading}
+              onClick={rows.loadMore}
+            >
+              {rows.loading ? "Loading…" : rows.error ? "Retry" : "Load more"}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** "Tasks | Projects" for the editor and the views list. */
+function ViewKindTabs({
+  kind,
+  onChange,
+}: {
+  kind: "issue" | "project";
+  onChange: (kind: "issue" | "project") => void;
+}) {
+  return (
+    <TaskViewTabs
+      label="View type"
+      views={["Tasks", "Projects"] as const}
+      active={kind === "project" ? "Projects" : "Tasks"}
+      onChange={(v) => onChange(v === "Projects" ? "project" : "issue")}
+    />
+  );
+}
+
+/* ----------------------------------------------------------- the editor */
+
+type EditorScope = { team?: Team; project?: Project };
+
+/** Where a new view in this scope may be saved, the default first. */
+function saveTargets(
+  scope: EditorScope,
+  teams: Team[],
+  viewerId?: string,
+): SaveTarget[] {
+  if (scope.project)
+    return [
+      { kind: "project", projectId: scope.project.id, shared: false },
+      { kind: "project", projectId: scope.project.id, shared: true },
+    ];
+  /* From a team, "Personal" is a team view only its owner sees: it keeps listing the team's
+     tasks (the preview does not widen to the workspace) and stays among the team's views. */
+  if (scope.team)
+    return [
+      { kind: "team", teamId: scope.team.id },
+      { kind: "team", teamId: scope.team.id, personal: true },
+      { kind: "workspace" },
+    ];
+  return [
+    { kind: "personal" },
+    { kind: "workspace" },
+    ...teams
+      .filter(
+        (t) => !viewerId || t.members?.nodes.some((m) => m.id === viewerId),
+      )
+      .map((t) => ({ kind: "team" as const, teamId: t.id })),
+  ];
+}
+
+/** Where an existing view can move to ("Move to ▸"). */
+function moveTargets(
+  view: ServerView,
+  teams: Team[],
+  viewerId?: string,
+): SaveTarget[] {
+  if (view.scope === "project" && view.project?.id)
+    return saveTargets({ project: { id: view.project.id } as Project }, teams);
+  const all = saveTargets({}, teams, viewerId);
+  if (view.scope === "team" && view.team?.id)
+    all.splice(1, 0, { kind: "team", teamId: view.team.id, personal: true });
+  const now = JSON.stringify(targetOf(view));
+  return all.filter((t) => JSON.stringify(t) !== now);
+}
+
+function previewScope(target: SaveTarget): {
+  scope: string;
+  teamId?: string;
+  projectId?: string;
+} {
+  const input = targetInput(target);
+  return {
+    scope: input.scope,
+    teamId: input.teamId,
+    projectId: input.projectId,
+  };
+}
+
+/** The full-page "New view" editor: identity card (icon, name, description, Save to), then the
+ * live result of the draft with the same filter bar, display panel, list and board. */
+function ViewEditorPage({
+  initialKind,
+  allowKinds = true,
+  scope,
+  projects,
+  actions,
+  onCancel,
+  onCreated,
+  pinOnCreate = false,
+  breadcrumb,
+  tabs: tabsOverride,
+}: {
+  /** Replaces the Tasks/Projects tabs (the team page shows its own tab strip). */
+  tabs?: React.ReactNode;
+  initialKind: "issue" | "project";
+  allowKinds?: boolean;
+  scope: EditorScope;
+  projects: Project[];
+  actions: IssueActions;
+  onCancel: () => void;
+  onCreated: (view: ServerView) => void;
+  /** Create the view as a pinned tab of its team (the team page's "Add new view"). */
+  pinOnCreate?: boolean;
+  breadcrumb?: React.ReactNode;
+}) {
+  /* "Save as view" (Alt V) on a list stashes its filters and display for this editor. */
+  const [draft] = useState(() => takeViewDraft());
+  const [kind, setKind] = useState<"issue" | "project">(
+    draft?.kind || initialKind,
+  );
+  const fieldsFor = (k: "issue" | "project") =>
+    k === "project" ? PROJECT_FILTER_FIELDS : ISSUE_FIELDS;
+  const [filterRoot, setFilterRoot] = useState<FilterGroup>(() =>
+    filterTreeToChips(draft?.filters, fieldsFor(draft?.kind || initialKind)),
+  );
+  const [identity, setIdentity] = useState<{
+    name: string;
+    description: string;
+    icon: string | null;
+    color: string | null;
+    touched: boolean;
+  }>({
+    name: draft?.name || "",
+    description: "",
+    icon: null,
+    color: null,
+    touched: Boolean(draft?.name),
+  });
+  const meta = useSyncMeta();
+  const viewer = meta?.viewer;
+  const teams = meta?.teams.nodes || NO_TEAMS;
+  const targets = useMemo(
+    () => saveTargets(scope, teams, viewer?.id),
+    [scope, teams, viewer?.id],
+  );
+  const draftTarget = draft?.teamId
+    ? targets.find((t) => t.kind === "team" && t.teamId === draft.teamId)
+    : draft?.saveTo
+      ? targets.find((t) =>
+          draft.saveTo === "personal"
+            ? t.kind === "personal" || (t.kind === "team" && t.personal)
+            : t.kind === draft.saveTo,
+        )
+      : undefined;
+  const [target, setTarget] = useState<SaveTarget>(
+    () => draftTarget || targets[0],
+  );
+  const [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
+  const base = useMemo(
+    () => (kind === "project" ? PROJECT_DEFAULTS : NO_DISPLAY),
+    [kind],
+  );
+  const draftDisplay = useMemo(
+    () => ({ ...base, ...((draft?.display as DisplayDoc) || {}) }),
+    [base, draft],
+  );
+  const prefs = useViewPreferences(null, draftDisplay);
+  const tree = useMemo(
+    () => chipsToFilterTree(filterRoot, fieldsFor(kind)),
+    [filterRoot, kind],
+  );
+  const run = useMemo<ViewRunTarget>(
+    () => ({ preview: { filters: tree, ...previewScope(target) } }),
+    [tree, target],
+  );
+  const issueRows = useViewRows<Issue>(
+    "issue",
+    issueFields,
+    kind === "issue" ? run : null,
+    prefs.display,
+  );
+  const projectRows = useViewRows<Project>(
+    "project",
+    PROJECT_VIEW_FIELDS,
+    kind === "project" ? run : null,
+    prefs.display,
+  );
+  const liveIssues = useLiveIssues(issueRows.rows);
+  const { catalog: issueCatalog, states } = useWorkspaceIssueCatalog(
+    projects,
+    liveIssues,
+  );
+  const projectCatalog = useProjectFilterCatalog(projects);
+  const catalog = kind === "project" ? projectCatalog : issueCatalog;
+  /* Linear's smart naming: while the name is untouched, the first chip names the view. */
+  const suggestion = useMemo(
+    () =>
+      suggestViewIdentity(
+        filterRoot,
+        catalog,
+        kind === "project" ? "projects" : "tasks",
+      ),
+    [filterRoot, catalog, kind],
+  );
+  const shown = identity.touched
+    ? identity
+    : {
+        ...identity,
+        name: suggestion?.name || "",
+        description: suggestion?.description || "",
+        icon: identity.icon || suggestion?.icon || null,
+      };
+  const placeholder = kind === "project" ? "All projects" : "All tasks";
+  const changeKind = (next: "issue" | "project") => {
+    if (next === kind) return;
+    setKind(next);
+    setFilterRoot(emptyGroup());
+  };
+  const create = async () => {
+    if (busy) return;
+    const name = (shown.name || placeholder).trim();
+    setBusy(true);
+    setError("");
+    try {
+      const created = await createView({
+        name,
+        description: shown.description.trim() || null,
+        icon: shown.icon,
+        color: shown.color,
+        kind,
+        filters: tree,
+        display: displayChanges(prefs.display, mergeDisplay(base)),
+        ...targetInput(target),
+      });
+      const pinned =
+        pinOnCreate && created.scope === "team"
+          ? await pinView(created.id, true).catch(() => created)
+          : created;
+      onCreated(pinned);
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+    }
+  };
+  const tabs =
+    tabsOverride ||
+    (allowKinds ? (
+      <ViewKindTabs kind={kind} onChange={changeKind} />
+    ) : (
+      <span className="flex-1" />
+    ));
+  const card = (
+    <div className="px-4 pt-4" data-view-editor-head="">
+      <ViewIdentityCard
+        icon={shown.icon}
+        color={shown.color}
+        name={shown.name}
+        description={shown.description}
+        namePlaceholder={placeholder}
+        autoFocusName
+        onSubmit={() => void create()}
+        onCancel={onCancel}
+        onChange={(patch) =>
+          setIdentity((old) => ({
+            ...(old.touched ? old : shown),
+            ...patch,
+            touched: true,
+          }))
+        }
+        actions={
+          <>
+            {targets.length > 1 && (
+              <SaveToPicker
+                value={target}
+                options={targets}
+                teams={teams}
+                onChange={setTarget}
+              />
+            )}
+            <button
+              type="button"
+              className="h-7 rounded-md px-2.5 text-sm text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
+              onClick={onCancel}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="h-7 rounded-md bg-accent px-2.5 text-sm font-medium text-panel hover:brightness-110 disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11"
+              disabled={busy}
+              onClick={() => void create()}
+              data-view-create=""
+            >
+              {busy ? "Creating…" : "Create view"}
+            </button>
+          </>
+        }
+      />
+      {error && (
+        <p className="mt-2 text-sm text-danger" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+  return (
+    <section
+      className="flex min-h-0 min-w-0 flex-1 flex-col"
+      data-view-editor=""
+      aria-label="New view"
+    >
+      {breadcrumb}
+      {card}
+      {kind === "issue" ? (
+        <MyIssuesContent
+          tabs={tabs}
+          tab="Assigned"
+          issues={liveIssues}
+          states={states}
+          teams={teams}
+          projects={projects}
+          onOpenIssue={actions.onOpen}
+          onNew={actions.onNew}
+          layout={actions.layout}
+          onLayoutChange={actions.onLayoutChange}
+          onMoved={actions.onMoved}
+          onUpdate={actions.onUpdate}
+          filterState={{ root: filterRoot, onChange: setFilterRoot }}
+          displayState={prefs}
+          canSetDefault={false}
+          serverRows={{
+            hasMore: issueRows.hasMore,
+            loading: issueRows.loading,
+            error: issueRows.error,
+            onLoadMore: issueRows.loadMore,
+          }}
+          emptyCopy={
+            issueRows.ready
+              ? ["No matching tasks", "Change the filters to see tasks here."]
+              : ["Loading tasks…", ""]
+          }
+        />
+      ) : (
+        <ViewProjectList
+          rows={projectRows}
+          filterRoot={filterRoot}
+          onFilterChange={setFilterRoot}
+          catalog={projectCatalog}
+          prefs={prefs}
+          canSetDefault={false}
+          tabs={tabs}
+          onOpen={(p) => navigateTo(`/workspace/project/${p.id}`)}
+        />
+      )}
+    </section>
+  );
+}
+
+/* --------------------------------------------------------- saved view */
+
+const DETAILS_KEY = "hoja_view_details_open";
+
+function readFlag(key: string, fallback: boolean): boolean {
+  try {
+    const v = localStorage.getItem(key);
+    return v === null ? fallback : v === "1";
+  } catch {
+    return fallback;
+  }
+}
+
+function writeFlag(key: string, value: boolean) {
+  try {
+    localStorage.setItem(key, value ? "1" : "0");
+  } catch {
+    /* storage blocked: the toggle lasts for this visit */
+  }
+}
+
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** A saved view's page: header (icon, name, star, "…" menu), count line, the rows through the
+ * shared list and board, the unsaved-changes bar and the details panel. */
+function SavedViewPage({
+  ident,
+  projects,
+  actions,
+  revision,
+  onDeleted,
+  breadcrumb,
+}: {
+  ident: string;
+  projects: Project[];
+  actions: IssueActions;
+  revision: number;
+  onDeleted: (view: ServerView) => void;
+  breadcrumb?: (view: ServerView) => React.ReactNode;
+}) {
+  const [view, setView] = useState<ServerView | null>(null),
+    [loadError, setLoadError] = useState("");
+  useEffect(() => {
+    let live = true;
+    setLoadError("");
+    getView(ident)
+      .then((v) => {
+        if (!live) return;
+        setView(v);
+        // Old links (ids, /views/issues/<id>) settle on the slug URL.
+        const path = location.pathname;
+        if (path.startsWith("/workspace/view/") && path !== viewPath(v))
+          history.replaceState(
+            history.state,
+            "",
+            viewPath(v) + location.search,
+          );
+      })
+      .catch((e) => {
+        if (live) setLoadError((e as Error).message);
       });
     return () => {
       live = false;
     };
-  }, [project.id, revision]);
-  const visible = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return issues.filter(
-      (i) =>
-        `${i.identifier} ${i.title}`.toLowerCase().includes(q) &&
-        (!state || i.state?.name === state),
+  }, [ident, revision]);
+  if (loadError)
+    return (
+      <section
+        className="p-10 text-center text-muted"
+        role="alert"
+        data-view-page=""
+      >
+        {loadError === "View not found."
+          ? "This view does not exist, or it is not shared with you."
+          : loadError}
+        <div className="mt-3">
+          <button
+            type="button"
+            className="rounded-md border border-line px-2.5 py-1 text-foreground hover:bg-subtle shell-phone:min-h-11"
+            onClick={() => navigateTo("/workspace/views/issues")}
+          >
+            All views
+          </button>
+        </div>
+      </section>
     );
-  }, [issues, query, state]);
-  const states = useMemo(
-    () =>
-      [
-        ...new Set(
-          issues.map((i) => i.state?.name).filter((x): x is string => !!x),
-        ),
-      ].sort(),
-    [issues],
+  if (!view)
+    return (
+      <section
+        className="p-10 text-center text-muted"
+        role="status"
+        data-view-page=""
+      >
+        Loading view…
+      </section>
+    );
+  // Initiative views have no page here yet; running one as a task view would show nothing.
+  if (view.kind === "initiative")
+    return (
+      <section
+        className="p-10 text-center text-muted"
+        role="status"
+        data-view-page=""
+      >
+        “{view.name}” is an initiative view. Open it from Initiatives.
+      </section>
+    );
+  return (
+    <SavedViewBody
+      key={view.id}
+      view={view}
+      onView={setView}
+      projects={projects}
+      actions={actions}
+      revision={revision}
+      onDeleted={onDeleted}
+      breadcrumb={breadcrumb?.(view)}
+    />
   );
-  const cancel = () => {
-    setEditing(false);
-    setError("");
-    onBack();
+}
+
+function SavedViewBody({
+  view: given,
+  onView: report,
+  projects,
+  actions,
+  revision,
+  onDeleted,
+  breadcrumb,
+  tabs,
+}: {
+  /** The team page's tab strip, when the view is shown as one of its pinned tabs. */
+  tabs?: React.ReactNode;
+  view: ServerView;
+  onView: (view: ServerView) => void;
+  projects: Project[];
+  actions: IssueActions;
+  revision: number;
+  onDeleted: (view: ServerView) => void;
+  breadcrumb?: React.ReactNode;
+}) {
+  /* The page keeps its own copy, so a write shows at once even where the parent's copy is a
+     shared list that refreshes later (the team tabs). */
+  const [view, setLocalView] = useState(given);
+  useEffect(() => setLocalView(given), [given]);
+  const onView = useCallback(
+    (next: ServerView) => {
+      setLocalView(next);
+      report(next);
+    },
+    [report],
+  );
+  const meta = useSyncMeta();
+  const viewer = meta?.viewer;
+  const teams = meta?.teams.nodes || NO_TEAMS;
+  const canEdit = canEditView(view, viewer);
+  const kind: "issue" | "project" =
+    view.kind === "project" ? "project" : "issue";
+  const fields = kind === "project" ? PROJECT_FILTER_FIELDS : ISSUE_FIELDS;
+  /* ---- filters: the saved tree, or this person's unsaved edits of it ---- */
+  const viewerId = viewer?.id;
+  const [filterRoot, setFilterRootState] = useState<FilterGroup>(() =>
+    filterTreeToChips(
+      loadViewEdits(view.id, viewerId)?.filters ?? view.filters,
+      fields,
+    ),
+  );
+  const tree = useMemo(
+    () => chipsToFilterTree(filterRoot, fields),
+    [filterRoot, fields],
+  );
+  const dirty = !sameDocument(tree, view.filters);
+  const setFilterRoot = useCallback(
+    (root: FilterGroup) => {
+      setFilterRootState(root);
+      const next = chipsToFilterTree(root, fields);
+      saveViewEdits(
+        view.id,
+        sameDocument(next, view.filters) ? null : { filters: next },
+        viewerId,
+      );
+    },
+    [view.id, view.filters, fields, viewerId],
+  );
+  const clearEdits = useCallback(() => {
+    setFilterRootState(filterTreeToChips(view.filters, fields));
+    saveViewEdits(view.id, null, viewerId);
+  }, [view.id, view.filters, fields, viewerId]);
+  /* ---- display: the view's default with this person's layer over it ---- */
+  const prefTarget = useMemo(() => ({ viewId: view.id }), [view.id]);
+  const prefs = useViewPreferences(
+    prefTarget,
+    kind === "project" ? PROJECT_DEFAULTS : NO_DISPLAY,
+  );
+  /* ---- rows ---- */
+  const run = useMemo<ViewRunTarget>(
+    () =>
+      dirty
+        ? {
+            preview: {
+              filters: tree,
+              scope: view.scope,
+              teamId: view.team?.id,
+              projectId: view.project?.id,
+              initiativeId: view.initiative?.id,
+            },
+          }
+        : { viewId: view.id },
+    [
+      dirty,
+      tree,
+      view.id,
+      view.scope,
+      view.team?.id,
+      view.project?.id,
+      view.initiative?.id,
+    ],
+  );
+  const issueRows = useViewRows<Issue>(
+    "issue",
+    issueFields,
+    kind === "issue" ? run : null,
+    prefs.display,
+    revision,
+  );
+  const projectRows = useViewRows<Project>(
+    "project",
+    PROJECT_VIEW_FIELDS,
+    kind === "project" ? run : null,
+    prefs.display,
+    revision,
+  );
+  const liveIssues = useLiveIssues(issueRows.rows);
+  const { states, users } = useWorkspaceIssueCatalog(projects, liveIssues);
+  const projectCatalog = useProjectFilterCatalog(projects);
+  const total = kind === "issue" ? issueRows.total : projectRows.total;
+  /* ---- header state ---- */
+  const [editing, setEditing] = useState(false),
+    [identity, setIdentity] = useState({
+      name: view.name,
+      description: view.description || "",
+      icon: view.icon || null,
+      color: view.color || null,
+    }),
+    [busy, setBusy] = useState(false),
+    [notice, setNotice] = useState(""),
+    [detailsOpen, setDetailsOpen] = useState(() =>
+      readFlag(DETAILS_KEY, false),
+    );
+  const fail = (e: unknown) => setNotice((e as Error).message);
+  const flash = (text: string) => {
+    setNotice(text);
+    window.setTimeout(() => setNotice((n) => (n === text ? "" : n)), 2500);
   };
-  const save = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name.trim()) {
-      setError("Enter a view name.");
-      return;
-    }
-    if (rows.some((v) => v.name.toLowerCase() === name.trim().toLowerCase())) {
-      setError("A project view with this name already exists.");
-      return;
-    }
-    if (busy) return;
+  const update = async (input: Partial<ViewInput>) => {
     setBusy(true);
-    createView({
-      name: name.trim(),
-      kind: "issue",
-      scope: "project",
-      projectId: project.id,
-      visibility: "private",
-      filters: filtersFromFields("issue", query, state),
-      display: {},
-    })
-      .then((created) => {
-        setRows((r) => [...r, created]);
-        setActive(created.id);
-        setEditing(false);
-        setError("");
-        history.replaceState(
-          {},
-          "",
-          `/workspace/project/${project.id}/view/${created.id}`,
-        );
-      })
-      .catch((err) => setError((err as Error).message))
-      .finally(() => setBusy(false));
+    try {
+      const next = await updateView(view.id, input);
+      onView(next);
+      return next;
+    } catch (e) {
+      fail(e);
+      return null;
+    } finally {
+      setBusy(false);
+    }
   };
+  const saveIdentity = async () => {
+    const name = identity.name.trim();
+    if (!name) return setNotice("A view needs a name.");
+    const next = await update({
+      name,
+      description: identity.description.trim() || null,
+      icon: identity.icon,
+      color: identity.color,
+    });
+    if (next) setEditing(false);
+  };
+  const favorite = useCallback(async () => {
+    try {
+      const fav = await toggleViewFavorite(view.id);
+      onView({ ...view, favorite: fav });
+    } catch (e) {
+      fail(e);
+    }
+  }, [view, onView]);
+  const saveToView = useCallback(async () => {
+    if (!canEdit || !dirty) return;
+    setBusy(true);
+    try {
+      const next = await updateView(view.id, { filters: tree });
+      saveViewEdits(view.id, null, viewerId);
+      if (prefs.hasOverrides) await prefs.setDefault();
+      // The chips follow what the server stored (it may normalise the tree), so the bar goes.
+      setFilterRootState(filterTreeToChips(next.filters, fields));
+      onView(next);
+      flash("View saved");
+    } catch (e) {
+      fail(e);
+    } finally {
+      setBusy(false);
+    }
+  }, [canEdit, dirty, view.id, tree, prefs, onView, viewerId, fields]);
+  const saveAsNew = useCallback(() => {
+    stashViewDraft({
+      kind,
+      filters: tree,
+      display: displayChanges(prefs.display, mergeDisplay()),
+      teamId: view.team?.id,
+      projectId: view.project?.id,
+    });
+    navigateTo(
+      view.scope === "project" && view.project?.id
+        ? `/workspace/project/${view.project.id}/view/new`
+        : `/workspace/views/${kind === "project" ? "projects" : "issues"}/new`,
+    );
+  }, [kind, tree, prefs.display, view.team?.id, view.project?.id, view.scope]);
+  /* Alt F favorites the view on screen; Alt S / Alt V are the list's own keys. */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.altKey || e.metaKey || e.ctrlKey || e.code !== "KeyF") return;
+      if (
+        isTypingTarget(e.target) ||
+        document.querySelector('[aria-modal="true"]')
+      )
+        return;
+      e.preventDefault();
+      void favorite();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [favorite]);
+  const duplicate = async () => {
+    const name = await promptDialog(
+      "Name the copy of this view:",
+      `${view.name} (copy)`.slice(0, 80),
+    );
+    if (name === null) return;
+    try {
+      const copy = await duplicateView(view.id, name.trim() || undefined);
+      navigateTo(viewPath(copy));
+    } catch (e) {
+      fail(e);
+    }
+  };
+  const remove = async () => {
+    if (
+      !(await confirmDialog(`Delete the view “${view.name}”?`, {
+        danger: true,
+      }))
+    )
+      return;
+    try {
+      await deleteView(view.id);
+      saveViewEdits(view.id, null, viewerId);
+      onDeleted(view);
+    } catch (e) {
+      fail(e);
+    }
+  };
+  const subscribe = async (onAdded: boolean, onCompleted: boolean) => {
+    try {
+      const subscription = await setViewSubscription(
+        view.id,
+        onAdded,
+        onCompleted,
+      );
+      onView({ ...view, subscription });
+      flash(subscription ? "Subscribed to this view" : "Unsubscribed");
+    } catch (e) {
+      fail(e);
+    }
+  };
+  const menu = (
+    <ViewMenu
+      view={view}
+      canEdit={canEdit}
+      moveOptions={moveTargets(view, teams, viewer?.id)}
+      teams={teams}
+      onEdit={() => {
+        setIdentity({
+          name: view.name,
+          description: view.description || "",
+          icon: view.icon || null,
+          color: view.color || null,
+        });
+        setEditing(true);
+      }}
+      onDuplicate={() => void duplicate()}
+      onMove={(t) => void update(targetInput(t))}
+      onSubscribe={(a, c) => void subscribe(a, c)}
+      onCopyLink={() =>
+        void copyText(view.url || `${location.origin}${viewPath(view)}`).then(
+          (ok) => flash(ok ? "Link copied" : "Could not copy the link"),
+        )
+      }
+      onExport={
+        kind === "issue"
+          ? () =>
+              void exportViewCsv(view.id, view.slugId || "view")
+                .then(() => {
+                  // The export runs the stored view; say so rather than imply the edits went in.
+                  if (dirty)
+                    flash(
+                      "Exported the saved view, without your unsaved filter changes.",
+                    );
+                })
+                .catch(fail)
+          : undefined
+      }
+      onDelete={() => void remove()}
+      onPin={
+        view.scope === "team"
+          ? () =>
+              void pinView(view.id, !view.pinned)
+                .then((next) => {
+                  onView(next);
+                  flash(next.pinned ? "Pinned to the team’s tabs" : "Unpinned");
+                })
+                .catch(fail)
+          : undefined
+      }
+    />
+  );
+  /* ---- details panel: breakdown of the loaded rows ---- */
+  const breakdown = useMemo(() => {
+    const count = (
+      pick: (
+        i: Issue,
+      ) => { value: string | null; label: string; icon?: React.ReactNode }[],
+    ): BreakdownRow[] => {
+      const m = new Map<string, BreakdownRow>();
+      for (const i of liveIssues)
+        for (const k of pick(i)) {
+          const key = k.value ?? "none";
+          const row = m.get(key);
+          if (row) row.count += 1;
+          else
+            m.set(key, {
+              key,
+              value: k.value,
+              label: k.label,
+              count: 1,
+              icon: k.icon,
+            });
+        }
+      return [...m.values()].sort(
+        (a, b) => b.count - a.count || a.label.localeCompare(b.label),
+      );
+    };
+    return {
+      assignee: count((i) => [
+        i.assignee
+          ? {
+              value: i.assignee.id,
+              label: i.assignee.name || "Unknown",
+              icon: (
+                <span className="grid size-4.5 place-items-center">
+                  <UserBlobatar user={i.assignee} />
+                </span>
+              ),
+            }
+          : { value: null, label: "No assignee" },
+      ]),
+      labels: count((i) =>
+        i.labels?.nodes.length
+          ? i.labels.nodes.map((l) => ({
+              value: l.id,
+              label: l.name,
+              icon: (
+                <span
+                  className="block size-2 rounded-full"
+                  style={{ background: l.color || "#a1a1aa" }}
+                />
+              ),
+            }))
+          : [{ value: null, label: "No labels" }],
+      ),
+      project: count((i) => [
+        i.project
+          ? { value: i.project.id, label: i.project.name }
+          : { value: null, label: "No project" },
+      ]),
+    };
+  }, [liveIssues]);
+  const teamName = view.team?.id
+    ? teams.find((t) => t.id === view.team?.id)?.name
+    : undefined;
+  const detailsToggle = (
+    <button
+      type="button"
+      className="grid size-7 flex-none place-items-center rounded-full border border-line bg-panel text-muted hover:bg-subtle hover:text-foreground aria-pressed:bg-subtle aria-pressed:text-foreground focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11 shell-phone:min-w-11"
+      aria-label={detailsOpen ? "Hide view details" : "Show view details"}
+      aria-pressed={detailsOpen}
+      title="View details"
+      onClick={() => {
+        setDetailsOpen(!detailsOpen);
+        writeFlag(DETAILS_KEY, !detailsOpen);
+      }}
+      data-view-details-toggle=""
+    >
+      <PanelRight size={15} />
+    </button>
+  );
+  const unsaved = dirty ? (
+    <UnsavedActions
+      canSave={canEdit}
+      busy={busy}
+      onClear={clearEdits}
+      onSave={() => void saveToView()}
+      onSaveAsNew={saveAsNew}
+    />
+  ) : undefined;
+  const noun = kind === "project" ? "project" : "task";
+  const countLine =
+    total === null ? "…" : `${total} ${total === 1 ? noun : `${noun}s`}`;
   return (
     <section
-      className="max-w-none min-w-0 w-full overflow-x-hidden text-[12px] leading-normal shell-phone:flex shell-phone:flex-col font-['Inter_Variable',Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe_UI',sans-serif] [font-optical-sizing:auto] min-h-[calc(100dvh-16px)] shell-desktop:[&:has(>[data-project-reference-properties])]:grid-cols-[minmax(0,1fr)_minmax(260px,38%)]"
-      data-project-local-views=""
-      data-project-reference=""
+      className="flex min-h-0 min-w-0 flex-1 flex-col"
+      data-view-page=""
+      data-view-id={view.id}
+      aria-label={view.name}
     >
       <header
-        className="border-b border-line h-11.25 min-h-11.25 items-center justify-between gap-2.5 pt-0 pr-0 pb-0 pl-0 relative max-w-none border-0 leading-normal block m-0 p-0 w-[calc(62%-87px)] [@media_(max-width:900px)]:w-auto shell-phone:order-3"
-        data-project-reference-head=""
+        className="flex h-11 min-h-11 flex-none items-center gap-2 border-b border-line px-4"
+        data-view-head=""
       >
-        <button
-          className="flex-none pt-1.25 pr-1.25 pb-1.25 pl-1.25 rounded-[5px] bg-transparent text-[12px] max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-          type="button"
-          onClick={onBack}
-        >
-          ← {project.name}
-        </button>
-        <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[12px] shell-phone:max-w-36 shell-phone:max-w-37.5">
-          Views
-        </span>
-      </header>
-      <nav
-        className="h-11 min-w-0 flex items-center gap-1.25 pt-0 pr-3 pb-0 pl-3 overflow-x-auto border-line [&::-webkit-scrollbar]:hidden border-b-0 md:col-span-full scrollbar-none"
-        data-project-reference-tabs=""
-        aria-label="Project views"
-      >
-        <button
-          className="h-7 flex-none inline-flex items-center gap-1.5 pt-0 pr-2.75 pb-0 pl-2.75 border border-line rounded-[99px] bg-panel text-muted no-underline text-[12px] max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-          type="button"
-          onClick={onBack}
-        >
-          Tasks
-        </button>
-        <span
-          className="self-center pt-1.25 pr-3 pb-1.25 pl-3 border border-line rounded-[20px] bg-subtle text-foreground font-semibold"
-          aria-current="page"
-        >
-          Views
-        </span>
-      </nav>
-      <div
-        className="max-w-195 mt-5 mr-auto mb-5 ml-auto pt-3 pr-5 pb-3 pl-5 text-[12px]     shell-phone:pt-3 shell-phone:pr-3 shell-phone:pb-3 shell-phone:pl-3"
-        data-project-local-view-body=""
-      >
-        <header className="flex items-center justify-between gap-2.5">
-          <h1 className="mt-0 mr-0 mb-0 ml-0 text-[18px] font-semibold leading-normal tracking-normal ">
-            {editing
-              ? "New view"
-              : active
-                ? rows.find((v) => v.id === active)?.name || "Project views"
-                : "Project views"}
-          </h1>
+        {breadcrumb}
+        {canEdit && !editing ? (
+          <ViewIconPicker
+            icon={view.icon}
+            color={view.color}
+            onChange={(patch) => void update(patch)}
+          />
+        ) : (
+          <ViewIcon icon={view.icon} color={view.color} />
+        )}
+        {canEdit && !editing ? (
           <button
-            className="pt-1.75 pr-2.5 pb-1.75 pl-2.5 border border-line rounded-md bg-panel text-[12px] hover:bg-subtle max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
             type="button"
+            className="min-w-0 truncate rounded px-1 text-sm font-medium text-foreground hover:bg-subtle"
+            title="Rename"
             onClick={() => {
-              setName("All issues");
-              setQuery("");
-              setState("");
+              setIdentity({
+                name: view.name,
+                description: view.description || "",
+                icon: view.icon || null,
+                color: view.color || null,
+              });
               setEditing(true);
-              history.pushState(
-                {},
-                "",
-                `/workspace/project/${project.id}/view/new`,
-              );
             }}
           >
-            New view
+            {view.name}
           </button>
-        </header>
-        <p className="text-muted leading-normal">
-          Views saved for this project. Private views are yours; share them from
-          the workspace Views page.
-        </p>
-        {editing && (
-          <form
-            onSubmit={save}
-            className="border grid gap-3 mt-4.5 mr-0 mb-4.5 ml-0 pt-4.5 pr-4.5 pb-4.5 pl-4.5 border-line rounded-lg bg-panel"
-            data-project-view-form=""
-          >
-            <label className="grid gap-1.25">
-              View name
-              <input
-                className="w-full pt-2 pr-2 pb-2 pl-2 border border-line rounded-[5px] bg-bg text-foreground shell-phone:text-base max-w-full font-sans placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                value={name}
-                maxLength={60}
-                onChange={(e) => setName(e.target.value)}
-                required
-              />
-            </label>
-            <label className="grid gap-1.25">
-              Search tasks
-              <input
-                className="w-full pt-2 pr-2 pb-2 pl-2 border border-line rounded-[5px] bg-bg text-foreground shell-phone:text-base max-w-full font-sans placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Title or identifier"
-              />
-            </label>
-            <label className="grid gap-1.25">
-              Status
-              <select
-                className="w-full pt-2 pr-2 pb-2 pl-2 border border-line rounded-[5px] bg-bg text-foreground shell-phone:text-base max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                value={state}
-                onChange={(e) => setState(e.target.value)}
-              >
-                <option value="">All statuses</option>
-                {states.map((x) => (
-                  <option key={x}>{x}</option>
-                ))}
-              </select>
-            </label>
-            <div className="flex justify-end gap-2">
-              <button
-                className="pt-1.75 pr-2.5 pb-1.75 pl-2.5 border border-line rounded-md bg-panel text-[12px] hover:bg-subtle max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                type="button"
-                onClick={cancel}
-              >
-                Cancel
-              </button>
-              <button
-                className="pt-1.75 pr-2.5 pb-1.75 pl-2.5 border border-line rounded-md bg-panel text-[12px] hover:bg-subtle max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                type="submit"
-                disabled={!name.trim()}
-              >
-                Create view
-              </button>
-            </div>
-          </form>
-        )}
-        {error && (
-          <p className="text-muted leading-normal" role="alert">
-            {error}
-          </p>
-        )}
-        {rows.length ? (
-          <div
-            className="flex flex-wrap gap-1.5 mt-5 mr-0 mb-5 ml-0"
-            data-project-local-view-list=""
-          >
-            {rows.map((v) => (
-              <button
-                className="pt-1.75 pr-2.5 pb-1.75 pl-2.5 border border-line rounded-md bg-panel text-[12px] hover:bg-subtle aria-pressed:bg-subtle max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                key={v.id}
-                type="button"
-                aria-pressed={active === v.id}
-                onClick={() => {
-                  const f = fieldsFromFilters(v.filters);
-                  setActive(v.id);
-                  setName(v.name);
-                  setQuery(f.query);
-                  setState(f.state);
-                  setEditing(false);
-                  history.pushState(
-                    {},
-                    "",
-                    `/workspace/project/${project.id}/view/${v.id}`,
-                  );
-                }}
-              >
-                {v.name}
-              </button>
-            ))}
-          </div>
         ) : (
-          !editing && (
-            <p className="text-muted leading-normal" role="status">
-              No project views saved yet.
-            </p>
-          )
+          <h1 className="min-w-0 truncate text-sm font-medium">{view.name}</h1>
         )}
-        {issueError && (
-          <p className="text-muted leading-normal" role="alert">
-            {issueError}
-          </p>
-        )}
-        {loading && (
-          <p className="text-muted leading-normal" role="status">
-            Loading project tasks…
-          </p>
-        )}
-        {!loading && (
-          <section className="grid gap-0.75" data-project-view-results="">
-            <h2 className="text-[13px]">
-              {visible.length} matching project tasks
-            </h2>
-            {visible.map((i) => (
-              <button
-                className="pt-1.75 pr-2.5 pb-1.75 pl-2.5 border border-line rounded-md bg-panel text-[12px] hover:bg-subtle text-left wrap-break-word max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                key={i.id}
-                type="button"
-                onClick={() => onOpenIssue(i)}
-              >
-                {i.identifier} · {i.title || "Untitled task"}
-              </button>
-            ))}
-            {!visible.length && (
-              <p className="text-muted leading-normal">
-                No matching project tasks.
-              </p>
-            )}
-            {projectIssues.more && (
-              <button
-                className="pt-1.75 pr-2.5 pb-1.75 pl-2.5 border border-line rounded-md bg-panel text-[12px] hover:bg-subtle text-left wrap-break-word max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                type="button"
-                disabled={projectIssues.loading}
-                onClick={projectIssues.loadMore}
-              >
-                {projectIssues.loading ? "Loading…" : "Load older closed tasks"}
-              </button>
-            )}
-          </section>
+        <button
+          type="button"
+          className="grid size-7 place-items-center rounded-md text-muted hover:bg-subtle hover:text-foreground aria-pressed:text-foreground shell-phone:min-h-11 shell-phone:min-w-11"
+          aria-label={
+            view.favorite ? "Remove from favorites" : "Add to favorites"
+          }
+          aria-pressed={view.favorite}
+          title={
+            view.favorite
+              ? "Remove from favorites (Alt F)"
+              : "Add to favorites (Alt F)"
+          }
+          onClick={() => void favorite()}
+          data-view-favorite=""
+        >
+          <Star size={15} fill={view.favorite ? "currentColor" : "none"} />
+        </button>
+        {menu}
+        <span
+          className="ml-auto text-sm text-muted"
+          data-view-count=""
+          aria-live="polite"
+        >
+          {countLine}
+        </span>
+      </header>
+      {notice && (
+        <p
+          className="mx-4 mt-2 text-sm text-muted"
+          role="status"
+          data-view-notice=""
+        >
+          {notice}
+        </p>
+      )}
+      {editing && (
+        <div className="px-4 pt-4">
+          <ViewIdentityCard
+            icon={identity.icon}
+            color={identity.color}
+            name={identity.name}
+            description={identity.description}
+            namePlaceholder="View name"
+            autoFocusName
+            onSubmit={() => void saveIdentity()}
+            onCancel={() => setEditing(false)}
+            onChange={(patch) => setIdentity((old) => ({ ...old, ...patch }))}
+            actions={
+              <>
+                <button
+                  type="button"
+                  className="h-7 rounded-md px-2.5 text-sm hover:bg-subtle shell-phone:min-h-11"
+                  onClick={() => setEditing(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="h-7 rounded-md bg-accent px-2.5 text-sm font-medium text-panel hover:brightness-110 disabled:opacity-60 shell-phone:min-h-11"
+                  disabled={busy || !identity.name.trim()}
+                  onClick={() => void saveIdentity()}
+                >
+                  Save
+                </button>
+              </>
+            }
+          />
+        </div>
+      )}
+      <div className="flex min-h-0 min-w-0 flex-1 max-md:flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {kind === "issue" ? (
+            <MyIssuesContent
+              tabs={tabs || <span className="flex-1" />}
+              tab="Assigned"
+              issues={liveIssues}
+              states={states}
+              teams={teams}
+              projects={projects}
+              onOpenIssue={actions.onOpen}
+              onNew={actions.onNew}
+              layout={actions.layout}
+              onLayoutChange={actions.onLayoutChange}
+              onMoved={actions.onMoved}
+              onUpdate={actions.onUpdate}
+              filterState={{ root: filterRoot, onChange: setFilterRoot }}
+              displayState={prefs}
+              canSetDefault={canEdit}
+              serverRows={{
+                hasMore: issueRows.hasMore,
+                loading: issueRows.loading,
+                error: issueRows.error,
+                onLoadMore: issueRows.loadMore,
+              }}
+              filterRowEnd={unsaved}
+              toolbarEnd={detailsToggle}
+              onSaveView={canEdit ? () => void saveToView() : undefined}
+              onSaveAsView={() => saveAsNew()}
+              emptyCopy={
+                issueRows.ready
+                  ? [
+                      "No tasks in this view",
+                      "Tasks that match its filters will show up here.",
+                    ]
+                  : ["Loading tasks…", ""]
+              }
+            />
+          ) : (
+            <ViewProjectList
+              rows={projectRows}
+              filterRoot={filterRoot}
+              onFilterChange={setFilterRoot}
+              catalog={projectCatalog}
+              prefs={prefs}
+              canSetDefault={canEdit}
+              filterRowEnd={unsaved}
+              toolbarEnd={detailsToggle}
+              onOpen={(p) => navigateTo(`/workspace/project/${p.id}`)}
+            />
+          )}
+        </div>
+        {detailsOpen && (
+          <div className="flex min-h-0 flex-none p-4 pl-0 max-md:pl-4 max-md:pt-0">
+            <ViewDetailsPanel
+              view={view}
+              visibility={visibilityLabel(view, teamName)}
+              owners={users}
+              canChangeOwner={canEdit}
+              onOwner={(ownerId) => void update({ ownerId })}
+              breakdown={breakdown}
+              partial={issueRows.hasMore}
+              onPick={(field, value) =>
+                setFilterRoot(toggleValue(filterRoot, field, value, fields))
+              }
+              onFavorite={() => void favorite()}
+            />
+          </div>
         )}
       </div>
     </section>
   );
 }
-type BrowserView = ServerView;
-const VIEW_PRIORITY_LABELS = ["No priority", "Urgent", "High", "Medium", "Low"];
+
+/* ------------------------------------------------------------ the list */
+
+const LIST_DISPLAY_KEY = "hoja_views_list_display";
+
+type ListDisplay = {
+  ordering: ViewOrdering;
+  descending: boolean;
+  columns: ListColumn[];
+};
+
+function readListDisplay(): ListDisplay {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(LIST_DISPLAY_KEY) || "null");
+    if (parsed && typeof parsed === "object")
+      return {
+        ordering: parsed.ordering || "name",
+        descending: Boolean(parsed.descending),
+        columns: Array.isArray(parsed.columns) ? parsed.columns : ["owner"],
+      };
+  } catch {
+    /* a corrupt value reads as the default */
+  }
+  return { ordering: "name", descending: false, columns: ["owner"] };
+}
+
+/** The views list (workspace, a team's, or the favorites): Tasks/Projects tabs, rows grouped
+ * into Personal, Workspace and team sections, its own small display menu, and the editor at
+ * `…/new`. */
 function ViewsPage({
-  orgId,
-  issues,
+  team,
   projects,
-  path,
-  onNavigate,
-  onSelect,
-  onOpenProject,
+  actions,
   favoriteOnly = false,
-  basePath = "/workspace/views",
-  viewName = "Views",
-  title,
   revision = 0,
 }: {
-  orgId: string;
-  issues: Issue[];
+  team?: Team;
   projects: Project[];
-  path: string;
-  onNavigate: (view: string, path?: string) => void;
-  onSelect: (issue: Issue) => void;
-  onOpenProject?: (project: Project) => void;
+  actions: IssueActions;
   favoriteOnly?: boolean;
-  basePath?: string;
-  viewName?: string;
-  title?: string;
   revision?: number;
 }) {
-  const [kind, setKind] = useState<"issues" | "projects">(() =>
-    path.includes("/projects") ? "projects" : "issues",
-  );
-  const [saved, setSaved] = useState<BrowserView[]>([]),
-    [name, setName] = useState(""),
-    [query, setQuery] = useState(""),
-    [state, setState] = useState(""),
-    [priority, setPriority] = useState(""),
-    [assignee, setAssignee] = useState(""),
-    [projectFilter, setProjectFilter] = useState(""),
-    [active, setActive] = useState(""),
-    [editingId, setEditingId] = useState<string | null>(null),
-    [editing, setEditing] = useState(path.endsWith("/new")),
-    [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
-  const members = useMemberOptions();
-  const teamScoped = basePath.startsWith("/workspace/team/");
+  const [path, setPath] = useState(() => location.pathname);
   useEffect(() => {
-    const syncKind = () =>
-      setKind(location.pathname.includes("/projects") ? "projects" : "issues");
-    window.addEventListener("popstate", syncKind);
-    return () => window.removeEventListener("popstate", syncKind);
+    const sync = () => setPath(location.pathname);
+    window.addEventListener("popstate", sync);
+    return () => window.removeEventListener("popstate", sync);
   }, []);
-  const applyFields = (v: BrowserView) => {
-    const f = fieldsFromFilters(v.filters);
-    setActive(v.id);
-    setName(v.name);
-    setQuery(f.query);
-    setState(f.state);
-    setPriority(f.priority);
-    setAssignee(f.assignee);
-    setProjectFilter(f.project);
+  const base = team
+    ? `/workspace/team/${team.key.toLowerCase()}/views`
+    : "/workspace/views";
+  const kind: "issue" | "project" = path.includes("/projects")
+    ? "project"
+    : "issue";
+  const creating = path.endsWith("/new");
+  const go = (next: string) => {
+    navigateTo(next);
+    setPath(next);
   };
-  const load = React.useCallback(async () => {
-    if (!orgId) {
-      setSaved([]);
-      return;
-    }
-    try {
-      const rows = await listViews(undefined, teamScoped ? "team" : undefined);
-      const scoped = teamScoped
-        ? rows.filter((v) => v.team?.id === orgId)
-        : rows;
-      setSaved(scoped);
-      setError("");
-      const id = location.pathname.split("/").pop();
-      const found = scoped.find((v) => v.id === id);
-      if (found) {
-        applyFields(found);
-        setEditingId(null);
-        setEditing(false);
-      } else if (
-        id &&
-        id !== "new" &&
-        id !== "issues" &&
-        id !== "projects" &&
-        location.pathname.includes("/views/")
-      )
-        setError("View not found.");
-    } catch (e) {
-      setSaved([]);
-      setError((e as Error).message);
-    }
-  }, [orgId, teamScoped]);
+  if (creating && !favoriteOnly)
+    return (
+      <ViewEditorPage
+        key={`${kind}-${path}`}
+        initialKind={kind}
+        allowKinds={!team}
+        scope={{ team }}
+        projects={projects}
+        actions={actions}
+        onCancel={() =>
+          go(`${base}/${kind === "project" ? "projects" : "issues"}`)
+        }
+        onCreated={(v) => navigateTo(viewPath(v))}
+        breadcrumb={
+          <nav
+            className="flex h-11 min-h-11 flex-none items-center gap-1.5 border-b border-line px-4 text-sm"
+            aria-label="Breadcrumb"
+          >
+            <button
+              type="button"
+              className="rounded px-1 text-muted hover:bg-subtle hover:text-foreground shell-phone:min-h-11"
+              onClick={() =>
+                go(`${base}/${kind === "project" ? "projects" : "issues"}`)
+              }
+            >
+              {team ? `${team.name} views` : "Views"}
+            </button>
+            <ChevronRight size={13} className="text-muted" />
+            <span>New view</span>
+          </nav>
+        }
+      />
+    );
+  return (
+    <ViewsList
+      key={kind}
+      team={team}
+      kind={kind}
+      favoriteOnly={favoriteOnly}
+      revision={revision}
+      onKind={(k) => go(`${base}/${k === "project" ? "projects" : "issues"}`)}
+      onNew={() =>
+        go(`${base}/${kind === "project" ? "projects" : "issues"}/new`)
+      }
+    />
+  );
+}
+
+function ViewsList({
+  team,
+  kind,
+  favoriteOnly,
+  revision,
+  onKind,
+  onNew,
+}: {
+  team?: Team;
+  kind: "issue" | "project";
+  favoriteOnly: boolean;
+  revision: number;
+  onKind: (kind: "issue" | "project") => void;
+  onNew: () => void;
+}) {
+  const meta = useSyncMeta();
+  const [rows, setRows] = useState<ServerView[] | null>(null),
+    [error, setError] = useState("");
+  const [display, setDisplayState] = useState<ListDisplay>(readListDisplay);
+  const setDisplay = (patch: Partial<ListDisplay>) =>
+    setDisplayState((old) => {
+      const next = { ...old, ...patch };
+      try {
+        localStorage.setItem(LIST_DISPLAY_KEY, JSON.stringify(next));
+      } catch {
+        /* the choice lasts for this visit */
+      }
+      return next;
+    });
+  /* Only the latest read lands: switching Tasks/Projects quickly must not let the slower,
+     older answer replace the list of the tab on screen. */
+  const reads = useRef(0);
+  const load = useCallback(() => {
+    const read = ++reads.current;
+    listViews(kind)
+      .then((r) => {
+        if (read !== reads.current) return;
+        setRows(r);
+        setError("");
+      })
+      .catch((e) => {
+        if (read === reads.current) setError((e as Error).message);
+      });
+  }, [kind]);
   useEffect(() => {
     void revision;
-    void load();
+    load();
+    window.addEventListener(VIEWS_CHANGED, load);
+    return () => {
+      reads.current += 1;
+      window.removeEventListener(VIEWS_CHANGED, load);
+    };
   }, [load, revision]);
-  const relevant = saved.filter(
-    (v) => (v.kind === "project" ? "projects" : "issues") === kind,
-  );
-  const shown = favoriteOnly ? relevant.filter((v) => v.favorite) : relevant;
-  const items: (Issue | Project)[] = kind === "issues" ? issues : projects;
-  const statuses = useMemo(
+  const shown = useMemo(
     () =>
-      [
-        ...new Set(
-          items
-            .map((v) =>
-              kind === "issues"
-                ? (v as Issue).state?.name
-                : (v as Project).state,
-            )
-            .filter((v): v is string => !!v),
-        ),
-      ].sort(),
-    [items, kind],
-  );
-  const assignees = useMemo(() => {
-    const byId = new Map<string, string>();
-    for (const m of members) byId.set(m.id, m.name);
-    for (const i of issues) {
-      if (i.assignee?.id && i.assignee.name) {
-        byId.set(i.assignee.id, i.assignee.name);
-      }
-    }
-    return [...byId.entries()]
-      .map(([id, label]) => ({ id, name: label }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [members, issues]);
-  const deferredQuery = React.useDeferredValue(query);
-  const matches = useMemo(() => {
-    const q = deferredQuery.trim().toLowerCase();
-    return items.filter((v) => {
-      if (kind === "issues") {
-        const task = v as Issue;
-        const text = `${task.identifier} ${task.title}`.toLowerCase();
-        if (q && !text.includes(q)) return false;
-        if (state && task.state?.name !== state) return false;
-        if (priority !== "" && String(task.priority) !== priority) return false;
-        if (
-          assignee &&
-          task.assignee?.id !== assignee &&
-          task.assignee?.name !== assignee
-        )
-          return false;
-        if (
-          projectFilter &&
-          task.project?.id !== projectFilter &&
-          task.project?.name !== projectFilter
-        )
-          return false;
-        return true;
-      }
-      const proj = v as Project;
-      if (q && !proj.name.toLowerCase().includes(q)) return false;
-      if (state && proj.state !== state) return false;
-      return true;
-    });
-  }, [items, kind, deferredQuery, state, priority, assignee, projectFilter]);
-  const [resultLimit, setResultLimit] = useState(LIST_RENDER_STEP);
-  const destination = (k: string) => `${basePath}/${k}`;
-  const kindLabel = kind === "issues" ? "tasks" : "projects";
-  const describe = (v: BrowserView) => {
-    const f = fieldsFromFilters(v.filters);
-    const prioLabel =
-      f.priority !== ""
-        ? VIEW_PRIORITY_LABELS[Number(f.priority)] || `P${f.priority}`
-        : "";
-    const assigneeLabel = f.assignee
-      ? assignees.find((a) => a.id === f.assignee)?.name || f.assignee
-      : "";
-    const projectLabel = f.project
-      ? projects.find((p) => p.id === f.project)?.name || f.project
-      : "";
-    return (
-      [f.query, f.state, prioLabel, assigneeLabel, projectLabel]
-        .filter(Boolean)
-        .join(" · ") || `All ${v.kind === "project" ? "projects" : "tasks"}`
-    );
-  };
-  const start = () => {
-    setEditingId(null);
-    setName(kind === "issues" ? "All tasks" : "All projects");
-    setQuery("");
-    setState("");
-    setPriority("");
-    setAssignee("");
-    setProjectFilter("");
-    setEditing(true);
-    setError("");
-    onNavigate(viewName, `${destination(kind)}/new`);
-  };
-  const startEdit = (v: BrowserView) => {
-    applyFields(v);
-    setEditingId(v.id);
-    setEditing(true);
-    setError("");
-  };
-  const removeView = async (v: BrowserView) => {
-    if (busy) return;
-    setBusy(true);
-    try {
-      await deleteView(v.id);
-      setSaved((rows) => rows.filter((x) => x.id !== v.id));
-      if (active === v.id) {
-        setActive("");
-        onNavigate(viewName, destination(kind));
-      }
-      if (editingId === v.id) {
-        setEditingId(null);
-        setEditing(false);
-      }
-      setError("");
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const save = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name.trim() || busy) return;
-    if (
-      relevant.some(
+      (rows || []).filter(
         (v) =>
-          v.id !== editingId &&
-          v.name.toLowerCase() === name.trim().toLowerCase(),
-      )
-    ) {
-      setError("A view with that name already exists.");
-      return;
-    }
-    setBusy(true);
-    try {
-      const viewKind =
-        kind === "issues" ? ("issue" as const) : ("project" as const);
-      const filters = filtersFromFields(viewKind, query, state, {
-        priority,
-        assignee,
-        project: projectFilter,
-      });
-      if (editingId) {
-        const updated = await updateView(editingId, {
-          name: name.trim(),
-          filters,
-        });
-        setSaved((rows) =>
-          rows.map((x) => (x.id === updated.id ? updated : x)),
-        );
-        setActive(updated.id);
-        setEditingId(null);
-        setEditing(false);
-        setError("");
-        history.replaceState({}, "", `${destination(kind)}/${updated.id}`);
-      } else {
-        const created = await createView({
-          name: name.trim(),
-          kind: viewKind,
-          scope: teamScoped ? "team" : "workspace",
-          ...(teamScoped ? { teamId: orgId } : {}),
-          visibility: teamScoped ? "team" : "workspace",
-          filters,
-          display: {},
-        });
-        setSaved((rows) => [...rows, created]);
-        setActive(created.id);
-        setEditing(false);
-        setError("");
-        history.replaceState({}, "", `${destination(kind)}/${created.id}`);
-      }
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const select = (v: BrowserView) => {
-    applyFields(v);
-    setEditingId(null);
-    setEditing(false);
-    onNavigate(
-      viewName,
-      `${destination(v.kind === "project" ? "projects" : "issues")}/${v.id}`,
-    );
-  };
-  const favorite = async (v: BrowserView) => {
-    try {
-      const next = await toggleViewFavorite(v.id);
-      setSaved((rows) =>
-        rows.map((x) => (x.id === v.id ? { ...x, favorite: next } : x)),
-      );
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  };
-  const openProjectItem = (p: Project) => {
-    if (onOpenProject) {
-      onOpenProject(p);
-    } else {
-      onNavigate("Project detail", `/workspace/project/${p.id}`);
-    }
-  };
+          (!team || v.team?.id === team.id) && (!favoriteOnly || v.favorite),
+      ),
+    [rows, team, favoriteOnly],
+  );
+  const sections = useMemo(
+    () =>
+      viewSections(sortViews(shown, display.ordering, display.descending), {
+        team: (id) => meta?.teams.nodes.find((t) => t.id === id)?.name,
+        project: (id) => meta?.projects.nodes.find((p) => p.id === id)?.name,
+      }),
+    [shown, display.ordering, display.descending, meta],
+  );
+  const title = favoriteOnly
+    ? "Favorite views"
+    : team
+      ? `${team.name} views`
+      : "Views";
   return (
     <section
-      className="text-[12px] font-['Inter_Variable',Inter,ui-sans-serif,system-ui,sans-serif] min-h-[calc(100dvh-16px)] min-w-0"
+      className="flex min-h-0 min-w-0 flex-1 flex-col text-sm"
       data-workspace-views-page=""
-      aria-label={favoriteOnly ? "Favorite views" : "Workspace views"}
+      aria-label={title}
     >
       <header
-        className="border-b border-line h-11.25 flex items-center justify-between gap-2 pt-0 pr-4.5 pb-0 pl-4.5"
+        className="flex h-11 min-h-11 flex-none items-center justify-between border-b border-line px-4"
         data-workspace-views-head=""
       >
-        <div className="flex min-w-0 items-center gap-1">
-          <MobileNavTrigger />
-          <h1 className="text-(length:--hoja-title-size) font-(--hoja-title-weight) mt-0 mr-0 mb-0 ml-0 leading-[normal] tracking-normal">
-            {title || (favoriteOnly ? "Favorite views" : "Views")}
-          </h1>
-        </div>
+        <h1 className="m-0 text-(length:--hoja-title-size) font-(--hoja-title-weight)">
+          {title}
+        </h1>
         {!favoriteOnly && (
           <button
-            className="flex gap-1.25 items-center pt-1.25 pr-1.25 pb-1.25 pl-1.25 bg-transparent text-[12px] font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+            className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-sm hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
             type="button"
-            onClick={start}
+            onClick={onNew}
+            data-new-view=""
           >
             <Plus size={15} /> New view
           </button>
         )}
       </header>
-      <nav
-        className="flex gap-1.25 pt-2 pr-2.25 pb-2 pl-2.25 h-11"
-        data-workspace-views-tabs=""
-        aria-label="View type"
-      >
-        <button
-          className="pt-0 pr-2.75 pb-0 pl-2.75 border border-line rounded-[20px] bg-transparent text-[12px] aria-[current=page]:bg-subtle aria-[current=page]:font-medium font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-          type="button"
-          aria-current={kind === "issues" ? "page" : undefined}
-          onClick={() => {
-            setKind("issues");
-            onNavigate(viewName, destination("issues"));
-          }}
-        >
-          Tasks
-        </button>
-        <button
-          className="pt-0 pr-2.75 pb-0 pl-2.75 border border-line rounded-[20px] bg-transparent text-[12px] aria-[current=page]:bg-subtle aria-[current=page]:font-medium font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-          type="button"
-          aria-current={kind === "projects" ? "page" : undefined}
-          onClick={() => {
-            setKind("projects");
-            onNavigate(viewName, destination("projects"));
-          }}
-        >
-          Projects
-        </button>
-      </nav>
-      {editing && (
-        <form
-          className="border grid gap-3 mt-5 mr-auto mb-5 ml-auto pt-4.5 pr-4.5 pb-4.5 pl-4.5 border-line rounded-lg w-[min(550px,calc(100%-30px))]"
-          data-workspace-view-form=""
-          onSubmit={save}
-        >
-          <h2 className="text-[16px] mt-0 mr-0 mb-0 ml-0">
-            {editingId ? "Edit" : "Create"}{" "}
-            {kind === "issues" ? "task" : "project"} view
-          </h2>
-          <label className="grid gap-1.5">
-            View name
-            <input
-              className="w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 border border-line rounded-md bg-panel text-foreground max-md:text-base font-sans placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-              maxLength={80}
-            />
-          </label>
-          <label className="grid gap-1.5">
-            Filter
-            <input
-              className="w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 border border-line rounded-md bg-panel text-foreground max-md:text-base font-sans placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Name or identifier"
-            />
-          </label>
-          <label className="grid gap-1.5">
-            Status
-            <select
-              className="w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 border border-line rounded-md bg-panel text-foreground max-md:text-base font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-              value={state}
-              onChange={(e) => setState(e.target.value)}
-            >
-              <option value="">All statuses</option>
-              {statuses.map((x) => (
-                <option key={x}>{x}</option>
-              ))}
-            </select>
-          </label>
-          {kind === "issues" && (
-            <>
-              <label className="grid gap-1.5">
-                Priority
-                <select
-                  className="w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 border border-line rounded-md bg-panel text-foreground max-md:text-base font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                  value={priority}
-                  onChange={(e) => setPriority(e.target.value)}
-                >
-                  <option value="">All priorities</option>
-                  {VIEW_PRIORITY_LABELS.map((label, idx) => (
-                    <option key={label} value={String(idx)}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="grid gap-1.5">
-                Assignee
-                <select
-                  className="w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 border border-line rounded-md bg-panel text-foreground max-md:text-base font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                  value={assignee}
-                  onChange={(e) => setAssignee(e.target.value)}
-                >
-                  <option value="">All assignees</option>
-                  {assignees.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="grid gap-1.5">
-                Project
-                <select
-                  className="w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 border border-line rounded-md bg-panel text-foreground max-md:text-base font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                  value={projectFilter}
-                  onChange={(e) => setProjectFilter(e.target.value)}
-                >
-                  <option value="">All projects</option>
-                  {projects.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </>
-          )}
-          <div className="flex justify-end gap-2">
-            <button
-              className="pt-1.75 pr-3 pb-1.75 pl-3 rounded-[20px] bg-accent text-panel text-[12px] first:bg-subtle first:text-foreground font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-              type="button"
-              onClick={() => {
-                setEditingId(null);
-                setEditing(false);
-                onNavigate(viewName, destination(kind));
-              }}
-            >
-              Cancel
-            </button>
-            <button
-              className="pt-1.75 pr-3 pb-1.75 pl-3 rounded-[20px] bg-accent text-panel text-[12px] first:bg-subtle first:text-foreground font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-              type="submit"
-              disabled={!name.trim() || busy}
-            >
-              {busy
-                ? editingId
-                  ? "Saving…"
-                  : "Creating…"
-                : editingId
-                  ? "Save view"
-                  : "Create view"}
-            </button>
-          </div>
-          <p className="text-[12px] text-muted">
-            {matches.length} matching loaded {kindLabel}; saved to{" "}
-            {teamScoped ? "this team" : "your workspace"}.
-          </p>
-        </form>
-      )}
+      <div className="flex items-center gap-2 px-4 py-2.5">
+        <ViewKindTabs kind={kind} onChange={onKind} />
+        <ViewsListDisplay
+          ordering={display.ordering}
+          descending={display.descending}
+          columns={display.columns}
+          onOrdering={(ordering) => setDisplay({ ordering })}
+          onDirection={(descending) => setDisplay({ descending })}
+          onColumns={(columns) => setDisplay({ columns })}
+        />
+      </div>
       {error && (
         <p
-          className="text-[12px] text-muted"
+          className="px-4 text-muted"
           role="alert"
           data-workspace-views-error=""
         >
           {error}
         </p>
       )}
-      {shown.length ? (
-        <div
-          className="max-w-185 mt-4 mr-auto mb-4 ml-auto pt-3 pr-3 pb-3 pl-3 max-md:pt-3 max-md:pr-3 max-md:pb-3 max-md:pl-3 shell-phone:pt-3 shell-phone:pr-3 shell-phone:pb-3 shell-phone:pl-3"
-          data-workspace-views-list=""
-        >
-          {shown.map((v) => (
-            <div
-              className="flex justify-between items-center border-b border-line"
-              key={v.id}
-            >
-              <button
-                className="flex gap-2.25 items-center pt-2.75 pr-2.75 pb-2.75 pl-2.75 bg-transparent text-left font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 max-sm:flex-1 max-sm:min-w-0 max-sm:pl-1 max-sm:pr-1"
-                type="button"
-                onClick={() => select(v)}
-              >
-                <Layers3 size={17} className="flex-none" />
-                <span className="grid grid-cols-[minmax(0,1fr)] gap-0.75 min-w-0 wrap-anywhere">
-                  <b>{v.name}</b>
-                  <small className="text-muted">{describe(v)}</small>
-                </span>
-              </button>
-              <div className="flex flex-none items-center gap-1 max-sm:gap-0">
-                <button
-                  className="pt-1.5 pr-2 pb-1.5 pl-2 bg-transparent text-muted hover:text-foreground text-[12px] font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                  type="button"
-                  aria-label={`Edit ${v.name}`}
-                  onClick={() => startEdit(v)}
-                >
-                  Edit
-                </button>
-                <button
-                  className="pt-1.5 pr-2 pb-1.5 pl-2 bg-transparent text-muted hover:text-danger text-[12px] font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                  type="button"
-                  aria-label={`Delete ${v.name}`}
-                  disabled={busy}
-                  onClick={() => void removeView(v)}
-                >
-                  Delete
-                </button>
-                <button
-                  className="flex gap-2.25 items-center pt-2.75 pr-2.75 pb-2.75 pl-2.75 bg-transparent text-left font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                  type="button"
-                  aria-label={`${v.favorite ? "Remove favorite" : "Favorite"} ${v.name}`}
-                  onClick={() => favorite(v)}
-                >
-                  {v.favorite ? "★" : "☆"}
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        !editing && (
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
+        {rows === null && !error ? (
+          <p className="p-6 text-center text-muted" role="status">
+            Loading views…
+          </p>
+        ) : sections.length ? (
+          <ViewsTable
+            sections={sections}
+            ordering={display.ordering}
+            descending={display.descending}
+            columns={display.columns}
+            onOrder={(ordering) =>
+              setDisplay(
+                ordering === display.ordering
+                  ? { descending: !display.descending }
+                  : { ordering, descending: false },
+              )
+            }
+            onOpen={(v) => navigateTo(viewPath(v))}
+            onFavorite={(v) =>
+              void toggleViewFavorite(v.id).catch((e) =>
+                setError((e as Error).message),
+              )
+            }
+            onNew={
+              favoriteOnly
+                ? undefined
+                : (section) => {
+                    /* A section's "+" starts the editor saving to that section. */
+                    const [where, id] = section.key.split(":");
+                    if (where === "project" && id)
+                      return navigateTo(`/workspace/project/${id}/view/new`);
+                    stashViewDraft({
+                      kind,
+                      filters: {},
+                      display: {},
+                      ...(where === "team" && id
+                        ? { teamId: id }
+                        : {
+                            saveTo:
+                              where === "workspace" ? "workspace" : "personal",
+                          }),
+                    });
+                    onNew();
+                  }
+            }
+          />
+        ) : (
           <div
-            className="grid justify-items-start content-center gap-3.5 mt-0 mr-auto mb-0 ml-auto text-muted shell-phone:min-h-[calc(100dvh-170px)] w-[min(365px,calc(100%-32px))] min-h-[calc(100dvh-170px)]"
+            className="mx-auto grid min-h-[calc(100dvh-200px)] w-[min(365px,calc(100%-32px))] content-center justify-items-start gap-3.5 text-muted"
             data-workspace-views-empty=""
             role="status"
           >
             <Layers3 size={44} strokeWidth={1} />
-            <h2 className="mt-0 mr-0 mb-0 ml-0 text-[16px] font-semibold text-foreground">
-              {favoriteOnly ? "Favorite views" : "Views"}
+            <h2 className="m-0 text-[16px] font-semibold text-foreground">
+              {title}
             </h2>
-            <p className="leading-normal text-[13px] mt-0 mr-0 mb-2 ml-0">
+            <p className="m-0 mb-2 text-[13px] leading-normal">
               {favoriteOnly
-                ? "Favorite a saved view to keep it here."
-                : `Create views using filters to see only the ${kindLabel} you want. Views are saved to ${teamScoped ? "this team" : "your workspace"} and can be shared.`}
+                ? "Star a view to keep it here and in the sidebar."
+                : `Views are saved filters over ${kind === "project" ? "projects" : "tasks"}. Keep one to yourself or share it with ${team ? "the team" : "the workspace"}.`}
             </p>
             {!favoriteOnly && (
               <button
-                className="pt-1.75 pr-3 pb-1.75 pl-3 rounded-[20px] bg-accent text-panel text-[12px] font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                className="rounded-full bg-accent px-3 py-1.5 text-[12px] text-panel focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11"
                 type="button"
-                onClick={start}
+                onClick={onNew}
               >
                 Create new view
               </button>
             )}
           </div>
-        )
-      )}
-      {active && (
-        <div
-          className="max-w-185 mt-4 mr-auto mb-4 ml-auto pt-3 pr-3 pb-3 pl-3 grid gap-1.25 max-md:pt-3 max-md:pr-3 max-md:pb-3 max-md:pl-3 shell-phone:pt-3 shell-phone:pr-3 shell-phone:pb-3 shell-phone:pl-3"
-          data-workspace-views-results=""
-        >
-          <h2 className="text-[13px]">
-            {matches.length} matching loaded {kindLabel}
-          </h2>
-          {kind === "issues"
-            ? matches.slice(0, resultLimit).map((x) => {
-                const task = x as Issue;
-                const prioText =
-                  task.priorityLabel ||
-                  VIEW_PRIORITY_LABELS[task.priority] ||
-                  "No priority";
-                return (
-                  <button
-                    className="flex justify-between gap-2.25 items-center pt-2.75 pr-2.75 pb-2.75 pl-2.75 bg-transparent text-left border-b border-line font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 max-sm:flex-wrap max-sm:gap-y-1 max-sm:pl-1 max-sm:pr-1"
-                    type="button"
-                    key={task.id}
-                    onClick={() => onSelect(task)}
-                  >
-                    <span className="flex items-center gap-2 min-w-0 max-sm:basis-full max-sm:items-start">
-                      {task.state && <StatusIcon state={task.state} />}
-                      <span className="text-muted flex-none">
-                        {task.identifier}
-                      </span>
-                      <span className="truncate max-sm:whitespace-normal max-sm:line-clamp-2 max-sm:wrap-break-word">
-                        {task.title}
-                      </span>
-                    </span>
-                    <span className="flex items-center gap-2 flex-none text-muted text-[11px] max-sm:pl-6">
-                      {task.state?.name && <span>{task.state.name}</span>}
-                      <span>{prioText}</span>
-                      {task.assignee?.name && <span>{task.assignee.name}</span>}
-                    </span>
-                  </button>
-                );
-              })
-            : matches.slice(0, resultLimit).map((x) => {
-                const proj = x as Project;
-                return (
-                  <button
-                    className="flex justify-between gap-2.25 items-center pt-2.75 pr-2.75 pb-2.75 pl-2.75 bg-transparent text-left border-b border-line font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                    type="button"
-                    key={proj.id}
-                    onClick={() => openProjectItem(proj)}
-                  >
-                    <span className="font-medium">{proj.name}</span>
-                    {proj.state && (
-                      <span className="text-muted text-[11px]">
-                        {proj.state}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-          {matches.length > resultLimit && (
-            <button
-              className="flex gap-2.25 items-center pt-2.75 pr-2.75 pb-2.75 pl-2.75 bg-transparent text-left border-b border-line font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-              type="button"
-              onClick={() => setResultLimit((l) => l + LIST_RENDER_STEP)}
-            >
-              Show {Math.min(LIST_RENDER_STEP, matches.length - resultLimit)}{" "}
-              more of {matches.length - resultLimit} not shown
-            </button>
-          )}
-        </div>
-      )}
+        )}
+      </div>
     </section>
+  );
+}
+
+/* --------------------------------------------------------- project views */
+
+/** A project's views: the list of views saved for it, the editor at `…/view/new` (Personal or
+ * shared with the workspace), and each view's page. */
+function ProjectViewsPage({
+  project: given,
+  onBack,
+  actions,
+  projects,
+  revision,
+}: {
+  project: Project;
+  onBack: () => void;
+  actions: IssueActions;
+  projects: Project[];
+  revision: number;
+}) {
+  const project = useProject(given);
+  const [path, setPath] = useState(() => location.pathname);
+  useEffect(() => {
+    const sync = () => setPath(location.pathname);
+    window.addEventListener("popstate", sync);
+    return () => window.removeEventListener("popstate", sync);
+  }, []);
+  const ident = decodeURIComponent(path.split("/view/")[1] || "").replace(
+    /\/$/,
+    "",
+  );
+  const base = `/workspace/project/${project.id}/view`;
+  const go = (next: string) => {
+    navigateTo(next);
+    setPath(next);
+  };
+  const crumb = (label?: string) => (
+    <nav
+      className="flex h-11 min-h-11 flex-none items-center gap-1.5 border-b border-line px-4 text-sm"
+      aria-label="Breadcrumb"
+      data-project-reference-head=""
+    >
+      <button
+        type="button"
+        className="rounded px-1 text-muted hover:bg-subtle hover:text-foreground shell-phone:min-h-11"
+        onClick={onBack}
+      >
+        {project.name}
+      </button>
+      <ChevronRight size={13} className="text-muted" />
+      <button
+        type="button"
+        className="rounded px-1 text-muted hover:bg-subtle hover:text-foreground shell-phone:min-h-11"
+        onClick={() => go(base)}
+      >
+        Views
+      </button>
+      {label && (
+        <>
+          <ChevronRight size={13} className="text-muted" />
+          <span className="truncate">{label}</span>
+        </>
+      )}
+    </nav>
+  );
+  let body: React.ReactNode;
+  if (ident === "new")
+    body = (
+      <ViewEditorPage
+        key="new"
+        initialKind="issue"
+        allowKinds={false}
+        scope={{ project }}
+        projects={projects}
+        actions={actions}
+        onCancel={() => go(base)}
+        onCreated={(v) => go(`${base}/${v.slugId || v.id}`)}
+        breadcrumb={crumb("New view")}
+      />
+    );
+  else if (ident)
+    body = (
+      <>
+        {crumb()}
+        <SavedViewPage
+          key={ident}
+          ident={ident}
+          projects={projects}
+          actions={actions}
+          revision={revision}
+          onDeleted={() => go(base)}
+        />
+      </>
+    );
+  else
+    body = (
+      <>
+        {crumb()}
+        <ProjectViewsList
+          project={project}
+          revision={revision}
+          onOpen={(v) => go(`${base}/${v.slugId || v.id}`)}
+          onNew={() => go(`${base}/new`)}
+        />
+      </>
+    );
+  return (
+    <section
+      className="flex min-h-[calc(100dvh-16px)] min-w-0 flex-col"
+      data-project-local-views=""
+      data-project-reference=""
+    >
+      {body}
+    </section>
+  );
+}
+
+function ProjectViewsList({
+  project,
+  revision,
+  onOpen,
+  onNew,
+}: {
+  project: Project;
+  revision: number;
+  onOpen: (view: ServerView) => void;
+  onNew: () => void;
+}) {
+  const [rows, setRows] = useState<ServerView[] | null>(null),
+    [error, setError] = useState("");
+  useEffect(() => {
+    let live = true;
+    const load = () =>
+      listViews(undefined, "project")
+        .then((r) => {
+          if (live) setRows(r.filter((v) => v.project?.id === project.id));
+        })
+        .catch((e) => live && setError((e as Error).message));
+    void revision;
+    void load();
+    window.addEventListener(VIEWS_CHANGED, load);
+    return () => {
+      live = false;
+      window.removeEventListener(VIEWS_CHANGED, load);
+    };
+  }, [project.id, revision]);
+  const [order, setOrder] = useState<{ by: ViewOrdering; descending: boolean }>(
+    {
+      by: "name",
+      descending: false,
+    },
+  );
+  const sections = useMemo(
+    () =>
+      viewSections(sortViews(rows || [], order.by, order.descending), {
+        team: () => undefined,
+        project: () => "Shared with the workspace",
+      }),
+    [rows, order],
+  );
+  return (
+    <div
+      className="grid content-start gap-3 p-4"
+      data-project-local-view-body=""
+    >
+      <div className="flex items-center justify-between gap-2">
+        <p className="m-0 text-muted">
+          Views saved for this project. Personal views are yours; shared views
+          are visible to everyone who can see the project.
+        </p>
+        <button
+          type="button"
+          className="inline-flex flex-none items-center gap-1.5 rounded-md border border-line bg-panel px-2.5 py-1 text-sm hover:bg-subtle shell-phone:min-h-11"
+          onClick={onNew}
+        >
+          <Plus size={14} /> New view
+        </button>
+      </div>
+      {error && (
+        <p className="text-muted" role="alert">
+          {error}
+        </p>
+      )}
+      {rows === null && !error ? (
+        <p className="text-muted" role="status">
+          Loading views…
+        </p>
+      ) : sections.length ? (
+        <ViewsTable
+          sections={sections}
+          ordering={order.by}
+          descending={order.descending}
+          columns={["owner", "updated"]}
+          onOrder={(by) =>
+            setOrder((old) =>
+              old.by === by
+                ? { by, descending: !old.descending }
+                : { by, descending: false },
+            )
+          }
+          onOpen={onOpen}
+          onFavorite={(v) =>
+            void toggleViewFavorite(v.id).catch((e) =>
+              setError((e as Error).message),
+            )
+          }
+        />
+      ) : (
+        <p className="text-muted" role="status">
+          No project views saved yet.
+        </p>
+      )}
+    </div>
   );
 }

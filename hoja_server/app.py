@@ -3671,6 +3671,36 @@ def create_app(
             headers=dict(uploads.BLOB_HEADERS),
         )
 
+    async def view_export_csv(request: Request):
+        """A task view's rows as CSV, run for the caller exactly as View.issues runs."""
+        uid, org, _identity_id, _browser_session = _auth(request)
+        if not uid:
+            return JSONResponse({"error": "Authentication required"}, status_code=401)
+        from hoja_server import views_api
+        from hoja_server.views import ViewError
+
+        try:
+            result = views_api.export_csv(store, org, uid, request.path_params.get("view_id", ""))
+        except ViewError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        if result is None:
+            return JSONResponse({"error": "Not found"}, status_code=404)
+        # A slug keeps the view name's letters (``привет-1a2b3c4d``): the plain filename
+        # is an ASCII fallback and ``filename*`` carries the real one (RFC 6266), since a
+        # header value must be Latin-1.
+        from urllib.parse import quote
+
+        filename = result["filename"]
+        ascii_name = "".join(c if c.isascii() and (c.isalnum() or c in "-_.") else "_"
+                             for c in filename)
+        return Response(result["csv"], media_type="text/csv; charset=utf-8", headers={
+            "Content-Disposition": f'attachment; filename="{ascii_name}"; '
+                                   f"filename*=UTF-8''{quote(filename, safe='')}",
+            "Cache-Control": "no-store",
+            "X-Total-Count": str(result["total"]),
+            "X-Export-Limit": str(result["limit"]),
+        })
+
     def _sync_meta(request: Request, uid: str, org: str, identity_id, is_browser: bool) -> dict:
         context = {"request": request, "store": store, "cache": {}, "writer": writer,
                    "org_id": org, "user_id": uid, "identity_id": identity_id,
@@ -4121,6 +4151,7 @@ def create_app(
             Route("/api/signup", signup_endpoint, methods=["GET", "POST"]),
             Route("/api/uploads", upload_create, methods=["POST"]),
             Route("/api/uploads/{file_id}", upload_serve, methods=["GET"]),
+            Route("/api/views/{view_id}/export.csv", view_export_csv, methods=["GET"]),
             Route("/sync/bootstrap", sync_bootstrap, methods=["GET"]),
             Route("/sync/delta", sync_delta, methods=["GET"]),
             Route("/health", health, methods=["GET"]),
