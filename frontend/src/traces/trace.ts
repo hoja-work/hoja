@@ -104,7 +104,7 @@ export function isTraceAttachment(a: {
   return (
     json &&
     (/\.trace\.json$/i.test(a.title || "") ||
-      /^Claude Code trace\b|^Codex trace\b/.test(a.subtitle || ""))
+      /^(Claude Code|Codex|Antigravity) trace\b/.test(a.subtitle || ""))
   );
 }
 

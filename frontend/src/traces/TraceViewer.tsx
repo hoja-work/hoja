@@ -34,10 +34,11 @@ import { storedApiToken } from "../main";
 
 type Tab = "timeline" | "tools" | "tasks";
 
-/* The agents whose plugins upload traces (hoja-claude-plugin, hoja-codex-plugin). */
+/* The agents whose plugins upload traces (hoja-claude-plugin, hoja-codex-plugin, hoja-antigravity-plugin). */
 const HOST_NAMES: Record<string, string> = {
   "claude-code": "Claude Code",
   codex: "Codex",
+  antigravity: "Antigravity",
 };
 
 const BAR: Record<TraceSpan["kind"], string> = {
