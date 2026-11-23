@@ -13,7 +13,6 @@ import openai
 from ariadne import graphql
 from fastmcp.client.transports import StreamableHttpTransport
 from google_workspace.mcp_server import PRINCIPAL_HEADER
-from graphql import GraphQLError, OperationDefinitionNode, OperationType, parse
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext, ToolOutput
 from pydantic_ai.exceptions import UnexpectedModelBehavior
@@ -31,6 +30,7 @@ from hoja_server.agent_threads import _title_from
 from hoja_server.db import model_provider
 from hoja_server.denials import DENY_HINT, READ_ONLY_HINT
 from hoja_server.model_providers import validate_model_base_url
+from hoja_server.readonly import read_only_violation
 from hoja_server.secrets_box import decrypt_secret
 
 INSTRUCTIONS = """You are the Hoja workspace agent for Clover. Hoja is a wire-compatible issue tracker.
@@ -153,20 +153,6 @@ def connector_toolset(binding: ConnectorBinding) -> MCPToolset:
         headers={PRINCIPAL_HEADER: binding.principal},
     )
     return MCPToolset(transport, id="google-workspace")
-
-
-def read_only_violation(query: str, access: str) -> bool:
-    """True when a read-only credential submits any operation other than a query."""
-    if access != "read":
-        return False
-    try:
-        document = parse(query)
-    except GraphQLError:
-        return False  # syntax errors are reported by graphql() without executing anything
-    return any(
-        isinstance(definition, OperationDefinitionNode) and definition.operation != OperationType.QUERY
-        for definition in document.definitions
-    )
 
 
 async def graphql_run(schema, query: str, variables: dict, context: dict):
