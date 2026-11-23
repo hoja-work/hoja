@@ -52,6 +52,8 @@ type Boot = {
   projectId?: string;
 };
 
+// Fields of the account step whose message renders under the field itself.
+const ACCOUNT_FIELDS = ["name", "email", "password"];
 const memory = new Map<string, string>();
 const fallbackStorage = {
   getItem: (key: string) => memory.get(key) ?? null,
@@ -126,6 +128,7 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
   const [pendingCount, setPendingCount] = useState(0);
   const [copied, setCopied] = useState<string | null>(null);
   const headingRef = useRef<HTMLHeadingElement | null>(null);
+  const stepListRef = useRef<HTMLOListElement | null>(null);
   const busyRef = useRef(false);
   const addressTouched = useRef(
     Boolean(
@@ -250,6 +253,11 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
 
   useEffect(() => {
     headingRef.current?.focus();
+    // On phones the steps are a sideways strip: keep the current one visible.
+    const list = stepListRef.current;
+    const current = list?.querySelector<HTMLElement>('[aria-current="step"]');
+    if (list && current && list.scrollWidth > list.clientWidth)
+      list.scrollLeft = current.offsetLeft - list.offsetLeft - 8;
   }, [step]);
 
   useEffect(() => {
@@ -552,6 +560,20 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
     else adapter.openWorkspace();
   };
 
+  // The account step shows each message under the field it is about, so on a phone the
+  // message sits next to the focused input instead of two fields away (under the keyboard).
+  const accountFieldError = (field: string) =>
+    fieldError?.field === field ? (
+      <p
+        className="mt-2 mx-0 mb-0 text-danger text-[12px] shell-phone:text-[13px] pointer-coarse:text-[13px]"
+        data-fidelity-state="setup-field-error"
+        id={`setup-${field}-error`}
+        role="alert"
+      >
+        {fieldError.message}
+      </p>
+    ) : null;
+
   const fieldProps = (field: string) => {
     const invalid = fieldError?.field === field;
     return {
@@ -579,7 +601,7 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
             continue.
           </p>
           <a
-            className="inline-flex items-center justify-center gap-1.75 rounded-lg bg-accent text-white py-2.25 px-3.5 font-[650] shadow-[0_1px_2px_#0002] [&:hover]:filter-[brightness(1.08)] w-full"
+            className="inline-flex items-center justify-center gap-1.75 rounded-lg bg-accent text-white py-2.25 px-3.5 font-[650] shadow-[0_1px_2px_#0002] [&:hover]:filter-[brightness(1.08)] w-full min-h-11"
             data-control-primary=""
             href="/login"
           >
@@ -620,7 +642,10 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
           >
             {position.label}
           </p>
-          <ol className="grid gap-0.5 m-0 p-0 list-none [@media(max-width:_760px)]:flex [@media(max-width:_760px)]:gap-1.5 [@media(max-width:_760px)]:overflow-x-auto [@media(max-width:_760px)]:pb-1 [@media(max-width:_760px)]:scrollbar-thin">
+          <ol
+            ref={stepListRef}
+            className="grid gap-0.5 m-0 p-0 list-none [@media(max-width:_760px)]:flex [@media(max-width:_760px)]:gap-1.5 [@media(max-width:_760px)]:overflow-x-auto [@media(max-width:_760px)]:pb-1 [@media(max-width:_760px)]:scrollbar-thin"
+          >
             {steps.map((id, index) => {
               const state =
                 id === step
@@ -654,7 +679,7 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
                     </button>
                   ) : (
                     <span
-                      className="flex items-center gap-2.5 w-full min-h-8.5 py-1 px-1.5 border-0 bg-transparent text-muted text-[12px] text-left in-data-[fidelity-state~=is-current]:text-foreground in-data-[fidelity-state~=is-current]:font-[650] in-data-[fidelity-state~=is-skipped]:opacity-65 [@media(max-width:_760px)]:w-auto [@media(max-width:_760px)]:min-w-max [@media(max-width:_760px)]:pt-1 [@media(max-width:_760px)]:pr-2 [@media(max-width:_760px)]:pb-1 [@media(max-width:_760px)]:pl-1 [@media(max-width:_760px)]:border [@media(max-width:_760px)]:border-solid [@media(max-width:_760px)]:border-line [@media(max-width:_760px)]:in-data-[fidelity-state~=is-current]:bg-accent-soft"
+                      className="flex items-center gap-2.5 w-full min-h-8.5 py-1 px-1.5 border-0 bg-transparent text-muted text-[12px] text-left in-data-[fidelity-state~=is-current]:text-foreground in-data-[fidelity-state~=is-current]:font-[650] in-data-[fidelity-state~=is-skipped]:opacity-65 [@media(max-width:_760px)]:w-auto [@media(max-width:_760px)]:min-w-max [@media(max-width:_760px)]:pt-1 [@media(max-width:_760px)]:pr-2 [@media(max-width:_760px)]:pb-1 [@media(max-width:_760px)]:pl-1 [@media(max-width:_760px)]:border [@media(max-width:_760px)]:border-solid [@media(max-width:_760px)]:border-line [@media(max-width:_760px)]:in-data-[fidelity-state~=is-current]:bg-accent-soft shell-phone:min-h-11 pointer-coarse:min-h-11"
                       aria-current={state === "current" ? "step" : undefined}
                     >
                       <span
@@ -698,7 +723,7 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
               {STEP_TITLES[step]}
             </p>
             <h1
-              className="mt-0 mx-0 mb-2 text-[clamp(24px,3vw,30px)] leading-[1.15] tracking-[-0.04em] focus:[outline:none] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-4"
+              className="mt-0 mx-0 mb-2 text-[clamp(24px,3vw,30px)] leading-[1.15] tracking-[-0.04em] focus:[outline:none] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-4 pointer-coarse:focus-visible:outline-none"
               ref={headingRef}
               tabIndex={-1}
             >
@@ -746,7 +771,7 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
                   {status?.googleSignIn && (
                     <>
                       <a
-                        className="mt-4.5 inline-flex items-center justify-center gap-1.75 rounded-lg bg-accent text-white py-2.25 px-3.5 font-[650] shadow-[0_1px_2px_#0002] [&:hover]:filter-[brightness(1.08)] w-full"
+                        className="mt-4.5 inline-flex items-center justify-center gap-1.75 rounded-lg bg-accent text-white py-2.25 px-3.5 font-[650] shadow-[0_1px_2px_#0002] [&:hover]:filter-[brightness(1.08)] w-full min-h-11"
                         data-control-primary=""
                         href={status.googleSignIn}
                         onClick={() =>
@@ -777,7 +802,7 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
                   >
                     Your name
                     <input
-                      className="block w-full min-h-10.5 mt-1.75 py-2.25 px-2.75 border border-solid border-line rounded-none bg-bg text-foreground [font:inherit] focus:outline-solid focus:outline-2 focus:outline-accent focus:outline-offset-2 aria-invalid:border-danger shell-phone:min-h-11 pointer-coarse:min-h-11"
+                      className="block w-full min-h-10.5 mt-1.75 py-2.25 px-2.75 border border-solid border-line rounded-none bg-bg text-foreground text-sm font-normal focus:outline-solid focus:outline-2 focus:outline-accent focus:outline-offset-2 aria-invalid:border-danger shell-phone:min-h-11 pointer-coarse:min-h-11"
                       id="setup-name"
                       autoComplete="name"
                       required
@@ -790,13 +815,14 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
                       {...fieldProps("name")}
                     />
                   </label>
+                  {accountFieldError("name")}
                   <label
                     className="block mt-4 text-[12px] font-[650]"
                     htmlFor="setup-email"
                   >
                     Work email
                     <input
-                      className="block w-full min-h-10.5 mt-1.75 py-2.25 px-2.75 border border-solid border-line rounded-none bg-bg text-foreground [font:inherit] focus:outline-solid focus:outline-2 focus:outline-accent focus:outline-offset-2 aria-invalid:border-danger shell-phone:min-h-11 pointer-coarse:min-h-11"
+                      className="block w-full min-h-10.5 mt-1.75 py-2.25 px-2.75 border border-solid border-line rounded-none bg-bg text-foreground text-sm font-normal focus:outline-solid focus:outline-2 focus:outline-accent focus:outline-offset-2 aria-invalid:border-danger shell-phone:min-h-11 pointer-coarse:min-h-11"
                       id="setup-email"
                       type="email"
                       autoComplete="email"
@@ -810,6 +836,7 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
                       {...fieldProps("email")}
                     />
                   </label>
+                  {accountFieldError("email")}
                   {status?.ownerBound && (
                     <p
                       className="mt-2.5 mx-0 mb-0 text-muted text-[11.5px] leading-[1.55]"
@@ -826,7 +853,7 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
                   >
                     Create a password
                     <input
-                      className="block w-full min-h-10.5 mt-1.75 py-2.25 px-2.75 border border-solid border-line rounded-none bg-bg text-foreground [font:inherit] focus:outline-solid focus:outline-2 focus:outline-accent focus:outline-offset-2 aria-invalid:border-danger shell-phone:min-h-11 pointer-coarse:min-h-11"
+                      className="block w-full min-h-10.5 mt-1.75 py-2.25 px-2.75 border border-solid border-line rounded-none bg-bg text-foreground text-sm font-normal focus:outline-solid focus:outline-2 focus:outline-accent focus:outline-offset-2 aria-invalid:border-danger shell-phone:min-h-11 pointer-coarse:min-h-11"
                       id="setup-password"
                       type="password"
                       autoComplete="new-password"
@@ -841,6 +868,7 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
                       {...fieldProps("password")}
                     />
                   </label>
+                  {accountFieldError("password")}
                   <p
                     className="mt-2.5 mx-0 mb-0 text-muted text-[11.5px] leading-[1.55]"
                     data-fidelity-state="setup-hint"
@@ -849,16 +877,9 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
                     Twelve characters or more. The browser session itself is an
                     HttpOnly cookie.
                   </p>
-                  {fieldError && (
-                    <p
-                      className="mt-2 mx-0 mb-0 text-danger text-[12px]"
-                      data-fidelity-state="setup-field-error"
-                      id={`setup-${fieldError.field}-error`}
-                      role="alert"
-                    >
-                      {fieldError.message}
-                    </p>
-                  )}
+                  {fieldError &&
+                    !ACCOUNT_FIELDS.includes(fieldError.field) &&
+                    accountFieldError(fieldError.field)}
                   <button
                     type="submit"
                     className="mt-4.5 inline-flex items-center justify-center gap-1.75 rounded-lg bg-accent text-white py-2.25 px-3.5 font-[650] shadow-none [&:hover]:filter-[brightness(1.08)] w-full min-h-11 [transition:background-color_.15s_ease,color_.15s_ease,transform_.15s_ease] tracking-[.01em] [&:hover:not(:disabled)]:bg-[color-mix(in_srgb,var(--accent)_84%,var(--text))] [&:hover:not(:disabled)]:filter-none [&:active:not(:disabled)]:transform-[translateY(1px)] disabled:cursor-wait disabled:opacity-65 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
@@ -869,7 +890,7 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
                   </button>
                   {status?.googleSignIn && (
                     <a
-                      className="mt-3.5 mx-auto mb-0 block bg-transparent text-accent text-[12px]"
+                      className="mt-3.5 mx-auto mb-0 block bg-transparent text-accent text-[12px] shell-phone:flex shell-phone:min-h-11 shell-phone:items-center shell-phone:justify-center pointer-coarse:flex pointer-coarse:min-h-11 pointer-coarse:items-center pointer-coarse:justify-center"
                       href="/login"
                     >
                       I already have an account
@@ -902,7 +923,7 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
                   >
                     <button
                       type="button"
-                      className="min-h-10.5 rounded-none [@media(max-width:_760px)]:w-full [@media(max-width:_760px)]:m-0 [&:hover]:bg-subtle flex items-center gap-1.75 border border-solid border-line bg-panel py-2 px-2.75 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                      className="min-h-10.5 rounded-none [@media(max-width:_760px)]:w-full [@media(max-width:_760px)]:m-0 [&:hover]:bg-subtle flex items-center [@media(max-width:_760px)]:justify-center gap-1.75 border border-solid border-line bg-panel py-2 px-2.75 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
                       data-control-outline=""
                       onClick={back}
                     >
@@ -926,7 +947,7 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
                   >
                     Workspace name
                     <input
-                      className="block w-full min-h-10.5 mt-1.75 py-2.25 px-2.75 border border-solid border-line rounded-none bg-bg text-foreground [font:inherit] focus:outline-solid focus:outline-2 focus:outline-accent focus:outline-offset-2 aria-invalid:border-danger shell-phone:min-h-11 pointer-coarse:min-h-11"
+                      className="block w-full min-h-10.5 mt-1.75 py-2.25 px-2.75 border border-solid border-line rounded-none bg-bg text-foreground text-sm font-normal focus:outline-solid focus:outline-2 focus:outline-accent focus:outline-offset-2 aria-invalid:border-danger shell-phone:min-h-11 pointer-coarse:min-h-11"
                       id="setup-workspace-name"
                       required
                       value={draft.workspaceName}
@@ -967,7 +988,7 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
                       data-setup-address=""
                     >
                       <input
-                        className="block w-full min-h-10.5 mt-1.75 py-2.25 px-2.75 border-0 rounded-none bg-transparent text-foreground [font:inherit] focus:[outline:none] focus:outline-offset-2 aria-invalid:border-danger m-0 shell-phone:min-h-11 pointer-coarse:min-h-11"
+                        className="block w-full min-h-10.5 py-2.25 px-2.75 border-0 rounded-none bg-transparent text-foreground text-sm font-normal focus:[outline:none] focus:outline-offset-2 aria-invalid:border-danger m-0 shell-phone:min-h-11 pointer-coarse:min-h-11"
                         id="setup-workspace-address"
                         required
                         autoCapitalize="none"
@@ -1018,7 +1039,7 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
                   >
                     <button
                       type="button"
-                      className="min-h-10.5 rounded-none [@media(max-width:_760px)]:w-full [@media(max-width:_760px)]:m-0 [&:hover]:bg-subtle flex items-center gap-1.75 border border-solid border-line bg-panel py-2 px-2.75 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                      className="min-h-10.5 rounded-none [@media(max-width:_760px)]:w-full [@media(max-width:_760px)]:m-0 [&:hover]:bg-subtle flex items-center [@media(max-width:_760px)]:justify-center gap-1.75 border border-solid border-line bg-panel py-2 px-2.75 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
                       data-control-outline=""
                       onClick={back}
                     >
@@ -1060,7 +1081,7 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
                   >
                     <button
                       type="button"
-                      className="min-h-10.5 rounded-none [@media(max-width:_760px)]:w-full [@media(max-width:_760px)]:m-0 [&:hover]:bg-subtle flex items-center gap-1.75 border border-solid border-line bg-panel py-2 px-2.75 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                      className="min-h-10.5 rounded-none [@media(max-width:_760px)]:w-full [@media(max-width:_760px)]:m-0 [&:hover]:bg-subtle flex items-center [@media(max-width:_760px)]:justify-center gap-1.75 border border-solid border-line bg-panel py-2 px-2.75 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
                       data-control-outline=""
                       onClick={back}
                     >
@@ -1084,7 +1105,7 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
                   >
                     Team name
                     <input
-                      className="block w-full min-h-10.5 mt-1.75 py-2.25 px-2.75 border border-solid border-line rounded-none bg-bg text-foreground [font:inherit] focus:outline-solid focus:outline-2 focus:outline-accent focus:outline-offset-2 aria-invalid:border-danger shell-phone:min-h-11 pointer-coarse:min-h-11"
+                      className="block w-full min-h-10.5 mt-1.75 py-2.25 px-2.75 border border-solid border-line rounded-none bg-bg text-foreground text-sm font-normal focus:outline-solid focus:outline-2 focus:outline-accent focus:outline-offset-2 aria-invalid:border-danger shell-phone:min-h-11 pointer-coarse:min-h-11"
                       id="setup-team-name"
                       required
                       value={draft.teamName}
@@ -1111,7 +1132,7 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
                   >
                     Team key
                     <input
-                      className="block w-full min-h-10.5 mt-1.75 py-2.25 px-2.75 border border-solid border-line rounded-none bg-bg text-foreground [font:inherit] focus:outline-solid focus:outline-2 focus:outline-accent focus:outline-offset-2 aria-invalid:border-danger shell-phone:min-h-11 pointer-coarse:min-h-11"
+                      className="block w-full min-h-10.5 mt-1.75 py-2.25 px-2.75 border border-solid border-line rounded-none bg-bg text-foreground text-sm font-normal focus:outline-solid focus:outline-2 focus:outline-accent focus:outline-offset-2 aria-invalid:border-danger shell-phone:min-h-11 pointer-coarse:min-h-11"
                       id="setup-team-key"
                       required
                       maxLength={8}
@@ -1165,7 +1186,7 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
                   >
                     <button
                       type="button"
-                      className="min-h-10.5 rounded-none [@media(max-width:_760px)]:w-full [@media(max-width:_760px)]:m-0 [&:hover]:bg-subtle flex items-center gap-1.75 border border-solid border-line bg-panel py-2 px-2.75 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                      className="min-h-10.5 rounded-none [@media(max-width:_760px)]:w-full [@media(max-width:_760px)]:m-0 [&:hover]:bg-subtle flex items-center [@media(max-width:_760px)]:justify-center gap-1.75 border border-solid border-line bg-panel py-2 px-2.75 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
                       data-control-outline=""
                       onClick={back}
                     >
@@ -1209,7 +1230,7 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
                     >
                       Project name
                       <input
-                        className="block w-full min-h-10.5 mt-1.75 py-2.25 px-2.75 border border-solid border-line rounded-none bg-bg text-foreground [font:inherit] focus:outline-solid focus:outline-2 focus:outline-accent focus:outline-offset-2 aria-invalid:border-danger shell-phone:min-h-11 pointer-coarse:min-h-11"
+                        className="block w-full min-h-10.5 mt-1.75 py-2.25 px-2.75 border border-solid border-line rounded-none bg-bg text-foreground text-sm font-normal focus:outline-solid focus:outline-2 focus:outline-accent focus:outline-offset-2 aria-invalid:border-danger shell-phone:min-h-11 pointer-coarse:min-h-11"
                         id="setup-project-name"
                         value={draft.projectName}
                         onChange={(event) =>
@@ -1246,7 +1267,7 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
                 >
                   <button
                     type="button"
-                    className="min-h-10.5 rounded-none [@media(max-width:_760px)]:w-full [@media(max-width:_760px)]:m-0 [&:hover]:bg-subtle flex items-center gap-1.75 border border-solid border-line bg-panel py-2 px-2.75 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                    className="min-h-10.5 rounded-none [@media(max-width:_760px)]:w-full [@media(max-width:_760px)]:m-0 [&:hover]:bg-subtle flex items-center [@media(max-width:_760px)]:justify-center gap-1.75 border border-solid border-line bg-panel py-2 px-2.75 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
                     data-control-outline=""
                     onClick={back}
                   >
@@ -1306,12 +1327,12 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
                         single-use link yourself.
                       </p>
                       <span
-                        className="flex items-stretch mt-1.75 border border-solid border-line bg-bg focus-within:outline-solid focus-within:outline-2 focus-within:outline-accent focus-within:outline-offset-2"
+                        className="flex items-stretch mt-1.75 border border-solid border-line bg-bg focus-within:outline-solid focus-within:outline-2 focus-within:outline-accent focus-within:outline-offset-2 max-sm:flex-col"
                         data-fidelity-state="setup-address"
                         data-setup-address=""
                       >
                         <input
-                          className="block w-full min-h-10.5 mt-1.75 py-2.25 px-2.75 border-0 rounded-none bg-transparent text-foreground [font:inherit] focus:[outline:none] focus:outline-offset-2 aria-invalid:border-danger m-0 shell-phone:min-h-11 pointer-coarse:min-h-11"
+                          className="block w-full min-h-10.5 py-2.25 px-2.75 border-0 rounded-none bg-transparent text-foreground text-sm font-normal focus:[outline:none] focus:outline-offset-2 aria-invalid:border-danger m-0 shell-phone:min-h-11 pointer-coarse:min-h-11"
                           aria-label="Invite link"
                           readOnly
                           value={result.link}
@@ -1319,7 +1340,7 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
                         />
                         <button
                           type="button"
-                          className="flex items-center py-0 px-2.75 border-l border-l-line text-muted text-[12px] whitespace-nowrap min-h-10.5 rounded-none [&:hover]:bg-subtle gap-1.75 border border-solid border-line bg-panel shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                          className="flex items-center py-0 px-2.75 border-l border-l-line text-muted text-[12px] whitespace-nowrap min-h-10.5 rounded-none [&:hover]:bg-subtle gap-1.75 bg-panel shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 max-sm:justify-center max-sm:border-l-0 max-sm:border-t max-sm:border-t-line max-sm:text-[13px] max-sm:font-[550] max-sm:text-foreground"
                           data-control-outline=""
                           onClick={() => void copy(result.link)}
                         >
@@ -1354,7 +1375,7 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
                   >
                     Name
                     <input
-                      className="block w-full min-h-10.5 mt-1.75 py-2.25 px-2.75 border border-solid border-line rounded-none bg-bg text-foreground [font:inherit] focus:outline-solid focus:outline-2 focus:outline-accent focus:outline-offset-2 aria-invalid:border-danger shell-phone:min-h-11 pointer-coarse:min-h-11"
+                      className="block w-full min-h-10.5 mt-1.75 py-2.25 px-2.75 border border-solid border-line rounded-none bg-bg text-foreground text-sm font-normal focus:outline-solid focus:outline-2 focus:outline-accent focus:outline-offset-2 aria-invalid:border-danger shell-phone:min-h-11 pointer-coarse:min-h-11"
                       id="setup-invite-name"
                       value={inviteName}
                       onChange={(event) => setInviteName(event.target.value)}
@@ -1367,7 +1388,7 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
                   >
                     Email
                     <input
-                      className="block w-full min-h-10.5 mt-1.75 py-2.25 px-2.75 border border-solid border-line rounded-none bg-bg text-foreground [font:inherit] focus:outline-solid focus:outline-2 focus:outline-accent focus:outline-offset-2 aria-invalid:border-danger shell-phone:min-h-11 pointer-coarse:min-h-11"
+                      className="block w-full min-h-10.5 mt-1.75 py-2.25 px-2.75 border border-solid border-line rounded-none bg-bg text-foreground text-sm font-normal focus:outline-solid focus:outline-2 focus:outline-accent focus:outline-offset-2 aria-invalid:border-danger shell-phone:min-h-11 pointer-coarse:min-h-11"
                       id="setup-invite-email"
                       type="email"
                       value={inviteEmail}
@@ -1400,27 +1421,42 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
                   >
                     <button
                       type="button"
-                      className="min-h-10.5 rounded-none [@media(max-width:_760px)]:w-full [@media(max-width:_760px)]:m-0 [&:hover]:bg-subtle flex items-center gap-1.75 border border-solid border-line bg-panel py-2 px-2.75 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                      className="min-h-10.5 rounded-none [@media(max-width:_760px)]:w-full [@media(max-width:_760px)]:m-0 [&:hover]:bg-subtle flex items-center [@media(max-width:_760px)]:justify-center gap-1.75 border border-solid border-line bg-panel py-2 px-2.75 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
                       data-control-outline=""
                       onClick={back}
                     >
                       Back
                     </button>
-                    <button
-                      type="button"
-                      className="mt-3.5 mx-auto mb-0 [@media(max-width:_760px)]:w-full [@media(max-width:_760px)]:m-0 [@media(max-width:_760px)]:order-3 block bg-transparent text-accent text-[12px] shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                      onClick={skip}
-                    >
-                      Skip this step
-                    </button>
-                    <button
-                      type="submit"
-                      className="min-w-37.5 [@media(max-width:_760px)]:w-full [@media(max-width:_760px)]:m-0 inline-flex items-center justify-center gap-1.75 rounded-lg bg-accent text-white py-2.25 px-3.5 font-[650] shadow-none [&:hover]:filter-[brightness(1.08)] min-h-11 [transition:background-color_.15s_ease,color_.15s_ease,transform_.15s_ease] tracking-[.01em] [&:hover:not(:disabled)]:bg-[color-mix(in_srgb,var(--accent)_84%,var(--text))] [&:hover:not(:disabled)]:filter-none [&:active:not(:disabled)]:transform-[translateY(1px)] disabled:cursor-wait disabled:opacity-65 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                      data-control-primary=""
-                      disabled={busy}
-                    >
-                      {busy ? "Adding…" : "Add invitation"}
-                    </button>
+                    {inviteResults.length === 0 && (
+                      <button
+                        type="button"
+                        className="mt-3.5 mx-auto mb-0 [@media(max-width:_760px)]:w-full [@media(max-width:_760px)]:m-0 [@media(max-width:_760px)]:order-3 block bg-transparent text-accent text-[12px] shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                        onClick={skip}
+                      >
+                        Skip this step
+                      </button>
+                    )}
+                    {inviteResults.length === 0 ? (
+                      <button
+                        type="submit"
+                        className="min-w-37.5 [@media(max-width:_760px)]:w-full [@media(max-width:_760px)]:m-0 inline-flex items-center justify-center gap-1.75 rounded-lg bg-accent text-white py-2.25 px-3.5 font-[650] shadow-none [&:hover]:filter-[brightness(1.08)] min-h-11 [transition:background-color_.15s_ease,color_.15s_ease,transform_.15s_ease] tracking-[.01em] [&:hover:not(:disabled)]:bg-[color-mix(in_srgb,var(--accent)_84%,var(--text))] [&:hover:not(:disabled)]:filter-none [&:active:not(:disabled)]:transform-[translateY(1px)] disabled:cursor-wait disabled:opacity-65 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                        data-control-primary=""
+                        disabled={busy}
+                      >
+                        {busy ? "Adding…" : "Add invitation"}
+                      </button>
+                    ) : (
+                      // Once a link exists, Continue below is the one primary action; adding
+                      // another person is secondary, so the two are not identical dark buttons.
+                      <button
+                        type="submit"
+                        className="min-w-37.5 [@media(max-width:_760px)]:w-full [@media(max-width:_760px)]:m-0 min-h-11 rounded-none [&:hover]:bg-subtle flex items-center justify-center gap-1.75 border border-solid border-line bg-panel py-2 px-2.75 font-[550] disabled:cursor-wait disabled:opacity-65 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                        data-control-outline=""
+                        disabled={busy}
+                      >
+                        {busy ? "Adding…" : "Add another invitation"}
+                      </button>
+                    )}
                   </div>
                   {inviteResults.length > 0 && (
                     <button
@@ -1463,7 +1499,7 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
                   </p>
                 ) : (
                   <a
-                    className="mt-4.5 inline-flex items-center justify-center gap-1.75 rounded-lg bg-accent text-white py-2.25 px-3.5 font-[650] shadow-[0_1px_2px_#0002] [&:hover]:filter-[brightness(1.08)] w-full"
+                    className="mt-4.5 inline-flex items-center justify-center gap-1.75 rounded-lg bg-accent text-white py-2.25 px-3.5 font-[650] shadow-[0_1px_2px_#0002] [&:hover]:filter-[brightness(1.08)] w-full min-h-11"
                     data-control-primary=""
                     href={adapter.googleConnectUrl()}
                     onClick={() => persist({ step: "integrations" })}
@@ -1478,7 +1514,7 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
                 >
                   <button
                     type="button"
-                    className="min-h-10.5 rounded-none [@media(max-width:_760px)]:w-full [@media(max-width:_760px)]:m-0 [&:hover]:bg-subtle flex items-center gap-1.75 border border-solid border-line bg-panel py-2 px-2.75 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                    className="min-h-10.5 rounded-none [@media(max-width:_760px)]:w-full [@media(max-width:_760px)]:m-0 [&:hover]:bg-subtle flex items-center [@media(max-width:_760px)]:justify-center gap-1.75 border border-solid border-line bg-panel py-2 px-2.75 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
                     data-control-outline=""
                     onClick={back}
                   >
@@ -1560,7 +1596,7 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
                     data-fidelity-state="setup-key"
                     data-setup-key=""
                   >
-                    <summary className="cursor-pointer text-[12px] font-[650]">
+                    <summary className="cursor-pointer text-[12px] font-[650] shell-phone:py-3 pointer-coarse:py-3 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[13px] pointer-coarse:text-[13px] shell-phone:leading-5 pointer-coarse:leading-5">
                       Admin API key for CLI setup
                     </summary>
                     <code className="p-2.75 border border-solid border-line bg-bg font-[ui-monospace,monospace] text-[11px] block my-2.5 mx-0 wrap-anywhere">
@@ -1590,7 +1626,7 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
                 >
                   <button
                     type="button"
-                    className="min-h-10.5 rounded-none [@media(max-width:_760px)]:w-full [@media(max-width:_760px)]:m-0 [&:hover]:bg-subtle flex items-center gap-1.75 border border-solid border-line bg-panel py-2 px-2.75 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                    className="min-h-10.5 rounded-none [@media(max-width:_760px)]:w-full [@media(max-width:_760px)]:m-0 [&:hover]:bg-subtle flex items-center [@media(max-width:_760px)]:justify-center gap-1.75 border border-solid border-line bg-panel py-2 px-2.75 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
                     data-control-outline=""
                     onClick={back}
                   >
@@ -1665,12 +1701,12 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
           >
             {liveSummary}
           </p>
-          <ul className="grid gap-px m-0 p-0 list-none bg-line [@media(max-width:_1040px)]:grid-cols-[repeat(auto-fit,minmax(150px,1fr))] [@media(max-width:_760px)]:grid-cols-[minmax(0,1fr)]">
+          <ul className="grid gap-px m-0 p-0 list-none bg-line [@media(max-width:_1040px)]:gap-2 [@media(max-width:_1040px)]:bg-transparent [@media(max-width:_1040px)]:grid-cols-[repeat(auto-fit,minmax(150px,1fr))] [@media(max-width:_760px)]:grid-cols-2">
             {preview.rows.map((row) => (
               <li
                 key={row.label}
                 data-fidelity-state={`is-${row.state}`}
-                className="grid gap-0.75 py-2.25 px-0.5 bg-panel text-[11px] [@media(max-width:_1040px)]:py-2.25 [@media(max-width:_1040px)]:px-2.5"
+                className="grid gap-0.75 py-2.25 px-0.5 bg-panel text-[11px] [@media(max-width:_1040px)]:py-2.25 [@media(max-width:_1040px)]:px-2.5 [@media(max-width:_1040px)]:border [@media(max-width:_1040px)]:border-solid [@media(max-width:_1040px)]:border-line"
               >
                 <span className="text-muted">{row.label}</span>
                 <b className="wrap-anywhere font-semibold in-data-[fidelity-state~=is-empty]:text-muted in-data-[fidelity-state~=is-empty]:font-normal in-data-[fidelity-state~=is-unavailable]:text-muted in-data-[fidelity-state~=is-unavailable]:font-normal in-data-[fidelity-state~=is-typed]:italic">
@@ -1678,7 +1714,7 @@ export function SetupWizard({ adapter, mode, initial, onFinish }: Props) {
                 </b>
               </li>
             ))}
-            <li className="grid gap-0.75 py-2.25 px-0.5 bg-panel text-[11px] [@media(max-width:_1040px)]:py-2.25 [@media(max-width:_1040px)]:px-2.5">
+            <li className="grid gap-0.75 py-2.25 px-0.5 bg-panel text-[11px] [@media(max-width:_1040px)]:py-2.25 [@media(max-width:_1040px)]:px-2.5 [@media(max-width:_1040px)]:border [@media(max-width:_1040px)]:border-solid [@media(max-width:_1040px)]:border-line">
               <span className="text-muted">First task</span>
               <b className="wrap-anywhere font-semibold">
                 {preview.issueExample}

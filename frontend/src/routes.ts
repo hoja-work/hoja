@@ -34,6 +34,17 @@ export const KNOWN_WORKSPACE_PAGES = [
   "profile",
 ];
 
+// First path segments that are real entry points outside /workspace/.
+const TOP_LEVEL_ENTRY_POINTS = [
+  "workspace",
+  "login",
+  "signup",
+  "signin",
+  "setup",
+  "onboarding",
+  "index.html",
+];
+
 export function routeView(path: string): string {
   const p = path.toLowerCase();
 
@@ -96,6 +107,13 @@ export function routeView(path: string): string {
     parts.length === 2 &&
     !KNOWN_WORKSPACE_PAGES.includes(parts[1])
   ) {
+    return "Not found";
+  }
+  // Every app page lives under /workspace/. Any other top-level path is not a page; the
+  // title-cased fallback below used to turn e.g. /totally/unknown into a fake "Unknown"
+  // dashboard. The auth entry points keep their old behaviour: they are rendered before
+  // this view is ever shown, and a signed-in visit to them must not read as a 404.
+  if (parts.length && !TOP_LEVEL_ENTRY_POINTS.includes(parts[0])) {
     return "Not found";
   }
   const name = parts.pop();

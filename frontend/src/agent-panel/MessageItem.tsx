@@ -23,7 +23,7 @@ function CopyAction({ text }: { text: string }) {
           })
           .catch(() => {});
       }}
-      className="inline-flex size-7 items-center justify-center rounded-md text-muted transition-colors duration-150 ease-out hover:bg-subtle hover:text-foreground hover:transition-none focus-visible:outline-2 focus-visible:outline-accent shell-phone:size-10"
+      className="inline-flex size-7 items-center justify-center rounded-md text-muted transition-colors duration-150 ease-out hover:bg-subtle hover:text-foreground hover:transition-none focus-visible:outline-2 focus-visible:outline-accent shell-phone:size-11"
     >
       {copied ? (
         <Check
@@ -78,7 +78,7 @@ export function MessageItem({
         className="group mx-auto flex w-full max-w-3xl flex-col items-end gap-1 py-2"
         data-agent-message="user"
       >
-        <div className="max-w-xl rounded-2xl border border-line bg-subtle px-4 py-2.5 text-sm leading-relaxed text-foreground whitespace-pre-wrap break-words">
+        <div className="max-w-xl rounded-2xl border border-line bg-subtle px-4 py-2.5 text-sm leading-relaxed text-foreground whitespace-pre-wrap break-words wrap-anywhere">
           {message.content}
         </div>
         <div className="flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100">
@@ -118,7 +118,7 @@ export function MessageItem({
       {waitingForFirstEvent && <StreamingPulse />}
 
       {text.trim() !== "" && (
-        <div className="min-w-0 text-sm leading-relaxed text-foreground break-words">
+        <div className="min-w-0 text-sm leading-relaxed text-foreground break-words wrap-anywhere">
           <Markdown text={text} density="compact" />
         </div>
       )}
@@ -152,7 +152,7 @@ export function MessageItem({
                 <button
                   type="button"
                   onClick={onRetry}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-danger/40 bg-panel px-2.5 py-1 text-xs font-medium text-danger transition-colors duration-150 ease-out hover:bg-danger/10 hover:transition-none"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-danger/40 bg-panel px-2.5 py-1 text-xs font-medium text-danger transition-colors duration-150 ease-out hover:bg-danger/10 hover:transition-none pointer-coarse:min-h-11"
                 >
                   <RotateCcw className="size-3" aria-hidden="true" />
                   <span>Try again</span>
@@ -176,7 +176,7 @@ export function MessageItem({
               aria-label="Regenerate response"
               title="Regenerate"
               onClick={onRetry}
-              className="inline-flex size-7 items-center justify-center rounded-md text-muted transition-colors duration-150 ease-out hover:bg-subtle hover:text-foreground hover:transition-none focus-visible:outline-2 focus-visible:outline-accent shell-phone:size-10"
+              className="inline-flex size-7 items-center justify-center rounded-md text-muted transition-colors duration-150 ease-out hover:bg-subtle hover:text-foreground hover:transition-none focus-visible:outline-2 focus-visible:outline-accent shell-phone:size-11"
             >
               <RotateCcw className="size-3.5" aria-hidden="true" />
             </button>

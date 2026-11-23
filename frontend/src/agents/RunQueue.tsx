@@ -20,7 +20,13 @@ import {
   type LinDisplay,
 } from "../graph/tasks";
 import { getAgentsAdapter } from "./adapter";
-import { AGENTS_TABS, AgentsListShell, SearchField } from "./chrome";
+import {
+  AGENTS_TABS,
+  AgentsListShell,
+  PhoneRowBreak,
+  SearchField,
+  TOUCH_LIST,
+} from "./chrome";
 import {
   SESSION_STATUSES,
   SESSION_TYPE,
@@ -199,7 +205,7 @@ export function RunQueue({
               <button
                 key={s.id}
                 type="button"
-                className="inline-flex items-center border border-line hover:text-foreground hover:border-accent aria-pressed:bg-subtle aria-pressed:text-foreground aria-pressed:font-semibold gap-1.5 pt-1.25 pr-2.75 pb-1.25 pl-2.75 border-solid rounded-[99px] bg-panel text-[12px] text-muted font-medium aria-pressed:border-line shell-phone:min-w-11! shell-phone:min-h-11!"
+                className="inline-flex items-center border border-line hover:text-foreground hover:border-accent aria-pressed:bg-subtle aria-pressed:text-foreground aria-pressed:font-semibold gap-1.5 pt-1.25 pr-2.75 pb-1.25 pl-2.75 border-solid rounded-[99px] bg-panel text-[12px] text-muted font-medium aria-pressed:border-line shell-phone:min-w-11! shell-phone:min-h-11! shrink-0 whitespace-nowrap"
                 aria-pressed={on}
                 onClick={() =>
                   setStatus((cur) =>
@@ -277,7 +283,10 @@ export function RunQueue({
         </div>
       )}
       {!loading && !error && (
-        <div className="pt-1.5 pr-3 pb-10 pl-3" data-style-hooks="lin-list">
+        <div
+          className={`pt-1.5 pr-3 pb-10 pl-3 ${TOUCH_LIST}`}
+          data-style-hooks="lin-list"
+        >
           {groups.map((g) => {
             const isCollapsed = collapsedSet.has(g.key);
             const tone = SESSION_TYPE[g.key as SessionStatus];
@@ -347,8 +356,9 @@ export function RunQueue({
                       childCount={0}
                       trailing={
                         <>
+                          <PhoneRowBreak />
                           <span
-                            className="inline-flex items-center whitespace-nowrap border border-line gap-1 h-6 text-[12px] font-[450] border-solid border-(--card-line) rounded-[48px] pt-0 pr-2 pb-0 pl-2 text-(--card-meta) bg-panel"
+                            className="inline-flex min-w-0 max-w-full shell-phone:max-w-3/5 items-center whitespace-nowrap border border-line gap-1 h-6 text-[12px] font-[450] border-solid border-(--card-line) rounded-[48px] pt-0 pr-2 pb-0 pl-2 text-(--card-meta) bg-panel"
                             data-session-chip={s.status}
                             title={`${s.agentName} · ${sessionStatusName(s.status)} · ${s.state}${s.reason ? ` · ${s.reason}` : ""}${s.harness ? ` · harness ${s.harness}` : ""}`}
                           >
@@ -358,7 +368,7 @@ export function RunQueue({
                                 background: SESSION_TYPE[s.status].color,
                               }}
                             />
-                            {s.agentName}
+                            <span className="truncate">{s.agentName}</span>
                           </span>
                           {/* A queued lease naming a harness waits for a runner that
                               declares it, rather than being held by the schedule. */}

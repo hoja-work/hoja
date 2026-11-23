@@ -85,27 +85,29 @@ export function DialogHost() {
   };
   return (
     <div
-      className="fixed inset-0 flex items-start justify-center p-4 z-10 bg-[#0008]"
+      className="fixed inset-0 flex items-start justify-center overflow-y-auto overscroll-contain p-4 z-110 bg-[#0008]"
       role="presentation"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) close(req.input ? null : false);
       }}
     >
       <form
-        className="mt-16 max-w-xl border border-line text-foreground absolute top-[12%] left-[50%] transform-[translateX(-50%)] w-[min(570px,calc(100%-32px))] pt-6.25 pr-6.25 pb-6.25 pl-6.25 border-solid rounded-[10px] bg-panel shadow-(--shadow)"
+        className="mt-[12vh] w-full max-w-xl border border-line text-foreground p-6 border-solid rounded-[10px] bg-panel shadow-(--shadow) shell-phone:mt-4 shell-phone:p-4"
         role="dialog"
         aria-modal="true"
         aria-label={req.message}
         onSubmit={submit}
       >
-        <p className="mt-0 mr-0 mb-3 ml-0 font-[550]">{req.message}</p>
+        <p className="mt-0 mr-0 mb-3 ml-0 font-[550] break-words">
+          {req.message}
+        </p>
         {req.input && (
           <input
             ref={(el) => el?.focus()}
             value={value}
             onChange={(e) => setValue(e.target.value)}
             aria-label={req.message}
-            className="border border-line shell-phone:min-h-11 pointer-coarse:min-h-11 w-full border-solid rounded-md bg-bg text-foreground pt-2.25 pr-2.5 pb-2.25 pl-2.5 resize-y mb-3"
+            className="border border-line shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-base pointer-coarse:text-base w-full border-solid rounded-md bg-bg text-foreground pt-2.25 pr-2.5 pb-2.25 pl-2.5 resize-y mb-3"
           />
         )}
         <div className="flex justify-end gap-2">
@@ -122,7 +124,7 @@ export function DialogHost() {
               <button
                 type="button"
                 onClick={() => close(req.input ? null : false)}
-                className="shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                className="inline-flex items-center justify-center rounded-md border border-line bg-panel px-3.5 text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
               >
                 Cancel
               </button>
@@ -138,9 +140,10 @@ export function DialogHost() {
                 <button
                   type="button"
                   data-style-hooks={req.danger ? "danger" : undefined}
+                  data-danger={req.danger || undefined}
                   className={
-                    `inline-flex items-center justify-center hover:brightness-110 ${req.danger ? "text-white" : ""}` +
-                    "shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11" +
+                    `inline-flex items-center justify-center hover:brightness-110 data-danger:bg-danger! ${req.danger ? "text-white" : ""}` +
+                    " shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11" +
                     " inline-flex items-center justify-center gap-1.75 rounded-none bg-accent text-white pt-2.25 pr-3.5 pb-2.25 pl-3.5 font-[650] shadow-none hover:filter-[brightness(1.08)] min-h-11 [transition:background-color_.15s_ease,color_.15s_ease,transform_.15s_ease] tracking-[.01em] hover:not-disabled:bg-[color-mix(in_srgb,var(--accent)_84%,var(--text))] hover:not-disabled:filter-none active:not-disabled:transform-[translateY(1px)] disabled:cursor-wait disabled:opacity-65 [html[data-theme=dark]_&]:text-[#171719]"
                   }
                   onClick={() => close(true)}

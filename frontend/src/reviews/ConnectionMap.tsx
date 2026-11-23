@@ -58,11 +58,11 @@ export function ConnectionMap({ nodes }: { nodes: ConnectionNode[] }) {
   return (
     <section
       aria-label="Connections"
-      className="flex flex-col gap-2"
+      className="@container flex flex-col gap-2"
       data-reviews-connection-map=""
     >
       <h3 className="m-0 text-xs font-semibold text-muted">Connections</h3>
-      <div className="flex items-stretch">
+      <div className="flex items-stretch @max-xl:flex-col">
         <div className="flex min-w-0 flex-1 flex-col justify-center gap-2">
           {left.map((n) => (
             <Node key={n.kind} node={n} />
@@ -70,7 +70,7 @@ export function ConnectionMap({ nodes }: { nodes: ConnectionNode[] }) {
         </div>
         <span
           aria-hidden="true"
-          className="w-4 flex-none self-center border-t border-line"
+          className="w-4 flex-none self-center border-t border-line @max-xl:h-3 @max-xl:w-0 @max-xl:border-t-0 @max-xl:border-l"
         />
         <div className="flex min-w-0 flex-1 flex-col justify-center gap-2">
           {middle.map((n) => (
@@ -79,7 +79,7 @@ export function ConnectionMap({ nodes }: { nodes: ConnectionNode[] }) {
         </div>
         <span
           aria-hidden="true"
-          className="w-4 flex-none self-center border-t border-line"
+          className="w-4 flex-none self-center border-t border-line @max-xl:h-3 @max-xl:w-0 @max-xl:border-t-0 @max-xl:border-l"
         />
         <div className="flex min-w-0 flex-1 flex-col justify-center gap-2">
           {right.map((n) => (

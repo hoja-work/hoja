@@ -181,6 +181,18 @@ const PANEL_KEY = "hoja.initiative.panel";
 const byNewest = (a: InitiativeUpdatePost, b: InitiativeUpdatePost) =>
   b.createdAt.localeCompare(a.createdAt);
 
+// On touch screens every control on the page (tabs, property chips, resource and project rows,
+// the properties drawer) gets a 44px target, and the hover-only tooltips stay hidden: a tap
+// emulates hover, which left a tooltip stuck over the drawer or menu it had just opened.
+const TOUCH_FIT = [
+  "pointer-coarse:[&_button]:min-h-11 shell-phone:[&_button]:min-h-11",
+  "pointer-coarse:[&_[role=tab]]:min-h-11 shell-phone:[&_[role=tab]]:min-h-11",
+  "pointer-coarse:[&_input[type=date]]:min-h-11 shell-phone:[&_input[type=date]]:min-h-11",
+  "pointer-coarse:[&_[data-style-hooks~='lin-icon-btn']]:min-w-11 shell-phone:[&_[data-style-hooks~='lin-icon-btn']]:min-w-11",
+  "pointer-coarse:[&_a[href]]:inline-flex pointer-coarse:[&_a[href]]:items-center pointer-coarse:[&_a[href]]:min-h-11",
+  "pointer-coarse:[&_[data-tip]]:before:hidden pointer-coarse:[&_[data-tip]]:after:hidden",
+].join(" ");
+
 function useNarrow() {
   const query = "(max-width: 900px)";
   const [narrow, setNarrow] = useState(() => window.matchMedia(query).matches);
@@ -929,12 +941,13 @@ export function InitiativeDetailPage({
     <DetailPage
       label={data.name}
       surface="initiative-detail"
+      className={TOUCH_FIT}
       data-initiative-detail=""
     >
       <DetailHeader
         crumbs={crumbs}
         actions={
-          <>
+          <span className="contents pointer-coarse:[&_button]:min-h-11 pointer-coarse:[&_button]:min-w-11 shell-phone:[&_button]:min-h-11 shell-phone:[&_button]:min-w-11">
             <FollowButton
               type="initiative"
               id={data.id}
@@ -998,7 +1011,7 @@ export function InitiativeDetailPage({
                 />
               )}
             </span>
-          </>
+          </span>
         }
       />
       <DetailColumns
@@ -1042,21 +1055,23 @@ export function InitiativeDetailPage({
                 })),
               ]}
             />
-            <IconBtn
-              label="New view of this initiative"
-              title="New view"
-              onClick={() => setAddingView(true)}
-            >
-              <Plus size={14} />
-            </IconBtn>
-            <IconBtn
-              label={panelShown ? "Hide properties" : "Show properties"}
-              title={panelShown ? "Hide properties" : "Show properties"}
-              active={panelShown}
-              onClick={togglePanel}
-            >
-              <PanelRight size={15} />
-            </IconBtn>
+            <span className="contents pointer-coarse:[&_button]:min-h-11 pointer-coarse:[&_button]:min-w-11 shell-phone:[&_button]:min-h-11 shell-phone:[&_button]:min-w-11">
+              <IconBtn
+                label="New view of this initiative"
+                title="New view"
+                onClick={() => setAddingView(true)}
+              >
+                <Plus size={14} />
+              </IconBtn>
+              <IconBtn
+                label={panelShown ? "Hide properties" : "Show properties"}
+                title={panelShown ? "Hide properties" : "Show properties"}
+                active={panelShown}
+                onClick={togglePanel}
+              >
+                <PanelRight size={15} />
+              </IconBtn>
+            </span>
           </>
         }
         main={

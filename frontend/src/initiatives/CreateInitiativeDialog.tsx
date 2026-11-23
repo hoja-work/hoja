@@ -146,7 +146,7 @@ export function CreateInitiativeDialog({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-100 flex items-start justify-center overflow-y-auto bg-black/40 px-4 py-16"
+      className="fixed inset-0 z-100 flex items-start justify-center overflow-y-auto overscroll-contain bg-black/40 px-4 py-16 shell-phone:px-2 shell-phone:py-2"
       role="presentation"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget && !busy) onClose();
@@ -157,7 +157,7 @@ export function CreateInitiativeDialog({
         aria-modal="true"
         aria-label="New initiative"
         data-initiative-create-dialog=""
-        className="grid w-full max-w-2xl gap-3 rounded-xl border border-line bg-panel p-4 shadow-xl"
+        className="grid w-full max-w-2xl gap-3 rounded-xl border border-line bg-panel p-4 shadow-xl pointer-coarse:[&_[data-initiative-create-chips]_button]:min-h-11 pointer-coarse:[&_button]:min-h-11 shell-phone:[&_button]:min-h-11 pointer-coarse:[&_button]:min-w-11 shell-phone:[&_button]:min-w-11"
         onSubmit={(e) => {
           e.preventDefault();
           void submit();
@@ -183,7 +183,7 @@ export function CreateInitiativeDialog({
           <button
             type="button"
             aria-label="Close"
-            className="grid size-7 place-items-center rounded-md hover:bg-subtle"
+            className="grid size-7 place-items-center rounded-md hover:bg-subtle pointer-coarse:size-11 shell-phone:-my-2 shell-phone:-mr-2 shell-phone:size-11"
             onClick={onClose}
           >
             <X size={16} />
@@ -210,14 +210,14 @@ export function CreateInitiativeDialog({
           aria-label="Initiative name"
           placeholder="Initiative name"
           required
-          className="w-full border-0 bg-transparent p-0 text-xl font-semibold text-foreground placeholder:text-muted focus:outline-none"
+          className="w-full border-0 bg-transparent p-0 text-xl font-semibold text-foreground placeholder:text-muted focus:outline-none pointer-coarse:min-h-11 shell-phone:min-h-11"
           value={draft.name}
           onChange={(e) => set({ name: e.target.value })}
         />
         <input
           aria-label="Summary"
           placeholder="Add a short summary…"
-          className="w-full border-0 bg-transparent p-0 text-base text-muted placeholder:text-muted focus:outline-none"
+          className="w-full border-0 bg-transparent p-0 text-base text-muted placeholder:text-muted focus:outline-none pointer-coarse:min-h-11 shell-phone:min-h-11"
           value={draft.summary}
           onChange={(e) => set({ summary: e.target.value })}
         />
@@ -364,7 +364,7 @@ export function CreateInitiativeDialog({
           </p>
         )}
         <footer className="flex flex-wrap items-center justify-end gap-3">
-          <label className="mr-auto inline-flex items-center gap-2 text-sm text-muted">
+          <label className="mr-auto inline-flex items-center gap-2 text-sm text-muted pointer-coarse:min-h-11 shell-phone:basis-full">
             <input
               type="checkbox"
               checked={more}
@@ -374,7 +374,7 @@ export function CreateInitiativeDialog({
           </label>
           <button
             type="button"
-            className="rounded-md border border-line bg-panel px-3 py-1.5 text-sm hover:bg-subtle"
+            className="rounded-md border border-line bg-panel px-3 py-1.5 text-sm hover:bg-subtle pointer-coarse:min-h-11 shell-phone:min-h-11 shell-phone:flex-1"
             onClick={onClose}
           >
             Cancel
@@ -382,7 +382,7 @@ export function CreateInitiativeDialog({
           <button
             type="submit"
             disabled={!draft.name.trim() || busy}
-            className="rounded-md bg-accent px-3 py-1.5 text-sm font-semibold text-white hover:brightness-110 disabled:opacity-60"
+            className="rounded-md bg-accent px-3 py-1.5 text-sm font-semibold text-white hover:brightness-110 disabled:opacity-60 pointer-coarse:min-h-11 shell-phone:min-h-11 shell-phone:flex-1 whitespace-nowrap"
           >
             {busy ? "Creating…" : "Create initiative"}
           </button>

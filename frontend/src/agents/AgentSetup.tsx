@@ -97,9 +97,9 @@ const PROBE_POLL_MS = 2000;
 type StepId = "teams" | "harness" | "model" | "key" | "machine" | "try";
 
 const BUTTON =
-  "inline-flex items-center gap-1.5 rounded-md border border-line bg-panel px-3 py-1.5 text-sm text-foreground hover:bg-subtle disabled:opacity-50";
+  "inline-flex items-center gap-1.5 rounded-md border border-line bg-panel px-3 py-1.5 text-sm text-foreground hover:bg-subtle disabled:opacity-50 pointer-coarse:min-h-11";
 const PRIMARY =
-  "inline-flex items-center gap-1.5 rounded-md border border-line bg-accent px-3 py-1.5 text-sm font-medium text-foreground disabled:bg-panel disabled:text-muted";
+  "inline-flex items-center gap-1.5 rounded-md border border-line bg-accent px-3 py-1.5 text-sm font-medium text-foreground disabled:bg-panel disabled:text-muted pointer-coarse:min-h-11";
 const FIELD =
   "min-w-0 flex-1 rounded-md border border-line bg-panel px-2 py-1.5 text-sm text-foreground";
 
@@ -483,7 +483,7 @@ export function AgentSetup({
         {allSetUp && !probing && (
           <button
             type="button"
-            className="text-xs text-muted hover:text-foreground"
+            className="text-xs text-muted hover:text-foreground pointer-coarse:min-h-11"
             onClick={() => setCollapsed(true)}
           >
             Hide
@@ -619,7 +619,7 @@ export function AgentSetup({
                 </span>
                 <button
                   type="button"
-                  className="ml-auto text-xs text-muted hover:text-foreground"
+                  className="ml-auto text-xs text-muted hover:text-foreground pointer-coarse:min-h-11"
                   onClick={() =>
                     void saveRepos(
                       access.repos.filter((x) => x.repo !== g.repo),

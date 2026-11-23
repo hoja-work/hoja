@@ -83,7 +83,7 @@ function CollapsibleActionEvent({
       >
         <Collapsible.Trigger
           type="button"
-          className="flex w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-left text-xs transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none focus-visible:outline-2 focus-visible:outline-accent"
+          className="flex w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-left text-xs transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-11"
         >
           <Wrench className="size-3.5 shrink-0 text-muted" aria-hidden="true" />
           <span className="shrink-0 font-medium text-foreground">Action</span>
@@ -525,7 +525,7 @@ export function AgentDetailPage({
         data-surface="agent-detail"
         aria-label={`${agentKey}: agent`}
       >
-        <header className="flex flex-none items-center border-b border-line gap-2 min-h-12.25 pt-0 pr-5 pb-0 pl-5 border-b-line shell-phone:flex-wrap shell-phone:gap-y-1">
+        <header className="flex flex-none items-center border-b border-line gap-2 min-h-12.25 pt-0 pr-5 pb-0 pl-5 border-b-line shell-phone:flex-wrap shell-phone:gap-y-1 pointer-coarse:[&_[data-style-hooks~=lin-icon-btn]]:size-11">
           <nav
             className="flex flex-1 items-center gap-1.75 text-[13px] text-muted min-w-0 shell-phone:min-w-0 shell-phone:flex-wrap shell-phone:gap-y-0.5"
             aria-label="Breadcrumb"
@@ -590,6 +590,30 @@ export function AgentDetailPage({
   const running = sessions.filter((s) => s.status === "active").length;
   const caps = `${agent.capacity} ${agent.capacity === 1 ? "slot" : "slots"}`;
 
+  /* One copy control, drawn in the toolbar on wide screens and in the header on a phone, where a
+   * whole toolbar row for a single icon would push the agent below the fold (HOJA-731). */
+  const copyId = (
+    <Tip label={copied ? "Copied" : `Copy ${agent.key}`}>
+      <span>
+        <IconBtn
+          label="Copy agent id"
+          title="Copy agent id"
+          onClick={() => {
+            void navigator.clipboard
+              .writeText(agent.id)
+              .then(() => {
+                setCopied(true);
+                window.setTimeout(() => setCopied(false), 1500);
+              })
+              .catch(() => setCopied(false));
+          }}
+        >
+          <Copy size={15} />
+        </IconBtn>
+      </span>
+    </Tip>
+  );
+
   return (
     <section
       className="flex flex-col min-w-0 h-full bg-panel"
@@ -598,7 +622,7 @@ export function AgentDetailPage({
       aria-label={`${agent.key}: ${agent.name}`}
     >
       <header
-        className="flex flex-none items-center border-b border-line gap-2 min-h-12.25 pt-0 pr-5 pb-0 pl-5 border-b-line shell-phone:flex-wrap shell-phone:gap-y-1"
+        className="flex flex-none items-center border-b border-line gap-2 min-h-12.25 pt-0 pr-5 pb-0 pl-5 border-b-line shell-phone:flex-wrap shell-phone:gap-y-1 pointer-coarse:[&_[data-style-hooks~=lin-icon-btn]]:size-11"
         data-style-hooks="lin-head"
       >
         <nav
@@ -613,10 +637,13 @@ export function AgentDetailPage({
             ← Agents
           </button>
           <span className="text-muted opacity-70">›</span>
-          <span>{workspaceName}</span>
-          <span className="text-muted opacity-70">›</span>
+          {/* On a phone the back link already names the place; the workspace is in the top bar. */}
+          <span className="shell-phone:hidden">{workspaceName}</span>
+          <span className="text-muted opacity-70 shell-phone:hidden">›</span>
           <span className="font-semibold text-muted">{agent.key}</span>
-          <span className="truncate text-foreground font-semibold overflow-hidden text-ellipsis whitespace-nowrap">
+          {/* The title right below names the agent; on a phone a second copy here wrapped the
+              breadcrumb onto two lines and left the header icons hanging between them. */}
+          <span className="truncate text-foreground font-semibold overflow-hidden text-ellipsis whitespace-nowrap shell-phone:hidden">
             {agent.name}
           </span>
         </nav>
@@ -638,43 +665,27 @@ export function AgentDetailPage({
               <path d="M2 4h12M2 8h12M2 12h8" strokeLinecap="round" />
             </svg>
           </IconBtn>
+          <span className="hidden shell-phone:contents">{copyId}</span>
         </div>
       </header>
       <div
-        className="flex flex-none items-center border-b border-line justify-end gap-1.5 pt-2 pr-5 pb-2 pl-5 border-b-line"
+        className="flex flex-none items-center border-b border-line justify-end gap-1.5 pt-2 pr-5 pb-2 pl-5 border-b-line pointer-coarse:[&_[data-style-hooks~=lin-icon-btn]]:size-11 shell-phone:hidden"
         data-style-hooks="lin-toolbar"
       >
-        <Tip label={copied ? "Copied" : `Copy ${agent.key}`}>
-          <span>
-            <IconBtn
-              label="Copy agent id"
-              title="Copy agent id"
-              onClick={() => {
-                void navigator.clipboard
-                  .writeText(agent.id)
-                  .then(() => {
-                    setCopied(true);
-                    window.setTimeout(() => setCopied(false), 1500);
-                  })
-                  .catch(() => setCopied(false));
-              }}
-            >
-              <Copy size={15} />
-            </IconBtn>
-          </span>
-        </Tip>
+        {copyId}
       </div>
 
       <div
-        className="flex flex-1 flex-col lg:flex-row min-h-0 [@media_(max-width:900px)]:flex-col"
+        className="flex flex-1 flex-col lg:flex-row min-h-0 [@media_(max-width:900px)]:flex-col max-lg:overflow-y-auto max-lg:overscroll-contain"
         data-style-hooks="lin-detail"
       >
         <main
-          className="flex-1 overflow-y-auto min-w-0 pt-6.5 pr-10 pb-20 pl-10 max-w-205 [@media_(max-width:900px)]:max-w-none [@media_(max-width:900px)]:pt-5 [@media_(max-width:900px)]:pr-5 [@media_(max-width:900px)]:pb-5 [@media_(max-width:900px)]:pl-5"
+          className="flex-1 overflow-y-auto min-w-0 pt-6.5 pr-10 pb-20 pl-10 max-w-205 max-lg:flex-none max-lg:overflow-visible max-lg:max-w-none [@media_(max-width:900px)]:max-w-none [@media_(max-width:900px)]:pt-5 [@media_(max-width:900px)]:pr-5 [@media_(max-width:900px)]:pb-5 [@media_(max-width:900px)]:pl-5"
           data-style-hooks="lin-detail-main"
         >
           <h1 className="overflow-hidden border-0 focus:outline-none flex items-center w-full bg-transparent text-foreground text-[21px] font-[650] tracking-[-.015em] leading-[1.3] pt-0 pr-0 pb-0 pl-0 mt-0 mr-0 mb-3.5 ml-0 resize-none font-[inherit] focus:[outline:none] gap-2.5">
-            {statusGlyph(agent.status)} {agent.name}
+            {statusGlyph(agent.status)}{" "}
+            <span className="min-w-0 [overflow-wrap:anywhere]">{agent.name}</span>
           </h1>
           <p
             className="relative wrap-break-word text-[14px] leading-[1.6] text-foreground [word-break:break-word] mt-0 mr-0 mb-2 ml-0 min-h-6"
@@ -944,7 +955,7 @@ export function AgentDetailPage({
         </main>
 
         <aside
-          className="flex-none overflow-y-auto border-t border-line lg:w-72 lg:border-t-0 lg:border-l w-72.5 border-l border-l-line pt-5.5 pr-5 pb-15 pl-5 [@media_(max-width:1100px)]:w-62.5 [@media_(max-width:900px)]:w-auto [@media_(max-width:900px)]:border-l-0 [@media_(max-width:900px)]:border-t [@media_(max-width:900px)]:border-t-line"
+          className="flex-none overflow-y-auto border-t border-line lg:w-72 lg:border-t-0 lg:border-l w-72.5 border-l border-l-line pt-5.5 pr-5 pb-15 pl-5 max-lg:overflow-visible max-lg:w-auto max-lg:border-l-0 [@media_(max-width:1100px)]:w-62.5 [@media_(max-width:900px)]:w-auto [@media_(max-width:900px)]:border-l-0 [@media_(max-width:900px)]:border-t [@media_(max-width:900px)]:border-t-line pointer-coarse:[&_[data-style-hooks~=lin-prop]_button[aria-haspopup]]:min-h-11"
           data-style-hooks="lin-props"
           aria-label="Agent settings"
         >

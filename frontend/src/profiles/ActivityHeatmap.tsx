@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { formatDuration, formatTokens, type ActivityDay } from "./api";
 
 export type HeatmapMetric = "all" | "tokens" | "completed";
@@ -129,6 +129,14 @@ export function ActivityHeatmap({
 
   const activeDay = focused ?? (daily.length ? daily[daily.length - 1] : null);
 
+  /* The newest weeks sit at the right end. When the graph is wider than its card (phones),
+   * start scrolled to the end so today is visible instead of the oldest months. */
+  const scroller = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (el) el.scrollLeft = el.scrollWidth;
+  }, [weeks.length]);
+
   return (
     <section
       className="flex flex-col gap-3 rounded-xl border border-line bg-panel p-4"
@@ -146,7 +154,7 @@ export function ActivityHeatmap({
         <div
           role="group"
           aria-label="Activity graph metric"
-          className="inline-flex items-center gap-1 rounded-lg border border-line bg-bg p-0.5"
+          className="inline-flex items-center gap-1 rounded-lg border border-line bg-bg p-0.5 max-sm:w-full"
         >
           {METRIC_LABELS.map((item) => {
             const active = metric === item.id;
@@ -156,7 +164,7 @@ export function ActivityHeatmap({
                 type="button"
                 aria-pressed={active}
                 onClick={() => setMetric(item.id)}
-                className={`rounded-md px-2.5 py-1 text-xs font-medium focus-visible:outline-2 focus-visible:outline-accent ${
+                className={`rounded-md px-2.5 py-1 text-xs font-medium focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-11 max-sm:flex-1 ${
                   active
                     ? "bg-panel text-foreground shadow-xs transition-colors duration-150 ease-out"
                     : "text-muted hover:text-foreground"
@@ -169,7 +177,11 @@ export function ActivityHeatmap({
         </div>
       </div>
 
-      <div className="overflow-x-auto pb-1">
+      <div
+        ref={scroller}
+        className="overflow-x-auto overscroll-x-contain pb-1"
+        data-activity-heatmap-scroll=""
+      >
         <div className="inline-flex flex-col gap-1">
           <div className="flex items-center gap-1 pl-8">
             {monthLabels.map((label, idx) => (
@@ -183,7 +195,7 @@ export function ActivityHeatmap({
           </div>
           <div className="flex items-start gap-1">
             <div
-              className="flex w-7 shrink-0 flex-col gap-1 pr-1"
+              className="sticky left-0 z-10 flex w-7 shrink-0 flex-col gap-1 bg-panel pr-1"
               aria-hidden="true"
             >
               {WEEKDAYS.map((day, idx) => (
@@ -197,11 +209,7 @@ export function ActivityHeatmap({
             </div>
             <div className="flex gap-1" role="grid" aria-label="Daily activity">
               {weeks.map((col, colIdx) => (
-                <div
-                  key={colIdx}
-                  className="flex flex-col gap-1"
-                  role="row"
-                >
+                <div key={colIdx} className="flex flex-col gap-1" role="row">
                   {col.map((cell, rowIdx) => {
                     if (!cell) {
                       return (

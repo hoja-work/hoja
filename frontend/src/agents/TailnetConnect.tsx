@@ -28,7 +28,7 @@ function CopyButton({ text, label }: { text: string; label: string }) {
   return (
     <button
       type="button"
-      className="inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs hover:bg-subtle"
+      className="inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs hover:bg-subtle pointer-coarse:min-h-11"
       onClick={() => {
         void navigator.clipboard?.writeText(text);
         setCopied(true);
@@ -110,7 +110,7 @@ function ConnectTailscale({
       <ol className="m-0 flex list-none flex-col gap-4 p-0">
         <Step n={1} title="Create an access token in Tailscale">
           <a
-            className="inline-flex w-fit items-center gap-2 rounded-md border border-line px-3 py-1.5 text-sm hover:bg-subtle"
+            className="inline-flex w-fit items-center gap-2 rounded-md border border-line px-3 py-1.5 text-sm hover:bg-subtle pointer-coarse:min-h-11"
             href={KEYS_URL}
             target="_blank"
             rel="noreferrer"
@@ -126,7 +126,7 @@ function ConnectTailscale({
         </Step>
         <Step n={2} title="Paste it here">
           <input
-            className="rounded-md border border-line bg-panel px-2 py-1.5 text-sm"
+            className="rounded-md border border-line bg-panel px-2 py-1.5 text-sm pointer-coarse:min-h-11"
             aria-label="Access token"
             placeholder="tskey-api-…"
             type="password"
@@ -167,7 +167,7 @@ function ConnectTailscale({
                   </ul>
                   <button
                     type="button"
-                    className="w-fit text-xs text-muted underline"
+                    className="w-fit text-xs text-muted underline pointer-coarse:min-h-11"
                     onClick={() => setShowLines((v) => !v)}
                   >
                     {showLines ? "Hide" : "Show"} the exact lines
@@ -199,7 +199,7 @@ function ConnectTailscale({
               <span>
                 <button
                   type="button"
-                  className="inline-flex items-center gap-2 rounded-md bg-foreground px-4 py-2 text-sm font-medium text-panel disabled:opacity-50"
+                  className="inline-flex items-center gap-2 rounded-md bg-foreground px-4 py-2 text-sm font-medium text-panel disabled:opacity-50 pointer-coarse:min-h-11"
                   disabled={busy || !!plan.problem}
                   onClick={() => {
                     setBusy(true);
@@ -227,7 +227,7 @@ function ConnectTailscale({
         </Step>
       </ol>
       <details className="text-sm" data-tailnet-manual>
-        <summary className="cursor-pointer text-xs text-muted">
+        <summary className="cursor-pointer text-xs text-muted pointer-coarse:min-h-11 pointer-coarse:py-3.5">
           Use an OAuth client instead (no access token)
         </summary>
         <div className="mt-3">
@@ -268,7 +268,7 @@ function ManualConnect({
           <span className="flex gap-2">
             <CopyButton text={tailnet.policy} label="Copy" />
             <a
-              className="inline-flex items-center gap-1 text-xs text-muted hover:text-foreground"
+              className="inline-flex items-center gap-1 text-xs text-muted hover:text-foreground pointer-coarse:min-h-11"
               href={POLICY_URL}
               target="_blank"
               rel="noreferrer"
@@ -284,7 +284,7 @@ function ManualConnect({
             .
           </span>
           <a
-            className="inline-flex w-fit items-center gap-1 text-xs text-muted hover:text-foreground"
+            className="inline-flex w-fit items-center gap-1 text-xs text-muted hover:text-foreground pointer-coarse:min-h-11"
             href={OAUTH_URL}
             target="_blank"
             rel="noreferrer"
@@ -307,7 +307,7 @@ function ManualConnect({
             }}
           >
             <input
-              className="rounded-md border border-line bg-panel px-2 py-1.5 text-sm"
+              className="rounded-md border border-line bg-panel px-2 py-1.5 text-sm pointer-coarse:min-h-11"
               aria-label="Client ID"
               placeholder="Client ID"
               value={clientId}
@@ -315,7 +315,7 @@ function ManualConnect({
               autoComplete="off"
             />
             <input
-              className="rounded-md border border-line bg-panel px-2 py-1.5 text-sm"
+              className="rounded-md border border-line bg-panel px-2 py-1.5 text-sm pointer-coarse:min-h-11"
               aria-label="Client secret"
               placeholder="Client secret (tskey-client-…)"
               type="password"
@@ -326,7 +326,7 @@ function ManualConnect({
             <span>
               <button
                 type="submit"
-                className="inline-flex items-center gap-2 rounded-md bg-foreground px-4 py-2 text-sm font-medium text-panel disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-md bg-foreground px-4 py-2 text-sm font-medium text-panel disabled:opacity-50 pointer-coarse:min-h-11"
                 disabled={busy || !clientId.trim() || !secret.trim()}
               >
                 {busy ? (
@@ -401,7 +401,7 @@ function AllowCard({
       <label className="flex flex-col gap-1 text-xs">
         Run as this user on {device.hostname}
         <input
-          className="rounded-md border border-line bg-panel px-2 py-1.5 text-sm"
+          className="rounded-md border border-line bg-panel px-2 py-1.5 text-sm pointer-coarse:min-h-11"
           aria-label="User on the machine"
           placeholder="the user you log in with, e.g. ada"
           value={user}
@@ -413,7 +413,7 @@ function AllowCard({
       <label className="flex flex-col gap-1 text-xs">
         Work folder (optional)
         <input
-          className="rounded-md border border-line bg-panel px-2 py-1.5 text-sm"
+          className="rounded-md border border-line bg-panel px-2 py-1.5 text-sm pointer-coarse:min-h-11"
           aria-label="Work folder"
           placeholder="~/hoja (standard) or a folder you use, like ~/code"
           value={folder}
@@ -421,7 +421,7 @@ function AllowCard({
         />
       </label>
       <fieldset className="m-0 flex flex-col gap-1 border-0 p-0 text-sm">
-        <label className="flex items-center gap-2">
+        <label className="flex items-center gap-2 pointer-coarse:min-h-11">
           <input
             type="radio"
             name={`mode-${device.id}`}
@@ -433,7 +433,7 @@ function AllowCard({
             (so Hoja can upgrade or restart it; revoke any time)
           </span>
         </label>
-        <label className="flex items-center gap-2">
+        <label className="flex items-center gap-2 pointer-coarse:min-h-11">
           <input
             type="radio"
             name={`mode-${device.id}`}
@@ -450,7 +450,7 @@ function AllowCard({
       <span className="flex gap-2">
         <button
           type="submit"
-          className="inline-flex items-center gap-2 rounded-md bg-foreground px-4 py-2 text-sm font-medium text-panel disabled:opacity-50"
+          className="inline-flex items-center gap-2 rounded-md bg-foreground px-4 py-2 text-sm font-medium text-panel disabled:opacity-50 pointer-coarse:min-h-11"
           disabled={busy || !user.trim()}
         >
           {busy && <Loader2 size={14} className="animate-spin" />}
@@ -458,7 +458,7 @@ function AllowCard({
         </button>
         <button
           type="button"
-          className="rounded-md px-3 py-2 text-sm text-muted"
+          className="rounded-md px-3 py-2 text-sm text-muted pointer-coarse:min-h-11"
           onClick={onCancel}
         >
           Deny
@@ -548,7 +548,7 @@ function DeviceRow({
           onUseCommand ? (
             <button
               type="button"
-              className="rounded-md border border-line px-3 py-1.5 text-xs font-medium hover:bg-subtle"
+              className="rounded-md border border-line px-3 py-1.5 text-xs font-medium hover:bg-subtle pointer-coarse:min-h-11"
               onClick={onUseCommand}
             >
               Use a command instead
@@ -561,7 +561,7 @@ function DeviceRow({
         ) : (
           <button
             type="button"
-            className="rounded-md border border-line px-3 py-1.5 text-xs font-medium hover:bg-subtle disabled:opacity-50"
+            className="rounded-md border border-line px-3 py-1.5 text-xs font-medium hover:bg-subtle disabled:opacity-50 pointer-coarse:min-h-11"
             disabled={!device.online || sshOff}
             title={
               !device.online
@@ -578,7 +578,7 @@ function DeviceRow({
         {access && access.state !== "revoked" && !installing && (
           <button
             type="button"
-            className="text-xs text-muted hover:text-foreground"
+            className="text-xs text-muted hover:text-foreground pointer-coarse:min-h-11"
             onClick={() =>
               void getAgentsAdapter()
                 .revokeTailnetMachine(device.id)
@@ -732,7 +732,7 @@ export function TailnetConnect({
         </span>
         <button
           type="button"
-          className="inline-flex items-center gap-1 text-xs text-muted hover:text-foreground"
+          className="inline-flex items-center gap-1 text-xs text-muted hover:text-foreground pointer-coarse:min-h-11"
           onClick={() => void adapter.disconnectTailnet().then(setTailnet)}
         >
           <Unplug size={12} /> Disconnect

@@ -226,12 +226,12 @@ const COMPONENTS: Components = {
   ),
   hr: () => <hr className="my-[.9em] border-0 border-t border-line" />,
   th: ({ children }) => (
-    <th className="border border-line bg-subtle px-2.5 py-1.5 text-left font-semibold">
+    <th className="border border-line bg-subtle px-2.5 py-1.5 text-left font-semibold break-normal">
       {children}
     </th>
   ),
   td: ({ children }) => (
-    <td className="border border-line px-2.5 py-1.5 text-left">{children}</td>
+    <td className="border border-line px-2.5 py-1.5 text-left break-normal">{children}</td>
   ),
   table: ({ children }) => (
     <div data-md-table className="my-[.5em] max-w-full overflow-x-auto">

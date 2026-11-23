@@ -143,7 +143,7 @@ export function SettingsSelect({
             ref={trigger}
             className={
               `flex cursor-pointer items-center justify-between border hover:border-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground aria-disabled:cursor-not-allowed aria-disabled:opacity-50 ${open ? "border-[#171717] shadow-[0_0_0_3px_#00000012] [html[data-theme=dark]_&]:border-[#aaa] [html[data-theme=dark]_&]:shadow-[0_0_0_3px_#ffffff12]" : ""}` +
-              " flex items-center justify-between gap-3 w-full min-h-10.5 pt-2 pr-3 pb-2 pl-3 border border-solid border-[#d3d3d3] rounded-md bg-[#fefefe] text-[#1f1f1f] cursor-pointer [transition:border-color_.15s_ease,box-shadow_.15s_ease] hover:border-[#888] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-[#525252] focus-visible:outline-offset-2 aria-disabled:cursor-not-allowed aria-disabled:opacity-58 [html[data-theme=dark]_&]:border-[#4d4d4d] [html[data-theme=dark]_&]:bg-[#2a2a2a] [html[data-theme=dark]_&]:text-[#f2f2f2] motion-reduce:[transition:none] focus-visible:outline-[#171717] [html[data-theme=dark]_&]:focus-visible:outline-[#ddd]"
+              " flex items-center justify-between gap-3 w-full min-h-10.5 pointer-coarse:min-h-11 pt-2 pr-3 pb-2 pl-3 border border-solid border-[#d3d3d3] rounded-md bg-[#fefefe] text-[#1f1f1f] cursor-pointer [transition:border-color_.15s_ease,box-shadow_.15s_ease] hover:border-[#888] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-[#525252] focus-visible:outline-offset-2 aria-disabled:cursor-not-allowed aria-disabled:opacity-58 [html[data-theme=dark]_&]:border-[#4d4d4d] [html[data-theme=dark]_&]:bg-[#2a2a2a] [html[data-theme=dark]_&]:text-[#f2f2f2] motion-reduce:[transition:none] focus-visible:outline-[#171717] [html[data-theme=dark]_&]:focus-visible:outline-[#ddd]"
             }
             role="combobox"
             aria-label={label}
@@ -246,7 +246,7 @@ export function SettingsSelect({
               </span>
             </div>
           ))}
-          <div className="border-t border-line mt-1.25 -mr-1.5 -mb-1.5 -ml-1.5 pt-2.25 pr-3 pb-2.25 pl-3 border-t-[#e6e6e6] text-[#6d6d6d] text-[11px] [html[data-theme=dark]_&]:text-[#b2b2b2] [html[data-theme=dark]_&]:border-[#434343]">
+          <div className="pointer-coarse:hidden border-t border-line mt-1.25 -mr-1.5 -mb-1.5 -ml-1.5 pt-2.25 pr-3 pb-2.25 pl-3 border-t-[#e6e6e6] text-[#6d6d6d] text-[11px] [html[data-theme=dark]_&]:text-[#b2b2b2] [html[data-theme=dark]_&]:border-[#434343]">
             ↑↓ to explore · Enter to select · Esc to close
           </div>
         </PopoverContent>

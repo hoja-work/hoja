@@ -128,14 +128,18 @@ function SpanDetail({ row, onClose }: { row: TraceRow; onClose: () => void }) {
           type="button"
           onClick={onClose}
           aria-label="Close span details"
-          className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted transition-colors hover:bg-subtle hover:transition-none"
+          className="flex size-8 pointer-coarse:size-11 shrink-0 items-center justify-center rounded-md text-muted transition-colors hover:bg-subtle hover:transition-none"
         >
           <X className="size-4" aria-hidden />
         </button>
       </div>
       <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
         <dt className="text-muted">Status</dt>
-        <dd>{STATUS_TEXT[span.status] || span.status}</dd>
+        <dd>
+          {(span.status && STATUS_TEXT[span.status]) ||
+            span.status ||
+            "Not recorded"}
+        </dd>
         <dt className="text-muted">Started</dt>
         <dd className="tabular-nums">{offsetLabel(row.startMs)}</dd>
         <dt className="text-muted">Duration</dt>
@@ -224,26 +228,28 @@ function Timeline({ trace }: { trace: HojaTrace }) {
   );
   const marksFor = (id: string) =>
     marks.get(id) || { marks: [], failed: 0, blocked: 0 };
+  // The session span is the timeline itself, not a row.
+  const spanCount = trace.spans.filter((s) => s.kind !== "session").length;
   const expandable = trace.spans.filter(
     (s) => s.kind === "turn" || s.kind === "subagent",
   );
   return (
     <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
       <div className="flex min-h-64 min-w-0 flex-1 flex-col sm:min-h-0">
-        <div className="flex items-center gap-2 border-b border-line px-4 py-2 text-xs text-muted">
+        <div className="flex items-center gap-2 border-b border-line px-4 py-2 text-xs text-muted pointer-coarse:py-0 pointer-coarse:pr-2">
           <span className="flex-1">
-            {rows.length} of {trace.spans.length - 1} spans
+            {rows.length} of {spanCount} spans
           </span>
           <button
             type="button"
-            className="rounded-md px-2 py-1 transition-colors hover:bg-subtle hover:transition-none"
+            className="rounded-md px-2 py-1 transition-colors hover:bg-subtle hover:transition-none pointer-coarse:min-h-11 pointer-coarse:px-3"
             onClick={() => setCollapsed(new Set())}
           >
             Expand all
           </button>
           <button
             type="button"
-            className="rounded-md px-2 py-1 transition-colors hover:bg-subtle hover:transition-none"
+            className="rounded-md px-2 py-1 transition-colors hover:bg-subtle hover:transition-none pointer-coarse:min-h-11 pointer-coarse:px-3"
             onClick={() => setCollapsed(new Set(expandable.map((s) => s.id)))}
           >
             Collapse all
@@ -273,7 +279,7 @@ function Timeline({ trace }: { trace: HojaTrace }) {
                 className="flex flex-col border-b border-line/60 sm:flex-row sm:items-center"
               >
                 <div
-                  className="flex min-w-0 items-center gap-1 py-1 pr-2 sm:w-2/5 sm:shrink-0"
+                  className="flex min-w-0 items-center gap-1 py-1 pr-2 pointer-coarse:py-0 sm:w-2/5 sm:shrink-0"
                   style={{
                     paddingLeft: `${0.75 + Math.min(row.depth, 8) * 1}rem`,
                   }}
@@ -284,7 +290,7 @@ function Timeline({ trace }: { trace: HojaTrace }) {
                       onClick={() => toggle(span.id)}
                       aria-expanded={open}
                       aria-label={`${open ? "Collapse" : "Expand"} ${span.name}`}
-                      className="flex size-6 shrink-0 items-center justify-center rounded text-muted transition-colors hover:bg-subtle hover:transition-none"
+                      className="flex size-6 shrink-0 items-center justify-center rounded text-muted transition-colors hover:bg-subtle hover:transition-none pointer-coarse:size-11"
                     >
                       {open ? (
                         <ChevronDown className="size-4" aria-hidden />
@@ -293,13 +299,13 @@ function Timeline({ trace }: { trace: HojaTrace }) {
                       )}
                     </button>
                   ) : (
-                    <span className="size-6 shrink-0" />
+                    <span className="size-6 shrink-0 pointer-coarse:w-11" />
                   )}
                   <button
                     type="button"
                     onClick={() => setSelected(isSelected ? null : span.id)}
                     aria-pressed={isSelected}
-                    className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1 text-left text-sm transition-colors hover:bg-subtle hover:transition-none ${isSelected ? "bg-accent-soft" : ""}`}
+                    className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1 text-left text-sm transition-colors pointer-coarse:min-h-11 hover:bg-subtle hover:transition-none ${isSelected ? "bg-accent-soft" : ""}`}
                   >
                     <KindIcon span={span} />
                     <span
@@ -599,7 +605,7 @@ function Body({
             aria-selected={tab === id}
             aria-controls={`trace-panel-${id}`}
             onClick={() => setTab(id)}
-            className={`shrink-0 border-b-2 px-2 py-2 text-sm whitespace-nowrap transition-colors hover:text-foreground hover:transition-none ${tab === id ? "border-accent text-foreground" : "border-transparent text-muted"}`}
+            className={`shrink-0 border-b-2 px-2 py-2 pointer-coarse:min-h-11 text-sm whitespace-nowrap transition-colors hover:text-foreground hover:transition-none ${tab === id ? "border-accent text-foreground" : "border-transparent text-muted"}`}
           >
             {label}
           </button>
@@ -677,7 +683,7 @@ export function TraceViewer({
     : [];
   return createPortal(
     <div
-      className="fixed inset-0 z-100 flex items-stretch justify-center bg-black/40 p-2 sm:p-8"
+      className="fixed inset-0 z-100 flex items-stretch justify-center bg-black/40 p-2 sm:p-8 shell-phone:p-0"
       role="presentation"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
@@ -688,7 +694,7 @@ export function TraceViewer({
         aria-modal="true"
         aria-label={`Session trace: ${s?.title || title}`}
         data-trace-viewer=""
-        className="flex min-h-0 w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-line bg-panel text-foreground shadow-xl"
+        className="flex min-h-0 w-full max-w-6xl flex-col overflow-hidden rounded-xl shell-phone:rounded-none shell-phone:border-0 border border-line bg-panel text-foreground shadow-xl"
       >
         <header className="flex items-start gap-3 border-b border-line p-4">
           <Activity className="mt-1 size-5 shrink-0 text-accent" aria-hidden />
@@ -703,7 +709,7 @@ export function TraceViewer({
           <a
             href={url}
             download={title}
-            className="flex h-8 shrink-0 items-center gap-1 rounded-md border border-line px-2 text-sm transition-colors hover:bg-subtle hover:transition-none"
+            className="flex h-8 pointer-coarse:h-11 pointer-coarse:px-3 shrink-0 items-center gap-1 rounded-md border border-line px-2 text-sm transition-colors hover:bg-subtle hover:transition-none"
           >
             <Download className="size-4" aria-hidden />
             <span className="hidden sm:inline">JSON</span>
@@ -714,7 +720,7 @@ export function TraceViewer({
             type="button"
             onClick={onClose}
             aria-label="Close trace"
-            className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted transition-colors hover:bg-subtle hover:transition-none"
+            className="flex size-8 pointer-coarse:size-11 shrink-0 items-center justify-center rounded-md text-muted transition-colors hover:bg-subtle hover:transition-none"
           >
             <X className="size-4" aria-hidden />
           </button>

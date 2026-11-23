@@ -311,7 +311,7 @@ export function KnowledgeSettings() {
           {editingId && (
             <button
               type="button"
-              className="rounded-lg border border-line px-3 py-1.5 text-xs font-medium hover:bg-subtle"
+              className="rounded-lg border border-line px-3 py-1.5 text-xs font-medium hover:bg-subtle pointer-coarse:min-h-11"
               onClick={resetForm}
             >
               Cancel editing
@@ -325,11 +325,13 @@ export function KnowledgeSettings() {
               Scope
               <select
                 aria-label="Document scope"
-                className="rounded-lg border border-line bg-transparent px-3 py-2 text-sm"
+                className="rounded-lg border border-line bg-transparent px-3 py-2 text-sm pointer-coarse:min-h-11"
                 value={scope}
                 onChange={(e) => handleScopeChange(e.target.value as Scope)}
               >
-                <option value="workspace">Workspace (applies everywhere)</option>
+                <option value="workspace">
+                  Workspace (applies everywhere)
+                </option>
                 <option value="team">Team</option>
                 <option value="project">Project</option>
               </select>
@@ -340,7 +342,7 @@ export function KnowledgeSettings() {
                 Team
                 <select
                   aria-label="Target team"
-                  className="rounded-lg border border-line bg-transparent px-3 py-2 text-sm"
+                  className="rounded-lg border border-line bg-transparent px-3 py-2 text-sm pointer-coarse:min-h-11"
                   value={scopeId}
                   onChange={(e) => setScopeId(e.target.value)}
                   required
@@ -360,7 +362,7 @@ export function KnowledgeSettings() {
                 Project
                 <select
                   aria-label="Target project"
-                  className="rounded-lg border border-line bg-transparent px-3 py-2 text-sm"
+                  className="rounded-lg border border-line bg-transparent px-3 py-2 text-sm pointer-coarse:min-h-11"
                   value={scopeId}
                   onChange={(e) => setScopeId(e.target.value)}
                   required
@@ -381,7 +383,7 @@ export function KnowledgeSettings() {
             <input
               type="text"
               aria-label="Document title"
-              className="rounded-lg border border-line bg-transparent px-3 py-2 text-sm"
+              className="rounded-lg border border-line bg-transparent px-3 py-2 text-sm pointer-coarse:min-h-11"
               placeholder="e.g. Architecture principles or Python style guide"
               required
               value={title}
@@ -403,8 +405,9 @@ export function KnowledgeSettings() {
           </label>
 
           <div className="flex flex-wrap items-center justify-between gap-4">
-            <label className="flex items-center gap-2 text-sm">
+            <label className="flex items-center gap-2 text-sm pointer-coarse:min-h-11">
               <input
+                className="shrink-0 pointer-coarse:size-5"
                 type="checkbox"
                 aria-label="Enable document for automatic agent injection"
                 checked={enabled}
@@ -418,13 +421,9 @@ export function KnowledgeSettings() {
             <button
               type="submit"
               disabled={!canSubmit}
-              className="rounded-lg border border-foreground bg-foreground px-4 py-2 text-sm font-medium text-background disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-lg border border-foreground bg-foreground px-4 py-2 text-sm font-medium text-bg disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11 max-sm:w-full"
             >
-              {busy
-                ? "Saving…"
-                : editingId
-                  ? "Save changes"
-                  : "Save document"}
+              {busy ? "Saving…" : editingId ? "Save changes" : "Save document"}
             </button>
           </div>
         </form>
@@ -443,7 +442,11 @@ export function KnowledgeSettings() {
 
       <div className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Filter documents by scope">
+          <div
+            className="flex flex-wrap items-center gap-2"
+            role="group"
+            aria-label="Filter documents by scope"
+          >
             {FILTER_OPTIONS.map((opt) => {
               const active = filter === opt.id;
               return (
@@ -454,8 +457,8 @@ export function KnowledgeSettings() {
                   onClick={() => setFilter(opt.id)}
                   className={
                     active
-                      ? "rounded-full border border-foreground bg-foreground px-3 py-1 text-xs font-medium text-background"
-                      : "rounded-full border border-line bg-transparent px-3 py-1 text-xs font-medium text-muted hover:bg-subtle"
+                      ? "rounded-full border border-foreground bg-foreground px-3 py-1 text-xs font-medium text-bg pointer-coarse:min-h-11 pointer-coarse:px-4"
+                      : "rounded-full border border-line bg-transparent px-3 py-1 text-xs font-medium text-muted hover:bg-subtle pointer-coarse:min-h-11 pointer-coarse:px-4"
                   }
                 >
                   {opt.label}
@@ -470,14 +473,19 @@ export function KnowledgeSettings() {
         </div>
 
         {loading && (
-          <p className="rounded-xl border border-line p-4 text-center text-sm text-muted" role="status">
+          <p
+            className="rounded-xl border border-line p-4 text-center text-sm text-muted"
+            role="status"
+          >
             Loading knowledge documents…
           </p>
         )}
 
         {!loading && filteredDocs.length === 0 && (
           <div className="flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-line p-6 text-center">
-            <b className="text-sm font-semibold">No knowledge documents found</b>
+            <b className="text-sm font-semibold">
+              No knowledge documents found
+            </b>
             <p className="max-w-md text-xs text-muted">
               Add a workspace, team, or project knowledge document above so
               agents automatically follow your standards and architecture
@@ -515,21 +523,21 @@ export function KnowledgeSettings() {
                   <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      className="rounded-lg border border-line px-2.5 py-1.5 text-xs font-medium hover:bg-subtle"
+                      className="rounded-lg border border-line px-2.5 py-1.5 text-xs font-medium hover:bg-subtle pointer-coarse:min-h-11 pointer-coarse:px-3.5"
                       onClick={() => startEdit(doc)}
                     >
                       Edit
                     </button>
                     <button
                       type="button"
-                      className="rounded-lg border border-line px-2.5 py-1.5 text-xs font-medium hover:bg-subtle"
+                      className="rounded-lg border border-line px-2.5 py-1.5 text-xs font-medium hover:bg-subtle pointer-coarse:min-h-11 pointer-coarse:px-3.5"
                       onClick={() => void toggleEnabled(doc)}
                     >
                       {doc.enabled ? "Disable" : "Enable"}
                     </button>
                     <button
                       type="button"
-                      className="rounded-lg border border-line px-2.5 py-1.5 text-xs font-medium hover:bg-subtle"
+                      className="rounded-lg border border-line px-2.5 py-1.5 text-xs font-medium hover:bg-subtle pointer-coarse:min-h-11 pointer-coarse:px-3.5"
                       onClick={() => void removeDoc(doc)}
                     >
                       Delete

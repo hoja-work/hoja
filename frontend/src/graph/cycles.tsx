@@ -1010,7 +1010,7 @@ export function CycleOverviewRows({
         <div
           data-cycle-timeline
           className={styleClasses(
-            "relative min-w-0 shell-phone:flex shell-phone:gap-2.25 shell-phone:overflow-x-auto shell-phone:pt-0.75 shell-phone:px-0.75 shell-phone:pb-3 shell-phone:[scroll-snap-type:x_proximity] shell-phone:scrollbar-thin motion-reduce:scroll-auto",
+            "relative min-w-0 shell-phone:flex shell-phone:gap-2.25 shell-phone:overflow-x-auto shell-phone:pt-0.75 shell-phone:px-0.75 shell-phone:pb-3 shell-phone:[scroll-snap-type:x_proximity] shell-phone:scrollbar-thin motion-reduce:scroll-auto shell-phone:[&_button]:min-h-11 pointer-coarse:[&_button]:min-h-11",
           )}
           data-style-hooks={styleHooks(
             "lin-cycles-tl relative min-w-0 shell-phone:flex shell-phone:gap-[9px] shell-phone:overflow-x-auto shell-phone:pt-[3px] shell-phone:px-[3px] shell-phone:pb-[12px] shell-phone:[scroll-snap-type:x_proximity] shell-phone:scrollbar-thin motion-reduce:scroll-auto",
@@ -1142,7 +1142,7 @@ function CyclePreview({
           <button
             type="button"
             className={styleClasses(
-              "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333] justify-center w-full",
+              "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333] justify-center w-full pointer-coarse:min-h-11 shell-phone:min-h-11",
             )}
             data-style-hooks={styleHooks(
               "lin-btn inline-flex items-center gap-[8px] border border-solid border-line bg-panel text-foreground rounded-[7px] py-[8px] px-[14px] text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default primary data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333] lin-cycle-open justify-center w-full",
@@ -1321,6 +1321,33 @@ function CyclePreview({
 
 const EMPTY_CYCLES: Cycle[] = [];
 
+// The shared IssueRow keeps its chips at full width (`meta` is flex-none), so a long project name
+// squeezed the title to nothing. In cycle lists the chips shrink instead: the title keeps up to
+// 30% of the row, the project chip ellipsizes, and on narrow phones the chips move to a
+// second line under a title that can wrap to two lines.
+const CYCLE_ROW_FIT = [
+  "[&_[data-style-hooks~='title']]:min-w-[min(30%,280px)]",
+  "[&_[data-style-hooks~='meta']]:shrink [&_[data-style-hooks~='meta']]:min-w-0",
+  "[&_[data-style-hooks~='lin-project-chip']]:block [&_[data-style-hooks~='lin-project-chip']]:min-w-18 [&_[data-style-hooks~='lin-project-chip']]:max-w-60 [&_[data-style-hooks~='lin-project-chip']]:overflow-hidden [&_[data-style-hooks~='lin-project-chip']]:text-ellipsis [&_[data-style-hooks~='lin-project-chip']]:leading-5.5",
+  "[&_[data-style-hooks~='lin-project-chip']>svg]:inline [&_[data-style-hooks~='lin-project-chip']>svg]:mr-1 [&_[data-style-hooks~='lin-project-chip']>svg]:align-[-2px]",
+  "max-sm:[&_[data-style-hooks~='lin-row']]:flex-wrap max-sm:[&_[data-style-hooks~='lin-row']]:gap-y-1.5 max-sm:[&_[data-style-hooks~='lin-row']]:py-2.5 max-sm:[&_[data-style-hooks~='lin-row']]:min-h-14",
+  "max-sm:[&_[data-style-hooks~='title']]:whitespace-normal max-sm:[&_[data-style-hooks~='title']]:line-clamp-2 max-sm:[&_[data-style-hooks~='title']]:wrap-break-word max-sm:[&_[data-style-hooks~='title']]:leading-5",
+  // Only the title opens the task; on a phone its tap area stretches over the whole row.
+  "shell-phone:[&_[data-style-hooks~='title']]:after:absolute shell-phone:[&_[data-style-hooks~='title']]:after:inset-0 pointer-coarse:[&_[data-style-hooks~='lin-row']]:min-h-11",
+  "max-sm:[&_[data-style-hooks~='meta']]:basis-full max-sm:[&_[data-style-hooks~='meta']]:ml-0 max-sm:[&_[data-style-hooks~='meta']]:pl-5.75 max-sm:[&_[data-style-hooks~='meta']]:flex-nowrap max-sm:[&_[data-style-hooks~='lin-project-chip']]:max-w-none",
+].join(" ");
+
+// The shared filter and display popovers are sized for a mouse. In cycle pages they get
+// 44px rows and a height that stays inside the phone viewport (the list inside scrolls).
+const PHONE_MENU_FIT =
+  "shell-phone:max-w-[calc(100vw-24px)] shell-phone:max-h-[min(480px,calc(100dvh-140px))] shell-phone:overscroll-contain pointer-coarse:[&_input]:min-h-11 shell-phone:[&_input]:min-h-11 pointer-coarse:[&_button]:min-h-11 shell-phone:[&_button]:min-h-11 pointer-coarse:[&_select]:min-h-11 shell-phone:[&_select]:min-h-11";
+
+// Cycle pages that render straight inside the app <main> (not in the shell card) take the
+// full phone width instead of sitting inside <main>'s desktop padding. On touch screens the
+// hover-only tooltips stay hidden: a tap emulates hover and left them stuck on screen.
+const PHONE_FULL_BLEED =
+  "shell-phone:[[data-main]>&]:mx-[calc(50%-50vw)] shell-phone:[[data-main]>&]:-mt-6 shell-phone:[[data-main]>&]:-mb-6 pointer-coarse:[&_[data-tip]]:before:hidden pointer-coarse:[&_[data-tip]]:after:hidden";
+
 export function GraphTeamCycles({
   team,
   teams,
@@ -1387,7 +1414,7 @@ export function GraphTeamCycles({
     >
       <header
         className={styleClasses(
-          "flex items-center gap-2 min-h-12.25 py-0 px-5 border-b border-b-line flex-none",
+          "flex items-center gap-2 min-h-12.25 py-0 px-5 border-b border-b-line flex-none shell-phone:min-h-14 shell-phone:gap-1 shell-phone:px-2 shell-phone:[&_nav_button]:min-h-11 pointer-coarse:[&_[data-style-hooks~='lin-icon-btn']]:min-h-11 pointer-coarse:[&_[data-style-hooks~='lin-icon-btn']]:min-w-11 shell-phone:[&_[data-style-hooks~='lin-icon-btn']]:min-h-11 shell-phone:[&_[data-style-hooks~='lin-icon-btn']]:min-w-11",
         )}
         data-style-hooks={styleHooks(
           "lin-head flex items-center gap-[8px] min-h-[49px] py-0 px-[20px] border-b border-b-line flex-none",
@@ -1543,7 +1570,7 @@ export function GraphTeamCycles({
               <button
                 type="button"
                 className={styleClasses(
-                  "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default",
+                  "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default pointer-coarse:min-h-11 shell-phone:min-h-11",
                 )}
                 data-style-hooks={styleHooks(
                   "lin-btn inline-flex items-center gap-[8px] border border-solid border-line bg-panel text-foreground rounded-[7px] py-[8px] px-[14px] text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default",
@@ -1603,7 +1630,7 @@ export function GraphWorkspaceCycles({
     >
       <header
         className={styleClasses(
-          "flex items-center gap-2 min-h-12.25 py-0 px-5 border-b border-b-line flex-none",
+          "flex items-center gap-2 min-h-12.25 py-0 px-5 border-b border-b-line flex-none shell-phone:min-h-14 shell-phone:gap-1 shell-phone:px-2 shell-phone:[&_nav_button]:min-h-11 pointer-coarse:[&_[data-style-hooks~='lin-icon-btn']]:min-h-11 pointer-coarse:[&_[data-style-hooks~='lin-icon-btn']]:min-w-11 shell-phone:[&_[data-style-hooks~='lin-icon-btn']]:min-h-11 shell-phone:[&_[data-style-hooks~='lin-icon-btn']]:min-w-11",
         )}
         data-style-hooks={styleHooks(
           "lin-head flex items-center gap-[8px] min-h-[49px] py-0 px-[20px] border-b border-b-line flex-none",
@@ -2127,7 +2154,7 @@ const CycleIssueGroups = React.memo(function CycleIssueGroups({
         >
           <header
             className={styleClasses(
-              "flex items-center gap-2 bg-subtle rounded-[7px] min-h-9 py-0 px-2.5 text-[13px] [&_b]:font-semibold",
+              "flex items-center gap-2 bg-subtle rounded-[7px] min-h-9 py-0 px-2.5 text-[13px] [&_b]:font-semibold shell-phone:gap-1 shell-phone:px-1 pointer-coarse:[&_button]:min-h-11 pointer-coarse:[&_button]:min-w-11 shell-phone:[&_button]:min-h-11 shell-phone:[&_button]:min-w-11",
             )}
             data-style-hooks={styleHooks(
               "lin-group-head flex items-center gap-[8px] bg-subtle rounded-[7px] min-h-[36px] py-0 px-[10px] text-[13px] [&_b]:font-semibold",
@@ -2201,6 +2228,7 @@ const CycleIssueGroups = React.memo(function CycleIssueGroups({
               <div
                 role="presentation"
                 key={i.id}
+                className={CYCLE_ROW_FIT}
                 draggable
                 data-issue-id={i.id}
                 onDragStart={(e) => {
@@ -2270,7 +2298,16 @@ export function GraphCycleDetail({
   const [filters, setFilters] = useState<LinFilters>({ ...emptyFilters });
   const [filterOpen, setFilterOpen] = useState(false);
   const [displayOpen, setDisplayOpen] = useState(false);
-  const [paneOpen, setPaneOpen] = useState(true);
+  // On a phone the details pane stacks above the task list, so it starts closed there and the
+  // list comes first; the toolbar toggle opens it. Same breakpoint as the `shell-phone` variant.
+  const [paneOpen, setPaneOpen] = useState(
+    () =>
+      typeof window === "undefined" ||
+      typeof window.matchMedia !== "function" ||
+      !window.matchMedia(
+        "(width <= 880px), (width <= 1000px) and (height <= 500px)",
+      ).matches,
+  );
   const [menuOpen, setMenuOpen] = useState(false);
   const [collapsed, setCollapsed] = useState<string[]>([]);
   const [progressOpen, setProgressOpen] = useState(true);
@@ -2455,7 +2492,9 @@ export function GraphCycleDetail({
 
   return (
     <section
-      className={styleClasses("min-w-0 flex flex-col h-full bg-panel")}
+      className={styleClasses(
+        `min-w-0 flex flex-col h-full bg-panel ${PHONE_FULL_BLEED}`,
+      )}
       data-style-hooks={styleHooks(
         "lin-page min-w-0 flex flex-col h-full bg-panel",
       )}
@@ -2463,7 +2502,7 @@ export function GraphCycleDetail({
     >
       <header
         className={styleClasses(
-          "flex items-center gap-2 min-h-12.25 py-0 px-5 border-b border-b-line flex-none",
+          "flex items-center gap-2 min-h-12.25 py-0 px-5 border-b border-b-line flex-none shell-phone:min-h-14 shell-phone:gap-1 shell-phone:px-2 shell-phone:[&_nav_button]:min-h-11 pointer-coarse:[&_[data-style-hooks~='lin-icon-btn']]:min-h-11 pointer-coarse:[&_[data-style-hooks~='lin-icon-btn']]:min-w-11 shell-phone:[&_[data-style-hooks~='lin-icon-btn']]:min-h-11 shell-phone:[&_[data-style-hooks~='lin-icon-btn']]:min-w-11",
         )}
         data-style-hooks={styleHooks(
           "lin-head flex items-center gap-[8px] min-h-[49px] py-0 px-[20px] border-b border-b-line flex-none",
@@ -2609,7 +2648,7 @@ export function GraphCycleDetail({
           </div>
           <div
             className={styleClasses(
-              "flex items-center gap-1.5 py-2 px-5 border-b border-b-line flex-none",
+              "flex items-center gap-1.5 py-2 px-5 border-b border-b-line flex-none shell-phone:px-3 shell-phone:py-1 pointer-coarse:[&_[data-style-hooks~='lin-icon-btn']]:min-h-11 pointer-coarse:[&_[data-style-hooks~='lin-icon-btn']]:min-w-11 shell-phone:[&_[data-style-hooks~='lin-icon-btn']]:min-h-11 shell-phone:[&_[data-style-hooks~='lin-icon-btn']]:min-w-11",
             )}
             data-style-hooks={styleHooks(
               "lin-toolbar flex items-center gap-[6px] py-[8px] px-[20px] border-b border-b-line flex-none",
@@ -2645,6 +2684,7 @@ export function GraphCycleDetail({
                   labels={labels}
                   cycles={cycles}
                   onClose={() => setFilterOpen(false)}
+                  anchorClass={PHONE_MENU_FIT}
                 />
               )}
             </span>
@@ -2665,6 +2705,7 @@ export function GraphCycleDetail({
                   display={{ ...display, layout: "List" } as LinDisplay}
                   setDisplay={() => {}}
                   onClose={() => setDisplayOpen(false)}
+                  anchorClass={PHONE_MENU_FIT}
                 />
               )}
             </span>
@@ -2767,7 +2808,7 @@ export function GraphCycleDetail({
         {paneOpen && (
           <aside
             className={styleClasses(
-              "w-82.5 flex-none border-l border-l-line overflow-y-auto pt-4.5 px-5 pb-15 [&_h2]:text-[15px] [&_h2]:font-[650] [&_h2]:m-0 [&_h2]:flex [&_h2]:items-center [&_h2]:gap-2 [@media_(max-width:1100px)]:w-72.5 [@media_(max-width:900px)]:w-auto [@media_(max-width:900px)]:border-l-0 [@media_(max-width:900px)]:border-t [@media_(max-width:900px)]:border-t-line",
+              "w-82.5 flex-none border-l border-l-line overflow-y-auto pt-4.5 px-5 pb-15 [&_h2]:text-[15px] [&_h2]:font-[650] [&_h2]:m-0 [&_h2]:flex [&_h2]:items-center [&_h2]:gap-2 [@media_(max-width:1100px)]:w-72.5 [@media_(max-width:900px)]:w-auto [@media_(max-width:900px)]:border-l-0 [@media_(max-width:900px)]:border-t [@media_(max-width:900px)]:border-t-line shell-phone:order-first shell-phone:border-t-0 shell-phone:border-b shell-phone:border-b-line shell-phone:px-4 shell-phone:pb-5 shell-phone:overflow-visible pointer-coarse:[&_button]:min-h-11 shell-phone:[&_button]:min-h-11 pointer-coarse:[&_button]:min-w-11 shell-phone:[&_button]:min-w-11",
             )}
             data-style-hooks={styleHooks(
               "lin-cpane w-[330px] flex-none border-l border-l-line overflow-y-auto pt-[18px] px-[20px] pb-[60px] [&_h2]:text-[15px] [&_h2]:font-[650] [&_h2]:m-0 [&_h2]:flex [&_h2]:items-center [&_h2]:gap-[8px] [@media_(max-width:1100px)]:w-[290px] [@media_(max-width:900px)]:w-auto [@media_(max-width:900px)]:border-l-0 [@media_(max-width:900px)]:border-t [@media_(max-width:900px)]:border-t-line",
@@ -2927,7 +2968,9 @@ export function GraphCycleDetail({
             </button>
             {progressOpen && (
               <>
-                <Legend stats={stats} />
+                <div data-style-hooks="lin-cycle-chart">
+                  <Legend stats={stats} />
+                </div>
                 <div style={{ marginTop: 8 }}>
                   <BurndownChart cycle={cycle} stats={stats} issues={issues} />
                 </div>
@@ -3165,7 +3208,7 @@ export function GraphTeamCycle({
       >
         <header
           className={styleClasses(
-            "flex items-center gap-2 min-h-12.25 py-0 px-5 border-b border-b-line flex-none",
+            "flex items-center gap-2 min-h-12.25 py-0 px-5 border-b border-b-line flex-none shell-phone:min-h-14 shell-phone:gap-1 shell-phone:px-2 shell-phone:[&_nav_button]:min-h-11 pointer-coarse:[&_[data-style-hooks~='lin-icon-btn']]:min-h-11 pointer-coarse:[&_[data-style-hooks~='lin-icon-btn']]:min-w-11 shell-phone:[&_[data-style-hooks~='lin-icon-btn']]:min-h-11 shell-phone:[&_[data-style-hooks~='lin-icon-btn']]:min-w-11",
           )}
           data-style-hooks={styleHooks(
             "lin-head flex items-center gap-[8px] min-h-[49px] py-0 px-[20px] border-b border-b-line flex-none",
@@ -3418,7 +3461,9 @@ export function GraphTeamCycleSettings({
   };
   return (
     <section
-      className={styleClasses("min-w-0 flex flex-col h-full bg-panel")}
+      className={styleClasses(
+        `min-w-0 flex flex-col h-full bg-panel ${PHONE_FULL_BLEED}`,
+      )}
       data-style-hooks={styleHooks(
         "lin-page min-w-0 flex flex-col h-full bg-panel",
       )}
@@ -3431,7 +3476,7 @@ export function GraphTeamCycleSettings({
       >
         <div
           className={styleClasses(
-            'max-w-160 py-7 px-8 [&_h1]:text-[18px] [&_h1]:mt-0 [&_h1]:mx-0 [&_h1]:mb-1.5 [&_h1]:tracking-[-.02em] [&_select]:border [&_select]:border-solid [&_select]:border-line [&_select]:rounded-[7px] [&_select]:py-2 [&_select]:px-2.5 [&_select]:[font:inherit] [&_select]:bg-panel [&_select]:text-foreground [&_select]:max-w-70 [&_input[type="date"]]:border [&_input[type="date"]]:border-solid [&_input[type="date"]]:border-line [&_input[type="date"]]:rounded-[7px] [&_input[type="date"]]:py-2 [&_input[type="date"]]:px-2.5 [&_input[type="date"]]:[font:inherit] [&_input[type="date"]]:bg-panel [&_input[type="date"]]:text-foreground [&_input[type="date"]]:max-w-70',
+            'max-w-160 py-7 px-8 shell-phone:px-4 shell-phone:py-5 pointer-coarse:[&_button]:min-h-11 shell-phone:[&_button]:min-h-11 pointer-coarse:[&_select]:min-h-11 shell-phone:[&_select]:min-h-11 [&_h1]:text-[18px] [&_h1]:mt-0 [&_h1]:mx-0 [&_h1]:mb-1.5 [&_h1]:tracking-[-.02em] [&_select]:border [&_select]:border-solid [&_select]:border-line [&_select]:rounded-[7px] [&_select]:py-2 [&_select]:px-2.5 [&_select]:[font:inherit] [&_select]:bg-panel [&_select]:text-foreground [&_select]:max-w-70 [&_input[type="date"]]:border [&_input[type="date"]]:border-solid [&_input[type="date"]]:border-line [&_input[type="date"]]:rounded-[7px] [&_input[type="date"]]:py-2 [&_input[type="date"]]:px-2.5 [&_input[type="date"]]:[font:inherit] [&_input[type="date"]]:bg-panel [&_input[type="date"]]:text-foreground [&_input[type="date"]]:max-w-70',
           )}
           data-style-hooks={styleHooks(
             'lin-csettings max-w-[640px] py-[28px] px-[32px] [&_h1]:text-[18px] [&_h1]:mt-0 [&_h1]:mx-0 [&_h1]:mb-[6px] [&_h1]:tracking-[-.02em] [&_select]:border [&_select]:border-solid [&_select]:border-line [&_select]:rounded-[7px] [&_select]:py-[8px] [&_select]:px-[10px] [&_select]:[font:inherit] [&_select]:bg-panel [&_select]:text-foreground [&_select]:max-w-[280px] [&_input[type="date"]]:border [&_input[type="date"]]:border-solid [&_input[type="date"]]:border-line [&_input[type="date"]]:rounded-[7px] [&_input[type="date"]]:py-[8px] [&_input[type="date"]]:px-[10px] [&_input[type="date"]]:[font:inherit] [&_input[type="date"]]:bg-panel [&_input[type="date"]]:text-foreground [&_input[type="date"]]:max-w-[280px]',

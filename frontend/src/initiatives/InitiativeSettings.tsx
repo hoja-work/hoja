@@ -28,7 +28,7 @@ type TeamRow = {
 };
 
 const field =
-  "rounded-md border border-line bg-bg px-2 py-1.5 text-sm text-foreground disabled:opacity-60";
+  "rounded-md border border-line bg-bg px-2 py-1.5 text-sm text-foreground disabled:opacity-60 pointer-coarse:min-h-11";
 
 function Section({
   title,
@@ -190,8 +190,9 @@ export function InitiativeSettings({
                 ))}
               </select>
             </label>
-            <label className="flex items-center gap-2 self-end text-sm">
+            <label className="flex items-center gap-2 self-end text-sm pointer-coarse:min-h-11">
               <input
+                className="pointer-coarse:size-5"
                 type="checkbox"
                 disabled={!admin}
                 checked={policy.followUps}
@@ -230,13 +231,17 @@ export function InitiativeSettings({
           }}
         >
           <input
-            className={`${field} min-w-0 flex-1`}
+            className={`${field} min-w-0 flex-1 max-sm:basis-full`}
             aria-label="New label group"
             placeholder="New label group, for example Horizon"
             value={newGroup}
             onChange={(e) => setNewGroup(e.target.value)}
           />
-          <DetailButton type="submit" disabled={!newGroup.trim()}>
+          <DetailButton
+            type="submit"
+            className="pointer-coarse:min-h-11 max-sm:flex-1"
+            disabled={!newGroup.trim()}
+          >
             Add group
           </DetailButton>
         </form>
@@ -255,14 +260,14 @@ export function InitiativeSettings({
           }}
         >
           <input
-            className={`${field} min-w-0 flex-1`}
+            className={`${field} min-w-0 flex-1 max-sm:basis-full`}
             aria-label="New label"
             placeholder="New label"
             value={newLabel}
             onChange={(e) => setNewLabel(e.target.value)}
           />
           <select
-            className={field}
+            className={`${field} max-sm:min-w-0 max-sm:flex-1`}
             aria-label="Group for the new label"
             value={newLabelGroup}
             onChange={(e) => setNewLabelGroup(e.target.value)}
@@ -274,7 +279,11 @@ export function InitiativeSettings({
               </option>
             ))}
           </select>
-          <DetailButton type="submit" disabled={!newLabel.trim()}>
+          <DetailButton
+            type="submit"
+            className="pointer-coarse:min-h-11"
+            disabled={!newLabel.trim()}
+          >
             Add label
           </DetailButton>
         </form>
@@ -286,8 +295,9 @@ export function InitiativeSettings({
             >
               <div className="flex flex-wrap items-center gap-2">
                 <span className="flex-1 font-medium">{g.name}</span>
-                <label className="flex items-center gap-2 text-sm text-muted">
+                <label className="flex items-center gap-2 text-sm text-muted pointer-coarse:min-h-11">
                   <input
+                    className="pointer-coarse:size-5"
                     type="checkbox"
                     checked={g.exclusive === false}
                     onChange={(e) =>
@@ -344,8 +354,9 @@ export function InitiativeSettings({
         >
           {teams.map((t) => (
             <li key={t.id}>
-              <label className="flex items-center gap-2 text-sm">
+              <label className="flex items-center gap-2 text-sm pointer-coarse:min-h-11">
                 <input
+                  className="shrink-0 pointer-coarse:size-5"
                   type="checkbox"
                   checked={Boolean(shown[t.id])}
                   onChange={(e) => {
@@ -385,7 +396,7 @@ function LabelRows({
         <li key={l.id} className="flex flex-wrap items-center gap-2 text-sm">
           <LabelDot color={l.color} />
           <input
-            className="min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1 py-0.5 hover:border-line focus:border-line"
+            className="min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1 py-0.5 hover:border-line focus:border-line pointer-coarse:min-h-11 pointer-coarse:border-line pointer-coarse:px-2"
             aria-label={`Rename ${l.name}`}
             defaultValue={l.name}
             onBlur={(e) => {
@@ -399,7 +410,7 @@ function LabelRows({
           />
           {groups.length > 0 && (
             <select
-              className="rounded-md border border-line bg-bg px-1.5 py-0.5 text-xs"
+              className="rounded-md border border-line bg-bg px-1.5 py-0.5 text-xs pointer-coarse:min-h-11"
               aria-label={`Group of ${l.name}`}
               value={l.parent?.id || ""}
               onChange={(e) =>

@@ -476,14 +476,14 @@ export function InitiativesList({
     { id: "all", label: "All initiatives" },
   ];
   const pill =
-    "inline-flex h-7 flex-none items-center gap-1 rounded-full border border-line bg-panel px-3 text-xs font-medium text-muted no-underline transition-colors duration-150 ease-out hover:bg-subtle hover:text-foreground hover:transition-none aria-[current=page]:bg-subtle aria-[current=page]:text-foreground focus-visible:outline-2 focus-visible:outline-accent";
+    "inline-flex h-7 flex-none items-center gap-1 rounded-full border border-line bg-panel px-3 text-xs font-medium text-muted no-underline transition-colors duration-150 ease-out hover:bg-subtle hover:text-foreground hover:transition-none aria-[current=page]:bg-subtle aria-[current=page]:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 pointer-coarse:h-11 shell-phone:h-11 shell-phone:text-sm";
 
   return (
     <section
-      className="relative flex min-h-0 min-w-0 flex-1 flex-col"
+      className="relative flex min-h-0 min-w-0 flex-1 flex-col pointer-coarse:[&_[data-tip]]:before:hidden pointer-coarse:[&_[data-tip]]:after:hidden"
       data-initiatives-page=""
     >
-      <header className="flex h-11 flex-none items-center justify-between gap-2 border-b border-line px-4">
+      <header className="flex h-11 flex-none items-center justify-between gap-2 border-b border-line px-4 shell-phone:h-auto shell-phone:min-h-14 shell-phone:py-1.5 shell-phone:pl-2 shell-phone:pr-3">
         <div className="flex min-w-0 items-center gap-1">
           <MobileNavTrigger />
           <h1 className="m-0 text-sm font-medium">
@@ -492,7 +492,7 @@ export function InitiativesList({
         </div>
         <button
           type="button"
-          className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted hover:bg-subtle hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent"
+          className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted hover:bg-subtle hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-11 shell-phone:min-h-11 shell-phone:border shell-phone:border-line shell-phone:bg-panel shell-phone:px-3 shell-phone:text-sm shell-phone:text-foreground"
           onClick={() => onNew()}
           title="New initiative (N then I)"
         >
@@ -500,7 +500,7 @@ export function InitiativesList({
         </button>
       </header>
       <div
-        className="flex flex-none items-center gap-2 px-2 py-2"
+        className="flex flex-none items-center gap-2 px-2 py-2 pointer-coarse:[&_button]:min-h-11 pointer-coarse:[&_button]:min-w-11 shell-phone:[&_button]:min-h-11 shell-phone:[&_button]:min-w-11"
         data-initiatives-toolbar=""
       >
         <nav
@@ -544,7 +544,7 @@ export function InitiativesList({
               <button
                 type="button"
                 aria-label={`Delete view ${v.name}`}
-                className="ml-0.5 grid size-5 place-items-center rounded-full text-muted opacity-0 hover:bg-subtle group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100"
+                className="ml-0.5 grid size-5 place-items-center rounded-full text-muted opacity-0 hover:bg-subtle group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
                 onClick={() => void removeView(v)}
               >
                 <X size={12} />
@@ -581,7 +581,7 @@ export function InitiativesList({
         />
       </div>
       {filterCount > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5 px-4 pb-2 text-xs">
+        <div className="flex flex-wrap items-center gap-1.5 px-4 pb-2 text-xs pointer-coarse:[&_button]:min-h-11 shell-phone:[&_button]:min-h-11">
           {(Object.keys(filters) as (keyof Filters)[]).flatMap((k) =>
             filters[k].map((v) => (
               <button
@@ -892,7 +892,7 @@ function InitiativeListRow({
       data-initiative-row=""
       data-dragging={dragging || undefined}
       data-drop={dropHint ? (dropHint.nest ? "nest" : "before") : undefined}
-      className="group relative flex items-center gap-3 border-b border-line px-4 py-3 transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none data-dragging:opacity-50 data-[drop=before]:border-t-2 data-[drop=before]:border-t-accent data-[drop=nest]:bg-accent-soft md:grid md:grid-cols-12"
+      className="group relative flex items-center gap-3 border-b border-line px-4 py-3 max-md:flex-wrap max-md:gap-y-1 max-md:pr-2 max-md:pl-3 transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none data-dragging:opacity-50 data-[drop=before]:border-t-2 data-[drop=before]:border-t-accent data-[drop=nest]:bg-accent-soft md:grid md:grid-cols-12"
       onDragStart={(e) => {
         e.dataTransfer.effectAllowed = "move";
         e.dataTransfer.setData("text/plain", i.id);
@@ -918,7 +918,7 @@ function InitiativeListRow({
             type="button"
             aria-expanded={!collapsed}
             aria-label={`${collapsed ? "Expand" : "Collapse"} ${i.name}`}
-            className="relative z-10 grid size-5 flex-none place-items-center rounded text-muted hover:bg-subtle"
+            className="relative z-10 grid size-5 flex-none place-items-center rounded text-muted hover:bg-subtle pointer-coarse:after:absolute pointer-coarse:after:-inset-3 pointer-coarse:after:content-['']"
             onClick={onToggle}
           >
             <ChevronRight
@@ -933,7 +933,7 @@ function InitiativeListRow({
         <InitiativeIcon icon={i.icon} color={i.color} />
         <div className="min-w-0">
           <a
-            className="block truncate font-medium text-foreground no-underline after:absolute after:inset-0 focus-visible:outline-2 focus-visible:outline-accent"
+            className="block truncate font-medium text-foreground no-underline after:absolute after:inset-0 focus-visible:outline-2 focus-visible:outline-accent max-md:line-clamp-2 max-md:whitespace-normal max-md:wrap-break-word"
             href={`/workspace/initiative/${encodeURIComponent(i.identifier || i.id)}`}
             onClick={(e) => {
               if (e.metaKey || e.ctrlKey || e.shiftKey) return;
@@ -947,7 +947,9 @@ function InitiativeListRow({
             )}
           </a>
           {showSummary && i.summary && (
-            <p className="m-0 truncate text-xs text-muted">{i.summary}</p>
+            <p className="m-0 truncate text-xs text-muted max-md:line-clamp-2 max-md:whitespace-normal">
+              {i.summary}
+            </p>
           )}
         </div>
         {(i.labels || []).slice(0, 2).map((l) => (
@@ -968,7 +970,10 @@ function InitiativeListRow({
           />
         </span>
       </div>
-      <span role="cell" className="flex-none md:col-span-2">
+      <span
+        role="cell"
+        className="flex-none md:col-span-2 max-md:order-last max-md:basis-full max-md:pl-14"
+      >
         <HealthBadge health={i.health} />
       </span>
       <span
@@ -1032,7 +1037,7 @@ function RowMenu({
   const item =
     "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-none";
   return (
-    <span className="relative z-10 flex-none">
+    <span className="relative z-10 flex-none pointer-coarse:[&_button]:min-h-11 pointer-coarse:[&_button]:min-w-11 shell-phone:[&_button]:min-h-11 shell-phone:[&_button]:min-w-11">
       <IconBtn
         label={`Actions for ${name}`}
         title="Move or nest"
@@ -1148,7 +1153,7 @@ function Popover({
           id={panelId}
           role="dialog"
           aria-label={label}
-          className="absolute top-full right-0 z-50 mt-1 grid max-h-96 w-72 max-w-xs gap-3 overflow-y-auto rounded-lg border border-line bg-panel p-3 text-sm shadow-lg"
+          className="absolute top-full right-0 z-50 mt-1 grid max-h-[min(24rem,calc(100dvh-11rem))] w-72 max-w-xs gap-3 overflow-y-auto rounded-lg border border-line bg-panel p-3 text-sm shadow-lg"
         >
           {children(() => setOpen(false))}
         </div>
@@ -1307,7 +1312,7 @@ function DisplayButton({
   onLeadOnly?: (v: boolean) => void;
 }) {
   const select =
-    "rounded-md border border-line bg-bg px-2 py-1 text-sm text-foreground";
+    "rounded-md border border-line bg-bg px-2 py-1 text-sm text-foreground pointer-coarse:min-h-11 shell-phone:min-h-11 shell-phone:text-base";
   return (
     <Popover label="Display options" icon={<Settings2 size={15} />}>
       {() => (

@@ -376,9 +376,9 @@ export function BillingUsageSettings() {
               placeholder="Search agent or model"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              className="min-h-9 min-w-0 flex-1 rounded-md border border-line bg-bg px-3 py-1.5 text-sm text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
+              className="min-h-9 min-w-0 flex-1 rounded-md border border-line bg-bg px-3 py-1.5 text-sm text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11 max-sm:basis-full"
             />
-            <label className="flex items-center gap-2 text-xs text-muted">
+            <label className="flex min-w-0 items-center gap-2 text-xs text-muted max-sm:flex-1">
               <span>Month</span>
               <input
                 type="month"
@@ -387,10 +387,10 @@ export function BillingUsageSettings() {
                 onChange={(event) =>
                   setMonth(event.target.value || monthValue())
                 }
-                className="min-h-9 rounded-md border border-line bg-bg px-2.5 py-1.5 text-sm text-foreground focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
+                className="min-h-9 min-w-0 rounded-md border border-line bg-bg px-2.5 py-1.5 text-sm text-foreground focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11 max-sm:flex-1"
               />
             </label>
-            <div className="relative ml-auto">
+            <div className="relative ml-auto pointer-coarse:[&>span>button]:size-11 shell-phone:[&>span>button]:size-11">
               <IconBtn
                 label="Display options"
                 title="Display options"
@@ -401,6 +401,11 @@ export function BillingUsageSettings() {
               </IconBtn>
               {displayOpen && (
                 <DisplayPanel
+                  /* Radix flips the panel above the trigger when the space below is short, but
+                   * the panel kept its fixed 560px cap and ran off the top of the viewport. Cap it
+                   * at the space Radix measured on the chosen side (less the phone app bar) so it
+                   * scrolls instead, and give its controls finger-sized targets on touch screens. */
+                  anchorClass="max-h-[min(560px,75dvh,var(--radix-popover-content-available-height))] shell-phone:data-[side=top]:max-h-[min(560px,75dvh,calc(var(--radix-popover-content-available-height)-64px))] pointer-coarse:[&_button]:min-h-11 pointer-coarse:[&_select]:min-h-11 pointer-coarse:[&_select]:text-base pointer-coarse:[&_label]:min-h-11 pointer-coarse:[&_input[type=checkbox]]:size-5"
                   display={display}
                   setDisplay={(next) => {
                     /* The panel's grouping is a property of the request, so it selects the

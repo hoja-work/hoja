@@ -33,7 +33,13 @@ import {
 } from "../graph/tasks";
 import { TailnetConnect } from "./TailnetConnect";
 import { getAgentsAdapter } from "./adapter";
-import { AGENTS_TABS, AgentsListShell, SearchField } from "./chrome";
+import {
+  DISPLAY_ANCHOR,
+  AGENTS_TABS,
+  AgentsListShell,
+  SearchField,
+  TOUCH_LIST,
+} from "./chrome";
 import {
   RUNNER_STATUSES,
   runnerStatus,
@@ -192,7 +198,7 @@ function CommandStep({
         {command && (
           <button
             type="button"
-            className="inline-flex items-center rounded-[7px] border border-line bg-panel px-3 py-1.5 text-[13px] text-foreground hover:bg-subtle disabled:opacity-50"
+            className="inline-flex items-center rounded-[7px] border border-line bg-panel px-3 py-1.5 text-[13px] text-foreground hover:bg-subtle disabled:opacity-50 pointer-coarse:min-h-11"
             onClick={onCopy}
           >
             {copied ? "Copied" : `Copy ${step} command`}
@@ -318,6 +324,7 @@ function EnrollPanel({ onClose }: { onClose: () => void }) {
           <b>Enroll a runner</b>
           <input
             aria-label="Runner name"
+            className="shell-phone:flex-[1_1_100%] pointer-coarse:min-h-11"
             placeholder="Machine name, e.g. mac-mini-01"
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -339,6 +346,7 @@ function EnrollPanel({ onClose }: { onClose: () => void }) {
             Expires in
             <input
               aria-label="Token lifetime in minutes"
+              className="pointer-coarse:min-h-11"
               value={ttl}
               inputMode="numeric"
               onChange={(e) => setTtl(e.target.value)}
@@ -355,7 +363,7 @@ function EnrollPanel({ onClose }: { onClose: () => void }) {
           </label>
           <button
             type="button"
-            className="inline-flex items-center rounded-[7px] border border-line bg-accent px-3 py-1.5 text-[13px] text-foreground disabled:opacity-50"
+            className="inline-flex items-center rounded-[7px] border border-line bg-accent px-3 py-1.5 text-[13px] text-foreground disabled:opacity-50 pointer-coarse:min-h-11"
             data-style-hooks="lin-btn primary"
             disabled={!name.trim() || busy === "create"}
             onClick={() => void create()}
@@ -364,7 +372,7 @@ function EnrollPanel({ onClose }: { onClose: () => void }) {
           </button>
           <button
             type="button"
-            className="inline-flex items-center rounded-[7px] border border-line bg-panel px-3 py-1.5 text-[13px] text-foreground hover:bg-subtle disabled:opacity-50"
+            className="inline-flex items-center rounded-[7px] border border-line bg-panel px-3 py-1.5 text-[13px] text-foreground hover:bg-subtle disabled:opacity-50 pointer-coarse:min-h-11"
             onClick={onClose}
           >
             Close
@@ -405,7 +413,7 @@ function EnrollPanel({ onClose }: { onClose: () => void }) {
             </code>
             <button
               type="button"
-              className="inline-flex items-center rounded-[7px] border border-line bg-panel px-3 py-1.5 text-[13px] text-foreground hover:bg-subtle disabled:opacity-50"
+              className="inline-flex items-center rounded-[7px] border border-line bg-panel px-3 py-1.5 text-[13px] text-foreground hover:bg-subtle disabled:opacity-50 pointer-coarse:min-h-11"
               onClick={() => copy("token", grant.token)}
             >
               {copied === "token" ? "Copied" : "Copy token"}
@@ -483,7 +491,7 @@ function EnrollPanel({ onClose }: { onClose: () => void }) {
             <span className="grow" />
             <button
               type="button"
-              className="inline-flex items-center rounded-[7px] border border-line bg-panel px-3 py-1.5 text-[13px] text-foreground hover:bg-subtle disabled:opacity-50"
+              className="inline-flex items-center rounded-[7px] border border-line bg-panel px-3 py-1.5 text-[13px] text-foreground hover:bg-subtle disabled:opacity-50 pointer-coarse:min-h-11"
               onClick={() => {
                 setGrant(null);
                 onClose();
@@ -539,7 +547,7 @@ function EnrollPanel({ onClose }: { onClose: () => void }) {
                 {enrollment.usable ? (
                   <button
                     type="button"
-                    className="inline-flex items-center rounded-[7px] border border-line bg-panel px-3 py-1.5 text-[13px] text-foreground hover:bg-subtle disabled:opacity-50"
+                    className="inline-flex items-center rounded-[7px] border border-line bg-panel px-3 py-1.5 text-[13px] text-foreground hover:bg-subtle disabled:opacity-50 pointer-coarse:min-h-11"
                     data-style-hooks="lin-btn"
                     disabled={busy === enrollment.id}
                     onClick={() => void revoke(enrollment)}
@@ -734,7 +742,7 @@ export function RunnersPane({
               <button
                 key={l}
                 type="button"
-                className="inline-flex items-center border border-line hover:text-foreground hover:border-accent aria-pressed:bg-subtle aria-pressed:text-foreground aria-pressed:font-semibold gap-1.5 pt-1.25 pr-2.75 pb-1.25 pl-2.75 border-solid rounded-[99px] bg-panel text-[12px] text-muted font-medium aria-pressed:border-line"
+                className="inline-flex items-center border border-line hover:text-foreground hover:border-accent aria-pressed:bg-subtle aria-pressed:text-foreground aria-pressed:font-semibold gap-1.5 pt-1.25 pr-2.75 pb-1.25 pl-2.75 border-solid rounded-[99px] bg-panel text-[12px] text-muted font-medium aria-pressed:border-line shrink-0 whitespace-nowrap pointer-coarse:min-h-11 pointer-coarse:min-w-11"
                 aria-pressed={on}
                 onClick={() =>
                   setLabels((cur) =>
@@ -752,7 +760,7 @@ export function RunnersPane({
           {!forbidden && (
             <button
               type="button"
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-[7px] border border-line bg-panel px-3 py-1.5 text-[13px] hover:bg-subtle whitespace-nowrap"
+              className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-[7px] border border-line bg-panel px-3 py-1.5 text-[13px] hover:bg-subtle whitespace-nowrap pointer-coarse:min-h-11 pointer-coarse:min-w-11"
               data-action="enroll-runner"
               aria-label="Enroll runner"
               title="Enroll runner"
@@ -763,7 +771,7 @@ export function RunnersPane({
               <span className="shell-phone:hidden">Connect a machine</span>
             </button>
           )}
-          <span className="relative">
+          <span className={DISPLAY_ANCHOR}>
             <IconBtn
               label="Display options"
               title="Display options"
@@ -857,7 +865,13 @@ export function RunnersPane({
         </div>
       )}
       {!loading && !error && (
-        <div className="pt-1.5 pr-3 pb-10 pl-3" data-style-hooks="lin-list">
+        <div
+          /* A runner row's labels sit in the shared row's meta column; on a phone they take a
+             line of their own under the machine name. The rule hangs off the list so the row
+             itself carries only the issue row's classes. */
+          className={`pt-1.5 pr-3 pb-10 pl-3 ${TOUCH_LIST} shell-phone:[&_[data-style-hooks~=ident]]:max-w-[9ch] shell-phone:[&_[data-style-hooks~=lin-row]>[data-style-hooks~=meta]:not(:empty)]:basis-full shell-phone:[&_[data-style-hooks~=lin-row]>[data-style-hooks~=meta]:not(:empty)]:ml-0`}
+          data-style-hooks="lin-list"
+        >
           {groups.map((g) => {
             const isCollapsed = collapsedSet.has(g.key);
             return (
@@ -1197,7 +1211,7 @@ export function RunnerDetailPage({
         data-surface="runner-detail"
         aria-label={`${runnerId}: runner`}
       >
-        <header className="flex flex-none items-center border-b border-line gap-2 min-h-12.25 pt-0 pr-5 pb-0 pl-5 border-b-line shell-phone:flex-wrap shell-phone:gap-y-1">
+        <header className="flex flex-none items-center border-b border-line gap-2 min-h-12.25 pt-0 pr-5 pb-0 pl-5 border-b-line shell-phone:flex-wrap shell-phone:gap-y-1 pointer-coarse:[&_[data-style-hooks~=lin-icon-btn]]:size-11">
           <nav
             className="flex flex-1 items-center gap-1.75 text-[13px] text-muted min-w-0 shell-phone:min-w-0 shell-phone:flex-wrap shell-phone:gap-y-0.5"
             aria-label="Breadcrumb"
@@ -1232,7 +1246,7 @@ export function RunnerDetailPage({
         data-surface="runner-detail"
         aria-label={`${runnerId}: runner`}
       >
-        <header className="flex flex-none items-center border-b border-line gap-2 min-h-12.25 pt-0 pr-5 pb-0 pl-5 border-b-line shell-phone:flex-wrap shell-phone:gap-y-1">
+        <header className="flex flex-none items-center border-b border-line gap-2 min-h-12.25 pt-0 pr-5 pb-0 pl-5 border-b-line shell-phone:flex-wrap shell-phone:gap-y-1 pointer-coarse:[&_[data-style-hooks~=lin-icon-btn]]:size-11">
           <nav
             className="flex flex-1 items-center gap-1.75 text-[13px] text-muted min-w-0 shell-phone:min-w-0 shell-phone:flex-wrap shell-phone:gap-y-0.5"
             aria-label="Breadcrumb"
@@ -1274,7 +1288,7 @@ export function RunnerDetailPage({
 
   return (
     <section
-      className="flex flex-col min-w-0 h-full bg-panel"
+      className="flex flex-col min-w-0 h-full bg-panel shell-phone:relative"
       data-surface="runner-detail"
       data-style-hooks="lin-page"
       data-connect={connectOn ? "on" : "off"}
@@ -1282,7 +1296,7 @@ export function RunnerDetailPage({
       aria-label={`${runner.id}: ${runner.name}`}
     >
       <header
-        className="flex flex-none items-center border-b border-line gap-2 min-h-12.25 pt-0 pr-5 pb-0 pl-5 border-b-line shell-phone:flex-wrap shell-phone:gap-y-1"
+        className="flex flex-none items-center border-b border-line gap-2 min-h-12.25 shell-phone:min-h-14 pt-0 pr-5 pb-0 pl-5 border-b-line shell-phone:flex-wrap shell-phone:gap-y-1 pointer-coarse:[&_[data-style-hooks~=lin-icon-btn]]:size-11"
         data-style-hooks="lin-head"
       >
         <nav
@@ -1297,23 +1311,28 @@ export function RunnerDetailPage({
           >
             ← Runners
           </button>
-          <span className="text-muted opacity-70">›</span>
-          <span>{workspaceName}</span>
-          <span className="text-muted opacity-70">›</span>
-          <span className="font-semibold text-muted">{runner.id}</span>
-          <span className="truncate text-foreground font-semibold overflow-hidden text-ellipsis whitespace-nowrap">
+          {/* On a phone the back link is the whole breadcrumb: the workspace is in the top bar and
+              the hostname is the title right below (HOJA-731). */}
+          <span className="text-muted opacity-70 shell-phone:hidden">›</span>
+          <span className="shell-phone:hidden">{workspaceName}</span>
+          <span className="text-muted opacity-70 shell-phone:hidden">›</span>
+          <span className="font-semibold text-muted shell-phone:hidden">
+            {runner.id}
+          </span>
+          <span className="truncate text-foreground font-semibold overflow-hidden text-ellipsis whitespace-nowrap shell-phone:hidden">
             {runner.name}
           </span>
         </nav>
       </header>
+      {/* On a phone the actions sit on the breadcrumb's line instead of a row of their own. */}
       <div
-        className="flex flex-none items-center border-b border-line justify-end gap-1.5 pt-2 pr-5 pb-2 pl-5 border-b-line"
+        className="flex flex-none items-center border-b border-line justify-end gap-1.5 pt-2 pr-5 pb-2 pl-5 border-b-line pointer-coarse:[&_[data-style-hooks~=lin-icon-btn]]:size-11 shell-phone:absolute shell-phone:top-0 shell-phone:right-0 shell-phone:h-14 shell-phone:border-b-0 shell-phone:py-0"
         data-style-hooks="lin-toolbar"
       >
         {!runner.revoked && runner.enabled && (
           <button
             type="button"
-            className="rounded-[7px] border border-line px-3 py-1.5 text-[13px] hover:bg-subtle disabled:opacity-50"
+            className="rounded-[7px] border border-line px-3 py-1.5 text-[13px] hover:bg-subtle disabled:opacity-50 pointer-coarse:min-h-11"
             data-style-hooks="lin-btn"
             data-action="revoke-runner"
             disabled={revoking}
@@ -1344,11 +1363,11 @@ export function RunnerDetailPage({
       </div>
 
       <div
-        className="flex flex-1 flex-col lg:flex-row min-h-0 [@media_(max-width:900px)]:flex-col"
+        className="flex flex-1 flex-col lg:flex-row min-h-0 [@media_(max-width:900px)]:flex-col max-lg:overflow-y-auto max-lg:overscroll-contain"
         data-style-hooks="lin-detail"
       >
         <main
-          className="flex-1 overflow-y-auto min-w-0 pt-6.5 pr-10 pb-20 pl-10 max-w-205 [@media_(max-width:900px)]:max-w-none [@media_(max-width:900px)]:pt-5 [@media_(max-width:900px)]:pr-5 [@media_(max-width:900px)]:pb-5 [@media_(max-width:900px)]:pl-5"
+          className="flex-1 overflow-y-auto min-w-0 pt-6.5 pr-10 pb-20 pl-10 max-w-205 max-lg:flex-none max-lg:overflow-visible max-lg:max-w-none [@media_(max-width:900px)]:max-w-none [@media_(max-width:900px)]:pt-5 [@media_(max-width:900px)]:pr-5 [@media_(max-width:900px)]:pb-5 [@media_(max-width:900px)]:pl-5"
           data-style-hooks="lin-detail-main"
         >
           <h1 className="overflow-hidden border-0 focus:outline-none flex items-center w-full bg-transparent text-foreground text-[21px] font-[650] tracking-[-.015em] leading-[1.3] pt-0 pr-0 pb-0 pl-0 mt-0 mr-0 mb-3.5 ml-0 resize-none font-[inherit] focus:[outline:none] gap-2.5">
@@ -1356,7 +1375,7 @@ export function RunnerDetailPage({
               state={{ name: tone.name, type: tone.type, color: tone.color }}
               size={16}
             />{" "}
-            {runner.name}
+            <span className="min-w-0 [overflow-wrap:anywhere]">{runner.name}</span>
           </h1>
           <p className="relative wrap-break-word text-[14px] leading-[1.6] text-foreground [word-break:break-word] mt-0 mr-0 mb-2 ml-0 min-h-6">
             {tone.name} · last seen {lastSeen(runner.lastSeenAt)} ·{" "}
@@ -1469,7 +1488,7 @@ export function RunnerDetailPage({
         </main>
 
         <aside
-          className="flex-none overflow-y-auto border-t border-line lg:w-72 lg:border-t-0 lg:border-l w-72.5 border-l border-l-line pt-5.5 pr-5 pb-15 pl-5 [@media_(max-width:1100px)]:w-62.5 [@media_(max-width:900px)]:w-auto [@media_(max-width:900px)]:border-l-0 [@media_(max-width:900px)]:border-t [@media_(max-width:900px)]:border-t-line"
+          className="flex-none overflow-y-auto border-t border-line lg:w-72 lg:border-t-0 lg:border-l w-72.5 border-l border-l-line pt-5.5 pr-5 pb-15 pl-5 max-lg:overflow-visible max-lg:w-auto max-lg:border-l-0 [@media_(max-width:1100px)]:w-62.5 [@media_(max-width:900px)]:w-auto [@media_(max-width:900px)]:border-l-0 [@media_(max-width:900px)]:border-t [@media_(max-width:900px)]:border-t-line pointer-coarse:[&_[data-style-hooks~=lin-prop]_button[aria-haspopup]]:min-h-11"
           data-style-hooks="lin-props"
           aria-label="Runner details"
         >

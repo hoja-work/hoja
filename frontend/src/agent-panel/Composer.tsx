@@ -50,7 +50,7 @@ export function Composer({
           }}
           placeholder={placeholder}
           aria-label="Message the workspace agent"
-          className="max-h-48 min-h-6 w-full resize-none border-0 bg-transparent px-1 py-0.5 text-sm leading-relaxed text-foreground placeholder:text-muted focus:outline-none"
+          className="max-h-48 min-h-6 w-full resize-none border-0 bg-transparent px-1 py-0.5 text-sm pointer-coarse:min-h-11 leading-relaxed text-foreground placeholder:text-muted focus:outline-none"
         />
         <div className="flex items-center justify-between gap-2">
           <span className="hidden text-xs text-muted sm:inline">

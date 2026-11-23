@@ -37,13 +37,13 @@ export function ReviewsBoard({
 }) {
   return (
     <div
-      className="flex min-h-0 flex-1 gap-3 overflow-x-auto p-4"
+      className="flex min-h-0 flex-1 gap-3 overflow-x-auto overscroll-x-contain p-4 max-sm:snap-x max-sm:snap-mandatory max-sm:scroll-px-4"
       data-reviews-board=""
     >
       {columns.map((col) => (
         <section
           key={col.bucket}
-          className="flex w-72 flex-none min-h-0 flex-col gap-2"
+          className="flex w-72 flex-none min-h-0 flex-col gap-2 max-sm:w-4/5 max-sm:snap-start"
           aria-label={col.bucket}
         >
           <header className="flex items-center gap-2 px-1 text-[13px] font-medium">
@@ -147,9 +147,9 @@ export function ReviewsActivity({
                 type="button"
                 onClick={() => onSelect(e.id)}
                 data-reviews-activity-row=""
-                className="flex items-center gap-3 rounded-md px-2 py-2 text-left hover:bg-subtle"
+                className="flex items-center gap-3 rounded-md px-2 py-2 text-left hover:bg-subtle pointer-coarse:min-h-11 max-sm:gap-2"
               >
-                <span className="w-16 flex-none whitespace-nowrap text-xs tabular-nums text-muted">
+                <span className="w-16 flex-none whitespace-nowrap text-xs tabular-nums text-muted max-sm:w-auto">
                   {e.at
                     ? new Date(e.at).toLocaleTimeString(undefined, {
                         hour: "2-digit",
@@ -162,7 +162,7 @@ export function ReviewsActivity({
                   className={`size-2 flex-none rounded-full ${TONE_DOT[e.tone]}`}
                 />
                 <span className="flex min-w-0 flex-1 flex-col">
-                  <span className="truncate text-[13px]">
+                  <span className="truncate text-[13px] max-sm:line-clamp-2 max-sm:whitespace-normal">
                     <span className="mr-1.5 font-semibold">{e.ref}</span>
                     {e.title}
                   </span>

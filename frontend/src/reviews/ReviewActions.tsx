@@ -61,9 +61,9 @@ function gateLine(gate: ReviewGate): string {
 }
 
 const BUTTON =
-  "inline-flex items-center h-8 px-3 rounded-md border border-line bg-panel text-[13px] text-foreground hover:bg-subtle disabled:opacity-50 disabled:cursor-not-allowed";
+  "inline-flex items-center justify-center h-8 px-3 rounded-md border border-line bg-panel text-[13px] text-foreground hover:bg-subtle disabled:opacity-50 disabled:cursor-not-allowed pointer-coarse:h-11";
 const PRIMARY =
-  "inline-flex items-center h-8 px-3 rounded-md border border-accent bg-accent text-[13px] text-white disabled:opacity-50 disabled:cursor-not-allowed";
+  "inline-flex items-center justify-center h-8 px-3 rounded-md border border-accent bg-accent text-[13px] text-white disabled:opacity-50 disabled:cursor-not-allowed pointer-coarse:h-11";
 
 export function ReviewActions({ linkId, gql, onChanged }: Props) {
   const [gate, setGate] = useState<ReviewGate | null>(null);
@@ -180,7 +180,7 @@ export function ReviewActions({ linkId, gql, onChanged }: Props) {
         )}
       </p>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2 max-sm:grid max-sm:grid-cols-2">
         <button
           type="button"
           className={BUTTON}
@@ -211,7 +211,7 @@ export function ReviewActions({ linkId, gql, onChanged }: Props) {
         </button>
         <button
           type="button"
-          className={PRIMARY}
+          className={`${PRIMARY} max-sm:col-span-2`}
           onClick={() => setConfirmingMerge(true)}
           disabled={!gateReady || busy !== "" || blocked !== null}
           title={
@@ -234,7 +234,7 @@ export function ReviewActions({ linkId, gql, onChanged }: Props) {
       {composing ? (
         <div className="flex flex-col gap-2 rounded-md border border-line bg-panel p-3">
           <textarea
-            className="w-full min-h-20 rounded-md border border-line bg-transparent p-2 text-[13px] text-foreground resize-y"
+            className="w-full min-h-20 rounded-md border border-line bg-transparent p-2 text-[13px] text-foreground resize-y pointer-coarse:text-base"
             value={body}
             onChange={(e) => setBody(e.target.value)}
             placeholder={
@@ -247,7 +247,7 @@ export function ReviewActions({ linkId, gql, onChanged }: Props) {
               composing === "request" ? "Requested changes" : "Comment"
             }
           />
-          <div>
+          <div className="flex gap-2 max-sm:flex-col">
             <button
               type="button"
               className={PRIMARY}
@@ -255,6 +255,13 @@ export function ReviewActions({ linkId, gql, onChanged }: Props) {
               disabled={!body.trim() || busy !== ""}
             >
               {composing === "request" ? "Submit request" : "Post comment"}
+            </button>
+            <button
+              type="button"
+              className={BUTTON}
+              onClick={() => setComposing(null)}
+            >
+              Cancel
             </button>
           </div>
         </div>
@@ -268,12 +275,12 @@ export function ReviewActions({ linkId, gql, onChanged }: Props) {
         >
           <p className="m-0 text-[13px]">
             Merge commit{" "}
-            <code className="font-mono text-xs" title={gate.sha}>
+            <code className="font-mono text-xs break-all" title={gate.sha}>
               {gate.sha}
             </code>
           </p>
           <p className="m-0 text-xs text-muted">{gateLine(gate)}</p>
-          <div className="flex gap-2">
+          <div className="flex gap-2 max-sm:flex-col">
             <button
               type="button"
               className={PRIMARY}

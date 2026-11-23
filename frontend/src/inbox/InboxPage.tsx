@@ -596,7 +596,39 @@ export function InboxPage({
   const iconButton =
     "grid size-7 place-items-center rounded-md bg-transparent text-muted hover:bg-subtle hover:text-foreground aria-pressed:bg-subtle aria-pressed:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 pointer-coarse:size-11 shell-phone:size-11";
   const rowAction =
-    "grid size-6 place-items-center rounded bg-transparent text-muted hover:bg-subtle hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:size-9";
+    "grid size-6 place-items-center rounded bg-transparent text-muted hover:bg-subtle hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:size-11";
+  const snoozeItems = (g: InboxGroup) => (
+    <>
+      {tab === "snoozed" && (
+        <button
+          type="button"
+          className="flex w-full items-center rounded-md bg-transparent px-2 py-1.5 text-left text-sm hover:bg-subtle pointer-coarse:min-h-11"
+          onClick={() => void snooze(g, null)}
+        >
+          Unsnooze now
+        </button>
+      )}
+      {SNOOZE_OPTIONS.map((o) => {
+        const until = o.until();
+        return (
+          <button
+            key={o.id}
+            type="button"
+            className="flex w-full items-center justify-between gap-2 rounded-md bg-transparent px-2 py-1.5 text-left text-sm hover:bg-subtle pointer-coarse:min-h-11"
+            onClick={() => void snooze(g, until)}
+          >
+            {o.label}
+            <span className="text-xs text-muted">
+              {until.toLocaleString(undefined, {
+                weekday: "short",
+                hour: "numeric",
+              })}
+            </span>
+          </button>
+        );
+      })}
+    </>
+  );
   const detailIssue =
     selected?.type === "issue" && selected.issue
       ? liveIssue(selected.issue)
@@ -722,7 +754,7 @@ export function InboxPage({
             key={t.id}
             href={t.path}
             aria-current={tab === t.id ? "page" : undefined}
-            className="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs text-muted no-underline hover:bg-subtle hover:text-foreground aria-[current=page]:bg-subtle aria-[current=page]:font-semibold aria-[current=page]:text-foreground focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-11"
+            className="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs text-muted no-underline hover:bg-subtle hover:text-foreground aria-[current=page]:bg-subtle aria-[current=page]:font-semibold aria-[current=page]:text-foreground focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:justify-center"
             onClick={(e) => {
               e.preventDefault();
               changeTab(t.id);
@@ -749,7 +781,7 @@ export function InboxPage({
             </span>
             <button
               type="button"
-              className="rounded-md border border-line bg-bg px-2 py-1 text-xs text-foreground hover:bg-subtle"
+              className="flex-none rounded-md border border-line bg-bg px-2 py-1 text-xs text-foreground hover:bg-subtle pointer-coarse:min-h-11 pointer-coarse:px-3"
               onClick={() => {
                 setError("");
                 setLoading(true);
@@ -809,33 +841,33 @@ export function InboxPage({
                       <Avatar name={n.actor?.name || null} size={24} />
                     )}
                     <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                      <span className="flex min-w-0 items-center gap-1.5">
+                      <span className="flex min-w-0 items-center gap-1.5 max-md:items-start">
                         {g.type === "issue" ? (
                           issue?.state && (
                             <StatusIcon
                               state={issue.state}
-                              className="size-3.5 flex-none"
+                              className="size-3.5 flex-none max-md:mt-0.5"
                             />
                           )
                         ) : (
                           <SubjectIcon
                             size={13}
-                            className="flex-none text-muted"
+                            className="flex-none text-muted max-md:mt-0.5"
                             aria-label={subjectLabel(g.type)}
                           />
                         )}
                         {g.type === "issue" && (
-                          <span className="flex-none text-xs text-muted">
+                          <span className="flex-none text-xs text-muted max-md:mt-0.5">
                             {issue?.identifier || "—"}
                           </span>
                         )}
                         <span
-                          className={`truncate text-sm ${unread ? "font-semibold text-foreground" : "text-foreground"}`}
+                          className={`truncate text-sm max-md:line-clamp-2 max-md:whitespace-normal ${unread ? "font-semibold text-foreground" : "text-foreground"}`}
                         >
                           {subjectTitle(g)}
                         </span>
                       </span>
-                      <span className="truncate text-xs text-muted">
+                      <span className="truncate text-xs text-muted max-md:line-clamp-2 max-md:whitespace-normal">
                         <span className={unread ? "text-foreground" : ""}>
                           {who}
                         </span>{" "}
@@ -864,7 +896,7 @@ export function InboxPage({
                     </span>
                   </button>
                   <div
-                    className="absolute right-2 top-2 hidden items-center rounded-md bg-panel group-hover:flex group-focus-within:flex"
+                    className="absolute right-2 top-2 hidden items-center rounded-md bg-panel group-hover:flex group-focus-within:flex pointer-coarse:top-1"
                     data-inbox-notification-actions=""
                   >
                     {tab !== "archived" && (
@@ -901,34 +933,7 @@ export function InboxPage({
                           className="z-50 flex w-52 flex-col gap-0.5 rounded-lg border border-line bg-panel p-1 shadow-(--shadow)"
                           data-inbox-snooze-menu=""
                         >
-                          {tab === "snoozed" && (
-                            <button
-                              type="button"
-                              className="flex w-full items-center rounded-md bg-transparent px-2 py-1.5 text-left text-sm hover:bg-subtle pointer-coarse:min-h-11"
-                              onClick={() => void snooze(g, null)}
-                            >
-                              Unsnooze now
-                            </button>
-                          )}
-                          {SNOOZE_OPTIONS.map((o) => {
-                            const until = o.until();
-                            return (
-                              <button
-                                key={o.id}
-                                type="button"
-                                className="flex w-full items-center justify-between gap-2 rounded-md bg-transparent px-2 py-1.5 text-left text-sm hover:bg-subtle pointer-coarse:min-h-11"
-                                onClick={() => void snooze(g, until)}
-                              >
-                                {o.label}
-                                <span className="text-xs text-muted">
-                                  {until.toLocaleString(undefined, {
-                                    weekday: "short",
-                                    hour: "numeric",
-                                  })}
-                                </span>
-                              </button>
-                            );
-                          })}
+                          {snoozeItems(g)}
                         </PopoverContent>
                       </UIPopover>
                     )}
@@ -978,7 +983,7 @@ export function InboxPage({
           <div className="flex justify-center p-4">
             <button
               type="button"
-              className="rounded-md border border-line bg-panel px-3 py-1.5 text-xs hover:bg-subtle disabled:opacity-50"
+              className="rounded-md border border-line bg-panel px-3 py-1.5 text-xs hover:bg-subtle disabled:opacity-50 pointer-coarse:min-h-11"
               data-inbox-load-more=""
               disabled={loading}
               onClick={() => void loadMore()}
@@ -995,13 +1000,15 @@ export function InboxPage({
     showDetail && selected ? (
       <div
         ref={detailRef}
-        className="flex min-h-0 flex-1 flex-col"
+        /* Below md this bar's "← Inbox" is the way back, so the embedded task's own
+           "← Inbox" breadcrumb (and the separator after it) would be a second, smaller copy. */
+        className="flex min-h-0 flex-1 flex-col max-md:[&_[data-style-hooks~='lin-crumb']>[data-style-hooks~='crumb-link']:first-child]:hidden max-md:[&_[data-style-hooks~='lin-crumb']>[data-style-hooks~='crumb-link']:first-child+[data-style-hooks~='sep']]:hidden"
         data-inbox-detail=""
       >
         <div className="flex flex-none items-center justify-between gap-2 border-b border-line px-3 py-1.5">
           <button
             type="button"
-            className="inline-flex items-center gap-1 rounded-md bg-transparent px-2 py-1 text-xs text-muted hover:bg-subtle hover:text-foreground md:hidden pointer-coarse:min-h-11"
+            className="inline-flex flex-none items-center gap-1 rounded-md bg-transparent px-2 py-1 text-xs text-muted hover:bg-subtle hover:text-foreground md:hidden pointer-coarse:min-h-11 max-md:min-h-11"
             onClick={close}
           >
             ← Inbox
@@ -1012,10 +1019,83 @@ export function InboxPage({
               : selected.latest.actor?.name || "Someone"}{" "}
             {describe(selected.latest)} · {fullTime(selected.latest.createdAt)}
           </span>
-          <div className="flex items-center gap-1">
+          <div className="flex min-w-0 items-center gap-1">
+            {/* On a phone the list and its hover actions are hidden while a notification is
+                open, so the triage actions live here instead. */}
+            <div
+              className="flex items-center gap-1 md:hidden"
+              data-inbox-detail-actions=""
+            >
+              {tab !== "archived" && (
+                <button
+                  type="button"
+                  className={iconButton}
+                  aria-label={`${selected.unreadCount > 0 ? "Mark read" : "Mark unread"}: ${nameOf(selected)}`}
+                  title={
+                    selected.unreadCount > 0
+                      ? "Mark read (U)"
+                      : "Mark unread (U)"
+                  }
+                  onClick={() =>
+                    void setRead(selected, selected.unreadCount > 0)
+                  }
+                >
+                  {selected.unreadCount > 0 ? (
+                    <Check size={15} />
+                  ) : (
+                    <CircleDot size={15} />
+                  )}
+                </button>
+              )}
+              {tab !== "archived" && real(selected) && (
+                <UIPopover
+                  open={snoozeFor === `detail:${selected.key}`}
+                  onOpenChange={(o) =>
+                    setSnoozeFor(o ? `detail:${selected.key}` : null)
+                  }
+                >
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      className={iconButton}
+                      title="Snooze (H)"
+                      aria-label={`Snooze ${nameOf(selected)}`}
+                      aria-haspopup="menu"
+                      aria-expanded={snoozeFor === `detail:${selected.key}`}
+                    >
+                      <Clock size={15} />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    align="end"
+                    sideOffset={6}
+                    collisionPadding={16}
+                    className="z-50 flex w-64 flex-col gap-0.5 rounded-lg border border-line bg-panel p-1 shadow-(--shadow)"
+                    data-inbox-snooze-menu=""
+                  >
+                    {snoozeItems(selected)}
+                  </PopoverContent>
+                </UIPopover>
+              )}
+              <button
+                type="button"
+                className={iconButton}
+                title={
+                  tab === "archived" ? "Move back to inbox" : "Archive (E)"
+                }
+                aria-label={`${tab === "archived" ? "Unarchive" : "Archive"} ${nameOf(selected)}`}
+                onClick={() => void archive(selected)}
+              >
+                {tab === "archived" ? (
+                  <ArchiveRestore size={15} />
+                ) : (
+                  <Archive size={15} />
+                )}
+              </button>
+            </div>
             <button
               type="button"
-              className="rounded-md bg-transparent px-2 py-1 text-xs text-muted hover:bg-subtle hover:text-foreground pointer-coarse:min-h-11"
+              className="flex-none rounded-md bg-transparent px-2 py-1 text-xs text-muted hover:bg-subtle hover:text-foreground pointer-coarse:min-h-11 pointer-coarse:min-w-11 max-md:min-h-11 max-md:min-w-11"
               onClick={() => openFull(selected)}
               title="Open the full page (Enter)"
             >
@@ -1026,12 +1106,13 @@ export function InboxPage({
                 type="issue"
                 id={selected.key}
                 compact
+                className="pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:justify-center"
                 onError={(m) => say(m)}
               />
             )}
             <button
               type="button"
-              className={iconButton}
+              className={`${iconButton} max-md:hidden`}
               aria-label="Close (Esc)"
               title="Close (Esc)"
               onClick={close}
@@ -1063,7 +1144,7 @@ export function InboxPage({
             ? "Select a notification to read it here"
             : "You’re all caught up"}
         </p>
-        <dl className="m-0 grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs text-muted">
+        <dl className="m-0 grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs text-muted pointer-coarse:hidden">
           {(
             [
               ["J / K", "Next / previous"],
@@ -1106,14 +1187,14 @@ export function InboxPage({
       {toast && (
         <div
           role="status"
-          className="pointer-events-auto fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-lg border border-line bg-panel px-3 py-2 text-sm shadow-(--shadow)"
+          className="pointer-events-auto fixed bottom-4 left-1/2 z-50 flex max-w-md -translate-x-1/2 items-center gap-3 rounded-lg border border-line bg-panel px-3 py-2 text-sm shadow-(--shadow) max-sm:inset-x-4 max-sm:max-w-none max-sm:translate-x-0 max-sm:pr-1"
           data-inbox-toast=""
         >
-          <span>{toast.text}</span>
+          <span className="min-w-0 flex-1">{toast.text}</span>
           {toast.undo && (
             <button
               type="button"
-              className="rounded-md px-2 py-0.5 text-sm font-semibold hover:bg-subtle"
+              className="flex-none rounded-md px-2 py-0.5 text-sm font-semibold hover:bg-subtle pointer-coarse:min-h-11 pointer-coarse:px-3"
               onClick={() => {
                 const undo = toast.undo;
                 setToast(null);
@@ -1126,7 +1207,7 @@ export function InboxPage({
           <button
             type="button"
             aria-label="Dismiss"
-            className="grid size-6 place-items-center rounded-md text-muted hover:bg-subtle"
+            className="grid size-6 flex-none place-items-center rounded-md text-muted hover:bg-subtle pointer-coarse:size-11"
             onClick={() => setToast(null)}
           >
             <X size={13} />

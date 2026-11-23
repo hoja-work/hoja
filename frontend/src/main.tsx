@@ -508,6 +508,7 @@ const SHELL_VIEWS = new Set([
   "Inbox",
   "Agent",
   "Agents",
+  "Agent detail",
   "Reviews",
   "Initiatives",
   "Projects",
@@ -535,11 +536,13 @@ const HEADERLESS_VIEWS = new Set([
   "Reviews",
   "Agent",
   "Agents",
+  "Agent detail",
   "Team Home",
   "Team cycles",
   "Team cycle",
   "Cycles",
   "Members",
+  "Not found",
 ]);
 type StatusEvent = {
   id: string;
@@ -1017,7 +1020,7 @@ function IssueList({
                 onClick={() => onOpen(i)}
               >
                 <span
-                  className="inline-block w-2 h-2 shrink-0 rounded-[50%] bg-room-muted data-[p=1]:bg-red-500 data-[p=2]:bg-orange-500 data-[p=3]:bg-yellow-500 data-[p=4]:bg-blue-400 data-[p=1]:bg-subtle data-[p=2]:bg-subtle data-[p=3]:bg-subtle data-[p=4]:bg-subtle"
+                  className="inline-block w-2 h-2 shrink-0 rounded-[50%] bg-room-muted data-[p=1]:bg-red-500 data-[p=2]:bg-orange-500 data-[p=3]:bg-yellow-500 data-[p=4]:bg-blue-400"
                   data-p={i.priority}
                 />
                 <span className="grid gap-1 flex-1 min-w-0" data-issue-copy="">
@@ -3276,7 +3279,7 @@ function App() {
       />
     ) : view === "Not found" ? (
       <section
-        className="pt-16 pr-12 pb-16 pl-12 max-w-160"
+        className="pt-16 pr-12 pb-16 pl-12 max-w-160 shell-phone:px-1 shell-phone:pt-8 shell-phone:pb-8"
         data-not-found-page=""
         role="alert"
       >
@@ -3286,6 +3289,13 @@ function App() {
         <p className="mt-0 mr-0 mb-0 ml-0 text-muted">
           This page does not exist.
         </p>
+        <button
+          type="button"
+          className="mt-6 inline-flex min-h-11 items-center justify-center border border-line bg-panel px-4 font-medium text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:w-full"
+          onClick={() => navigate("My issues")}
+        >
+          Go to My issues
+        </button>
       </section>
     ) : view === "My issues" ? (
       <>
@@ -3487,15 +3497,20 @@ function App() {
             aria-controls="workspace-sidebar"
             onClick={() => setMobile((open) => !open)}
           >
-            <Menu size={18} aria-hidden="true" />
+            {mobile ? (
+              <X size={18} aria-hidden="true" />
+            ) : (
+              <Menu size={18} aria-hidden="true" />
+            )}
           </button>
-          <span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
+          <span className="min-w-0 flex-1 truncate text-base font-semibold text-foreground">
             {workspace.name || "Hoja"}
           </span>
           <button
             type="button"
             className="inline-flex min-h-11 min-w-11 flex-none items-center justify-center rounded-lg bg-transparent text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent"
             aria-label="Search workspace"
+            hidden={mobile}
             onClick={() => setCommandOpen(true)}
           >
             <Search size={18} aria-hidden="true" />
@@ -3504,6 +3519,7 @@ function App() {
             type="button"
             className="inline-flex min-h-11 min-w-11 flex-none items-center justify-center rounded-lg bg-transparent text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent"
             aria-label="Create new task"
+            hidden={mobile}
             onClick={() => openNewIssue()}
           >
             <Plus size={18} aria-hidden="true" />
@@ -3536,13 +3552,8 @@ function App() {
             <button
               type="button"
               className={
-                ` hidden ${mobile ? "visible" : ""}` +
-                "" +
-                "" +
-                " focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2" +
-                " shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11" +
-                " shell-phone:fixed shell-phone:inset-x-0 shell-phone:top-15 shell-phone:bottom-0 invisible opacity-0 data-visible:visible data-visible:opacity-100 transition-opacity duration-150 motion-reduce:transition-none" +
-                " [@media_(max-width:700px)]:z-34 [@media_(max-width:700px)]:bg-[#14141466] [@media_(max-width:700px)]:opacity-[1]"
+                "hidden border-0 p-0 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2" +
+                " shell-phone:block shell-phone:fixed shell-phone:inset-x-0 shell-phone:top-15 shell-phone:bottom-0 shell-phone:z-34 shell-phone:bg-black/40 invisible opacity-0 data-visible:visible data-visible:opacity-100 transition-opacity duration-150 motion-reduce:transition-none"
               }
               data-workspace-drawer-scrim=""
               aria-label="Close navigation"
@@ -3578,7 +3589,7 @@ function App() {
                     <PopoverTrigger asChild>
                       <button
                         type="button"
-                        className="border flex items-center gap-1.5 pt-0 pr-1 pb-0 pl-1 bg-transparent text-left border-transparent rounded-lg h-7 border-line hover:bg-subtle hover:border-line w-full min-w-0 max-w-full border-0 text-foreground [&>span:nth-child(2)]:grid [&>span:nth-child(2)]:gap-0.5 [&>span:nth-child(2)]:font-semibold shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:h-7 shell-desktop:rail-collapsed:p-0 hover:bg-[#e5e5e5] shell-phone:pt-1 shell-phone:pr-1 shell-phone:pb-1 shell-phone:pl-1 shell-phone:max-w-none shell-phone:w-9.5"
+                        className="border flex items-center gap-1.5 pt-0 pr-1 pb-0 pl-1 bg-transparent text-left border-transparent rounded-lg h-7 border-line hover:bg-subtle hover:border-line w-full min-w-0 max-w-full border-0 text-foreground [&>span:nth-child(2)]:grid [&>span:nth-child(2)]:gap-0.5 [&>span:nth-child(2)]:font-semibold shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:h-7 shell-desktop:rail-collapsed:p-0 hover:bg-[#e5e5e5] shell-phone:pt-1 shell-phone:pr-1 shell-phone:pb-1 shell-phone:pl-1 shell-phone:h-11 shell-phone:gap-2.5"
                         data-workspace-trigger=""
                         aria-label={
                           onboarding.singleOrg
@@ -3769,7 +3780,7 @@ function App() {
                 </button>
                 <button
                   type="button"
-                  className="grid flex-none w-7 h-7 rounded-lg bg-transparent text-muted hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-desktop:rail-collapsed:flex-none shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:size-11 group focus-visible:bg-[#e1e1e1]"
+                  className="grid flex-none w-7 h-7 rounded-lg bg-transparent text-muted hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-desktop:rail-collapsed:flex-none shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:size-11 group focus-visible:bg-[#e1e1e1] shell-phone:hidden"
                   data-sidebar-icon=""
                   data-sidebar-toggle=""
                   aria-label={
@@ -4841,16 +4852,16 @@ function PulsePage({
           >
             {composeOpen && (
               <form
-                className="border grid gap-3 mt-0 mr-0 mb-6 ml-0 pt-4 pr-4 pb-4 pl-4 border-line rounded-lg bg-panel text-(length:--ds-feed-meta-size)"
+                className="border grid grid-cols-[minmax(0,1fr)] gap-3 mt-0 mr-0 mb-6 ml-0 pt-4 pr-4 pb-4 pl-4 border-line rounded-lg bg-panel text-(length:--ds-feed-meta-size) min-w-0"
                 data-pulse-composer=""
                 aria-label="Write project update"
                 onSubmit={(e) => void publishUpdate(e)}
               >
-                <div className="flex flex-wrap items-center gap-3">
-                  <label className="flex items-center gap-2 font-medium">
+                <div className="flex flex-wrap items-center gap-3 min-w-0">
+                  <label className="flex items-center gap-2 font-medium min-w-0 max-w-full max-sm:basis-full">
                     Project
                     <select
-                      className="pt-1.5 pr-2.5 pb-1.5 pl-2.5 border border-line rounded-md bg-bg text-foreground font-normal font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11"
+                      className="pt-1.5 pr-2.5 pb-1.5 pl-2.5 border border-line rounded-md bg-bg text-foreground font-normal font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 min-w-0 max-w-full truncate max-sm:flex-1 pointer-coarse:text-base"
                       value={composeProjectId}
                       onChange={(e) => setComposeProjectId(e.target.value)}
                     >
@@ -4861,10 +4872,10 @@ function PulsePage({
                       ))}
                     </select>
                   </label>
-                  <label className="flex items-center gap-2 font-medium">
+                  <label className="flex items-center gap-2 font-medium min-w-0 max-sm:basis-full">
                     Health
                     <select
-                      className="pt-1.5 pr-2.5 pb-1.5 pl-2.5 border border-line rounded-md bg-bg text-foreground font-normal font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11"
+                      className="pt-1.5 pr-2.5 pb-1.5 pl-2.5 border border-line rounded-md bg-bg text-foreground font-normal font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 min-w-0 max-sm:flex-1 pointer-coarse:text-base"
                       value={composeHealth}
                       onChange={(e) =>
                         setComposeHealth(
@@ -4879,7 +4890,7 @@ function PulsePage({
                   </label>
                 </div>
                 <textarea
-                  className="w-full min-h-24 pt-2.25 pr-2.75 pb-2.25 pl-2.75 border border-line rounded-md bg-bg text-foreground resize-y font-sans placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+                  className="w-full min-w-0 min-h-24 pt-2.25 pr-2.75 pb-2.25 pl-2.75 border border-line rounded-md bg-bg text-foreground resize-y font-sans placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 pointer-coarse:text-base"
                   rows={3}
                   value={composeBody}
                   onChange={(e) => setComposeBody(e.target.value)}
@@ -5267,6 +5278,33 @@ export function StatusIcon({
     );
   return svg(<circle cx="8" cy="8" r="6" />);
 }
+/* Tree rails follow the row's --row-inset, which narrows on phones. */
+const railAt = (column: number) =>
+  `calc(var(--row-inset) + ${railLeft(column) - ROW_INSET}px)`;
+/* Activity shows people words, not wire names: "issueUpdated" reads "Updated". */
+const activityKindLabel = (type?: string | null) => {
+  const words = (type || "event")
+    .replace(/^(issue|task)(?=[A-Z])/, "")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+};
+/* Activity groups are keyed by ISO day; the header reads "Today", "Yesterday" or a date. */
+const activityDayLabel = (day: string) => {
+  const date = new Date(`${day}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return day;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diff = Math.round((today.getTime() - date.getTime()) / 86400000);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Yesterday";
+  return date.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    ...(date.getFullYear() === today.getFullYear() ? {} : { year: "numeric" }),
+  });
+};
 /* The one issue list + board surface: My issues, team issues and project issues all render this,
  * so rows, groups, toolbar, filters, display options and the Kanban stay identical everywhere. */
 function MyIssuesContent({
@@ -5639,7 +5677,7 @@ function MyIssuesContent({
     displayPanelRef = useRef<HTMLDivElement>(null);
   return (
     <div
-      className="relative flex p-4 gap-4 min-h-0 min-w-0 flex-1 flex-col bg-bg text-foreground max-md:flex-1 max-md:flex max-md:flex-col max-md:min-h-0 max-md:h-auto [&_[data-my-issue-group]>header_button:last-child:not(:first-child)]:ml-auto shell-phone:flex-1 shell-desktop:min-h-0 shell-phone:min-h-0 shell-phone:h-auto"
+      className="relative flex p-4 gap-4 min-h-0 min-w-0 flex-1 flex-col bg-bg text-foreground max-md:flex-1 max-md:flex max-md:flex-col max-md:min-h-0 max-md:h-auto [&_[data-my-issue-group]>header_button:last-child:not(:first-child)]:ml-auto shell-phone:flex-1 shell-desktop:min-h-0 shell-phone:min-h-0 shell-phone:h-auto [@media(max-height:500px)]:has-[[data-issues-board]]:overflow-y-auto [@media(max-height:500px)]:has-[[data-issues-board]]:overscroll-contain"
       data-my-issues-view=""
     >
       <div
@@ -5673,7 +5711,8 @@ function MyIssuesContent({
               align="end"
               side="bottom"
               sideOffset={4}
-              className="z-50 grid w-[min(245px,calc(100vw-35px))] max-w-full max-h-[calc(100dvh-110px)] content-start gap-2.5 overflow-y-auto overscroll-contain rounded-[9px] border-line bg-panel p-3 text-[12px] text-foreground shadow-[0_12px_32px_#0002]"
+              collisionPadding={8}
+              className="z-50 grid w-[min(245px,calc(100vw-35px))] max-w-full max-h-[min(calc(100dvh-110px),var(--radix-popover-content-available-height))] content-start gap-2.5 overflow-y-auto overscroll-contain rounded-[9px] border-line bg-panel p-3 text-[12px] text-foreground shadow-[0_12px_32px_#0002] max-sm:w-[calc(100vw-16px)] max-sm:p-4 max-sm:text-sm"
               data-my-issue-popover=""
               aria-label="Task filters"
               onCloseAutoFocus={(event) => event.preventDefault()}
@@ -5696,7 +5735,7 @@ function MyIssuesContent({
                 <button
                   type="button"
                   aria-pressed={!status}
-                  className="w-full rounded-md bg-transparent pl-0 pr-0 pt-1 pb-1 text-left text-[#4f5d9d] aria-pressed:bg-accent-soft aria-pressed:font-semibold shell-phone:min-h-11"
+                  className="flex w-full items-center rounded-md bg-transparent pl-1.5 pr-1.5 pt-1 pb-1 text-left text-[#4f5d9d] aria-pressed:bg-accent-soft aria-pressed:font-semibold shell-phone:min-h-11 shell-phone:px-2"
                   data-my-status-filter-all=""
                   onClick={() => setStatus("")}
                 >
@@ -5711,7 +5750,7 @@ function MyIssuesContent({
                       key={s.id}
                       type="button"
                       aria-pressed={status === stateKey(s)}
-                      className="flex min-w-0 items-center gap-2 rounded-md bg-transparent pl-0 pr-0 pt-1 pb-1 text-left text-[#4f5d9d] aria-pressed:bg-accent-soft aria-pressed:font-semibold shell-phone:min-h-11"
+                      className="flex min-w-0 items-center gap-2 rounded-md bg-transparent pl-1.5 pr-1.5 pt-1 pb-1 text-left text-[#4f5d9d] aria-pressed:bg-accent-soft aria-pressed:font-semibold shell-phone:min-h-11 shell-phone:px-2"
                       onClick={() =>
                         setStatus(status === stateKey(s) ? "" : stateKey(s))
                       }
@@ -5924,7 +5963,8 @@ function MyIssuesContent({
               align="end"
               side="bottom"
               sideOffset={4}
-              className="z-50 grid w-[min(245px,calc(100vw-35px))] max-w-full max-h-[calc(100dvh-110px)] content-start gap-2.5 overflow-y-auto overscroll-contain rounded-[9px] border-line bg-panel p-3 text-[12px] text-foreground shadow-[0_12px_32px_#0002]"
+              collisionPadding={8}
+              className="z-50 grid w-[min(245px,calc(100vw-35px))] max-w-full max-h-[min(calc(100dvh-110px),var(--radix-popover-content-available-height))] content-start gap-2.5 overflow-y-auto overscroll-contain rounded-[9px] border-line bg-panel p-3 text-[12px] text-foreground shadow-[0_12px_32px_#0002] max-sm:w-[calc(100vw-16px)] max-sm:p-4 max-sm:text-sm"
               data-my-issue-popover=""
               aria-label="Display options"
               onCloseAutoFocus={(event) => event.preventDefault()}
@@ -5971,63 +6011,63 @@ function MyIssuesContent({
                   </select>
                 </label>
               )}
-              <label className="grid gap-1.25">
+              <label className="flex items-center gap-2 cursor-pointer shell-phone:min-h-11 pointer-coarse:min-h-11">
                 <input
-                  className="max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
+                  className="m-0 size-4 flex-none pointer-coarse:size-5 max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
                   type="checkbox"
                   checked={showProject}
                   onChange={(e) => setShowProject(e.target.checked)}
                 />{" "}
                 Project
               </label>
-              <label className="grid gap-1.25">
+              <label className="flex items-center gap-2 cursor-pointer shell-phone:min-h-11 pointer-coarse:min-h-11">
                 <input
-                  className="max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
+                  className="m-0 size-4 flex-none pointer-coarse:size-5 max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
                   type="checkbox"
                   checked={showDate}
                   onChange={(e) => setShowDate(e.target.checked)}
                 />{" "}
                 Created date
               </label>
-              <label className="grid gap-1.25">
+              <label className="flex items-center gap-2 cursor-pointer shell-phone:min-h-11 pointer-coarse:min-h-11">
                 <input
-                  className="max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
+                  className="m-0 size-4 flex-none pointer-coarse:size-5 max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
                   type="checkbox"
                   checked={showAssignee}
                   onChange={(e) => setShowAssignee(e.target.checked)}
                 />{" "}
                 Assignee
               </label>
-              <label className="grid gap-1.25">
+              <label className="flex items-center gap-2 cursor-pointer shell-phone:min-h-11 pointer-coarse:min-h-11">
                 <input
-                  className="max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
+                  className="m-0 size-4 flex-none pointer-coarse:size-5 max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
                   type="checkbox"
                   checked={showPriority}
                   onChange={(e) => setShowPriority(e.target.checked)}
                 />{" "}
                 Priority
               </label>
-              <label className="grid gap-1.25">
+              <label className="flex items-center gap-2 cursor-pointer shell-phone:min-h-11 pointer-coarse:min-h-11">
                 <input
-                  className="max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
+                  className="m-0 size-4 flex-none pointer-coarse:size-5 max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
                   type="checkbox"
                   checked={showStatus}
                   onChange={(e) => setShowStatus(e.target.checked)}
                 />{" "}
                 Status
               </label>
-              <label className="grid gap-1.25">
+              <label className="flex items-center gap-2 cursor-pointer shell-phone:min-h-11 pointer-coarse:min-h-11">
                 <input
-                  className="max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
+                  className="m-0 size-4 flex-none pointer-coarse:size-5 max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
                   type="checkbox"
                   checked={showLabels}
                   onChange={(e) => setShowLabels(e.target.checked)}
                 />{" "}
                 Labels
               </label>
-              <label className="grid gap-1.25">
+              <label className="flex items-center gap-2 cursor-pointer shell-phone:min-h-11 pointer-coarse:min-h-11">
                 <input
-                  className="max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
+                  className="m-0 size-4 flex-none pointer-coarse:size-5 max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
                   type="checkbox"
                   checked={showDue}
                   onChange={(e) => setShowDue(e.target.checked)}
@@ -6069,7 +6109,7 @@ function MyIssuesContent({
         </p>
       )}
       <div
-        className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overscroll-contain"
+        className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overscroll-contain [@media(max-height:500px)]:has-[[data-issues-board]]:flex-none [@media(max-height:500px)]:has-[[data-issues-board]]:overflow-visible"
         data-my-issues-list=""
       >
         {layout === "Board" ? (
@@ -6137,7 +6177,7 @@ function MyIssuesContent({
                     <header className="flex items-center gap-1.75 h-8.5 pt-0 pr-2 pb-0 pl-2 text-muted text-[12px] mt-0 mr-2.5 mb-0.5 ml-2.5 rounded-[7px] bg-subtle">
                       <button
                         className="grid place-items-center w-5.5 h-5.5 ml-0 rounded-md bg-transparent text-[#626269] hover:bg-subtle mt-0 mr-0 mb-0 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 group"
-                        aria-label={`${collapsed.includes(g.name) ? "Expand" : "Collapse"} ${g.name}`}
+                        aria-label={`${collapsed.includes(g.name) ? "Expand" : "Collapse"} ${tab === "Activity" ? activityDayLabel(g.name) : g.name}`}
                         aria-expanded={!collapsed.includes(g.name)}
                         onClick={() =>
                           setCollapsed((old) =>
@@ -6153,7 +6193,9 @@ function MyIssuesContent({
                         />
                       </button>
                       {g.state && <StatusIcon state={g.state} />}
-                      <b className="text-foreground font-medium">{g.name}</b>
+                      <b className="text-foreground font-medium">
+                        {tab === "Activity" ? activityDayLabel(g.name) : g.name}
+                      </b>
                       <span className="text-muted text-[11px]">
                         {g.items.length}
                       </span>
@@ -6183,9 +6225,9 @@ function MyIssuesContent({
                       parentOutside,
                     }) => (
                       <div
-                        className="relative flex w-full min-w-0 min-h-9 items-center gap-2 bg-transparent py-0 pr-6 text-left text-foreground hover:bg-subtle cursor-pointer max-md:gap-1.5 shell-phone:pr-3 [@media_(max-width:650px)]:gap-1.5"
+                        className="relative flex w-full min-w-0 min-h-9 items-center gap-2 bg-transparent py-0 pr-6 text-left text-foreground hover:bg-subtle cursor-pointer max-md:gap-1.5 shell-phone:pr-3 [@media_(max-width:650px)]:gap-1.5 max-sm:flex-wrap max-sm:gap-y-0 max-sm:pb-2 [--row-inset:42px] max-sm:[--row-inset:14px]"
                         style={{
-                          paddingLeft: ROW_INSET + depth * SIBLING_STEP,
+                          paddingLeft: `calc(var(--row-inset) + ${depth * SIBLING_STEP}px)`,
                         }}
                         data-my-issue-row=""
                         data-depth={depth}
@@ -6204,7 +6246,7 @@ function MyIssuesContent({
                             key={`rail-${column}`}
                             aria-hidden="true"
                             className="absolute top-0 bottom-0 w-0.5 bg-line"
-                            style={{ left: railLeft(column) }}
+                            style={{ left: railAt(column) }}
                             data-tree-rail=""
                           />
                         ))}
@@ -6213,7 +6255,7 @@ function MyIssuesContent({
                             aria-hidden="true"
                             className="absolute w-2.5 border-l-2 border-b-2 border-line rounded-bl-[6px]"
                             style={{
-                              left: railLeft(depth - 1),
+                              left: railAt(depth - 1),
                               top: 0,
                               height: 18,
                             }}
@@ -6225,13 +6267,13 @@ function MyIssuesContent({
                             <span
                               aria-hidden="true"
                               className="absolute top-0 bottom-0 w-0.5 bg-line"
-                              style={{ left: railLeft(depth - 1) }}
+                              style={{ left: railAt(depth - 1) }}
                               data-tree-rail="through"
                             />
                             <span
                               aria-hidden="true"
                               className="absolute h-0.5 w-2.5 bg-line"
-                              style={{ left: railLeft(depth - 1), top: 18 }}
+                              style={{ left: railAt(depth - 1), top: 18 }}
                             />
                           </>
                         )}
@@ -6249,7 +6291,7 @@ function MyIssuesContent({
                                   [i.id]: !old[i.id],
                                 }));
                               }}
-                              className="grid place-items-center w-4 h-4 rounded bg-transparent text-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent"
+                              className="relative grid place-items-center w-4 h-4 rounded bg-transparent text-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent before:absolute before:inset-0 pointer-coarse:before:-inset-3.5 shell-phone:before:-inset-3.5"
                               data-tree-toggle=""
                             >
                               <ChevronDown
@@ -6286,7 +6328,7 @@ function MyIssuesContent({
                         ) : null}
                         {showStatus && (
                           <span
-                            className="text-[12px] text-[#89948d] data-[status=started]:text-foreground"
+                            className="text-[12px] text-[#89948d] data-[status=started]:text-foreground max-sm:-my-2"
                             data-my-issue-status=""
                             data-status={i.state?.type}
                           >
@@ -6319,7 +6361,7 @@ function MyIssuesContent({
                         ) : null}
                         <button
                           type="button"
-                          className="overflow-hidden text-ellipsis whitespace-nowrap text-[12px] flex-1 min-w-0 [background:none] border-0 pt-0 pr-0 pb-0 pl-0 mt-0 mr-0 mb-0 ml-0 text-inherit text-left cursor-pointer block font-[inherit] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                          className="overflow-hidden text-ellipsis whitespace-nowrap text-[12px] flex-1 min-w-0 [background:none] border-0 pt-0 pr-0 pb-0 pl-0 mt-0 mr-0 mb-0 ml-0 text-inherit text-left cursor-pointer block font-[inherit] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 max-sm:order-last max-sm:basis-full max-sm:min-h-0! max-sm:pl-6 max-sm:text-sm max-sm:leading-snug max-sm:whitespace-normal max-sm:line-clamp-2 max-sm:wrap-break-word"
                           data-my-issue-title=""
                           data-my-issue-title-open=""
                           aria-label={`Open ${i.identifier}: ${i.title}`}
@@ -6335,7 +6377,7 @@ function MyIssuesContent({
                               data-my-activity-kind=""
                             >
                               {" "}
-                              · {dayEvents[index]?.eventType || "event"}
+                              · {activityKindLabel(dayEvents[index]?.eventType)}
                             </small>
                           )}
                         </button>
@@ -6355,8 +6397,8 @@ function MyIssuesContent({
                           <span
                             className={
                               i.assignee
-                                ? "grid place-items-center w-5.5 h-5.5 flex-none"
-                                : "grid place-items-center w-5.5 h-5.5 rounded-[50%] bg-[#e5e5e7] text-[#46464b] text-[10px] flex-none"
+                                ? "grid place-items-center w-5.5 h-5.5 flex-none max-sm:ml-auto"
+                                : "grid place-items-center w-5.5 h-5.5 rounded-[50%] bg-[#e5e5e7] text-[#46464b] text-[10px] flex-none max-sm:ml-auto"
                             }
                             data-my-issue-assignee=""
                             title={i.assignee?.name || "Unassigned"}
@@ -6564,7 +6606,7 @@ function KanbanAssignee({
     onChange(id);
   };
   return (
-    <UIPopover open={open} onOpenChange={setOpen}>
+    <UIPopover modal open={open} onOpenChange={setOpen}>
       <div className="relative shrink-0">
         <PopoverTrigger asChild>
           <button
@@ -6592,7 +6634,7 @@ function KanbanAssignee({
                 </Avatar>
               </AvatarGroup>
             ) : (
-              <span className="border grid rounded-full border-dashed border-line text-muted">
+              <span className="border grid size-6 flex-none place-items-center rounded-full border-dashed border-line text-muted [&>svg]:size-4">
                 <MaterialPersonIcon />
               </span>
             )}
@@ -6601,11 +6643,12 @@ function KanbanAssignee({
         <PopoverContent
           align="end"
           sideOffset={6}
+          collisionPadding={8}
           id={`kanban-assignee-${issue.id}`}
           role="menu"
           aria-label={`Assignee of ${issue.identifier}`}
           data-popover-panel
-          className="border origin-top-left shadow-(--shadow) z-55 pt-1.5 pr-1.5 pb-1.5 pl-1.5 border-line rounded-[10px] bg-panel w-60 overflow-y-auto max-h-[var(--radix-popover-content-available-height)] animate-[workspace-popover-in_.14s_ease-out_both]"
+          className="border origin-top-left shadow-(--shadow) z-55 pt-1.5 pr-1.5 pb-1.5 pl-1.5 border-line rounded-[10px] bg-panel w-60 overflow-y-auto max-h-[var(--radix-popover-content-available-height)]"
         >
           <button
             type="button"
@@ -6613,7 +6656,7 @@ function KanbanAssignee({
             className="flex min-h-9 w-full items-center gap-2 rounded-lg px-2 text-left transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
             onClick={() => assign(null)}
           >
-            <span className="border grid rounded-full border-dashed border-line text-muted">
+            <span className="border grid size-6 flex-none place-items-center rounded-full border-dashed border-line text-muted [&>svg]:size-4">
               <MaterialPersonIcon />
             </span>
             <span className="min-w-0 flex-1 truncate">Unassigned</span>
@@ -6667,7 +6710,7 @@ function KanbanPriority({
   };
   const current = issue.priority || 0;
   return (
-    <UIPopover open={open} onOpenChange={setOpen}>
+    <UIPopover modal open={open} onOpenChange={setOpen}>
       <div className="relative min-w-0 flex-1">
         <PopoverTrigger asChild>
           <button
@@ -6681,7 +6724,7 @@ function KanbanPriority({
           >
             <span className="grid size-4 shrink-0 place-items-center">
               <span
-                className="inline-block w-2 h-2 shrink-0 rounded-[50%] bg-room-muted data-[p=1]:bg-red-500 data-[p=2]:bg-orange-500 data-[p=3]:bg-yellow-500 data-[p=4]:bg-blue-400 data-[p=1]:bg-subtle data-[p=2]:bg-subtle data-[p=3]:bg-subtle data-[p=4]:bg-subtle"
+                className="inline-block w-2 h-2 shrink-0 rounded-[50%] bg-room-muted data-[p=1]:bg-red-500 data-[p=2]:bg-orange-500 data-[p=3]:bg-yellow-500 data-[p=4]:bg-blue-400"
                 data-p={current}
                 aria-hidden="true"
               />
@@ -6694,11 +6737,12 @@ function KanbanPriority({
         <PopoverContent
           align="end"
           sideOffset={6}
+          collisionPadding={8}
           id={`kanban-priority-${issue.id}`}
           role="menu"
           aria-label={`Priority of ${issue.identifier}`}
           data-popover-panel
-          className="border origin-top-left shadow-(--shadow) z-55 pt-1.5 pr-1.5 pb-1.5 pl-1.5 border-line rounded-[10px] bg-panel w-60 overflow-y-auto max-h-[var(--radix-popover-content-available-height)] animate-[workspace-popover-in_.14s_ease-out_both]"
+          className="border origin-top-left shadow-(--shadow) z-55 pt-1.5 pr-1.5 pb-1.5 pl-1.5 border-line rounded-[10px] bg-panel w-60 overflow-y-auto max-h-[var(--radix-popover-content-available-height)]"
         >
           {PRIORITIES.map((label, priority) => (
             <button
@@ -6710,7 +6754,7 @@ function KanbanPriority({
             >
               <span className="grid size-4 shrink-0 place-items-center">
                 <span
-                  className="inline-block w-2 h-2 shrink-0 rounded-[50%] bg-room-muted data-[p=1]:bg-red-500 data-[p=2]:bg-orange-500 data-[p=3]:bg-yellow-500 data-[p=4]:bg-blue-400 data-[p=1]:bg-subtle data-[p=2]:bg-subtle data-[p=3]:bg-subtle data-[p=4]:bg-subtle"
+                  className="inline-block w-2 h-2 shrink-0 rounded-[50%] bg-room-muted data-[p=1]:bg-red-500 data-[p=2]:bg-orange-500 data-[p=3]:bg-yellow-500 data-[p=4]:bg-blue-400"
                   data-p={priority}
                   aria-hidden="true"
                 />
@@ -6906,8 +6950,9 @@ function KanbanCard({
         }}
         onDragEnd={onDragEnd}
         onClick={(event) => {
+          /* The whole card opens the task (or its sub-task stack), so a tap on the
+           * padding or beside a short title is not lost on a phone. */
           if (
-            subtasks.length &&
             !(event.target as HTMLElement).closest(
               "button,input,label,select,a,[data-kanban-card-props]",
             )
@@ -6979,7 +7024,7 @@ function KanbanCard({
         </div>
         <button
           type="button"
-          className="flex w-full flex-col gap-1.5 pt-0 pr-0 pb-0 pl-0 bg-transparent text-inherit text-left min-w-0 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+          className="flex w-full flex-col gap-1.5 pt-0 pr-0 pb-0 pl-0 bg-transparent text-inherit text-left min-w-0 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
           data-kanban-card-open=""
           onClick={openOrSelect}
           onKeyDown={(e) => {
@@ -7007,7 +7052,7 @@ function KanbanCard({
         </button>
         {!compact && (
           <div
-            className="flex flex-col min-w-0 mt-1 text-[12px] text-muted [&>label]:gap-2 [&>div]:gap-2 [&>label]:h-7 [&>div]:h-7 [&>label]:px-2.25 [&>div]:px-2.25 [&>label]:rounded-lg [&>div]:rounded-lg **:data-status-picker:min-w-0 **:data-status-picker:self-center **:data-status-picker-trigger:w-auto **:data-status-picker-trigger:max-w-full **:data-status-picker-trigger:h-auto **:data-status-picker-trigger:p-0 **:data-status-picker-trigger:border-0 **:data-status-picker-trigger:bg-transparent **:data-status-picker-trigger:text-inherit **:data-status-picker-trigger:gap-2 [&>label:hover]:[transition:none] [&>div:hover]:[transition:none] [&>label:focus-within]:[transition:none]"
+            className="flex flex-col min-w-0 mt-1 text-[12px] text-muted pointer-coarse:grid pointer-coarse:grid-cols-2 pointer-coarse:gap-x-1 shell-phone:grid shell-phone:grid-cols-2 shell-phone:gap-x-1 pointer-coarse:[&>label]:h-11 pointer-coarse:[&>div]:h-11 shell-phone:[&>label]:h-11 shell-phone:[&>div]:h-11 pointer-coarse:[&>label]:order-last shell-phone:[&>label]:order-last pointer-coarse:[&>label]:col-span-2 shell-phone:[&>label]:col-span-2 [&>label]:gap-2 [&>div]:gap-2 [&>label]:h-7 [&>div]:h-7 [&>label]:px-2.25 [&>div]:px-2.25 [&>label]:rounded-lg [&>div]:rounded-lg **:data-status-picker:min-w-0 **:data-status-picker:self-center **:data-status-picker-trigger:w-auto **:data-status-picker-trigger:max-w-full **:data-status-picker-trigger:h-auto **:data-status-picker-trigger:p-0 **:data-status-picker-trigger:border-0 **:data-status-picker-trigger:bg-transparent **:data-status-picker-trigger:text-inherit **:data-status-picker-trigger:gap-2 [&>label:hover]:[transition:none] [&>div:hover]:[transition:none] [&>label:focus-within]:[transition:none]"
             data-kanban-card-props=""
             aria-busy={busy || undefined}
           >
@@ -7358,7 +7403,7 @@ function KanbanScrollFade({ children }: { children: React.ReactNode }) {
   return (
     <div
       ref={rootRef}
-      className="relative isolate flex min-h-0 flex-1 flex-col overflow-hidden"
+      className="relative isolate flex min-h-0 flex-1 flex-col overflow-hidden [@media(max-height:500px)]:flex-none"
     >
       {children}
       <div
@@ -7552,9 +7597,9 @@ function Kanban({
     [subtasksByParent],
   );
   return (
-    <div className="kanban flex min-h-0 min-w-0 flex-1 flex-col w-full">
+    <div className="kanban flex min-h-0 min-w-0 flex-1 flex-col w-full [@media(max-height:500px)]:flex-none">
       <div
-        className="grid grid-flow-col auto-cols-[minmax(260px,1fr)] gap-x-3 bg-bg flex-1 overflow-x-auto overflow-y-hidden min-w-0 w-full items-stretch min-h-0 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-subtle [&::-webkit-scrollbar-thumb]:rounded-lg [&::-webkit-scrollbar-thumb]:bg-muted overscroll-x-contain focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 scrollbar-thin [scrollbar-color:var(--muted)_var(--subtle)] [&::-webkit-scrollbar-thumb]:border-[2px_solid_var(--subtle)]"
+        className="grid grid-flow-col auto-cols-[minmax(260px,1fr)] max-sm:auto-cols-[85%] gap-x-3 bg-bg flex-1 [@media(max-height:500px)]:flex-none overflow-x-auto overflow-y-hidden min-w-0 w-full items-stretch min-h-0 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-subtle [&::-webkit-scrollbar-thumb]:rounded-lg [&::-webkit-scrollbar-thumb]:bg-muted overscroll-x-contain focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 scrollbar-thin [scrollbar-color:var(--muted)_var(--subtle)] [&::-webkit-scrollbar-thumb]:border-[2px_solid_var(--subtle)]"
         data-kanban-columns=""
         ref={columnsRef}
       >
@@ -7563,7 +7608,7 @@ function Kanban({
             role="presentation"
             className={
               ` flex flex-col min-w-0 inset-shadow-neutral-50 shadow-md  inset-shadow-sm rounded-xl border border-neutral-200 bg-neutral-100 overflow-hidden ${dragged ? "" : ""}` +
-              " flex flex-col min-h-0 max-h-full" +
+              " flex flex-col min-h-0 max-h-full [@media(max-height:500px)]:max-h-none" +
               " data-drop-ready:bg-[color-mix(in_srgb,var(--accent-soft)_18%,transparent)]"
             }
             data-kanban-column=""
@@ -7618,7 +7663,7 @@ function Kanban({
             </header>
             <KanbanScrollFade>
               <div
-                className="flex flex-col gap-1 p-1 overflow-y-auto flex-auto min-h-0 overscroll-y-contain [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-subtle [&::-webkit-scrollbar-thumb]:rounded-lg [&::-webkit-scrollbar-thumb]:bg-muted max-h-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 scrollbar-thin [&::-webkit-scrollbar-thumb]:border-[2px_solid_var(--subtle)]"
+                className="flex flex-col gap-1 p-1 overflow-y-auto flex-auto min-h-0 overscroll-y-contain [@media(max-height:500px)]:flex-none [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-subtle [&::-webkit-scrollbar-thumb]:rounded-lg [&::-webkit-scrollbar-thumb]:bg-muted max-h-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 scrollbar-thin [&::-webkit-scrollbar-thumb]:border-[2px_solid_var(--subtle)]"
                 data-kanban-cards=""
                 onScroll={
                   group.items.length > (limits[group.state.id] || KANBAN_PAGE)
@@ -8154,15 +8199,15 @@ function WorkspaceChooser({
   };
   return (
     <div
-      className="min-h-dvh grid place-items-center pt-6 pr-6 pb-6 pl-6 bg-bg max-md:pt-6 max-md:pr-6 max-md:pb-6 max-md:pl-6 [@media_(max-width:750px)]:pt-6 [@media_(max-width:750px)]:pr-6 [@media_(max-width:750px)]:pb-6 [@media_(max-width:750px)]:pl-6"
+      className="min-h-dvh grid place-items-center pt-6 pr-6 pb-6 pl-6 bg-bg max-md:pt-6 max-md:pr-6 max-md:pb-6 max-md:pl-6 [@media_(max-width:750px)]:pt-6 [@media_(max-width:750px)]:pr-6 [@media_(max-width:750px)]:pb-6 [@media_(max-width:750px)]:pl-6 max-sm:p-4!"
       data-login-page=""
     >
       <div
-        className="border shadow-(--shadow) pt-8 pr-8 pb-8 pl-8 border-line rounded-none bg-panel max-md:mt-auto max-md:mr-auto max-md:mb-auto max-md:ml-auto max-md:w-full w-[min(100%,420px)] max-w-105 [@media_(max-width:750px)]:mt-auto [@media_(max-width:750px)]:mr-auto [@media_(max-width:750px)]:mb-auto [@media_(max-width:750px)]:ml-auto [@media_(max-width:750px)]:w-full"
+        className="min-w-0 border shadow-(--shadow) pt-8 pr-8 pb-8 pl-8 max-sm:pt-6.5 max-sm:pr-5.5 max-sm:pb-6.5 max-sm:pl-5.5 border-line rounded-none bg-panel max-md:mt-auto max-md:mr-auto max-md:mb-auto max-md:ml-auto max-md:w-full w-[min(100%,420px)] max-w-105 [@media_(max-width:750px)]:mt-auto [@media_(max-width:750px)]:mr-auto [@media_(max-width:750px)]:mb-auto [@media_(max-width:750px)]:ml-auto [@media_(max-width:750px)]:w-full"
         data-login-card=""
       >
         <div
-          className="flex items-center justify-start gap-2.5 mb-6 text-[18px] max-md:mb-auto [@media_(max-width:750px)]:mb-auto"
+          className="flex items-center justify-start gap-2.5 mb-6 text-[18px]"
           data-login-brand=""
         >
           <img
@@ -8178,7 +8223,7 @@ function WorkspaceChooser({
           <h2 className="text-[22px] mt-0 mr-0 mb-1.5 ml-0">
             Choose workspace
           </h2>
-          <p className="text-muted mt-0 mr-0 mb-6 ml-0">
+          <p className="text-muted mt-0 mr-0 mb-6 ml-0 wrap-anywhere">
             Select the workspace to open for {pending.email}.
           </p>
         </div>
@@ -8242,6 +8287,7 @@ function Login({
   const [t, setT] = useState("");
   const [show, setShow] = useState(false);
   const [email, setEmail] = useState("");
+  const [apiKeyInput, setApiKeyInput] = useState("");
   const [password, setPassword] = useState("");
   const [credentialMode, setCredentialMode] = useState<"email" | "apiKey">(
     "email",
@@ -8275,7 +8321,8 @@ function Login({
     setBusy(true);
     setAuthError("");
     try {
-      const apiKey = credentialMode === "apiKey" ? email.trim() : undefined;
+      const apiKey =
+        credentialMode === "apiKey" ? apiKeyInput.trim() : undefined;
       const r = await fetch("/auth/login", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -8332,15 +8379,15 @@ function Login({
   };
   return (
     <div
-      className="min-w-0 min-h-dvh grid place-items-center pt-6 pr-6 pb-6 pl-6 bg-bg max-md:pt-6 max-md:pr-6 max-md:pb-6 max-md:pl-6 [@media_(max-width:750px)]:pt-6 [@media_(max-width:750px)]:pr-6 [@media_(max-width:750px)]:pb-6 [@media_(max-width:750px)]:pl-6"
+      className="min-w-0 min-h-dvh grid place-items-center pt-6 pr-6 pb-6 pl-6 bg-bg max-md:pt-6 max-md:pr-6 max-md:pb-6 max-md:pl-6 [@media_(max-width:750px)]:pt-6 [@media_(max-width:750px)]:pr-6 [@media_(max-width:750px)]:pb-6 [@media_(max-width:750px)]:pl-6 max-sm:p-4!"
       data-login-page=""
     >
       <div
-        className="min-w-0 [&_form>input]:min-w-0 [&_form>select]:min-w-0 border shadow-(--shadow) pt-8 pr-8 pb-8 pl-8 border-line rounded-none bg-panel max-md:mt-auto max-md:mr-auto max-md:mb-auto max-md:ml-auto max-md:w-full w-[min(100%,420px)] max-w-105 [@media_(max-width:750px)]:mt-auto [@media_(max-width:750px)]:mr-auto [@media_(max-width:750px)]:mb-auto [@media_(max-width:750px)]:ml-auto [@media_(max-width:750px)]:w-full"
+        className="min-w-0 [&_form>input]:min-w-0 [&_form>select]:min-w-0 border shadow-(--shadow) pt-8 pr-8 pb-8 pl-8 max-sm:pt-6.5 max-sm:pr-5.5 max-sm:pb-6.5 max-sm:pl-5.5 border-line rounded-none bg-panel max-md:mt-auto max-md:mr-auto max-md:mb-auto max-md:ml-auto max-md:w-full w-[min(100%,420px)] max-w-105 [@media_(max-width:750px)]:mt-auto [@media_(max-width:750px)]:mr-auto [@media_(max-width:750px)]:mb-auto [@media_(max-width:750px)]:ml-auto [@media_(max-width:750px)]:w-full"
         data-login-card=""
       >
         <div
-          className="flex items-center justify-start gap-2.5 mb-6 text-[18px] max-md:mb-auto [@media_(max-width:750px)]:mb-auto"
+          className="flex items-center justify-start gap-2.5 mb-6 text-[18px]"
           data-login-brand=""
         >
           <img
@@ -8352,9 +8399,13 @@ function Login({
           <b>Hoja</b>
         </div>
         <div data-login-card-head="">
-          <h2 className="text-[22px] mt-0 mr-0 mb-1.5 ml-0">Welcome back</h2>
+          <h2 className="text-[22px] mt-0 mr-0 mb-1.5 ml-0">
+            {mode === "setup" ? "Set up a password" : "Welcome back"}
+          </h2>
           <p className="text-muted mt-0 mr-0 mb-6 ml-0">
-            Sign in with your email or API key.
+            {mode === "setup"
+              ? "Use an existing workspace API key to set a password for your email."
+              : "Sign in with your email or API key."}
           </p>
         </div>
         {mode === "login" && googleUrl && (
@@ -8385,7 +8436,7 @@ function Login({
               <button
                 type="button"
                 aria-pressed={credentialMode === "email"}
-                className=" rounded-none min-h-10.5 bg-accent-soft text-accent font-semibold focus-visible:relative aria-pressed:bg-accent-soft aria-pressed:text-accent border-line not-first:border-l focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                className=" rounded-none min-h-10.5 bg-panel text-muted font-semibold focus-visible:relative aria-pressed:bg-accent-soft aria-pressed:text-foreground aria-pressed:shadow-[inset_0_-2px_0_var(--accent)] border-line not-first:border-l focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
                 onClick={() => {
                   setCredentialMode("email");
                   setAuthError("");
@@ -8396,7 +8447,7 @@ function Login({
               <button
                 type="button"
                 aria-pressed={credentialMode === "apiKey"}
-                className=" rounded-none min-h-10.5 bg-accent-soft text-accent font-semibold focus-visible:relative aria-pressed:bg-accent-soft aria-pressed:text-accent border-line not-first:border-l focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                className=" rounded-none min-h-10.5 bg-panel text-muted font-semibold focus-visible:relative aria-pressed:bg-accent-soft aria-pressed:text-foreground aria-pressed:shadow-[inset_0_-2px_0_var(--accent)] border-line not-first:border-l focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
                 onClick={() => {
                   setCredentialMode("apiKey");
                   setAuthError("");
@@ -8416,8 +8467,12 @@ function Login({
               className="w-full mt-1.75 mr-0 mb-3.5 ml-0 pt-2.5 pr-2.5 pb-2.5 pl-2.5 border border-line rounded-none bg-bg text-foreground max-md:text-base placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
               id="email"
               type={credentialMode === "email" ? "email" : "password"}
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              value={credentialMode === "email" ? email : apiKeyInput}
+              onChange={(e) =>
+                credentialMode === "email"
+                  ? setEmail(e.target.value)
+                  : setApiKeyInput(e.target.value)
+              }
               autoComplete={credentialMode === "email" ? "username" : "off"}
               placeholder={
                 credentialMode === "email" ? "you@example.com" : "hoja_…"
@@ -8551,7 +8606,7 @@ function Login({
           New to Hoja?{" "}
           <a
             href="/signup"
-            className="font-medium text-foreground underline underline-offset-2"
+            className="font-medium text-foreground underline underline-offset-2 shell-phone:inline-flex shell-phone:min-h-11 shell-phone:items-center pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
           >
             Request a workspace
           </a>
@@ -9118,7 +9173,7 @@ function NewIssue({
   };
   return (
     <div
-      className="fixed inset-0 z-10 bg-[#0008] has-data-issue-create-modal:p-[clamp(60px,13vh,118px)_12px_12px] [&:has(>[data-issue-create-modal])]:animate-[issue-backdrop-in_var(--motion-overlay)_var(--ease-standard)_both] [&:has(>[data-issue-create-modal][data-is-closing])]:animate-[issue-backdrop-out_var(--motion-fast)_var(--ease-standard)_both] [@supports_(backdrop-filter:blur(2px))_or_(-webkit-backdrop-filter:blur(2px))]:[&:has(>[data-issue-create-modal])]:[background:rgba(9,9,11,.42)] [@supports_(backdrop-filter:blur(2px))_or_(-webkit-backdrop-filter:blur(2px))]:[&:has(>[data-issue-create-modal])]:[backdrop-filter:blur(2px)] [@supports_(backdrop-filter:blur(2px))_or_(-webkit-backdrop-filter:blur(2px))]:[&:has(>[data-issue-create-modal])]:[-webkit-backdrop-filter:blur(2px)]"
+      className="fixed inset-0 z-10 shell-phone:z-50 flex items-start justify-center bg-[#0008] has-data-issue-create-modal:p-[clamp(60px,13vh,118px)_12px_12px] shell-phone:has-data-issue-create-modal:p-2! [&:has(>[data-issue-create-modal])]:animate-[issue-backdrop-in_var(--motion-overlay)_var(--ease-standard)_both] [&:has(>[data-issue-create-modal][data-is-closing])]:animate-[issue-backdrop-out_var(--motion-fast)_var(--ease-standard)_both] [@supports_(backdrop-filter:blur(2px))_or_(-webkit-backdrop-filter:blur(2px))]:[&:has(>[data-issue-create-modal])]:[background:rgba(9,9,11,.42)] [@supports_(backdrop-filter:blur(2px))_or_(-webkit-backdrop-filter:blur(2px))]:[&:has(>[data-issue-create-modal])]:[backdrop-filter:blur(2px)] [@supports_(backdrop-filter:blur(2px))_or_(-webkit-backdrop-filter:blur(2px))]:[&:has(>[data-issue-create-modal])]:[-webkit-backdrop-filter:blur(2px)]"
       data-modal-backdrop=""
     >
       <form
@@ -9128,15 +9183,9 @@ function NewIssue({
         aria-label="New task"
         aria-busy={busy || undefined}
         className={
-          (closing
-            ? "modal shadow-[0_14px_40px_#0003] relative top-auto left-auto mt-0 mr-0 mb-0 ml-0 overflow-auto pt-0 pr-0 pb-0 pl-0 rounded-2xl bg-panel"
-            : "modal shadow-[0_14px_40px_#0003] relative top-auto left-auto mt-0 mr-0 mb-0 ml-0 overflow-auto pt-0 pr-0 pb-0 pl-0 rounded-2xl bg-panel") +
-          " absolute pt-0 pr-0 pb-0 pl-0 border border-line rounded-2xl bg-panel shadow-[0_14px_40px_#0003] max-sm:w-full" +
-          "font-['Inter_Variable',Inter,ui-sans-serif,system-ui,sans-serif] [&_[data-issue-property]_input[type=date]::-webkit-calendar-picker-indicator]:opacity-50 [&_[data-issue-property]_input[type=date]::-webkit-calendar-picker-indicator]:cursor-pointer max-md:[&_[data-issue-property]:hover_input[type=date]::-webkit-calendar-picker-indicator]:opacity-100" +
-          " transform-none" +
-          " [@media_(max-width:560px)]:w-[calc(100vw-16px)] [@media_(max-width:560px)]:max-h-[94dvh] [@media_(max-width:600px)]:w-full [@media_(max-width:600px)]:max-h-[calc(100dvh-24px)]" +
-          " top-[12%] left-[50%] transform-[translateX(-50%)] w-[min(746px,calc(100vw-24px))] max-h-[calc(100dvh-140px)] [@media_(max-width:560px)]:w-[calc(100vw-16px)] [@media_(max-width:560px)]:max-h-[94dvh] [@media_(max-width:600px)]:max-h-[calc(100dvh-24px)] animate-[issue-modal-out_var(--motion-fast)_var(--ease-standard)_both]" +
-          " data-is-closing:animate-[issue-modal-out_var(--motion-fast)_var(--ease-standard)_both]"
+          "relative flex w-[min(746px,calc(100vw-24px))] max-h-[calc(100dvh-140px)] flex-col overflow-auto overscroll-contain rounded-2xl border border-line bg-panel p-0 shadow-[0_14px_40px_#0003] font-['Inter_Variable',Inter,ui-sans-serif,system-ui,sans-serif] [&_[data-issue-property]_input[type=date]::-webkit-calendar-picker-indicator]:opacity-50 [&_[data-issue-property]_input[type=date]::-webkit-calendar-picker-indicator]:cursor-pointer max-md:[&_[data-issue-property]:hover_input[type=date]::-webkit-calendar-picker-indicator]:opacity-100" +
+          " animate-[issue-modal-in_var(--motion-overlay)_var(--ease-standard)_both] data-is-closing:animate-[issue-modal-out_var(--motion-fast)_var(--ease-standard)_both] motion-reduce:animate-none" +
+          " shell-phone:w-full shell-phone:max-h-[calc(100dvh-16px)]"
         }
         data-issue-create-modal=""
         data-is-closing={closing ? "" : undefined}
@@ -9176,7 +9225,7 @@ function NewIssue({
           data-issue-create-body=""
         >
           <input
-            className="w-full text-foreground bg-transparent border-0 text-[18px] font-[450] tracking-tight h-9 rounded-none resize-y max-sm:text-lg shadow-[none] focus-visible:rounded-none max-md:text-base placeholder:text-muted outline-none focus-visible:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 caret-accent selection:bg-accent/20 shell-phone:min-h-11 pointer-coarse:min-h-11 [@media_(max-width:560px)]:text-[18px] shell-phone:text-[16px] p-0"
+            className="w-full text-foreground bg-transparent border-0 text-[18px] font-[450] tracking-tight h-9 rounded-none resize-y max-sm:text-lg shadow-[none] focus-visible:rounded-none max-md:text-base placeholder:text-muted outline-none focus-visible:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 caret-accent selection:bg-accent/20 shell-phone:min-h-11 pointer-coarse:min-h-11 [@media_(max-width:560px)]:text-[18px] shell-phone:text-[16px] pointer-coarse:text-[16px] p-0"
             data-issue-create-title=""
             value={title}
             onChange={(e) => setTitle(e.target.value)}
@@ -9187,7 +9236,7 @@ function NewIssue({
             required
           />
           <textarea
-            className="w-full min-h-16.25 mt-1.25 mr-0 mb-2 ml-0 text-foreground bg-transparent border-0 resize-y text-[14px] leading-normal rounded-none max-sm:min-h-16 shadow-[none] focus-visible:rounded-none max-md:text-base placeholder:text-muted outline-none focus-visible:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 caret-accent selection:bg-accent/20 shell-phone:min-h-11 pointer-coarse:min-h-11 [@media_(max-width:560px)]:min-h-16 shell-phone:text-[16px] p-0"
+            className="w-full min-h-16.25 mt-1.25 mr-0 mb-2 ml-0 text-foreground bg-transparent border-0 resize-y text-[14px] leading-normal rounded-none max-sm:min-h-16 shadow-[none] focus-visible:rounded-none max-md:text-base placeholder:text-muted outline-none focus-visible:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 caret-accent selection:bg-accent/20 shell-phone:min-h-11 pointer-coarse:min-h-11 [@media_(max-width:560px)]:min-h-16 shell-phone:text-[16px] pointer-coarse:text-[16px] p-0"
             data-issue-create-description=""
             value={description}
             onChange={(e) => setDescription(e.target.value)}
@@ -9196,18 +9245,18 @@ function NewIssue({
             aria-label="Task description"
           />
           <div
-            className="border-b border-line flex flex-wrap gap-1.5 pt-0 pr-0 pb-1.25 pl-0 border-0 max-sm:gap-1 [@media_(max-width:560px)]:gap-1.25"
+            className="border-b border-line flex flex-wrap gap-1.5 pt-0 pr-0 pb-1.25 pl-0 border-0 max-sm:gap-1 [@media_(max-width:560px)]:gap-1.25 shell-phone:grid! shell-phone:grid-cols-2 shell-phone:sm:grid-cols-3 shell-phone:gap-2! shell-phone:[&>label:last-child]:col-span-2 shell-phone:sm:[&>label:last-child]:col-span-1"
             data-issue-property-pills=""
           >
             <label
-              className="inline-flex items-center gap-1 max-w-full h-6.5 pt-0 pr-2 pb-0 pl-2 bg-panel border-transparent rounded-[20px] text-muted text-[12px] mt-0 font-normal focus-within:border-accent max-sm:h-7 max-sm:pt-0 max-sm:pr-1.5 max-sm:pb-0 max-sm:pl-1.5 mr-0 mb-0 ml-0 border border-line focus-within:shadow-sm max-md:hover:text-foreground transition-colors duration-150 ease-out hover:transition-none hover:bg-subtle hover:border-accent/40 motion-reduce:transition-none [@media_(max-width:560px)]:h-6.75 [@media_(max-width:560px)]:pt-0 [@media_(max-width:560px)]:pr-1.5 [@media_(max-width:560px)]:pb-0 [@media_(max-width:560px)]:pl-1.5 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent)_16%,transparent)] [@media_(hover:hover)_and_(pointer:fine)]:hover:bg-[color-mix(in_srgb,var(--subtle)_58%,var(--panel))] [@media_(hover:hover)_and_(pointer:fine)]:hover:text-foreground"
+              className="shell-phone:h-auto! shell-phone:min-w-0 shell-phone:rounded-lg! shell-phone:border-line! shell-phone:pl-2.5! shell-phone:flex-col shell-phone:items-stretch shell-phone:gap-0! shell-phone:pt-1.5! inline-flex items-center gap-1 max-w-full h-6.5 pt-0 pr-2 pb-0 pl-2 bg-panel border-transparent rounded-[20px] text-muted text-[12px] mt-0 font-normal focus-within:border-accent max-sm:h-7 max-sm:pt-0 max-sm:pr-1.5 max-sm:pb-0 max-sm:pl-1.5 mr-0 mb-0 ml-0 border border-line focus-within:shadow-sm max-md:hover:text-foreground transition-colors duration-150 ease-out hover:transition-none hover:bg-subtle hover:border-accent/40 motion-reduce:transition-none [@media_(max-width:560px)]:h-6.75 [@media_(max-width:560px)]:pt-0 [@media_(max-width:560px)]:pr-1.5 [@media_(max-width:560px)]:pb-0 [@media_(max-width:560px)]:pl-1.5 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent)_16%,transparent)] [@media_(hover:hover)_and_(pointer:fine)]:hover:bg-[color-mix(in_srgb,var(--subtle)_58%,var(--panel))] [@media_(hover:hover)_and_(pointer:fine)]:hover:text-foreground"
               data-issue-property=""
             >
-              <span className="whitespace-nowrap inline text-muted text-[11px]">
+              <span className="whitespace-nowrap inline text-muted text-[11px] shell-phone:text-xs shell-phone:leading-none">
                 Team
               </span>
               <select
-                className="w-auto min-w-0 max-w-37.5 h-6 pt-0 pr-4.25 pb-0 pl-0.5 border-0 bg-transparent text-foreground text-[12px] max-sm:max-w-28 inline-block min-h-6 mt-0 mr-0 mb-0 ml-0 font-[450] max-md:text-base border border-line rounded-[7px] focus:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 [@media_(max-width:560px)]:max-w-30 [@media_(max-width:600px)]:max-w-27.5 shell-phone:text-[16px]"
+                className="shell-phone:flex-1 shell-phone:max-w-none! shell-phone:min-h-11! shell-phone:h-11 shell-phone:w-full shell-phone:pl-0! shell-phone:border-0 w-auto min-w-0 max-w-37.5 h-6 pt-0 pr-4.25 pb-0 pl-0.5 border-0 bg-transparent text-foreground text-[12px] max-sm:max-w-28 inline-block min-h-6 mt-0 mr-0 mb-0 ml-0 font-[450] max-md:text-base border border-line rounded-[7px] focus:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 [@media_(max-width:560px)]:max-w-30 [@media_(max-width:600px)]:max-w-27.5 shell-phone:text-[16px] pointer-coarse:text-[16px]"
                 value={team}
                 onChange={(e) => {
                   setTeam(e.target.value);
@@ -9229,14 +9278,14 @@ function NewIssue({
               </select>
             </label>
             <label
-              className="inline-flex items-center gap-1 max-w-full h-6.5 pt-0 pr-2 pb-0 pl-2 bg-panel border-transparent rounded-[20px] text-muted text-[12px] mt-0 font-normal focus-within:border-accent max-sm:h-7 max-sm:pt-0 max-sm:pr-1.5 max-sm:pb-0 max-sm:pl-1.5 mr-0 mb-0 ml-0 border border-line focus-within:shadow-sm max-md:hover:text-foreground transition-colors duration-150 ease-out hover:transition-none hover:bg-subtle hover:border-accent/40 motion-reduce:transition-none [@media_(max-width:560px)]:h-6.75 [@media_(max-width:560px)]:pt-0 [@media_(max-width:560px)]:pr-1.5 [@media_(max-width:560px)]:pb-0 [@media_(max-width:560px)]:pl-1.5 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent)_16%,transparent)] [@media_(hover:hover)_and_(pointer:fine)]:hover:bg-[color-mix(in_srgb,var(--subtle)_58%,var(--panel))] [@media_(hover:hover)_and_(pointer:fine)]:hover:text-foreground"
+              className="shell-phone:h-auto! shell-phone:min-w-0 shell-phone:rounded-lg! shell-phone:border-line! shell-phone:pl-2.5! shell-phone:flex-col shell-phone:items-stretch shell-phone:gap-0! shell-phone:pt-1.5! inline-flex items-center gap-1 max-w-full h-6.5 pt-0 pr-2 pb-0 pl-2 bg-panel border-transparent rounded-[20px] text-muted text-[12px] mt-0 font-normal focus-within:border-accent max-sm:h-7 max-sm:pt-0 max-sm:pr-1.5 max-sm:pb-0 max-sm:pl-1.5 mr-0 mb-0 ml-0 border border-line focus-within:shadow-sm max-md:hover:text-foreground transition-colors duration-150 ease-out hover:transition-none hover:bg-subtle hover:border-accent/40 motion-reduce:transition-none [@media_(max-width:560px)]:h-6.75 [@media_(max-width:560px)]:pt-0 [@media_(max-width:560px)]:pr-1.5 [@media_(max-width:560px)]:pb-0 [@media_(max-width:560px)]:pl-1.5 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent)_16%,transparent)] [@media_(hover:hover)_and_(pointer:fine)]:hover:bg-[color-mix(in_srgb,var(--subtle)_58%,var(--panel))] [@media_(hover:hover)_and_(pointer:fine)]:hover:text-foreground"
               data-issue-property=""
             >
-              <span className="whitespace-nowrap inline text-muted text-[11px]">
+              <span className="whitespace-nowrap inline text-muted text-[11px] shell-phone:text-xs shell-phone:leading-none">
                 Status
               </span>
               <select
-                className="w-auto min-w-0 max-w-37.5 h-6 pt-0 pr-4.25 pb-0 pl-0.5 border-0 bg-transparent text-foreground text-[12px] max-sm:max-w-28 inline-block min-h-6 mt-0 mr-0 mb-0 ml-0 font-[450] max-md:text-base border border-line rounded-[7px] focus:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 [@media_(max-width:560px)]:max-w-30 [@media_(max-width:600px)]:max-w-27.5 shell-phone:text-[16px]"
+                className="shell-phone:flex-1 shell-phone:max-w-none! shell-phone:min-h-11! shell-phone:h-11 shell-phone:w-full shell-phone:pl-0! shell-phone:border-0 w-auto min-w-0 max-w-37.5 h-6 pt-0 pr-4.25 pb-0 pl-0.5 border-0 bg-transparent text-foreground text-[12px] max-sm:max-w-28 inline-block min-h-6 mt-0 mr-0 mb-0 ml-0 font-[450] max-md:text-base border border-line rounded-[7px] focus:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 [@media_(max-width:560px)]:max-w-30 [@media_(max-width:600px)]:max-w-27.5 shell-phone:text-[16px] pointer-coarse:text-[16px]"
                 value={stateId}
                 onChange={(e) => setStateId(e.target.value)}
               >
@@ -9255,14 +9304,14 @@ function NewIssue({
               </select>
             </label>
             <label
-              className="inline-flex items-center gap-1 max-w-full h-6.5 pt-0 pr-2 pb-0 pl-2 bg-panel border-transparent rounded-[20px] text-muted text-[12px] mt-0 font-normal focus-within:border-accent max-sm:h-7 max-sm:pt-0 max-sm:pr-1.5 max-sm:pb-0 max-sm:pl-1.5 mr-0 mb-0 ml-0 border border-line focus-within:shadow-sm max-md:hover:text-foreground transition-colors duration-150 ease-out hover:transition-none hover:bg-subtle hover:border-accent/40 motion-reduce:transition-none [@media_(max-width:560px)]:h-6.75 [@media_(max-width:560px)]:pt-0 [@media_(max-width:560px)]:pr-1.5 [@media_(max-width:560px)]:pb-0 [@media_(max-width:560px)]:pl-1.5 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent)_16%,transparent)] [@media_(hover:hover)_and_(pointer:fine)]:hover:bg-[color-mix(in_srgb,var(--subtle)_58%,var(--panel))] [@media_(hover:hover)_and_(pointer:fine)]:hover:text-foreground"
+              className="shell-phone:h-auto! shell-phone:min-w-0 shell-phone:rounded-lg! shell-phone:border-line! shell-phone:pl-2.5! shell-phone:flex-col shell-phone:items-stretch shell-phone:gap-0! shell-phone:pt-1.5! inline-flex items-center gap-1 max-w-full h-6.5 pt-0 pr-2 pb-0 pl-2 bg-panel border-transparent rounded-[20px] text-muted text-[12px] mt-0 font-normal focus-within:border-accent max-sm:h-7 max-sm:pt-0 max-sm:pr-1.5 max-sm:pb-0 max-sm:pl-1.5 mr-0 mb-0 ml-0 border border-line focus-within:shadow-sm max-md:hover:text-foreground transition-colors duration-150 ease-out hover:transition-none hover:bg-subtle hover:border-accent/40 motion-reduce:transition-none [@media_(max-width:560px)]:h-6.75 [@media_(max-width:560px)]:pt-0 [@media_(max-width:560px)]:pr-1.5 [@media_(max-width:560px)]:pb-0 [@media_(max-width:560px)]:pl-1.5 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent)_16%,transparent)] [@media_(hover:hover)_and_(pointer:fine)]:hover:bg-[color-mix(in_srgb,var(--subtle)_58%,var(--panel))] [@media_(hover:hover)_and_(pointer:fine)]:hover:text-foreground"
               data-issue-property=""
             >
-              <span className="whitespace-nowrap inline text-muted text-[11px]">
+              <span className="whitespace-nowrap inline text-muted text-[11px] shell-phone:text-xs shell-phone:leading-none">
                 Priority
               </span>
               <select
-                className="w-auto min-w-0 max-w-37.5 h-6 pt-0 pr-4.25 pb-0 pl-0.5 border-0 bg-transparent text-foreground text-[12px] max-sm:max-w-28 inline-block min-h-6 mt-0 mr-0 mb-0 ml-0 font-[450] max-md:text-base border border-line rounded-[7px] focus:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 [@media_(max-width:560px)]:max-w-30 [@media_(max-width:600px)]:max-w-27.5 shell-phone:text-[16px]"
+                className="shell-phone:flex-1 shell-phone:max-w-none! shell-phone:min-h-11! shell-phone:h-11 shell-phone:w-full shell-phone:pl-0! shell-phone:border-0 w-auto min-w-0 max-w-37.5 h-6 pt-0 pr-4.25 pb-0 pl-0.5 border-0 bg-transparent text-foreground text-[12px] max-sm:max-w-28 inline-block min-h-6 mt-0 mr-0 mb-0 ml-0 font-[450] max-md:text-base border border-line rounded-[7px] focus:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 [@media_(max-width:560px)]:max-w-30 [@media_(max-width:600px)]:max-w-27.5 shell-phone:text-[16px] pointer-coarse:text-[16px]"
                 value={priority}
                 onChange={(e) => setPriority(e.target.value)}
               >
@@ -9284,14 +9333,14 @@ function NewIssue({
               </select>
             </label>
             <label
-              className="inline-flex items-center gap-1 max-w-full h-6.5 pt-0 pr-2 pb-0 pl-2 bg-panel border-transparent rounded-[20px] text-muted text-[12px] mt-0 font-normal focus-within:border-accent max-sm:h-7 max-sm:pt-0 max-sm:pr-1.5 max-sm:pb-0 max-sm:pl-1.5 mr-0 mb-0 ml-0 border border-line focus-within:shadow-sm max-md:hover:text-foreground transition-colors duration-150 ease-out hover:transition-none hover:bg-subtle hover:border-accent/40 motion-reduce:transition-none [@media_(max-width:560px)]:h-6.75 [@media_(max-width:560px)]:pt-0 [@media_(max-width:560px)]:pr-1.5 [@media_(max-width:560px)]:pb-0 [@media_(max-width:560px)]:pl-1.5 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent)_16%,transparent)] [@media_(hover:hover)_and_(pointer:fine)]:hover:bg-[color-mix(in_srgb,var(--subtle)_58%,var(--panel))] [@media_(hover:hover)_and_(pointer:fine)]:hover:text-foreground"
+              className="shell-phone:h-auto! shell-phone:min-w-0 shell-phone:rounded-lg! shell-phone:border-line! shell-phone:pl-2.5! shell-phone:flex-col shell-phone:items-stretch shell-phone:gap-0! shell-phone:pt-1.5! inline-flex items-center gap-1 max-w-full h-6.5 pt-0 pr-2 pb-0 pl-2 bg-panel border-transparent rounded-[20px] text-muted text-[12px] mt-0 font-normal focus-within:border-accent max-sm:h-7 max-sm:pt-0 max-sm:pr-1.5 max-sm:pb-0 max-sm:pl-1.5 mr-0 mb-0 ml-0 border border-line focus-within:shadow-sm max-md:hover:text-foreground transition-colors duration-150 ease-out hover:transition-none hover:bg-subtle hover:border-accent/40 motion-reduce:transition-none [@media_(max-width:560px)]:h-6.75 [@media_(max-width:560px)]:pt-0 [@media_(max-width:560px)]:pr-1.5 [@media_(max-width:560px)]:pb-0 [@media_(max-width:560px)]:pl-1.5 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent)_16%,transparent)] [@media_(hover:hover)_and_(pointer:fine)]:hover:bg-[color-mix(in_srgb,var(--subtle)_58%,var(--panel))] [@media_(hover:hover)_and_(pointer:fine)]:hover:text-foreground"
               data-issue-property=""
             >
-              <span className="whitespace-nowrap inline text-muted text-[11px]">
+              <span className="whitespace-nowrap inline text-muted text-[11px] shell-phone:text-xs shell-phone:leading-none">
                 Assignee
               </span>
               <select
-                className="w-auto min-w-0 max-w-37.5 h-6 pt-0 pr-4.25 pb-0 pl-0.5 border-0 bg-transparent text-foreground text-[12px] max-sm:max-w-28 inline-block min-h-6 mt-0 mr-0 mb-0 ml-0 font-[450] max-md:text-base border border-line rounded-[7px] focus:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 [@media_(max-width:560px)]:max-w-30 [@media_(max-width:600px)]:max-w-27.5 shell-phone:text-[16px]"
+                className="shell-phone:flex-1 shell-phone:max-w-none! shell-phone:min-h-11! shell-phone:h-11 shell-phone:w-full shell-phone:pl-0! shell-phone:border-0 w-auto min-w-0 max-w-37.5 h-6 pt-0 pr-4.25 pb-0 pl-0.5 border-0 bg-transparent text-foreground text-[12px] max-sm:max-w-28 inline-block min-h-6 mt-0 mr-0 mb-0 ml-0 font-[450] max-md:text-base border border-line rounded-[7px] focus:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 [@media_(max-width:560px)]:max-w-30 [@media_(max-width:600px)]:max-w-27.5 shell-phone:text-[16px] pointer-coarse:text-[16px]"
                 value={assigneeId}
                 onChange={(e) => setAssigneeId(e.target.value)}
               >
@@ -9310,14 +9359,14 @@ function NewIssue({
               </select>
             </label>
             <label
-              className="inline-flex items-center gap-1 max-w-full h-6.5 pt-0 pr-2 pb-0 pl-2 bg-panel border-transparent rounded-[20px] text-muted text-[12px] mt-0 font-normal focus-within:border-accent max-sm:h-7 max-sm:pt-0 max-sm:pr-1.5 max-sm:pb-0 max-sm:pl-1.5 mr-0 mb-0 ml-0 border border-line focus-within:shadow-sm max-md:hover:text-foreground transition-colors duration-150 ease-out hover:transition-none hover:bg-subtle hover:border-accent/40 motion-reduce:transition-none [@media_(max-width:560px)]:h-6.75 [@media_(max-width:560px)]:pt-0 [@media_(max-width:560px)]:pr-1.5 [@media_(max-width:560px)]:pb-0 [@media_(max-width:560px)]:pl-1.5 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent)_16%,transparent)] [@media_(hover:hover)_and_(pointer:fine)]:hover:bg-[color-mix(in_srgb,var(--subtle)_58%,var(--panel))] [@media_(hover:hover)_and_(pointer:fine)]:hover:text-foreground"
+              className="shell-phone:h-auto! shell-phone:min-w-0 shell-phone:rounded-lg! shell-phone:border-line! shell-phone:pl-2.5! shell-phone:flex-col shell-phone:items-stretch shell-phone:gap-0! shell-phone:pt-1.5! inline-flex items-center gap-1 max-w-full h-6.5 pt-0 pr-2 pb-0 pl-2 bg-panel border-transparent rounded-[20px] text-muted text-[12px] mt-0 font-normal focus-within:border-accent max-sm:h-7 max-sm:pt-0 max-sm:pr-1.5 max-sm:pb-0 max-sm:pl-1.5 mr-0 mb-0 ml-0 border border-line focus-within:shadow-sm max-md:hover:text-foreground transition-colors duration-150 ease-out hover:transition-none hover:bg-subtle hover:border-accent/40 motion-reduce:transition-none [@media_(max-width:560px)]:h-6.75 [@media_(max-width:560px)]:pt-0 [@media_(max-width:560px)]:pr-1.5 [@media_(max-width:560px)]:pb-0 [@media_(max-width:560px)]:pl-1.5 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent)_16%,transparent)] [@media_(hover:hover)_and_(pointer:fine)]:hover:bg-[color-mix(in_srgb,var(--subtle)_58%,var(--panel))] [@media_(hover:hover)_and_(pointer:fine)]:hover:text-foreground"
               data-issue-property=""
             >
-              <span className="whitespace-nowrap inline text-muted text-[11px]">
+              <span className="whitespace-nowrap inline text-muted text-[11px] shell-phone:text-xs shell-phone:leading-none">
                 Project
               </span>
               <select
-                className="w-auto min-w-0 max-w-37.5 h-6 pt-0 pr-4.25 pb-0 pl-0.5 border-0 bg-transparent text-foreground text-[12px] max-sm:max-w-28 inline-block min-h-6 mt-0 mr-0 mb-0 ml-0 font-[450] max-md:text-base border border-line rounded-[7px] focus:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 [@media_(max-width:560px)]:max-w-30 [@media_(max-width:600px)]:max-w-27.5 shell-phone:text-[16px]"
+                className="shell-phone:flex-1 shell-phone:max-w-none! shell-phone:min-h-11! shell-phone:h-11 shell-phone:w-full shell-phone:pl-0! shell-phone:border-0 w-auto min-w-0 max-w-37.5 h-6 pt-0 pr-4.25 pb-0 pl-0.5 border-0 bg-transparent text-foreground text-[12px] max-sm:max-w-28 inline-block min-h-6 mt-0 mr-0 mb-0 ml-0 font-[450] max-md:text-base border border-line rounded-[7px] focus:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 [@media_(max-width:560px)]:max-w-30 [@media_(max-width:600px)]:max-w-27.5 shell-phone:text-[16px] pointer-coarse:text-[16px]"
                 value={projectId}
                 onChange={(e) => setProjectId(e.target.value)}
               >
@@ -9342,14 +9391,14 @@ function NewIssue({
               </select>
             </label>
             <label
-              className="inline-flex items-center gap-1 max-w-full h-6.5 pt-0 pr-2 pb-0 pl-2 bg-panel border-transparent rounded-[20px] text-muted text-[12px] mt-0 font-normal focus-within:border-accent max-sm:h-7 max-sm:pt-0 max-sm:pr-1.5 max-sm:pb-0 max-sm:pl-1.5 mr-0 mb-0 ml-0 border border-line focus-within:shadow-sm max-md:hover:text-foreground transition-colors duration-150 ease-out hover:transition-none hover:bg-subtle hover:border-accent/40 motion-reduce:transition-none [@media_(max-width:560px)]:h-6.75 [@media_(max-width:560px)]:pt-0 [@media_(max-width:560px)]:pr-1.5 [@media_(max-width:560px)]:pb-0 [@media_(max-width:560px)]:pl-1.5 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent)_16%,transparent)] [@media_(hover:hover)_and_(pointer:fine)]:hover:bg-[color-mix(in_srgb,var(--subtle)_58%,var(--panel))] [@media_(hover:hover)_and_(pointer:fine)]:hover:text-foreground"
+              className="shell-phone:h-auto! shell-phone:min-w-0 shell-phone:rounded-lg! shell-phone:border-line! shell-phone:pl-2.5! shell-phone:flex-col shell-phone:items-stretch shell-phone:gap-0! shell-phone:pt-1.5! inline-flex items-center gap-1 max-w-full h-6.5 pt-0 pr-2 pb-0 pl-2 bg-panel border-transparent rounded-[20px] text-muted text-[12px] mt-0 font-normal focus-within:border-accent max-sm:h-7 max-sm:pt-0 max-sm:pr-1.5 max-sm:pb-0 max-sm:pl-1.5 mr-0 mb-0 ml-0 border border-line focus-within:shadow-sm max-md:hover:text-foreground transition-colors duration-150 ease-out hover:transition-none hover:bg-subtle hover:border-accent/40 motion-reduce:transition-none [@media_(max-width:560px)]:h-6.75 [@media_(max-width:560px)]:pt-0 [@media_(max-width:560px)]:pr-1.5 [@media_(max-width:560px)]:pb-0 [@media_(max-width:560px)]:pl-1.5 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent)_16%,transparent)] [@media_(hover:hover)_and_(pointer:fine)]:hover:bg-[color-mix(in_srgb,var(--subtle)_58%,var(--panel))] [@media_(hover:hover)_and_(pointer:fine)]:hover:text-foreground"
               data-issue-property=""
             >
-              <span className="whitespace-nowrap inline text-muted text-[11px]">
+              <span className="whitespace-nowrap inline text-muted text-[11px] shell-phone:text-xs shell-phone:leading-none">
                 Cycle
               </span>
               <select
-                className="w-auto min-w-0 max-w-37.5 h-6 pt-0 pr-4.25 pb-0 pl-0.5 border-0 bg-transparent text-foreground text-[12px] max-sm:max-w-28 inline-block min-h-6 mt-0 mr-0 mb-0 ml-0 font-[450] max-md:text-base border border-line rounded-[7px] focus:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 [@media_(max-width:560px)]:max-w-30 [@media_(max-width:600px)]:max-w-27.5 shell-phone:text-[16px]"
+                className="shell-phone:flex-1 shell-phone:max-w-none! shell-phone:min-h-11! shell-phone:h-11 shell-phone:w-full shell-phone:pl-0! shell-phone:border-0 w-auto min-w-0 max-w-37.5 h-6 pt-0 pr-4.25 pb-0 pl-0.5 border-0 bg-transparent text-foreground text-[12px] max-sm:max-w-28 inline-block min-h-6 mt-0 mr-0 mb-0 ml-0 font-[450] max-md:text-base border border-line rounded-[7px] focus:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 [@media_(max-width:560px)]:max-w-30 [@media_(max-width:600px)]:max-w-27.5 shell-phone:text-[16px] pointer-coarse:text-[16px]"
                 value={cycleId}
                 onChange={(e) => setCycleId(e.target.value)}
               >
@@ -9370,14 +9419,14 @@ function NewIssue({
               </select>
             </label>
             <label
-              className="inline-flex items-center gap-1 max-w-full h-6.5 pt-0 pr-2 pb-0 pl-2 bg-panel border-transparent rounded-[20px] text-muted text-[12px] mt-0 font-normal focus-within:border-accent max-sm:h-7 max-sm:pt-0 max-sm:pr-1.5 max-sm:pb-0 max-sm:pl-1.5 mr-0 mb-0 ml-0 border border-line focus-within:shadow-sm max-md:hover:text-foreground transition-colors duration-150 ease-out hover:transition-none hover:bg-subtle hover:border-accent/40 motion-reduce:transition-none [@media_(max-width:560px)]:h-6.75 [@media_(max-width:560px)]:pt-0 [@media_(max-width:560px)]:pr-1.5 [@media_(max-width:560px)]:pb-0 [@media_(max-width:560px)]:pl-1.5 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent)_16%,transparent)] [@media_(hover:hover)_and_(pointer:fine)]:hover:bg-[color-mix(in_srgb,var(--subtle)_58%,var(--panel))] [@media_(hover:hover)_and_(pointer:fine)]:hover:text-foreground"
+              className="shell-phone:h-auto! shell-phone:min-w-0 shell-phone:rounded-lg! shell-phone:border-line! shell-phone:pl-2.5! shell-phone:flex-col shell-phone:items-stretch shell-phone:gap-0! shell-phone:pt-1.5! inline-flex items-center gap-1 max-w-full h-6.5 pt-0 pr-2 pb-0 pl-2 bg-panel border-transparent rounded-[20px] text-muted text-[12px] mt-0 font-normal focus-within:border-accent max-sm:h-7 max-sm:pt-0 max-sm:pr-1.5 max-sm:pb-0 max-sm:pl-1.5 mr-0 mb-0 ml-0 border border-line focus-within:shadow-sm max-md:hover:text-foreground transition-colors duration-150 ease-out hover:transition-none hover:bg-subtle hover:border-accent/40 motion-reduce:transition-none [@media_(max-width:560px)]:h-6.75 [@media_(max-width:560px)]:pt-0 [@media_(max-width:560px)]:pr-1.5 [@media_(max-width:560px)]:pb-0 [@media_(max-width:560px)]:pl-1.5 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent)_16%,transparent)] [@media_(hover:hover)_and_(pointer:fine)]:hover:bg-[color-mix(in_srgb,var(--subtle)_58%,var(--panel))] [@media_(hover:hover)_and_(pointer:fine)]:hover:text-foreground"
               data-issue-property=""
             >
-              <span className="whitespace-nowrap inline text-muted text-[11px]">
+              <span className="whitespace-nowrap inline text-muted text-[11px] shell-phone:text-xs shell-phone:leading-none">
                 Due date
               </span>
               <input
-                className="w-full border border-line rounded-md bg-bg text-foreground pt-2.25 pr-2.5 pb-2.25 pl-2.5 resize-y max-md:text-base max-w-32 h-5 border-0 text-xs font-medium placeholder:text-muted focus-visible:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                className="shell-phone:flex-1 shell-phone:max-w-none shell-phone:min-h-11! shell-phone:h-11 shell-phone:w-full shell-phone:pl-0! shell-phone:bg-transparent shell-phone:py-0 w-full border border-line rounded-md bg-bg text-foreground pt-2.25 pr-2.5 pb-2.25 pl-2.5 resize-y max-md:text-base max-w-32 h-5 border-0 text-xs font-medium placeholder:text-muted focus-visible:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] pointer-coarse:text-[16px]"
                 type="date"
                 value={dueDate}
                 onChange={(e) => setDueDate(e.target.value)}
@@ -9407,7 +9456,7 @@ function NewIssue({
                   data-issue-label-option=""
                 >
                   <input
-                    className="w-full border border-line rounded-md bg-bg text-foreground pt-2.25 pr-2.5 pb-2.25 pl-2.5 resize-y max-md:text-base accent-accent placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:text-[16px]"
+                    className="w-full border border-line rounded-md bg-bg text-foreground pt-2.25 pr-2.5 pb-2.25 pl-2.5 resize-y max-md:text-base accent-accent placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:text-[16px] pointer-coarse:text-[16px]"
                     type="checkbox"
                     checked={labelIds.includes(l.id)}
                     onChange={(e) =>
@@ -9441,11 +9490,11 @@ function NewIssue({
           data-issue-create-footer=""
         >
           <label
-            className="inline-flex items-center gap-1.5 mt-0 mr-0 mb-0 ml-0 text-muted text-[12px] font-normal max-sm:text-xs flex-row w-auto min-h-7.5 whitespace-nowrap max-md:hover:text-foreground transition-colors duration-150 [@media_(max-width:600px)]:text-[11px] [@media_(hover:hover)_and_(pointer:fine)]:hover:text-foreground"
+            className="shell-phone:min-h-11 shell-phone:text-sm! inline-flex items-center gap-1.5 mt-0 mr-0 mb-0 ml-0 text-muted text-[12px] font-normal max-sm:text-xs flex-row w-auto min-h-7.5 whitespace-nowrap max-md:hover:text-foreground transition-colors duration-150 [@media_(max-width:600px)]:text-[11px] [@media_(hover:hover)_and_(pointer:fine)]:hover:text-foreground"
             data-issue-create-more=""
           >
             <input
-              className="w-3.75 border border-line rounded-md bg-bg text-foreground pt-2.25 pr-2.5 pb-2.25 pl-2.5 resize-y h-3.75 mt-0 mr-0 mb-0 ml-0 flex-none max-md:text-base accent-accent placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:text-[16px]"
+              className="w-3.75 border border-line rounded-md bg-bg text-foreground pt-2.25 pr-2.5 pb-2.25 pl-2.5 resize-y h-3.75 mt-0 mr-0 mb-0 ml-0 flex-none shell-phone:size-5 pointer-coarse:size-5 max-md:text-base accent-accent placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:text-[16px] pointer-coarse:text-[16px]"
               type="checkbox"
               checked={createMore}
               onChange={(e) => setCreateMore(e.target.checked)}
@@ -9649,7 +9698,7 @@ function ProjectsPage({
     return (
       <button
         type="button"
-        className="border-b border-line grid items-center gap-1.5 pt-0 pr-4.25 pb-0 pl-4.25 min-h-12 bg-transparent w-full text-left text-[13px] h-12 border-0 font-normal hover:bg-subtle shell-phone:min-w-96 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:w-[max(620px,100%)] shell-phone:min-w-175 grid-cols-[minmax(0,4.3fr)_minmax(52px,.48fr)_minmax(90px,1fr)_minmax(84px,.9fr)_minmax(42px,.45fr)_minmax(104px,1fr)]"
+        className="border-b border-line grid items-center gap-1.5 pt-0 pr-4.25 pb-0 pl-4.25 min-h-12 bg-transparent w-full text-left text-[13px] h-12 border-0 font-normal hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 focus-visible:-outline-offset-2 shell-phone:flex shell-phone:flex-wrap shell-phone:items-center shell-phone:h-auto shell-phone:min-h-15 shell-phone:gap-x-3 shell-phone:gap-y-1 shell-phone:px-4 shell-phone:py-3 grid-cols-[minmax(0,4.3fr)_minmax(52px,.48fr)_minmax(90px,1fr)_minmax(84px,.9fr)_minmax(42px,.45fr)_minmax(104px,1fr)]"
         data-projects-table-row=""
         key={p.id}
         onClick={() => onOpen(p)}
@@ -9658,7 +9707,7 @@ function ProjectsPage({
         aria-label={`Open project ${p.name}`}
       >
         <span
-          className="flex items-center gap-2.5 overflow-hidden min-w-0 text-ellipsis whitespace-nowrap"
+          className="flex items-center gap-2.5 overflow-hidden min-w-0 text-ellipsis whitespace-nowrap shell-phone:order-first shell-phone:basis-full shell-phone:whitespace-normal"
           data-projects-table-name=""
         >
           <span
@@ -9670,28 +9719,41 @@ function ProjectsPage({
             <FolderKanban size={15} />
           </span>
           <span className="last:grid last:gap-0.5 last:min-w-0 last:gap-0.75">
-            <strong className="overflow-hidden text-ellipsis font-medium">
+            <strong className="overflow-hidden text-ellipsis font-medium shell-phone:line-clamp-2 shell-phone:text-sm shell-phone:wrap-break-word">
               {p.name}
             </strong>
             {summary && p.description && (
-              <small className="overflow-hidden text-ellipsis text-muted">
+              <small className="overflow-hidden text-ellipsis text-muted shell-phone:line-clamp-2">
                 {p.description}
               </small>
             )}
           </span>
         </span>
         <span
-          className="text-[19px] text-muted leading-none min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
+          className="text-[19px] text-muted leading-none min-w-0 overflow-hidden text-ellipsis whitespace-nowrap shell-phone:order-last shell-phone:ml-auto"
           aria-label={p.health || "No health updates"}
           title={p.health || "No health updates"}
         >
           {p.health ? "◉" : "◌"}
         </span>
-        <span className="text-muted min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
-          {p.lead?.name || "—"}
+        <span className="text-muted min-w-0 overflow-hidden text-ellipsis whitespace-nowrap shell-phone:max-w-32">
+          {p.lead?.name || (
+            <>
+              —<span className="sr-only shell-phone:not-sr-only"> No lead</span>
+            </>
+          )}
         </span>
-        <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
-          {p.targetDate || "—"}
+        <span
+          className={`min-w-0 overflow-hidden text-ellipsis whitespace-nowrap shell-phone:text-muted ${p.targetDate ? "" : "shell-phone:hidden"}`}
+        >
+          {p.targetDate ? (
+            <>
+              <span className="hidden shell-phone:inline">Target </span>
+              {p.targetDate}
+            </>
+          ) : (
+            "—"
+          )}
         </span>
         <span
           className="text-center text-muted min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
@@ -9699,10 +9761,13 @@ function ProjectsPage({
           title={`${count} open task${count === 1 ? "" : "s"}`}
         >
           {count}
+          <span className="hidden shell-phone:inline">
+            {count === 1 ? " task" : " tasks"}
+          </span>
         </span>
-        <span className="flex items-center gap-1.75 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+        <span className="flex items-center gap-1.75 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap shell-phone:-order-1 shell-phone:font-medium">
           <span
-            className="w-3 h-3 rounded-[50%] data-[state=started]:border-line data-[state=completed]:border-line border-2 border-dotted border-orange-400"
+            className="flex-none w-3 h-3 rounded-[50%] data-[state=started]:border-line data-[state=completed]:border-line border-2 border-dotted border-orange-400"
             data-projects-status-dot=""
             data-state={p.state || "backlog"}
           />
@@ -9719,7 +9784,7 @@ function ProjectsPage({
       aria-labelledby="projects-title"
     >
       <header
-        className="border-b border-line h-11.25 min-h-11.25 flex items-center justify-between gap-2.5 pt-0 pr-4.5 pb-0 pl-4.5 leading-normal shell-phone:pt-0 shell-phone:pr-3 shell-phone:pb-0 shell-phone:pl-4"
+        className="border-b border-line h-11.25 min-h-11.25 flex items-center justify-between gap-2.5 pt-0 pr-4.5 pb-0 pl-4.5 leading-normal shell-phone:h-auto shell-phone:min-h-15 shell-phone:py-2 shell-phone:pr-3 shell-phone:pl-2"
         data-projects-reference-head=""
       >
         <div className="flex min-w-0 items-center gap-1">
@@ -9740,7 +9805,7 @@ function ProjectsPage({
         </button>
       </header>
       <div
-        className="h-11 min-w-0 flex items-center gap-1.25 pt-0 pr-2.25 pb-0 pl-2.25 overflow-x-auto justify-between border-line [&::-webkit-scrollbar]:hidden border-b-0 scrollbar-none"
+        className="h-11 min-w-0 flex items-center gap-1.25 pt-0 pr-2.25 pb-0 pl-2.25 overflow-x-auto justify-between border-line [&::-webkit-scrollbar]:hidden border-b-0 scrollbar-none shell-phone:h-auto shell-phone:py-2 shell-phone:px-3 shell-phone:border-b"
         data-projects-reference-tabs=""
       >
         <span
@@ -9897,7 +9962,7 @@ function ProjectsPage({
                   <option>Target date</option>
                 </select>
               </label>
-              <label className="grid gap-1.25">
+              <label className="flex items-center gap-2 pointer-coarse:min-h-11 shell-phone:min-h-11">
                 <input
                   className="shell-phone:text-base max-w-full font-sans placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:text-[16px]"
                   type="checkbox"
@@ -9906,7 +9971,7 @@ function ProjectsPage({
                 />{" "}
                 Show closed projects
               </label>
-              <label className="grid gap-1.25">
+              <label className="flex items-center gap-2 pointer-coarse:min-h-11 shell-phone:min-h-11">
                 <input
                   className="shell-phone:text-base max-w-full font-sans placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:text-[16px]"
                   type="checkbox"
@@ -10030,7 +10095,7 @@ function ProjectsPage({
             const rows = inColumn(col.key);
             return (
               <section
-                className="w-full min-w-0 border-collapse table-fixed text-[12px] shell-phone:block shell-phone:overflow-x-auto shell-phone:whitespace-nowrap"
+                className="w-full min-w-0 border-collapse table-fixed text-[12px]"
                 data-projects-table=""
                 key={col.key}
               >
@@ -10043,7 +10108,7 @@ function ProjectsPage({
                   </h2>
                 )}
                 <div
-                  className="border-b border-line grid items-center gap-1.5 pt-0 pr-4.25 pb-0 pl-4.25 min-h-8.75 text-muted text-[12px] w-full text-left border-0 font-medium shell-phone:min-w-96 shell-phone:w-[max(620px,100%)] shell-phone:min-w-175 grid-cols-[minmax(0,4.3fr)_minmax(52px,.48fr)_minmax(90px,1fr)_minmax(84px,.9fr)_minmax(42px,.45fr)_minmax(104px,1fr)]"
+                  className="border-b border-line grid items-center gap-1.5 pt-0 pr-4.25 pb-0 pl-4.25 min-h-8.75 text-muted text-[12px] w-full text-left border-0 font-medium shell-phone:hidden grid-cols-[minmax(0,4.3fr)_minmax(52px,.48fr)_minmax(90px,1fr)_minmax(84px,.9fr)_minmax(42px,.45fr)_minmax(104px,1fr)]"
                   data-projects-table-head=""
                 >
                   <span>Name</span>
@@ -10450,33 +10515,34 @@ function ProjectDetails({
   };
   return (
     <section
-      className="max-w-none mt-0 mr-auto mb-0 ml-auto min-w-0 w-full overflow-x-hidden text-[12px] leading-normal shell-phone:flex shell-phone:flex-col font-['Inter_Variable',Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe_UI',sans-serif] [font-optical-sizing:auto] shell-desktop:[&:has(>[data-project-reference-properties])]:grid-cols-[minmax(0,1fr)_minmax(260px,38%)]"
+      className="max-w-none mt-0 mr-auto mb-0 ml-auto min-w-0 w-full overflow-x-hidden text-[12px] leading-normal shell-phone:flex shell-phone:flex-col font-['Inter_Variable',Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe_UI',sans-serif] [font-optical-sizing:auto] shell-desktop:[&:has(>[data-project-reference-properties])]:grid-cols-[minmax(0,1fr)_minmax(260px,38%)] shell-phone:[[data-main]>&]:mx-[calc(50%-50vw)] shell-phone:[[data-main]>&]:w-auto shell-phone:[[data-main]>&]:-mt-6 shell-phone:[&_[data-my-issues-view]]:px-2 shell-phone:[&_[data-my-issues-view]]:pt-2 shell-phone:[&_[data-my-issue-row]]:pl-2! shell-phone:[&_[data-my-issue-row][data-depth='1']]:pl-8! shell-phone:[&_[data-my-issue-row][data-depth='2']]:pl-14! shell-phone:[&_[data-my-issue-row][data-depth='3']]:pl-20! shell-phone:[&_[data-my-issue-row][data-depth='4']]:pl-26! shell-phone:[&_[data-my-issue-row]>span[aria-hidden=true]]:-translate-x-8.5"
       data-project-detail=""
       data-project-reference=""
     >
       <div
-        className="border-b border-line h-11.25 min-h-11.25 flex items-center justify-between gap-2.5 pt-0 pr-4.5 pb-0 pl-4.5 relative shell-phone:order-0 md:col-span-full leading-normal shell-phone:pt-0 shell-phone:pr-3 shell-phone:pb-0 shell-phone:pl-4"
+        className="border-b border-line h-11.25 min-h-11.25 flex items-center justify-between gap-2.5 pt-0 pr-4.5 pb-0 pl-4.5 relative shell-phone:order-0 md:col-span-full leading-normal shell-phone:flex-wrap shell-phone:h-auto shell-phone:gap-x-1 shell-phone:gap-y-0 shell-phone:pt-1 shell-phone:pr-1 shell-phone:pb-2 shell-phone:pl-1"
         data-project-reference-head=""
       >
         <MobileNavTrigger />
         <button
-          className="flex-none pt-1.25 pr-1.25 pb-1.25 pl-1.25 rounded-[5px] bg-transparent text-[12px] text-muted max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+          className="flex-none pt-1.25 pr-1.25 pb-1.25 pl-1.25 rounded-[5px] bg-transparent text-[12px] text-muted max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:mr-auto shell-phone:text-base"
           data-back-link=""
           onClick={onBack}
         >
-          ← Projects
+          ← <span className="shell-phone:sr-only">Projects</span>
         </button>
-        <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[12px] shell-phone:max-w-36 shell-phone:max-w-37.5">
+        <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[12px] shell-phone:order-last shell-phone:basis-full shell-phone:px-2 shell-phone:text-sm shell-phone:font-medium">
           {project.name}
         </span>
         <FollowButton
           type="project"
           id={project.id}
           onError={(m) => setStatus(m)}
+          className="shell-phone:min-h-11 pointer-coarse:min-h-11"
         />
         {tab === "Overview" && (
           <button
-            className={`flex-none inline-flex items-center gap-1.5 pt-1.25 pr-2 pb-1.25 pl-2 rounded-[5px] border border-line text-[12px] max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 ${
+            className={`flex-none inline-flex items-center gap-1.5 pt-1.25 pr-2 pb-1.25 pl-2 rounded-[5px] border border-line text-[12px] max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 shell-phone:justify-center ${
               propsOpen
                 ? "bg-subtle text-foreground font-medium"
                 : "bg-panel text-muted hover:bg-subtle hover:text-foreground"
@@ -10489,11 +10555,11 @@ function ProjectDetails({
             onClick={togglePropsOpen}
           >
             <SlidersHorizontal size={13} aria-hidden="true" />
-            Properties
+            <span className="shell-phone:sr-only">Properties</span>
           </button>
         )}
         <button
-          className="flex-none pt-1.25 pr-1.25 pb-1.25 pl-1.25 rounded-[5px] bg-transparent text-[12px] max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+          className="flex-none pt-1.25 pr-1.25 pb-1.25 pl-1.25 rounded-[5px] bg-transparent text-[12px] max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:hidden pointer-coarse:min-h-11 pointer-coarse:min-w-11"
           type="button"
           aria-label="Copy page URL"
           onClick={() => {
@@ -10519,11 +10585,24 @@ function ProjectDetails({
           <PopoverContent
             align="end"
             sideOffset={6}
-            className="z-50 w-auto pt-2.25 pr-2.25 pb-2.25 pl-2.25 border border-line rounded-[7px] bg-panel shadow-(--shadow)"
+            className="z-50 w-auto pt-2.25 pr-2.25 pb-2.25 pl-2.25 border border-line rounded-[7px] bg-panel shadow-(--shadow) shell-phone:grid shell-phone:min-w-48"
             data-project-reference-menu=""
           >
             <button
-              className="bg-transparent pt-1.75 pr-2.5 pb-1.75 pl-2.5 max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+              className="hidden bg-transparent pt-1.75 pr-2.5 pb-1.75 pl-2.5 text-left max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:block shell-phone:min-h-11"
+              type="button"
+              onClick={() => {
+                setDetailMenu(false);
+                void navigator.clipboard
+                  .writeText(location.href)
+                  .then(() => setStatus("Project URL copied."))
+                  .catch(() => setStatus("Could not copy project URL."));
+              }}
+            >
+              Copy URL
+            </button>
+            <button
+              className="bg-transparent pt-1.75 pr-2.5 pb-1.75 pl-2.5 max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:text-left"
               type="button"
               onClick={() => {
                 setConfirmArchive(true);
@@ -10537,7 +10616,7 @@ function ProjectDetails({
       </div>
 
       <nav
-        className="h-11 min-w-0 flex items-center gap-1.25 pt-0 pr-3 pb-0 pl-3 overflow-x-auto border-line [&::-webkit-scrollbar]:hidden border-b-0 md:col-span-full scrollbar-none"
+        className="h-11 min-w-0 flex items-center gap-1.25 pt-0 pr-3 pb-0 pl-3 overflow-x-auto border-line [&::-webkit-scrollbar]:hidden border-b-0 md:col-span-full scrollbar-none shell-phone:h-14 shell-phone:pr-14 shell-phone:pl-2"
         data-project-reference-tabs=""
         aria-label="Project views"
       >
@@ -10562,7 +10641,7 @@ function ProjectDetails({
       </nav>
       <button
         type="button"
-        className="absolute right-4.75 top-13.25 z-2 grid place-items-center w-7 h-7 rounded-md bg-transparent text-muted hover:bg-subtle hover:text-foreground max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 md:col-start-2 md:row-start-2 md:justify-self-end shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:static shell-phone:right-auto shell-phone:top-auto shell-phone:mr-1"
+        className="absolute right-4.75 top-13.25 z-2 grid place-items-center w-7 h-7 rounded-md bg-transparent text-muted hover:bg-subtle hover:text-foreground max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 md:col-start-2 md:row-start-2 md:justify-self-end shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:static shell-phone:right-auto shell-phone:top-auto shell-phone:mr-1 shell-phone:-mt-12.5 shell-phone:mb-1.5 shell-phone:self-end"
         data-project-add-view=""
         aria-label="Add new view"
         onClick={onNewView}
@@ -10587,7 +10666,7 @@ function ProjectDetails({
           </header>
           {propsOpen && (
             <div
-              className="border absolute right-2.75 top-22.5 min-w-65 max-w-96.25 grid content-start gap-4 pt-4 pr-3.25 pb-4 pl-3.25 border-line rounded-[10px] bg-panel max-lg:static max-lg:w-auto max-lg:max-w-none max-lg:min-w-0 max-lg:mt-5 max-lg:mr-3.5 max-lg:mb-5 max-lg:ml-3.5 shell-phone:mt-0 shell-phone:mb-4 shell-phone:pt-3 shell-phone:pb-3 shell-phone:order-2 md:col-start-2 md:row-start-3 md:row-span-6 [@media_(max-width:900px)]:w-auto [@media_(max-width:900px)]:max-w-none [@media_(max-width:900px)]:min-w-0 [@media_(max-width:900px)]:mt-5 [@media_(max-width:900px)]:mr-3.5 [@media_(max-width:900px)]:mb-5 [@media_(max-width:900px)]:ml-3.5 shell-phone:mr-2.5 shell-phone:mb-4.5 shell-phone:ml-2.5 shell-phone:pt-3.25 shell-phone:pr-3.25 shell-phone:pb-3.25 shell-phone:pl-3.25 w-[calc(38%-11px)]"
+              className="border absolute right-2.75 top-22.5 min-w-65 max-w-96.25 grid content-start gap-4 pt-4 pr-3.25 pb-4 pl-3.25 border-line rounded-[10px] bg-panel max-lg:static max-lg:w-auto max-lg:max-w-none max-lg:min-w-0 max-lg:mt-5 max-lg:mr-3.5 max-lg:mb-5 max-lg:ml-3.5 shell-phone:mt-0 shell-phone:mb-4 shell-phone:pt-3 shell-phone:pb-3 shell-phone:order-2 md:col-start-2 md:row-start-3 md:row-span-6 [@media_(max-width:900px)]:w-auto [@media_(max-width:900px)]:max-w-none [@media_(max-width:900px)]:min-w-0 [@media_(max-width:900px)]:mt-5 [@media_(max-width:900px)]:mr-3.5 [@media_(max-width:900px)]:mb-5 [@media_(max-width:900px)]:ml-3.5 shell-phone:mr-2.5 shell-phone:mb-4.5 shell-phone:ml-2.5 shell-phone:pt-3.25 shell-phone:pr-3.25 shell-phone:pb-3.25 shell-phone:pl-3.25 w-[calc(38%-11px)] shell-phone:[&_[data-project-repository]]:grid-cols-1 shell-phone:[&_[data-project-repository]]:gap-1 shell-phone:[&_[data-project-repository]_button[aria-haspopup=dialog]]:min-h-11 pointer-coarse:[&_[data-project-repository]_button[aria-haspopup=dialog]]:min-h-11 shell-phone:[&_[data-project-repository]_button[aria-haspopup=dialog]]:border-line"
               data-project-reference-properties=""
             >
               <h2 className="mt-0 mr-0 mb-0.5 ml-0 text-[12px] font-semibold">
@@ -11388,9 +11467,9 @@ function IssueBoard({
     ];
   }, [issues, states]);
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col [@media(max-height:500px)]:flex-none">
       <div
-        className="flex min-h-0 min-w-0 flex-1 flex-col  overflow-hidden bg-panel "
+        className="flex min-h-0 min-w-0 flex-1 flex-col  overflow-hidden bg-panel [@media(max-height:500px)]:flex-none"
         data-issues-board=""
       >
         <Kanban
@@ -11487,7 +11566,7 @@ function TaskViewTabs<T extends string>({
 }) {
   return (
     <nav
-      className="flex min-w-0 flex-1 items-center gap-1.5 border-0 bg-bg  text-foreground overflow-x-auto shell-phone:basis-full [@media_(max-width:650px)]:gap-1 "
+      className="flex min-w-0 flex-1 items-center gap-1.5 border-0 bg-bg  text-foreground overflow-x-auto max-sm:basis-full [@media_(max-width:650px)]:gap-1 "
       data-my-issue-tabs=""
       aria-label={label}
     >
@@ -12417,7 +12496,7 @@ function CommandPalette({
   };
   return bodyLayer(
     <div
-      className="inset-0 pr-4.5 pl-4.5 bg-[#0008] fixed z-100 flex justify-center items-start py-[15vh] px-4.5"
+      className="inset-0 pr-4.5 pl-4.5 bg-[#0008] fixed z-100 flex justify-center items-start py-[15vh] px-4.5 shell-phone:p-2"
       data-command-backdrop=""
       role="presentation"
       onMouseDown={(e) => {
@@ -12425,7 +12504,7 @@ function CommandPalette({
       }}
     >
       <section
-        className="border shadow-(--shadow) overflow-hidden border-line rounded-[10px] bg-panel w-[min(570px,100%)] max-w-xl"
+        className="border shadow-(--shadow) overflow-hidden border-line rounded-[10px] bg-panel w-[min(570px,100%)] max-w-xl shell-phone:w-full shell-phone:max-w-none"
         data-command-palette=""
         role="dialog"
         aria-modal="true"
@@ -12441,7 +12520,7 @@ function CommandPalette({
           <Search size={17} />
           <input
             ref={inputRef}
-            className="flex-1 border-0 bg-transparent text-foreground text-[14px] max-md:text-base outline-none placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+            className="flex-1 border-0 bg-transparent text-foreground text-[14px] max-md:text-base outline-none placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] pointer-coarse:text-[16px]"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search tasks or navigate..."
@@ -12455,14 +12534,23 @@ function CommandPalette({
             }
             onKeyDown={onKeyDown}
           />
-          <kbd className="text-[10px] text-muted">ESC</kbd>
+          <kbd className="text-[10px] text-muted pointer-coarse:hidden shell-phone:hidden">
+            ESC
+          </kbd>
+          <button
+            type="button"
+            className="hidden min-h-11 flex-none items-center rounded-md bg-transparent px-2 text-sm text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:inline-flex pointer-coarse:inline-flex"
+            onClick={closeAndRestore}
+          >
+            Cancel
+          </button>
         </div>
         <div
           ref={listRef}
           id="command-palette-list"
           role="listbox"
           aria-label="Search results"
-          style={{ maxHeight: "min(60vh,520px)", overflowY: "auto" }}
+          className="max-h-[min(60vh,520px)] overflow-y-auto overscroll-contain shell-phone:max-h-[calc(100dvh-90px)]"
         >
           {terms.length > 0 && results.length > 0 && (
             <div
@@ -12479,7 +12567,7 @@ function CommandPalette({
               </p>
               {results.map((i) => (
                 <button
-                  className="flex items-center gap-2.25 w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 rounded-md bg-transparent text-left text-[12px] hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                  className="flex items-center gap-2.25 w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 rounded-md bg-transparent text-left text-[12px] hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:text-sm"
                   key={i.id}
                   {...row(`i:${i.id}`)}
                   onClick={() => onIssue(i)}
@@ -12488,8 +12576,8 @@ function CommandPalette({
                     className="inline-block w-2 h-2 shrink-0 rounded-[50%] bg-room-muted data-[p=1]:bg-red-500 data-[p=2]:bg-orange-500 data-[p=3]:bg-yellow-500 data-[p=4]:bg-blue-400 last:text-muted last:overflow-hidden last:text-ellipsis data-[p=1]:bg-subtle data-[p=2]:bg-subtle data-[p=3]:bg-subtle data-[p=4]:bg-subtle"
                     data-p={i.priority}
                   />
-                  <b>{i.identifier}</b>
-                  <span className="last:text-muted last:overflow-hidden last:text-ellipsis">
+                  <b className="flex-none whitespace-nowrap">{i.identifier}</b>
+                  <span className="last:text-muted last:overflow-hidden last:text-ellipsis min-w-0">
                     {i.title}
                   </span>
                 </button>
@@ -12511,7 +12599,7 @@ function CommandPalette({
               </p>
               {remote.map((i) => (
                 <button
-                  className="flex items-center gap-2.25 w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 rounded-md bg-transparent text-left text-[12px] hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                  className="flex items-center gap-2.25 w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 rounded-md bg-transparent text-left text-[12px] hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:text-sm"
                   key={i.id}
                   {...row(`r:${i.id}`)}
                   onClick={() => onIssue(i)}
@@ -12520,8 +12608,8 @@ function CommandPalette({
                     className="inline-block w-2 h-2 shrink-0 rounded-[50%] bg-room-muted data-[p=1]:bg-red-500 data-[p=2]:bg-orange-500 data-[p=3]:bg-yellow-500 data-[p=4]:bg-blue-400 last:text-muted last:overflow-hidden last:text-ellipsis data-[p=1]:bg-subtle data-[p=2]:bg-subtle data-[p=3]:bg-subtle data-[p=4]:bg-subtle"
                     data-p={i.priority}
                   />
-                  <b>{i.identifier}</b>
-                  <span className="last:text-muted last:overflow-hidden last:text-ellipsis">
+                  <b className="flex-none whitespace-nowrap">{i.identifier}</b>
+                  <span className="last:text-muted last:overflow-hidden last:text-ellipsis min-w-0">
                     {i.title}
                   </span>
                 </button>
@@ -12543,7 +12631,7 @@ function CommandPalette({
               </p>
               {projects.map((p) => (
                 <button
-                  className="flex items-center gap-2.25 w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 rounded-md bg-transparent text-left text-[12px] hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                  className="flex items-center gap-2.25 w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 rounded-md bg-transparent text-left text-[12px] hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:text-sm"
                   key={p.id}
                   {...row(`p:${p.id}`)}
                   onClick={() => go(`/workspace/project/${p.id}`)}
@@ -12571,7 +12659,7 @@ function CommandPalette({
               </p>
               {teams.map((t) => (
                 <button
-                  className="flex items-center gap-2.25 w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 rounded-md bg-transparent text-left text-[12px] hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                  className="flex items-center gap-2.25 w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 rounded-md bg-transparent text-left text-[12px] hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:text-sm"
                   key={t.id}
                   {...row(`t:${t.id}`)}
                   onClick={() =>
@@ -12601,14 +12689,14 @@ function CommandPalette({
               </p>
               {initiativeHits.map((i) => (
                 <button
-                  className="flex items-center gap-2.25 w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 rounded-md bg-transparent text-left text-[12px] hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                  className="flex items-center gap-2.25 w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 rounded-md bg-transparent text-left text-[12px] hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:text-sm"
                   key={i.id}
                   {...row(`in:${i.id}`)}
                   onClick={() => onOpenInitiative(i.identifier || i.id)}
                 >
                   <Target size={14} />
-                  <b>{i.identifier}</b>
-                  <span className="last:text-muted last:overflow-hidden last:text-ellipsis">
+                  <b className="flex-none whitespace-nowrap">{i.identifier}</b>
+                  <span className="last:text-muted last:overflow-hidden last:text-ellipsis min-w-0">
                     {i.name}
                   </span>
                 </button>
@@ -12629,14 +12717,16 @@ function CommandPalette({
               </p>
               {actions.map((a) => (
                 <button
-                  className="flex items-center gap-2.25 w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 rounded-md bg-transparent text-left text-[12px] hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                  className="flex items-center gap-2.25 w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 rounded-md bg-transparent text-left text-[12px] hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:text-sm"
                   key={a.key}
                   {...row(a.key)}
                   onClick={onCreateInitiative}
                 >
                   <Plus size={14} />
                   <span className="flex-1">{a.label}</span>
-                  <kbd className="text-[10px] text-muted">{a.hint}</kbd>
+                  <kbd className="text-[10px] text-muted pointer-coarse:hidden">
+                    {a.hint}
+                  </kbd>
                 </button>
               ))}
             </div>
@@ -12655,7 +12745,7 @@ function CommandPalette({
             </p>
             {pages.map((x) => (
               <button
-                className="flex items-center gap-2.25 w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 rounded-md bg-transparent text-left text-[12px] hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                className="flex items-center gap-2.25 w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 rounded-md bg-transparent text-left text-[12px] hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:text-sm"
                 key={x}
                 {...row(`n:${x}`)}
                 onClick={() => onNavigate(x)}
@@ -12668,7 +12758,7 @@ function CommandPalette({
             ))}
           </div>
         </div>
-        <footer className="pt-2.5 pr-3.5 pb-2.5 pl-3.5 border-t border-line text-muted text-[10px]">
+        <footer className="pt-2.5 pr-3.5 pb-2.5 pl-3.5 border-t border-line text-muted text-[10px] pointer-coarse:hidden shell-phone:hidden">
           ↑↓ to navigate · Enter to select · Esc to close
         </footer>
       </section>
@@ -13077,11 +13167,11 @@ function WorkspaceFeaturesGroup({ hidden }: { hidden: boolean }) {
       <h2 className="mt-0 mr-0 mb-0 ml-0 text-(--settings-ink) text-(length:--ds-settings-section-size) font-(--ds-settings-section-weight) leading-(--ds-settings-section-line) tracking-[-.035em] wrap-break-word">
         Features
       </h2>
-      <div
-        className="flex min-h-(--ds-settings-row-height) min-w-0 flex-col items-start justify-between gap-5 border-t border-line p-(--ds-settings-row-padding) first-of-type:border-t-0 first-of-type:pt-0 last-of-type:pb-0.5 md:flex-row md:items-center md:gap-5 shell-phone:gap-3 [@media_(max-width:_700px)]:gap-3"
+      <label
+        className="flex min-h-(--ds-settings-row-height) min-w-0 cursor-pointer flex-row items-center justify-between gap-5 border-t border-line p-(--ds-settings-row-padding) first-of-type:border-t-0 first-of-type:pt-0 last-of-type:pb-0.5 md:gap-5 shell-phone:gap-3 [@media_(max-width:_700px)]:gap-3"
         data-setting-row=""
       >
-        <div>
+        <div className="min-w-0 flex-1">
           <b className="font-[620]">Agents</b>
           <p>
             Show the Agents screens (agents, run queue, runners and audit) to
@@ -13098,7 +13188,7 @@ function WorkspaceFeaturesGroup({ hidden }: { hidden: boolean }) {
           disabled={busy || enabled === null}
           onChange={(e) => void change(e.target.checked)}
         />
-      </div>
+      </label>
       {message && (
         <p
           role={
@@ -13246,19 +13336,19 @@ function LegacyWorkspaceSettings({
                 }
               }}
             >
-              <label className="min-w-0 text-[12px] wrap-break-word">
+              <label className="min-w-0 text-[12px] wrap-break-word grid gap-1.5">
                 Workspace name
                 <input
-                  className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base max-w-full placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                  className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base max-w-full placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   required
                 />
               </label>
-              <label className="min-w-0 text-[12px] wrap-break-word">
+              <label className="min-w-0 text-[12px] wrap-break-word grid gap-1.5">
                 Workspace key
                 <input
-                  className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base max-w-full placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                  className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base max-w-full placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
                   value={urlKey}
                   onChange={(e) => setUrlKey(e.target.value)}
                   required
@@ -13829,7 +13919,7 @@ function CycleSettingsIndex({
         </p>
       </header>
       <div
-        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 shell-phone:pt-3.75 shell-phone:pr-3.75 shell-phone:pb-3.75 shell-phone:pl-3.75 [@media_(max-width:_700px)]:mb-7 [@media_(max-width:_700px)]:pt-4.75 [@media_(max-width:_700px)]:pr-4.25 [@media_(max-width:_700px)]:pb-4.75 [@media_(max-width:_700px)]:pl-4.25 [@media_(max-width:_700px)]:rounded-[13px]"
+        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 [@media_(max-width:_700px)]:mb-7"
         data-settings-group=""
       >
         <h2 className="mt-0 mr-0 mb-0 ml-0 text-(--settings-ink) text-(length:--ds-settings-section-size) font-(--ds-settings-section-weight) leading-(--ds-settings-section-line) tracking-[-.035em]">
@@ -14021,19 +14111,19 @@ function TeamsSettings({
             className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-4 [@media_(max-width:_700px)]:gap-3.5"
             data-settings-form-grid=""
           >
-            <label className="min-w-0 text-xs wrap-break-word">
+            <label className="min-w-0 text-xs wrap-break-word grid gap-1.5">
               Name
               <input
-                className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base max-w-full placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base max-w-full placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
                 required
                 value={name}
                 onChange={(e) => setName(e.target.value)}
               />
             </label>
-            <label className="min-w-0 text-xs wrap-break-word">
+            <label className="min-w-0 text-xs wrap-break-word grid gap-1.5">
               Key
               <input
-                className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base max-w-full placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base max-w-full placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
                 required
                 maxLength={8}
                 pattern="[A-Za-z0-9]+"
@@ -14048,7 +14138,7 @@ function TeamsSettings({
               </legend>
               {people.map((p) => (
                 <label
-                  className="min-w-0 text-[13px] flex items-center gap-2 text-foreground flex-row justify-start w-auto justify-self-start wrap-break-word"
+                  className="min-w-0 text-[13px] flex items-center gap-2 text-foreground flex-row justify-start w-auto justify-self-start wrap-break-word pointer-coarse:min-h-11"
                   key={p.id}
                 >
                   <input
@@ -14072,7 +14162,7 @@ function TeamsSettings({
             className="mt-4.5 flex flex-col items-start gap-3.5 md:flex-row md:items-center md:gap-3.5 [@media_(max-width:_700px)]:gap-2.25"
             data-settings-form-actions=""
           >
-            <button className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-9 rounded-lg border border-foreground bg-(--settings-accent-strong) pl-3.5 pr-3.5 pt-2.25 pb-2.25 text-[12px] font-[620] text-(--settings-on-accent) shadow-[0_1px_2px_#24242412] hover:bg-foreground/90 hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5] [@media_(max-width:_700px)]:min-h-10">
+            <button className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-9 rounded-lg border border-foreground bg-(--settings-accent-strong) pl-3.5 pr-3.5 pt-2.25 pb-2.25 text-[12px] font-[620] text-(--settings-on-accent) shadow-[0_1px_2px_#24242412] hover:bg-foreground/90 hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5]">
               Create team
             </button>
             <span>Team keys use letters and numbers.</span>
@@ -14184,7 +14274,7 @@ function WorkspaceSettings({
           </p>
         </header>
         <div
-          className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 shell-phone:pt-3.75 shell-phone:pr-3.75 shell-phone:pb-3.75 shell-phone:pl-3.75 [@media_(max-width:_700px)]:mb-7 [@media_(max-width:_700px)]:pt-4.75 [@media_(max-width:_700px)]:pr-4.25 [@media_(max-width:_700px)]:pb-4.75 [@media_(max-width:_700px)]:pl-4.25 [@media_(max-width:_700px)]:rounded-[13px]"
+          className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 [@media_(max-width:_700px)]:mb-7"
           data-settings-group=""
         >
           <h2 className="mt-0 mr-0 mb-0 ml-0 text-(--settings-ink) text-(length:--ds-settings-section-size) font-(--ds-settings-section-weight) leading-(--ds-settings-section-line) tracking-[-.035em]">
@@ -14221,7 +14311,7 @@ function WorkspaceSettings({
                 disabled={preferenceMessage === "Saving…"}
                 onClick={() => onTheme("light")}
                 aria-pressed={theme === "light"}
-                className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 grid min-w-0 flex-1 grid-cols-2 overflow-hidden rounded-lg border border-line bg-(--settings-card) pt-0 pr-0 pb-0 pl-0 text-left text-(--settings-accent-strong) aria-pressed:border-foreground aria-pressed:ring-1 aria-pressed:ring-foreground focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5] [@media_(max-width:_700px)]:min-w-0"
+                className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 grid min-w-0 flex-1 grid-cols-2 overflow-hidden rounded-lg border border-line bg-(--settings-card) pt-0 pr-0 pb-0 pl-0 text-left text-(--settings-accent-strong) aria-pressed:border-foreground aria-pressed:ring-1 aria-pressed:ring-foreground focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5] [@media_(max-width:_700px)]:min-w-0 max-md:grid-cols-1"
               >
                 <span
                   className="col-span-full grid h-23 grid-cols-[5px_minmax(0,1fr)] grid-rows-[10px_8px_8px] gap-2 bg-[#e9e9e9] pt-4.5 pr-4.5 pb-4.5 pl-4.5 [@media_(max-width:_700px)]:h-18 [@media_(max-width:_700px)]:pt-3.25 [@media_(max-width:_700px)]:pr-3.25 [@media_(max-width:_700px)]:pb-3.25 [@media_(max-width:_700px)]:pl-3.25 [@media_(max-width:_390px)]:h-20.5"
@@ -14250,7 +14340,7 @@ function WorkspaceSettings({
                 disabled={preferenceMessage === "Saving…"}
                 onClick={() => onTheme("dark")}
                 aria-pressed={theme === "dark"}
-                className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 grid min-w-0 flex-1 grid-cols-2 overflow-hidden rounded-lg border border-line bg-(--settings-card) pt-0 pr-0 pb-0 pl-0 text-left text-(--settings-accent-strong) aria-pressed:border-foreground aria-pressed:ring-1 aria-pressed:ring-foreground focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5] [@media_(max-width:_700px)]:min-w-0"
+                className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 grid min-w-0 flex-1 grid-cols-2 overflow-hidden rounded-lg border border-line bg-(--settings-card) pt-0 pr-0 pb-0 pl-0 text-left text-(--settings-accent-strong) aria-pressed:border-foreground aria-pressed:ring-1 aria-pressed:ring-foreground focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5] [@media_(max-width:_700px)]:min-w-0 max-md:grid-cols-1"
               >
                 <span
                   className="col-span-full grid h-23 grid-cols-[5px_minmax(0,1fr)] grid-rows-[10px_8px_8px] gap-2 bg-[#202020] pt-4.5 pr-4.5 pb-4.5 pl-4.5 [@media_(max-width:_700px)]:h-18 [@media_(max-width:_700px)]:pt-3.25 [@media_(max-width:_700px)]:pr-3.25 [@media_(max-width:_700px)]:pb-3.25 [@media_(max-width:_700px)]:pl-3.25 [@media_(max-width:_390px)]:h-20.5"
@@ -14486,9 +14576,9 @@ function ProfileSettings({
           >
             <UserBlobatar user={viewer} />
           </span>
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 basis-40">
             <b className="font-semibold">{viewer.name || "Your profile"}</b>
-            <p className="mt-0.75 mb-0 break-all text-[12px] text-(--settings-muted)">
+            <p className="mt-0.75 mb-0 wrap-anywhere text-[12px] text-(--settings-muted)">
               {viewer.email}
             </p>
           </div>
@@ -14503,10 +14593,10 @@ function ProfileSettings({
           className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-4 [@media_(max-width:_700px)]:gap-3.5"
           data-settings-form-grid=""
         >
-          <label className="min-w-0 text-xs">
+          <label className="min-w-0 text-xs grid gap-1.5">
             Display name
             <input
-              className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
               aria-label="Profile display name"
               required
               maxLength={80}
@@ -14514,10 +14604,10 @@ function ProfileSettings({
               onChange={(e) => setName(e.target.value)}
             />
           </label>
-          <label className="min-w-0 text-xs">
+          <label className="min-w-0 text-xs grid gap-1.5">
             Email
             <input
-              className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
               aria-label="Profile email"
               readOnly
               value={viewer.email || ""}
@@ -14540,7 +14630,7 @@ function ProfileSettings({
           data-settings-form-actions=""
         >
           <button
-            className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-9 rounded-lg border border-foreground bg-(--settings-accent-strong) pl-3.5 pr-3.5 pt-2.25 pb-2.25 text-[12px] font-[620] text-(--settings-on-accent) shadow-[0_1px_2px_#24242412] hover:bg-foreground/90 hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5] [@media_(max-width:_700px)]:min-h-10"
+            className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-9 rounded-lg border border-foreground bg-(--settings-accent-strong) pl-3.5 pr-3.5 pt-2.25 pb-2.25 text-[12px] font-[620] text-(--settings-on-accent) shadow-[0_1px_2px_#24242412] hover:bg-foreground/90 hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5]"
             disabled={busy || !name.trim()}
           >
             {busy ? "Saving…" : "Save profile"}
@@ -14737,7 +14827,7 @@ function NotificationSettings() {
         </p>
       </header>
       <div
-        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 shell-phone:pt-3.75 shell-phone:pr-3.75 shell-phone:pb-3.75 shell-phone:pl-3.75 [@media_(max-width:_700px)]:mb-7 [@media_(max-width:_700px)]:pt-4.75 [@media_(max-width:_700px)]:pr-4.25 [@media_(max-width:_700px)]:pb-4.75 [@media_(max-width:_700px)]:pl-4.25 [@media_(max-width:_700px)]:rounded-[13px]"
+        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 [@media_(max-width:_700px)]:mb-7"
         data-settings-group=""
       >
         <span className="hidden">Delivery</span>
@@ -14765,12 +14855,12 @@ function NotificationSettings() {
               {group}
             </h3>
             {kinds.map(([key, label, hint]) => (
-              <div
-                className="flex min-h-(--ds-settings-row-height) min-w-0 flex-col items-start justify-between gap-5 border-t border-line p-(--ds-settings-row-padding) first-of-type:border-t-0 first-of-type:pt-0 last-of-type:pb-0.5 md:flex-row md:items-center md:gap-5 shell-phone:gap-3 [@media_(max-width:_700px)]:gap-3"
+              <label
+                className="flex min-h-(--ds-settings-row-height) min-w-0 cursor-pointer flex-row items-center justify-between gap-5 border-t border-line p-(--ds-settings-row-padding) first-of-type:border-t-0 first-of-type:pt-0 last-of-type:pb-0.5 md:gap-5 shell-phone:gap-3 [@media_(max-width:_700px)]:gap-3"
                 data-setting-row=""
                 key={key}
               >
-                <div>
+                <div className="min-w-0 flex-1">
                   <b className="font-[620]">{label}</b>
                   <p>{hint}</p>
                 </div>
@@ -14784,7 +14874,7 @@ function NotificationSettings() {
                   disabled={!loaded.current && message === "Loading…"}
                   onChange={(e) => void change(key, e.target.checked)}
                 />
-              </div>
+              </label>
             ))}
           </section>
         ))}
@@ -14888,10 +14978,10 @@ function LabelRow({
       data-label-row=""
       onSubmit={save}
     >
-      <label className="min-w-0 text-xs last-of-type:col-span-full">
+      <label className="min-w-0 text-xs last-of-type:col-span-full grid gap-1.5">
         Name
         <input
-          className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+          className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
           aria-label={`Name for label ${label.name}`}
           required
           maxLength={64}
@@ -14899,7 +14989,7 @@ function LabelRow({
           onChange={(e) => setName(e.target.value)}
         />
       </label>
-      <label className="min-w-0 text-xs last-of-type:col-span-full">
+      <label className="min-w-0 text-xs last-of-type:col-span-full grid gap-1.5">
         Color
         <input
           className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
@@ -14909,10 +14999,10 @@ function LabelRow({
           onChange={(e) => setColor(e.target.value)}
         />
       </label>
-      <label className="min-w-0 text-xs last-of-type:col-span-full">
+      <label className="min-w-0 text-xs last-of-type:col-span-full grid gap-1.5">
         Description
         <input
-          className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+          className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
           aria-label={`Description for label ${label.name}`}
           maxLength={240}
           value={description}
@@ -15072,7 +15162,7 @@ function IssueLabelsSettings({ viewer }: { viewer: Viewer }) {
         </p>
       </header>
       <div
-        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 shell-phone:pt-3.75 shell-phone:pr-3.75 shell-phone:pb-3.75 shell-phone:pl-3.75 [@media_(max-width:_700px)]:mb-7 [@media_(max-width:_700px)]:pt-4.75 [@media_(max-width:_700px)]:pr-4.25 [@media_(max-width:_700px)]:pb-4.75 [@media_(max-width:_700px)]:pl-4.25 [@media_(max-width:_700px)]:rounded-[13px]"
+        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 [@media_(max-width:_700px)]:mb-7"
         data-settings-group=""
         data-label-settings=""
       >
@@ -15092,10 +15182,10 @@ function IssueLabelsSettings({ viewer }: { viewer: Viewer }) {
             data-label-create=""
             onSubmit={create}
           >
-            <label className="min-w-0 text-[12px]">
+            <label className="min-w-0 text-[12px] grid gap-1.5">
               Label name
               <input
-                className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
                 aria-label="Task label name"
                 required
                 maxLength={64}
@@ -15103,7 +15193,7 @@ function IssueLabelsSettings({ viewer }: { viewer: Viewer }) {
                 onChange={(e) => setName(e.target.value)}
               />
             </label>
-            <label className="min-w-0 text-[12px]">
+            <label className="min-w-0 text-[12px] grid gap-1.5">
               Color
               <input
                 className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
@@ -15287,7 +15377,7 @@ function ProjectStatusesSettings() {
         </p>
       </header>
       <div
-        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 shell-phone:pt-3.75 shell-phone:pr-3.75 shell-phone:pb-3.75 shell-phone:pl-3.75 [@media_(max-width:_700px)]:mb-7 [@media_(max-width:_700px)]:pt-4.75 [@media_(max-width:_700px)]:pr-4.25 [@media_(max-width:_700px)]:pb-4.75 [@media_(max-width:_700px)]:pl-4.25 [@media_(max-width:_700px)]:rounded-[13px]"
+        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 [@media_(max-width:_700px)]:mb-7"
         data-settings-group=""
       >
         <span className="hidden">Projects</span>
@@ -15306,10 +15396,10 @@ function ProjectStatusesSettings() {
           data-label-create=""
           onSubmit={create}
         >
-          <label className="min-w-0 text-[12px]">
+          <label className="grid min-w-0 gap-1.5 text-[12px]">
             Name
             <input
-              className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
               aria-label="Project status name"
               required
               maxLength={40}
@@ -15317,7 +15407,7 @@ function ProjectStatusesSettings() {
               onChange={(e) => setName(e.target.value)}
             />
           </label>
-          <label className="min-w-0 text-[12px]">
+          <label className="grid min-w-0 gap-1.5 text-[12px]">
             Category
             <select
               className="min-w-0 rounded-[7px] border border-line bg-panel text-[13px] text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base pt-0 pr-2.5 pb-0 pl-2.5 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
@@ -15331,7 +15421,7 @@ function ProjectStatusesSettings() {
               <option value="canceled">Canceled</option>
             </select>
           </label>
-          <label className="min-w-0 text-[12px]">
+          <label className="grid min-w-0 gap-1.5 text-[12px]">
             Color
             <input
               className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
@@ -15351,12 +15441,12 @@ function ProjectStatusesSettings() {
         {error && <p role="alert">{error}</p>}
         {status && <p role="status">{status}</p>}
         <div
-          className="border border-line rounded-lg shadow-[0_1px_2px_#1b1b1b08] overflow-hidden bg-panel **:data-status-history:max-w-[min(240px,calc(100vw-16px))] **:data-status-menu:max-w-[min(240px,calc(100vw-16px))]"
+          className="mt-4 border border-line rounded-lg shadow-[0_1px_2px_#1b1b1b08] overflow-hidden bg-panel **:data-status-history:max-w-[min(240px,calc(100vw-16px))] **:data-status-menu:max-w-[min(240px,calc(100vw-16px))]"
           data-issue-card=""
         >
           {rows.map((row, index) => (
             <form
-              className="grid grid-cols-[28px_10px_minmax(90px,1fr)_minmax(110px,auto)_auto_auto_auto_auto] [@media_(max-width:640px)]:grid-cols-[24px_10px_minmax(0,1fr)] items-center gap-2 border-b border-line pl-3 pr-3 pt-2.5 pb-2.5 last:border-b-0 [&>button]:whitespace-nowrap"
+              className="grid grid-cols-[28px_10px_minmax(90px,1fr)_minmax(110px,auto)_auto_auto_auto_auto_auto] max-sm:grid-cols-[24px_10px_minmax(0,1fr)_44px_44px_44px] items-center gap-2 border-b border-line pl-3 pr-3 pt-2.5 pb-2.5 last:border-b-0 [&>button]:whitespace-nowrap"
               data-project-status-row=""
               key={row.id}
               onSubmit={save(row)}
@@ -15375,7 +15465,7 @@ function ProjectStatusesSettings() {
                 aria-hidden="true"
               />
               <input
-                className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] max-sm:col-[3/6] px-2.5"
                 aria-label={`Status ${index + 1} name`}
                 value={row.name}
                 onChange={(e) =>
@@ -15387,7 +15477,7 @@ function ProjectStatusesSettings() {
                 }
               />
               <select
-                className="min-w-0 rounded-[7px] border border-line bg-panel text-[13px] text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base pt-0 pr-2.5 pb-0 pl-2.5 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                className="min-w-0 rounded-[7px] border border-line bg-panel text-[13px] text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base pt-0 pr-2.5 pb-0 pl-2.5 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] max-sm:col-[1/5]"
                 aria-label={`Status ${row.name} category`}
                 value={row.category}
                 onChange={(e) =>
@@ -15404,7 +15494,7 @@ function ProjectStatusesSettings() {
                 <option value="canceled">Canceled</option>
               </select>
               <input
-                className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 w-7 border-0 p-0 [background:none] max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 w-7 border-0 p-0 [background:none] max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] pointer-coarse:w-11 max-sm:col-start-6 max-sm:row-start-1"
                 aria-label={`Status ${row.name} color`}
                 type="color"
                 value={row.color || "#6b7280"}
@@ -15436,14 +15526,14 @@ function ProjectStatusesSettings() {
               </button>
               <button
                 type="submit"
-                className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-9 rounded-lg border border-foreground bg-(--settings-accent-strong) pl-4 pr-4 pt-0 pb-0 text-[12px] font-[620] text-(--settings-on-accent) shadow-[0_1px_2px_#24242412] hover:bg-foreground/90 hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5]"
+                className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-9 rounded-lg border border-foreground bg-(--settings-accent-strong) pl-4 pr-4 pt-0 pb-0 text-[12px] font-[620] text-(--settings-on-accent) shadow-[0_1px_2px_#24242412] hover:bg-foreground/90 hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5] max-sm:col-[1/5]"
                 disabled={busy}
               >
                 Save
               </button>
               <button
                 type="button"
-                className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-8 rounded-lg border border-line bg-(--settings-card) pl-4 pr-4 pt-0 pb-0 text-[11px] text-(--settings-ink) hover:bg-subtle hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 hover:bg-(--settings-subtle) disabled:opacity-[.5]"
+                className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-8 rounded-lg border border-line bg-(--settings-card) pl-4 pr-4 pt-0 pb-0 text-[11px] text-(--settings-ink) hover:bg-subtle hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 hover:bg-(--settings-subtle) disabled:opacity-[.5] max-sm:col-[5/-1]"
                 aria-label={`Delete ${row.name}`}
                 disabled={busy || rows.length === 1}
                 onClick={remove(row)}
@@ -15615,7 +15705,7 @@ function ProjectTemplatesSettings({ teams }: { teams: Team[] }) {
         </p>
       </header>
       <div
-        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 shell-phone:pt-3.75 shell-phone:pr-3.75 shell-phone:pb-3.75 shell-phone:pl-3.75 [@media_(max-width:_700px)]:mb-7 [@media_(max-width:_700px)]:pt-4.75 [@media_(max-width:_700px)]:pr-4.25 [@media_(max-width:_700px)]:pb-4.75 [@media_(max-width:_700px)]:pl-4.25 [@media_(max-width:_700px)]:rounded-[13px]"
+        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 [@media_(max-width:_700px)]:mb-7"
         data-settings-group=""
       >
         <span className="hidden">Projects</span>
@@ -15636,15 +15726,15 @@ function ProjectTemplatesSettings({ teams }: { teams: Team[] }) {
           </button>
         )}
         <form
-          className="grid grid-cols-2 items-end gap-3.5 md:grid-cols-3 grid-cols-1 md:grid-cols-2"
+          className="grid grid-cols-1 items-end gap-3.5 sm:grid-cols-2 md:grid-cols-3"
           data-label-create=""
           data-project-template-form=""
           onSubmit={submit}
         >
-          <label className="min-w-0 text-[12px]">
+          <label className="min-w-0 text-[12px] grid gap-1.5">
             Name
             <input
-              className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
               aria-label="Template name"
               required
               maxLength={80}
@@ -15654,10 +15744,10 @@ function ProjectTemplatesSettings({ teams }: { teams: Team[] }) {
               }
             />
           </label>
-          <label className="min-w-0 text-[12px]">
+          <label className="min-w-0 text-[12px] grid gap-1.5">
             Description
             <textarea
-              className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 w-full max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 w-full max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
               aria-label="Template description"
               rows={2}
               value={draft.description}
@@ -15666,7 +15756,7 @@ function ProjectTemplatesSettings({ teams }: { teams: Team[] }) {
               }
             />
           </label>
-          <label className="min-w-0 text-[12px]">
+          <label className="min-w-0 text-[12px] grid gap-1.5">
             Default status
             <select
               className="min-w-0 rounded-[7px] border border-line bg-panel text-[13px] text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base pt-0 pr-2.5 pb-0 pl-2.5 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
@@ -15684,7 +15774,7 @@ function ProjectTemplatesSettings({ teams }: { teams: Team[] }) {
               ))}
             </select>
           </label>
-          <label className="min-w-0 text-[12px]">
+          <label className="min-w-0 text-[12px] grid gap-1.5">
             Lead
             <select
               className="min-w-0 rounded-[7px] border border-line bg-panel text-[13px] text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base pt-0 pr-2.5 pb-0 pl-2.5 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
@@ -15702,7 +15792,7 @@ function ProjectTemplatesSettings({ teams }: { teams: Team[] }) {
               ))}
             </select>
           </label>
-          <label className="min-w-0 text-[12px]">
+          <label className="min-w-0 text-[12px] grid gap-1.5">
             Color
             <input
               className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
@@ -15722,7 +15812,10 @@ function ProjectTemplatesSettings({ teams }: { teams: Team[] }) {
               Teams
             </legend>
             {teams.map((t) => (
-              <label className="min-w-0 text-[12px]" key={t.id}>
+              <label
+                className="min-w-0 text-[12px] flex items-center gap-2 pointer-coarse:min-h-11"
+                key={t.id}
+              >
                 <input
                   className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm size-3.5 accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:text-[16px]"
                   type="checkbox"
@@ -15734,10 +15827,10 @@ function ProjectTemplatesSettings({ teams }: { teams: Team[] }) {
             ))}
             {!teams.length && <p>No teams yet.</p>}
           </fieldset>
-          <label className="min-w-0 text-[12px]">
+          <label className="min-w-0 text-[12px] grid gap-1.5">
             Task set, one title per line
             <textarea
-              className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 w-full max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 w-full max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
               aria-label="Template task set"
               rows={3}
               placeholder={"Write the brief\nShip the build"}
@@ -15803,7 +15896,11 @@ function ProjectTemplatesSettings({ teams }: { teams: Team[] }) {
               </button>
             </div>
           ))}
-          {!rows.length && <p>No project templates yet.</p>}
+          {!rows.length && (
+            <p className="m-0 pt-4 pr-4 pb-4 pl-4 text-[13px] text-(--settings-muted)">
+              No project templates yet.
+            </p>
+          )}
         </div>
       </div>
     </section>
@@ -16070,7 +16167,7 @@ function SlaSettings({ teams }: { teams: Team[] }) {
         </p>
       </header>
       <div
-        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 shell-phone:pt-3.75 shell-phone:pr-3.75 shell-phone:pb-3.75 shell-phone:pl-3.75 [@media_(max-width:_700px)]:mb-7 [@media_(max-width:_700px)]:pt-4.75 [@media_(max-width:_700px)]:pr-4.25 [@media_(max-width:_700px)]:pb-4.75 [@media_(max-width:_700px)]:pl-4.25 [@media_(max-width:_700px)]:rounded-[13px]"
+        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 [@media_(max-width:_700px)]:mb-7"
         data-settings-group=""
       >
         <span className="hidden">Policies</span>
@@ -16102,14 +16199,14 @@ function SlaSettings({ teams }: { teams: Team[] }) {
           </button>
         )}
         <form
-          className="grid grid-cols-2 items-end gap-3.5 md:grid-cols-3"
+          className="grid grid-cols-1 items-end gap-3.5 sm:grid-cols-2 md:grid-cols-3"
           data-label-create=""
           onSubmit={submit}
         >
-          <label className="min-w-0 text-[12px]">
+          <label className="grid min-w-0 gap-1.5 text-[12px]">
             Name
             <input
-              className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
               aria-label="SLA policy name"
               required
               maxLength={80}
@@ -16119,7 +16216,7 @@ function SlaSettings({ teams }: { teams: Team[] }) {
               }
             />
           </label>
-          <label className="min-w-0 text-[12px]">
+          <label className="grid min-w-0 gap-1.5 text-[12px]">
             Scope
             <select
               className="min-w-0 rounded-[7px] border border-line bg-panel text-[13px] text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base pt-0 pr-2.5 pb-0 pl-2.5 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
@@ -16145,13 +16242,13 @@ function SlaSettings({ teams }: { teams: Team[] }) {
               "how fast do you answer" and "how fast do you finish" are read
               together instead of stacking into two rows of the grid. */}
           <div
-            className="col-span-full grid min-w-0 grid-cols-2 items-end gap-3.5"
+            className="col-span-full grid min-w-0 grid-cols-1 items-end gap-3.5 sm:grid-cols-2"
             data-sla-targets=""
           >
-            <label className="min-w-0 text-[12px]">
+            <label className="grid min-w-0 gap-1.5 text-[12px]">
               First response, minutes
               <input
-                className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
                 aria-label="First response minutes"
                 type="number"
                 min="1"
@@ -16161,12 +16258,12 @@ function SlaSettings({ teams }: { teams: Team[] }) {
                 }
               />
             </label>
-            <label className="min-w-0 text-[12px]">
+            <label className="grid min-w-0 gap-1.5 text-[12px]">
               {draft.cycleBound
                 ? "Resolution, minutes if no cycle"
                 : "Resolution, minutes"}
               <input
-                className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
                 aria-label="Resolution minutes"
                 type="number"
                 min="1"
@@ -16182,9 +16279,9 @@ function SlaSettings({ teams }: { teams: Team[] }) {
             data-sla-clock-options=""
           >
             <legend className="px-1 text-xs text-muted">Clock</legend>
-            <label className="flex min-w-0 items-center gap-2 text-[12px]">
+            <label className="flex min-w-0 items-center gap-2 text-[12px] pointer-coarse:min-h-11">
               <input
-                className="size-3.5 accent-foreground"
+                className="size-3.5 flex-none accent-foreground pointer-coarse:size-5"
                 type="checkbox"
                 checked={draft.cycleBound}
                 onChange={(e) =>
@@ -16194,9 +16291,9 @@ function SlaSettings({ teams }: { teams: Team[] }) {
               Resolution follows the task&#39;s cycle, ending when the cycle
               ends
             </label>
-            <label className="flex min-w-0 items-center gap-2 text-[12px]">
+            <label className="flex min-w-0 items-center gap-2 text-[12px] pointer-coarse:min-h-11">
               <input
-                className="size-3.5 accent-foreground"
+                className="size-3.5 flex-none accent-foreground pointer-coarse:size-5"
                 type="checkbox"
                 checked={draft.businessDaysOnly}
                 onChange={(e) =>
@@ -16208,9 +16305,9 @@ function SlaSettings({ teams }: { teams: Team[] }) {
               />
               Count weekdays only, in the team&#39;s timezone
             </label>
-            <label className="flex min-w-0 items-center gap-2 text-[12px]">
+            <label className="flex min-w-0 items-center gap-2 text-[12px] pointer-coarse:min-h-11">
               <input
-                className="size-3.5 accent-foreground"
+                className="size-3.5 flex-none accent-foreground pointer-coarse:size-5"
                 type="checkbox"
                 checked={draft.applyToOpen}
                 onChange={(e) =>
@@ -16222,7 +16319,7 @@ function SlaSettings({ teams }: { teams: Team[] }) {
             <label className="mt-1.5 flex min-w-0 flex-col gap-1 text-[12px]">
               Stops on
               <select
-                className="min-w-0 rounded-[7px] border border-line bg-panel pt-0 pr-2.5 pb-0 pl-2.5 text-[13px] text-foreground hover:border-muted"
+                className="min-w-0 rounded-[7px] border border-line bg-panel pt-0 pr-2.5 pb-0 pl-2.5 text-[13px] text-foreground hover:border-muted pointer-coarse:min-h-11 shell-phone:text-base"
                 aria-label="What stops the clock"
                 value={draft.stopsOn}
                 onChange={(e) =>
@@ -16238,9 +16335,12 @@ function SlaSettings({ teams }: { teams: Team[] }) {
           <fieldset className="col-span-full rounded-lg border border-line p-3">
             <legend className="px-1 text-xs text-muted">Priorities</legend>
             {[1, 2, 3, 4].map((p) => (
-              <label className="min-w-0 text-[12px]" key={p}>
+              <label
+                className="mr-3 inline-flex min-w-0 items-center gap-1.5 text-[12px] pointer-coarse:min-h-11"
+                key={p}
+              >
                 <input
-                  className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm size-3.5 accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:text-[16px]"
+                  className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm size-3.5 accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:text-[16px] flex-none pointer-coarse:size-5"
                   type="checkbox"
                   checked={draft.priorities.includes(p)}
                   onChange={() =>
@@ -16262,9 +16362,12 @@ function SlaSettings({ teams }: { teams: Team[] }) {
           <fieldset className="col-span-full rounded-lg border border-line p-3">
             <legend className="px-1 text-xs text-muted">Pause while in</legend>
             {pauseStates.map((st) => (
-              <label className="min-w-0 text-[12px]" key={st.id}>
+              <label
+                className="mr-3 inline-flex min-w-0 items-center gap-1.5 text-[12px] pointer-coarse:min-h-11"
+                key={st.id}
+              >
                 <input
-                  className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm size-3.5 accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:text-[16px]"
+                  className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm size-3.5 accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:text-[16px] flex-none pointer-coarse:size-5"
                   type="checkbox"
                   checked={draft.pauseStateIds.includes(st.id)}
                   onChange={() =>
@@ -16582,7 +16685,7 @@ function TaskTemplatesSettings({ teams }: { teams: Team[] }) {
         </p>
       </header>
       <div
-        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 shell-phone:pt-3.75 shell-phone:pr-3.75 shell-phone:pb-3.75 shell-phone:pl-3.75 [@media_(max-width:_700px)]:mb-7 [@media_(max-width:_700px)]:pt-4.75 [@media_(max-width:_700px)]:pr-4.25 [@media_(max-width:_700px)]:pb-4.75 [@media_(max-width:_700px)]:pl-4.25 [@media_(max-width:_700px)]:rounded-[13px]"
+        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 [@media_(max-width:_700px)]:mb-7"
         data-settings-group=""
       >
         <span className="hidden">Templates</span>
@@ -16603,14 +16706,14 @@ function TaskTemplatesSettings({ teams }: { teams: Team[] }) {
           </button>
         )}
         <form
-          className="grid grid-cols-2 items-end gap-3.5 md:grid-cols-3"
+          className="grid grid-cols-1 items-end gap-3.5 sm:grid-cols-2 md:grid-cols-3"
           data-label-create=""
           onSubmit={submit}
         >
-          <label className="min-w-0 text-[12px]">
+          <label className="min-w-0 text-[12px] grid gap-1.5">
             Name
             <input
-              className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
               aria-label="Task template name"
               required
               maxLength={80}
@@ -16620,7 +16723,7 @@ function TaskTemplatesSettings({ teams }: { teams: Team[] }) {
               }
             />
           </label>
-          <label className="min-w-0 text-[12px]">
+          <label className="min-w-0 text-[12px] grid gap-1.5">
             Scope
             <select
               className="min-w-0 rounded-[7px] border border-line bg-panel text-[13px] text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base pt-0 pr-2.5 pb-0 pl-2.5 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
@@ -16638,10 +16741,10 @@ function TaskTemplatesSettings({ teams }: { teams: Team[] }) {
               ))}
             </select>
           </label>
-          <label className="min-w-0 text-[12px]">
+          <label className="min-w-0 text-[12px] grid gap-1.5">
             Description
             <textarea
-              className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
               aria-label="Task template description"
               rows={2}
               value={draft.description}
@@ -16650,10 +16753,10 @@ function TaskTemplatesSettings({ teams }: { teams: Team[] }) {
               }
             />
           </label>
-          <label className="min-w-0 text-[12px]">
+          <label className="min-w-0 text-[12px] grid gap-1.5">
             Default title
             <input
-              className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
               aria-label="Default title"
               required
               value={draft.defaultTitle}
@@ -16663,10 +16766,10 @@ function TaskTemplatesSettings({ teams }: { teams: Team[] }) {
               }
             />
           </label>
-          <label className="min-w-0 text-[12px]">
+          <label className="min-w-0 text-[12px] grid gap-1.5">
             Default description
             <textarea
-              className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
               aria-label="Default description"
               rows={2}
               value={draft.defaultDescription}
@@ -16675,7 +16778,7 @@ function TaskTemplatesSettings({ teams }: { teams: Team[] }) {
               }
             />
           </label>
-          <label className="min-w-0 text-[12px]">
+          <label className="min-w-0 text-[12px] grid gap-1.5">
             Default priority
             <select
               className="min-w-0 rounded-[7px] border border-line bg-panel text-[13px] text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base pt-0 pr-2.5 pb-0 pl-2.5 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
@@ -16692,7 +16795,7 @@ function TaskTemplatesSettings({ teams }: { teams: Team[] }) {
               <option value="4">Low</option>
             </select>
           </label>
-          <label className="min-w-0 text-[12px]">
+          <label className="min-w-0 text-[12px] grid gap-1.5">
             Default assignee
             <select
               className="min-w-0 rounded-[7px] border border-line bg-panel text-[13px] text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base pt-0 pr-2.5 pb-0 pl-2.5 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
@@ -16710,7 +16813,7 @@ function TaskTemplatesSettings({ teams }: { teams: Team[] }) {
               ))}
             </select>
           </label>
-          <label className="min-w-0 text-[12px]">
+          <label className="min-w-0 text-[12px] grid gap-1.5">
             Default project
             <select
               className="min-w-0 rounded-[7px] border border-line bg-panel text-[13px] text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base pt-0 pr-2.5 pb-0 pl-2.5 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
@@ -16731,7 +16834,10 @@ function TaskTemplatesSettings({ teams }: { teams: Team[] }) {
           <fieldset className="col-span-full rounded-lg border border-line p-3">
             <legend className="px-1 text-xs text-muted">Default labels</legend>
             {visibleLabels.map((l) => (
-              <label className="min-w-0 text-[12px]" key={l.id}>
+              <label
+                className="min-w-0 text-[12px] flex items-center gap-2 pointer-coarse:min-h-11"
+                key={l.id}
+              >
                 <input
                   className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm size-3.5 accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:text-[16px]"
                   type="checkbox"
@@ -16753,7 +16859,7 @@ function TaskTemplatesSettings({ teams }: { teams: Team[] }) {
         {error && <p role="alert">{error}</p>}
         {status && <p role="status">{status}</p>}
         <div>
-          <label className="min-w-0 text-xs">
+          <label className="min-w-0 text-xs grid gap-1.5">
             Show
             <select
               className="min-w-0 rounded-[7px] border border-line bg-panel text-[13px] text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base pt-0 pr-2.5 pb-0 pl-2.5 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
@@ -16811,7 +16917,11 @@ function TaskTemplatesSettings({ teams }: { teams: Team[] }) {
               </button>
             </div>
           ))}
-          {!rows.length && <p>No task templates in this scope yet.</p>}
+          {!rows.length && (
+            <p className="m-0 pt-4 pr-4 pb-4 pl-4 text-[13px] text-(--settings-muted)">
+              No task templates in this scope yet.
+            </p>
+          )}
         </div>
       </div>
     </section>
@@ -16903,7 +17013,7 @@ function PermissionsSettings() {
         </p>
       </header>
       <div
-        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 shell-phone:pt-3.75 shell-phone:pr-3.75 shell-phone:pb-3.75 shell-phone:pl-3.75 [@media_(max-width:_700px)]:mb-7 [@media_(max-width:_700px)]:pt-4.75 [@media_(max-width:_700px)]:pr-4.25 [@media_(max-width:_700px)]:pb-4.75 [@media_(max-width:_700px)]:pl-4.25 [@media_(max-width:_700px)]:rounded-[13px]"
+        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 [@media_(max-width:_700px)]:mb-7"
         data-settings-group=""
       >
         <span className="hidden">Access</span>
@@ -16946,11 +17056,11 @@ function PermissionsSettings() {
                 </small>
               </span>
               <label
-                className="inline-flex items-center gap-2 whitespace-nowrap text-[11px] text-(--settings-ink) min-w-0"
+                className="inline-flex flex-none items-center gap-2 whitespace-nowrap text-[11px] text-(--settings-ink) min-w-0 pointer-coarse:min-h-11"
                 data-permission-toggle=""
               >
                 <input
-                  className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm w-3.5 h-3.5 accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:text-[16px]"
+                  className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm w-3.5 h-3.5 flex-none accent-foreground pointer-coarse:size-5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:text-[16px]"
                   type="checkbox"
                   aria-label={`Members may ${row.label.toLowerCase()}`}
                   checked={row.memberAllowed}
@@ -17067,7 +17177,7 @@ function SecuritySettings() {
         </p>
       </header>
       <div
-        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 shell-phone:pt-3.75 shell-phone:pr-3.75 shell-phone:pb-3.75 shell-phone:pl-3.75 [@media_(max-width:_700px)]:mb-7 [@media_(max-width:_700px)]:pt-4.75 [@media_(max-width:_700px)]:pr-4.25 [@media_(max-width:_700px)]:pb-4.75 [@media_(max-width:_700px)]:pl-4.25 [@media_(max-width:_700px)]:rounded-[13px]"
+        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 [@media_(max-width:_700px)]:mb-7"
         data-settings-group=""
       >
         <span className="hidden">Sessions</span>
@@ -17088,10 +17198,10 @@ function SecuritySettings() {
           data-security-form=""
           onSubmit={save}
         >
-          <label className="min-w-0 text-[12px]">
+          <label className="min-w-0 text-[12px] grid gap-1.5 max-sm:basis-full max-sm:col-span-full">
             Idle timeout, minutes
             <input
-              className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5 py-2"
               aria-label="Idle timeout minutes"
               inputMode="numeric"
               placeholder="No idle timeout"
@@ -17106,7 +17216,7 @@ function SecuritySettings() {
             <legend className="pl-1 pr-1 text-[11px] text-(--settings-muted)">
               Allowed sign-in methods
             </legend>
-            <label className="min-w-0 text-[12px]">
+            <label className="min-w-0 text-[12px] flex items-center gap-2 pointer-coarse:min-h-11">
               <input
                 className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm size-3.5 accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:text-[16px]"
                 type="checkbox"
@@ -17116,7 +17226,7 @@ function SecuritySettings() {
               />
               Email and password
             </label>
-            <label className="min-w-0 text-[12px]">
+            <label className="min-w-0 text-[12px] flex items-center gap-2 pointer-coarse:min-h-11">
               <input
                 className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm size-3.5 accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:text-[16px]"
                 type="checkbox"
@@ -17132,10 +17242,10 @@ function SecuritySettings() {
                 : `Sign-in is limited to ${methods.join(" and ")}.`}
             </small>
           </fieldset>
-          <label className="min-w-0 text-[12px]">
+          <label className="min-w-0 text-[12px] grid gap-1.5 max-sm:basis-full max-sm:col-span-full">
             IP allowlist, one CIDR per line
             <textarea
-              className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5 py-2"
               aria-label="IP allowlist"
               rows={3}
               placeholder={"203.0.113.0/24\n198.51.100.7"}
@@ -17227,7 +17337,7 @@ function SettingsUnavailable({
         </p>
       </header>
       <div
-        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 shell-phone:pt-3.75 shell-phone:pr-3.75 shell-phone:pb-3.75 shell-phone:pl-3.75 [@media_(max-width:_700px)]:mb-7 [@media_(max-width:_700px)]:pt-4.75 [@media_(max-width:_700px)]:pr-4.25 [@media_(max-width:_700px)]:pb-4.75 [@media_(max-width:_700px)]:pl-4.25 [@media_(max-width:_700px)]:rounded-[13px]"
+        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 [@media_(max-width:_700px)]:mb-7"
         data-settings-group=""
       >
         <h2 className="mt-0 mr-0 mb-0 ml-0 text-(--settings-ink) text-(length:--ds-settings-section-size) font-(--ds-settings-section-weight) leading-(--ds-settings-section-line) tracking-[-.035em]">
@@ -17716,19 +17826,19 @@ function MembersPage({
           className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-4 [@media_(max-width:_700px)]:gap-3.5"
           data-settings-form-grid=""
         >
-          <label className="min-w-0 text-xs wrap-break-word">
+          <label className="min-w-0 text-xs wrap-break-word grid gap-1.5">
             Name
             <input
-              className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base max-w-full placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base max-w-full placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
               required
               value={inviteName}
               onChange={(e) => setInviteName(e.target.value)}
             />
           </label>
-          <label className="min-w-0 text-xs wrap-break-word">
+          <label className="min-w-0 text-xs wrap-break-word grid gap-1.5">
             Email
             <input
-              className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base max-w-full placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base max-w-full placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
               required
               type="email"
               value={inviteEmail}
@@ -17745,7 +17855,7 @@ function MembersPage({
             </p>
             {teams.map((t) => (
               <label
-                className="min-w-0 text-[13px] flex items-center gap-2 text-foreground flex-row justify-start w-auto justify-self-start wrap-break-word"
+                className="min-w-0 text-[13px] flex items-center gap-2 text-foreground flex-row justify-start w-auto justify-self-start wrap-break-word pointer-coarse:min-h-11"
                 key={t.id}
               >
                 <input
@@ -17770,7 +17880,7 @@ function MembersPage({
           data-settings-form-actions=""
         >
           <button
-            className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-9 rounded-lg border border-foreground bg-(--settings-accent-strong) pl-3.5 pr-3.5 pt-2.25 pb-2.25 text-[12px] font-[620] text-(--settings-on-accent) shadow-[0_1px_2px_#24242412] hover:bg-foreground/90 hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5] [@media_(max-width:_700px)]:min-h-10"
+            className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-9 rounded-lg border border-foreground bg-(--settings-accent-strong) pl-3.5 pr-3.5 pt-2.25 pb-2.25 text-[12px] font-[620] text-(--settings-on-accent) shadow-[0_1px_2px_#24242412] hover:bg-foreground/90 hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5]"
             disabled={inviting}
           >
             {inviting ? "Sending invitation…" : "Send invitation"}
@@ -17800,10 +17910,10 @@ function MembersPage({
                 </p>
               </div>
             </div>
-            <label className="min-w-0 text-xs wrap-break-word">
+            <label className="min-w-0 text-xs wrap-break-word grid gap-1.5">
               Invite link
               <input
-                className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base max-w-full placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base max-w-full placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
                 aria-label="Copy invite link"
                 readOnly
                 value={inviteResult.url}
@@ -17896,7 +18006,7 @@ function MembersPage({
         </div>
         {members.map((m) => (
           <div
-            className="grid [@media_(max-width:700px)]:*:data-member-avatar:row-start-1 [@media_(max-width:700px)]:*:data-issue-copy:col-start-2 [@media_(max-width:700px)]:*:data-issue-copy:row-start-1 [@media_(max-width:1100px)]:*:data-member-status:col-start-4 [@media_(max-width:1100px)]:*:data-member-status:row-start-1 [@media_(max-width:700px)]:*:data-member-status:col-start-3 [@media_(max-width:700px)]:[&>button]:col-start-3 [@media_(max-width:700px)]:[&>button]:row-start-3 [@media_(max-width:700px)]:[&>button]:justify-self-end grid-cols-[auto_minmax(140px,1.25fr)_minmax(115px,.85fr)_auto_auto_auto] [@media_(max-width:1100px)]:grid-cols-[auto_minmax(140px,1fr)_auto_auto] [@media_(max-width:700px)]:grid-cols-[auto_minmax(0,1fr)_auto] min-h-16.5 w-full items-center gap-3 border-b border-line bg-transparent pl-1 pr-1 pt-4.5 pb-4.5 text-left hover:bg-transparent hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 last:border-b-0 [@media_(max-width:_700px)]:gap-2.5 [@media_(max-width:_700px)]:pt-3.5 [@media_(max-width:_700px)]:pr-3.5 [@media_(max-width:_700px)]:pb-3.5 [@media_(max-width:_700px)]:pl-3.5"
+            className="grid [@media_(max-width:700px)]:*:data-member-avatar:row-start-1 [@media_(max-width:700px)]:*:data-issue-copy:col-start-2 [@media_(max-width:700px)]:*:data-issue-copy:row-start-1 [@media_(max-width:1100px)]:*:data-member-status:col-start-4 [@media_(max-width:1100px)]:*:data-member-status:row-start-1 [@media_(max-width:700px)]:*:data-member-status:col-start-3 [@media_(max-width:700px)]:[&>button]:row-start-4 [@media_(max-width:700px)]:[&>button:first-of-type]:col-start-2 [@media_(max-width:700px)]:[&>button:first-of-type]:justify-self-start [@media_(max-width:700px)]:[&>button:last-of-type]:col-start-3 grid-cols-[auto_minmax(140px,1.25fr)_minmax(115px,.85fr)_auto_auto_auto] [@media_(max-width:1100px)]:grid-cols-[auto_minmax(140px,1fr)_auto_auto] [@media_(max-width:700px)]:grid-cols-[auto_minmax(0,1fr)_auto] min-h-16.5 w-full items-center gap-3 border-b border-line bg-transparent pl-1 pr-1 pt-4.5 pb-4.5 text-left hover:bg-transparent hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 last:border-b-0 [@media_(max-width:_700px)]:gap-2.5 [@media_(max-width:_700px)]:pt-3.5 [@media_(max-width:_700px)]:pr-3.5 [@media_(max-width:_700px)]:pb-3.5 [@media_(max-width:_700px)]:pl-3.5"
             data-issue-row=""
             data-member-row=""
             key={m.id}
@@ -17908,24 +18018,26 @@ function MembersPage({
             >
               <UserBlobatar user={m} />
             </span>
-            <span className="grid gap-1 flex-1" data-issue-copy="">
+            <span className="grid gap-1 flex-1 min-w-0" data-issue-copy="">
               {onOpenMember ? (
                 <button
                   type="button"
                   onClick={() => onOpenMember(m.id)}
-                  className="w-fit bg-transparent p-0 text-left font-[550] text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-accent"
+                  className="w-fit max-w-full bg-transparent p-0 text-left font-[550] text-foreground [overflow-wrap:anywhere] hover:underline focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11"
                 >
                   {m.name || m.email}
                 </button>
               ) : (
-                <b className="font-[550]">{m.name || m.email}</b>
+                <b className="font-[550] [overflow-wrap:anywhere]">
+                  {m.name || m.email}
+                </b>
               )}
-              <small className="text-[12px] leading-normal text-muted">
+              <small className="text-[12px] leading-normal text-muted [overflow-wrap:anywhere]">
                 {m.email}
               </small>
             </span>
             <span
-              className="flex flex-wrap gap-1.25 [@media_(max-width:1100px)]:col-[2/-1] [@media_(max-width:1100px)]:row-start-2 [@media_(max-width:700px)]:col-span-full"
+              className="flex flex-wrap gap-1.25 min-w-0 [@media_(max-width:1100px)]:col-[2/-1] [@media_(max-width:1100px)]:row-start-2"
               data-member-teams=""
               role="group"
               aria-label={`Teams for ${m.name || m.email}`}
@@ -17948,7 +18060,7 @@ function MembersPage({
               })}
             </span>
             <span
-              className="[@media_(max-width:1100px)]:col-start-3 [@media_(max-width:1100px)]:row-start-1 [@media_(max-width:700px)]:col-start-2 [@media_(max-width:700px)]:row-start-3"
+              className="[@media_(max-width:1100px)]:col-start-3 [@media_(max-width:1100px)]:row-start-1 [@media_(max-width:700px)]:col-[2/-1] [@media_(max-width:700px)]:row-start-3"
               data-member-role=""
             >
               <SettingsSelect
@@ -18002,7 +18114,7 @@ function MembersPage({
         ))}
         {viewer.admin && removed.length > 0 && (
           <div
-            className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 shell-phone:pt-3.75 shell-phone:pr-3.75 shell-phone:pb-3.75 shell-phone:pl-3.75 [@media_(max-width:_700px)]:mb-7 [@media_(max-width:_700px)]:pt-4.75 [@media_(max-width:_700px)]:pr-4.25 [@media_(max-width:_700px)]:pb-4.75 [@media_(max-width:_700px)]:pl-4.25 [@media_(max-width:_700px)]:rounded-[13px]"
+            className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 [@media_(max-width:_700px)]:mb-7"
             data-settings-group=""
           >
             <h2 className="mt-0 mr-0 mb-0 ml-0 text-(--settings-ink) text-(length:--ds-settings-section-size) font-(--ds-settings-section-weight) leading-(--ds-settings-section-line) tracking-[-.035em]">
@@ -18877,19 +18989,19 @@ function ViewsPage({
               key={v.id}
             >
               <button
-                className="flex gap-2.25 items-center pt-2.75 pr-2.75 pb-2.75 pl-2.75 bg-transparent text-left font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                className="flex gap-2.25 items-center pt-2.75 pr-2.75 pb-2.75 pl-2.75 bg-transparent text-left font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 max-sm:flex-1 max-sm:min-w-0 max-sm:pl-1 max-sm:pr-1"
                 type="button"
                 onClick={() => select(v)}
               >
-                <Layers3 size={17} />
-                <span className="grid gap-0.75">
+                <Layers3 size={17} className="flex-none" />
+                <span className="grid grid-cols-[minmax(0,1fr)] gap-0.75 min-w-0 wrap-anywhere">
                   <b>{v.name}</b>
                   <small className="text-muted">{describe(v)}</small>
                 </span>
               </button>
-              <div className="flex items-center gap-1">
+              <div className="flex flex-none items-center gap-1 max-sm:gap-0">
                 <button
-                  className="pt-1.5 pr-2 pb-1.5 pl-2 bg-transparent text-muted hover:text-foreground text-[12px] font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11"
+                  className="pt-1.5 pr-2 pb-1.5 pl-2 bg-transparent text-muted hover:text-foreground text-[12px] font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
                   type="button"
                   aria-label={`Edit ${v.name}`}
                   onClick={() => startEdit(v)}
@@ -18897,7 +19009,7 @@ function ViewsPage({
                   Edit
                 </button>
                 <button
-                  className="pt-1.5 pr-2 pb-1.5 pl-2 bg-transparent text-muted hover:text-danger text-[12px] font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11"
+                  className="pt-1.5 pr-2 pb-1.5 pl-2 bg-transparent text-muted hover:text-danger text-[12px] font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
                   type="button"
                   aria-label={`Delete ${v.name}`}
                   disabled={busy}
@@ -18962,19 +19074,21 @@ function ViewsPage({
                   "No priority";
                 return (
                   <button
-                    className="flex justify-between gap-2.25 items-center pt-2.75 pr-2.75 pb-2.75 pl-2.75 bg-transparent text-left border-b border-line font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                    className="flex justify-between gap-2.25 items-center pt-2.75 pr-2.75 pb-2.75 pl-2.75 bg-transparent text-left border-b border-line font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 max-sm:flex-wrap max-sm:gap-y-1 max-sm:pl-1 max-sm:pr-1"
                     type="button"
                     key={task.id}
                     onClick={() => onSelect(task)}
                   >
-                    <span className="flex items-center gap-2 min-w-0">
+                    <span className="flex items-center gap-2 min-w-0 max-sm:basis-full max-sm:items-start">
                       {task.state && <StatusIcon state={task.state} />}
                       <span className="text-muted flex-none">
                         {task.identifier}
                       </span>
-                      <span className="truncate">{task.title}</span>
+                      <span className="truncate max-sm:whitespace-normal max-sm:line-clamp-2 max-sm:wrap-break-word">
+                        {task.title}
+                      </span>
                     </span>
-                    <span className="flex items-center gap-2 flex-none text-muted text-[11px]">
+                    <span className="flex items-center gap-2 flex-none text-muted text-[11px] max-sm:pl-6">
                       {task.state?.name && <span>{task.state.name}</span>}
                       <span>{prioText}</span>
                       {task.assignee?.name && <span>{task.assignee.name}</span>}

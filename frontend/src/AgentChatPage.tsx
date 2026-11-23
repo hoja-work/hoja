@@ -81,7 +81,26 @@ function applyStreamEvent(msg: ChatMessage, event: StreamEvent): ChatMessage {
   return msg;
 }
 
+// Same query as the `shell-phone` variant (tailwind.css): phone portrait and landscape.
+const SHELL_PHONE_QUERY = "(max-width: 880px), (max-width: 1000px) and (max-height: 500px)";
+
+function useShellPhone(): boolean {
+  const [phone, setPhone] = useState(
+    () => typeof window.matchMedia === "function" && window.matchMedia(SHELL_PHONE_QUERY).matches,
+  );
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia(SHELL_PHONE_QUERY);
+    const sync = () => setPhone(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+  return phone;
+}
+
 export function AgentChatPage({ workspaceName }: { workspaceName: string }) {
+  const phone = useShellPhone();
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [threadsLoading, setThreadsLoading] = useState(true);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
@@ -146,14 +165,20 @@ export function AgentChatPage({ workspaceName }: { workspaceName: string }) {
   }, []);
 
   useEffect(() => {
-    if (stickRef.current) {
-      const el = scrollRef.current;
-      if (el) {
-        el.scrollTop = el.scrollHeight;
-        lastScrollTopRef.current = el.scrollTop;
-      }
+    const el = scrollRef.current;
+    if (!el) return;
+    if (messages.length === 0) {
+      // The welcome screen reads from the top; pinning it to the bottom hid its heading
+      // under the chat header on short phones.
+      el.scrollTop = 0;
+      lastScrollTopRef.current = 0;
+      return;
     }
-  }, [messages, loadingThread]);
+    if (stickRef.current) {
+      el.scrollTop = el.scrollHeight;
+      lastScrollTopRef.current = el.scrollTop;
+    }
+  }, [messages, loadingThread, phone]);
 
   const selectThread = useCallback(async (threadId: string) => {
     abortRef.current?.abort();
@@ -349,6 +374,26 @@ export function AgentChatPage({ workspaceName }: { workspaceName: string }) {
   }, [isRunning, messages]);
 
   const hasMessages = messages.length > 0;
+  // On phones the wizard joins the conversation's scroll instead of being pinned under it:
+  // pinned, it covered the question it answers and hid Next inside a nested scroller.
+  const askWizard = pendingAsk ? (
+    <AskWizard
+      key={pendingAsk.key}
+      questions={pendingAsk.questions}
+      onSubmit={(answer) => void sendPrompt(answer)}
+      disabled={isRunning}
+      inline={phone}
+    />
+  ) : null;
+  const inlineAsk = phone && askWizard !== null;
+  const inlineAskKey = inlineAsk ? pendingAsk?.key : undefined;
+  useEffect(() => {
+    // The inline wizard mounts when the reply finishes; keep its Next button in view.
+    const el = scrollRef.current;
+    if (!el || !inlineAskKey || !stickRef.current) return;
+    el.scrollTop = el.scrollHeight;
+    lastScrollTopRef.current = el.scrollTop;
+  }, [inlineAskKey]);
 
   return (
     <section
@@ -421,6 +466,7 @@ export function AgentChatPage({ workspaceName }: { workspaceName: string }) {
                   />
                 );
               })}
+              {inlineAsk && <div className="pt-2">{askWizard}</div>}
             </div>
           )}
         </div>
@@ -430,7 +476,7 @@ export function AgentChatPage({ workspaceName }: { workspaceName: string }) {
             <button
               type="button"
               onClick={scrollToBottom}
-              className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-line bg-panel px-3 py-1.5 text-xs font-medium text-foreground shadow-md transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none focus-visible:outline-2 focus-visible:outline-accent"
+              className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-line bg-panel px-3 py-1.5 text-xs font-medium pointer-coarse:min-h-11 pointer-coarse:px-4 text-foreground shadow-md transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none focus-visible:outline-2 focus-visible:outline-accent"
             >
               <ArrowDown className="size-3.5" aria-hidden="true" />
               <span>Jump to latest</span>
@@ -439,24 +485,19 @@ export function AgentChatPage({ workspaceName }: { workspaceName: string }) {
         )}
       </div>
 
-      <div className="shrink-0 bg-bg px-4 pt-2 pb-4 sm:px-6">
-        {pendingAsk ? (
-          <AskWizard
-            key={pendingAsk.key}
-            questions={pendingAsk.questions}
-            onSubmit={(answer) => void sendPrompt(answer)}
-            disabled={isRunning}
-          />
-        ) : (
-          <Composer
-            value={draft}
-            onChange={setDraft}
-            onSend={() => void sendPrompt(draft)}
-            onStop={stopGeneration}
-            isRunning={isRunning}
-          />
-        )}
-      </div>
+      {!inlineAsk && (
+        <div className="shrink-0 bg-bg px-4 pt-2 pb-4 sm:px-6">
+          {askWizard ?? (
+            <Composer
+              value={draft}
+              onChange={setDraft}
+              onSend={() => void sendPrompt(draft)}
+              onStop={stopGeneration}
+              isRunning={isRunning}
+            />
+          )}
+        </div>
+      )}
     </section>
   );
 }

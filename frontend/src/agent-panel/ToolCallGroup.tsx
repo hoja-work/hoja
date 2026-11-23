@@ -86,7 +86,7 @@ function CopySnippetButton({ text, label }: { text: string; label: string }) {
           })
           .catch(() => {});
       }}
-      className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted transition-colors duration-150 ease-out hover:bg-subtle hover:text-foreground hover:transition-none focus-visible:outline-2 focus-visible:outline-accent"
+      className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted transition-colors duration-150 ease-out hover:bg-subtle hover:text-foreground hover:transition-none focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-11 pointer-coarse:px-2.5"
     >
       {copied ? (
         <>
@@ -201,7 +201,7 @@ function ToolCallRow({
     >
       <Collapsible.Trigger
         type="button"
-        className="flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left text-xs transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none focus-visible:outline-2 focus-visible:outline-accent"
+        className="flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left text-xs transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-11"
       >
         <StatusGlyph status={call.status} reduced={reduced} />
         <ToolGlyph kind={meta.icon} />

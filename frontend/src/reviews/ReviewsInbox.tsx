@@ -12,6 +12,7 @@ import {
   ArrowLeft,
   ExternalLink,
   LayoutGrid,
+  PanelLeft,
   List as ListIcon,
   Activity as ActivityIcon,
   TriangleAlert,
@@ -20,7 +21,7 @@ import { Avatar, fmtDate } from "../graph/shared";
 import { Markdown } from "../markdown";
 import { reviewGlyphPaths } from "../reviews-glyphs";
 import { reviewGroupsOf } from "../reviews-gate";
-import { MobileNavTrigger } from "../mobileNav";
+import { MobileNavTrigger, useMobileNav } from "../mobileNav";
 import { ConnectionMap } from "./ConnectionMap";
 import { ReviewActions } from "./ReviewActions";
 import { ReviewsActivity, ReviewsBoard } from "./ReviewsBoard";
@@ -160,7 +161,7 @@ function ViewSwitch({
           aria-label={VIEW_LABEL[v]}
           title={VIEW_LABEL[v]}
           onClick={() => onChange(v)}
-          className={`grid size-7 place-items-center rounded-md ${view === v ? "bg-subtle text-foreground" : "text-muted hover:bg-subtle"}`}
+          className={`grid size-7 place-items-center rounded-md pointer-coarse:size-11 ${view === v ? "bg-subtle text-foreground" : "text-muted hover:bg-subtle"}`}
         >
           {v === "list" ? (
             <ListIcon size={15} aria-hidden="true" />
@@ -190,7 +191,7 @@ function ListRow({
   const checks = pr ? checksText(pr) : null;
   return (
     <li
-      className={`group flex min-h-10 items-center gap-2.5 border-b border-line px-3 text-[13px] hover:bg-subtle ${selected ? "bg-subtle" : ""}`}
+      className={`group relative flex min-h-10 items-center gap-2.5 border-b border-line px-3 text-[13px] hover:bg-subtle max-lg:flex-wrap max-lg:gap-y-1 max-lg:py-2.5 pointer-coarse:min-h-11 ${selected ? "bg-subtle" : ""}`}
       data-reviews-row=""
       data-selected={selected ? "true" : undefined}
     >
@@ -203,7 +204,7 @@ function ListRow({
         onClick={onSelect}
         aria-pressed={selected}
         title={item.title}
-        className="min-w-0 flex-1 truncate bg-transparent border-0 p-0 text-left text-foreground focus-visible:outline-2 focus-visible:outline-accent"
+        className="min-w-0 flex-1 truncate bg-transparent border-0 p-0 text-left text-foreground after:absolute after:inset-0 focus-visible:outline-2 focus-visible:outline-accent max-lg:order-last max-lg:basis-full max-lg:line-clamp-2 max-lg:whitespace-normal max-lg:pl-6"
       >
         {item.title}
         {item.bucket === "Needs attention" ? (
@@ -211,14 +212,21 @@ function ListRow({
         ) : null}
       </button>
       {checks ? (
-        <span className="flex-none text-xs tabular-nums text-muted">
+        <span className="flex-none text-xs tabular-nums text-muted max-lg:ml-auto">
           {checks}
         </span>
       ) : null}
       {pr?.author ? (
-        <Avatar name={pr.author} size={18} title={pr.author} />
+        <Avatar
+          name={pr.author}
+          size={18}
+          title={pr.author}
+          className="max-lg:pointer-events-none pointer-coarse:pointer-events-none"
+        />
       ) : null}
-      <span className="w-8 flex-none text-right text-xs tabular-nums text-muted">
+      <span
+        className={`w-8 flex-none text-right text-xs tabular-nums text-muted ${checks ? "" : "max-lg:ml-auto"}`}
+      >
         {age(item.updatedAt)}
       </span>
     </li>
@@ -242,7 +250,7 @@ function DetailHeader({
         type="button"
         onClick={onBack}
         aria-label="Back to the review list"
-        className="grid size-7 flex-none place-items-center rounded-md text-muted hover:bg-subtle hover:text-foreground md:hidden"
+        className="grid size-7 flex-none place-items-center rounded-md text-muted hover:bg-subtle hover:text-foreground md:hidden pointer-coarse:size-11 max-md:-ml-2 max-md:size-11"
       >
         <ArrowLeft size={16} aria-hidden="true" />
       </button>
@@ -254,7 +262,7 @@ function DetailHeader({
         {taskKey ? (
           <>
             <span aria-hidden="true">›</span>
-            <span className="flex-none font-medium text-foreground">
+            <span className="min-w-0 truncate font-medium text-foreground">
               {taskKey}
             </span>
           </>
@@ -273,7 +281,7 @@ function DetailHeader({
           rel="noreferrer"
           aria-label="Open on GitHub"
           title="Open on GitHub"
-          className="grid size-7 flex-none place-items-center rounded-md text-muted hover:bg-subtle hover:text-foreground"
+          className="grid size-7 flex-none place-items-center rounded-md text-muted hover:bg-subtle hover:text-foreground pointer-coarse:size-11"
         >
           <ExternalLink size={15} aria-hidden="true" />
         </a>
@@ -298,11 +306,11 @@ function FilesPane({ pr }: { pr: ReviewLink }) {
         <li key={f.path} className="rounded-md border border-line">
           <button
             type="button"
-            className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] hover:bg-subtle"
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] hover:bg-subtle pointer-coarse:min-h-11"
             aria-expanded={!!open[f.path]}
             onClick={() => setOpen((o) => ({ ...o, [f.path]: !o[f.path] }))}
           >
-            <span className="min-w-0 flex-1 truncate font-mono text-xs">
+            <span className="min-w-0 flex-1 truncate font-mono text-xs max-md:whitespace-normal max-md:break-all">
               {f.path}
             </span>
             <span className="flex-none text-xs tabular-nums text-green-600">
@@ -369,8 +377,8 @@ function Detail({
         url={item.url}
         onBack={onBack}
       />
-      <div className="flex min-h-0 flex-1">
-        <main className="min-w-0 flex-1 overflow-y-auto px-10 pb-20 pt-6 max-md:px-5">
+      <div className="flex min-h-0 flex-1 max-lg:flex-col max-lg:overflow-y-auto max-lg:overscroll-contain">
+        <main className="min-w-0 flex-1 overflow-y-auto px-10 pb-20 pt-6 max-lg:flex-none max-lg:overflow-visible max-lg:pb-6 max-md:px-5">
           <h1 className="m-0 text-xl font-semibold leading-snug tracking-tight text-foreground">
             {headline}
           </h1>
@@ -405,7 +413,7 @@ function Detail({
                 aria-selected={tab === t}
                 onClick={() => setTab(t)}
                 disabled={t === "files" && !pr}
-                className={`-mb-px border-b-2 px-3 pb-2 text-[13px] capitalize ${tab === t ? "border-accent text-foreground" : "border-transparent text-muted hover:text-foreground"} disabled:opacity-50`}
+                className={`-mb-px border-b-2 px-3 pb-2 text-[13px] capitalize pointer-coarse:min-h-11 pointer-coarse:pb-0 ${tab === t ? "border-accent text-foreground" : "border-transparent text-muted hover:text-foreground"} disabled:opacity-50`}
               >
                 {t === "files"
                   ? `Files${pr?.files?.length ? ` (${pr.files.length})` : ""}`
@@ -429,7 +437,7 @@ function Detail({
 
         <aside
           aria-label="Properties"
-          className="hidden w-72 flex-none flex-col overflow-y-auto border-l border-line px-5 pb-10 pt-5 lg:flex"
+          className="flex w-72 flex-none flex-col overflow-y-auto border-l border-line px-5 pb-10 pt-5 max-lg:mx-10 max-lg:w-auto max-lg:overflow-visible max-lg:border-l-0 max-lg:border-t max-lg:px-0 max-md:mx-5"
         >
           <h3 className="m-0 mb-2.5 text-xs font-semibold text-muted">
             Properties
@@ -589,6 +597,31 @@ function Detail({
   );
 }
 
+/**
+ * The shell hides its phone top bar on Reviews, so this header has to carry the way into the
+ * app navigation. Uses the shared inline trigger when the shell provides one, otherwise a
+ * button with the same look that opens the drawer through `onOpenNav`.
+ */
+function ReviewsNavTrigger({ onOpenNav }: { onOpenNav?: () => void }) {
+  const ctx = useMobileNav();
+  if (ctx) return <MobileNavTrigger />;
+  if (!onOpenNav) return null;
+  return (
+    <button
+      type="button"
+      data-mobile-nav-toggle=""
+      aria-label="Open navigation"
+      aria-controls="workspace-sidebar"
+      onClick={onOpenNav}
+      className="group -ml-2 grid size-11 flex-none place-items-center rounded-lg border-0 bg-transparent p-0 text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-desktop:hidden"
+    >
+      <span className="grid size-7 place-items-center rounded-md transition-colors duration-120 ease-out group-hover:bg-sidebar-hover group-hover:text-foreground group-hover:transition-none">
+        <PanelLeft size={16} aria-hidden="true" />
+      </span>
+    </button>
+  );
+}
+
 export function ReviewsInbox({
   links,
   tasks = [],
@@ -658,7 +691,7 @@ export function ReviewsInbox({
 
   const header = (
     <div className="flex h-12 flex-none items-center gap-2 border-b border-line px-4">
-      <MobileNavTrigger />
+      <ReviewsNavTrigger onOpenNav={onOpenNav} />
       <h1 className="m-0 text-[15px] font-semibold">Reviews</h1>
       <span className="text-xs text-muted tabular-nums">
         {inbox.items.length}
@@ -719,7 +752,7 @@ export function ReviewsInbox({
         <div
           role="toolbar"
           aria-label="Filter reviews by source"
-          className="flex flex-none flex-wrap gap-1.5 border-b border-line px-3 py-2"
+          className="flex flex-none flex-wrap gap-1.5 border-b border-line px-3 py-2 pointer-coarse:flex-nowrap pointer-coarse:overflow-x-auto pointer-coarse:overscroll-x-contain pointer-coarse:scrollbar-none"
         >
           {chips.map((c) => (
             <button
@@ -728,7 +761,7 @@ export function ReviewsInbox({
               aria-pressed={source === c.id}
               title={c.connected ? undefined : c.hint}
               onClick={() => setSource(c.id)}
-              className={`inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 text-xs ${source === c.id ? "border-line bg-subtle text-foreground" : "border-transparent text-muted hover:bg-subtle"} ${c.connected ? "" : "border-dashed"}`}
+              className={`inline-flex h-7 flex-none items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 text-xs pointer-coarse:h-11 pointer-coarse:px-3.5 ${source === c.id ? "border-line bg-subtle text-foreground" : "border-transparent text-muted hover:bg-subtle"} ${c.connected ? "" : "border-dashed"}`}
             >
               {c.label}
               {c.connected ? (

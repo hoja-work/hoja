@@ -87,7 +87,7 @@ export function ProjectMembers({
           <PopoverTrigger asChild>
             <button
               type="button"
-              className="grid size-6 place-items-center rounded-md bg-transparent text-muted hover:bg-subtle hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent"
+              className="grid size-6 place-items-center rounded-md bg-transparent text-muted hover:bg-subtle hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent shell-phone:size-11 pointer-coarse:size-11"
               aria-label="Add or remove members"
               aria-haspopup="listbox"
               aria-expanded={open}

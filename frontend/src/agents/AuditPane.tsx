@@ -27,7 +27,13 @@ import {
 import { Avatar, IconBtn, cx } from "../graph/shared";
 import { DisplayPanel, defaultDisplay, type LinDisplay } from "../graph/tasks";
 import { AgentApiError, getAgentsAdapter } from "./adapter";
-import { AGENTS_TABS, AgentsListShell, SearchField } from "./chrome";
+import {
+  DISPLAY_ANCHOR,
+  AGENTS_TABS,
+  AgentsListShell,
+  SearchField,
+  TOUCH_LIST,
+} from "./chrome";
 import type { AuditEvent } from "./types";
 
 export const AUDIT_DISPLAY: LinDisplay = {
@@ -89,27 +95,30 @@ function AuditRow({
       ) : (
         <span />
       )}
+      {/* Phone (HOJA-731): line 1 is the action and the time, line 2 the whole detail, line 3
+          the target and actor. Squeezed onto one line the detail read "No …" and the target and
+          actor were hidden, and nothing opens from a row to show them. */}
       <span
-        className="whitespace-nowrap font-semibold text-foreground"
+        className="whitespace-nowrap font-semibold text-foreground shell-phone:flex-1 shell-phone:min-w-0 shell-phone:truncate"
         data-style-hooks="ident"
       >
         {event.action}
       </span>
       {/* An audit row is a record, not a target: nothing opens from it, so it is not a button. */}
       <span
-        className="flex-1 cursor-pointer truncate border-0 text-left min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-foreground [background:none] [font:inherit] pt-0 pr-0 pb-0 pl-0"
+        className="flex-1 cursor-pointer truncate border-0 text-left min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-foreground [background:none] [font:inherit] pt-0 pr-0 pb-0 pl-0 shell-phone:order-2 shell-phone:basis-full shell-phone:cursor-auto shell-phone:whitespace-normal shell-phone:break-words shell-phone:pl-[46px]"
         title={event.detail}
       >
         {event.detail || "No detail recorded"}
       </span>
       <span
-        className="flex flex-none items-center gap-2 ml-auto"
+        className="flex flex-none items-center gap-2 ml-auto shell-phone:contents"
         data-style-hooks="meta"
       >
         {show.target && (
-          <span className="hidden md:inline-flex">
+          <span className="hidden md:inline-flex shell-phone:order-3 shell-phone:inline-flex shell-phone:min-w-0 shell-phone:basis-0 shell-phone:grow shell-phone:ml-[46px]">
             <span
-              className="inline-flex items-center whitespace-nowrap border border-line gap-1 h-6 text-[12px] font-[450] border-solid border-(--card-line) rounded-[48px] pt-0 pr-2 pb-0 pl-2 text-(--card-meta) bg-panel"
+              className="inline-flex items-center whitespace-nowrap border border-line gap-1 h-6 text-[12px] font-[450] border-solid border-(--card-line) rounded-[48px] pt-0 pr-2 pb-0 pl-2 text-(--card-meta) bg-panel shell-phone:block shell-phone:min-w-0 shell-phone:max-w-full shell-phone:truncate shell-phone:leading-[22px]"
               title="Target"
             >
               {event.target}
@@ -118,7 +127,7 @@ function AuditRow({
         )}
         {show.actor && (
           <span
-            className="whitespace-nowrap hidden sm:inline text-muted text-[12px]"
+            className="whitespace-nowrap hidden sm:inline text-muted text-[12px] shell-phone:order-3 shell-phone:inline shell-phone:ml-auto"
             data-actor-kind={event.actorKind || undefined}
             title={
               event.actorKind
@@ -132,7 +141,7 @@ function AuditRow({
         )}
         {show.time && (
           <span
-            className="whitespace-nowrap text-muted text-[12px]"
+            className="whitespace-nowrap text-muted text-[12px] shell-phone:order-1"
             title={event.at}
           >
             {stamp(event.at)}
@@ -273,6 +282,7 @@ export function AuditPane({
       tabs={AGENTS_TABS}
       activeTab={tab}
       onTab={onTab}
+      toolbarWraps
       toolbar={
         <>
           <SearchField
@@ -280,14 +290,15 @@ export function AuditPane({
             onChange={setQ}
             placeholder="Search the audit log…"
             label="Search the audit log"
+            className="max-sm:basis-[calc(100%-50px)]"
           />
-          <label className="flex max-w-72 flex-1 items-center border border-line max-w-44 gap-2 border-solid rounded-[7px] pt-0 pr-2.5 pb-0 pl-2.5 h-7.5 text-muted bg-panel min-w-37.5 flex-[0_1_180px]">
+          <label className="flex max-w-72 flex-1 items-center border border-line max-w-44 gap-2 border-solid rounded-[7px] pt-0 pr-2.5 pb-0 pl-2.5 h-7.5 text-muted bg-panel min-w-37.5 flex-[0_1_180px] pointer-coarse:h-11 shrink-0 max-sm:order-2 max-sm:min-w-0 max-sm:max-w-none max-sm:flex-[1_1_0]">
             <span className="text-[12px] text-muted">Actor</span>
             <select
               value={actor}
               onChange={(e) => setActor(e.target.value)}
               aria-label="Filter by actor"
-              className="flex-1 border-0 bg-transparent text-foreground text-[13px] min-w-0"
+              className="flex-1 border-0 bg-transparent text-foreground text-[13px] min-w-0 pointer-coarse:self-stretch pointer-coarse:-my-px"
             >
               <option value="">Anyone</option>
               {actors.map((a) => (
@@ -297,13 +308,13 @@ export function AuditPane({
               ))}
             </select>
           </label>
-          <label className="flex max-w-72 flex-1 items-center border border-line max-w-44 gap-2 border-solid rounded-[7px] pt-0 pr-2.5 pb-0 pl-2.5 h-7.5 text-muted bg-panel min-w-37.5 flex-[0_1_180px]">
+          <label className="flex max-w-72 flex-1 items-center border border-line max-w-44 gap-2 border-solid rounded-[7px] pt-0 pr-2.5 pb-0 pl-2.5 h-7.5 text-muted bg-panel min-w-37.5 flex-[0_1_180px] pointer-coarse:h-11 shrink-0 max-sm:order-2 max-sm:min-w-0 max-sm:max-w-none max-sm:flex-[1_1_0]">
             <span className="text-[12px] text-muted">Action</span>
             <select
               value={action}
               onChange={(e) => setAction(e.target.value)}
               aria-label="Filter by action"
-              className="flex-1 border-0 bg-transparent text-foreground text-[13px] min-w-0"
+              className="flex-1 border-0 bg-transparent text-foreground text-[13px] min-w-0 pointer-coarse:self-stretch pointer-coarse:-my-px"
             >
               <option value="">Any action</option>
               {actions.map((a) => (
@@ -313,8 +324,8 @@ export function AuditPane({
               ))}
             </select>
           </label>
-          <span className="flex-1" />
-          <span className="relative">
+          <span className="flex-1 max-sm:hidden" />
+          <span className={`${DISPLAY_ANCHOR} max-sm:order-1`}>
             <IconBtn
               label="Display options"
               title="Display options"
@@ -371,7 +382,7 @@ export function AuditPane({
               >
                 {c.label}
                 <button
-                  className="border-0 hover:text-foreground [background:none] text-muted text-[13px] leading-none pt-0.5 pr-1 pb-0.5 pl-1 rounded-sm"
+                  className="border-0 hover:text-foreground [background:none] text-muted text-[13px] leading-none pt-0.5 pr-1 pb-0.5 pl-1 rounded-sm pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:-my-3 pointer-coarse:-mr-1.5"
                   type="button"
                   aria-label={`Remove filter ${c.label}`}
                   onClick={c.clear}
@@ -382,7 +393,7 @@ export function AuditPane({
             ))}
             <button
               type="button"
-              className="inline-flex items-center border-0 hover:bg-subtle hover:text-foreground gap-2 [background:none] text-muted text-[13px] pt-1.25 pr-1.5 pb-1.25 pl-1.5 rounded-md"
+              className="inline-flex items-center border-0 hover:bg-subtle hover:text-foreground gap-2 [background:none] text-muted text-[13px] pt-1.25 pr-1.5 pb-1.25 pl-1.5 rounded-md pointer-coarse:min-h-11"
               onClick={() => {
                 setActor("");
                 setAction("");
@@ -429,7 +440,10 @@ export function AuditPane({
         </p>
       )}
       {!loading && !refused && !error && (
-        <div className="pt-1.5 pr-3 pb-10 pl-3" data-style-hooks="lin-list">
+        <div
+          className={`pt-1.5 pr-3 pb-10 pl-3 ${TOUCH_LIST}`}
+          data-style-hooks="lin-list"
+        >
           {groups.map((g) => (
             <section
               key={g.key}
@@ -478,7 +492,7 @@ export function AuditPane({
             {hasMore && (
               <button
                 type="button"
-                className="inline-flex items-center rounded-md border border-line bg-panel px-2 py-1 text-foreground hover:bg-subtle"
+                className="inline-flex items-center rounded-md border border-line bg-panel px-2 py-1 text-foreground hover:bg-subtle pointer-coarse:min-h-11 pointer-coarse:px-3"
                 data-action="load-more"
                 disabled={paging}
                 onClick={() => void loadMore()}

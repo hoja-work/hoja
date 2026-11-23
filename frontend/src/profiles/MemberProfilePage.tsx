@@ -80,16 +80,16 @@ export function MemberProfilePage({
 
   return (
     <section
-      className="flex min-h-0 flex-1 flex-col overflow-hidden bg-bg text-foreground"
+      className="flex min-h-0 flex-1 flex-col overflow-hidden bg-bg text-foreground shell-phone:overflow-y-auto shell-phone:overscroll-contain"
       aria-label="Member profile"
       data-member-profile-page=""
     >
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-panel px-5 py-3">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-panel px-5 py-3 max-sm:px-4">
         <div className="flex min-w-0 items-center gap-2">
           <button
             type="button"
             onClick={onBack}
-            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted hover:bg-subtle hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent"
+            className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs text-muted hover:bg-subtle hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-11"
           >
             <ArrowLeft size={14} aria-hidden="true" />
             Members
@@ -101,12 +101,12 @@ export function MemberProfilePage({
             {profile?.user.name || "Profile"}
           </h1>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 max-sm:w-full">
           {isMe && onOpenSettingsProfile && (
             <button
               type="button"
               onClick={onOpenSettingsProfile}
-              className="rounded-lg border border-line bg-panel px-3 py-1.5 text-xs font-medium text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent"
+              className="shrink-0 whitespace-nowrap rounded-lg border border-line bg-panel px-3 py-1.5 text-xs font-medium text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-11"
             >
               Edit profile
             </button>
@@ -114,7 +114,7 @@ export function MemberProfilePage({
           <button
             type="button"
             onClick={onOpenLeaderboard}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-panel px-3 py-1.5 text-xs font-medium text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent"
+            className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-line bg-panel px-3 py-1.5 text-xs font-medium text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-11"
           >
             <Trophy size={13} aria-hidden="true" />
             Leaderboard
@@ -122,7 +122,7 @@ export function MemberProfilePage({
           <div
             role="group"
             aria-label="Time range"
-            className="inline-flex items-center gap-0.5 rounded-lg border border-line bg-bg p-0.5"
+            className="inline-flex items-center gap-0.5 rounded-lg border border-line bg-bg p-0.5 max-sm:w-full"
           >
             {RANGES.map((r) => {
               const active = days === r.days;
@@ -132,7 +132,7 @@ export function MemberProfilePage({
                   type="button"
                   aria-pressed={active}
                   onClick={() => setDays(r.days)}
-                  className={`rounded-md px-2.5 py-1 text-xs font-medium focus-visible:outline-2 focus-visible:outline-accent ${
+                  className={`rounded-md px-2.5 py-1 text-xs font-medium focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-11 max-sm:flex-1 ${
                     active
                       ? "bg-panel text-foreground shadow-xs transition-colors duration-150 ease-out"
                       : "text-muted hover:text-foreground"
@@ -146,7 +146,7 @@ export function MemberProfilePage({
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+      <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6 shell-phone:flex-none shell-phone:overflow-visible">
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-5">
           {error && (
             <div
@@ -197,7 +197,7 @@ export function MemberProfilePage({
                         </span>
                       )}
                     </div>
-                    <p className="m-0 text-xs text-muted">
+                    <p className="m-0 text-xs text-muted wrap-anywhere">
                       {[
                         profile.user.email,
                         profile.user.timezone,
@@ -216,20 +216,20 @@ export function MemberProfilePage({
                     <button
                       type="button"
                       onClick={onOpenLeaderboard}
-                      className="inline-flex items-center gap-1.5 rounded-full border border-line bg-bg px-3 py-1 text-xs font-medium text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent"
+                      className="inline-flex items-center gap-1.5 rounded-full border border-line bg-bg px-3 py-1 text-xs font-medium text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-10"
                     >
-                      <Flame size={13} aria-hidden="true" />
-                      #{profile.rankByTokens} token burner
+                      <Flame size={13} aria-hidden="true" />#
+                      {profile.rankByTokens} token burner
                     </button>
                   )}
                   {profile.rankByCompleted != null && (
                     <button
                       type="button"
                       onClick={onOpenLeaderboard}
-                      className="inline-flex items-center gap-1.5 rounded-full border border-line bg-bg px-3 py-1 text-xs font-medium text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent"
+                      className="inline-flex items-center gap-1.5 rounded-full border border-line bg-bg px-3 py-1 text-xs font-medium text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-10"
                     >
-                      <Trophy size={13} aria-hidden="true" />
-                      #{profile.rankByCompleted} shipper
+                      <Trophy size={13} aria-hidden="true" />#
+                      {profile.rankByCompleted} shipper
                     </button>
                   )}
                   <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-bg px-3 py-1 text-xs font-medium tabular-nums text-muted">
@@ -333,7 +333,7 @@ export function MemberProfilePage({
                         role="tab"
                         aria-selected={active}
                         onClick={() => setTab(id)}
-                        className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium focus-visible:outline-2 focus-visible:outline-accent ${
+                        className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-11 ${
                           active
                             ? "bg-subtle text-foreground transition-colors duration-150 ease-out"
                             : "text-muted hover:bg-subtle hover:text-foreground"
@@ -360,7 +360,7 @@ export function MemberProfilePage({
                           onClick={() =>
                             onOpenTask(task.identifier, task.title)
                           }
-                          className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent"
+                          className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-12"
                         >
                           <PriorityIcon priority={task.priority} size={14} />
                           <GraphStatusIcon
@@ -404,9 +404,7 @@ export function MemberProfilePage({
                           maxTaskTokens > 0
                             ? Math.max(
                                 4,
-                                Math.round(
-                                  (task.tokens / maxTaskTokens) * 100,
-                                ),
+                                Math.round((task.tokens / maxTaskTokens) * 100),
                               )
                             : 0;
                         return (
@@ -416,7 +414,7 @@ export function MemberProfilePage({
                             onClick={() =>
                               onOpenTask(task.identifier, task.title)
                             }
-                            className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent"
+                            className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-12"
                           >
                             <GraphStatusIcon
                               state={{
@@ -468,7 +466,7 @@ export function MemberProfilePage({
                           onClick={() =>
                             onOpenTask(item.issueIdentifier, item.issueTitle)
                           }
-                          className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent"
+                          className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-12"
                         >
                           <span className="shrink-0 text-xs text-muted">
                             {formatActivityVerb(item.eventType)}

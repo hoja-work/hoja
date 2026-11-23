@@ -499,7 +499,8 @@ export function ProjectActivity({
             kind: "lines",
             at: x.at,
             actor,
-            name: x.event.actor?.name || users.get(actor) || actorLabel(x.event),
+            name:
+              x.event.actor?.name || users.get(actor) || actorLabel(x.event),
             key: line.key,
             items: [item],
           });
@@ -639,7 +640,7 @@ export function ProjectActivity({
           data-activity-composer-row=""
         >
           <fieldset
-            className="flex border-0 gap-1 mt-0 mr-0 mb-0 ml-0 pt-0 pr-0 pb-0 pl-0"
+            className="flex border-0 gap-1 mt-0 mr-0 mb-0 ml-0 pt-0 pr-0 pb-0 pl-0 shell-phone:w-full"
             data-activity-health-pick=""
           >
             <legend className="sr-only absolute w-px h-px pt-0 pr-0 pb-0 pl-0 -mt-px -mr-px -mb-px -ml-px overflow-hidden [clip:rect(0,0,0,0)] whitespace-nowrap border-0">
@@ -648,7 +649,7 @@ export function ProjectActivity({
             {HEALTH.map((h) => (
               <label
                 key={h}
-                className="inline-flex cursor-pointer items-center border border-line has-checked:bg-subtle has-checked:font-semibold has-focus-visible:outline-2 has-focus-visible:outline-accent has-focus-visible:outline-offset-2 gap-1.25 min-h-7 pt-0 pr-2.5 pb-0 pl-2.5 border-solid rounded-[99px] text-[12px]"
+                className="inline-flex cursor-pointer items-center border border-line has-checked:bg-subtle has-checked:font-semibold has-focus-visible:outline-2 has-focus-visible:outline-accent has-focus-visible:outline-offset-2 gap-1.25 min-h-7 pt-0 pr-2.5 pb-0 pl-2.5 border-solid rounded-[99px] text-[12px] whitespace-nowrap shell-phone:flex-1 shell-phone:justify-center shell-phone:min-h-11 shell-phone:px-2 pointer-coarse:min-h-11"
               >
                 <input
                   className="accent-accent mt-0 mr-0 mb-0 ml-0"

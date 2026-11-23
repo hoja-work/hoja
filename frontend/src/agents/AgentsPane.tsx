@@ -27,7 +27,13 @@ import {
 import { stateKey } from "../main";
 import { GettingStarted } from "./GettingStarted";
 import { getAgentsAdapter } from "./adapter";
-import { AGENTS_TABS, AgentsListShell, SearchField } from "./chrome";
+import {
+  DISPLAY_ANCHOR,
+  AGENTS_TABS,
+  AgentsListShell,
+  SearchField,
+  TOUCH_LIST,
+} from "./chrome";
 import { AGENT_STATUSES, agentStatus } from "./types";
 import type { Agent, AgentStatus } from "./types";
 
@@ -80,6 +86,7 @@ function NotReported({ what }: { what: string }) {
   return (
     <span
       className="whitespace-nowrap text-xs text-muted"
+      data-not-reported=""
       title={`${what}: the server does not report this yet`}
     >
       —
@@ -156,16 +163,17 @@ function AgentRow({
         {agent.name}
       </button>
       <span
-        className="flex flex-none items-center gap-2 ml-auto"
+        className="flex flex-none items-center gap-2 ml-auto shell-phone:basis-full shell-phone:min-w-0 shell-phone:flex-wrap shell-phone:gap-y-1 shell-phone:ml-0 shell-phone:empty:hidden"
         data-style-hooks="meta"
       >
         {/* Narrow screens keep the row readable instead of clipping the identifier: the extra
-            columns return as space allows, widest last. */}
+            columns return as space allows, widest last. On a phone the row wraps instead, and
+            every column comes back on a line of its own under the name (HOJA-731). */}
         {props.model && (
-          <span className="hidden sm:inline-flex">
+          <span className="hidden sm:inline-flex shell-phone:inline-flex shell-phone:min-w-0 shell-phone:max-w-full shell-phone:has-[[data-not-reported]]:hidden">
             {agent.model ? (
               <span
-                className="inline-flex items-center whitespace-nowrap border border-line gap-1 h-6 text-[12px] font-[450] border-solid border-(--card-line) rounded-[48px] pt-0 pr-2 pb-0 pl-2 text-(--card-meta) bg-panel"
+                className="inline-flex items-center whitespace-nowrap border border-line gap-1 h-6 text-[12px] font-[450] border-solid border-(--card-line) rounded-[48px] pt-0 pr-2 pb-0 pl-2 text-(--card-meta) bg-panel shell-phone:block shell-phone:min-w-0 shell-phone:truncate shell-phone:leading-[22px]"
                 title="Model"
               >
                 {agent.model}
@@ -176,10 +184,10 @@ function AgentRow({
           </span>
         )}
         {props.budget && (
-          <span className="hidden md:inline-flex">
+          <span className="hidden md:inline-flex shell-phone:inline-flex shell-phone:min-w-0 shell-phone:max-w-full shell-phone:has-[[data-not-reported]]:hidden">
             {agent.monthlyBudgetCredits !== null ? (
               <span
-                className="inline-flex items-center whitespace-nowrap border border-line gap-1 h-6 text-[12px] font-[450] border-solid border-(--card-line) rounded-[48px] pt-0 pr-2 pb-0 pl-2 text-(--card-meta) bg-panel"
+                className="inline-flex items-center whitespace-nowrap border border-line gap-1 h-6 text-[12px] font-[450] border-solid border-(--card-line) rounded-[48px] pt-0 pr-2 pb-0 pl-2 text-(--card-meta) bg-panel shell-phone:block shell-phone:min-w-0 shell-phone:truncate shell-phone:leading-[22px]"
                 title="Credits per calendar month"
               >
                 {agent.monthlyBudgetCredits} credits/mo
@@ -190,10 +198,10 @@ function AgentRow({
           </span>
         )}
         {props.pool && (
-          <span className="hidden lg:inline-flex">
+          <span className="hidden lg:inline-flex shell-phone:inline-flex shell-phone:min-w-0 shell-phone:max-w-full shell-phone:has-[[data-not-reported]]:hidden">
             {agent.runnerPool ? (
               <span
-                className="inline-flex items-center whitespace-nowrap border border-line gap-1 h-6 text-[12px] font-[450] border-solid border-(--card-line) rounded-[48px] pt-0 pr-2 pb-0 pl-2 text-(--card-meta) bg-panel"
+                className="inline-flex items-center whitespace-nowrap border border-line gap-1 h-6 text-[12px] font-[450] border-solid border-(--card-line) rounded-[48px] pt-0 pr-2 pb-0 pl-2 text-(--card-meta) bg-panel shell-phone:block shell-phone:min-w-0 shell-phone:truncate shell-phone:leading-[22px]"
                 title="Runner pool"
               >
                 {agent.runnerPool}
@@ -538,7 +546,7 @@ export function AgentsPane({
               />
             )}
           </span>
-          <span className="relative">
+          <span className={DISPLAY_ANCHOR}>
             <IconBtn
               label="Display options"
               title="Display options"
@@ -658,7 +666,10 @@ export function AgentsPane({
         />
       )}
       {!loading && !refused && !nothingYet && (
-        <div className="pt-1.5 pr-3 pb-10 pl-3" data-style-hooks="lin-list">
+        <div
+          className={`pt-1.5 pr-3 pb-10 pl-3 ${TOUCH_LIST}`}
+          data-style-hooks="lin-list"
+        >
           {groups.map((g) => {
             const isCollapsed = collapsedSet.has(g.key);
             return (

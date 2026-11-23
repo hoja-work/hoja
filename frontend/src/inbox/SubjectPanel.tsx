@@ -85,14 +85,19 @@ export function SubjectPanel({
           <span>{subjectLabel(type)}</span>
         </div>
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <h2 className="m-0 min-w-0 flex-1 text-lg font-semibold">
+          <h2 className="m-0 min-w-0 flex-1 text-lg font-semibold max-sm:basis-full">
             {subjectTitle(group)}
           </h2>
           <div className="flex items-center gap-2">
-            <FollowButton type={type} id={group.key} onError={onError} />
+            <FollowButton
+              type={type}
+              id={group.key}
+              onError={onError}
+              className="pointer-coarse:min-h-11 pointer-coarse:px-3"
+            />
             <button
               type="button"
-              className="rounded-md border border-line bg-panel px-2.5 py-1 text-xs hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent"
+              className="rounded-md border border-line bg-panel px-2.5 py-1 text-xs hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-11 pointer-coarse:px-3"
               onClick={onOpen}
             >
               {openLabel}
@@ -155,7 +160,11 @@ export function SubjectPanel({
           aria-label={reply ? "Reply" : "Update"}
         >
           <div className="flex items-center gap-2 text-xs text-muted">
-            <Avatar name={latest.actor?.name || null} seed={latest.actor?.avatarSeed} size={20} />
+            <Avatar
+              name={latest.actor?.name || null}
+              seed={latest.actor?.avatarSeed}
+              size={20}
+            />
             <span className="text-foreground">
               {latest.actor?.name || "Someone"}
             </span>
@@ -198,7 +207,11 @@ export function SubjectPanel({
                 {isSystemEvent(n) ? (
                   <CalendarDays size={14} className="flex-none text-muted" />
                 ) : (
-                  <Avatar name={n.actor?.name || null} seed={n.actor?.avatarSeed} size={18} />
+                  <Avatar
+                    name={n.actor?.name || null}
+                    seed={n.actor?.avatarSeed}
+                    size={18}
+                  />
                 )}
                 <span className="min-w-0 flex-1 truncate">
                   {!isSystemEvent(n) && (

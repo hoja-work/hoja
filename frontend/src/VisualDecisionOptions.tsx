@@ -65,9 +65,7 @@ export function VisualDecisionOptions({
 
   const activeIndex = useMemo(
     () =>
-      previewKey
-        ? visualOptions.findIndex((o) => o.key === previewKey)
-        : -1,
+      previewKey ? visualOptions.findIndex((o) => o.key === previewKey) : -1,
     [previewKey, visualOptions],
   );
   const activeOption =
@@ -170,7 +168,7 @@ export function VisualDecisionOptions({
                   <button
                     type="button"
                     onClick={() => setPreviewKey(option.key)}
-                    className="rounded-md border border-neutral-300 bg-transparent px-2.5 py-1.5 text-xs font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
+                    className="pointer-coarse:min-h-11 pointer-coarse:px-3.5 rounded-md border border-neutral-300 bg-transparent px-2.5 py-1.5 text-xs font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
                   >
                     Preview
                   </button>
@@ -179,7 +177,7 @@ export function VisualDecisionOptions({
                   type="button"
                   disabled={disabled}
                   onClick={() => onPick(option.key)}
-                  className="rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-neutral-700 disabled:cursor-default disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300"
+                  className="pointer-coarse:min-h-11 pointer-coarse:px-3.5 rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-neutral-700 disabled:cursor-default disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300"
                 >
                   Select
                 </button>
@@ -220,7 +218,7 @@ export function VisualDecisionOptions({
                     <button
                       type="button"
                       onClick={() => stepPreview(-1)}
-                      className="rounded-md border border-neutral-300 px-2.5 py-1 text-xs font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
+                      className="pointer-coarse:min-h-11 pointer-coarse:px-3.5 rounded-md border border-neutral-300 px-2.5 py-1 text-xs font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
                     >
                       Prev
                     </button>
@@ -230,7 +228,7 @@ export function VisualDecisionOptions({
                     <button
                       type="button"
                       onClick={() => stepPreview(1)}
-                      className="rounded-md border border-neutral-300 px-2.5 py-1 text-xs font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
+                      className="pointer-coarse:min-h-11 pointer-coarse:px-3.5 rounded-md border border-neutral-300 px-2.5 py-1 text-xs font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
                     >
                       Next
                     </button>
@@ -244,14 +242,14 @@ export function VisualDecisionOptions({
                     setPreviewKey(null);
                     onPick(chosen);
                   }}
-                  className="rounded-md bg-neutral-900 px-3 py-1 text-xs font-semibold text-white hover:bg-neutral-700 disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
+                  className="pointer-coarse:min-h-11 pointer-coarse:px-3.5 rounded-md bg-neutral-900 px-3 py-1 text-xs font-semibold text-white hover:bg-neutral-700 disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
                 >
                   Select
                 </button>
                 <button
                   type="button"
                   onClick={() => setPreviewKey(null)}
-                  className="rounded-md border border-neutral-300 px-2.5 py-1 text-xs font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
+                  className="pointer-coarse:min-h-11 pointer-coarse:px-3.5 rounded-md border border-neutral-300 px-2.5 py-1 text-xs font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
                 >
                   Close
                 </button>

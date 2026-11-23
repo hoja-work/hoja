@@ -139,6 +139,7 @@ export function ChatHeader({
               aria-haspopup="dialog"
               aria-expanded={open}
               aria-controls="agent-history"
+              aria-label="History"
               className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-sm text-muted transition-colors duration-150 ease-out hover:bg-subtle hover:text-foreground hover:transition-none aria-expanded:bg-subtle aria-expanded:text-foreground focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11 shell-phone:min-w-11"
             >
               <History className="size-4" aria-hidden="true" />
@@ -156,9 +157,9 @@ export function ChatHeader({
             aria-label="Chat history"
             align="end"
             sideOffset={6}
-            className="z-50 flex max-h-96 w-80 max-w-full flex-col overflow-hidden rounded-xl border border-line bg-panel p-2 text-foreground shadow-lg"
+            className="z-50 flex max-h-[min(24rem,var(--radix-popover-content-available-height))] w-80 max-w-[calc(100vw-16px)] flex-col overflow-hidden rounded-xl border border-line bg-panel p-2 text-foreground shadow-lg"
           >
-            <label className="mb-2 flex items-center gap-2 rounded-lg border border-line bg-bg px-2.5 py-1.5 text-muted focus-within:border-foreground/30">
+            <label className="mb-2 flex items-center gap-2 rounded-lg border border-line bg-bg px-2.5 py-1.5 text-muted focus-within:border-foreground/30 pointer-coarse:min-h-11">
               <Search className="size-3.5 shrink-0" aria-hidden="true" />
               <input
                 type="search"
@@ -194,7 +195,7 @@ export function ChatHeader({
                         return (
                           <div
                             key={thread.id}
-                            className={`group/row flex items-center gap-1 rounded-lg px-2 py-1.5 transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none ${
+                            className={`group/row flex items-center gap-1 rounded-lg px-2 py-1.5 pointer-coarse:min-h-11 pointer-coarse:py-0 transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none ${
                               isSelected ? "bg-subtle" : ""
                             }`}
                           >
@@ -224,7 +225,7 @@ export function ChatHeader({
                                 <button
                                   type="submit"
                                   aria-label="Save title"
-                                  className="inline-flex size-6 items-center justify-center rounded text-muted hover:bg-panel hover:text-foreground"
+                                  className="inline-flex size-6 pointer-coarse:size-11 items-center justify-center rounded text-muted hover:bg-panel hover:text-foreground"
                                 >
                                   <Check
                                     className="size-3.5"
@@ -235,7 +236,7 @@ export function ChatHeader({
                                   type="button"
                                   aria-label="Cancel rename"
                                   onClick={() => setEditingId(null)}
-                                  className="inline-flex size-6 items-center justify-center rounded text-muted hover:bg-panel hover:text-foreground"
+                                  className="inline-flex size-6 pointer-coarse:size-11 items-center justify-center rounded text-muted hover:bg-panel hover:text-foreground"
                                 >
                                   <X className="size-3.5" aria-hidden="true" />
                                 </button>
@@ -248,7 +249,7 @@ export function ChatHeader({
                                     onSelectThread(thread.id);
                                     setOpen(false);
                                   }}
-                                  className="min-w-0 flex-1 truncate bg-transparent p-0 text-left text-sm text-foreground focus-visible:outline-2 focus-visible:outline-accent"
+                                  className="min-w-0 flex-1 truncate bg-transparent p-0 text-left text-sm text-foreground pointer-coarse:self-stretch focus-visible:outline-2 focus-visible:outline-accent"
                                   title={thread.title}
                                 >
                                   {thread.title}
@@ -262,7 +263,7 @@ export function ChatHeader({
                                       setEditingId(thread.id);
                                       setDraftTitle(thread.title);
                                     }}
-                                    className="inline-flex size-6 items-center justify-center rounded text-muted transition-colors duration-150 ease-out hover:bg-panel hover:text-foreground hover:transition-none"
+                                    className="inline-flex size-6 pointer-coarse:size-11 items-center justify-center rounded text-muted transition-colors duration-150 ease-out hover:bg-panel hover:text-foreground hover:transition-none"
                                   >
                                     <Pencil
                                       className="size-3"
@@ -274,7 +275,7 @@ export function ChatHeader({
                                     aria-label={`Delete ${thread.title}`}
                                     title="Delete"
                                     onClick={() => void handleDelete(thread)}
-                                    className="inline-flex size-6 items-center justify-center rounded text-muted transition-colors duration-150 ease-out hover:bg-panel hover:text-danger hover:transition-none"
+                                    className="inline-flex size-6 pointer-coarse:size-11 items-center justify-center rounded text-muted transition-colors duration-150 ease-out hover:bg-panel hover:text-danger hover:transition-none"
                                   >
                                     <Trash2
                                       className="size-3"
@@ -301,6 +302,7 @@ export function ChatHeader({
             setOpen(false);
             onNewChat();
           }}
+          aria-label="New chat"
           className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-sm text-muted transition-colors duration-150 ease-out hover:bg-subtle hover:text-foreground hover:transition-none focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11 shell-phone:min-w-11"
         >
           <SquarePen className="size-4" aria-hidden="true" />

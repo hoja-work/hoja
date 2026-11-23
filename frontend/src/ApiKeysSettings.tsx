@@ -349,7 +349,7 @@ export function ApiKeysSettings() {
         </div>
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 items-center flex-wrap justify-between mb-3.75 [@media_(max-width:_700px)]:items-stretch [@media_(max-width:_700px)]:flex-col">
           <input
-            className="w-full border border-line text-base sm:text-sm shell-phone:min-h-11 pointer-coarse:min-h-11 min-w-0 max-w-85 min-h-9 pt-1.5 pr-2 pb-1.5 pl-2 border-solid rounded-lg bg-(--settings-card) text-foreground flex-[1_1_220px] h-10.5 [@media_(max-width:_700px)]:max-w-none"
+            className="w-full border border-line text-base sm:text-sm shell-phone:min-h-11 pointer-coarse:min-h-11 min-w-0 max-w-85 min-h-9 pt-1.5 pr-2 pb-1.5 pl-2 border-solid rounded-lg bg-(--settings-card) text-foreground flex-[1_1_220px] h-10.5 [@media_(max-width:_700px)]:max-w-none [@media_(max-width:_700px)]:flex-none"
             type="search"
             aria-label="Search API keys"
             placeholder="Search by name or key ending"

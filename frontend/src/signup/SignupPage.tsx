@@ -435,7 +435,7 @@ export function SignupPage() {
                     href={entry.signInUrl}
                   >
                     <span className="grid gap-1 min-w-0">
-                      <span className="font-semibold truncate">
+                      <span className="font-semibold truncate max-sm:whitespace-normal max-sm:wrap-anywhere">
                         Open {entry.name}
                       </span>
                       <span className="text-sm text-neutral-300 truncate">
@@ -520,20 +520,20 @@ export function SignupPage() {
                 </p>
               )}
               <p
-                className="max-w-md mt-2 mx-auto mb-8 text-[#666] text-[12.8px] tracking-[-0.01em] leading-[1.45]"
+                className="max-w-md mt-2 mx-auto mb-8 text-[#666] text-[12.8px] tracking-[-0.01em] leading-[1.45] pointer-coarse:leading-[1.9]"
                 data-fidelity-state="signin-legal"
               >
                 By continuing you agree to the{" "}
                 <a
                   href="https://hoja.work/terms"
-                  className="text-[#242424] underline underline-offset-2"
+                  className="text-[#242424] underline underline-offset-2 pointer-coarse:py-2.5"
                 >
                   Hoja terms
                 </a>{" "}
                 and{" "}
                 <a
                   href="https://hoja.work/privacy"
-                  className="text-[#242424] underline underline-offset-2"
+                  className="text-[#242424] underline underline-offset-2 pointer-coarse:py-2.5"
                 >
                   Privacy Policy
                 </a>
@@ -546,7 +546,7 @@ export function SignupPage() {
                 data-fidelity-state="signin-providers"
               >
                 <a
-                  className="flex items-center justify-center w-full py-2 px-3 border border-solid border-[#d8d6d4] rounded-sm bg-white shadow-[0_2px_4px_rgba(0,0,0,0.05)] text-[#242424] font-[inherit] text-[16px] font-normal leading-[inherit] no-underline cursor-pointer appearance-none transition-[color,border-color,background-color,box-shadow] duration-200 ease-[ease] [&:hover]:border-[#a9a8a6] [&:hover]:shadow-[0_1px_2px_rgba(0,0,0,0.08)]"
+                  className="flex items-center justify-center w-full py-2 px-3 shell-phone:min-h-11 pointer-coarse:min-h-11 border border-solid border-[#d8d6d4] rounded-sm bg-white shadow-[0_2px_4px_rgba(0,0,0,0.05)] text-[#242424] font-[inherit] text-[16px] font-normal leading-[inherit] no-underline cursor-pointer appearance-none transition-[color,border-color,background-color,box-shadow] duration-200 ease-[ease] [&:hover]:border-[#a9a8a6] [&:hover]:shadow-[0_1px_2px_rgba(0,0,0,0.08)]"
                   data-fidelity-state="signin-provider"
                   href={config.signInUrl ?? undefined}
                 >
@@ -560,7 +560,7 @@ export function SignupPage() {
                 Already have a workspace?{" "}
                 <a
                   href={config.loginUrl || "/signin"}
-                  className="font-medium text-[#242424] underline underline-offset-2"
+                  className="font-medium text-[#242424] underline underline-offset-2 shell-phone:inline-flex shell-phone:min-h-11 shell-phone:min-w-11 shell-phone:items-center shell-phone:justify-center shell-phone:px-1 pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:items-center pointer-coarse:justify-center pointer-coarse:px-1"
                 >
                   Sign in
                 </a>
@@ -578,13 +578,15 @@ export function SignupPage() {
                 data-fidelity-state="signin-identity"
               >
                 Signed in as{" "}
-                <b className="text-[#242424] font-semibold">
+                <b className="text-[#242424] font-semibold wrap-anywhere">
                   {session.email || "your Google account"}
                 </b>{" "}
-                ·{" "}
+                <span className="shell-phone:hidden pointer-coarse:hidden">
+                  ·{" "}
+                </span>
                 <button
                   type="button"
-                  className="p-0 border-0 [background:none] text-[#666] font-[inherit] text-[12.8px] underline underline-offset-[0.1em] cursor-pointer [&:hover]:text-[#242424] shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                  className="p-0 border-0 [background:none] text-[#666] font-[inherit] text-[12.8px] underline underline-offset-[0.1em] cursor-pointer [&:hover]:text-[#242424] shell-phone:mx-auto shell-phone:block pointer-coarse:mx-auto pointer-coarse:block shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
                   data-fidelity-state="signin-link"
                   onClick={signOut}
                 >
@@ -716,7 +718,7 @@ export function SignupPage() {
             (request.signInUrl || request.workspaceUrl) ? (
               <p className="mt-0 mx-0 mb-2 text-[#666] text-[12.8px] leading-[1.45] last:mb-0">
                 <a
-                  className="inline-flex items-center min-h-9 py-0 px-3 border border-solid border-[#242424] rounded-sm bg-[#242424] text-white text-[12.8px] font-medium no-underline [&:hover]:bg-black"
+                  className="inline-flex items-center min-h-9 shell-phone:min-h-11 pointer-coarse:min-h-11 py-0 shell-phone:py-2.5 pointer-coarse:py-2.5 wrap-anywhere px-3 border border-solid border-[#242424] rounded-sm bg-[#242424] text-white text-[12.8px] font-medium no-underline [&:hover]:bg-black"
                   data-fidelity-state="signin-workspace-link"
                   href={request.signInUrl || request.workspaceUrl || undefined}
                 >

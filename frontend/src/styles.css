@@ -343,3 +343,6 @@ html.hoja-modal-open{overflow:hidden;scrollbar-gutter:stable}
 
 /* Meetings owns the full workspace height like the other feed surfaces: no app header on desktop. */
 @media(min-width:881px) and (min-height:501px),(min-width:1001px){.app{grid-template-columns:var(--sidebar-width,244px) minmax(0,1fr);grid-template-rows:minmax(100dvh,auto)}.app[data-sidebar-collapsed]{grid-template-columns:44px minmax(0,1fr)}.app:has([data-settings-sidebar]){grid-template-columns:var(--ds-settings-nav-width,244px) minmax(0,1fr)}}
+
+/* Phones: a popover never grows past the room Radix measured beside its trigger, whatever its own cap, so it can always scroll. */
+@media (max-width:880px),(max-width:1000px) and (max-height:500px){[data-radix-popper-content-wrapper] > [data-slot=popover-content]{max-height:var(--radix-popover-content-available-height);overflow-y:auto;overscroll-behavior:contain}}

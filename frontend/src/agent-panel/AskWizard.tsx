@@ -15,10 +15,13 @@ export function AskWizard({
   questions,
   onSubmit,
   disabled = false,
+  inline = false,
 }: {
   questions: AskQuestion[];
   onSubmit: (answer: string) => void;
   disabled?: boolean;
+  /** Rendered inside the conversation scroll (phones): no height cap, no scroller of its own. */
+  inline?: boolean;
 }) {
   const [step, setStep] = useState(0);
   const [answers, setAnswers] = useState<AskAnswer[]>(() =>
@@ -69,7 +72,9 @@ export function AskWizard({
 
   return (
     <form
-      className="mx-auto flex w-full max-w-3xl flex-col gap-3 overflow-y-auto rounded-2xl border border-line bg-panel p-4 shadow-sm max-h-96"
+      className={`mx-auto flex w-full max-w-3xl flex-col gap-3 rounded-2xl border border-line bg-panel p-4 shadow-sm ${
+        inline ? "" : "max-h-96 overflow-y-auto"
+      }`}
       aria-label="Agent question"
       data-ask-wizard=""
       onSubmit={(e) => {

@@ -96,11 +96,11 @@ export function ConnectMachine(props: {
   if (tailnet === null) return <CommandConnect {...props} />;
   const shown = tab ?? (tailnet.connected ? "tailscale" : "command");
   const tabClass = (on: boolean) =>
-    `inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium ${on ? "bg-panel text-foreground shadow-sm" : "text-muted hover:text-foreground"}`;
+    `inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium whitespace-nowrap pointer-coarse:min-h-11 shell-phone:flex-wrap shell-phone:justify-center shell-phone:gap-y-1 ${on ? "bg-panel text-foreground shadow-sm" : "text-muted hover:text-foreground"}`;
   return (
     <div className="flex flex-col gap-4" data-connect-tabs={shown}>
       <div
-        className="inline-flex w-fit gap-1 rounded-lg bg-subtle p-1"
+        className="inline-flex w-fit gap-1 rounded-lg bg-subtle p-1 shell-phone:grid shell-phone:w-full shell-phone:grid-cols-2"
         role="tablist"
       >
         <button
@@ -112,7 +112,7 @@ export function ConnectMachine(props: {
         >
           <Network size={14} aria-hidden="true" /> From Tailscale
           {!tailnet.connected && (
-            <span className="rounded-full bg-emerald-600 px-1.5 text-[10px] text-white">
+            <span className="rounded-full bg-emerald-600 px-1.5 text-[10px] text-white whitespace-nowrap">
               No terminal
             </span>
           )}

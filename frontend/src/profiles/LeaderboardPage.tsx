@@ -46,7 +46,8 @@ function RankBadge({ rank }: { rank: number }) {
 }
 
 function ShareBar({ value, max }: { value: number; max: number }) {
-  const pct = max > 0 ? Math.max(value > 0 ? 4 : 0, Math.round((value / max) * 100)) : 0;
+  const pct =
+    max > 0 ? Math.max(value > 0 ? 4 : 0, Math.round((value / max) * 100)) : 0;
   return (
     <div
       className="h-1.5 w-24 overflow-hidden rounded-full bg-subtle"
@@ -147,12 +148,12 @@ export function LeaderboardPage({
 
   return (
     <section
-      className="flex min-h-0 flex-1 flex-col overflow-hidden bg-bg text-foreground"
+      className="flex min-h-0 flex-1 flex-col overflow-hidden bg-bg text-foreground shell-phone:overflow-y-auto shell-phone:overscroll-contain"
       aria-label="Leaderboard"
       data-leaderboard-page=""
     >
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-panel px-5 py-3">
-        <div className="flex items-center gap-2">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-panel px-5 py-3 max-sm:px-4">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
           <Trophy size={16} className="text-muted" aria-hidden="true" />
           <h1 className="m-0 text-sm font-semibold text-foreground">
             Leaderboard
@@ -161,12 +162,12 @@ export function LeaderboardPage({
             Tokens, runtime, and shipped work
           </span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 max-sm:w-full">
           {viewerId && (
             <button
               type="button"
               onClick={() => onOpenMember(viewerId)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-panel px-3 py-1.5 text-xs font-medium text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line bg-panel px-3 py-1.5 text-xs font-medium text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-11"
             >
               My profile
             </button>
@@ -174,7 +175,7 @@ export function LeaderboardPage({
           <div
             role="group"
             aria-label="Time range"
-            className="inline-flex items-center gap-0.5 rounded-lg border border-line bg-bg p-0.5"
+            className="inline-flex items-center gap-0.5 rounded-lg border border-line bg-bg p-0.5 max-sm:flex-1"
           >
             {RANGES.map((r) => {
               const active = days === r.days;
@@ -184,7 +185,7 @@ export function LeaderboardPage({
                   type="button"
                   aria-pressed={active}
                   onClick={() => setDays(r.days)}
-                  className={`rounded-md px-2.5 py-1 text-xs font-medium focus-visible:outline-2 focus-visible:outline-accent ${
+                  className={`rounded-md px-2.5 py-1 text-xs font-medium focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-11 max-sm:flex-1 ${
                     active
                       ? "bg-panel text-foreground shadow-xs transition-colors duration-150 ease-out"
                       : "text-muted hover:text-foreground"
@@ -198,7 +199,7 @@ export function LeaderboardPage({
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+      <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6 shell-phone:flex-none shell-phone:overflow-visible">
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-5">
           {error && (
             <div
@@ -277,17 +278,14 @@ export function LeaderboardPage({
                 </div>
               </div>
 
-              <ActivityHeatmap
-                daily={data.daily}
-                title="Workspace activity"
-              />
+              <ActivityHeatmap daily={data.daily} title="Workspace activity" />
 
               <section className="flex flex-col overflow-hidden rounded-xl border border-line bg-panel">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3">
                   <div
                     role="tablist"
                     aria-label="Leaderboard categories"
-                    className="flex items-center gap-1"
+                    className="flex flex-wrap items-center gap-1"
                   >
                     {(
                       [
@@ -316,7 +314,7 @@ export function LeaderboardPage({
                           role="tab"
                           aria-selected={active}
                           onClick={() => setTab(id)}
-                          className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium focus-visible:outline-2 focus-visible:outline-accent ${
+                          className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-11 ${
                             active
                               ? "bg-subtle text-foreground transition-colors duration-150 ease-out"
                               : "text-muted hover:bg-subtle hover:text-foreground"
@@ -348,7 +346,7 @@ export function LeaderboardPage({
                           type="button"
                           aria-pressed={peopleSort === id}
                           onClick={() => setPeopleSort(id)}
-                          className={`rounded-md px-2 py-1 text-xs font-medium focus-visible:outline-2 focus-visible:outline-accent ${
+                          className={`rounded-md px-2 py-1 text-xs font-medium focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-11 pointer-coarse:px-3 ${
                             peopleSort === id
                               ? "bg-subtle text-foreground"
                               : "text-muted hover:text-foreground"
@@ -362,7 +360,10 @@ export function LeaderboardPage({
                 </div>
 
                 {tab === "people" && (
-                  <div className="divide-y divide-line" data-leaderboard-people="">
+                  <div
+                    className="divide-y divide-line"
+                    data-leaderboard-people=""
+                  >
                     {sortedPeople.length === 0 ? (
                       <p className="m-0 p-6 text-center text-sm text-muted">
                         No workspace members found.
@@ -380,7 +381,7 @@ export function LeaderboardPage({
                             key={person.userId}
                             type="button"
                             onClick={() => onOpenMember(person.userId)}
-                            className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent"
+                            className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-12"
                           >
                             <RankBadge rank={index + 1} />
                             <span
@@ -410,7 +411,8 @@ export function LeaderboardPage({
                               <span className="truncate text-xs text-muted">
                                 {person.completedTasks} shipped ·{" "}
                                 {person.openTasks} open · {person.activeDays}{" "}
-                                active {person.activeDays === 1 ? "day" : "days"}
+                                active{" "}
+                                {person.activeDays === 1 ? "day" : "days"}
                               </span>
                             </span>
                             <div className="hidden items-center gap-3 sm:flex">
@@ -433,7 +435,10 @@ export function LeaderboardPage({
                 )}
 
                 {tab === "tasks" && (
-                  <div className="divide-y divide-line" data-leaderboard-tasks="">
+                  <div
+                    className="divide-y divide-line"
+                    data-leaderboard-tasks=""
+                  >
                     {data.tasks.length === 0 ? (
                       <p className="m-0 p-6 text-center text-sm text-muted">
                         No tasks have recorded token usage in the last {days}{" "}
@@ -445,8 +450,10 @@ export function LeaderboardPage({
                         <button
                           key={task.issueId}
                           type="button"
-                          onClick={() => onOpenTask(task.identifier, task.title)}
-                          className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent"
+                          onClick={() =>
+                            onOpenTask(task.identifier, task.title)
+                          }
+                          className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-12"
                         >
                           <RankBadge rank={index + 1} />
                           <GraphStatusIcon
@@ -493,7 +500,10 @@ export function LeaderboardPage({
                 )}
 
                 {tab === "agents" && (
-                  <div className="divide-y divide-line" data-leaderboard-agents="">
+                  <div
+                    className="divide-y divide-line"
+                    data-leaderboard-agents=""
+                  >
                     {data.agents.length === 0 ? (
                       <p className="m-0 p-6 text-center text-sm text-muted">
                         No agent usage recorded in the last {days} days.
@@ -504,7 +514,7 @@ export function LeaderboardPage({
                           key={ag.agentUserId}
                           type="button"
                           onClick={() => onOpenMember(ag.agentUserId)}
-                          className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent"
+                          className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-12"
                         >
                           <RankBadge rank={index + 1} />
                           <span

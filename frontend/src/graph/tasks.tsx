@@ -1408,7 +1408,7 @@ function DecisionPanel({
             <button
               type="button"
               className={styleClasses(
-                "ml-auto [background:none] border-0 py-0.5 px-1 text-muted text-[12px] cursor-pointer [&:hover]:text-foreground",
+                "ml-auto [background:none] border-0 py-0.5 px-1 text-muted text-[12px] cursor-pointer [&:hover]:text-foreground pointer-coarse:min-h-11 pointer-coarse:px-3 pointer-coarse:-my-2.5 pointer-coarse:-mr-3",
               )}
               data-style-hooks={styleHooks(
                 "lin-decision-dismiss ml-auto [background:none] border-0 py-[2px] px-[4px] text-muted text-[12px] cursor-pointer [&:hover]:text-foreground",
@@ -1448,7 +1448,9 @@ function DecisionPanel({
             />
           ) : (
             <div
-              className={styleClasses("flex flex-wrap gap-2 mt-2.5")}
+              className={styleClasses(
+                "flex flex-wrap gap-2 mt-2.5 shell-phone:flex-col shell-phone:flex-nowrap shell-phone:items-stretch",
+              )}
               data-style-hooks={styleHooks(
                 "lin-decision-actions flex flex-wrap gap-[8px] mt-[10px]",
               )}
@@ -1475,7 +1477,7 @@ function DecisionPanel({
               ) : (
                 <form
                   className={styleClasses(
-                    "flex gap-2 flex-[1_1_320px] min-w-0 [&_input]:flex-1 [&_input]:min-w-0 [&_input]:py-2 [&_input]:px-2.5 [&_input]:border [&_input]:border-solid [&_input]:border-line [&_input]:rounded-[7px] [&_input]:bg-bg [&_input]:text-foreground [&_input]:text-[13px]",
+                    "flex gap-2 flex-[1_1_320px] shell-phone:flex-auto min-w-0 pointer-coarse:[&_input]:min-h-11 pointer-coarse:[&_button]:min-h-11 [&_input]:flex-1 [&_input]:min-w-0 [&_input]:py-2 [&_input]:px-2.5 [&_input]:border [&_input]:border-solid [&_input]:border-line [&_input]:rounded-[7px] [&_input]:bg-bg [&_input]:text-foreground [&_input]:text-[13px]",
                   )}
                   data-style-hooks={styleHooks(
                     "lin-decision-free flex gap-[8px] flex-[1_1_320px] min-w-0 [&_input]:flex-1 [&_input]:min-w-0 [&_input]:py-[8px] [&_input]:px-[10px] [&_input]:border [&_input]:border-solid [&_input]:border-line [&_input]:rounded-[7px] [&_input]:bg-bg [&_input]:text-foreground [&_input]:text-[13px]",
@@ -4212,7 +4214,7 @@ export function PropDropdown({
         <LinPopover
           onClose={() => setOpen(false)}
           className={styleClasses(
-            "absolute z-130 min-w-55 max-w-[320px] p-1.25 border border-solid border-line rounded-[9px] bg-panel shadow-[0_12px_40px_#1b1b1b1f] top-[calc(100%+4px)] left-0 min-w-57.5 max-h-80 overflow-y-auto",
+            "absolute z-130 min-w-55 max-w-[320px] p-1.25 border border-solid border-line rounded-[9px] bg-panel shadow-[0_12px_40px_#1b1b1b1f] top-[calc(100%+4px)] left-0 min-w-57.5 max-h-[min(20rem,var(--radix-popover-content-available-height))] overflow-y-auto",
           )}
           data-style-hooks={styleHooks(
             "lin-menu absolute z-130 min-w-[220px] max-w-[320px] p-[5px] border border-solid border-line rounded-[9px] bg-panel shadow-[0_12px_40px_#1b1b1b1f] lin-dd-panel absolute top-[calc(100%+4px)] left-0 z-130 min-w-[230px] max-h-[320px] overflow-y-auto",
@@ -4227,7 +4229,7 @@ export function PropDropdown({
               role="option"
               aria-selected={o.selected}
               className={styleClasses(
-                "flex items-center gap-2.25 w-full py-1.75 px-2.5 rounded-md bg-transparent text-[13px] text-foreground text-left [&:hover]:bg-subtle aria-selected:font-semibold",
+                "flex items-center gap-2.25 w-full py-1.75 px-2.5 rounded-md bg-transparent text-[13px] text-foreground text-left [&:hover]:bg-subtle aria-selected:font-semibold pointer-coarse:min-h-11",
               )}
               data-style-hooks={styleHooks(
                 "lin-dd-opt flex items-center gap-[9px] w-full py-[7px] px-[10px] rounded-[6px] bg-transparent text-[13px] text-foreground text-left [&:hover]:bg-subtle aria-selected:font-semibold",
@@ -4561,6 +4563,21 @@ type PendingComment = {
   known: Set<string>;
 };
 
+/** True below 900px, where DetailColumns stacks the properties under the main
+ * column. Mirrors that media query so the task's core properties can move up. */
+function useNarrowDetail() {
+  const query = "(max-width: 900px)";
+  const [narrow, setNarrow] = useState(() => window.matchMedia(query).matches);
+  useEffect(() => {
+    const m = window.matchMedia(query);
+    const on = () => setNarrow(m.matches);
+    on();
+    m.addEventListener("change", on);
+    return () => m.removeEventListener("change", on);
+  }, []);
+  return narrow;
+}
+
 export function GraphIssueDetail({
   workspaceName,
   viewer,
@@ -4606,6 +4623,7 @@ export function GraphIssueDetail({
   const [loadError, setLoadError] = useState("");
   const [retryTick, setRetryTick] = useState(0);
   const [moreOpen, setMoreOpen] = useState(false);
+  const narrow = useNarrowDetail();
   const [layers, setLayers] = useState<{ patch: Partial<LinIssue> }[]>([]);
   const [updateError, setUpdateError] = useState("");
   // Ids whose preview failed to load, so a dead URL degrades to an icon instead of
@@ -4669,6 +4687,7 @@ export function GraphIssueDetail({
     text: string;
   } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const composerFileRef = useRef<HTMLInputElement>(null);
   const titleFocused = useRef(false);
 
   const issueId = issue?.id;
@@ -5391,22 +5410,274 @@ export function GraphIssueDetail({
   const subsView = [...(entry?.subs || []), ...pendingSubs];
   const subsDone = subsView.filter((s) => s.state?.type === "completed").length;
 
+  // Status, priority, assignee, delegate, cycle, project (and SLA): the properties
+  // a phone user changes most. On a narrow screen they sit right under the title
+  // instead of at the very bottom of the stacked page.
+  const coreProps = (
+    <>
+      <PropDropdown
+        label="Status"
+        icon={<GraphStatusIcon state={detail.state} size={14} />}
+        value={
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 7,
+            }}
+          >
+            {detail.state?.name || "No status"}
+          </span>
+        }
+        onPick={(id) => {
+          if (id) void change({ stateId: id });
+        }}
+        options={states.map((s) => ({
+          id: s.id,
+          selected: s.id === detail.state?.id,
+          label: (
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              <GraphStatusIcon state={s} />
+              {s.name}
+            </span>
+          ),
+        }))}
+      />
+      <PropDropdown
+        label="Priority"
+        icon={<PriorityIcon priority={detail.priority} />}
+        value={
+          ["No priority", "Urgent", "High", "Medium", "Low"][
+            detail.priority || 0
+          ]
+        }
+        onPick={(id) => void change({ priority: Number(id) })}
+        options={[
+          [0, "No priority"],
+          [1, "Urgent"],
+          [2, "High"],
+          [3, "Medium"],
+          [4, "Low"],
+        ].map(([v, l]) => ({
+          id: String(v),
+          selected: (detail.priority || 0) === v,
+          label: (
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              <PriorityIcon priority={v as number} />
+              {l}
+            </span>
+          ),
+        }))}
+      />
+      <PropDropdown
+        label="Assignee"
+        icon={
+          <Avatar
+            name={detail.assignee?.name}
+            seed={detail.assignee?.avatarSeed}
+            size={16}
+          />
+        }
+        value={detail.assignee?.name || "Unassigned"}
+        onPick={(id) => void change({ assigneeId: id })}
+        options={[
+          {
+            id: null,
+            selected: !detail.assignee,
+            label: "Unassigned",
+            hint: "Unassigned",
+          },
+          ...members.map((m) => ({
+            id: m.id as string | null,
+            selected: m.id === detail.assignee?.id,
+            hint: m.name || m.email || undefined,
+            label: (
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                }}
+              >
+                <Avatar name={m.name} seed={m.avatarSeed} size={18} />
+                {m.name || m.email}
+              </span>
+            ),
+          })),
+        ]}
+      />
+      {/* The agent this task is delegated to — `issue.delegate_id` (WP04), separate from the
+        assignee: the assignee is the person accountable, the delegate is the agent that runs
+        it. Same control, same row height and same keyboard behaviour as the Assignee row. */}
+      <PropDropdown
+        label="Delegate"
+        icon={<Bot size={14} />}
+        value={detail.delegate?.name || "No delegate"}
+        onOpen={loadAgentChoices}
+        onPick={(id) => void change({ delegateId: id })}
+        options={[
+          {
+            id: null,
+            selected: !detail.delegate,
+            label: "No delegate",
+            hint: "Nothing is delegated",
+          },
+          ...(agentChoices || []).map((a) => ({
+            id: a.id as string | null,
+            selected: a.id === detail.delegate?.id,
+            hint: a.name,
+            label: (
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                }}
+              >
+                <Bot size={14} aria-hidden="true" />
+                {a.name}
+              </span>
+            ),
+          })),
+        ]}
+        footer={
+          agentChoicesError ? (
+            <p
+              className={styleClasses("text-[12px] text-muted")}
+              data-style-hooks={styleHooks("lin-note text-[12px] text-muted")}
+              role="alert"
+              style={{ padding: "8px 10px" }}
+            >
+              {agentChoicesError}
+            </p>
+          ) : agentChoicesLoading || !agentChoices ? (
+            <p
+              className={styleClasses("text-[12px] text-muted")}
+              data-style-hooks={styleHooks("lin-note text-[12px] text-muted")}
+              style={{ padding: "8px 10px" }}
+              role="status"
+            >
+              Loading agents…
+            </p>
+          ) : !agentChoices.length ? (
+            <p
+              className={styleClasses("text-[12px] text-muted")}
+              data-style-hooks={styleHooks("lin-note text-[12px] text-muted")}
+              style={{ padding: "8px 10px" }}
+            >
+              This workspace has no active agent member to delegate to.
+            </p>
+          ) : undefined
+        }
+      />
+      <PropDropdown
+        label="Cycle"
+        icon={<CycleGlyph />}
+        value={
+          detail.cycle
+            ? detail.cycle.name || `Cycle ${detail.cycle.number}`
+            : "No cycle"
+        }
+        onPick={(id) => void change({ cycleId: id })}
+        options={[
+          { id: null, selected: !detail.cycle, label: "No cycle" },
+          ...teamCycles.map((c) => ({
+            id: c.id as string | null,
+            selected: c.id === detail.cycle?.id,
+            label: c.name || `Cycle ${c.number}`,
+          })),
+        ]}
+      />
+      <PropDropdown
+        label="Project"
+        icon={
+          <svg
+            width="13"
+            height="13"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+          >
+            <path
+              d="M8 1.8l5.6 3.2v6.4L8 14.6l-5.6-3.2V5L8 1.8Z"
+              strokeLinejoin="round"
+            />
+          </svg>
+        }
+        value={detail.project?.name || "No project"}
+        onPick={(id) => void change({ projectId: id })}
+        options={[
+          { id: null, selected: !detail.project, label: "No project" },
+          ...projects.map((p) => ({
+            id: p.id as string | null,
+            selected: p.id === detail.project?.id,
+            label: p.name,
+          })),
+        ]}
+      />
+      {detail.sla && (
+        <PropStatic
+          label="SLA"
+          icon={
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+            >
+              <circle cx="8" cy="8.6" r="5.4" />
+              <path d="M8 5.8v3l2 1.3M5.6 2.2h4.8" strokeLinecap="round" />
+            </svg>
+          }
+          value={
+            <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+              <SlaChip sla={detail.sla} />
+              <span className="min-w-0 truncate text-muted">
+                {slaClockSummary(detail.sla)}
+              </span>
+            </span>
+          }
+        />
+      )}
+    </>
+  );
+
   return (
     <DetailPage
       label={`${detail.identifier}: ${detail.title}`}
       surface="issue-detail"
+      // A landscape phone has ~270px under the app bar: the header scrolls away with
+      // the page there instead of pinning another 51px.
+      className="[@media_(max-width:1000px)_and_(max-height:500px)]:overflow-y-auto [@media_(max-width:1000px)_and_(max-height:500px)]:overscroll-contain [@media_(max-width:1000px)_and_(max-height:500px)]:[&_[data-style-hooks~='lin-detail']]:flex-none [@media_(max-width:1000px)_and_(max-height:500px)]:[&_[data-style-hooks~='lin-detail']]:overflow-visible"
     >
       <DetailHeader
         crumbs={
           <>
-            <Crumb onClick={onBack}>← {backLabel}</Crumb>
-            <CrumbSep />
-            <span>{workspaceName}</span>
-            <CrumbSep />
+            <Crumb onClick={onBack}>
+              ← <span className="shell-phone:sr-only">{backLabel}</span>
+            </Crumb>
+            <CrumbSep className="shell-phone:hidden" />
+            <span className="shell-phone:hidden">{workspaceName}</span>
+            <CrumbSep className="shell-phone:hidden" />
             {detail.parent && (
               <>
                 <Crumb
-                  className="lin-crumb-parent"
+                  className="lin-crumb-parent shell-phone:hidden!"
                   data-parent-path={detail.parent.identifier}
                   title={`Parent: ${detail.parent.identifier} ${detail.parent.title}`}
                   onClick={() =>
@@ -5418,7 +5689,7 @@ export function GraphIssueDetail({
                 >
                   {detail.parent.identifier}
                 </Crumb>
-                <CrumbSep />
+                <CrumbSep className="shell-phone:hidden" />
               </>
             )}
             <CrumbCurrent title={detail.identifier}>
@@ -5441,12 +5712,24 @@ export function GraphIssueDetail({
                 <LinMenu
                   onClose={() => setMoreOpen(false)}
                   className={styleClasses(
-                    "absolute top-[calc(100%+4px)] left-0 z-130 min-w-57.5 max-h-80 overflow-y-auto data-[style-hooks~='lin-dd-panel']:right-0 data-[style-hooks~='lin-dd-panel']:left-auto",
+                    "absolute top-[calc(100%+4px)] left-0 z-130 min-w-57.5 max-h-80 overflow-y-auto data-[style-hooks~='lin-dd-panel']:right-0 data-[style-hooks~='lin-dd-panel']:left-auto pointer-coarse:max-h-[min(400px,calc(100dvh-140px))] pointer-coarse:[&_[role=menuitem]]:min-h-11",
                   )}
                   data-style-hooks={styleHooks(
                     "lin-dd-panel absolute top-[calc(100%+4px)] left-0 z-130 min-w-[230px] max-h-[320px] overflow-y-auto lin-dd-right data-[style-hooks~='lin-dd-panel']:right-0 data-[style-hooks~='lin-dd-panel']:left-auto",
                   )}
                   items={[
+                    {
+                      key: "link",
+                      label: "Copy link",
+                      icon: <Link2 size={14} />,
+                      onSelect: () => void copyText(window.location.href),
+                    },
+                    {
+                      key: "duplicate",
+                      label: "Create copy of task",
+                      icon: <Copy size={14} />,
+                      onSelect: () => void copyIssue(),
+                    },
                     {
                       key: "copy",
                       label: "Copy as prompt",
@@ -5492,7 +5775,7 @@ export function GraphIssueDetail({
               <>
                 <span
                   className={styleClasses(
-                    "text-[12px] text-muted my-0 mx-1 whitespace-nowrap",
+                    "text-[12px] text-muted my-0 mx-1 whitespace-nowrap shell-phone:hidden",
                   )}
                   data-style-hooks={styleHooks(
                     "lin-nav-count text-[12px] text-muted my-0 mx-[4px] whitespace-nowrap",
@@ -5560,6 +5843,7 @@ export function GraphIssueDetail({
 
       <DetailColumns
         data-issue-content=""
+        toolbarOnPhone={false}
         toolbar={
           <>
             <IconBtn
@@ -5601,6 +5885,25 @@ export function GraphIssueDetail({
         }
         main={
           <>
+            {detail.parent && (
+              // A phone's header has no room for the parent crumb: it moves here.
+              <button
+                type="button"
+                className="hidden shell-phone:flex items-center gap-1.5 max-w-full min-h-11 -mt-2 mb-1 p-0 border-0 bg-transparent text-[13px] text-muted text-left cursor-pointer hover:text-foreground"
+                onClick={() =>
+                  onOpenIssue({
+                    ...(detail.parent as LinIssue),
+                    id: detail.parent!.id,
+                  })
+                }
+              >
+                <span className="flex-none">Sub-task of</span>
+                <span className="flex-none font-semibold">
+                  {detail.parent.identifier}
+                </span>
+                <span className="min-w-0 truncate">{detail.parent.title}</span>
+              </button>
+            )}
             <DetailTitle
               value={title}
               onFocusChange={(focused) => {
@@ -5661,6 +5964,11 @@ export function GraphIssueDetail({
                 </button>
               </DetailNotice>
             )}
+            {narrow && (
+              <PropertiesPanel inline title={null}>
+                {coreProps}
+              </PropertiesPanel>
+            )}
             <DecisionPanel
               decisions={detail.decisions || []}
               onAnswer={answerOne}
@@ -5687,13 +5995,15 @@ export function GraphIssueDetail({
               }
               actions={
                 <>
-                  <IconBtn
-                    label="Sub-task display settings"
-                    title="Sub-task display options are not available yet"
-                    disabled
-                  >
-                    <SlidersHorizontal size={14} />
-                  </IconBtn>
+                  <span className="contents shell-phone:hidden">
+                    <IconBtn
+                      label="Sub-task display settings"
+                      title="Sub-task display options are not available yet"
+                      disabled
+                    >
+                      <SlidersHorizontal size={14} />
+                    </IconBtn>
+                  </span>
                   <IconBtn
                     label="Add sub-task"
                     title="Add sub-task"
@@ -5707,6 +6017,7 @@ export function GraphIssueDetail({
               {addingSub && (
                 <div style={{ display: "flex", gap: 8, margin: "4px 0 8px" }}>
                   <input
+                    className="min-w-0 pointer-coarse:min-h-11"
                     placeholder="Sub-task title…"
                     value={newSubTitle}
                     onChange={(e) => setNewSubTitle(e.target.value)}
@@ -5724,7 +6035,7 @@ export function GraphIssueDetail({
                   <button
                     type="button"
                     className={styleClasses(
-                      "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333]",
+                      "pointer-coarse:min-h-11 inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333]",
                     )}
                     data-style-hooks={styleHooks(
                       "lin-btn inline-flex items-center gap-[8px] border border-solid border-line bg-panel text-foreground rounded-[7px] py-[8px] px-[14px] text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default primary data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333]",
@@ -5741,7 +6052,7 @@ export function GraphIssueDetail({
                   key={s.id}
                   className={styleClasses(
                     cx(
-                      "relative flex items-center gap-2.5 py-1.75 pr-2 pl-7 rounded-[7px] font-[inherit] text-[13px] w-full [background:none] border-0 text-left text-foreground cursor-pointer [&:hover]:bg-subtle",
+                      "relative flex items-center gap-2.5 py-1.75 pr-2 pl-7 rounded-[7px] font-[inherit] text-[13px] w-full [background:none] border-0 text-left text-foreground cursor-pointer [&:hover]:bg-subtle pointer-coarse:min-h-11 shell-phone:[&_[data-style-hooks~='lin-icon-btn']]:hidden",
                       s.state?.type === "completed" && "",
                       isLocalIssueId(s.id) &&
                         "data-[style-hooks~='lin-subrow']:opacity-62 data-[style-hooks~='lin-comment']:opacity-62 [[data-style-hooks~='lin-comment']&_>_header_time]:italic",
@@ -5782,7 +6093,7 @@ export function GraphIssueDetail({
                   <StateGlyph state={s.state} size={15} />
                   <span
                     className={styleClasses(
-                      "in-data-[style-hooks~='lin-row']:font-semibold in-data-[style-hooks~='lin-row']:whitespace-nowrap in-data-[style-hooks~='lin-row']:text-foreground [[data-style-hooks~='lin-bcard']_[data-style-hooks~='top']_&]:font-[450] [[data-style-hooks~='lin-bcard']_[data-style-hooks~='top']_&]:text-muted",
+                      "in-data-[style-hooks~='lin-row']:font-semibold in-data-[style-hooks~='lin-row']:whitespace-nowrap in-data-[style-hooks~='lin-row']:text-foreground [[data-style-hooks~='lin-bcard']_[data-style-hooks~='top']_&]:font-[450] [[data-style-hooks~='lin-bcard']_[data-style-hooks~='top']_&]:text-muted shell-phone:hidden",
                     )}
                     data-style-hooks={styleHooks(
                       "ident in-data-[style-hooks~='lin-row']:font-semibold in-data-[style-hooks~='lin-row']:whitespace-nowrap in-data-[style-hooks~='lin-row']:text-foreground [[data-style-hooks~='lin-bcard']_[data-style-hooks~='top']_&]:font-[450] [[data-style-hooks~='lin-bcard']_[data-style-hooks~='top']_&]:text-muted",
@@ -5793,7 +6104,7 @@ export function GraphIssueDetail({
                   <button
                     type="button"
                     className={styleClasses(
-                      "in-data-[style-hooks~='lin-subrow']:flex-1 in-data-[style-hooks~='lin-subrow']:min-w-0 in-data-[style-hooks~='lin-subrow']:overflow-hidden in-data-[style-hooks~='lin-subrow']:text-ellipsis in-data-[style-hooks~='lin-subrow']:whitespace-nowrap [[data-style-hooks~='lin-subrow'][data-style-hooks~='done']_&]:line-through [[data-style-hooks~='lin-subrow'][data-style-hooks~='done']_&]:text-muted",
+                      "in-data-[style-hooks~='lin-subrow']:flex-1 in-data-[style-hooks~='lin-subrow']:min-w-0 in-data-[style-hooks~='lin-subrow']:overflow-hidden in-data-[style-hooks~='lin-subrow']:text-ellipsis in-data-[style-hooks~='lin-subrow']:whitespace-nowrap [[data-style-hooks~='lin-subrow'][data-style-hooks~='done']_&]:line-through [[data-style-hooks~='lin-subrow'][data-style-hooks~='done']_&]:text-muted pointer-coarse:min-h-11",
                     )}
                     data-style-hooks={styleHooks(
                       "t in-data-[style-hooks~='lin-subrow']:flex-1 in-data-[style-hooks~='lin-subrow']:min-w-0 in-data-[style-hooks~='lin-subrow']:overflow-hidden in-data-[style-hooks~='lin-subrow']:text-ellipsis in-data-[style-hooks~='lin-subrow']:whitespace-nowrap [[data-style-hooks~='lin-subrow'][data-style-hooks~='done']_&]:line-through [[data-style-hooks~='lin-subrow'][data-style-hooks~='done']_&]:text-muted",
@@ -5806,9 +6117,16 @@ export function GraphIssueDetail({
                       <span className="truncate">{s.title}</span>
                       {s.description ? (
                         <span className="truncate text-[11px] font-normal text-muted">
+                          <span className="hidden shell-phone:inline">
+                            {s.identifier} ·{" "}
+                          </span>
                           {s.description.split("\n")[0].slice(0, 96)}
                         </span>
-                      ) : null}
+                      ) : (
+                        <span className="hidden truncate text-[11px] font-normal text-muted shell-phone:block">
+                          {s.identifier}
+                        </span>
+                      )}
                     </span>
                   </button>
                   {s.labels?.nodes.map((l) => (
@@ -5878,7 +6196,7 @@ export function GraphIssueDetail({
                       <LinPopover
                         onClose={() => setAttachMenu(false)}
                         className={styleClasses(
-                          "absolute z-130 border border-solid border-line rounded-[10px] bg-panel shadow-[0_12px_40px_#1b1b1b1f]",
+                          "absolute z-130 border border-solid border-line rounded-[10px] bg-panel shadow-[0_12px_40px_#1b1b1b1f] max-w-[calc(100vw-2rem)] max-h-(--radix-popover-content-available-height) overflow-y-auto pointer-coarse:[&_input]:min-h-11 pointer-coarse:[&_button]:min-h-11 shell-phone:[&_button:first-child]:flex-1 shell-phone:[&_button:first-child]:justify-center",
                         )}
                         data-style-hooks={styleHooks(
                           "lin-popover absolute z-130 border border-solid border-line rounded-[10px] bg-panel shadow-[0_12px_40px_#1b1b1b1f]",
@@ -5982,7 +6300,7 @@ export function GraphIssueDetail({
                     <div
                       key={a.id}
                       className={styleClasses(
-                        "flex items-center gap-2.5 border border-solid border-line rounded-lg py-2 px-3 text-[13px] [&_a]:text-foreground [&_a]:font-[550] [&_a]:overflow-hidden [&_a]:text-ellipsis [&_a]:whitespace-nowrap [&_small]:text-muted",
+                        "flex items-center gap-2.5 border border-solid border-line rounded-lg py-2 px-3 text-[13px] [&_a]:text-foreground [&_a]:font-[550] [&_a]:overflow-hidden [&_a]:text-ellipsis [&_a]:whitespace-nowrap [&_small]:text-muted pointer-coarse:py-0 pointer-coarse:min-h-11 pointer-coarse:[&_a]:py-3.5 pointer-coarse:[&>button]:py-3.5",
                       )}
                       data-style-hooks={styleHooks(
                         "lin-attach flex items-center gap-[10px] border border-solid border-line rounded-[8px] py-[8px] px-[12px] text-[13px] [&_a]:text-foreground [&_a]:font-[550] [&_a]:overflow-hidden [&_a]:text-ellipsis [&_a]:whitespace-nowrap [&_small]:text-muted",
@@ -6041,7 +6359,10 @@ export function GraphIssueDetail({
                         </a>
                       )}
                       {a.subtitle && <small>{a.subtitle}</small>}
-                      <small style={{ marginLeft: "auto" }}>
+                      <small
+                        className="flex-none whitespace-nowrap"
+                        style={{ marginLeft: "auto" }}
+                      >
                         {relTime(a.createdAt)}
                       </small>
                     </div>
@@ -6155,7 +6476,10 @@ export function GraphIssueDetail({
                             {l.title || l.externalId}
                           </a>
                           {detailText && <small>{detailText}</small>}
-                          <small style={{ marginLeft: "auto" }}>
+                          <small
+                            className="flex-none whitespace-nowrap"
+                            style={{ marginLeft: "auto" }}
+                          >
                             {relTime(l.createdAt)}
                           </small>
                         </div>
@@ -6312,7 +6636,7 @@ export function GraphIssueDetail({
                         <button
                           type="button"
                           className={styleClasses(
-                            "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default",
+                            "pointer-coarse:min-h-11 inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default",
                           )}
                           data-style-hooks={styleHooks(
                             "lin-btn inline-flex items-center gap-[8px] border border-solid border-line bg-panel text-foreground rounded-[7px] py-[8px] px-[14px] text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default",
@@ -6324,7 +6648,7 @@ export function GraphIssueDetail({
                         <button
                           type="submit"
                           className={styleClasses(
-                            "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333]",
+                            "pointer-coarse:min-h-11 inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333]",
                           )}
                           data-style-hooks={styleHooks(
                             "lin-btn inline-flex items-center gap-[8px] border border-solid border-line bg-panel text-foreground rounded-[7px] py-[8px] px-[14px] text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default primary data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333]",
@@ -6344,7 +6668,7 @@ export function GraphIssueDetail({
                         <button
                           type="button"
                           className={styleClasses(
-                            "inline-flex items-center gap-2 [background:none] border-0 text-muted text-[13px] py-1.25 px-1.5 rounded-md [&:hover]:bg-subtle [&:hover]:text-foreground in-data-[style-hooks~='lin-comment']:mt-2",
+                            "inline-flex items-center gap-2 [background:none] border-0 text-muted text-[13px] py-1.25 px-1.5 rounded-md [&:hover]:bg-subtle [&:hover]:text-foreground in-data-[style-hooks~='lin-comment']:mt-2 pointer-coarse:min-h-11 pointer-coarse:in-data-[style-hooks~='lin-comment']:mt-0 pointer-coarse:-mb-2.5",
                           )}
                           data-style-hooks={styleHooks(
                             "lin-addrow inline-flex items-center gap-[8px] [background:none] border-0 text-muted text-[13px] py-[5px] px-[6px] rounded-[6px] [&:hover]:bg-subtle [&:hover]:text-foreground del in-data-[style-hooks~='lin-comment']:mt-[8px]",
@@ -6358,7 +6682,7 @@ export function GraphIssueDetail({
                         <button
                           type="button"
                           className={styleClasses(
-                            "inline-flex items-center gap-2 [background:none] border-0 text-muted text-[13px] py-1.25 px-1.5 rounded-md [&:hover]:bg-subtle [&:hover]:text-foreground in-data-[style-hooks~='lin-comment']:mt-2",
+                            "inline-flex items-center gap-2 [background:none] border-0 text-muted text-[13px] py-1.25 px-1.5 rounded-md [&:hover]:bg-subtle [&:hover]:text-foreground in-data-[style-hooks~='lin-comment']:mt-2 pointer-coarse:min-h-11 pointer-coarse:in-data-[style-hooks~='lin-comment']:mt-0 pointer-coarse:-mb-2.5",
                           )}
                           data-style-hooks={styleHooks(
                             "lin-addrow inline-flex items-center gap-[8px] [background:none] border-0 text-muted text-[13px] py-[5px] px-[6px] rounded-[6px] [&:hover]:bg-subtle [&:hover]:text-foreground del in-data-[style-hooks~='lin-comment']:mt-[8px]",
@@ -6453,8 +6777,13 @@ export function GraphIssueDetail({
                         "lin-icon-btn grid place-items-center w-[28px] h-[28px] rounded-[6px] bg-transparent text-muted border border-solid border-transparent relative [&:hover]:bg-subtle [&:hover]:text-foreground disabled:opacity-40 disabled:cursor-default",
                       )}
                       aria-label="Attach a file"
+                      disabled={uploading}
                       onClick={() => {
-                        setAttachMenu(true);
+                        /* Opens the file picker in place. The attach panel hangs off the
+                         * Attachments header, which a long thread pushes far above the
+                         * composer, so opening it from here jumped the page away from the
+                         * comment being written. Links are attached from that header. */
+                        composerFileRef.current?.click();
                       }}
                     >
                       <svg
@@ -6472,6 +6801,17 @@ export function GraphIssueDetail({
                       </svg>
                     </button>
                   </Tip>
+                  <input
+                    ref={composerFileRef}
+                    type="file"
+                    hidden
+                    accept="image/*,video/*,.pdf,.txt,.md,.markdown,.csv,.tsv,.json,.rtf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.odt,.ods,.odp"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) void doUpload(f);
+                      e.target.value = "";
+                    }}
+                  />
                   <button
                     type="submit"
                     className={styleClasses(
@@ -6518,255 +6858,8 @@ export function GraphIssueDetail({
           </>
         }
         aside={
-          <PropertiesPanel>
-            <PropDropdown
-              label="Status"
-              icon={<GraphStatusIcon state={detail.state} size={14} />}
-              value={
-                <span
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 7,
-                  }}
-                >
-                  {detail.state?.name || "No status"}
-                </span>
-              }
-              onPick={(id) => {
-                if (id) void change({ stateId: id });
-              }}
-              options={states.map((s) => ({
-                id: s.id,
-                selected: s.id === detail.state?.id,
-                label: (
-                  <span
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 8,
-                    }}
-                  >
-                    <GraphStatusIcon state={s} />
-                    {s.name}
-                  </span>
-                ),
-              }))}
-            />
-            <PropDropdown
-              label="Priority"
-              icon={<PriorityIcon priority={detail.priority} />}
-              value={
-                ["No priority", "Urgent", "High", "Medium", "Low"][
-                  detail.priority || 0
-                ]
-              }
-              onPick={(id) => void change({ priority: Number(id) })}
-              options={[
-                [0, "No priority"],
-                [1, "Urgent"],
-                [2, "High"],
-                [3, "Medium"],
-                [4, "Low"],
-              ].map(([v, l]) => ({
-                id: String(v),
-                selected: (detail.priority || 0) === v,
-                label: (
-                  <span
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 8,
-                    }}
-                  >
-                    <PriorityIcon priority={v as number} />
-                    {l}
-                  </span>
-                ),
-              }))}
-            />
-            <PropDropdown
-              label="Assignee"
-              icon={
-                <Avatar
-                  name={detail.assignee?.name}
-                  seed={detail.assignee?.avatarSeed}
-                  size={16}
-                />
-              }
-              value={detail.assignee?.name || "Unassigned"}
-              onPick={(id) => void change({ assigneeId: id })}
-              options={[
-                {
-                  id: null,
-                  selected: !detail.assignee,
-                  label: "Unassigned",
-                  hint: "Unassigned",
-                },
-                ...members.map((m) => ({
-                  id: m.id as string | null,
-                  selected: m.id === detail.assignee?.id,
-                  hint: m.name || m.email || undefined,
-                  label: (
-                    <span
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 8,
-                      }}
-                    >
-                      <Avatar name={m.name} seed={m.avatarSeed} size={18} />
-                      {m.name || m.email}
-                    </span>
-                  ),
-                })),
-              ]}
-            />
-            {/* The agent this task is delegated to — `issue.delegate_id` (WP04), separate from the
-              assignee: the assignee is the person accountable, the delegate is the agent that runs
-              it. Same control, same row height and same keyboard behaviour as the Assignee row. */}
-            <PropDropdown
-              label="Delegate"
-              icon={<Bot size={14} />}
-              value={detail.delegate?.name || "No delegate"}
-              onOpen={loadAgentChoices}
-              onPick={(id) => void change({ delegateId: id })}
-              options={[
-                {
-                  id: null,
-                  selected: !detail.delegate,
-                  label: "No delegate",
-                  hint: "Nothing is delegated",
-                },
-                ...(agentChoices || []).map((a) => ({
-                  id: a.id as string | null,
-                  selected: a.id === detail.delegate?.id,
-                  hint: a.name,
-                  label: (
-                    <span
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 8,
-                      }}
-                    >
-                      <Bot size={14} aria-hidden="true" />
-                      {a.name}
-                    </span>
-                  ),
-                })),
-              ]}
-              footer={
-                agentChoicesError ? (
-                  <p
-                    className={styleClasses("text-[12px] text-muted")}
-                    data-style-hooks={styleHooks(
-                      "lin-note text-[12px] text-muted",
-                    )}
-                    role="alert"
-                    style={{ padding: "8px 10px" }}
-                  >
-                    {agentChoicesError}
-                  </p>
-                ) : agentChoicesLoading || !agentChoices ? (
-                  <p
-                    className={styleClasses("text-[12px] text-muted")}
-                    data-style-hooks={styleHooks(
-                      "lin-note text-[12px] text-muted",
-                    )}
-                    style={{ padding: "8px 10px" }}
-                    role="status"
-                  >
-                    Loading agents…
-                  </p>
-                ) : !agentChoices.length ? (
-                  <p
-                    className={styleClasses("text-[12px] text-muted")}
-                    data-style-hooks={styleHooks(
-                      "lin-note text-[12px] text-muted",
-                    )}
-                    style={{ padding: "8px 10px" }}
-                  >
-                    This workspace has no active agent member to delegate to.
-                  </p>
-                ) : undefined
-              }
-            />
-            <PropDropdown
-              label="Cycle"
-              icon={<CycleGlyph />}
-              value={
-                detail.cycle
-                  ? detail.cycle.name || `Cycle ${detail.cycle.number}`
-                  : "No cycle"
-              }
-              onPick={(id) => void change({ cycleId: id })}
-              options={[
-                { id: null, selected: !detail.cycle, label: "No cycle" },
-                ...teamCycles.map((c) => ({
-                  id: c.id as string | null,
-                  selected: c.id === detail.cycle?.id,
-                  label: c.name || `Cycle ${c.number}`,
-                })),
-              ]}
-            />
-            <PropDropdown
-              label="Project"
-              icon={
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                >
-                  <path
-                    d="M8 1.8l5.6 3.2v6.4L8 14.6l-5.6-3.2V5L8 1.8Z"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              }
-              value={detail.project?.name || "No project"}
-              onPick={(id) => void change({ projectId: id })}
-              options={[
-                { id: null, selected: !detail.project, label: "No project" },
-                ...projects.map((p) => ({
-                  id: p.id as string | null,
-                  selected: p.id === detail.project?.id,
-                  label: p.name,
-                })),
-              ]}
-            />
-            {detail.sla && (
-              <PropStatic
-                label="SLA"
-                icon={
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                  >
-                    <circle cx="8" cy="8.6" r="5.4" />
-                    <path
-                      d="M8 5.8v3l2 1.3M5.6 2.2h4.8"
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                }
-                value={
-                  <span className="flex min-w-0 flex-wrap items-center gap-1.5">
-                    <SlaChip sla={detail.sla} />
-                    <span className="min-w-0 truncate text-muted">
-                      {slaClockSummary(detail.sla)}
-                    </span>
-                  </span>
-                }
-              />
-            )}
+          <PropertiesPanel title={narrow ? "More properties" : "Properties"}>
+            {!narrow && coreProps}
 
             <div
               className={styleClasses(
@@ -6829,7 +6922,7 @@ export function GraphIssueDetail({
                 <LinPopover
                   onClose={() => setLabelOpen(false)}
                   className={styleClasses(
-                    "absolute z-130 min-w-55 max-w-[320px] p-1.25 border border-solid border-line rounded-[9px] bg-panel shadow-[0_12px_40px_#1b1b1b1f] top-[calc(100%+4px)] left-0 min-w-57.5 max-h-80 overflow-y-auto",
+                    "absolute z-130 min-w-55 max-w-[320px] p-1.25 border border-solid border-line rounded-[9px] bg-panel shadow-[0_12px_40px_#1b1b1b1f] top-[calc(100%+4px)] left-0 min-w-57.5 max-h-[min(20rem,var(--radix-popover-content-available-height))] overflow-y-auto",
                   )}
                   data-style-hooks={styleHooks(
                     "lin-menu absolute z-130 min-w-[220px] max-w-[320px] p-[5px] border border-solid border-line rounded-[9px] bg-panel shadow-[0_12px_40px_#1b1b1b1f] lin-dd-panel absolute top-[calc(100%+4px)] left-0 z-130 min-w-[230px] max-h-[320px] overflow-y-auto",
@@ -6844,7 +6937,7 @@ export function GraphIssueDetail({
                         key={l.id}
                         type="button"
                         className={styleClasses(
-                          "flex items-center gap-2.25 w-full py-1.75 px-2.5 rounded-md bg-transparent text-[13px] text-foreground text-left [&:hover]:bg-subtle aria-selected:font-semibold",
+                          "flex items-center gap-2.25 w-full py-1.75 px-2.5 rounded-md bg-transparent text-[13px] text-foreground text-left [&:hover]:bg-subtle aria-selected:font-semibold pointer-coarse:min-h-11",
                         )}
                         data-style-hooks={styleHooks(
                           "lin-dd-opt flex items-center gap-[9px] w-full py-[7px] px-[10px] rounded-[6px] bg-transparent text-[13px] text-foreground text-left [&:hover]:bg-subtle aria-selected:font-semibold",
@@ -6913,6 +7006,7 @@ export function GraphIssueDetail({
                   min={0}
                   step={1}
                   aria-label="Estimate (points)"
+                  className="pointer-coarse:min-h-11"
                   value={detail.estimate ?? ""}
                   onChange={(e) => {
                     const v =
@@ -6959,6 +7053,7 @@ export function GraphIssueDetail({
                 <input
                   type="date"
                   aria-label="Due date"
+                  className="pointer-coarse:min-h-11"
                   value={(detail.dueDate || "").slice(0, 10)}
                   onChange={(e) =>
                     void change({ dueDate: e.target.value || null })
@@ -7069,7 +7164,7 @@ export function GraphIssueDetail({
                   <LinPopover
                     onClose={() => setParentSearch(false)}
                     className={styleClasses(
-                      "absolute z-130 border border-solid border-line rounded-[10px] bg-panel shadow-[0_12px_40px_#1b1b1b1f]",
+                      "absolute z-130 border border-solid border-line rounded-[10px] bg-panel shadow-[0_12px_40px_#1b1b1b1f] max-w-[calc(100vw-2rem)] max-h-(--radix-popover-content-available-height) overflow-y-auto pointer-coarse:[&_input]:min-h-11 pointer-coarse:[&_button]:min-h-11",
                     )}
                     data-style-hooks={styleHooks(
                       "lin-popover absolute z-130 border border-solid border-line rounded-[10px] bg-panel shadow-[0_12px_40px_#1b1b1b1f]",
@@ -7100,7 +7195,7 @@ export function GraphIssueDetail({
                         key={r.id}
                         type="button"
                         className={styleClasses(
-                          "flex items-center gap-2.25 w-full py-1.75 px-2.5 rounded-md bg-transparent text-[13px] text-foreground text-left [&:hover]:bg-subtle aria-selected:font-semibold",
+                          "flex items-center gap-2.25 w-full py-1.75 px-2.5 rounded-md bg-transparent text-[13px] text-foreground text-left [&:hover]:bg-subtle aria-selected:font-semibold pointer-coarse:min-h-11",
                         )}
                         data-style-hooks={styleHooks(
                           "lin-dd-opt flex items-center gap-[9px] w-full py-[7px] px-[10px] rounded-[6px] bg-transparent text-[13px] text-foreground text-left [&:hover]:bg-subtle aria-selected:font-semibold",

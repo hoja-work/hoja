@@ -58,12 +58,12 @@ export function DetailHeader({
 }) {
   return (
     <header
-      className="flex items-center gap-2 min-h-12.25 py-0 px-5 border-b border-b-line flex-none shell-phone:flex-wrap shell-phone:gap-y-1"
+      className="flex items-center gap-2 min-h-12.25 py-0 px-5 border-b border-b-line flex-none shell-phone:gap-1 shell-phone:px-2 shell-phone:py-0.5"
       data-style-hooks="lin-head"
     >
       <MobileNavTrigger />
       <nav
-        className="flex items-center gap-1.75 text-[13px] text-muted min-w-0 flex-1 shell-phone:flex-wrap shell-phone:gap-y-0.5 [&_a]:[background:none] [&_a]:border-0 [&_a]:p-0 [&_a]:text-muted [&_a]:[font:inherit] [&_a]:cursor-pointer [&_a]:inline-flex [&_a]:items-center [&_a]:gap-1.5 [&_a]:whitespace-nowrap [&_a:hover]:text-foreground"
+        className="flex items-center gap-1.75 text-[13px] text-muted min-w-0 flex-1 shell-phone:overflow-hidden shell-phone:p-px shell-phone:[&>button]:flex-none [&_a]:[background:none] [&_a]:border-0 [&_a]:p-0 [&_a]:text-muted [&_a]:[font:inherit] [&_a]:cursor-pointer [&_a]:inline-flex [&_a]:items-center [&_a]:gap-1.5 [&_a]:whitespace-nowrap [&_a:hover]:text-foreground"
         data-style-hooks="lin-crumb"
         aria-label="Breadcrumb"
       >
@@ -71,7 +71,7 @@ export function DetailHeader({
       </nav>
       {actions && (
         <div
-          className="flex items-center gap-0.5 ml-auto flex-none"
+          className="flex items-center gap-0.5 ml-auto flex-none pointer-coarse:[&_[data-style-hooks~='lin-icon-btn']]:size-11"
           data-style-hooks="lin-head-actions"
         >
           {actions}
@@ -100,6 +100,7 @@ export function Crumb({
       type="button"
       className={cx(
         "[[data-style-hooks~='lin-crumb']_button&]:[background:none] [[data-style-hooks~='lin-crumb']_button&]:border-0 [[data-style-hooks~='lin-crumb']_button&]:p-0 [[data-style-hooks~='lin-crumb']_button&]:text-muted [[data-style-hooks~='lin-crumb']_button&]:[font:inherit] [[data-style-hooks~='lin-crumb']_button&]:cursor-pointer [[data-style-hooks~='lin-crumb']_button&]:inline-flex [[data-style-hooks~='lin-crumb']_button&]:items-center [[data-style-hooks~='lin-crumb']_button&]:gap-1.5 [[data-style-hooks~='lin-crumb']_button&]:whitespace-nowrap [[data-style-hooks~='lin-crumb']_button&:hover]:text-foreground",
+        "pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:justify-center",
         className,
       )}
       data-style-hooks="crumb-link"
@@ -111,10 +112,13 @@ export function Crumb({
   );
 }
 
-export function CrumbSep() {
+export function CrumbSep({ className }: { className?: string } = {}) {
   return (
     <span
-      className="in-data-[style-hooks~='lin-crumb']:text-muted in-data-[style-hooks~='lin-crumb']:opacity-70"
+      className={cx(
+        "in-data-[style-hooks~='lin-crumb']:text-muted in-data-[style-hooks~='lin-crumb']:opacity-70",
+        className,
+      )}
       data-style-hooks="sep"
       aria-hidden="true"
     >
@@ -144,22 +148,26 @@ export function CrumbCurrent({
 }
 
 /** Main column plus properties sidebar. Below 900px they stack and the page scrolls
- * as one, so the sidebar never squeezes the main column into a sliver. */
+ * as one, so the sidebar never squeezes the main column into a sliver. On a touch
+ * screen every icon button in the columns grows to a 44px target. */
 export function DetailColumns({
   toolbar,
+  toolbarOnPhone = true,
   main,
   aside,
   mainLabel,
   ...data
 }: DataAttributes & {
   toolbar?: React.ReactNode;
+  /** false drops the toolbar row on a phone, for a page whose header menu repeats it. */
+  toolbarOnPhone?: boolean;
   main: React.ReactNode;
   aside?: React.ReactNode;
   mainLabel?: string;
 }) {
   return (
     <div
-      className="flex min-h-0 flex-1 [@media_(max-width:900px)]:flex-col [@media_(max-width:900px)]:overflow-y-auto"
+      className="flex min-h-0 flex-1 [@media_(max-width:900px)]:flex-col [@media_(max-width:900px)]:overflow-y-auto [@media_(max-width:900px)]:overscroll-contain pointer-coarse:[&_[data-style-hooks~='lin-icon-btn']]:size-11"
       data-style-hooks="lin-detail"
     >
       <div
@@ -168,14 +176,17 @@ export function DetailColumns({
       >
         {toolbar && (
           <div
-            className="flex items-center justify-end gap-1.5 py-2 px-5 border-b border-b-line flex-none"
+            className={cx(
+              "flex items-center justify-end gap-1.5 py-2 px-5 border-b border-b-line flex-none shell-phone:px-4",
+              !toolbarOnPhone && "shell-phone:hidden",
+            )}
             data-style-hooks="lin-toolbar"
           >
             {toolbar}
           </div>
         )}
         <main
-          className="flex-1 min-w-0 overflow-y-auto pt-6.5 px-10 pb-20 max-w-none [@media_(max-width:900px)]:p-5 [@media_(max-width:900px)]:flex-none [@media_(max-width:900px)]:overflow-visible"
+          className="flex-1 min-w-0 overflow-y-auto pt-6.5 px-10 pb-20 max-w-none [@media_(max-width:900px)]:py-5 [@media_(max-width:900px)]:px-4 [@media_(max-width:900px)]:flex-none [@media_(max-width:900px)]:overflow-visible"
           data-style-hooks="lin-detail-main"
           aria-label={mainLabel}
         >
@@ -191,15 +202,30 @@ export function DetailColumns({
 export function PropertiesPanel({
   label = "Properties",
   title = "Properties",
+  inline = false,
   children,
 }: {
   label?: string;
   title?: React.ReactNode;
+  /** Rendered inside the main column (a phone's core properties under the title):
+   * a bordered card instead of a sidebar. */
+  inline?: boolean;
   children: React.ReactNode;
 }) {
+  if (inline)
+    return (
+      <aside
+        className="mt-1 mb-5 rounded-xl border border-line px-3 py-1 [&_h3]:text-[12px] [&_h3]:font-semibold [&_h3]:text-muted [&_h3]:mt-2 [&_h3]:mb-1 pointer-coarse:[&_[data-style-hooks~='lin-prop']]:min-h-11 pointer-coarse:[&_[data-style-hooks~='plain']]:min-h-11 [&_[data-style-hooks~='plain']]:flex-1"
+        data-style-hooks="lin-props lin-props-inline"
+        aria-label={label}
+      >
+        {title && <h3>{title}</h3>}
+        {children}
+      </aside>
+    );
   return (
     <aside
-      className="w-72.5 flex-none border-l border-l-line overflow-y-auto pt-5.5 px-5 pb-15 [&_h3]:text-[12px] [&_h3]:font-semibold [&_h3]:text-muted [&_h3]:mt-0 [&_h3]:mx-0 [&_h3]:mb-2.5 [@media_(max-width:1100px)]:w-62.5 [@media_(max-width:900px)]:w-auto [@media_(max-width:900px)]:overflow-visible [@media_(max-width:900px)]:border-l-0 [@media_(max-width:900px)]:border-t [@media_(max-width:900px)]:border-t-line"
+      className="w-72.5 flex-none border-l border-l-line overflow-y-auto pt-5.5 px-5 pb-15 [&_h3]:text-[12px] [&_h3]:font-semibold [&_h3]:text-muted [&_h3]:mt-0 [&_h3]:mx-0 [&_h3]:mb-2.5 [@media_(max-width:1100px)]:w-62.5 [@media_(max-width:900px)]:w-auto [@media_(max-width:900px)]:overflow-visible [@media_(max-width:900px)]:border-l-0 [@media_(max-width:900px)]:border-t [@media_(max-width:900px)]:border-t-line [@media_(max-width:900px)]:px-4 pointer-coarse:[&_[data-style-hooks~='lin-prop']]:min-h-11 pointer-coarse:[&_[data-style-hooks~='plain']]:min-h-11 shell-phone:[&_[data-style-hooks~='plain']]:flex-1 pointer-coarse:[&_[data-style-hooks~='lin-addrow']]:min-h-11"
       data-style-hooks="lin-props"
       aria-label={label}
     >
@@ -243,7 +269,7 @@ export function DetailTabs<T extends string>({
           key={t.id}
           href={t.href}
           aria-current={t.id === current ? "page" : undefined}
-          className="inline-flex h-7 flex-none items-center rounded-full border border-line bg-panel px-3 text-xs font-medium text-muted no-underline transition-colors duration-150 ease-out hover:bg-subtle hover:text-foreground hover:transition-none aria-[current=page]:bg-subtle aria-[current=page]:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+          className="inline-flex h-7 pointer-coarse:h-11 flex-none items-center rounded-full border border-line bg-panel px-3 text-xs font-medium text-muted no-underline transition-colors duration-150 ease-out hover:bg-subtle hover:text-foreground hover:transition-none aria-[current=page]:bg-subtle aria-[current=page]:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
           onClick={(e) => {
             if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
             e.preventDefault();
@@ -396,7 +422,7 @@ export function DetailButton({
       {...rest}
       type={type}
       className={cx(
-        "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default",
+        "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default pointer-coarse:min-h-11",
         primary &&
           "data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333]",
         className,
@@ -532,8 +558,8 @@ export function DetailSection({
       <section
         className={
           activity
-            ? "border-t border-t-line pt-4 mt-1.5 [&_>_header]:flex [&_>_header]:items-center [&_>_header]:mb-3 [&_>_header_b]:text-[14px]"
-            : "border-t border-t-line py-3.5 px-0 [&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-2 [&_>_header]:text-[13px] [&_>_header]:font-semibold [&_>_header]:mb-1.5"
+            ? "border-t border-t-line pt-4 mt-1.5 [&_>_header]:flex [&_>_header]:items-center [&_>_header]:mb-3 [&_>_header_b]:text-[14px] pointer-coarse:[&>header>button]:min-h-11"
+            : "border-t border-t-line py-3.5 px-0 [&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-2 [&_>_header]:text-[13px] [&_>_header]:font-semibold [&_>_header]:mb-1.5 pointer-coarse:[&>header>button]:min-h-11"
         }
         data-style-hooks={activity ? "lin-activity" : "lin-subsec"}
         aria-label={label ?? (typeof title === "string" ? title : undefined)}
@@ -670,7 +696,7 @@ export function PickerMenu({
             role="option"
             aria-selected={Boolean(o.selected)}
             data-active={i === active || undefined}
-            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground hover:bg-subtle data-active:bg-subtle aria-selected:font-semibold"
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground hover:bg-subtle data-active:bg-subtle aria-selected:font-semibold pointer-coarse:min-h-11"
             onMouseEnter={() => setActive(i)}
             onClick={() => choose(o)}
           >
@@ -681,7 +707,7 @@ export function PickerMenu({
         {canCreate && (
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted hover:bg-subtle"
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted hover:bg-subtle pointer-coarse:min-h-11"
             onClick={() => onCreate!(query.trim())}
           >
             Create “{query.trim()}”
@@ -722,7 +748,7 @@ export function PropertyChip({
         aria-haspopup={menu ? "dialog" : undefined}
         aria-expanded={menu ? open : undefined}
         disabled={disabled || !menu}
-        className="inline-flex h-7 max-w-full items-center gap-1.5 rounded-md border border-line bg-panel px-2 text-xs font-medium text-foreground transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none disabled:cursor-default disabled:hover:bg-panel focus-visible:outline-2 focus-visible:outline-accent"
+        className="inline-flex h-7 max-w-full items-center gap-1.5 rounded-md border border-line bg-panel px-2 text-xs font-medium pointer-coarse:h-11 pointer-coarse:px-3 text-foreground transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none disabled:cursor-default disabled:hover:bg-panel focus-visible:outline-2 focus-visible:outline-accent"
         onClick={() => setOpen((v) => !v)}
       >
         {icon}
@@ -731,7 +757,7 @@ export function PropertyChip({
       {open && menu && (
         <LinPopover
           onClose={() => setOpen(false)}
-          className="absolute top-full left-0 z-50 mt-1 w-64 max-w-xs rounded-lg border border-line bg-panel p-1 shadow-lg"
+          className="absolute top-full left-0 z-50 mt-1 w-64 max-w-xs shell-phone:max-w-[calc(100vw-2rem)] rounded-lg border border-line bg-panel p-1 shadow-lg"
           role="dialog"
           aria-label={label}
         >
