@@ -6,6 +6,7 @@
  * Pure: `scripts/test-view-filters.mjs` runs it with node.
  */
 import type { TaskLike } from "./filterEval";
+import { compareRank } from "./ranking";
 
 export type Layout = "list" | "board" | "timeline";
 export type CompletedWindow =
@@ -28,6 +29,11 @@ export type DisplayDoc = {
   collapsedGroups?: string[];
   boardColumnOrder?: string[];
   timelineZoom?: number;
+  /** Grouping by label group: which group's labels become the groups. */
+  groupingLabelGroupId?: string | null;
+  /** Initiative views: nest sub-initiatives under their parent; show summaries. */
+  nested?: boolean;
+  summary?: boolean;
 };
 
 export type Option = { value: string; label: string; disabled?: string };
@@ -42,7 +48,25 @@ export const ISSUE_GROUPINGS: Option[] = [
   { value: "priority", label: "Priority" },
   { value: "cycle", label: "Cycle" },
   { value: "labels", label: "Label" },
+  { value: "labelGroup", label: "Label group" },
   { value: "team", label: "Team" },
+];
+
+/** Initiative views (views.py INITIATIVE_GROUPINGS / INITIATIVE_ORDERINGS). */
+export const INITIATIVE_GROUPINGS: Option[] = [
+  { value: "none", label: "No grouping" },
+  { value: "status", label: "Status" },
+  { value: "health", label: "Health" },
+  { value: "owner", label: "Owner" },
+  { value: "leadTeam", label: "Lead team" },
+];
+export const INITIATIVE_ORDERINGS: Option[] = [
+  { value: "manual", label: "Manual" },
+  { value: "name", label: "Name" },
+  { value: "targetDate", label: "Target date" },
+  { value: "created", label: "Created" },
+  { value: "health", label: "Health" },
+  { value: "priority", label: "Priority" },
 ];
 
 export const ISSUE_ORDERINGS: Option[] = [
@@ -246,10 +270,28 @@ export type GroupCtx = {
   users?: { id: string; name: string }[];
   projects?: { id: string; name: string }[];
   cycles?: { id: string; name?: string; number?: number }[];
-  labels?: { id: string; name: string; color?: string }[];
+  labels?: {
+    id: string;
+    name: string;
+    color?: string;
+    parentId?: string | null;
+    isGroup?: boolean;
+  }[];
   teams?: { id: string; name: string }[];
   viewerId?: string;
+  /** Grouping by label group (Linear's issueGroupingLabelGroupId): whose labels form the groups. */
+  labelGroupId?: string | null;
 };
+
+/** The label group a `labelGroup` grouping uses: the chosen one, else the first group. */
+export function activeLabelGroup(ctx: GroupCtx): { id: string; name: string } | null {
+  const groups = (ctx.labels || []).filter((l) => l.isGroup);
+  return (
+    groups.find((g) => g.id === ctx.labelGroupId) ||
+    groups.sort((a, b) => a.name.localeCompare(b.name))[0] ||
+    null
+  );
+}
 
 export type GroupKey = { key: string; label: string; rank: number };
 
@@ -380,6 +422,16 @@ export function groupKeysOf(
             },
           ]
         : none("No team");
+    case "labelGroup": {
+      // One child of the group per task (an exclusive group), else "No <group>".
+      const group = activeLabelGroup(ctx);
+      const child = (t.labels?.nodes || []).find(
+        (l) => group && l.parent?.id === group.id,
+      );
+      return child
+        ? [{ key: child.id, label: child.name, rank: 0 }]
+        : none(group ? `No ${group.name}` : "No label group");
+    }
     default:
       return [{ key: "all", label: "", rank: 0 }];
   }
@@ -437,6 +489,12 @@ export function allGroupKeys(grouping: string, ctx: GroupCtx): GroupKey[] {
         label: t.name,
         rank: 0,
       }));
+    case "labelGroup": {
+      const group = activeLabelGroup(ctx);
+      return (ctx.labels || [])
+        .filter((l) => group && l.parentId === group.id)
+        .map((l) => ({ key: l.id, label: l.name, rank: 0 }));
+    }
     default:
       return [];
   }
@@ -527,13 +585,17 @@ export function sortTasks<T extends TaskLike>(
       case "created":
         return { empty: false, v: -ms(t.createdAt) };
       case "manual":
-        return { empty: false, v: ms(t.createdAt) };
+        // The task's rank; unranked tasks (imports) after ranked ones, newest first.
+        return { empty: !t.rank, v: t.rank || "" };
       default: // updated
         return { empty: false, v: -ms(t.updatedAt || t.createdAt) };
     }
   };
   const tie = (a: T, b: T) =>
-    ms(b.updatedAt || b.createdAt) - ms(a.updatedAt || a.createdAt) ||
+    (ordering === "priority" ? compareRank(a.priorityRank, b.priorityRank) : 0) ||
+    (ordering === "manual"
+      ? ms(b.createdAt) - ms(a.createdAt)
+      : ms(b.updatedAt || b.createdAt) - ms(a.updatedAt || a.createdAt)) ||
     a.id.localeCompare(b.id);
   const keyed = items.map((t) => ({ t, k: key(t) }));
   keyed.sort((a, b) => {

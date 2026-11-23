@@ -25,6 +25,10 @@ import {
 import {createViewListCache} from '../src/views/viewListCache.ts';
 import {routeView} from '../src/routes.ts';
 import {ISSUE_FIELDS} from '../src/views/filterModel.ts';
+import {keyBetween, validate as validateRank, compareRank} from '../src/views/ranking.ts';
+import {planDrop, planKey, groupPatch, optimisticRank} from '../src/views/manualOrderPlan.ts';
+import {execFileSync} from 'node:child_process';
+import {existsSync} from 'node:fs';
 
 let failures = 0, passed = 0;
 function test(name, fn) {
@@ -586,6 +590,108 @@ await testAsync('the shared views list never outlives the person or workspace it
   release();
   await pending;
   assert.deepEqual(cache.last(), []);
+});
+
+
+/* ------------------------------------------------------------- manual order (views depth) */
+
+test('ranking: keys stay strictly between and sorted under random inserts', () => {
+  let seed = 7;
+  const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+  const keys = [keyBetween(null, null)];
+  for (let i = 0; i < 1500; i++) {
+    const at = rnd(keys.length + 1);
+    const a = at > 0 ? keys[at - 1] : null, b = at < keys.length ? keys[at] : null;
+    const k = keyBetween(a, b);
+    validateRank(k);
+    assert.ok((a === null || a < k) && (b === null || k < b), `${a} < ${k} < ${b}`);
+    keys.splice(at, 0, k);
+  }
+  assert.deepEqual([...keys].sort(), keys);
+});
+
+test('ranking: the browser and the server compute the same keys', () => {
+  const py = new URL('../../.venv/bin/python', import.meta.url).pathname;
+  if (!existsSync(py)) { console.log('  (skipped: no app/.venv)'); return; }
+  let seed = 11;
+  const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+  const keys = [keyBetween(null, null)], pairs = [];
+  for (let i = 0; i < 400; i++) {
+    const at = rnd(keys.length + 1);
+    const a = at > 0 ? keys[at - 1] : null, b = at < keys.length ? keys[at] : null;
+    pairs.push([a, b]);
+    keys.splice(at, 0, keyBetween(a, b));
+  }
+  for (let i = 0; i < 50; i++) { pairs.push([null, keys[0]]); keys.unshift(keyBetween(null, keys[0])); }
+  const out = execFileSync(py, ['-c', 'import json,sys\nfrom hoja_server.ranking import key_between\nprint(json.dumps([key_between(a,b) for a,b in json.load(sys.stdin)]))'],
+    {cwd: new URL('../..', import.meta.url).pathname, input: JSON.stringify(pairs)});
+  assert.deepEqual(JSON.parse(out), pairs.map(([a, b]) => keyBetween(a, b)));
+});
+
+test('manual ordering follows the rank; unranked tasks last, newest first', () => {
+  const t = (id, rank, createdAt = '2026-11-01T00:00:00Z') => ({id, identifier: id, title: id, rank, createdAt});
+  const got = sortTasks([t('c', 'a2'), t('n1', null, '2026-11-02T00:00:00Z'), t('a', 'Zz'), t('b', 'a0'),
+                         t('n2', null, '2026-11-03T00:00:00Z')], {ordering: 'manual'});
+  assert.deepEqual(got.map(x => x.id), ['a', 'b', 'c', 'n2', 'n1']);
+  assert.equal(compareRank('a0', 'B0') > 0, true, 'byte-wise: lower-case sorts after upper-case');
+});
+
+test('priority ordering breaks ties with the priority rank', () => {
+  const t = (id, priority, priorityRank) => ({id, identifier: id, title: id, priority, priorityRank});
+  const got = sortTasks([t('x', 2, 'a3'), t('y', 2, 'a1'), t('u', 1, 'a9'), t('z', 0, 'a0')], {ordering: 'priority'});
+  assert.deepEqual(got.map(x => x.id), ['u', 'y', 'x', 'z']);
+});
+
+test('a label group filter matches tasks carrying one of its labels', () => {
+  const group = {id: 'g', name: 'area'};
+  const t = (id, labels) => ({id, identifier: id, title: id, labels: {nodes: labels}});
+  const tasks = [t('A', [{id: 'api', name: 'api', parent: group}, {id: 'bug', name: 'Bug'}]),
+                 t('B', [{id: 'ui', name: 'ui', parent: group}]), t('C', [{id: 'bug', name: 'Bug'}]), t('D', [])];
+  const pick = (f) => tasks.filter(x => matchesFilter(f, x)).map(x => x.id);
+  assert.deepEqual(pick({labels: {includesAny: ['g']}}), ['A', 'B']);
+  assert.deepEqual(pick({labels: {includesAll: ['g', 'bug']}}), ['A']);
+  assert.deepEqual(pick({labels: {includesNone: ['area']}}), ['C', 'D']);
+  assert.equal(countBy(tasks, 'labels').get('g'), 2);
+});
+
+
+test('planDrop: neighbours inside a group and across groups', () => {
+  const groups = [{key: 'Todo', ids: ['t1', 't2', 't3']}, {key: 'Backlog', ids: ['b1', 'b2']}];
+  assert.deepEqual(planDrop(groups, 't3', 'Todo', 0), {id: 't3', groupKey: 'Todo', fromGroupKey: 'Todo', afterId: null, beforeId: 't1'});
+  assert.deepEqual(planDrop(groups, 'b1', 'Todo', 1), {id: 'b1', groupKey: 'Todo', fromGroupKey: 'Backlog', afterId: 't1', beforeId: 't2'});
+  assert.equal(planDrop(groups, 't2', 'Todo', 1), null, 'dropped where it was');
+  assert.deepEqual(planDrop(groups, 't1', 'Backlog', 9), {id: 't1', groupKey: 'Backlog', fromGroupKey: 'Todo', afterId: 'b2', beforeId: null});
+});
+
+test('planKey: Alt+arrows step, cross group edges, and Alt+Shift goes to the edge', () => {
+  const groups = [{key: 'Todo', ids: ['t1', 't2']}, {key: 'Backlog', ids: ['b1', 'b2']}];
+  assert.deepEqual(planKey(groups, 't2', -1), {id: 't2', groupKey: 'Todo', fromGroupKey: 'Todo', afterId: null, beforeId: 't1'});
+  assert.deepEqual(planKey(groups, 't1', 1), {id: 't1', groupKey: 'Todo', fromGroupKey: 'Todo', afterId: 't2', beforeId: null});
+  // Linear stops here (JOBS.md); Hoja carries the task into the next group.
+  assert.deepEqual(planKey(groups, 'b1', -1), {id: 'b1', groupKey: 'Todo', fromGroupKey: 'Backlog', afterId: 't2', beforeId: null});
+  assert.deepEqual(planKey(groups, 't2', 1), {id: 't2', groupKey: 'Backlog', fromGroupKey: 'Todo', afterId: null, beforeId: 'b1'});
+  assert.equal(planKey(groups, 't1', -1), null, 'nothing above the first group');
+  assert.deepEqual(planKey(groups, 'b2', -1, true), {id: 'b2', groupKey: 'Backlog', fromGroupKey: 'Backlog', afterId: null, beforeId: 'b1'});
+  assert.equal(planKey(groups, 'b2', 1, true), null, 'already at the bottom');
+});
+
+test('groupPatch: the field a drop into a group sets', () => {
+  const task = {labels: {nodes: [{id: 'api', parent: {id: 'area'}}, {id: 'bug'}]}};
+  assert.deepEqual(groupPatch('status', 'Todo', task, {stateIdForName: n => (n === 'Todo' ? 's-todo' : undefined)}), {stateId: 's-todo'});
+  assert.deepEqual(groupPatch('assignee', 'none', task, {}), {assigneeId: null});
+  assert.deepEqual(groupPatch('priority', '2', task, {}), {priority: 2});
+  assert.deepEqual(groupPatch('labelGroup', 'ui', task, {labelGroupId: 'area'}), {labelIds: ['bug', 'ui']});
+  assert.equal(groupPatch('labels', 'x', task, {}), null, 'a label grouping has no single target');
+  assert.deepEqual(groupPatch('none', 'all', task, {}), {});
+});
+
+test('optimisticRank: between the visible neighbours, tolerant of stale order', () => {
+  const ranks = {a: 'a0', b: 'a2', c: 'a1'};
+  const r = optimisticRank({id: 'x', groupKey: 'g', fromGroupKey: 'g', afterId: 'a', beforeId: 'b'}, id => ranks[id]);
+  assert.ok('a0' < r && r < 'a2');
+  const stale = optimisticRank({id: 'x', groupKey: 'g', fromGroupKey: 'g', afterId: 'b', beforeId: 'c'}, id => ranks[id]);
+  assert.ok(stale > 'a2', 'after wins when before is out of order');
+  assert.equal(optimisticRank({id: 'x', groupKey: 'g', fromGroupKey: 'g', afterId: 'zz', beforeId: null}, () => null), undefined);
 });
 
 console.log(`${passed} passed, ${failures} failed`);

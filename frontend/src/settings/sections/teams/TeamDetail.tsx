@@ -29,7 +29,9 @@ import {
   personLabel,
   setTeamMember,
   updateTeam,
+  PLACEMENT_OPTIONS,
   VISIBILITY_OPTIONS,
+  type Placement,
   type Person,
   type TeamRow,
   type Visibility,
@@ -95,6 +97,13 @@ export function TeamDetail({
     value: team.description || "",
     save: async (next) => {
       await updateTeam(team.id, { description: next });
+      await onChanged();
+    },
+  });
+  const placement = useSetting<Placement>({
+    value: team.issueSortOrderOnStateChange || "first",
+    save: async (next) => {
+      await updateTeam(team.id, { issueSortOrderOnStateChange: next });
       await onChanged();
     },
   });
@@ -305,6 +314,22 @@ export function TeamDetail({
             />
           )}
         </SettingsCard>
+      </SettingsSection>
+
+      <SettingsSection title="Workflow">
+        <SettingRow
+          label="When a task changes status, put it"
+          description="In lists ordered manually (Linear's setting of the same name). A drag always keeps the spot it was dropped on."
+          locked={isAdmin ? undefined : ADMIN_ONLY}
+        >
+          <Select
+            aria-label="When a task changes status, put it"
+            value={placement.value}
+            disabled={!isAdmin}
+            onValueChange={(v) => void placement.set(v as Placement)}
+            options={PLACEMENT_OPTIONS}
+          />
+        </SettingRow>
       </SettingsSection>
 
       <SettingsSection title="Cycles">

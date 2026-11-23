@@ -29,7 +29,18 @@ export type TaskLike = {
   creator?: { id: string; name?: string } | null;
   cycle?: { id: string; name?: string; number?: number } | null;
   subscribers?: { nodes: { id: string }[] } | null;
-  labels?: { nodes: { id: string; name: string }[] } | null;
+  labels?: {
+    nodes: {
+      id: string;
+      name: string;
+      /** The label's group: a filter on the group matches its labels (Linear's parent). */
+      parent?: { id: string; name: string } | null;
+    }[];
+  } | null;
+  /** Manual order (Linear's sortOrder): fractional-index key, compared byte-wise. */
+  rank?: string | null;
+  /** Order within one priority (Linear's prioritySortOrder). */
+  priorityRank?: string | null;
 };
 
 export type EvalContext = {
@@ -100,7 +111,9 @@ function single(t: TaskLike, key: string, ctx: EvalContext): Aliases {
 
 function collection(t: TaskLike, key: string, ctx: EvalContext): string[][] {
   if (key === "labels")
-    return (t.labels?.nodes || []).map((l) => [l.id, l.name]);
+    return (t.labels?.nodes || []).map((l) =>
+      l.parent ? [l.id, l.name, l.parent.id, l.parent.name] : [l.id, l.name],
+    );
   if (key === "subscriber")
     return (t.subscribers?.nodes || []).map((u) => [
       u.id,
@@ -313,6 +326,10 @@ export function countBy(
       const items = collection(t, key, ctx);
       if (!items.length) bump("null");
       for (const a of items) bump(a[0]);
+      // A group counts every task carrying one of its labels.
+      if (key === "labels")
+        for (const g of new Set(items.filter((a) => a.length > 2).map((a) => a[2])))
+          bump(g);
       if (key === "subscriber" && items.some((a) => a.includes("me")))
         bump("me");
     } else if (key === "state") {

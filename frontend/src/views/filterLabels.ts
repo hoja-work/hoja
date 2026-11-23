@@ -40,6 +40,10 @@ export type FilterCatalog = {
   options: (field: string) => ValueOption[];
   /** How many rows a value would select; undefined hides the count. */
   count?: (field: string, value: FilterValue) => number | undefined;
+  /** Plain-language filters (viewFilterSuggestion): text in, filters for the chips out. */
+  suggest?: (
+    prompt: string,
+  ) => Promise<{ filters: Record<string, unknown> | null; message?: string | null }>;
 };
 
 /* ------------------------------------------------------------ labels */

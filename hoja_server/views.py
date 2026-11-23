@@ -30,7 +30,8 @@ LAYOUTS = ("list", "board", "timeline")
 # Grouping is applied by the client; the project-only keys (lead … targetDate) group a
 # project list, and ``statusType`` groups by workflow category.
 GROUPINGS = ("none", "status", "statusType", "assignee", "creator", "priority", "project",
-             "cycle", "labels", "team", "lead", "members", "health", "startDate", "targetDate")
+             "cycle", "labels", "labelGroup", "team", "lead", "members", "health", "startDate",
+             "targetDate")
 # ``name``/``startDate``/``targetDate`` order projects (for tasks: title, creation, due date).
 ORDERINGS = ("manual", "priority", "updated", "created", "title", "dueDate", "status",
              "estimate", "name", "startDate", "targetDate")
@@ -532,15 +533,25 @@ def _collection_clauses(prop: str, ref: str, op: str, operand: Any,
     grammar: ``some``/``none`` take a filter of the related row, ``null`` means "has none"."""
     if op == "isMe":
         op, operand = ("is" if operand else "isNot"), ME
+
+    def row(column: str, cmp: dict) -> dict:
+        # A label also matches through its group, in Linear's own shape: "Labels include
+        # area" is ``{or: [{name: eq area}, {parent: {name: eq area}}]}`` (SPEC.md §4,
+        # linear-capture/s6-filter-labelgroup-save.jsonl). A plain label has no children,
+        # so the second branch only ever widens a group.
+        if prop != "labels":
+            return {column: cmp}
+        return {"or": [{column: cmp}, {"parent": {column: cmp}}]}
+
     if op == "includesAll":
-        return [{prop: {"some": {column: {"eq": v}}}}
+        return [{prop: {"some": row(column, {"eq": v})}}
                 for v in operand for column, v in [_resolved(ref, v, ctx)]]
     negative, values, named_null = _split(op, operand)
     parts: list[dict] = []
     if named_null:
         parts.append({prop: {"null": not negative}})
     for column, vs in _by_column(ref, values, ctx).items():
-        parts.append({prop: {"none" if negative else "some": {column: {"in": vs}}}})
+        parts.append({prop: {"none" if negative else "some": row(column, {"in": vs})}})
     return _combine(negative, parts)
 
 
@@ -825,7 +836,8 @@ _DISPLAY_FIELDS = frozenset({"layout", "grouping", "subGrouping", "ordering", "r
                              "visibleProperties", "timelineZoom", "completedWindow",
                              "boardColumnOrder", "showEmptyGroups", "showSubIssues",
                              "nestedSubIssues", "orderCompletedByRecency", "hiddenColumns",
-                             "collapsedGroups"})
+                             "collapsedGroups", "groupingLabelGroupId",
+                             "subGroupingLabelGroupId"})
 
 
 # The initiatives list groups and orders by initiative properties, nests sub-initiatives
@@ -873,6 +885,15 @@ def parse_display(kind: str, raw: Any) -> dict:
     for name in ("grouping", "subGrouping"):
         if name in document:
             out[name] = _enum(document[name], GROUPINGS, f"display.{name}")
+    # Linear's issueGroupingLabelGroupId: which label group's labels become the groups when
+    # grouping by ``labelGroup`` (the client falls back to the first group when it is unset).
+    for name in ("groupingLabelGroupId", "subGroupingLabelGroupId"):
+        if name in document:
+            value = document[name]
+            if value is not None and (not isinstance(value, str) or not value):
+                raise ViewError(f"display.{name} must be a label group id or null.",
+                                f"display.{name}")
+            out[name] = value
     if "ordering" in document:
         out["ordering"] = _enum(document["ordering"], ORDERINGS, "display.ordering")
     if "reverse" in document:

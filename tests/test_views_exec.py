@@ -308,7 +308,10 @@ def test_saved_scope_is_anded_into_results(world):
     ("title", ["alpha", "bravo", "Charlie", "Delta", "Echo", "foxtrot", "Golf"]),
     ("created", ["bravo", "Charlie", "alpha", "Delta", "Echo", "foxtrot", "Golf"]),
     ("updated", ["alpha", "Delta", "Charlie", "bravo", "Echo", "foxtrot", "Golf"]),
-    ("manual", ["Golf", "foxtrot", "Echo", "Delta", "alpha", "Charlie", "bravo"]),
+    # These rows are inserted without a rank (as an import would): unranked tasks sort after
+    # ranked ones, newest first, the order the revision-96 backfill gives existing tasks.
+    # Ranked manual order is pinned in test_views_depth_order.py.
+    ("manual", ["bravo", "Charlie", "alpha", "Delta", "Echo", "foxtrot", "Golf"]),
     ("status", ["alpha", "Delta", "bravo", "Charlie", "Echo", "foxtrot", "Golf"]),
 ])
 def test_every_ordering_is_pushed_down(world, ordering, expected):

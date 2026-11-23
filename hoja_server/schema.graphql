@@ -183,6 +183,8 @@ type Mutation {
   teamMemberRemove(teamId: String!, userId: String!): UserPayload
   issueCreate(input: IssueCreateInput!): IssuePayload @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   issueUpdate(id: String!, input: IssueUpdateInput!): IssuePayload @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
+  "Drop a task between two others in manual order, optionally changing the field it is grouped by in the same write (a drag across groups)."
+  issueMove(id: String!, input: IssueMoveInput!): IssuePayload @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   notificationMarkRead(id: String!): Boolean!
   notificationArchive(id: String!): Boolean!
   notificationMarkAllRead: Boolean!
@@ -343,6 +345,8 @@ type Team {
   autoAddStarted: Boolean
   autoAddCompleted: Boolean
   autoAddBacklog: Boolean
+  "Where a task lands in manual order when its status changes outside a drag: first, last or noAction (Linear's setIssueSortOrderOnStateChange)."
+  issueSortOrderOnStateChange: String!
 }
 
 type WorkflowState {
@@ -364,6 +368,15 @@ type IssueLabel {
   description: String
   createdAt: DateTime
   updatedAt: DateTime
+  "A label group (Linear's isGroup): organizes its labels and cannot be applied to a task itself."
+  isGroup: Boolean!
+  "For a group: a task may hold only one of its labels."
+  exclusive: Boolean!
+  parentId: ID
+  "The group this label belongs to."
+  parent: IssueLabel
+  "A group's labels; empty for a plain label."
+  children: [IssueLabel!]!
 }
 
 type TeamCycleCadence { enabled: Boolean! weekday: Int timezone: String! policyVersion: Int! activeCycle: Cycle upcomingCycles: [Cycle!]! }
@@ -464,6 +477,10 @@ type Issue {
   id: ID!
   identifier: String!
   title: String!
+  "Manual order across every list (Linear's sortOrder): a fractional-index key, compared byte-wise; smaller first."
+  rank: String
+  "Order within one priority when a list is ordered by priority (Linear's prioritySortOrder)."
+  priorityRank: String
   description: String
   priority: Int
   priorityLabel: String
@@ -684,7 +701,8 @@ input UserFilter { id: IDComparator email: StringComparator displayName: StringC
 input WorkflowStateFilter { name: StringComparator type: StringComparator team: TeamFilter }
 input CycleFilter { id: IDComparator name: StringComparator team: TeamFilter isActive: BooleanComparator isNext: BooleanComparator }
 input ProjectRelFilter { id: IDComparator name: StringComparator }
-input LabelRelFilter { name: StringComparator }
+"Linear's IssueLabelCollectionFilter: label fields at the top level mean some label matches; parent filters on the label's group."
+input LabelRelFilter { id: IDComparator name: StringComparator isGroup: BooleanComparator parent: LabelRelFilter and: [LabelRelFilter!] or: [LabelRelFilter!] some: LabelRelFilter none: LabelRelFilter null: Boolean }
 
 input IssueFilter {
   identifier: StringComparator
@@ -716,7 +734,7 @@ input IssueParentFilter {
 input IssueLabelFilter { team: TeamFilter name: StringComparator }
 
 # ---- Mutation inputs ----
-input TeamUpdateInput { name: String key: String description: String autoAddStarted: Boolean autoAddCompleted: Boolean autoAddBacklog: Boolean visibility: String parentTeamId: String }
+input TeamUpdateInput { name: String key: String description: String autoAddStarted: Boolean autoAddCompleted: Boolean autoAddBacklog: Boolean visibility: String parentTeamId: String "first, last or noAction" issueSortOrderOnStateChange: String }
 input CycleUpdateInput { name: String description: String startsAt: DateTime endsAt: DateTime }
 type CyclePayload { success: Boolean! cycle: Cycle }
 input TeamCreateInput { name: String! key: String! description: String color: String icon: String visibility: String parentTeamId: String timezone: String memberIds: [String!] }
@@ -754,10 +772,25 @@ input IssueUpdateInput {
   dueDate: DateTime
   labelIds: [String!]
 }
+input IssueMoveInput {
+  "The task that should end up directly above; omit for the top."
+  afterId: String
+  "The task that should end up directly below; omit for the bottom."
+  beforeId: String
+  "sortOrder (manual lists, the default) or prioritySortOrder (lists ordered by priority)."
+  field: String
+  "Set with the move when the task is dropped into another group."
+  stateId: String
+  assigneeId: String
+  priority: Int
+  projectId: String
+  cycleId: String
+  labelIds: [String!]
+}
 input CommentCreateInput { issueId: String projectUpdateId: String initiativeUpdateId: String body: String! }
 input CommentUpdateInput { body: String }
-input IssueLabelUpdateInput { name: String color: String description: String }
-input IssueLabelCreateInput { name: String! teamId: String color: String description: String }
+input IssueLabelUpdateInput { name: String color: String description: String "Move into a group, or null to take it out." parentId: String isGroup: Boolean exclusive: Boolean }
+input IssueLabelCreateInput { name: String! teamId: String color: String description: String "The group to create the label in." parentId: String "Create a label group instead of a label." isGroup: Boolean "For a group: one label per task (default true)." exclusive: Boolean }
 input ProjectCreateInput { name: String! description: String teamIds: [String!] "People working on the project. The creator is always a member; members follow the project." memberIds: [String!] leadId: String state: String color: String icon: String startDate: TimelessDate targetDate: TimelessDate "Apply a workspace project template: absent fields fall back to the template's, and its task set is created as tasks." templateId: String }
 input ProjectUpdateInput { name: String description: String "Replaces the member list. Anyone added follows the project and is told; removing someone leaves their subscription alone." memberIds: [String!] leadId: String state: String color: String icon: String startDate: TimelessDate targetDate: TimelessDate teamIds: [String!] }
 input ProjectUpdateCreateInput { projectId: String! body: String! status: String health: String }

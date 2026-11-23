@@ -41,6 +41,14 @@ Team = ObjectType("Team")
 Initiative.set_field("owner", lambda obj, info: info.context["store"].get_user(info.context["org_id"], obj.get("_owner_id")) if obj.get("_owner_id") else None)
 Initiative.set_field("creator", lambda obj, info: info.context["store"].get_user(info.context["org_id"], obj.get("_creator_id")) if obj.get("_creator_id") else None)
 Issue = ObjectType("Issue")
+# Label groups (revision 96): a label's group and a group's labels, on both vocabularies.
+IssueLabel = ObjectType("IssueLabel")
+TaskLabel = ObjectType("TaskLabel")
+for _label_type in (IssueLabel, TaskLabel):
+    _label_type.set_field("parent", lambda obj, info: info.context["store"].label_by_id(
+        info.context["org_id"], obj.get("parentId")))
+    _label_type.set_field("children", lambda obj, info: info.context["store"].label_children(
+        info.context["org_id"], obj["id"]) if obj.get("isGroup") else [])
 IssueActivity = ObjectType("IssueActivity")
 MyIssueActivity = ObjectType("MyIssueActivity")
 Project = ObjectType("Project")
@@ -1864,6 +1872,34 @@ def m_issue_update(_, info, id, input):
     return {"success": True, "issue": store.issue_by_id_or_identifier(org, iid, viewer_id=uid)}
 
 
+@mutation.field("issueMove")
+def m_issue_move(_, info, id, input):
+    """A drag: the new rank and any group change land in one write (Linear sends one
+    IssueUpdate carrying both, linear-capture/s3-*). Group fields pass the same extension
+    hooks and validation as issueUpdate."""
+    store, w, org, uid = _ctx(info)
+    current = store.issue_by_id_or_identifier(org, id, viewer_id=uid)
+    if current is None:
+        return {"success": False, "issue": None}
+    field = input.get("field") or "sortOrder"
+    if field not in ("sortOrder", "prioritySortOrder"):
+        raise GraphQLError("field must be sortOrder or prioritySortOrder.",
+                           extensions={"code": "BAD_USER_INPUT", "field": "field"})
+    updates = {k: v for k, v in input.items() if k not in ("afterId", "beforeId", "field")}
+    if updates:
+        updates, patches = _extension_hooks(info, store, org, uid, "issue.beforeUpdate", updates,
+                                            extensions.issue_data(store.engine, org, current["id"]),
+                                            "IssueUpdateInput")
+    else:
+        patches = []
+    move = {"afterId": input.get("afterId"), "beforeId": input.get("beforeId"), "field": field}
+    iid = w.issue_update(org, id, {**updates, "_move": move}, actor_id=uid)
+    if not iid:
+        return {"success": False, "issue": None}
+    extensions.record_patches(store.engine, org, iid, patches)
+    return {"success": True, "issue": store.issue_by_id_or_identifier(org, iid, viewer_id=uid)}
+
+
 @mutation.field("issueDelete")
 def m_issue_delete(_, info, id):
     # Authorization lives in writer._authorize_issue_change: creator, admin, or a
@@ -2184,7 +2220,7 @@ def build_schema():
         webhooks_api.query, webhooks_api.mutation, webhooks_api.webhook_type,
         extensions_api.query, extensions_api.mutation, extensions_api.extension_type,
         views_api.query, views_api.mutation, views_api.view_type, views_api.preview_type,
-        views_api.subscription_type, views_api.custom_view_type,
+        views_api.subscription_type, views_api.custom_view_type, IssueLabel, TaskLabel,
         initiative_api.query, initiative_api.mutation,
         decisions_api.query, decisions_api.mutation, decisions_api.decision_type,
         conversation_query,

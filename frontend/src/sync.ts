@@ -197,7 +197,11 @@ function lookups(meta: SyncMeta): Lookups {
     states, teams,
     projects: new Map(meta.projects.nodes.map(p => [p.id, {id: p.id, name: p.name}])),
     cycles: new Map(meta.cycles.nodes.map(c => [c.id, {id: c.id, name: c.name, number: c.number}])),
-    labels: new Map(meta.issueLabels.nodes.map(l => [l.id, l])),
+    labels: new Map(meta.issueLabels.nodes.map(l => {
+      // A label knows its group, so a filter or grouping on the group reaches its labels.
+      const group = l.parentId ? meta.issueLabels.nodes.find(g => g.id === l.parentId) : null;
+      return [l.id, group ? {...l, parent: {id: group.id, name: group.name}} : l];
+    })),
     users: new Map(meta.users.map(([id, name]) => [id, {id, name: name || ''}])),
   };
 }
@@ -231,6 +235,7 @@ function hydrate(row: Row, col: (name: string) => Col, lk: Lookups, parentRow: R
     labels: {nodes: ((col('labelIds')(row) as string[]) || []).map(l => lk.labels.get(l)).filter(Boolean) as IssueLabel[]},
     subscribers: {nodes: ((col('subscriberIds')(row) as string[]) || []).map(u => ({id: u}))},
     estimate: (col('estimate')(row) as number | null) ?? null,
+    rank: id('rank'), priorityRank: id('priorityRank'),
     // SQLite stores the flag as 0/1, PostgreSQL as a boolean; both mean the same thing here.
     decisionNeeded: flag(col('decisionNeeded')(row)) ? true : undefined,
     parent: parentRow
@@ -249,6 +254,7 @@ function dehydrate(issue: Issue, columns: string[]): Row {
     assigneeId: issue.assignee?.id, creatorId: issue.creator?.id, cycleId: issue.cycle?.id,
     labelIds: issue.labels?.nodes.map(l => l.id) || [], subscriberIds: issue.subscribers?.nodes.map(s => s.id) || [],
     decisionNeeded: issue.decisionNeeded ? 1 : 0,
+    rank: issue.rank ?? null, priorityRank: issue.priorityRank ?? null,
   };
   return columns.map(c => values[c] ?? null);
 }

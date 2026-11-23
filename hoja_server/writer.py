@@ -10,7 +10,8 @@ from graphql import GraphQLError
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.engine import Engine
 
-from hoja_server import activity, comment_policy, identifiers, notifications, uploads, view_subscriptions
+from hoja_server import (activity, comment_policy, identifiers, notifications, ranking, uploads,
+                         view_subscriptions)
 from hoja_server import decisions as decisiondocs
 from hoja_server import views as viewdocs
 from hoja_server.db import (
@@ -202,6 +203,7 @@ def _validate_issue_references(
         )
         if found != expected:
             raise InvalidReferenceError("labelIds")
+        check_label_set(conn, org_id, label_ids)
     return parent_id
 
 
@@ -219,6 +221,144 @@ def normalize_workspace_url_key(raw) -> str:
         raise GraphQLError("Workspace key must contain letters, numbers, and hyphens",
                            extensions={"code": "BAD_USER_INPUT", "field": "urlKey"})
     return key
+
+
+def check_label_set(conn, org_id: str, label_ids: list[str]) -> None:
+    """A task's labels: no group headers, and one child per exclusive group. The message is
+    Linear's own (linear-capture/s6-exclusivity.json)."""
+    rows = conn.execute(select(issue_label.c.id, issue_label.c.name, issue_label.c.is_group,
+                               issue_label.c.parent_id).where(and_(
+        issue_label.c.organization_id == org_id,
+        issue_label.c.id.in_(list(dict.fromkeys(label_ids)))))).all()
+    for row in rows:
+        if row.is_group:
+            raise GraphQLError(
+                f"'{row.name}' is a label group; pick one of its labels.",
+                extensions={"code": "BAD_USER_INPUT", "field": "labelIds"})
+    seen: dict[str, str] = {}
+    for row in rows:
+        if not row.parent_id:
+            continue
+        exclusive = conn.execute(select(issue_label.c.exclusive).where(
+            issue_label.c.id == row.parent_id)).scalar()
+        if exclusive and row.parent_id in seen:
+            raise GraphQLError(
+                f"The label '{row.name}' is in the same group as '{seen[row.parent_id]}'. "
+                "Only one label in a group can be applied to an issue.",
+                extensions={"code": "BAD_USER_INPUT", "field": "labelIds"})
+        seen[row.parent_id] = row.name
+
+
+RANK_COLUMNS = {"sortOrder": "sort_order", "prioritySortOrder": "priority_sort_order"}
+STATE_CHANGE_PLACEMENTS = ("first", "last", "noAction")
+
+
+def _rank_col(conn, column: str):
+    return ranking.sortable(issue.c[column], conn.dialect.name)
+
+
+def _rank_edge(conn, org_id: str, column: str, *, last: bool, exclude: str | None = None,
+               state_id: str | None = None):
+    """The smallest (or, with ``last``, the largest) rank in the workspace — among the tasks in
+    ``state_id`` when given (Linear places by status column) — or None."""
+    col = _rank_col(conn, column)
+    stmt = select(issue.c[column]).where(and_(
+        issue.c.organization_id == org_id, issue.c[column].is_not(None)))
+    if state_id:
+        stmt = stmt.where(issue.c.state_id == state_id)
+    if exclude:
+        stmt = stmt.where(issue.c.id != exclude)
+    return conn.execute(stmt.order_by(col.desc() if last else col.asc()).limit(1)).scalar()
+
+
+def _rank_neighbour(conn, org_id: str, column: str, key: str, *, above: bool,
+                    exclude: str | None = None):
+    """The next distinct rank after ``key`` (``above``: the one before it), or None."""
+    col = _rank_col(conn, column)
+    stmt = select(issue.c[column]).where(and_(
+        issue.c.organization_id == org_id, issue.c[column].is_not(None),
+        col < key if above else col > key))
+    if exclude:
+        stmt = stmt.where(issue.c.id != exclude)
+    return conn.execute(stmt.order_by(col.desc() if above else col.asc()).limit(1)).scalar()
+
+
+def _rank_of(conn, org_id: str, column: str, ident: str | None,
+             field: str) -> tuple[str | None, str | None]:
+    """(issue id, rank) for a task id or identifier; a task with no rank yet gets one at the
+    end, so every neighbour a move names has a key to place against."""
+    if not ident:
+        return None, None
+    row = conn.execute(select(issue.c.id, issue.c[column]).where(and_(
+        issue.c.organization_id == org_id, identifiers.issue_ref_clause(org_id, ident)))).first()
+    if not row:
+        raise InvalidReferenceError(field)
+    if row[1] is None:
+        key = ranking.key_between(_rank_edge(conn, org_id, column, last=True), None)
+        conn.execute(issue.update().where(issue.c.id == row[0]).values({column: key}))
+        return row[0], key
+    return row[0], row[1]
+
+
+def _lock_ranks(conn, org_id: str) -> None:
+    """Serialize rank writes per workspace: two moves computed from the same neighbours would
+    otherwise pick the same key (the prototype showed 100% collisions for that case).
+    SQLite already serializes writers; PostgreSQL takes the organization row."""
+    if conn.dialect.name == "postgresql":
+        conn.execute(select(organization.c.id).where(
+            organization.c.id == org_id).with_for_update()).first()
+    else:
+        # SQLite reads outside a write lock see whatever is committed, so two movers could
+        # read the same neighbours (the concurrency property test caught exactly that). A
+        # no-op write takes the database's write lock now, before the neighbours are read.
+        conn.execute(organization.update().where(organization.c.id == org_id)
+                     .values(id=organization.c.id))
+
+
+def place_between(conn, org_id: str, moving_id: str, column: str,
+                  after_id: str | None, before_id: str | None) -> str:
+    """The rank that puts ``moving_id`` directly after ``after_id`` and before ``before_id``
+    (either may be None). Neighbours are read inside the caller's transaction, after the
+    lock, so the key is computed from what is committed rather than a client's snapshot."""
+    _lock_ranks(conn, org_id)
+    a_id, a = _rank_of(conn, org_id, column, after_id, "afterId")
+    b_id, b = _rank_of(conn, org_id, column, before_id, "beforeId")
+    if a_id == moving_id or b_id == moving_id:
+        raise GraphQLError("A task cannot be placed next to itself.",
+                           extensions={"code": "BAD_USER_INPUT", "field": "afterId"})
+    if a is not None and b is not None and a == b:
+        # Two tasks share a rank (an import, or a race before this lock existed): give the
+        # lower neighbour a fresh key just above, then place between them.
+        nxt = _rank_neighbour(conn, org_id, column, a, above=False, exclude=moving_id)
+        b = ranking.key_between(a, nxt)
+        conn.execute(issue.update().where(issue.c.id == b_id).values({column: b}))
+    elif a is not None and b is not None and a > b:
+        b = None  # a stale view: honour "after" and ignore the out-of-order "before"
+    if a is None and b is None:
+        return ranking.key_between(None, _rank_edge(conn, org_id, column, last=False,
+                                                     exclude=moving_id))
+    if a is None:
+        a = _rank_neighbour(conn, org_id, column, b, above=True, exclude=moving_id)
+    else:
+        # "After X" wins: whatever now follows X directly bounds the gap, even when the
+        # client's "before" is further down because someone else dropped a task in the same
+        # gap since its snapshot. Otherwise both would get the same midpoint.
+        nxt = _rank_neighbour(conn, org_id, column, a, above=False, exclude=moving_id)
+        if b is None or (nxt is not None and nxt < b):
+            b = nxt
+    return ranking.key_between(a, b)
+
+
+def edge_rank(conn, org_id: str, column: str, *, last: bool, exclude: str | None = None,
+              state_id: str | None = None) -> str:
+    """A rank before every task (or, with ``last``, after every task) — of status ``state_id``
+    when given. Linear puts a new or re-statused task at the top of its status column, and
+    appends a new task's priority rank (row-by-row comparison, proof/linear-diff.json)."""
+    _lock_ranks(conn, org_id)
+    edge = _rank_edge(conn, org_id, column, last=last, exclude=exclude, state_id=state_id)
+    if edge is None and state_id:
+        edge = _rank_edge(conn, org_id, column, last=last, exclude=exclude)
+    return ranking.key_between(edge, None) if last else ranking.key_between(None, edge)
 
 
 class Writer:
@@ -532,6 +672,12 @@ class Writer:
                 if not isinstance(inp[key], bool):
                     raise GraphQLError(f"{key} must be a boolean", extensions={"code": "BAD_USER_INPUT", "field": key})
                 values[column] = inp[key]
+        if "issueSortOrderOnStateChange" in inp:
+            if inp["issueSortOrderOnStateChange"] not in STATE_CHANGE_PLACEMENTS:
+                raise GraphQLError("issueSortOrderOnStateChange must be first, last or noAction.",
+                                   extensions={"code": "BAD_USER_INPUT",
+                                               "field": "issueSortOrderOnStateChange"})
+            values["issue_sort_order_on_state_change"] = inp["issueSortOrderOnStateChange"]
         if "visibility" in inp:
             values["visibility"] = self._validate_visibility(inp["visibility"])
         with self.engine.begin() as conn:
@@ -1041,8 +1187,11 @@ class Writer:
             ts = now_iso()
             url_key, base_url = org_links(conn, org_id)
             iid = new_id()
+            top = edge_rank(conn, org_id, "sort_order", last=False, state_id=state_id)
+            top_priority = edge_rank(conn, org_id, "priority_sort_order", last=True)
             conn.execute(issue.insert().values(
                 id=iid, organization_id=org_id, team_id=tid, number=n, identifier=ident,
+                sort_order=top, priority_sort_order=top_priority,
                 slot=slot, depth=issue_depth,
                 title=inp["title"], description=inp.get("description"),
                 priority=prio, priority_label=PRIORITY_LABELS.get(prio, "No priority"),
@@ -1301,6 +1450,18 @@ class Writer:
                                 conn, org_id, dict(team_row), inp["stateId"])
                             if auto_id:
                                 values["cycle_id"] = auto_id
+            move = inp.get("_move")
+            if move:
+                column = RANK_COLUMNS[move.get("field") or "sortOrder"]
+                values[column] = place_between(conn, org_id, iid, column,
+                                               move.get("afterId"), move.get("beforeId"))
+            elif values.get("state_changed_at") == ts:
+                placement = conn.execute(select(team.c.issue_sort_order_on_state_change).where(
+                    team.c.id == issue_row["team_id"])).scalar() or "first"
+                if placement != "noAction":
+                    values["sort_order"] = edge_rank(conn, org_id, "sort_order",
+                                                     last=placement == "last", exclude=iid,
+                                                     state_id=inp["stateId"])
             changes = {}
             for field, column in {"title": "title", "description": "description", "priority": "priority", "stateId": "state_id", "assigneeId": "assignee_id", "delegateId": "delegate_id", "projectId": "project_id"}.items():
                 if field in inp and issue_row.get(column) != values.get(column):
@@ -1663,13 +1824,37 @@ class Writer:
                 if not trow:
                     raise InvalidReferenceError("teamId")
                 team_id = trow[0]
+            is_group = bool(inp.get("isGroup"))
+            parent_id = None
+            if inp.get("parentId"):
+                if is_group:
+                    raise GraphQLError("A label group cannot sit inside another group.",
+                                       extensions={"code": "BAD_USER_INPUT", "field": "parentId"})
+                parent_id = self._label_group(conn, org_id, inp["parentId"], team_id)
             ts = now_iso()
             lid = new_id()
             conn.execute(issue_label.insert().values(
                 id=lid, organization_id=org_id, team_id=team_id, name=inp["name"],
                 color=inp.get("color"), description=inp.get("description"),
+                parent_id=parent_id, is_group=is_group,
+                exclusive=True if inp.get("exclusive") is None else bool(inp["exclusive"]),
                 created_at=ts, updated_at=ts))
             return lid
+
+    @staticmethod
+    def _label_group(conn, org_id: str, group_id: str, team_id: str | None) -> str:
+        """The id of a live label group a label of ``team_id`` may join (same team scope)."""
+        row = conn.execute(select(issue_label).where(and_(
+            issue_label.c.organization_id == org_id, issue_label.c.id == group_id,
+            issue_label.c.archived_at.is_(None)))).mappings().first()
+        if not row or not row["is_group"]:
+            raise GraphQLError("parentId must be a label group.",
+                               extensions={"code": "BAD_USER_INPUT", "field": "parentId"})
+        if row["team_id"] != team_id:
+            raise GraphQLError("A label and its group must belong to the same team, or both "
+                               "to the workspace.",
+                               extensions={"code": "BAD_USER_INPUT", "field": "parentId"})
+        return row["id"]
 
     def label_update(self, org_id: str, viewer_id: str, lid: str, inp: dict) -> bool:
         values: dict = {}
@@ -1690,15 +1875,79 @@ class Writer:
                 extensions={"code": "FORBIDDEN", "capability": "label.manage"},
             )
         with self.engine.begin() as conn:
+            current = conn.execute(select(issue_label).where(and_(
+                issue_label.c.id == lid, issue_label.c.organization_id == org_id,
+                issue_label.c.archived_at.is_(None)))).mappings().first()
+            if current is None:
+                return False
+            if "exclusive" in inp:
+                values["exclusive"] = bool(inp["exclusive"])
+            if "isGroup" in inp and bool(inp["isGroup"]) != bool(current["is_group"]):
+                values.update(self._label_group_toggle(conn, org_id, dict(current), bool(inp["isGroup"])))
+            if "parentId" in inp:
+                values["parent_id"] = self._label_reparent(conn, org_id, dict(current), inp["parentId"])
+            if values.get("exclusive") and (current["is_group"] or values.get("is_group")):
+                self._require_exclusive_holds(conn, org_id, lid)
             if not values:
-                return conn.execute(select(issue_label.c.id).where(and_(
-                    issue_label.c.id == lid, issue_label.c.organization_id == org_id,
-                    issue_label.c.archived_at.is_(None)))).first() is not None
+                return True
             values["updated_at"] = now_iso()
             result = conn.execute(issue_label.update().where(and_(
                 issue_label.c.id == lid, issue_label.c.organization_id == org_id,
                 issue_label.c.archived_at.is_(None))).values(**values))
             return result.rowcount > 0
+
+    @staticmethod
+    def _label_group_toggle(conn, org_id: str, current: dict, to_group: bool) -> dict:
+        if to_group:
+            if current["parent_id"]:
+                raise GraphQLError("A label inside a group cannot become a group.",
+                                   extensions={"code": "BAD_USER_INPUT", "field": "isGroup"})
+            if conn.execute(select(issue_label_link.c.issue_id).where(
+                    issue_label_link.c.label_id == current["id"]).limit(1)).first():
+                raise GraphQLError("This label is applied to tasks; a group cannot be applied, so "
+                                   "remove it from them first.",
+                                   extensions={"code": "BAD_USER_INPUT", "field": "isGroup"})
+            return {"is_group": True}
+        if conn.execute(select(issue_label.c.id).where(and_(
+                issue_label.c.organization_id == org_id, issue_label.c.parent_id == current["id"],
+                issue_label.c.archived_at.is_(None))).limit(1)).first():
+            raise GraphQLError("Move or delete this group's labels before ungrouping it.",
+                               extensions={"code": "BAD_USER_INPUT", "field": "isGroup"})
+        return {"is_group": False}
+
+    def _label_reparent(self, conn, org_id: str, current: dict, parent_id: str | None) -> str | None:
+        if not parent_id:
+            return None
+        if current["is_group"]:
+            raise GraphQLError("A label group cannot sit inside another group.",
+                               extensions={"code": "BAD_USER_INPUT", "field": "parentId"})
+        group = self._label_group(conn, org_id, parent_id, current["team_id"])
+        exclusive = conn.execute(select(issue_label.c.exclusive).where(
+            issue_label.c.id == group)).scalar()
+        if exclusive:
+            siblings = select(issue_label.c.id).where(and_(
+                issue_label.c.parent_id == group, issue_label.c.id != current["id"]))
+            clash = conn.execute(select(issue_label_link.c.issue_id).where(and_(
+                issue_label_link.c.label_id == current["id"],
+                issue_label_link.c.issue_id.in_(select(issue_label_link.c.issue_id).where(
+                    issue_label_link.c.label_id.in_(siblings))))).limit(1)).first()
+            if clash:
+                raise GraphQLError("Some tasks already carry this label and another label of that "
+                                   "group; only one label in a group can be applied to a task.",
+                                   extensions={"code": "BAD_USER_INPUT", "field": "parentId"})
+        return group
+
+    @staticmethod
+    def _require_exclusive_holds(conn, org_id: str, group_id: str) -> None:
+        children = select(issue_label.c.id).where(and_(
+            issue_label.c.organization_id == org_id, issue_label.c.parent_id == group_id))
+        clash = conn.execute(select(issue_label_link.c.issue_id).where(
+            issue_label_link.c.label_id.in_(children)).group_by(issue_label_link.c.issue_id)
+            .having(func.count() > 1).limit(1)).first()
+        if clash:
+            raise GraphQLError("Some tasks carry two labels of this group; leave it non-exclusive "
+                               "or remove one first.",
+                               extensions={"code": "BAD_USER_INPUT", "field": "exclusive"})
 
     def label_delete(self, org_id: str, lid: str) -> bool:
         return self._soft_delete(issue_label, org_id, lid)
@@ -2325,21 +2574,50 @@ class Writer:
         return dict(row)
 
     def view_duplicate(self, org_id: str, viewer_id: str, view_id: str, inp: dict) -> str:
-        """Copy a view the caller can read: same documents and look, the caller as owner,
-        private unless ``visibility`` says otherwise, archived state not copied."""
+        """Copy a view the caller can read, as Linear does (SPEC.md §5, linear-capture/s7-*):
+        the same name, documents, look and visibility, the caller as owner; the caller's own
+        display override comes along, and a pinned tab's copy is pinned right after it.
+        Subscriptions and archived state are not copied. A shared source falls back to a
+        personal copy only when the caller may not create a shared view there."""
         with self.engine.connect() as conn:
             row = self._visible_view_row(conn, org_id, viewer_id, view_id)
-        name = inp.get("name") or f"{row['name']} (copy)"[:80]
-        visibility = inp.get("visibility") or "private"
+            own = conn.execute(select(view_preference.c["values"]).where(and_(
+                view_preference.c.organization_id == org_id,
+                view_preference.c.user_id == viewer_id,
+                view_preference.c.view_id == row["id"]))).scalar()
+        name = (inp.get("name") or row["name"])[:80]
+        visibility = inp.get("visibility") or row.get("visibility") or "private"
         if visibility == "team" and row["scope"] != "team":
             visibility = "workspace"
-        return self.view_create(org_id, viewer_id, {
+        payload = {
             "name": name, "description": row.get("description"), "icon": row.get("icon"),
             "color": row.get("color"), "kind": row["kind"], "scope": row["scope"],
             "teamId": row.get("team_id"), "projectId": row.get("project_id"),
-            "initiativeId": row.get("initiative_id"), "visibility": visibility,
+            "initiativeId": row.get("initiative_id"),
             "filters": viewdocs.load(row.get("filters")),
-            "display": viewdocs.load(row.get("display"))})
+            "display": viewdocs.load(row.get("display"))}
+        try:
+            new_id_ = self.view_create(org_id, viewer_id, {**payload, "visibility": visibility})
+        except GraphQLError:
+            if inp.get("visibility") or visibility == "private":
+                raise
+            new_id_ = self.view_create(org_id, viewer_id, {**payload, "visibility": "private"})
+        with self.engine.begin() as conn:
+            if own:
+                ts = now_iso()
+                conn.execute(view_preference.insert().values(
+                    id=new_id(), organization_id=org_id, user_id=viewer_id, view_id=new_id_,
+                    values=own, created_at=ts, updated_at=ts))
+            if row.get("pinned") and row["scope"] in ("team", "project"):
+                owner_col = saved_view.c.team_id if row["scope"] == "team" else saved_view.c.project_id
+                owner_val = row["team_id"] if row["scope"] == "team" else row["project_id"]
+                after = row.get("sort_order") or 0.0
+                nxt = conn.execute(select(func.min(saved_view.c.sort_order)).where(and_(
+                    saved_view.c.organization_id == org_id, owner_col == owner_val,
+                    saved_view.c.pinned.is_(True), saved_view.c.sort_order > after))).scalar()
+                conn.execute(saved_view.update().where(saved_view.c.id == new_id_).values(
+                    pinned=True, sort_order=(after + nxt) / 2 if nxt is not None else after + 1.0))
+        return new_id_
 
     # ------------------------------------------------------- view preferences
 

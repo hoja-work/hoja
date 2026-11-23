@@ -56,6 +56,21 @@ SDL = gql(
       subscription: ViewSubscription
       subscriberCount: Int!
     }
+    "What a plain-language request turned into: filters in the view grammar, ready to show as chips."
+    type ViewFilterSuggestion {
+      "Null when nothing in the request names a filter."
+      filters: JSON
+      "rules (Hoja's parser), model (the workspace's model) or none."
+      source: String!
+      "Words neither tier could use."
+      unmatched: [String!]!
+      message: String
+    }
+    "Linear's IssueFilterSuggestionPayload: the suggestion in Linear's filter shape."
+    type IssueFilterSuggestionPayload {
+      filter: JSON
+      logId: String
+    }
     "Display preferences in layers: the default everyone starts from, the caller's own overrides, and the result."
     type ViewPreferenceState {
       viewId: String
@@ -205,13 +220,17 @@ SDL = gql(
       customView(id: String!): CustomView!
       customViews(first: Int, after: String, includeArchived: Boolean): CustomViewConnection!
       customViewHasSubscribers(id: String!): CustomViewHasSubscribersPayload!
+      "Turn a plain-language request into view filters (the AI filter)."
+      viewFilterSuggestion(prompt: String!, kind: String, teamId: String, projectId: String): ViewFilterSuggestion!
+      "Linear's issueFilterSuggestion: the same suggestion as Linear-shaped filterData."
+      issueFilterSuggestion(prompt: String!, teamId: String, projectId: String): IssueFilterSuggestionPayload! @deprecated(reason: "Kept under Linear's name for compatible clients; use viewFilterSuggestion.")
     }
     extend type Mutation {
       viewCreate(input: ViewCreateInput!): ViewPayload!
       viewUpdate(id: String!, input: ViewUpdateInput!): ViewPayload!
       viewDelete(id: String!): DeletePayload!
       viewFavoriteToggle(id: String!): ViewFavoritePayload!
-      "Copy a view you can read; you own the copy, which is private unless visibility says otherwise."
+      "Copy a view you can read, as Linear does: same name, filters, look and visibility, you as owner; your own display override comes along and a pinned tab's copy is pinned next to it."
       viewDuplicate(id: String!, name: String, visibility: String): ViewPayload!
       "Pin a team or project view as a tab on that page (or unpin it). Anyone who can read the view may; sortOrder places the tab."
       viewPin(id: String!, pinned: Boolean!, sortOrder: Float): ViewPayload!
@@ -332,6 +351,33 @@ def m_view_favorite_toggle(_, info, id):
     store, writer, org, uid = _ctx(info)
     favorite = writer.view_favorite_toggle(org, uid, id)
     return {"success": True, "favorite": favorite, "view": store.view_by_id(org, uid, id)}
+
+
+def _suggest(info, prompt, kind, teamId):  # noqa: N803 - GraphQL argument name
+    from hoja_server import ai_filter
+
+    store, _writer, org, uid = _ctx(info)
+    if kind not in (None, "issue"):
+        raise GraphQLError("Plain-language filters cover task views for now.",
+                           extensions={"code": "BAD_USER_INPUT", "field": "kind"})
+    try:
+        return ai_filter.suggest(store, org, uid, prompt, kind="issue", team_id=teamId)
+    except viewdocs.ViewError as exc:
+        raise _bad(exc) from exc
+
+
+@query.field("viewFilterSuggestion")
+def q_view_filter_suggestion(_, info, prompt, kind=None, teamId=None, projectId=None):  # noqa: N803
+    got = _suggest(info, prompt, kind, teamId)
+    return {"filters": got.filters, "source": got.source, "unmatched": got.unmatched,
+            "message": got.message}
+
+
+@query.field("issueFilterSuggestion")
+def q_issue_filter_suggestion(_, info, prompt, teamId=None, projectId=None):  # noqa: N803
+    got = _suggest(info, prompt, None, teamId)
+    return {"filter": view_linear.to_linear("issue", got.filters) if got.filters else None,
+            "logId": None}
 
 
 @mutation.field("viewDuplicate")

@@ -126,9 +126,13 @@ const ok = (cond, label, detail = '') => { cond ? pass++ : fail++; console.log(`
     // ---- duplicate and delete
     await page.locator('[data-view-menu]').click();
     await page.getByRole('menuitem', { name: 'Duplicate…' }).click();
-    await page.waitForSelector('[role=dialog] input');
-    await page.locator('[role=dialog] input').fill('Urgent copy');
-    await page.keyboard.press('Enter');
+    // As on Linear: Duplicate opens the editor on a draft with the same name, selected, and
+    // nothing is written until Create view (Ctrl/Cmd Enter).
+    await page.waitForURL(/\/views\/issues\/new$/);
+    await page.waitForFunction(() => document.activeElement?.closest('[data-view-editor-head]'));
+    ok((await page.evaluate(() => document.activeElement.value)) === 'Urgent tasks', 'Duplicate opens the editor on the same name');
+    await page.keyboard.type('Urgent copy');
+    await page.keyboard.press('Control+Enter');
     await page.waitForURL(/\/workspace\/view\/urgent-copy-/);
     ok(true, 'Duplicate opens the copy');
     await page.waitForSelector('[data-view-page]');

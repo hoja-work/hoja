@@ -15,6 +15,7 @@ ROOT_ALIASES: dict[str, str] = {
     "searchTasks": "searchIssues",
     "taskCreate": "issueCreate",
     "taskUpdate": "issueUpdate",
+    "taskMove": "issueMove",
     "taskDelete": "issueDelete",
     "taskArchive": "issueArchive",
     "taskSubscribe": "issueSubscribe",

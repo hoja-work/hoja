@@ -32,7 +32,8 @@ from hoja_server.db import (
 )
 from hoja_server.store import Store, visible_team_clause
 
-SYNC_VERSION = 1
+# 2: rows carry rank and priorityRank (manual order); a new version re-bootstraps old caches.
+SYNC_VERSION = 2
 DEFAULT_CLOSED_DAYS = 14
 MAX_CLOSED_DAYS = 365
 # A client further behind than this re-bootstraps instead of replaying.
@@ -41,7 +42,8 @@ MAX_DELTA_EVENTS = 5000
 ISSUE_COLUMNS = (
     "id", "identifier", "title", "priority", "estimate", "createdAt", "updatedAt",
     "stateChangedAt", "dueDate", "stateId", "teamId", "projectId", "assigneeId",
-    "creatorId", "cycleId", "parentId", "decisionNeeded", "labelIds", "subscriberIds",
+    "creatorId", "cycleId", "parentId", "decisionNeeded", "rank", "priorityRank", "labelIds",
+    "subscriberIds",
 )
 TEAM_COLUMN = ISSUE_COLUMNS.index("teamId")
 _CLOSED_TYPES = ("completed", "canceled")
@@ -53,12 +55,13 @@ RELOAD_ENTITIES = {"team", "teamMember"}
 META_QUERY = """query SyncMeta {
   viewer { id name email admin }
   workspace { id name urlKey }
-  teams { nodes { id name key description showInitiatives states { nodes { id name color type } }
+  teams { nodes { id name key description showInitiatives issueSortOrderOnStateChange
+    states { nodes { id name color type } }
     members { nodes { id name email } } activeCycle { id name number startsAt endsAt progress } } }
   projects(first: 250) { nodes { id name description state progress startDate targetDate health
     lead { name } teams { nodes { id name key } } } pageInfo { hasNextPage endCursor } }
   cycles(first: 250) { nodes { id name number startsAt endsAt completedAt progress team { id name key } } }
-  issueLabels(first: 250) { nodes { id name color } }
+  issueLabels(first: 250) { nodes { id name color isGroup parentId exclusive } }
 }"""
 
 
@@ -141,6 +144,7 @@ def _issue_select(conn, org_id: str, viewer_id: str | None):
             issue.c.created_at, issue.c.updated_at, issue.c.state_changed_at, issue.c.due_date,
             issue.c.state_id, issue.c.team_id, issue.c.project_id, issue.c.assignee_id,
             issue.c.creator_id, issue.c.cycle_id, issue.c.parent_id, issue.c.decision_needed,
+            issue.c.sort_order, issue.c.priority_sort_order,
         )
         .select_from(issue.outerjoin(workflow_state, workflow_state.c.id == issue.c.state_id))
         .where(and_(issue.c.organization_id == org_id, issue.c.archived_at.is_(None)))

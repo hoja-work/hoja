@@ -21,6 +21,8 @@ import {
 import {
   COMPLETED_WINDOWS,
   ISSUE_GROUPINGS,
+  INITIATIVE_GROUPINGS,
+  INITIATIVE_ORDERINGS,
   ISSUE_ORDERINGS,
   ISSUE_PROPERTIES,
   NESTED_OPTIONS,
@@ -35,7 +37,7 @@ import {
   type Option,
 } from "./displayModel";
 
-export type DisplayVariant = "issue" | "project";
+export type DisplayVariant = "issue" | "project" | "initiative";
 
 const rowClass =
   "flex min-h-8 items-center justify-between gap-3 text-sm text-muted";
@@ -116,6 +118,7 @@ export function DisplayPanel({
   onReset,
   onSetDefault,
   canSetDefault = true,
+  labelGroups = [],
 }: {
   display: EffectiveDisplay;
   onChange: (patch: DisplayDoc) => void;
@@ -126,10 +129,21 @@ export function DisplayPanel({
   onReset: () => void;
   onSetDefault?: () => void;
   canSetDefault?: boolean;
+  /** The workspace's label groups, for grouping by one (Linear's "Label group"). */
+  labelGroups?: { id: string; name: string }[];
 }) {
   const issue = variant === "issue";
-  const groupings = issue ? ISSUE_GROUPINGS : PROJECT_GROUPINGS;
-  const orderings = issue ? ISSUE_ORDERINGS : PROJECT_ORDERINGS;
+  const initiative = variant === "initiative";
+  const groupings = issue
+    ? ISSUE_GROUPINGS
+    : initiative
+      ? INITIATIVE_GROUPINGS
+      : PROJECT_GROUPINGS;
+  const orderings = issue
+    ? ISSUE_ORDERINGS
+    : initiative
+      ? INITIATIVE_ORDERINGS
+      : PROJECT_ORDERINGS;
   const properties = issue ? ISSUE_PROPERTIES : PROJECT_PROPERTIES;
   const board = display.layout === "board";
   const visible = new Set(display.visibleProperties);
@@ -166,6 +180,32 @@ export function DisplayPanel({
           options={groupings}
           onChange={(grouping) => onChange({ grouping })}
         />
+        {issue && display.grouping === "labelGroup" && (
+          <Select
+            label="Label group"
+            value={
+              display.groupingLabelGroupId ||
+              [...labelGroups].sort((a, b) => a.name.localeCompare(b.name))[0]
+                ?.id ||
+              ""
+            }
+            options={
+              labelGroups.length
+                ? labelGroups.map((g) => ({ value: g.id, label: g.name }))
+                : [
+                    {
+                      value: "",
+                      label: "No label groups",
+                      disabled: "Create a label group in Settings › Labels.",
+                    },
+                  ]
+            }
+            onChange={(groupingLabelGroupId) =>
+              onChange({ groupingLabelGroupId })
+            }
+          />
+        )}
+        {!initiative && (
         <Select
           label={board ? "Rows" : "Sub-grouping"}
           value={display.subGrouping}
@@ -176,6 +216,21 @@ export function DisplayPanel({
           )}
           onChange={(subGrouping) => onChange({ subGrouping })}
         />
+        )}
+        {initiative && (
+          <>
+            <Switch
+              label="Nest sub-initiatives"
+              checked={display.nested !== false}
+              onChange={(v) => onChange({ nested: v })}
+            />
+            <Switch
+              label="Show summaries"
+              checked={display.summary !== false}
+              onChange={(v) => onChange({ summary: v })}
+            />
+          </>
+        )}
         <div className={rowClass}>
           <span>Ordering</span>
           <span className="flex items-center gap-1">
@@ -238,6 +293,7 @@ export function DisplayPanel({
           />
         )}
       </div>
+      {!initiative && (
       <div className="grid gap-1 border-t border-line pt-3">
         <span className="text-sm font-medium text-foreground">
           {board ? "Board options" : "List options"}
@@ -258,6 +314,8 @@ export function DisplayPanel({
           onChange={(v) => onChange({ showEmptyGroups: v })}
         />
       </div>
+      )}
+      {!initiative && (
       <div className="grid gap-2">
         <span className="text-sm text-muted">Display properties</span>
         <div
@@ -288,6 +346,7 @@ export function DisplayPanel({
           ))}
         </div>
       </div>
+      )}
       <div className="flex items-center justify-between gap-2 border-t border-line pt-3">
         <button
           type="button"

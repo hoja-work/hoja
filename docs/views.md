@@ -21,6 +21,7 @@ display options, kept per page as [display preferences](#display-preferences).
 | How results are computed | [Execution](#execution) |
 | Linear clients | [Linear-compatible API](#linear-compatible-api), [Linear parity](#linear-parity) |
 | Command line | [Command line](#command-line) |
+| Manual order, label groups, plain-language filters | [Manual order](#manual-order), [Label groups](#label-groups), [Plain-language filters](#plain-language-filters) |
 | Web pages, routes and shortcuts | [Web client](#web-client), [Routes and shortcuts](#routes-and-shortcuts) |
 
 The GraphQL surface lives in `hoja_server/views_api.py`; validation and compilation live in
@@ -418,6 +419,64 @@ validates its documents and scope exactly as `viewCreate` does and returns a `Vi
 with the same `issues`/`projects`/`initiatives` fields, so a draft renders through the same
 engine as the saved view it will become.
 
+## Manual order
+
+Order is stored on the **task**, not on the view, as on Linear (`Issue.sortOrder`): one drag
+reorders every manual list that shows both tasks. Two ranks exist (revision 96):
+
+| Rank | Linear field | Used when |
+| --- | --- | --- |
+| `issue.sort_order` (`Task.rank`) | `sortOrder` | `display.ordering: "manual"` |
+| `issue.priority_sort_order` (`Task.priorityRank`) | `prioritySortOrder` | `display.ordering: "priority"`, within one priority |
+
+Ranks are fractional-index keys (`hoja_server/ranking.py`, a port of rocicorp's
+fractional-indexing; the browser half is `frontend/src/views/ranking.ts` and both are checked
+against each other). They compare **byte-wise**: PostgreSQL orders them with `COLLATE "C"`,
+because a default collation such as `en-US` sorts `a0` before `B0` and would scramble the order.
+A move writes one row; nothing is ever renumbered. Tasks without a rank (an import that wrote
+rows directly) sort after ranked ones, newest first, and get a rank the first time a move names
+them.
+
+`taskMove(id, input: {afterId, beforeId, field, ...})` (alias `issueMove`) drops a task between
+two others and may set the grouped field in the same write (a drag into another group):
+`stateId`, `assigneeId`, `priority`, `projectId`, `cycleId` or `labelIds`. The key is computed
+on the server under a per-workspace lock, so two people dropping into the same gap never get
+the same key; "after X" wins when the client's "before" is stale.
+
+Where tasks land without a drag, as Linear places them:
+
+- a new task goes on top of its **status** (and its priority rank is appended);
+- a task whose status changes outside a drag follows the team's
+  `issueSortOrderOnStateChange` — `first` (default: top of the new status), `last`, or
+  `noAction` — set in Settings › Teams › Workflow.
+
+## Label groups
+
+A task label can be a group (`isGroup`), and labels can sit in one (`parentId`). A group cannot
+be applied to a task; an `exclusive` group (the default) allows one of its labels per task, and
+a second is refused with Linear's own message ("The label 'ui' is in the same group as 'api'.
+Only one label in a group can be applied to an issue."). A label filter on a group matches the
+group's labels, in Linear's stored shape (`{labels: {or: [{name}, {parent: {name}}]}}`), so
+`{"labels": {"includesAny": ["area"]}}` selects tasks labelled `api` or `ui`. Group a list by a
+label group with `display.grouping: "labelGroup"` and `display.groupingLabelGroupId`; a drag
+between its groups swaps the task's label in that group and keeps the others.
+
+## Plain-language filters
+
+`viewFilterSuggestion(prompt, kind, teamId)` turns a request ("unassigned bugs due this week",
+"overdue tasks assigned to me") into view filters; Linear's `issueFilterSuggestion` answers the
+same in Linear's filter shape. The filter menu offers it as its last row, `AI filter "…"`, and
+the result replaces the chips, which stay ordinary and editable.
+
+It answers in two tiers (`hoja_server/ai_filter.py`): a parser that knows the workspace's own
+label, status, member and project names and answers in milliseconds; and, for words it could
+not read, the workspace's configured model (the provider Agent Chat uses), whose answer must
+pass the same validator as a saved view, with one retry carrying the validator's message. A
+request that names nothing concrete gets no filter and a message, never a guess: any unread
+word — a negation above all — makes the parser abstain. Evaluation: 54 written cases
+(`tests/fixtures/ai_filter_eval.json`, all pass) and a 60-case set written without access to
+the parser (right 44, abstained 13, wrong 3 — two of the three are alternative readings).
+
 ## Sharing and visibility
 
 | `visibility` | Who may read | Who may change or delete |
@@ -518,15 +577,22 @@ label by name or by id) becomes an `or`, `includesAll` becomes one `some` per va
 | Per-user display | `ViewPreferences(type: "user")` | `viewPreferences` / `viewPreferencesSet` (`view_preference`) |
 | Subscribe to a view | `notificationSubscriptionCreate(customViewId)` | `viewSubscribe` (`view_subscription`) |
 | Export as CSV | view menu → Export | `GET /api/views/<id>/export.csv` |
+| Manual order | `Issue.sortOrder`, `prioritySortOrder` | `Task.rank`, `Task.priorityRank`; `taskMove` ([Manual order](#manual-order)) |
+| Placement on status change | `Team.setIssueSortOrderOnStateChange` | `Team.issueSortOrderOnStateChange` |
+| Label groups | `IssueLabel.isGroup`, `parent`, `children` | same fields on `TaskLabel` / `IssueLabel` ([Label groups](#label-groups)) |
+| Group by label group | `issueGrouping: "labelGroup"`, `issueGroupingLabelGroupId` | `display.grouping: "labelGroup"`, `display.groupingLabelGroupId` |
+| AI filter | `issueFilterSuggestion` | `viewFilterSuggestion`, and `issueFilterSuggestion` in Linear's shape |
+| Duplicate | view menu → Duplicate… (editor draft, same name and visibility, pinned after the source) | same; `viewDuplicate` for API clients |
 
 ### Not supported yet
 
 | Linear capability | Why not |
 | --- | --- |
 | Views in the open-source `hoja` server | The OSS server has the tables but no views API; its web client keeps views in `localStorage`. Everything on this page is the Cloud app. |
-| Initiative views in the web client | `kind: "initiative"` views run through the API (`View.initiatives`), but have no list, editor or page in the web app yet; the views list, palette and sidebar leave them out. |
+| Creating initiative views from the views list | A saved initiative view has a page (shared chips and Display panel over `View.initiatives`), but the views list, palette and editor still create task and project views only. |
 | Grouping or ordering by agent, milestone, customer, SLA or time in status | Hoja has no milestones, customers or per-issue agent column to group by; `display` rejects those keys. |
-| Natural-language ("AI") filters, Insights panel, in-view `Cmd/Ctrl F` search | Not built. |
+| Insights panel, in-view `Cmd/Ctrl F` search | Not built. |
+| A `Float` `sortOrder` on tasks | Hoja's ranks are fractional-index strings (`rank`); a Linear client writing `sortOrder` floats is not accepted. |
 | A favorited view as the custom home page | Not built; the home page is fixed. |
 | Team "active issues" notifications (the bell on a team's Issues page) | Not built; follow a team view instead ([Subscriptions](#subscriptions)). |
 | Pinned-view management permission | Any member who can read a team view may pin it; there is no separate permission. |
@@ -640,6 +706,11 @@ board as the team pages, paged with `after` as the list scrolls.
 | `Alt V` | any task list or view | Save as a new view ("Create new view…") |
 | `Alt S` | a saved view with unsaved edits | Save to this view (owner or admin) |
 | `Alt F` | a saved view | Favorite or unfavorite |
+| `Alt D` | a saved view | Duplicate (opens the editor on a draft) |
+| `Cmd/Ctrl Enter` | the view editor | Create the view |
+| `J` / `K`, `↓` / `↑` | a task list | Move the focus between tasks; `Enter` opens the focused one |
+| `Alt ↑` / `Alt ↓` | a focused task, manual or priority order | Move it one place — across a group edge too, setting the grouped field |
+| `Alt Shift ↑` / `Alt Shift ↓` | a focused task, manual or priority order | Move it to the top or bottom of its group |
 | `Cmd/Ctrl B` | any task list or view | Switch list and board |
 | `T` | any task list or view, list layout | Collapse every group, or open them all |
 | `1`–`9` | a team's Tasks page | Select a tab, pinned views included |
@@ -673,7 +744,11 @@ never dropped. `--project` must name one project (UUID, slug or exact name).
 ## Tests
 
 `tests/test_views.py`, `tests/test_views_exec.py` and `tests/test_views_parity.py` cover the
-API, execution and the parity features; `tests/test_cli_issue_view.py` drives
+API, execution and the parity features; `tests/test_views_depth_order.py` (ranks, moves, random
+and concurrent move sequences), `tests/test_views_depth_labels.py`, `tests/test_views_depth_dates.py`
+(pinned clocks across midnight, DST and month ends, browser vs server) and
+`tests/test_ai_filter.py` cover manual order, label groups, relative dates and plain-language
+filters; `tests/test_cli_issue_view.py` drives
 `hoja issue list --view` against a live server; `tests/test_view_filter_contract.py` serializes
 every chip the web filter bar offers and checks the server grammar accepts it.
 `npm run test:views` runs the filter, display and view-page models' table tests

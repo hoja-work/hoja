@@ -29,6 +29,7 @@ import {
   X,
   HeartPulse,
   Boxes,
+  Sparkles,
 } from "lucide-react";
 import {
   Popover,
@@ -44,7 +45,9 @@ import {
   chipOps,
   effectiveOp,
   fieldSpec,
+  filterTreeToChips,
   isSimple,
+  newChip,
   opLabel,
   parseDateInput,
   RELATION_VALUES,
@@ -57,6 +60,7 @@ import {
   type FilterChip,
   type FilterGroup,
   type FilterNode,
+  type FilterTree,
   type FilterValue,
 } from "./filterModel";
 import {
@@ -283,6 +287,8 @@ function FilterMenu({
   onDone: () => void;
 }) {
   const [query, setQuery] = useState("");
+  const [thinking, setThinking] = useState(false);
+  const [aiNote, setAiNote] = useState("");
   const [path, setPath] = useState<string[]>(() => (chip ? [chip.field] : []));
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -326,6 +332,17 @@ function FilterMenu({
           ? updateNode(next, liveChip.id, (n) => ({ ...n, op }) as FilterChip)
           : next,
       );
+    } else if (
+      spec.type === "labels" &&
+      value !== null &&
+      !chip &&
+      group.items.some(
+        (n) => n.type === "chip" && n.field === field && !n.values.includes(value),
+      )
+    ) {
+      // A second label from the menu is its own chip, so the labels are ANDed (Linear does
+      // this; merging made "Bug" then "api" silently mean Bug OR api — JOBS.md, J3).
+      onChange(appendTo(root, group.id, newChip(field, [value], op, fields)));
     } else if (group.id === root.id)
       onChange(toggleValue(root, field, value, fields, op));
     else
@@ -413,18 +430,63 @@ function FilterMenu({
       ];
     } else {
       // Typing searches categories and every value at once ("urg" finds Priority: Urgent).
-      const hits = categories.filter((c) => c.label.toLowerCase().includes(q));
+      // Every typed word must appear, in any order, so "created 1 week" finds the date
+      // preset directly instead of three menu levels down (JOBS.md, J2).
+      const tokens = q.split(/\s+/).filter(Boolean);
+      const matches = (label: string) => {
+        const l = label.toLowerCase();
+        return tokens.every((t) => l.includes(t));
+      };
+      const hits = categories.filter((c) => matches(c.label));
       const values: Item[] = [];
       for (const m of catalog.menu) {
-        if (!m.field || m.disabled) continue;
-        const s = fieldSpec(m.field, fields);
-        if (s.type === "text" || s.type === "content" || s.type === "date")
-          continue;
-        for (const it of valueItems(m.field, `${m.label}: `))
-          if (!it.disabled && it.label.toLowerCase().includes(q))
-            values.push(it);
+        if (m.disabled) continue;
+        for (const f of m.field ? [m.field] : m.fields || []) {
+          const s = fieldSpec(f, fields);
+          if (s.type === "text" || s.type === "content") continue;
+          if (s.type === "date") {
+            for (const p of datePresets(s)) {
+              const label = `${s.label}: ${p.label}`;
+              if (matches(label))
+                values.push({
+                  id: `${f}:preset:${String(p.value)}`,
+                  label,
+                  icon: <CalendarDays size={ICON} />,
+                  run: () => apply(f, p.value, p.op),
+                });
+            }
+            continue;
+          }
+          for (const it of valueItems(f, `${m.label}: `))
+            if (!it.disabled && matches(it.label)) values.push(it);
+        }
       }
       items = [...hits, ...values.slice(0, 40)];
+      if (catalog.suggest && q.length >= 3)
+        items.push({
+          id: "ai",
+          label: `AI filter “${query.trim()}”`,
+          icon: <Sparkles size={ICON} />,
+          run: () => {
+            setThinking(true);
+            setAiNote("");
+            catalog.suggest!(query.trim())
+              .then((got) => {
+                setThinking(false);
+                if (!got.filters) {
+                  setAiNote(got.message || "Nothing in that names a filter.");
+                  return;
+                }
+                // Linear replaces the draft's chips with the suggestion (linear-capture/s4-*).
+                onChange(filterTreeToChips(got.filters as FilterTree, fields));
+                onDone();
+              })
+              .catch(() => {
+                setThinking(false);
+                setAiNote("The AI filter did not answer. Try again.");
+              });
+          },
+        });
     }
   } else if (entry?.fields && path.length === 1) {
     items = entry.fields
@@ -508,6 +570,8 @@ function FilterMenu({
     );
   }
 
+  if (thinking) note = "Turning that into filters…";
+  else if (aiNote) note = aiNote;
   const enabled = items.filter((it) => !it.disabled);
   const activeIndex = Math.min(active, Math.max(0, enabled.length - 1));
   const activeId = enabled[activeIndex]?.id;
@@ -524,15 +588,21 @@ function FilterMenu({
     setActive(0);
   };
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    // The list wraps, as Linear's does: ↑ from the first item reaches the last (the AI filter).
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setActive((i) => Math.min(i + 1, enabled.length - 1));
+      setActive((i) => (enabled.length ? (Math.min(i, enabled.length - 1) + 1) % enabled.length : 0));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setActive((i) => Math.max(i - 1, 0));
+      setActive((i) =>
+        enabled.length ? (Math.min(i, enabled.length - 1) - 1 + enabled.length) % enabled.length : 0,
+      );
     } else if (e.key === "Enter") {
       e.preventDefault();
-      enabled[activeIndex]?.run();
+      const it = enabled[activeIndex];
+      it?.run();
+      // A value picked from a typed search is done; the next F starts a fresh search.
+      if (it && !path.length && q && !it.submenu && it.id !== "ai") onDone();
     } else if (e.key === "ArrowRight" && enabled[activeIndex]?.submenu) {
       e.preventDefault();
       enabled[activeIndex].run();
@@ -699,6 +769,16 @@ export function AddFilterButton({
 }) {
   const [ownOpen, setOwnOpen] = useState(false);
   const isOpen = open ?? ownOpen;
+  /* Where focus was when the menu opened (F from a list, a button in the editor): closing
+     the menu puts it back, so the keyboard path continues from there instead of the page
+     body (from where Shift+Tab wrapped into the preview list — JOBS.md J3 keyboard run). */
+  const returnTo = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (isOpen) {
+      const a = document.activeElement;
+      returnTo.current = a instanceof HTMLElement && a !== document.body ? a : null;
+    }
+  }, [isOpen]);
   const setOpen = (v: boolean) =>
     onOpenChange ? onOpenChange(v) : setOwnOpen(v);
   return (
@@ -744,7 +824,11 @@ export function AddFilterButton({
         className={panelClass}
         data-my-issue-popover=""
         aria-label="Task filters"
-        onCloseAutoFocus={(e) => e.preventDefault()}
+        onCloseAutoFocus={(e) => {
+          e.preventDefault();
+          const back = returnTo.current;
+          if (back && back.isConnected) back.focus({ preventScroll: true });
+        }}
       >
         {isOpen && (
           <FilterMenu

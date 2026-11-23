@@ -116,6 +116,14 @@ export async function getView(ident: string): Promise<ServerView> {
   return data.view;
 }
 
+/** Plain-language filters: the server's rules tier, then the workspace's model (ai_filter.py). */
+export async function suggestFilters(prompt: string, teamId?: string): Promise<{filters: Record<string, unknown> | null; message?: string | null; source: string}> {
+  const data = await request<{viewFilterSuggestion: {filters: Record<string, unknown> | null; message: string | null; source: string}}>(
+    `query SuggestFilters($p:String!,$t:String){viewFilterSuggestion(prompt:$p,teamId:$t){filters message source}}`,
+    {p: prompt, t: teamId || null});
+  return data.viewFilterSuggestion;
+}
+
 export async function duplicateView(id: string, name?: string, visibility?: string): Promise<ServerView> {
   const data = await request<{viewDuplicate: {success: boolean; view: ServerView | null}}>(
     `mutation DuplicateView($id:String!,$name:String,$visibility:String){viewDuplicate(id:$id,name:$name,visibility:$visibility){success view{${FIELDS}}}}`,
@@ -374,6 +382,12 @@ export type ViewDraft = {
   name?: string;
   /** The "Save to" the editor starts on (a section's "+" on the views list). */
   saveTo?: 'personal' | 'workspace';
+  /** Duplicate (Linear's flow, linear-capture/s7-*): the source's identity, and the tab to pin
+   * the copy right after when the source is a pinned tab. */
+  description?: string | null;
+  icon?: string | null;
+  color?: string | null;
+  pinAfter?: {sortOrder: number; nextSortOrder: number | null};
 };
 
 const DRAFT_KEY = 'hoja_view_draft';

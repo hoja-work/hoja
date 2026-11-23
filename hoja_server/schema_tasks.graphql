@@ -8,12 +8,25 @@ type TaskLabel {
   description: String
   createdAt: DateTime
   updatedAt: DateTime
+  "A label group (Linear's isGroup): organizes its labels and cannot be applied to a task itself."
+  isGroup: Boolean!
+  "For a group: a task may hold only one of its labels."
+  exclusive: Boolean!
+  parentId: ID
+  "The group this label belongs to."
+  parent: TaskLabel
+  "A group's labels; empty for a plain label."
+  children: [TaskLabel!]!
 }
 
 type Task {
   id: ID!
   identifier: String!
   title: String!
+  "Manual order across every list (Linear's sortOrder): a fractional-index key, compared byte-wise; smaller first."
+  rank: String
+  "Order within one priority when a list is ordered by priority (Linear's prioritySortOrder)."
+  priorityRank: String
   "The SLA clock this task runs against, or null when no policy covers it."
   sla: SlaClock
   description: String
@@ -149,6 +162,22 @@ input TaskCreateInput {
   labelIds: [String!]
 }
 
+input TaskMoveInput {
+  "The task that should end up directly above; omit for the top."
+  afterId: String
+  "The task that should end up directly below; omit for the bottom."
+  beforeId: String
+  "sortOrder (manual lists, the default) or prioritySortOrder (lists ordered by priority)."
+  field: String
+  "Set with the move when the task is dropped into another group."
+  stateId: String
+  assigneeId: String
+  priority: Int
+  projectId: String
+  cycleId: String
+  labelIds: [String!]
+}
+
 input TaskUpdateInput {
   title: String
   description: String
@@ -167,6 +196,10 @@ input TaskLabelUpdateInput {
   name: String
   color: String
   description: String
+  "Move into a group, or null to take it out."
+  parentId: String
+  isGroup: Boolean
+  exclusive: Boolean
 }
 
 input TaskLabelCreateInput {
@@ -174,6 +207,12 @@ input TaskLabelCreateInput {
   teamId: String
   color: String
   description: String
+  "The group to create the label in."
+  parentId: String
+  "Create a label group instead of a label."
+  isGroup: Boolean
+  "For a group: one label per task (default true)."
+  exclusive: Boolean
 }
 
 type TaskDecision {
@@ -244,6 +283,8 @@ extend type Mutation {
   taskLabelUpdate(id: String!, input: TaskLabelUpdateInput!): TaskLabelPayload
   taskSubscribe(id: String!): Boolean!
   taskUnsubscribe(id: String!): Boolean!
+  "Drop a task between two others in manual order, optionally changing the field it is grouped by in the same write (a drag across groups)."
+  taskMove(id: String!, input: TaskMoveInput!): TaskPayload
   taskUpdate(id: String!, input: TaskUpdateInput!): TaskPayload
 }
 

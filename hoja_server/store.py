@@ -17,7 +17,7 @@ from graphql import GraphQLError
 from sqlalchemy import String, and_, case, false, func, or_, select, true, update
 from sqlalchemy.engine import Engine
 
-from hoja_server import activity, addresses, identifiers
+from hoja_server import activity, addresses, identifiers, ranking
 from hoja_server import decisions as decisiondocs
 from hoja_server import views as viewdocs
 
@@ -1151,6 +1151,7 @@ class Store:
             "autoAddStarted": True if auto_started is None else bool(auto_started),
             "autoAddCompleted": True if auto_completed is None else bool(auto_completed),
             "autoAddBacklog": True if auto_backlog is None else bool(auto_backlog),
+            "issueSortOrderOnStateChange": row.get("issue_sort_order_on_state_change") or "first",
             "_active_cycle_id": row.get("active_cycle_id"),
         }
 
@@ -1161,7 +1162,22 @@ class Store:
             "id": row["id"], "name": row["name"], "color": row.get("color"),
             "description": row.get("description"), "createdAt": row.get("created_at"),
             "updatedAt": row.get("updated_at"),
+            "isGroup": bool(row.get("is_group")), "parentId": row.get("parent_id"),
+            "exclusive": True if row.get("exclusive") is None else bool(row.get("exclusive")),
         }
+
+    def label_children(self, org_id: str, group_id: str) -> list[dict]:
+        with self.engine.connect() as conn:
+            return [self.ser_label(r) for r in _conn_rows(conn, select(issue_label).where(and_(
+                issue_label.c.organization_id == org_id, issue_label.c.parent_id == group_id,
+                issue_label.c.archived_at.is_(None))).order_by(issue_label.c.name))]
+
+    def label_by_id(self, org_id: str, label_id: str | None) -> dict | None:
+        if not label_id:
+            return None
+        with self.engine.connect() as conn:
+            return self.ser_label(_one(conn, select(issue_label).where(and_(
+                issue_label.c.organization_id == org_id, issue_label.c.id == label_id))))
 
     def ser_cycle(self, row: dict | None) -> dict | None:
         if not row:
@@ -1310,6 +1326,7 @@ class Store:
             "completedAt": row.get("completed_at"), "canceledAt": row.get("canceled_at"),
             "startedAt": row.get("started_at"), "snoozedUntilAt": row.get("snoozed_until_at"),
             "stateChangedAt": row.get("state_changed_at"),
+            "rank": row.get("sort_order"), "priorityRank": row.get("priority_sort_order"),
             # ids for lazy field resolvers
             "_state_id": row.get("state_id"), "_assignee_id": row.get("assignee_id"),
             "_delegate_id": row.get("delegate_id"),
@@ -3225,20 +3242,27 @@ class Store:
         return seen
 
     @staticmethod
-    def _issue_sort_keys(org_id: str, ordering: str) -> list[tuple]:
+    def _issue_sort_keys(org_id: str, ordering: str, dialect: str = "sqlite") -> list[tuple]:
         """(expression, descending, follows reverse) for each sort key, id last.
 
         Empty values (no priority, no due date, no estimate) sort last in both
-        directions, which is what Linear does; ``manual`` has no per-issue rank yet and
-        falls back to creation order, oldest first.
+        directions, which is what Linear does. ``manual`` is the task's rank
+        (``sort_order``, Linear's sortOrder); within one priority, ``priority`` orders by
+        ``priority_sort_order`` (Linear's prioritySortOrder), then newest activity. Ranks
+        are fractional-index strings compared byte-wise (:func:`ranking.sortable`).
         """
         def last_if_empty(col):
             return (case((col.is_(None), 1), else_=0), False, False)
+
+        def rank(col):
+            return [last_if_empty(col),
+                    (ranking.sortable(func.coalesce(col, ""), dialect), False, True)]
 
         if ordering == "priority":
             empty = or_(issue.c.priority.is_(None), issue.c.priority == 0)
             keys = [(case((empty, 1), else_=0), False, False),
                     (func.coalesce(issue.c.priority, 0), False, True),
+                    *rank(issue.c.priority_sort_order),
                     (issue.c.updated_at, True, True)]
         elif ordering in ("title", "name"):
             keys = [(func.lower(issue.c.title), False, True)]
@@ -3259,7 +3283,7 @@ class Store:
         elif ordering == "created":
             keys = [(issue.c.created_at, True, True)]
         elif ordering == "manual":
-            keys = [(issue.c.created_at, False, True)]
+            keys = [*rank(issue.c.sort_order), (issue.c.created_at, True, True)]
         else:  # updated
             keys = [(issue.c.updated_at, True, True)]
         return [*keys, (issue.c.id, keys[-1][1], True)]
@@ -3338,7 +3362,8 @@ class Store:
             if not show_sub_issues:
                 stmt = stmt.where(issue.c.parent_id.is_(None))
             rows, keys, total = self._keyset_page(
-                conn, stmt, self._issue_sort_keys(org_id, ordering), reverse, after, limit)
+                conn, stmt, self._issue_sort_keys(org_id, ordering, self.engine.dialect.name), reverse,
+                after, limit)
             return {"nodes": [self.ser_issue(r) for r in rows], "keys": keys, "total": total}
 
     def view_projects(self, org_id: str, viewer_id: str | None, flt: dict | None, *,
@@ -3672,17 +3697,42 @@ def _resolve_cycle_name_ids(conn, org_id: str, cmp: dict) -> list[str]:
     return [r[0] for r in conn.execute(stmt)]
 
 
+def _label_row_clause(org_id: str, label_filter: dict, tbl=issue_label, depth: int = 0):
+    """A condition on label rows (``tbl``) from Linear's IssueLabelFilter: ``id``, ``name``,
+    ``isGroup``, ``parent`` (a filter on the label's group) and nested ``and``/``or``."""
+    if depth > 8:
+        raise viewdocs.ViewError("Label filters nest too deeply.", "labels")
+    label_filter = label_filter or {}
+    clauses = []
+    for field in ("id", "name"):
+        if field in label_filter:
+            c = _apply_str_cmp(tbl.c[field], label_filter[field])
+            if c is not None:
+                clauses.append(c)
+    if "isGroup" in label_filter:
+        want = (label_filter["isGroup"] or {}).get("eq", True)
+        clauses.append(tbl.c.is_group.is_(bool(want)))
+    if "parent" in label_filter:
+        group = issue_label.alias(f"label_group_{depth}")
+        inner = _label_row_clause(org_id, label_filter["parent"], group, depth + 1)
+        clauses.append(tbl.c.parent_id.in_(select(group.c.id).where(and_(
+            group.c.organization_id == org_id, inner if inner is not None else true()))))
+    for key, joiner in (("and", and_), ("or", or_)):
+        if key in label_filter:
+            subs = [_label_row_clause(org_id, f, tbl, depth + 1) for f in label_filter[key] or []]
+            subs = [c for c in subs if c is not None]
+            if subs:
+                clauses.append(joiner(*subs))
+    return and_(*clauses) if clauses else None
+
+
 def _label_issue_ids(org_id: str, label_filter: dict):
-    """Issue ids carrying at least one label that matches ``label_filter`` (id/name)."""
+    """Issue ids carrying at least one label that matches ``label_filter``."""
     sub = select(issue_label_link.c.issue_id).select_from(
         issue_label_link.join(issue_label, issue_label.c.id == issue_label_link.c.label_id)
     ).where(issue_label.c.organization_id == org_id)
-    for field, column in (("id", issue_label.c.id), ("name", issue_label.c.name)):
-        if field in (label_filter or {}):
-            c = _apply_str_cmp(column, label_filter[field])
-            if c is not None:
-                sub = sub.where(c)
-    return sub
+    clause = _label_row_clause(org_id, label_filter or {})
+    return sub.where(clause) if clause is not None else sub
 
 
 def _label_clause(org_id: str, cmp: dict):
@@ -3696,7 +3746,10 @@ def _label_clause(org_id: str, cmp: dict):
         clauses.append(issue.c.id.in_(_label_issue_ids(org_id, cmp["some"])))
     if "none" in cmp:
         clauses.append(issue.c.id.notin_(_label_issue_ids(org_id, cmp["none"])))
-    direct = {k: cmp[k] for k in ("id", "name") if k in cmp}
+    # Linear's IssueLabelCollectionFilter also takes label fields at the top level
+    # (``{or: [{name: ...}, {parent: ...}]}`` is how it stores a group filter); they mean
+    # "some label matches".
+    direct = {k: cmp[k] for k in ("id", "name", "parent", "isGroup", "and", "or") if k in cmp}
     if direct:
         clauses.append(issue.c.id.in_(_label_issue_ids(org_id, direct)))
     return and_(*clauses) if clauses else None

@@ -40,7 +40,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 95
+CURRENT_SCHEMA_REVISION = 96
 
 log = logging.getLogger(__name__)
 
@@ -1136,6 +1136,9 @@ team = Table(
     Column("active_cycle_id", String),
     Column("auto_add_started", Boolean, nullable=False, default=True),
     Column("auto_add_completed", Boolean, nullable=False, default=True),
+    # Revision 96: where a task lands in manual order when its status changes elsewhere
+    # (Linear's Team.setIssueSortOrderOnStateChange): first, last or noAction.
+    Column("issue_sort_order_on_state_change", String, nullable=False, default="first"),
     Column("auto_add_backlog", Boolean, nullable=False, default=True),
     Column("default_state_id", String),
     Column("created_at", String),
@@ -1211,6 +1214,11 @@ issue = Table(
     # Maintained by issue_decision writes: true while one of its decisions is open, so a
     # board or list reads "waiting on me" without a subquery per row (docs/decisions.md).
     Column("decision_needed", Boolean, nullable=False, default=False),
+    # Revision 96: manual order (Linear's Issue.sortOrder and prioritySortOrder). Global per
+    # task, not per view: one drag reorders every manual list that shows both tasks.
+    # Fractional-index keys (hoja_server/ranking.py), compared byte-wise; NULL sorts last.
+    Column("sort_order", String),
+    Column("priority_sort_order", String),
     UniqueConstraint("team_id", "number", name="uq_issue_team_number"),
 )
 
@@ -1269,6 +1277,12 @@ issue_label = Table(
     Column("created_at", String),
     Column("updated_at", String),
     Column("archived_at", String),
+    # Revision 96: label groups, as on Linear. A group (is_group) cannot be applied to a
+    # task; its children point at it with parent_id, and a task holds at most one child of
+    # an exclusive group.
+    Column("parent_id", String, index=True),
+    Column("is_group", Boolean, nullable=False, default=False),
+    Column("exclusive", Boolean, nullable=False, default=True),
 )
 
 issue_label_link = Table(
@@ -3707,6 +3721,49 @@ def _apply_view_pins(conn):
         conn.exec_driver_sql("ALTER TABLE saved_view ADD COLUMN sort_order FLOAT")
 
 
+def _apply_views_depth(conn):
+    """Revision 96: task manual order, placement on status change, task label groups.
+
+    Existing tasks get keys newest first, which is where Linear puts a new task (top), so a
+    list switched to manual order starts out as the familiar newest-first list.
+    """
+    from hoja_server import ranking
+
+    existing = {column["name"] for column in inspect(conn).get_columns("issue")}
+    for name in ("sort_order", "priority_sort_order"):
+        if name not in existing:
+            conn.exec_driver_sql(f"ALTER TABLE issue ADD COLUMN {name} VARCHAR")
+    conn.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_issue_org_sort_order ON issue (organization_id, sort_order)")
+    team_cols = {column["name"] for column in inspect(conn).get_columns("team")}
+    if "issue_sort_order_on_state_change" not in team_cols:
+        conn.exec_driver_sql("ALTER TABLE team ADD COLUMN issue_sort_order_on_state_change "
+                             "VARCHAR NOT NULL DEFAULT 'first'")
+    label_cols = {column["name"] for column in inspect(conn).get_columns("issue_label")}
+    if "parent_id" not in label_cols:
+        conn.exec_driver_sql("ALTER TABLE issue_label ADD COLUMN parent_id VARCHAR")
+    if "is_group" not in label_cols:
+        conn.exec_driver_sql("ALTER TABLE issue_label ADD COLUMN is_group BOOLEAN NOT NULL DEFAULT FALSE")
+    if "exclusive" not in label_cols:
+        conn.exec_driver_sql("ALTER TABLE issue_label ADD COLUMN exclusive BOOLEAN NOT NULL DEFAULT TRUE")
+    conn.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_issue_label_parent_id ON issue_label (parent_id)")
+    # Manual order newest first (a new task lands on top of its status, as on Linear); the
+    # priority rank oldest first (Linear appends it), so ties within a priority keep the order
+    # they were filed in.
+    for column, newest_first in (("sort_order", True), ("priority_sort_order", False)):
+        rows = conn.execute(select(issue.c.id, issue.c.organization_id).where(
+            issue.c[column].is_(None)).order_by(
+            issue.c.organization_id,
+            issue.c.created_at.desc() if newest_first else issue.c.created_at.asc(),
+            issue.c.id)).all()
+        last: dict[str, str] = {}
+        for ident, org_id in rows:
+            key = ranking.key_between(last.get(org_id), None)
+            last[org_id] = key
+            conn.execute(issue.update().where(issue.c.id == ident).values({column: key}))
+
+
 def _apply_initiative_structure(conn):
     """Revision 88: sub-initiatives, icon/colour, lead team, readable numbers, manual
     order, update reminders, labels, resources, update reactions and replies."""
@@ -4261,6 +4318,9 @@ _MIGRATIONS = {
     # 95: mobile sign-in (HOJA-733): QR handoff, single-use identity transfers
     # bound to a native app's PKCE challenge, and labelled 90-day app sessions.
     95: _apply_mobile_signin,
+    # 96: manual order for tasks (sort_order, priority_sort_order, backfilled newest first),
+    # the team's placement-on-status-change setting, and task label groups.
+    96: _apply_views_depth,
 }
 
 

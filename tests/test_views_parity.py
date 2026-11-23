@@ -540,9 +540,10 @@ def test_owner_handover_move_to_and_duplicate(world):
         # An admin may hand any view over.
         ok(client, ADMIN, UPDATE, {"id": view["id"], "i": {"ownerId": world["alice"]}})
         ok(client, ALICE, UPDATE, {"id": view["id"], "i": {"visibility": "workspace"}})
+        # Linear keeps the name and the visibility (linear-capture/s7-duplicate.jsonl).
         copy = ok(client, BOB, DUPLICATE, {"id": view["id"]})["viewDuplicate"]["view"]
-        assert copy["name"] == "Handover (copy)"
-        assert copy["visibility"] == "private" and copy["owner"]["id"] == world["bob"]
+        assert copy["name"] == "Handover"
+        assert copy["visibility"] == "workspace" and copy["owner"]["id"] == world["bob"]
         assert copy["filters"] == {"priority": {"is": 1}}
         assert copy["display"] == {"grouping": "assignee"}
         shared = ok(client, BOB, DUPLICATE, {"id": view["id"], "n": "Bob's",
@@ -871,13 +872,37 @@ def test_team_views_pin_as_ordered_tabs(world):
                       {"id": second["id"]})["view"]["pinned"]
 
 
-def test_duplicate_of_pinned_view_is_not_a_tab(world):
-    """A copy is the caller's own view: it does not take over the original's tab."""
+def test_duplicate_of_pinned_view_is_pinned_right_after_it(world):
+    """Linear pins the copy as a tab next to the source (FacetCreate in
+    linear-capture/s7-duplicate.jsonl); the source keeps its own tab."""
     with TestClient(world["app"]) as client:
         source = make_view(client, ALICE, name="Pinned", scope="team", teamId=world["OPS"],
                            visibility="team")
         ok(client, ALICE, PIN, {"id": source["id"], "p": True})
-        copy = ok(client, ALICE, """mutation($id: String!) { viewDuplicate(id: $id,
-            visibility: "team") { view { id pinned sortOrder scope } } }""",
+        later = make_view(client, ALICE, name="Later", scope="team", teamId=world["OPS"],
+                          visibility="team")
+        ok(client, ALICE, PIN, {"id": later["id"], "p": True})
+        copy = ok(client, ALICE, """mutation($id: String!) { viewDuplicate(id: $id) {
+            view { id pinned sortOrder scope visibility } } }""",
                   {"id": source["id"]})["viewDuplicate"]["view"]
-        assert copy["scope"] == "team" and not copy["pinned"] and copy["sortOrder"] is None
+        orders = {v: ok(client, ALICE, "query($id: String!) { view(id: $id) { sortOrder pinned } }",
+                        {"id": v})["view"] for v in (source["id"], later["id"])}
+        assert copy["scope"] == "team" and copy["pinned"] and copy["visibility"] == "team"
+        assert orders[source["id"]]["sortOrder"] < copy["sortOrder"] < orders[later["id"]]["sortOrder"]
+        assert orders[source["id"]]["pinned"]
+
+
+def test_duplicate_carries_the_default_and_the_callers_own_override(world):
+    """Linear writes both a user and an organization ViewPreferences for the copy
+    (linear-capture/s7-duplicate.jsonl). Another member's override stays behind."""
+    with TestClient(world["app"]) as client:
+        view = make_view(client, ADMIN, name="Prefs", visibility="workspace",
+                         display={"grouping": "status"})
+        ok(client, ALICE, PREFS_SET, {"v": view["id"], "values": {"layout": "board"}})
+        ok(client, BOB, PREFS_SET, {"v": view["id"], "values": {"ordering": "title"}})
+        copy = ok(client, ALICE, DUPLICATE, {"id": view["id"]})["viewDuplicate"]["view"]
+        mine = ok(client, ALICE, PREFS, {"v": copy["id"]})["viewPreferences"]
+        assert mine["default"] == {"grouping": "status"}
+        assert mine["user"] == {"layout": "board"}
+        theirs = ok(client, BOB, PREFS, {"v": copy["id"]})["viewPreferences"]
+        assert theirs["user"] is None

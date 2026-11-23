@@ -96,6 +96,7 @@ import {
   createView,
   deleteView,
   duplicateView,
+  suggestFilters,
   exportViewCsv,
   getView,
   listViews,
@@ -240,6 +241,8 @@ export type Team = {
   description?: string;
   /** The team's sidebar lists Initiatives. */
   showInitiatives?: boolean;
+  /** Where a task lands in manual order when its status changes outside a drag. */
+  issueSortOrderOnStateChange?: "first" | "last" | "noAction";
   states: {
     nodes: { id: string; name: string; color: string; type: string }[];
   };
@@ -270,7 +273,16 @@ export type IssueActivityEvent = {
   actor?: { name?: string; avatarSeed?: string | null };
   changes?: Record<string, unknown>;
 };
-export type IssueLabel = { id: string; name: string; color?: string };
+export type IssueLabel = {
+  id: string;
+  name: string;
+  color?: string;
+  /** The label's group (Linear's label groups); null for a top-level label. */
+  parent?: { id: string; name: string } | null;
+  isGroup?: boolean;
+  exclusive?: boolean;
+  parentId?: string | null;
+};
 export type Issue = {
   id: string;
   identifier: string;
@@ -282,6 +294,9 @@ export type Issue = {
   dueDate?: string;
   priority: number;
   priorityLabel?: string;
+  /** Manual order (Linear's sortOrder); see views/ranking.ts. */
+  rank?: string | null;
+  priorityRank?: string | null;
   estimate?: number | null;
   decisionNeeded?: boolean;
   parent?: { id: string; identifier: string; title: string } | null;
@@ -398,7 +413,7 @@ export type PulsePost = {
   };
   comments?: { nodes: PulseComment[] };
 };
-export const issueFields = `{ id identifier title description createdAt updatedAt stateChangedAt dueDate priority priorityLabel state { id name color type } team { id key name } githubLinks { id kind externalId url title state author } project{id name} assignee { id name avatarSeed } delegate { id name avatarSeed } delegateId creator { id name avatarSeed } subscribers { nodes { id } } cycle { id name number } parent { id identifier title } labels { nodes { id name color } } }`;
+export const issueFields = `{ id identifier title description createdAt updatedAt stateChangedAt dueDate priority priorityLabel rank priorityRank state { id name color type } team { id key name } githubLinks { id kind externalId url title state author } project{id name} assignee { id name avatarSeed } delegate { id name avatarSeed } delegateId creator { id name avatarSeed } subscribers { nodes { id } } cycle { id name number } parent { id identifier title } labels { nodes { id name color parent { id name } } } }`;
 const query = `query Dashboard { viewer { id name avatarSeed email admin } teams { nodes { id name key description showInitiatives states { nodes { id name color type } } members { nodes { id name avatarSeed email } } activeCycle { id name number startsAt endsAt progress } } } issues(first:100, orderBy:createdAt) { nodes ${issueFields} pageInfo { hasNextPage endCursor } } }`;
 export function storedApiToken(): string | null {
   const t = localStorage.getItem("hoja_token");
@@ -544,6 +559,7 @@ import {
   projectPagePatch,
   sortTasks,
   withSubIssues,
+  activeLabelGroup,
   type DisplayDoc,
   type GroupCtx,
   type ProjectPageOptions,
@@ -558,6 +574,17 @@ import {
 } from "./views/FilterBar";
 import { suggestViewIdentity } from "./views/filterLabels";
 import { DisplayButton, DisplayPanel } from "./views/DisplayPanel";
+import { InitiativeViewBody } from "./views/InitiativeViewBody";
+import {
+  ManualOrderGroup,
+  ManualOrderList,
+  SortableRow,
+  groupPatch,
+  optimisticRank,
+  planKey,
+  type MovePlan,
+  type OrderGroups,
+} from "./views/manualOrder";
 import {
   useViewPreferences,
   type ViewPreferences,
@@ -2755,27 +2782,69 @@ function App() {
     input: Record<string, unknown>,
   ) => {
     const sync = syncRef.current;
-    const optimistic = sync ? sync.patchFromInput(input) : {};
+    /* A drag or Alt+arrow: `_move` places the task between two others (manual order) and may
+       carry the grouped field it was dropped into; one write on the server (issueMove). */
+    const { _move: move, ...fields } = input as Record<string, unknown> & {
+      _move?: {
+        afterId?: string | null;
+        beforeId?: string | null;
+        field?: "sortOrder" | "prioritySortOrder";
+        optimisticRank?: string;
+      };
+    };
+    const optimistic = {
+      ...(sync ? sync.patchFromInput(fields) : {}),
+      ...(move?.optimisticRank
+        ? move.field === "prioritySortOrder"
+          ? { priorityRank: move.optimisticRank }
+          : { rank: move.optimisticRank }
+        : {}),
+    };
     const before =
       activeIssue && activeIssue.id === issueId ? activeIssue : null;
     const settle = sync?.patch(issueId, optimistic);
+    const previous = issues.find((i) => i.id === issueId);
+    if (!sync && move?.optimisticRank)
+      setIssues((old) =>
+        old.map((i) => (i.id === issueId ? { ...i, ...optimistic } : i)),
+      );
     if (before)
       setActiveIssue((old) =>
         old && old.id === issueId ? { ...old, ...optimistic } : old,
       );
     let updated: Issue;
     try {
-      const d = await gql(
-        `mutation($id:String!,$input:IssueUpdateInput!){issueUpdate(id:$id,input:$input){success issue ${issueFields}}}`,
-        { id: issueId, input },
-      );
-      if (!d.issueUpdate.success || !d.issueUpdate.issue)
-        throw Error("Update was rejected");
-      updated = d.issueUpdate.issue;
+      if (move) {
+        const d = await gql(
+          `mutation($id:String!,$input:IssueMoveInput!){issueMove(id:$id,input:$input){success issue ${issueFields}}}`,
+          {
+            id: issueId,
+            input: {
+              ...fields,
+              afterId: move.afterId ?? null,
+              beforeId: move.beforeId ?? null,
+              field: move.field || "sortOrder",
+            },
+          },
+        );
+        if (!d.issueMove.success || !d.issueMove.issue)
+          throw Error("Move was rejected");
+        updated = d.issueMove.issue;
+      } else {
+        const d = await gql(
+          `mutation($id:String!,$input:IssueUpdateInput!){issueUpdate(id:$id,input:$input){success issue ${issueFields}}}`,
+          { id: issueId, input },
+        );
+        if (!d.issueUpdate.success || !d.issueUpdate.issue)
+          throw Error("Update was rejected");
+        updated = d.issueUpdate.issue;
+      }
     } catch (e) {
       settle?.(false);
       if (before)
         setActiveIssue((old) => (old && old.id === issueId ? before : old));
+      if (!sync && move?.optimisticRank && previous)
+        setIssues((old) => old.map((i) => (i.id === issueId ? previous : i)));
       throw e;
     }
     settle?.(true);
@@ -5801,7 +5870,11 @@ function useIssueFilterCatalog({
               { value: null, label: "No labels" },
               ...labels.map((l) => ({
                 value: l.id,
-                label: l.name,
+                // "area › api", as Linear lists a group's labels; the group itself is its
+                // own option and matches every label in it.
+                label: l.parentId
+                  ? `${labels.find((g) => g.id === l.parentId)?.name || "Group"} › ${l.name}`
+                  : l.name,
                 icon: (
                   <span
                     className="block size-2 rounded-full"
@@ -5840,6 +5913,7 @@ function useIssueFilterCatalog({
             return [];
         }
       },
+      suggest: (prompt) => suggestFilters(prompt),
       count: (field, value) => {
         if (field === "team" && value === "myTeams") return undefined;
         const key = server(field);
@@ -6127,8 +6201,9 @@ function MyIssuesContent({
       cycles: meta?.cycles.nodes || [],
       labels: meta?.issueLabels.nodes || [],
       teams: teams.map((t) => ({ id: t.id, name: t.name })),
+      labelGroupId: display.groupingLabelGroupId,
     }),
-    [states, viewerId, meta, projects, teams],
+    [states, viewerId, meta, projects, teams, display.groupingLabelGroupId],
   );
   const scoped = useMemo(
     () =>
@@ -6400,6 +6475,118 @@ function MyIssuesContent({
     io.observe(el);
     return () => io.disconnect();
   }, [canAutoLoad]);
+  /* Manual order (views/manualOrder.tsx): drag a row, or Alt+arrows on the focused row. Only
+     in the list, when the order is one a person sets (manual, or within a priority). */
+  const orderField: "sortOrder" | "prioritySortOrder" =
+    display.ordering === "priority" ? "prioritySortOrder" : "sortOrder";
+  const canReorder =
+    layout !== "Board" &&
+    tab !== "Activity" &&
+    (!display.subGrouping || display.subGrouping === "none") &&
+    !display.reverse &&
+    (display.ordering === "manual" || display.ordering === "priority");
+  const [focusedRow, setFocusedRow] = useState<string | null>(null);
+  const [moveNote, setMoveNote] = useState<string>("");
+  const orderGroups = useMemo<OrderGroups>(
+    () =>
+      buckets.map((g) => ({
+        key: g.key,
+        ids: collapsedKeys.includes(g.key)
+          ? []
+          : (display.nestedSubIssues === "hide"
+              ? g.items
+              : orderTree(g.items, treeCollapsed).map((r) => r.node)
+            ).map((i) => i.id),
+      })),
+    [buckets, collapsedKeys, display.nestedSubIssues, treeCollapsed],
+  );
+  const applyMove = async (plan: MovePlan) => {
+    const task = issues.find((i) => i.id === plan.id);
+    if (!task) return;
+    const patch =
+      plan.groupKey === plan.fromGroupKey
+        ? {}
+        : groupPatch(display.grouping || "none", plan.groupKey, task, {
+            stateIdForName: (name) =>
+              (teamStates(task) || states).find((st) => st.name === name)?.id,
+            labelGroupId: activeLabelGroup(groupCtx)?.id,
+          });
+    if (patch === null) {
+      setMoveNote("Tasks can't be moved between these groups.");
+      return;
+    }
+    const rankOf = (id: string) => {
+      const t = issues.find((x) => x.id === id);
+      return orderField === "prioritySortOrder" ? t?.priorityRank : t?.rank;
+    };
+    const label = buckets.find((b) => b.key === plan.groupKey)?.label;
+    setMoveNote(
+      `Moved ${task.identifier}${plan.groupKey !== plan.fromGroupKey && label ? ` to ${label}` : ""}.`,
+    );
+    try {
+      await onUpdate(task.id, {
+        ...patch,
+        _move: {
+          afterId: plan.afterId,
+          beforeId: plan.beforeId,
+          field: orderField,
+          optimisticRank: optimisticRank(plan, rankOf),
+        },
+      });
+    } catch {
+      setMoveNote(`Couldn't move ${task.identifier}.`);
+    }
+  };
+  /* Keyboard: j/k or ↓/↑ walk the rows, Enter opens, ⌥↑/⌥↓ move the focused task (crossing
+     group edges), ⌥⇧↑/⌥⇧↓ send it to the top or bottom of its group. Focus stays on the task. */
+  const keyRef = useRef<(e: KeyboardEvent) => void>(() => {});
+  keyRef.current = (e: KeyboardEvent) => {
+    if (tab === "Activity" || layout === "Board") return;
+    if (e.metaKey || e.ctrlKey || isTypingTarget(e.target)) return;
+    if (document.querySelector('[aria-modal="true"],[role="menu"],[role="dialog"]')) return;
+    const flat = orderGroups.flatMap((g) => g.ids);
+    if (!flat.length) return;
+    const up = e.key === "ArrowUp" || (!e.altKey && e.key === "k");
+    const down = e.key === "ArrowDown" || (!e.altKey && e.key === "j");
+    if (!up && !down && e.key !== "Enter") return;
+    const current = focusedRow && flat.includes(focusedRow) ? focusedRow : null;
+    if (e.key === "Enter") {
+      const t = current && issues.find((i) => i.id === current);
+      if (!t || document.activeElement?.getAttribute("data-row-id") !== current) return;
+      e.preventDefault();
+      onOpenIssue(t);
+      return;
+    }
+    e.preventDefault();
+    if (e.altKey) {
+      if (!current || !canReorder) {
+        if (!canReorder) setMoveNote("Switch ordering to Manual to move tasks.");
+        return;
+      }
+      const plan = planKey(orderGroups, current, up ? -1 : 1, e.shiftKey);
+      if (plan) void applyMove(plan);
+      return;
+    }
+    const at = current ? flat.indexOf(current) : -1;
+    const next =
+      at < 0 ? flat[up ? flat.length - 1 : 0] : flat[Math.max(0, Math.min(flat.length - 1, at + (up ? -1 : 1)))];
+    setFocusedRow(next);
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => keyRef.current(e);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  useEffect(() => {
+    if (!focusedRow) return;
+    const el = document.querySelector<HTMLElement>(
+      `[data-row-id="${CSS.escape(focusedRow)}"]`,
+    );
+    if (el && document.activeElement !== el) {
+      el.focus({ preventScroll: true });
+      el.scrollIntoView({ block: "nearest" });
+    }
+  }, [focusedRow, orderGroups]);
   /* One group's rows: parent then children, so a sub-task is never rendered above the task
      that created it, unless nested sub-issues are hidden. Activity rows are events, not a
      hierarchy, and stay flat. */
@@ -6431,19 +6618,29 @@ function MyIssuesContent({
         },
         index,
       ) => (
-        <div
-          className="relative flex w-full min-w-0 min-h-9 items-center gap-2 bg-transparent py-0 pr-6 text-left text-foreground hover:bg-subtle cursor-pointer max-md:gap-1.5 shell-phone:pr-3 [@media_(max-width:650px)]:gap-1.5 max-sm:flex-wrap max-sm:gap-y-0 max-sm:pb-2 [--row-inset:42px] max-sm:[--row-inset:14px]"
-          style={{
-            paddingLeft: `calc(var(--row-inset) + ${depth * SIBLING_STEP}px)`,
-          }}
-          data-my-issue-row=""
-          data-depth={depth}
-          role="presentation"
+        <SortableRow
           key={
             tab === "Activity"
               ? `${groupKey}-${dayEvents[index]?.id || index}`
               : i.id
           }
+          id={i.id}
+          enabled={canReorder}
+        >
+          {({ style: dragStyle, ...dnd }) => (
+        <div
+          {...dnd}
+          className="relative flex w-full min-w-0 min-h-9 items-center gap-2 bg-transparent py-0 pr-6 text-left text-foreground hover:bg-subtle cursor-pointer max-md:gap-1.5 shell-phone:pr-3 [@media_(max-width:650px)]:gap-1.5 max-sm:flex-wrap max-sm:gap-y-0 max-sm:pb-2 [--row-inset:42px] max-sm:[--row-inset:14px] outline-none focus-visible:bg-subtle focus-visible:shadow-[inset_2px_0_0_var(--color-accent)] data-[dragging]:bg-panel data-[dragging]:shadow-md data-[dragging]:cursor-grabbing"
+          style={{
+            ...dragStyle,
+            paddingLeft: `calc(var(--row-inset) + ${depth * SIBLING_STEP}px)`,
+          }}
+          data-my-issue-row=""
+          data-row-id={tab === "Activity" ? undefined : i.id}
+          data-depth={depth}
+          role="presentation"
+          tabIndex={tab === "Activity" ? undefined : focusedRow === i.id ? 0 : -1}
+          onFocus={() => tab !== "Activity" && setFocusedRow(i.id)}
           onClick={() => onOpenIssue(i)}
         >
           {/* Ancestry rails: one 2px line per open ancestor, then this row's own
@@ -6579,7 +6776,7 @@ function MyIssuesContent({
             {i.title}
             {tab === "Activity" && (
               <small
-                className="text-[11px] font-normal text-[#777]"
+                className="text-[11px] font-normal text-muted"
                 data-my-activity-kind=""
               >
                 {" "}
@@ -6592,7 +6789,7 @@ function MyIssuesContent({
           )}
           {has("labels") && i.labels?.nodes.length ? (
             <span
-              className="max-w-25 overflow-hidden text-ellipsis whitespace-nowrap text-[#777] text-[11px] max-md:hidden"
+              className="max-w-25 overflow-hidden text-ellipsis whitespace-nowrap text-muted text-[11px] max-md:hidden"
               data-my-issue-labels=""
               title={i.labels.nodes.map((l) => l.name).join(", ")}
             >
@@ -6698,6 +6895,8 @@ function MyIssuesContent({
             </span>
           )}
         </div>
+          )}
+        </SortableRow>
       ),
     );
   };
@@ -6806,6 +7005,7 @@ function MyIssuesContent({
           hasOverrides={prefs.hasOverrides}
         >
           <DisplayPanel
+            labelGroups={(meta?.issueLabels.nodes || []).filter((l) => l.isGroup)}
             display={display}
             onChange={(patch) => {
               prefs.update(patch);
@@ -6974,7 +7174,18 @@ function MyIssuesContent({
               />
             )
           ) : (
-            <div className="my-issue-groups shrink-0">
+            <ManualOrderList
+              enabled={canReorder}
+              groups={orderGroups}
+              onDrop={(plan) => void applyMove(plan)}
+            >
+            <div
+              className="my-issue-groups shrink-0"
+              data-manual-order={canReorder ? orderField : undefined}
+            >
+              <p className="sr-only" aria-live="polite" data-move-note="">
+                {moveNote}
+              </p>
               {buckets.map((g) => {
                 const open = !collapsedKeys.includes(g.key);
                 return (
@@ -7000,11 +7211,21 @@ function MyIssuesContent({
                               </div>
                             ),
                           )
-                        : rowsFor(g.items, g.key))}
+                        : (
+                          <ManualOrderGroup
+                            ids={
+                              orderGroups.find((o) => o.key === g.key)?.ids ||
+                              []
+                            }
+                          >
+                            {rowsFor(g.items, g.key)}
+                          </ManualOrderGroup>
+                        ))}
                   </section>
                 );
               })}
             </div>
+            </ManualOrderList>
           )}
           {serverRows && (serverRows.hasMore || serverRows.error) && (
             <div
@@ -15313,6 +15534,15 @@ function ViewEditorPage({
 }) {
   /* "Save as view" (Alt V) on a list stashes its filters and display for this editor. */
   const [draft] = useState(() => takeViewDraft());
+  /* A duplicate arrives named: put the caret in the name, selected, so typing renames it. */
+  useEffect(() => {
+    if (!draft?.name) return;
+    const input = document.querySelector<HTMLInputElement>(
+      "[data-view-editor-head] input",
+    );
+    input?.focus();
+    input?.select();
+  }, [draft?.name]);
   const [kind, setKind] = useState<"issue" | "project">(
     draft?.kind || initialKind,
   );
@@ -15329,9 +15559,9 @@ function ViewEditorPage({
     touched: boolean;
   }>({
     name: draft?.name || "",
-    description: "",
-    icon: null,
-    color: null,
+    description: draft?.description || "",
+    icon: draft?.icon || null,
+    color: draft?.color || null,
     touched: Boolean(draft?.name),
   });
   const meta = useSyncMeta();
@@ -15342,7 +15572,12 @@ function ViewEditorPage({
     [scope, teams, viewer?.id],
   );
   const draftTarget = draft?.teamId
-    ? targets.find((t) => t.kind === "team" && t.teamId === draft.teamId)
+    ? targets.find(
+        (t) =>
+          t.kind === "team" &&
+          t.teamId === draft.teamId &&
+          Boolean(t.personal) === (draft.saveTo === "personal"),
+      ) || targets.find((t) => t.kind === "team" && t.teamId === draft.teamId)
     : draft?.saveTo
       ? targets.find((t) =>
           draft.saveTo === "personal"
@@ -15415,6 +15650,19 @@ function ViewEditorPage({
     setKind(next);
     setFilterRoot(emptyGroup());
   };
+  /* Ctrl/⌘ Enter creates the view from anywhere in the editor (the name field's Enter does
+     too), so a keyboard path never depends on tab order. */
+  const createRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Enter" || !(e.ctrlKey || e.metaKey) || e.altKey) return;
+      if (document.querySelector('[aria-modal="true"]')) return;
+      e.preventDefault();
+      createRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const create = async () => {
     if (busy) return;
     const name = (shown.name || placeholder).trim();
@@ -15431,16 +15679,30 @@ function ViewEditorPage({
         display: displayChanges(prefs.display, mergeDisplay(base)),
         ...targetInput(target),
       });
+      const after = draft?.pinAfter;
       const pinned =
-        pinOnCreate && created.scope === "team"
-          ? await pinView(created.id, true).catch(() => created)
-          : created;
+        after && (created.scope === "team" || created.scope === "project")
+          ? await pinView(
+              created.id,
+              true,
+              after.nextSortOrder != null
+                ? (after.sortOrder + after.nextSortOrder) / 2
+                : after.sortOrder + 1,
+            ).catch(() => created)
+          : (pinOnCreate ||
+                // Saved from a team's list (Alt V): Linear pins it as a team tab (FacetCreate in
+                // linear-capture/s5b-relative-create.jsonl); a personal team view stays unpinned.
+                (draft?.teamId && target.kind === "team" && !target.personal)) &&
+              created.scope === "team"
+            ? await pinView(created.id, true).catch(() => created)
+            : created;
       onCreated(pinned);
     } catch (e) {
       setError((e as Error).message);
       setBusy(false);
     }
   };
+  createRef.current = () => void create();
   const tabs =
     tabsOverride ||
     (allowKinds ? (
@@ -15658,16 +15920,22 @@ function SavedViewPage({
         Loading view…
       </section>
     );
-  // Initiative views have no page here yet; running one as a task view would show nothing.
+  // Initiative views run on the server's initiative engine with the shared chips and panel.
   if (view.kind === "initiative")
     return (
-      <section
-        className="p-10 text-center text-muted"
-        role="status"
-        data-view-page=""
-      >
-        “{view.name}” is an initiative view. Open it from Initiatives.
-      </section>
+      <InitiativeViewBody
+        key={view.id}
+        view={view}
+        onView={setView}
+        onOpenInitiative={(id) =>
+          navigateTo(`/workspace/initiative/${encodeURIComponent(id)}`)
+        }
+        header={
+          <b className="truncate text-[13px] font-medium" data-view-title="">
+            {view.name}
+          </b>
+        }
+      />
     );
   return (
     <SavedViewBody
@@ -15879,33 +16147,68 @@ function SavedViewBody({
         : `/workspace/views/${kind === "project" ? "projects" : "issues"}/new`,
     );
   }, [kind, tree, prefs.display, view.team?.id, view.project?.id, view.scope]);
-  /* Alt F favorites the view on screen; Alt S / Alt V are the list's own keys. */
+  /* Alt F favorites the view on screen and Alt D duplicates it (the menu sits behind the whole
+     sidebar in tab order — 25+ presses, JOBS.md J3); Alt S / Alt V are the list's own keys. */
+  const duplicateRef = useRef<() => void>(() => {});
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!e.altKey || e.metaKey || e.ctrlKey || e.code !== "KeyF") return;
+      if (!e.altKey || e.metaKey || e.ctrlKey) return;
+      if (e.code !== "KeyF" && e.code !== "KeyD") return;
       if (
         isTypingTarget(e.target) ||
         document.querySelector('[aria-modal="true"]')
       )
         return;
       e.preventDefault();
-      void favorite();
+      if (e.code === "KeyD") duplicateRef.current();
+      else void favorite();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [favorite]);
+  duplicateRef.current = () => void duplicate();
+  /* Duplicate opens the editor on a draft of the saved view, as Linear does: same name,
+     description, icon, filters, look and visibility; nothing is written until "Create view",
+     and a pinned tab's copy is pinned right after it (SPEC.md §5). */
   const duplicate = async () => {
-    const name = await promptDialog(
-      "Name the copy of this view:",
-      `${view.name} (copy)`.slice(0, 80),
-    );
-    if (name === null) return;
-    try {
-      const copy = await duplicateView(view.id, name.trim() || undefined);
-      navigateTo(viewPath(copy));
-    } catch (e) {
-      fail(e);
+    let pinAfter: { sortOrder: number; nextSortOrder: number | null } | undefined;
+    if (view.pinned && view.sortOrder != null) {
+      const siblings = await listViews(kind).catch(() => [] as ServerView[]);
+      const next = siblings
+        .filter(
+          (v) =>
+            v.pinned &&
+            v.sortOrder != null &&
+            v.sortOrder > (view.sortOrder as number) &&
+            (view.scope === "team"
+              ? v.team?.id === view.team?.id
+              : v.project?.id === view.project?.id),
+        )
+        .map((v) => v.sortOrder as number)
+        .sort((a, b) => a - b)[0];
+      pinAfter = { sortOrder: view.sortOrder, nextSortOrder: next ?? null };
     }
+    stashViewDraft({
+      kind,
+      filters: view.filters || {},
+      display: view.display || {},
+      teamId: view.team?.id,
+      projectId: view.project?.id,
+      name: view.name,
+      description: view.description,
+      icon: view.icon,
+      color: view.color,
+      saveTo: view.visibility === "private" ? "personal" : view.visibility === "workspace" ? "workspace" : undefined,
+      pinAfter,
+    });
+    // A team view's copy opens the team's editor, so "Personal" there stays a team view.
+    navigateTo(
+      view.scope === "project" && view.project?.id
+        ? `/workspace/project/${view.project.id}/view/new`
+        : view.scope === "team" && view.team?.key
+          ? `/workspace/team/${view.team.key.toLowerCase()}/views/${kind === "project" ? "projects" : "issues"}/new`
+          : `/workspace/views/${kind === "project" ? "projects" : "issues"}/new`,
+    );
   };
   const remove = async () => {
     if (

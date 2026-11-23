@@ -76,6 +76,15 @@ export type FieldSpec = {
 const IDENTITY: ChipOp[] = ["is", "isNot"];
 const DATE_OPS: ChipOp[] = ["before", "after", "onOrBefore", "onOrAfter", "is"];
 
+/** Initiative views' fields (the server's initiative grammar: is / isEitherOf only). */
+export const INITIATIVE_FIELDS: FieldSpec[] = [
+  { key: "status", label: "Status", type: "enum", server: "status", ops: ["is"] },
+  { key: "health", label: "Health", type: "enum", server: "health", ops: ["is"] },
+  { key: "owner", label: "Owner", type: "ref", server: "owner", ops: ["is"] },
+  { key: "leadTeam", label: "Lead team", type: "ref", server: "leadTeam", ops: ["is"] },
+  { key: "label", label: "Label", type: "ref", server: "label", ops: ["is"] },
+];
+
 /** Every field a task chip can address, in the order the filter menu lists them. */
 export const ISSUE_FIELDS: FieldSpec[] = [
   {
@@ -1070,11 +1079,15 @@ export function resolveDate(
     const sign = d[1] === "-" ? -1 : 1;
     const [y, mo, w, dd, h, mi, s] = d.slice(2).map((x) => Number(x || 0));
     const at = new Date(now);
-    at.setUTCFullYear(
-      at.getUTCFullYear() + sign * y,
-      at.getUTCMonth() + sign * mo,
-      at.getUTCDate() + sign * (w * 7 + dd),
-    );
+    // Months and years clamp to the month's last day (Jan 31 + P1M is Feb 28, Feb 29 - P1Y is
+    // Feb 28), then weeks and days are added — the server's order (views.py _add_months).
+    // Date's own rollover would give Mar 3 and Mar 1 (tests/test_views_depth_dates.py).
+    const total = at.getUTCFullYear() * 12 + at.getUTCMonth() + sign * (y * 12 + mo);
+    const year = Math.floor(total / 12);
+    const month = total - year * 12;
+    const last = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+    at.setUTCFullYear(year, month, Math.min(at.getUTCDate(), last));
+    at.setUTCDate(at.getUTCDate() + sign * (w * 7 + dd));
     const ms = at.getTime() + sign * ((h * 60 + mi) * 60 + s) * 1000;
     if (h || mi || s) return { start: ms, end: ms };
     const day = startOfUtcDay(ms);

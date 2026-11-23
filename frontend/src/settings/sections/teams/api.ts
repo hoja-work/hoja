@@ -19,10 +19,19 @@ export type TeamRow = {
   visibility: Visibility;
   parentTeamId?: string | null;
   timezone?: string | null;
+  /** Where a task lands in manual order when its status changes outside a drag. */
+  issueSortOrderOnStateChange?: Placement;
   members: Person[];
 };
 
-const TEAM_FIELDS = `id name key description visibility parentTeamId timezone members{nodes{id name email avatarSeed}}`;
+export type Placement = "first" | "last" | "noAction";
+export const PLACEMENT_OPTIONS: { value: Placement; label: string }[] = [
+  { value: "first", label: "At the top" },
+  { value: "last", label: "At the bottom" },
+  { value: "noAction", label: "Where it was" },
+];
+
+const TEAM_FIELDS = `id name key description visibility parentTeamId timezone issueSortOrderOnStateChange members{nodes{id name email avatarSeed}}`;
 
 type RawTeam = Omit<TeamRow, "members"> & { members?: { nodes: Person[] } };
 const toRow = (t: RawTeam): TeamRow => ({
@@ -70,6 +79,7 @@ export async function updateTeam(
     description: string;
     visibility: Visibility;
     parentTeamId: string | null;
+    issueSortOrderOnStateChange: Placement;
   }>,
 ) {
   const d = await gql<{ teamUpdate: { success: boolean } }>(
