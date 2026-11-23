@@ -1,12 +1,63 @@
 import * as React from "react";
 import { cn } from "cn";
 import { ChevronDown } from "lucide-react";
+import { Tooltip as TooltipPrimitive } from "radix-ui";
 
 /* The one sidebar row. The workspace navigation and the settings navigation both render
  * inside the app's single <aside id="workspace-sidebar"> (main.tsx) and both use this row,
  * so hover, current-page, focus, touch-target and collapsed-rail behaviour cannot drift. */
 export const sidebarItemClass =
-  "group flex w-full min-w-0 items-center gap-2 overflow-hidden rounded-lg bg-transparent px-2.5 py-1 text-left text-[13px] font-normal whitespace-nowrap text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:font-medium aria-[current=page]:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent shell-phone:min-h-11 shell-phone:min-w-11 pointer-coarse:min-h-11 shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:px-0";
+  "group relative flex w-full min-w-0 items-center gap-2 overflow-hidden rounded-lg bg-transparent px-2.5 py-1 text-left text-[13px] font-normal whitespace-nowrap text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:font-medium aria-[current=page]:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent shell-phone:min-h-11 shell-phone:min-w-11 pointer-coarse:min-h-11 shell-desktop:rail-collapsed:mx-auto shell-desktop:rail-collapsed:size-7 shell-desktop:rail-collapsed:min-h-7 shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:gap-0 shell-desktop:rail-collapsed:p-0";
+
+export function SidebarTooltipProvider({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <TooltipPrimitive.Provider delayDuration={200} skipDelayDuration={80}>
+      {children}
+    </TooltipPrimitive.Provider>
+  );
+}
+
+/** Rail-only tooltip: renders nothing in expanded mode so full labels never duplicate. */
+export function SidebarTooltip({
+  label,
+  detail,
+  shortcut,
+  enabled,
+  children,
+}: {
+  label: string;
+  detail?: string;
+  shortcut?: string;
+  enabled: boolean;
+  children: React.ReactElement;
+}) {
+  if (!enabled) return children;
+  return (
+    <TooltipPrimitive.Root>
+      <TooltipPrimitive.Trigger asChild>{children}</TooltipPrimitive.Trigger>
+      <TooltipPrimitive.Portal>
+        <TooltipPrimitive.Content
+          side="right"
+          sideOffset={10}
+          collisionPadding={8}
+          className="z-50 flex items-center gap-2 rounded-md border border-line bg-panel px-2.5 py-1 text-[12px] font-medium text-foreground shadow-md shell-phone:hidden state-closed:animate-fade-out data-[state=delayed-open]:animate-fade-in"
+        >
+          <span>{label}</span>
+          {detail && <span className="font-normal text-muted">{detail}</span>}
+          {shortcut && (
+            <kbd className="rounded border border-line bg-subtle px-1 py-px font-mono text-[10px] font-normal text-muted">
+              {shortcut}
+            </kbd>
+          )}
+        </TooltipPrimitive.Content>
+      </TooltipPrimitive.Portal>
+    </TooltipPrimitive.Root>
+  );
+}
 
 /** The same row as a real link: middle-click, ⌘/Ctrl-click and "open in new tab" work, and a
  *  plain click navigates in place through `onNavigate` (no full page load). */

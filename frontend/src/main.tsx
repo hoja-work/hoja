@@ -10,6 +10,7 @@ import React, {
   useState,
 } from "react";
 import { createRoot } from "react-dom/client";
+import { cn } from "cn";
 import { Dialog as StackDialog } from "radix-ui";
 import { ReactGrabDev } from "./dev/ReactGrabDev";
 import {
@@ -155,6 +156,11 @@ import "./settings.css";
 import { SettingsSelect } from "./SettingsSelect";
 import { SettingsRoute } from "./settings/SettingsRoute";
 import { SettingsNav } from "./settings/SettingsNav";
+import {
+  SidebarTooltip,
+  SidebarTooltipProvider,
+  sidebarItemClass,
+} from "./components/sidebar";
 import type { Capability } from "./settings/context";
 import { GraphIssueDetail } from "./graph/tasks";
 import { Avatar, AvatarFallback, AvatarGroup } from "./components/ui/avatar";
@@ -212,9 +218,32 @@ function InboxBadge() {
   const n = useInboxUnread();
   if (!n) return null;
   return (
-    <em className="" aria-label={`${n} unread`} data-inbox-badge="">
+    <em
+      className="ml-auto rounded-full bg-sidebar-active px-1.5 py-px text-[11px] leading-4 font-medium text-foreground not-italic tabular-nums shell-desktop:rail-collapsed:pointer-events-none shell-desktop:rail-collapsed:absolute shell-desktop:rail-collapsed:top-1 shell-desktop:rail-collapsed:right-1 shell-desktop:rail-collapsed:ml-0 shell-desktop:rail-collapsed:size-2 shell-desktop:rail-collapsed:bg-foreground shell-desktop:rail-collapsed:p-0 shell-desktop:rail-collapsed:text-[0px] shell-desktop:rail-collapsed:leading-none shell-desktop:rail-collapsed:ring-2 shell-desktop:rail-collapsed:ring-sidebar"
+      aria-label={`${n} unread`}
+      data-inbox-badge=""
+    >
       {n > 99 ? "99+" : n}
     </em>
+  );
+}
+
+function InboxTooltip({
+  enabled,
+  children,
+}: {
+  enabled: boolean;
+  children: React.ReactElement;
+}) {
+  const n = useInboxUnread();
+  return (
+    <SidebarTooltip
+      label="Inbox"
+      detail={n ? `${n} unread` : undefined}
+      enabled={enabled}
+    >
+      {children}
+    </SidebarTooltip>
   );
 }
 import {
@@ -1579,6 +1608,22 @@ function App() {
   useEffect(() => {
     localStorage.setItem("hoja_sidebar_collapsed", String(sidebarCollapsed));
   }, [sidebarCollapsed]);
+  const [isDesktopShell, setIsDesktopShell] = useState(() =>
+    typeof window !== "undefined"
+      ? window.matchMedia(
+          "(min-width: 881px) and (min-height: 501px), (min-width: 1001px)",
+        ).matches
+      : true,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia(
+      "(min-width: 881px) and (min-height: 501px), (min-width: 1001px)",
+    );
+    const sync = () => setIsDesktopShell(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
     const saved = Number(localStorage.getItem("hoja_sidebar_width"));
     return Number.isFinite(saved) && saved >= 200 && saved <= 340 ? saved : 244;
@@ -3725,12 +3770,12 @@ function App() {
         onFinish={() => setupAdapter.openWorkspace()}
       />
     );
+  const railCollapsed =
+    sidebarCollapsed && view !== "Settings" && isDesktopShell;
   return (
     <div
       className="app min-h-dvh has-data-workspace-page:h-dvh has-data-workspace-page:min-w-0 has-data-workspace-page:overflow-x-clip shell-phone:has-data-workspace-page:flex shell-phone:has-data-workspace-page:flex-col shell-phone:has-data-workspace-page:overflow-hidden shell-desktop:grid shell-desktop:grid-cols-[244px_minmax(0,1fr)] shell-desktop:grid-rows-[48px_minmax(calc(100dvh-48px),auto)]"
-      data-sidebar-collapsed={
-        sidebarCollapsed && view !== "Settings" ? "" : undefined
-      }
+      data-sidebar-collapsed={railCollapsed ? "" : undefined}
     >
       {view !== "Reviews" && (
         <header
@@ -3826,9 +3871,9 @@ function App() {
                 onLogout={logout}
               />
             ) : (
-              <>
+              <SidebarTooltipProvider>
                 <div
-                  className="relative z-10 flex flex-none items-center gap-1 min-h-9 mb-3 overscroll-none shell-desktop:rail-collapsed:flex-col shell-desktop:rail-collapsed:justify-start shell-desktop:rail-collapsed:gap-1.5 shell-desktop:rail-collapsed:mb-2 min-w-0"
+                  className="relative z-10 flex flex-none items-center gap-1 min-h-9 mb-3 overscroll-none shell-desktop:rail-collapsed:flex-col shell-desktop:rail-collapsed:items-center shell-desktop:rail-collapsed:justify-start shell-desktop:rail-collapsed:gap-1 shell-desktop:rail-collapsed:pb-2 shell-desktop:rail-collapsed:mb-2 shell-desktop:rail-collapsed:border-b shell-desktop:rail-collapsed:border-line min-w-0"
                   data-sidebar-top=""
                 >
                   <div
@@ -3842,57 +3887,68 @@ function App() {
                         if (open) setMoreOpen(false);
                       }}
                     >
-                      <PopoverTrigger asChild>
-                        <button
-                          type="button"
-                          className="border flex items-center gap-1.5 pt-0 pr-1 pb-0 pl-1 bg-transparent text-left border-transparent rounded-lg h-7 border-line hover:bg-subtle hover:border-line w-full min-w-0 max-w-full border-0 text-foreground [&>span:nth-child(2)]:grid [&>span:nth-child(2)]:gap-0.5 [&>span:nth-child(2)]:font-semibold shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:h-7 shell-desktop:rail-collapsed:p-0 hover:bg-[#e5e5e5] shell-phone:pt-1 shell-phone:pr-1 shell-phone:pb-1 shell-phone:pl-1 shell-phone:h-11 shell-phone:gap-2.5"
-                          data-workspace-trigger=""
-                          aria-label={
-                            onboarding.singleOrg
-                              ? "Workspace menu"
-                              : "Switch workspace"
-                          }
-                          aria-haspopup="menu"
-                          aria-controls="workspace-switcher-menu"
-                          disabled={switching}
-                        >
-                          <span
-                            className="grid place-items-center w-5 h-5 flex-none rounded-md bg-[#6d6d73] text-[white] font-[750] text-[10px] shell-desktop:rail-collapsed:size-6 shell-phone:w-8 shell-phone:h-8"
-                            data-workspace-trigger-mark=""
+                      <SidebarTooltip
+                        label={workspace.name || "Workspace"}
+                        enabled={railCollapsed && !orgMenu}
+                      >
+                        <PopoverTrigger asChild>
+                          <button
+                            type="button"
+                            className="flex items-center gap-1.5 px-1 py-0 bg-transparent text-left rounded-lg h-7 w-full min-w-0 max-w-full border-0 text-foreground hover:bg-sidebar-hover focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-desktop:rail-collapsed:mx-auto shell-desktop:rail-collapsed:size-7 shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:p-0 shell-desktop:rail-collapsed:gap-0 shell-phone:p-1 shell-phone:h-11 shell-phone:gap-2.5"
+                            data-workspace-trigger=""
+                            aria-label={
+                              onboarding.singleOrg
+                                ? "Workspace menu"
+                                : "Switch workspace"
+                            }
+                            aria-haspopup="menu"
+                            aria-controls="workspace-switcher-menu"
+                            disabled={switching}
                           >
-                            {(workspace.name || "W").slice(0, 1).toUpperCase()}
-                          </span>
-                          <span
-                            className="grid gap-px max-w-none min-w-0 flex-1"
-                            data-workspace-trigger-copy=""
-                          >
-                            <b className="text-[13px] font-medium overflow-hidden text-ellipsis whitespace-nowrap text-foreground">
-                              {switching
-                                ? "Switching…"
-                                : workspace.name || "Workspace"}
-                            </b>
-                            <small className="hidden text-muted text-[10px] font-normal">
-                              {workspace.urlKey}
-                            </small>
-                          </span>
-                          <ChevronDown size={15} />
-                        </button>
-                      </PopoverTrigger>
+                            <span
+                              className="grid place-items-center w-5 h-5 flex-none rounded-md bg-[#6d6d73] text-[white] font-[750] text-[10px] shell-desktop:rail-collapsed:size-6 shell-phone:w-8 shell-phone:h-8"
+                              data-workspace-trigger-mark=""
+                            >
+                              {(workspace.name || "W").slice(0, 1).toUpperCase()}
+                            </span>
+                            <span
+                              className="grid gap-px max-w-none min-w-0 flex-1 shell-desktop:rail-collapsed:hidden"
+                              data-workspace-trigger-copy=""
+                            >
+                              <b className="text-[13px] font-medium overflow-hidden text-ellipsis whitespace-nowrap text-foreground">
+                                {switching
+                                  ? "Switching…"
+                                  : workspace.name || "Workspace"}
+                              </b>
+                              <small className="hidden text-muted text-[10px] font-normal">
+                                {workspace.urlKey}
+                              </small>
+                            </span>
+                            <ChevronDown
+                              size={15}
+                              aria-hidden="true"
+                              className="flex-none text-sidebar-icon shell-desktop:rail-collapsed:hidden"
+                            />
+                          </button>
+                        </PopoverTrigger>
+                      </SidebarTooltip>
                       <PopoverContent
                         align="start"
-                        side="bottom"
-                        sideOffset={4}
-                        portal={false}
+                        side={railCollapsed ? "right" : "bottom"}
+                        sideOffset={railCollapsed ? 10 : 4}
+                        portal={railCollapsed}
                         id="workspace-switcher-menu"
                         role="menu"
                         className="sidebar-popover workspace-menu z-50 min-w-0 max-w-none rounded-[10px] border-line bg-panel p-1.5 text-foreground shadow-(--shadow)"
                         style={
-                          workspaceMenuWidth === undefined
-                            ? undefined
-                            : {
-                                width: workspaceMenuWidth,
-                                maxWidth: workspaceMenuWidth,
-                              }
+                          railCollapsed
+                            ? { width: 240, maxWidth: "calc(100vw - 64px)" }
+                            : workspaceMenuWidth === undefined
+                              ? undefined
+                              : {
+                                  width: workspaceMenuWidth,
+                                  maxWidth: workspaceMenuWidth,
+                                }
                         }
                       >
                         <div
@@ -3900,7 +3956,7 @@ function App() {
                           data-workspace-menu-head=""
                         >
                           <span
-                            className="grid place-items-center w-5 h-5 flex-none rounded-md bg-[#6d6d73] text-[white] font-[750] text-[10px] last:grid last:gap-0.5 last:min-w-0 shell-desktop:rail-collapsed:size-6 shell-phone:w-8 shell-phone:h-8"
+                            className="grid place-items-center w-5 h-5 flex-none rounded-md bg-[#6d6d73] text-[white] font-[750] text-[10px] last:grid last:gap-0.5 last:min-w-0 shell-phone:w-8 shell-phone:h-8"
                             data-workspace-trigger-mark=""
                           >
                             {(workspace.name || "W").slice(0, 1).toUpperCase()}
@@ -4030,61 +4086,82 @@ function App() {
                       </small>
                     )}
                   </div>
-                  <button
-                    type="button"
-                    className="grid w-7 h-7 flex-none place-items-center rounded-[7px] border-0 bg-transparent text-muted hover:bg-subtle hover:text-foreground focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-desktop:rail-collapsed:flex-none shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:size-11"
-                    data-sidebar-icon=""
-                    data-sidebar-search=""
-                    aria-label="Search workspace"
-                    title="Search (Ctrl+K)"
-                    onClick={() => setCommandOpen(true)}
+                  <SidebarTooltip
+                    label="Search"
+                    shortcut="Ctrl+K"
+                    enabled={railCollapsed}
                   >
-                    <Search size={15} aria-hidden="true" />
-                  </button>
-                  <button
-                    className="grid w-7 h-7 flex-none place-items-center rounded-[7px] border-0 bg-[#f9f9fa] pt-1.5 pr-1.5 pb-1.5 pl-1.5 text-[#2e2e30] hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-foreground focus-visible:outline-offset-2 focus-visible:outline-accent shell-desktop:rail-collapsed:flex-none shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:size-11 hover:bg-[#efeff0] focus-visible:bg-[#efeff0]"
-                    data-sidebar-icon=""
-                    data-sidebar-create=""
-                    aria-label="Create new task"
-                    onClick={() => openNewIssue()}
-                  >
-                    <svg
-                      className="w-4 h-4 flex-none"
-                      width="16"
-                      height="16"
-                      viewBox="0 0 16 16"
-                      fill="currentColor"
-                      aria-hidden="true"
+                    <button
+                      type="button"
+                      className="grid size-7 flex-none place-items-center rounded-[7px] border-0 bg-transparent text-sidebar-icon hover:bg-sidebar-hover hover:text-foreground focus-visible:bg-sidebar-hover focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:size-11"
+                      data-sidebar-icon=""
+                      data-sidebar-search=""
+                      aria-label="Search workspace"
+                      title={railCollapsed ? undefined : "Search (Ctrl+K)"}
+                      onClick={() => setCommandOpen(true)}
                     >
-                      <path
-                        fillRule="evenodd"
-                        clipRule="evenodd"
-                        d="M7.25 1C7.66414 1 8 1.33589 8 1.75S7.66421 2.5 7.25 2.5H4.75A2.25 2.25 0 0 0 2.5 4.75v6.5a2.25 2.25 0 0 0 2.25 2.25h6.5a2.25 2.25 0 0 0 2.25-2.25v-2.5a.75.75 0 0 1 1.5 0v2.5A3.75 3.75 0 0 1 11.25 15h-6.5A3.75 3.75 0 0 1 1 11.25v-6.5A3.75 3.75 0 0 1 4.75 1h2.5Z"
-                      />
-                      <path d="M13.4326 1.26953a.919.919 0 0 1 1.2988 1.2988L9.2373 8.0615a3.25 3.25 0 0 1-2.082.9385c-.0877.0052-.1606-.0675-.1553-.1553a3.25 3.25 0 0 1 .9385-2.082L13.4326 1.26953Z" />
-                    </svg>
-                  </button>
-                  <button
-                    type="button"
-                    className="grid flex-none w-7 h-7 rounded-lg bg-transparent text-muted hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-desktop:rail-collapsed:flex-none shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:size-11 group focus-visible:bg-[#e1e1e1] shell-phone:hidden"
-                    data-sidebar-icon=""
-                    data-sidebar-toggle=""
-                    aria-label={
-                      sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
-                    }
-                    aria-expanded={!sidebarCollapsed}
-                    aria-controls="workspace-sidebar"
-                    title={
-                      sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
-                    }
-                    onClick={() => setSidebarCollapsed((v) => !v)}
+                      <Search size={15} aria-hidden="true" />
+                    </button>
+                  </SidebarTooltip>
+                  <SidebarTooltip
+                    label="Create new task"
+                    enabled={railCollapsed}
                   >
-                    {sidebarCollapsed ? (
-                      <PanelLeftOpen size={16} />
-                    ) : (
-                      <PanelLeftClose size={16} />
-                    )}
-                  </button>
+                    <button
+                      type="button"
+                      className="grid size-7 flex-none place-items-center rounded-[7px] border border-black/8 bg-[#f9f9fa] p-1.5 text-[#2e2e30] shadow-2xs hover:bg-sidebar-hover focus-visible:bg-sidebar-hover focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 dark:border-white/10 dark:bg-[#2f2f34] dark:text-foreground dark:hover:bg-[#3a3a40] dark:focus-visible:bg-[#3a3a40] shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:size-11"
+                      data-sidebar-icon=""
+                      data-sidebar-create=""
+                      aria-label="Create new task"
+                      title={railCollapsed ? undefined : "Create new task"}
+                      onClick={() => openNewIssue()}
+                    >
+                      <svg
+                        className="w-4 h-4 flex-none"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 16 16"
+                        fill="currentColor"
+                        aria-hidden="true"
+                      >
+                        <path
+                          fillRule="evenodd"
+                          clipRule="evenodd"
+                          d="M7.25 1C7.66414 1 8 1.33589 8 1.75S7.66421 2.5 7.25 2.5H4.75A2.25 2.25 0 0 0 2.5 4.75v6.5a2.25 2.25 0 0 0 2.25 2.25h6.5a2.25 2.25 0 0 0 2.25-2.25v-2.5a.75.75 0 0 1 1.5 0v2.5A3.75 3.75 0 0 1 11.25 15h-6.5A3.75 3.75 0 0 1 1 11.25v-6.5A3.75 3.75 0 0 1 4.75 1h2.5Z"
+                        />
+                        <path d="M13.4326 1.26953a.919.919 0 0 1 1.2988 1.2988L9.2373 8.0615a3.25 3.25 0 0 1-2.082.9385c-.0877.0052-.1606-.0675-.1553-.1553a3.25 3.25 0 0 1 .9385-2.082L13.4326 1.26953Z" />
+                      </svg>
+                    </button>
+                  </SidebarTooltip>
+                  <SidebarTooltip
+                    label={
+                      railCollapsed ? "Expand sidebar" : "Collapse sidebar"
+                    }
+                    shortcut="["
+                    enabled={railCollapsed}
+                  >
+                    <button
+                      type="button"
+                      className="grid size-7 flex-none place-items-center rounded-[7px] border-0 bg-transparent text-sidebar-icon hover:bg-sidebar-hover hover:text-foreground focus-visible:bg-sidebar-hover focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:hidden"
+                      data-sidebar-icon=""
+                      data-sidebar-toggle=""
+                      aria-label={
+                        sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
+                      }
+                      aria-expanded={!sidebarCollapsed}
+                      aria-controls="workspace-sidebar"
+                      title={
+                        railCollapsed ? undefined : "Collapse sidebar ([)"
+                      }
+                      onClick={() => setSidebarCollapsed((v) => !v)}
+                    >
+                      {sidebarCollapsed ? (
+                        <PanelLeftOpen size={16} aria-hidden="true" />
+                      ) : (
+                        <PanelLeftClose size={16} aria-hidden="true" />
+                      )}
+                    </button>
+                  </SidebarTooltip>
                 </div>
                 <nav
                   className="relative z-0 min-h-0 flex-1 overflow-x-hidden overflow-y-auto"
@@ -4095,19 +4172,14 @@ function App() {
                     !favoriteViews.length &&
                     !favoriteTasks.length ? null : (
                       <div
-                        className={
-                          ` mb-4.25` +
-                          " mt-0 mr-0 mb-4.25 ml-0" +
-                          "" +
-                          " mb-4.25"
-                        }
+                        className="mb-4.25 shell-desktop:rail-collapsed:mb-0 shell-desktop:rail-collapsed:not-first:mt-2 shell-desktop:rail-collapsed:not-first:pt-2 shell-desktop:rail-collapsed:not-first:border-t shell-desktop:rail-collapsed:not-first:border-line"
                         data-nav-group=""
                         key={section}
                       >
                         {section !== "primary" && (
                           <button
                             type="button"
-                            className="flex items-center justify-between w-full h-7 mt-0 mr-1 mb-0.5 ml-1 pt-0 pr-1.25 pb-0 pl-1.25 rounded-md bg-transparent text-muted text-[13px] font-normal text-left hover:bg-subtle focus-visible:bg-subtle hover:text-foreground focus-visible:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:h-auto group shell-desktop:rail-collapsed:hidden"
+                            className="flex items-center justify-between w-full h-7 mt-0 mr-1 mb-0.5 ml-1 pt-0 pr-1.25 pb-0 pl-1.25 rounded-md bg-transparent text-muted text-[13px] font-normal text-left hover:bg-sidebar-hover focus-visible:bg-sidebar-hover hover:text-foreground focus-visible:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:h-auto group shell-desktop:rail-collapsed:hidden"
                             data-nav-group-toggle=""
                             aria-expanded={!collapsedSections[section]}
                             onClick={() =>
@@ -4120,24 +4192,35 @@ function App() {
                             <span>{section}</span>
                             <ChevronDown
                               size={12}
+                              aria-hidden="true"
                               className="transition-transform duration-150 motion-reduce:transition-none group-aria-[expanded=false]:-rotate-90"
                             />
                           </button>
                         )}
-                        {!collapsedSections[section] && (
-                          <>
-                            {section === "Favorites" && (
-                              <div
-                                className="grid gap-px"
-                                data-nav-favorites=""
-                              >
-                                {favoriteViews.map((v) => (
+                        <div
+                          className={cn(
+                            "grid gap-px shell-desktop:rail-collapsed:gap-0.5",
+                            collapsedSections[section] &&
+                              "hidden shell-desktop:rail-collapsed:grid",
+                          )}
+                        >
+                          {section === "Favorites" && (
+                            <div
+                              className="grid gap-px shell-desktop:rail-collapsed:gap-0.5"
+                              data-nav-favorites=""
+                            >
+                              {favoriteViews.map((v) => (
+                                <SidebarTooltip
+                                  key={v.id}
+                                  label={v.name}
+                                  enabled={railCollapsed}
+                                >
                                   <button
                                     type="button"
-                                    key={v.id}
-                                    className="flex w-full items-center gap-2 overflow-hidden rounded-lg bg-transparent px-2.5 py-1 text-left text-[13px] font-normal text-muted whitespace-nowrap hover:bg-neutral-200 aria-[current=page]:bg-subtle aria-[current=page]:font-medium aria-[current=page]:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:px-0"
+                                    className={sidebarItemClass}
                                     data-nav-item=""
                                     data-nav-favorite-view={v.id}
+                                    aria-label={v.name}
                                     aria-current={
                                       view === "View" &&
                                       [v.id, v.slugId].includes(
@@ -4152,61 +4235,111 @@ function App() {
                                     }}
                                   >
                                     <ViewIcon icon={v.icon} color={v.color} />
-                                    <span className="overflow-hidden text-ellipsis shell-desktop:rail-collapsed:hidden">
+                                    <span className="min-w-0 flex-1 truncate shell-desktop:rail-collapsed:hidden">
                                       {v.name}
                                     </span>
                                   </button>
-                                ))}
-                                {favoriteTasks.map((i) => (
+                                </SidebarTooltip>
+                              ))}
+                              {favoriteTasks.map((i) => (
+                                <SidebarTooltip
+                                  key={i.id}
+                                  label={i.identifier}
+                                  detail={i.title}
+                                  enabled={railCollapsed}
+                                >
                                   <button
                                     type="button"
-                                    key={i.id}
-                                    className="flex w-full items-center gap-2 overflow-hidden rounded-lg bg-transparent px-2.5 py-1 text-left text-[13px] font-normal text-muted whitespace-nowrap hover:bg-neutral-200 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:px-0"
+                                    className={sidebarItemClass}
                                     data-nav-item=""
+                                    aria-label={`${i.identifier} ${i.title}`}
                                     onClick={() => {
                                       openIssue(i);
                                       setMobile(false);
                                     }}
                                   >
-                                    <CircleDot size={15} />
-                                    <span className="overflow-hidden text-ellipsis shell-desktop:rail-collapsed:hidden">
+                                    <CircleDot
+                                      size={15}
+                                      aria-hidden="true"
+                                      className="flex-none text-sidebar-icon group-hover:text-foreground"
+                                    />
+                                    <span className="min-w-0 flex-1 truncate shell-desktop:rail-collapsed:hidden">
                                       {i.identifier} {i.title}
                                     </span>
                                   </button>
-                                ))}
-                              </div>
-                            )}
-                            {section === "Your teams" &&
-                              teams.map((team) => (
+                                </SidebarTooltip>
+                              ))}
+                            </div>
+                          )}
+                          {section === "Your teams" &&
+                            teams.map((team) => {
+                              const teamPrefix = `/workspace/team/${team.key.toLowerCase()}/`;
+                              const isTeamRoute =
+                                location.pathname.startsWith(teamPrefix);
+                              return (
                                 <div
                                   data-team-block=""
                                   key={team.id}
-                                  className="mb-1 first-of-type:mt-2"
+                                  className="mb-1 first-of-type:mt-2 shell-desktop:rail-collapsed:mb-0 shell-desktop:rail-collapsed:first-of-type:mt-0"
                                 >
                                   <div
                                     className="max-md:justify-center flex items-center gap-0"
                                     data-team-row=""
                                   >
-                                    <button
-                                      type="button"
-                                      className="group flex min-h-7  w-full min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-md border-0 bg-transparent px-2 py-1 text-left text-[13px] font-medium text-[#202023] whitespace-nowrap text-ellipsis hover:text-foreground aria-[current=page]:text-foreground aria-[current=page]:font-semibold shell-phone:min-h-11 shell-phone:min-w-11 shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:px-0 hover:bg-transparent hover:text-[#202023]"
-                                      data-team-name=""
-                                      aria-expanded={!collapsedTeams[team.id]}
-                                      onClick={() =>
-                                        setCollapsedTeams((c) => ({
-                                          ...c,
-                                          [team.id]: !c[team.id],
-                                        }))
-                                      }
+                                    <SidebarTooltip
+                                      label={team.name}
+                                      detail="Team home"
+                                      enabled={railCollapsed}
                                     >
-                                      <Users
-                                        size={15}
-                                        className="size-4 flex-none"
-                                      />
-                                      <span className=" shell-desktop:rail-collapsed:hidden">
-                                        {team.name}
-                                      </span>
-                                    </button>
+                                      <button
+                                        type="button"
+                                        className={cn(
+                                          sidebarItemClass,
+                                          "font-medium text-foreground",
+                                        )}
+                                        data-team-name=""
+                                        aria-label={team.name}
+                                        aria-current={
+                                          railCollapsed && isTeamRoute
+                                            ? "page"
+                                            : undefined
+                                        }
+                                        aria-expanded={
+                                          railCollapsed
+                                            ? undefined
+                                            : !collapsedTeams[team.id]
+                                        }
+                                        onClick={() => {
+                                          if (railCollapsed) {
+                                            navigate(
+                                              "Team Home",
+                                              `/workspace/team/${team.key.toLowerCase()}/home`,
+                                            );
+                                            setMobile(false);
+                                            return;
+                                          }
+                                          setCollapsedTeams((c) => ({
+                                            ...c,
+                                            [team.id]: !c[team.id],
+                                          }));
+                                        }}
+                                      >
+                                        <Users
+                                          size={15}
+                                          aria-hidden="true"
+                                          className="size-4 flex-none text-sidebar-icon group-hover:text-foreground shell-desktop:rail-collapsed:hidden"
+                                        />
+                                        <b
+                                          className="hidden size-5 flex-none place-items-center rounded-[5px] border border-line bg-panel text-[9.5px] font-semibold tracking-tight text-foreground shell-desktop:rail-collapsed:grid"
+                                          aria-hidden="true"
+                                        >
+                                          {team.key.slice(0, 2).toUpperCase()}
+                                        </b>
+                                        <span className="min-w-0 flex-1 truncate shell-desktop:rail-collapsed:hidden">
+                                          {team.name}
+                                        </span>
+                                      </button>
+                                    </SidebarTooltip>
                                   </div>
                                   {!collapsedTeams[team.id] && (
                                     <div
@@ -4214,7 +4347,7 @@ function App() {
                                       data-team-nav-links=""
                                     >
                                       <button
-                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
                                         type="button"
                                         onClick={() => {
                                           navigate(
@@ -4233,7 +4366,7 @@ function App() {
                                         Home
                                       </button>
                                       <button
-                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
                                         type="button"
                                         onClick={() => {
                                           navigate(
@@ -4251,7 +4384,7 @@ function App() {
                                         Tasks
                                       </button>
                                       <button
-                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
                                         type="button"
                                         onClick={() => {
                                           navigate(
@@ -4273,7 +4406,7 @@ function App() {
                                         data-team-cycle-links=""
                                       >
                                         <button
-                                          className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-1.75 pr-1.75 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                          className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-1.75 pr-1.75 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
                                           type="button"
                                           aria-current={
                                             view === "Team cycle" &&
@@ -4297,7 +4430,7 @@ function App() {
                                           Current
                                         </button>
                                         <button
-                                          className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-1.75 pr-1.75 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                          className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-1.75 pr-1.75 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
                                           type="button"
                                           aria-current={
                                             view === "Team cycle" &&
@@ -4322,7 +4455,7 @@ function App() {
                                         </button>
                                       </div>
                                       <button
-                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
                                         type="button"
                                         onClick={() => {
                                           navigate(
@@ -4341,7 +4474,7 @@ function App() {
                                       </button>
                                       {team.showInitiatives && (
                                         <button
-                                          className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                          className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
                                           type="button"
                                           data-team-initiatives=""
                                           onClick={() => {
@@ -4365,7 +4498,7 @@ function App() {
                                         </button>
                                       )}
                                       <button
-                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
                                         type="button"
                                         onClick={() => {
                                           navigate(
@@ -4385,24 +4518,30 @@ function App() {
                                     </div>
                                   )}
                                 </div>
-                              ))}
-                            {[
-                              ...items,
-                              /* Admins always see the entry, so the screens can be found and turned on
-                               * from where they live; the page offers the switch while it is off. */
-                              ...(section === "primary" &&
-                              (agentsOn || viewer.admin)
-                                ? ([["Agents", GitBranch]] as [
-                                    string,
-                                    typeof GitBranch,
-                                  ][])
-                                : []),
-                            ].map(([label, Icon]) => (
+                              );
+                            })}
+                          {[
+                            ...items,
+                            /* Admins always see the entry, so the screens can be found and turned on
+                             * from where they live; the page offers the switch while it is off. */
+                            ...(section === "primary" &&
+                            (agentsOn || viewer.admin)
+                              ? ([["Agents", GitBranch]] as [
+                                  string,
+                                  typeof GitBranch,
+                                ][])
+                              : []),
+                          ].map(([label, Icon]) => {
+                            const navLabel =
+                              label === "Favorite views"
+                                ? "Saved views"
+                                : label;
+                            const button = (
                               <button
                                 type="button"
-                                className="flex w-full  items-center gap-2 overflow-hidden rounded-lg bg-transparent px-2.5 py-1 hover:bg-neutral-200  text-left text-[13px] font-normal text-muted whitespace-nowrap text-ellipsis aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 pointer-coarse:min-h-11 shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:px-0  aria-[current=page]:bg-subtle aria-[current=page]:font-medium"
+                                className={sidebarItemClass}
                                 data-nav-item=""
-                                key={label}
+                                aria-label={navLabel}
                                 onClick={() => {
                                   navigate(label);
                                   setMobile(false);
@@ -4411,22 +4550,40 @@ function App() {
                                   view === label ? "page" : undefined
                                 }
                               >
-                                <Icon size={15} />
-                                <span className="overflow-hidden text-ellipsis shell-desktop:rail-collapsed:hidden">
-                                  {label === "Favorite views"
-                                    ? "Saved views"
-                                    : label}
+                                <Icon
+                                  size={15}
+                                  aria-hidden="true"
+                                  className="flex-none text-sidebar-icon group-hover:text-foreground group-aria-[current=page]:text-foreground"
+                                />
+                                <span className="min-w-0 flex-1 truncate shell-desktop:rail-collapsed:hidden">
+                                  {navLabel}
                                 </span>
                                 {label === "Inbox" && <InboxBadge />}
                               </button>
-                            ))}
-                          </>
-                        )}
+                            );
+                            return label === "Inbox" ? (
+                              <InboxTooltip
+                                key={label}
+                                enabled={railCollapsed}
+                              >
+                                {button}
+                              </InboxTooltip>
+                            ) : (
+                              <SidebarTooltip
+                                key={label}
+                                label={navLabel}
+                                enabled={railCollapsed}
+                              >
+                                {button}
+                              </SidebarTooltip>
+                            );
+                          })}
+                        </div>
                       </div>
                     ),
                   )}
                   <div
-                    className="mb-4.25 mt-0 mr-0 ml-0"
+                    className="mb-4.25 mt-0 mr-0 ml-0 shell-desktop:rail-collapsed:mb-0 shell-desktop:rail-collapsed:mt-2 shell-desktop:rail-collapsed:pt-2 shell-desktop:rail-collapsed:border-t shell-desktop:rail-collapsed:border-line"
                     data-nav-group=""
                     data-nav-group-more-control=""
                   >
@@ -4437,25 +4594,34 @@ function App() {
                         if (open) setOrgMenu(false);
                       }}
                     >
-                      <PopoverTrigger asChild>
-                        <button
-                          type="button"
-                          className="flex items-center gap-2 w-full pt-0 pr-2.25 pb-0 pl-2.25 rounded-lg bg-transparent text-muted text-left min-h-7 text-[13px] hover:bg-subtle hover:text-foreground h-7 font-normal whitespace-nowrap overflow-hidden text-ellipsis [&_em]:ml-auto [&_em]:not-italic [&_em]:text-xs [&_em]:text-accent [&_em]:bg-accent-soft [&_em]:pt-0 [&_em]:pr-1.5 [&_em]:pb-0 [&_em]:pl-1.5 [&_em]:rounded-xl [&_svg]:flex-none hover:bg-[#e5e5e5] hover:text-muted aria-[current=page]:bg-subtle aria-[current=page]:text-foreground aria-[current=page]:font-medium"
-                          data-nav-item=""
-                          aria-label="Workspace More"
-                          aria-haspopup="menu"
-                          aria-controls="workspace-more-menu"
-                        >
-                          <MoreHorizontal size={15} />
-                          <span className="overflow-hidden text-ellipsis">
-                            More
-                          </span>
-                        </button>
-                      </PopoverTrigger>
+                      <SidebarTooltip
+                        label="More"
+                        enabled={railCollapsed && !moreOpen}
+                      >
+                        <PopoverTrigger asChild>
+                          <button
+                            type="button"
+                            className={sidebarItemClass}
+                            data-nav-item=""
+                            aria-label="Workspace More"
+                            aria-haspopup="menu"
+                            aria-controls="workspace-more-menu"
+                          >
+                            <MoreHorizontal
+                              size={15}
+                              aria-hidden="true"
+                              className="flex-none text-sidebar-icon group-hover:text-foreground"
+                            />
+                            <span className="min-w-0 flex-1 truncate shell-desktop:rail-collapsed:hidden">
+                              More
+                            </span>
+                          </button>
+                        </PopoverTrigger>
+                      </SidebarTooltip>
                       <PopoverContent
-                        align="start"
-                        side="bottom"
-                        sideOffset={6}
+                        align={railCollapsed ? "end" : "start"}
+                        side={railCollapsed ? "right" : "bottom"}
+                        sideOffset={railCollapsed ? 10 : 6}
                         id="workspace-more-menu"
                         role="menu"
                         data-popover-panel
@@ -4481,7 +4647,7 @@ function App() {
                     </UIPopover>
                   </div>
                 </nav>
-              </>
+              </SidebarTooltipProvider>
             )}
           </aside>
         </>
