@@ -594,7 +594,7 @@ export function InboxPage({
     setSelectedKey(null);
   };
   const iconButton =
-    "grid size-7 place-items-center rounded-md bg-transparent text-muted hover:bg-subtle hover:text-foreground aria-pressed:bg-subtle aria-pressed:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 pointer-coarse:size-11 shell-phone:size-11";
+    "grid size-7 place-items-center rounded-md bg-transparent text-muted hover:bg-subtle hover:text-foreground aria-pressed:bg-subtle aria-pressed:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 pointer-coarse:size-11 pointer-coarse:focus-visible:-outline-offset-2 shell-phone:size-11 shell-phone:focus-visible:-outline-offset-2";
   const rowAction =
     "grid size-6 place-items-center rounded bg-transparent text-muted hover:bg-subtle hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:size-11";
   const snoozeItems = (g: InboxGroup) => (

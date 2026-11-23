@@ -381,7 +381,7 @@ export function LeaderboardPage({
                             key={person.userId}
                             type="button"
                             onClick={() => onOpenMember(person.userId)}
-                            className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-12"
+                            className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-subtle focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent pointer-coarse:min-h-12"
                           >
                             <RankBadge rank={index + 1} />
                             <span
@@ -453,7 +453,7 @@ export function LeaderboardPage({
                           onClick={() =>
                             onOpenTask(task.identifier, task.title)
                           }
-                          className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-12"
+                          className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-subtle focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent pointer-coarse:min-h-12"
                         >
                           <RankBadge rank={index + 1} />
                           <GraphStatusIcon
@@ -514,7 +514,7 @@ export function LeaderboardPage({
                           key={ag.agentUserId}
                           type="button"
                           onClick={() => onOpenMember(ag.agentUserId)}
-                          className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:min-h-12"
+                          className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-subtle focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent pointer-coarse:min-h-12"
                         >
                           <RankBadge rank={index + 1} />
                           <span

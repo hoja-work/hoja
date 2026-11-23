@@ -613,9 +613,9 @@ function ReviewsNavTrigger({ onOpenNav }: { onOpenNav?: () => void }) {
       aria-label="Open navigation"
       aria-controls="workspace-sidebar"
       onClick={onOpenNav}
-      className="group -ml-2 grid size-11 flex-none place-items-center rounded-lg border-0 bg-transparent p-0 text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-desktop:hidden"
+      className="group -ml-2 grid size-11 flex-none place-items-center rounded-lg border-0 bg-transparent p-0 text-muted focus-visible:outline-none shell-desktop:hidden"
     >
-      <span className="grid size-7 place-items-center rounded-md transition-colors duration-120 ease-out group-hover:bg-sidebar-hover group-hover:text-foreground group-hover:transition-none">
+      <span className="grid size-7 place-items-center rounded-md transition-colors duration-120 ease-out group-hover:bg-sidebar-hover group-hover:text-foreground group-hover:transition-none group-focus-visible:outline-2 group-focus-visible:outline-offset-2 group-focus-visible:outline-accent">
         <PanelLeft size={16} aria-hidden="true" />
       </span>
     </button>

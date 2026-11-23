@@ -4207,14 +4207,14 @@ function App() {
                     !favoriteViews.length &&
                     !favoriteTasks.length ? null : (
                       <div
-                        className="mb-4.25 shell-desktop:rail-collapsed:mb-0 shell-desktop:rail-collapsed:not-first:mt-2 shell-desktop:rail-collapsed:not-first:pt-2 shell-desktop:rail-collapsed:not-first:border-t shell-desktop:rail-collapsed:not-first:border-line"
+                        className="flex flex-col mb-4.25 shell-desktop:rail-collapsed:mb-0 shell-desktop:rail-collapsed:not-first:mt-2 shell-desktop:rail-collapsed:not-first:pt-2 shell-desktop:rail-collapsed:not-first:border-t shell-desktop:rail-collapsed:not-first:border-line"
                         data-nav-group=""
                         key={section}
                       >
                         {section !== "primary" && (
                           <button
                             type="button"
-                            className="flex items-center justify-between w-full h-7 mt-0 mr-1 mb-0.5 ml-1 pt-0 pr-1.25 pb-0 pl-1.25 rounded-md bg-transparent text-muted text-[13px] font-normal text-left hover:bg-sidebar-hover focus-visible:bg-sidebar-hover hover:text-foreground focus-visible:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:h-auto group shell-desktop:rail-collapsed:hidden"
+                            className="flex items-center justify-between h-7 mt-0 mr-1 mb-0.5 ml-1 pt-0 pr-1.25 pb-0 pl-1.25 rounded-md bg-transparent text-muted text-[13px] font-normal text-left hover:bg-sidebar-hover focus-visible:bg-sidebar-hover hover:text-foreground focus-visible:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:h-auto group shell-desktop:rail-collapsed:hidden"
                             data-nav-group-toggle=""
                             aria-expanded={!collapsedSections[section]}
                             onClick={() =>
@@ -4382,7 +4382,7 @@ function App() {
                                       data-team-nav-links=""
                                     >
                                       <button
-                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
                                         type="button"
                                         onClick={() => {
                                           navigate(
@@ -4401,7 +4401,7 @@ function App() {
                                         Home
                                       </button>
                                       <button
-                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
                                         type="button"
                                         onClick={() => {
                                           navigate(
@@ -4419,7 +4419,7 @@ function App() {
                                         Tasks
                                       </button>
                                       <button
-                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
                                         type="button"
                                         onClick={() => {
                                           navigate(
@@ -4441,7 +4441,7 @@ function App() {
                                         data-team-cycle-links=""
                                       >
                                         <button
-                                          className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-1.75 pr-1.75 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                          className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-1.75 pr-1.75 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
                                           type="button"
                                           aria-current={
                                             view === "Team cycle" &&
@@ -4465,7 +4465,7 @@ function App() {
                                           Current
                                         </button>
                                         <button
-                                          className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-1.75 pr-1.75 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                          className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-1.75 pr-1.75 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
                                           type="button"
                                           aria-current={
                                             view === "Team cycle" &&
@@ -4490,7 +4490,7 @@ function App() {
                                         </button>
                                       </div>
                                       <button
-                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
                                         type="button"
                                         onClick={() => {
                                           navigate(
@@ -4509,7 +4509,7 @@ function App() {
                                       </button>
                                       {team.showInitiatives && (
                                         <button
-                                          className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                          className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
                                           type="button"
                                           data-team-initiatives=""
                                           onClick={() => {
@@ -4533,7 +4533,7 @@ function App() {
                                         </button>
                                       )}
                                       <button
-                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
                                         type="button"
                                         onClick={() => {
                                           navigate(
@@ -7136,12 +7136,12 @@ function MyIssuesContent({
       className={
         sub
           ? "flex items-center gap-1.75 h-7.5 pt-0 pr-2 pb-0 pl-6 text-muted text-[12px] mt-0 mr-2.5 mb-0.5 ml-2.5"
-          : "flex items-center gap-1.75 h-8.5 pt-0 pr-2 pb-0 pl-2 text-muted text-[12px] mt-0 mr-2.5 mb-0.5 ml-2.5 rounded-[7px] bg-subtle"
+          : "flex items-center gap-1.75 h-8.5 shell-phone:h-11 pointer-coarse:h-11 pt-0 pr-2 pb-0 pl-2 text-muted text-[12px] mt-0 mr-2.5 mb-0.5 ml-2.5 rounded-[7px] bg-subtle"
       }
     >
       {!sub && (
         <button
-          className="grid place-items-center w-5.5 h-5.5 ml-0 rounded-md bg-transparent text-[#626269] hover:bg-subtle mt-0 mr-0 mb-0 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 group"
+          className="grid place-items-center w-5.5 h-5.5 ml-0 rounded-md bg-transparent text-[#626269] hover:bg-subtle mt-0 mr-0 mb-0 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 group pointer-coarse:focus-visible:-outline-offset-2 shell-phone:focus-visible:-outline-offset-2"
           aria-label={`${open ? "Collapse" : "Expand"} ${tab === "Activity" ? activityDayLabel(g.label) : g.label}`}
           aria-expanded={open}
           onClick={() => toggleCollapsed(g.key)}
@@ -7163,7 +7163,7 @@ function MyIssuesContent({
       </span>
       {!sub && tab !== "Activity" && (
         <button
-          className="grid place-items-center w-5.5 h-5.5 ml-0 rounded-md bg-transparent text-[#626269] hover:bg-subtle mt-0 mr-0 mb-0 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+          className="grid place-items-center w-5.5 h-5.5 ml-0 rounded-md bg-transparent text-[#626269] hover:bg-subtle mt-0 mr-0 mb-0 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 pointer-coarse:focus-visible:-outline-offset-2 shell-phone:focus-visible:-outline-offset-2"
           aria-label={`Create task in ${g.label || "this list"}`}
           onClick={() => onNew(state?.id)}
         >
@@ -12712,7 +12712,7 @@ function TaskViewTabs<T extends string>({
 }) {
   return (
     <nav
-      className="flex min-w-0 flex-1 items-center gap-1.5 border-0 bg-bg  text-foreground overflow-x-auto max-sm:basis-full [@media_(max-width:650px)]:gap-1 "
+      className="-m-1 flex min-w-0 flex-1 items-center gap-1.5 border-0 bg-bg p-1 text-foreground overflow-x-auto max-sm:basis-full [@media_(max-width:650px)]:gap-1 "
       data-my-issue-tabs=""
       aria-label={label}
     >
@@ -12756,7 +12756,7 @@ function TeamTabs({
     "inline-flex min-h-7 flex-none items-center gap-1.5 rounded-full border-0 outline outline-1 outline-line -outline-offset-1 bg-panel pl-2.75 pr-2.75 text-[12px] text-foreground transition-none aria-selected:bg-subtle aria-selected:inset-shadow-sm aria-selected:inset-shadow-neutral-50 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11";
   return (
     <nav
-      className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto border-0 bg-bg text-foreground [@media_(max-width:650px)]:gap-1"
+      className="-m-1 flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto border-0 bg-bg p-1 text-foreground [@media_(max-width:650px)]:gap-1"
       data-my-issue-tabs=""
       data-team-tabs=""
       aria-label="Team task views"
@@ -16992,7 +16992,7 @@ function ViewsList({
         </h1>
         {!favoriteOnly && (
           <button
-            className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-sm hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
+            className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-sm hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11 shell-phone:focus-visible:-outline-offset-2"
             type="button"
             onClick={onNew}
             data-new-view=""

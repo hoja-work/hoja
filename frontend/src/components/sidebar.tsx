@@ -7,7 +7,7 @@ import { Tooltip as TooltipPrimitive } from "radix-ui";
  * inside the app's single <aside id="workspace-sidebar"> (main.tsx) and both use this row,
  * so hover, current-page, focus, touch-target and collapsed-rail behaviour cannot drift. */
 export const sidebarItemClass =
-  "group relative flex w-full min-w-0 items-center gap-2 overflow-hidden rounded-lg bg-transparent px-2.5 py-1 text-left text-[13px] font-normal whitespace-nowrap text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:font-medium aria-[current=page]:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent shell-phone:min-h-11 shell-phone:min-w-11 pointer-coarse:min-h-11 shell-desktop:rail-collapsed:mx-auto shell-desktop:rail-collapsed:size-7 shell-desktop:rail-collapsed:min-h-7 shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:gap-0 shell-desktop:rail-collapsed:p-0";
+  "group relative flex w-full min-w-0 items-center gap-2 overflow-hidden rounded-lg bg-transparent px-2.5 py-1 text-left text-[13px] font-normal whitespace-nowrap text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:font-medium aria-[current=page]:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent shell-phone:min-h-11 shell-phone:min-w-11 pointer-coarse:min-h-11 shell-desktop:rail-collapsed:mx-auto shell-desktop:rail-collapsed:size-7 shell-desktop:rail-collapsed:min-h-7 shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:gap-0 shell-desktop:rail-collapsed:p-0";
 
 export function SidebarTooltipProvider({
   children,
@@ -174,14 +174,14 @@ export function SidebarGroup({
 } & { [k: `data-${string}`]: string | undefined }) {
   const id = React.useId();
   return (
-    <div className="mb-4 last:mb-0" data-nav-group="" {...data}>
+    <div className="mb-4 flex flex-col last:mb-0" data-nav-group="" {...data}>
       {onToggle ? (
         <button
           type="button"
           data-nav-group-toggle=""
           aria-expanded={!collapsed}
           onClick={onToggle}
-          className="group mx-1 mb-0.5 flex h-7 w-full items-center justify-between rounded-md bg-transparent px-1.5 text-left text-[13px] font-normal text-muted hover:bg-subtle hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-desktop:rail-collapsed:hidden"
+          className="group mx-1 mb-0.5 flex h-7 items-center justify-between rounded-md bg-transparent px-1.5 text-left text-[13px] font-normal text-muted hover:bg-subtle hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-desktop:rail-collapsed:hidden"
         >
           <span>{label}</span>
           <ChevronDown

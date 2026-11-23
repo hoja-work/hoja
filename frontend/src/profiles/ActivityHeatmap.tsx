@@ -179,7 +179,7 @@ export function ActivityHeatmap({
 
       <div
         ref={scroller}
-        className="overflow-x-auto overscroll-x-contain pb-1"
+        className="overflow-x-auto overscroll-x-contain pr-0.5 pb-1"
         data-activity-heatmap-scroll=""
       >
         <div className="inline-flex flex-col gap-1">

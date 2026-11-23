@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "lint:styles": "stylelint 'src/**/*.css'",
-    "test:layout": "node ../scripts/test-project-layout.cjs && node ../scripts/test-settings-layout.cjs && node ../scripts/test-task-layout.cjs && node ../scripts/test-work-surface-layout.cjs && node ../scripts/test-agent-chat-layout.cjs && node ../scripts/test-overflow-layout.cjs && node ../scripts/test-list-scroll-layout.cjs && node ../scripts/test-agent-reply-layout.cjs && node ../scripts/test-brand-and-welcome-composer.cjs && node ../scripts/test-overlay-dismiss.cjs",
+    "test:layout": "node ../scripts/test-project-layout.cjs && node ../scripts/test-settings-layout.cjs && node ../scripts/test-task-layout.cjs && node ../scripts/test-work-surface-layout.cjs && node ../scripts/test-agent-chat-layout.cjs && node ../scripts/test-overflow-layout.cjs && node ../scripts/test-list-scroll-layout.cjs && node ../scripts/test-agent-reply-layout.cjs && node ../scripts/test-brand-and-welcome-composer.cjs && node ../scripts/test-overlay-dismiss.cjs && node ../scripts/test-state-shape.cjs",
     "preview": "vite preview",
     "check:production": "python3 ../scripts/verify-web-production.py",
     "test:shell-alignment": "node ../scripts/test-shell-top-alignment.cjs",
@@ -44,7 +44,9 @@
     "fix:tailwind-intellisense": "node scripts/fix-tailwind-intellisense.mjs",
     "test:tailwind-intellisense": "node scripts/test-fix-tailwind-intellisense.mjs",
     "test:spacing-parity": "node scripts/test-spacing-parity.cjs",
-    "test:tailwind": "node scripts/test-canonicalize-tailwind.mjs"
+    "test:tailwind": "node scripts/test-canonicalize-tailwind.mjs",
+    "lint:state-shape": "node scripts/check-state-shape-source.mjs --self-test && node scripts/check-state-shape-source.mjs",
+    "test:state-shape": "node ../scripts/test-state-shape.cjs"
   },
   "dependencies": {
     "@dnd-kit/core": "6.3.1",

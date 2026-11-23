@@ -23,6 +23,16 @@
 - Use standard Tailwind spacing and sizing utilities. Do not use arbitrary values in square brackets, including pixel values such as `w-[10px]`.
 - Do not introduce custom pixel values or custom Tailwind utility values.
 
+## State shape
+
+An interactive surface keeps the same shape in every state. The pill a control paints on hover, selected or pressed, and its focus ring, must never be cut by an ancestor that clips (`overflow-hidden`, `overflow-x-hidden`, or any `overflow-auto` scroller at its first or last row). A cut surface reads as a pill rounded on one side and square on the other, or a focus ring with a missing edge.
+
+- Never combine `w-full` with a horizontal margin (`mx-*`, `ml-*`, `mr-*`). The box becomes wider than its parent and the far edge is clipped. Inset with margins and let a block or `flex flex-col` parent stretch the box, or keep `w-full` and inset with padding. `npm run lint:state-shape` enforces this.
+- A row that fills its container (sidebar rows, list rows in a clipped card, a full-bleed leaderboard row) draws its focus ring inside itself: `focus-visible:-outline-offset-2`.
+- A free-standing control keeps the outer ring (`focus-visible:outline-2 focus-visible:outline-offset-2`), and its scroller leaves room for it. A horizontal tab strip that scrolls takes `-m-1 p-1`.
+- On touch (`shell-phone:` / `pointer-coarse:`), a control grown to a 44px target must fit its row: grow the row too (`shell-phone:h-11 pointer-coarse:h-11`), or keep the 44px box invisible and paint hover and focus on an inner element (`group-hover:` / `group-focus-visible:`, as `MobileNavTrigger` does).
+- `npm run test:state-shape` drives the app in light, dark, 125% zoom and phone sizes. It hovers with the real pointer (no scroll-into-view) and focuses with `preventScroll`, then fails on any clipped hover or focus paint.
+
 ## Main content container
 
 Use this shell for full-height issue surfaces displayed beside the sidebar.
