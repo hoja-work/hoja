@@ -9,7 +9,7 @@ workspace, and the two are the same entity with a different `visibility`.
 A view always runs on the server. The web client, the CLI (`hoja issue list --view`), the
 CSV export and Linear-shaped clients (`customView`) all read the same `View.issues` /
 `View.projects` result, so a view selects the same rows wherever it is opened. Built-in task
-lists (a team's Tasks tabs, My issues, a project's tasks) share the same filter grammar and
+lists (a team's Tasks tabs, My tasks, a project's tasks) share the same filter grammar and
 display options, kept per page as [display preferences](#display-preferences).
 
 | Topic | Section |
@@ -86,7 +86,7 @@ scope, description, icon and color — with the caller as owner. The copy is `pr
 
 | `kind` | Filter addresses | Executed by |
 | --- | --- | --- |
-| `issue` | `IssueFilter` properties | `Store.view_issues` (team visibility + the shared issue predicate compiler) |
+| `issue` | `IssueFilter` properties | `Store.view_issues` (team visibility + the shared task predicate compiler) |
 | `project` | `ProjectFilter` properties | `Store.view_projects` (project visibility + the project predicate compiler) |
 | `initiative` | `InitiativeFilter` properties | `Store.view_initiative_rows`, then the derived predicates in Python |
 
@@ -103,7 +103,7 @@ A view's kind is fixed at creation; `viewUpdate` cannot move filters between kin
 
 Scope is part of what a view selects: results are the saved filters AND the scope. A team
 scope covers the team and its sub-teams; an initiative scope covers the projects of the
-initiative and its sub-initiatives (for an issue view, the issues in those projects; for an
+initiative and its sub-initiatives (for an task view, the tasks in those projects; for an
 initiative view, the initiative and its sub-initiatives); a project scope covers that
 project. Scope never widens visibility: rows outside the viewer's teams stay invisible.
 
@@ -212,7 +212,7 @@ Relations filter writes exactly these three.
 
 Properties Linear has and Hoja cannot execute are rejected with the reason rather than
 ignored: `blocked`, `blocking`, `hasRelations`, `related` and `duplicate` (Hoja does not track
-issue-to-issue relations), `triagedAt`, `autoClosedAt`, `milestone`, `customer` and `sla`.
+task-to-task relations), `triagedAt`, `autoClosedAt`, `milestone`, `customer` and `sla`.
 
 ### Project and initiative properties
 
@@ -276,7 +276,7 @@ Each member can lay their own options over them; see [Display preferences](#disp
 | `boardColumnOrder` | list of group keys, at most 50 | `[]` |
 | `showEmptyGroups` | boolean | `true` |
 | `showSubIssues` | boolean; `false` lists only top-level tasks | `true` |
-| `nestedSubIssues` | `all`, `matching`, `hide` — how a client nests children under a parent | `matching` (Linear's default: only sub-issues that match the filters nest under a parent) |
+| `nestedSubIssues` | `all`, `matching`, `hide` — how a client nests children under a parent | `matching` (Linear's default: only sub-tasks that match the filters nest under a parent) |
 | `orderCompletedByRecency` | boolean; a client orders completed rows by completion time | `false` |
 | `hiddenColumns` | board group keys hidden from the board, at most 50 | `[]` |
 | `collapsedGroups` | list group keys rendered collapsed, at most 50 | `[]` |
@@ -336,7 +336,7 @@ mutation { viewUnsubscribe(viewId: "…") { success } }
 ```
 
 A member who can read a task view can follow it (`view_subscription`) for two events, Linear's
-"An issue is added to the view" and "An issue is marked completed or canceled". With neither
+"An task is added to the view" and "An task is marked completed or canceled". With neither
 flag both are on; a subscription with both off is removed. When a task is created or changed
 (`issueCreate`, `issueUpdate`, an agent verifier's state move), the writer compares which
 followed views the task matched before and after, in the same transaction:
@@ -349,7 +349,7 @@ followed views the task matched before and after, in the same transaction:
 The notification is an ordinary inbox row about the task, with `data.view` naming the view
 (`id`, `name`, `slugId`) and, for completions, `data.stateType`. A view is matched for each
 follower: `"me"` is the follower, their team visibility applies, the view's scope applies, and
-`showSubIssues: false` is honoured; the completed-issues window is not. The member who made the
+`showSubIssues: false` is honoured; the completed-tasks window is not. The member who made the
 change is never notified, and a follower who can no longer read the view hears nothing. Both
 kinds can be turned off in notification preferences like every other kind. Only views with
 followers in the organization are evaluated, so a workspace without subscriptions pays one
@@ -455,7 +455,7 @@ Where tasks land without a drag, as Linear places them:
 A task label can be a group (`isGroup`), and labels can sit in one (`parentId`). A group cannot
 be applied to a task; an `exclusive` group (the default) allows one of its labels per task, and
 a second is refused with Linear's own message ("The label 'ui' is in the same group as 'api'.
-Only one label in a group can be applied to an issue."). A label filter on a group matches the
+Only one label in a group can be applied to an task."). A label filter on a group matches the
 group's labels, in Linear's stored shape (`{labels: {or: [{name}, {parent: {name}}]}}`), so
 `{"labels": {"includesAny": ["area"]}}` selects tasks labelled `api` or `ui`. Group a list by a
 label group with `display.grouping: "labelGroup"` and `display.groupingLabelGroupId`; a drag
@@ -590,14 +590,14 @@ label by name or by id) becomes an `or`, `includesAll` becomes one `some` per va
 | --- | --- |
 | Views in the open-source `hoja` server | The OSS server has the tables but no views API; its web client keeps views in `localStorage`. Everything on this page is the Cloud app. |
 | Creating initiative views from the views list | A saved initiative view has a page (shared chips and Display panel over `View.initiatives`), but the views list, palette and editor still create task and project views only. |
-| Grouping or ordering by agent, milestone, customer, SLA or time in status | Hoja has no milestones, customers or per-issue agent column to group by; `display` rejects those keys. |
+| Grouping or ordering by agent, milestone, customer, SLA or time in status | Hoja has no milestones, customers or per-task agent column to group by; `display` rejects those keys. |
 | Insights panel, in-view `Cmd/Ctrl F` search | Not built. |
 | A `Float` `sortOrder` on tasks | Hoja's ranks are fractional-index strings (`rank`); a Linear client writing `sortOrder` floats is not accepted. |
 | A favorited view as the custom home page | Not built; the home page is fixed. |
-| Team "active issues" notifications (the bell on a team's Issues page) | Not built; follow a team view instead ([Subscriptions](#subscriptions)). |
+| Team "active tasks" notifications (the bell on a team's Tasks page) | Not built; follow a team view instead ([Subscriptions](#subscriptions)). |
 | Pinned-view management permission | Any member who can read a team view may pin it; there is no separate permission. |
 | `viewPreferencesCreate/Update/Delete`, `notificationSubscriptionCreate(customViewId)` | Hoja's `viewPreferencesSet`/`Reset` and `viewSubscribe` cover the same ground under Hoja names. |
-| Issue relation filters | Hoja does not track blocked/blocking/related/duplicate relations. |
+| Task relation filters | Hoja does not track blocked/blocking/related/duplicate relations. |
 | Feed-item views | `CustomView.feedItemFilterData` addresses updates; Hoja's `Store` has no feed-item read model. |
 | Favorite folders and nested children | Linear's `Favorite.children` is a tree; Hoja's favorite is a flat per-user set. |
 | Slack notifications per view | Hoja has no Slack connector for view events; subscriptions notify in the inbox. |
@@ -607,7 +607,7 @@ label by name or by id) becomes an `or`, `includesAll` becomes one `some` per va
 
 ## Web client
 
-Every task list in the web app — a team's Tasks tabs, My issues, a project's tasks and the
+Every task list in the web app — a team's Tasks tabs, My tasks, a project's tasks and the
 workspace board — shares one filter bar and one Display panel (`frontend/src/views/`).
 
 - **Filters** are chips over the grammar above: `F` opens a type-ahead menu of categories
@@ -628,7 +628,7 @@ workspace board — shares one filter bar and one Display panel (`frontend/src/v
   `viewType`: `team:<teamId>:all|active|backlog`, `my-issues:assigned|created|subscribed|activity`,
   `project:<projectId>`, `board:all|active|backlog`, and for the Projects page `projects`
   (workspace) or `team:<teamId>:projects` (its layout, grouping, ordering, closed projects
-  and summary). My issues' Created and Subscribed tabs default to every completed task; the
+  and summary). My tasks' Created and Subscribed tabs default to every completed task; the
   other task lists start at "Past week". Edits are debounced and written to the page they
   were made on, even when the tab changes before the write. The browser keeps the last answer
   in `localStorage` (`hoja_view_prefs:<viewType>`) only as an offline cache. A dot on the Display

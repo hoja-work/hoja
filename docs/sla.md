@@ -1,7 +1,7 @@
 # SLAs
 
 An SLA policy gives a task a clock: a first-response deadline, a resolution
-deadline, or both. The clock is what the task page and the issue list show, and
+deadline, or both. The clock is what the task page and the task list show, and
 what a breach is recorded against. Policies are workspace settings
 (**Settings → SLAs**) and only an admin can change them.
 

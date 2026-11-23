@@ -1,6 +1,6 @@
 # Hierarchy rendering (parent tasks, sub-tasks, tree layout)
 
-One derivation feeds both issue surfaces: `orderTree` in
+One derivation feeds both task surfaces: `orderTree` in
 `app/frontend/src/graph/hierarchy.ts`. The list and the board call the same function, so they
 cannot drift apart — an earlier revision had the board nesting while the list rendered flat,
 because each surface carried its own copy of the walk.
@@ -12,16 +12,16 @@ because each surface carried its own copy of the walk.
 - The server owns validity: `hoja_server/writer.py` requires the parent to be in the same
   organisation and team, accepts an id or an identifier, and rejects self-parenting and
   ancestor cycles.
-- Issues carry **no icon field**. `icon` exists only on `team`, `project`, `project_template`
+- Tasks carry **no icon field**. `icon` exists only on `team`, `project`, `project_template`
   and `saved_view` (`hoja_server/db.py`), and holds an emoji string.
 
 ## Derivation
 
-`orderTree(items, collapsed)` returns, for every issue: `node`, `depth`, `isLast`,
+`orderTree(items, collapsed)` returns, for every task: `node`, `depth`, `isLast`,
 `openRails` (depths of ancestors whose rail continues past this row), `childCount`,
 `doneCount` and `parentOutside`.
 
-- Roots are issues whose parent is absent, filtered out, or outside the loaded set. A parent
+- Roots are tasks whose parent is absent, filtered out, or outside the loaded set. A parent
   that cannot be nested keeps the `↳IDENT` chip and is flagged `parentOutside` rather than
   reading as an orphan.
 - Children are ordered **oldest first**, so a sub-task never renders above the task that

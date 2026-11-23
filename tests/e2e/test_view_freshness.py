@@ -32,22 +32,20 @@ def test_team_home_reflects_new_issue(browser_pair, gql):
     assert _wait_for_text(viewer, title, present=True), "team home did not refresh"
 
 
+def _saved_view(gql, name: str, **scope) -> str:
+    """Create a server-side saved view and return its page path (views/viewModel.ts viewPath)."""
+    made = gql("mutation($i:ViewCreateInput!){viewCreate(input:$i){success view{id slugId}}}",
+               {"i": {"name": name, "kind": "issue", **scope}})["viewCreate"]
+    assert made["success"], made
+    return f"/workspace/view/{made['view']['slugId'] or made['view']['id']}"
+
+
 def test_team_views_reflects_new_issue(browser_pair, gql):
     base, (_, viewer) = browser_pair
     team_id = _team_id(gql)
-    view_id = "e2e-all-tasks"
-    viewer.goto(base + "/")
-    viewer.wait_for_load_state("networkidle")
-    # Views are browser-local saved views: frontend/src/main.tsx ViewsPage renders
-    # results only when a saved view is active (`{active && ...results...}`), and the
-    # page otherwise shows its empty state. Seed an "All tasks" view so this test
-    # measures realtime freshness rather than the empty state.
-    viewer.evaluate(
-        "([key, id]) => localStorage.setItem(key, JSON.stringify(["
-        "{id, name: 'All tasks', query: '', state: '', kind: 'issues'}]))",
-        [f"hoja_saved_views_{team_id}", view_id],
-    )
-    _settle(viewer, base, f"/workspace/team/eng/views/issues/{view_id}")
+    # Saved views live on the server (docs/views.md); open one scoped to the team.
+    path = _saved_view(gql, f"All tasks {time.time_ns()}", scope="team", teamId=team_id)
+    _settle(viewer, base, path)
     title = f"Views fresh {time.time_ns()}"
     _create_issue(gql, title, team_id)
     assert _wait_for_text(viewer, title, present=True), "team views did not refresh"
@@ -81,7 +79,8 @@ def test_project_views_reflect_new_issue_in_project(browser_pair, gql):
     project_id = gql("mutation($i:ProjectCreateInput!){projectCreate(input:$i){project{id}}}",
                      {"i": {"name": f"Fresh project {time.time_ns()}", "teamIds": [_team_id(gql)]}}
                      )["projectCreate"]["project"]["id"]
-    _settle(viewer, base, f"/workspace/project/{project_id}/view/new")
+    path = _saved_view(gql, f"Project tasks {time.time_ns()}", scope="project", projectId=project_id)
+    _settle(viewer, base, path)
     title = f"Project view fresh {time.time_ns()}"
     issue_id = _create_issue(gql, title, _team_id(gql))
     gql("mutation($id:String!,$i:IssueUpdateInput!){issueUpdate(id:$id,input:$i){success}}",
