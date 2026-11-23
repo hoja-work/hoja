@@ -709,6 +709,8 @@ input IssueFilter {
   team: TeamFilter
   state: WorkflowStateFilter
   assignee: UserFilter
+  "The agent member a task is delegated to. Same shape and semantics as `assignee`."
+  delegate: UserFilter
   creator: UserFilter
   project: ProjectRelFilter
   cycle: CycleFilter

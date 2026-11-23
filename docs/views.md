@@ -187,7 +187,7 @@ and still means this week next month. Free-text dates ("next tuesday") are rejec
 | `team` | team id or key, or `"myTeams"` | `is`, `isNot`, `isEitherOf`, `isNeitherOf` |
 | `state` | state id, state name (every team's state of that name), or the web client's `Name|type` key | `is`, `isNot`, `isEitherOf`, `isNeitherOf` |
 | `stateType` | `triage`, `backlog`, `unstarted`, `started`, `completed`, `canceled` | `is`, `isNot`, `isEitherOf`, `isNeitherOf` |
-| `assignee`, `creator` | user id, email, display name, or `"me"` | `is`, `isNot`, `isEitherOf`, `isNeitherOf`, `isMe` |
+| `assignee`, `delegate`, `creator` | user id, email, display name, or `"me"` | `is`, `isNot`, `isEitherOf`, `isNeitherOf`, `isMe` |
 | `project` | project id or name | `is`, `isNot`, `isEitherOf`, `isNeitherOf` |
 | `cycle` | cycle id or name | `is`, `isNot`, `isEitherOf`, `isNeitherOf` |
 | `subscriber` | user id, email, display name, or `"me"` | `is`, `isNot`, `isEitherOf`, `isNeitherOf`, `includesAny`, `includesNone`, `includesAll`, `isMe` |

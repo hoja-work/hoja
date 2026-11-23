@@ -33,7 +33,8 @@ _DATE = {"eq": "is", "lt": "before", "gt": "after", "lte": "onOrBefore", "gte": 
 # "collection" (some/none of a referenced row), "userCollection".
 _ISSUE = {
     "team": ("team", "team"), "state": ("state", "state"),
-    "assignee": ("assignee", "user"), "creator": ("creator", "user"),
+    "assignee": ("assignee", "user"), "delegate": ("delegate", "user"),
+    "creator": ("creator", "user"),
     "project": ("project", "ref"), "cycle": ("cycle", "ref"),
     "parent": ("parent", "parent"), "children": ("hasSubIssues", "children"),
     "priority": ("priority", "number"), "estimate": ("estimate", "number"),

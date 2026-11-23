@@ -244,6 +244,9 @@ _ISSUE_PROPERTIES = {
     "state": (_IDENTITY_OPS, "state"),
     "stateType": (_IDENTITY_OPS, "stateType"),
     "assignee": (_USER_OPS, "user"),
+    # Linear's custom views filter on delegate too, and delegation is a separate
+    # column from assignment, so the stored view needs its own property (HOJA-712).
+    "delegate": (_USER_OPS, "user"),
     "creator": (_USER_OPS, "user"),
     # Anyone following the task (issue_subscriber); "is" means "is one of its subscribers".
     "subscriber": ((*_COLLECTION_OPS, "isMe"), "subscriber"),
@@ -321,9 +324,9 @@ _REFERENCE_KINDS = frozenset({"team", "state", "user", "project", "cycle", "issu
 # Properties whose column may be empty: ``null`` is "No assignee", "No project", "No labels"
 # and so on, and a negative predicate on them keeps the empty rows.
 _NULLABLE_PROPERTIES = {
-    "issue": frozenset({"assignee", "creator", "project", "cycle", "parent", "labels",
-                        "dueDate", "estimate", "subscriber", "startedAt", "completedAt",
-                        "canceledAt"}),
+    "issue": frozenset({"assignee", "delegate", "creator", "project", "cycle", "parent",
+                        "labels", "dueDate", "estimate", "subscriber", "startedAt",
+                        "completedAt", "canceledAt"}),
     "project": frozenset({"lead", "creator", "members", "health", "startDate", "targetDate",
                           "initiative"}),
     "initiative": frozenset(),

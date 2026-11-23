@@ -3843,7 +3843,14 @@ def _apply_issue_filter(conn, stmt, org_id, viewer_id, flt: dict | None):
     if "state" in flt:
         ids = _resolve_state_ids(conn, org_id, flt["state"])
         stmt = stmt.where(issue.c.state_id.in_(ids or ["__none__"]))
-    for who, col in (("assignee", issue.c.assignee_id), ("creator", issue.c.creator_id)):
+    # `delegate` is `assignee`'s twin, one column over (HOJA-712): Linear filters a
+    # view by delegate, and Hoja keeps delegation separate from assignment, so the
+    # same UserFilter resolution must read `issue.delegate_id`. Resolving through
+    # `_resolve_user_ids` also keeps both tenant-scoped: an id from another
+    # organization resolves to nothing, and the `["__none__"]` fallback returns no
+    # rows instead of leaking them.
+    for who, col in (("assignee", issue.c.assignee_id), ("delegate", issue.c.delegate_id),
+                     ("creator", issue.c.creator_id)):
         if who in flt:
             c = _nullable_ref_clause(col, flt[who], ("id", "email", "displayName"),
                                      lambda cmp: _resolve_user_ids(conn, org_id, cmp))
