@@ -32,6 +32,7 @@ import {
   ChevronRight,
   Copy,
   ExternalLink,
+  Activity,
   FileText,
   Link2,
   ListFilter,
@@ -57,6 +58,8 @@ import type {
   Viewer,
 } from "../main";
 import { Markdown } from "../markdown";
+import { isTraceAttachment } from "../traces/trace";
+import { TraceViewer } from "../traces/TraceViewer";
 import {
   addLocalIssue,
   getSync,
@@ -4580,6 +4583,11 @@ export function GraphIssueDetail({
   // Ids whose preview failed to load, so a dead URL degrades to an icon instead of
   // leaving the browser's torn-page glyph in the row.
   const [brokenThumbs, setBrokenThumbs] = useState<Record<string, boolean>>({});
+  // An agent session trace attachment (hoja.trace/v1) opens in the trace viewer.
+  const [openTrace, setOpenTrace] = useState<{
+    url: string;
+    title: string;
+  } | null>(null);
   const [comment, setComment] = useState("");
   const [commentError, setCommentError] = useState("");
   const commentRef = useRef<HTMLTextAreaElement | null>(null);
@@ -5968,6 +5976,12 @@ export function GraphIssueDetail({
                             setBrokenThumbs((m) => ({ ...m, [a.id]: true }))
                           }
                         />
+                      ) : isTraceAttachment(a) ? (
+                        <Activity
+                          size={16}
+                          color="var(--accent)"
+                          aria-hidden="true"
+                        />
                       ) : (
                         <FileText
                           size={16}
@@ -5975,9 +5989,29 @@ export function GraphIssueDetail({
                           aria-hidden="true"
                         />
                       )}
-                      <a href={a.url} target="_blank" rel="noopener noreferrer">
-                        {a.title}
-                      </a>
+                      {isTraceAttachment(a) ? (
+                        <button
+                          type="button"
+                          className="min-w-0 truncate text-left font-semibold text-foreground hover:underline"
+                          aria-haspopup="dialog"
+                          onClick={() =>
+                            setOpenTrace({
+                              url: a.url || "",
+                              title: a.title || "",
+                            })
+                          }
+                        >
+                          {a.title}
+                        </button>
+                      ) : (
+                        <a
+                          href={a.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          {a.title}
+                        </a>
+                      )}
                       {a.subtitle && <small>{a.subtitle}</small>}
                       <small style={{ marginLeft: "auto" }}>
                         {relTime(a.createdAt)}
@@ -5986,6 +6020,13 @@ export function GraphIssueDetail({
                   );
                 })}
               </div>
+              {openTrace && (
+                <TraceViewer
+                  url={openTrace.url}
+                  title={openTrace.title}
+                  onClose={() => setOpenTrace(null)}
+                />
+              )}
               {!(detail.attachments?.nodes || []).length && (
                 <p
                   className={styleClasses("text-[12px] text-muted")}
