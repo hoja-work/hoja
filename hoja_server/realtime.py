@@ -45,11 +45,13 @@ import asyncio
 import itertools
 import json
 import logging
+import os
 import time
 from collections import deque
 from contextlib import suppress
 from dataclasses import dataclass, field
 
+from sqlalchemy.engine import make_url
 from starlette.websockets import WebSocketDisconnect
 from hoja_server import tenant_context
 
@@ -60,6 +62,7 @@ log = logging.getLogger("hoja_server.realtime")
 NOTIFY_CHANNEL = "hoja_change"
 POLL_INTERVAL = 0.1            # SQLite / PostgreSQL-without-LISTEN
 PG_SAFETY_POLL_INTERVAL = 2.0  # PostgreSQL while LISTEN is healthy
+STOP_JOIN_SECONDS = 5.0        # bound on joining the hub's loops during shutdown
 NOTIFY_COALESCE = 0.002        # gather a burst of notifications into one batch
 RING_BATCHES = 4096
 ROW_PUSH_LIMIT = 200           # issue rows pushed inline per batch; beyond, clients pull
@@ -249,12 +252,29 @@ class RealtimeHub:
             self._tasks.append(sys_task(self._listen_loop()))
 
     async def stop(self) -> None:
-        for task in self._tasks:
+        tasks, self._tasks = list(self._tasks), []
+        for task in tasks:
             task.cancel()
-        for task in self._tasks:
-            with suppress(asyncio.CancelledError, Exception):
-                await task
-        self._tasks.clear()
+        # The hub is a module singleton restarted per lifespan, so a process with two
+        # servers (or two TestClients) can hold loops started on another event loop. Those
+        # are cancelled above but cannot be joined from this loop.
+        loop = asyncio.get_running_loop()
+        joined = [task for task in tasks if task.get_loop() is loop]
+        if joined:
+            # A loop can lose one cancellation when a wakeup lands at that instant (see
+            # _wait_for_kick), and then a bare ``await task`` never returns — which wedges
+            # the ASGI lifespan shutdown that is holding this. Re-cancel and bound the join.
+            done, pending = await asyncio.wait(joined, timeout=STOP_JOIN_SECONDS)
+            for task in pending:
+                task.cancel()
+            if pending:
+                more_done, pending = await asyncio.wait(pending, timeout=STOP_JOIN_SECONDS)
+                done |= more_done
+            for task in done:  # consume, so a crashed loop does not warn at collection
+                with suppress(asyncio.CancelledError, Exception):
+                    task.result()
+            for task in pending:
+                log.warning("realtime: %s ignored cancellation; abandoning it", task.get_name())
         self._loop = None
 
     def kick(self) -> None:
@@ -344,8 +364,25 @@ class RealtimeHub:
                     self._last_poll_error = now
                     log.exception("realtime poll failed")
             interval = PG_SAFETY_POLL_INTERVAL if self.listening else self.poll_interval
-            with suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(self._kick.wait(), timeout=interval)
+            await self._wait_for_kick(interval)
+
+    async def _wait_for_kick(self, interval: float) -> None:
+        """Sleep until kicked or until ``interval`` elapses. A cancellation always propagates.
+
+        ``asyncio.wait_for`` swallows a cancellation when the awaited task finishes in the
+        same loop iteration the waiter is cancelled: on CPython 3.10 its
+        ``except CancelledError`` branch returns ``fut.result()`` instead of re-raising.
+        A poll loop that loses one cancel keeps polling, so ``stop()`` never joined it and
+        the ASGI lifespan shutdown hung forever (seen as TestClient ``wait_shutdown``
+        stalls under ``HOJA_TEST_RLS``). ``asyncio.wait`` has no such branch.
+        """
+        kick = asyncio.ensure_future(self._kick.wait())
+        try:
+            await asyncio.wait({kick}, timeout=interval)
+        finally:
+            # Cancel on every exit path, but never await it here: a cancellation that
+            # arrived while we were suppressing would be the one we must not swallow.
+            kick.cancel()
 
     async def _poll_global(self) -> None:
         while True:
@@ -367,6 +404,10 @@ class RealtimeHub:
         await self.ingest(rows)
 
     def _pg_dsn(self) -> str:
+        direct = os.environ.get("HOJA_LISTEN_DATABASE_URL", "").strip()
+        if direct:
+            # LISTEN needs a session; a transaction pooler would drop it between statements.
+            return make_url(direct).set(drivername="postgresql").render_as_string(hide_password=False)
         url = self.store.engine.url.set(drivername="postgresql")
         return url.render_as_string(hide_password=False)
 

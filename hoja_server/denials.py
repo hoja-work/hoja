@@ -4,6 +4,8 @@ Denials are honest; the hint tells automated agents the refusal is deliberate po
 stop instead of probing for a way around it.
 """
 
+from __future__ import annotations
+
 from graphql import GraphQLError, OperationDefinitionNode, OperationType, parse
 
 DENY_HINT = (

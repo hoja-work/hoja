@@ -1,5 +1,7 @@
+import { fileURLToPath, URL } from 'node:url';
 import { defineConfig, type Plugin, type ProxyOptions } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 
 // The dev/test harness can point the proxy at a disposable backend. This config is
 // the only place the browser app learns where the backend is: the app always calls
@@ -59,7 +61,10 @@ export default defineConfig(({ command }) => {
     );
   }
   return {
-    plugins: [react(), devBackendModule()],
+    plugins: [react(), tailwindcss(), devBackendModule()],
+    resolve: {
+      alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+    },
     server: {
       port,
       proxy: {

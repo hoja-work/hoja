@@ -21,6 +21,7 @@ class User(Timestamped):
     admin: bool = False
     is_me: bool = Field(alias="isMe", default=False)
     avatar_url: str | None = Field(alias="avatarUrl", default=None)
+    avatar_seed: str | None = Field(alias="avatarSeed", default=None)
     url: str | None = None
     timezone: str | None = None
     status_emoji: str | None = Field(alias="statusEmoji", default=None)

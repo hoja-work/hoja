@@ -113,9 +113,14 @@ def test_oauth_refresh_replay_revokes_family_and_persists_resource(tmp_path) -> 
     assert latest_access.resource == resource
     assert rotated_refresh.resource == resource
 
+    # Within the grace window the rotated token is honoured once (a client that
+    # lost the response retries); a second reuse is a replay of the family.
+    retried = asyncio.run(provider.exchange_refresh_token(client, original, []))
+    assert retried.access_token != rotated.access_token
     with pytest.raises(TokenError):
         asyncio.run(provider.exchange_refresh_token(client, original, []))
     assert asyncio.run(provider.load_access_token(rotated.access_token)) is None
+    assert asyncio.run(provider.load_access_token(retried.access_token)) is None
     assert asyncio.run(provider.load_refresh_token(client, rotated.refresh_token)) is None
     with engine.connect() as conn:
         rows = conn.execute(select(db.oauth_access_token).where(db.oauth_access_token.c.grant_id == minted_refresh["grant_id"])).mappings().all()
@@ -297,19 +302,20 @@ def test_mcp_oauth_http_authorization_code_pkce_flow(tmp_path, monkeypatch) -> N
         }))
         assert authorize.status_code in (302, 303)
         consent_url = authorize.headers["location"]
-        assert "/oauth/consent?" in consent_url
-        consent_path = "/mcp" + urlparse(consent_url).path.rstrip("/") + "?" + urlparse(consent_url).query
+        # Followed verbatim by a browser, so it must be the consent page under /mcp.
+        assert consent_url.startswith("https://mcp.example.test/mcp/oauth/consent?pending=")
+        consent_path = urlparse(consent_url).path + "?" + urlparse(consent_url).query
         consent = client.get(consent_path, headers={"host": "mcp.example.test"})
         assert consent.status_code == 200
-        assert "Authorize MCP client" in consent.text
+        assert "Allow " in consent.text and "to use Hoja?" in consent.text
         import re
-        csrf = re.search(r'name=csrf_token value="([^"]+)"', consent.text).group(1)
+        csrf = re.search(r'name="csrf_token" value="([^"]+)"', consent.text).group(1)
         denied = client.post(consent_path, data={"decision": "allow", "csrf_token": "wrong"},
                              headers={"host": "mcp.example.test"})
         assert denied.status_code == 400
         approved = client.post(consent_path, data={"decision": "allow", "csrf_token": csrf},
                                headers={"host": "mcp.example.test"})
-        assert approved.status_code in (302, 303, 307)
+        assert approved.status_code == 303  # RFC 9700 4.11: not 307
         redirect = urlparse(approved.headers["location"])
         result = parse_qs(redirect.query)
         assert redirect.netloc == "client.example" and result["state"] == [state]
@@ -371,8 +377,10 @@ def test_mcp_streamable_http_lifecycle_and_host_validation(tmp_path) -> None:
         assert called.status_code == 200, called.text
         assert not called.json()["result"].get("isError"), called.json()
         denied = client.post("/mcp/", headers={**session_headers, "Mcp-Method": "tools/call", "Mcp-Name": "hoja_teamCreate"}, json={**base, "id": 4, "method": "tools/call", "params": {**envelope, "name": "hoja_teamCreate", "arguments": {"name": "No"}}})
-        assert denied.status_code == 200 and denied.json()["result"].get("isError")
-        assert "hoja:write" in denied.json()["result"]["content"][0]["text"], denied.json()
+        # A read-only token calling a write tool is challenged for hoja:write.
+        assert denied.status_code == 403
+        assert 'error="insufficient_scope"' in denied.headers["www-authenticate"]
+        assert "hoja:write" in denied.headers["www-authenticate"]
         wrong_host = client.post("/mcp/", headers={**session_headers, "Host": "attacker.invalid"}, json={**base, "id": 5, "method": "tools/list", "params": envelope})
         assert wrong_host.status_code == 421
 
@@ -962,6 +970,90 @@ def test_health_and_readiness(tmp_path) -> None:
     assert ready.json() == {"status": "ready"}
 
 
+def test_api_version_reports_the_running_build(tmp_path, monkeypatch) -> None:
+    """The endpoint exists so a person (or a probe) can see which build runs.
+
+    It must answer JSON, not the SPA shell that swallowed the bare path; carry
+    the same three fields as the homepage origin; report the version built from
+    app/VERSION rather than a literal here; and report the deploy's own commit
+    sha and build time when the release stamped them.
+    """
+    from pathlib import Path
+
+    import hoja_server
+
+    version_file = Path(hoja_server.__file__).resolve().parent.parent / "VERSION"
+    release_sha = "968fa40" + "0" * 33
+    monkeypatch.setenv("HOJA_RELEASE_SHA", release_sha)
+    monkeypatch.setenv("HOJA_BUILT_AT", "2026-11-12T05:00:00Z")
+
+    db_path = tmp_path / "version.db"
+    engine = make_engine(db_path)
+    migrate(engine)
+    engine.dispose()
+    app = create_app(str(db_path), open_mode=False)
+
+    with TestClient(app) as client:
+        response = client.get("/api/version")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.headers["cache-control"] == "no-store"
+    payload = response.json()
+    assert set(payload) == {"version", "sha", "builtAt"}
+    assert payload["version"] == version_file.read_text(encoding="utf-8").strip()
+    assert payload["sha"] == release_sha
+    assert payload["builtAt"] == "2026-11-12T05:00:00Z"
+
+
+def test_api_version_never_invents_a_sha(tmp_path, monkeypatch) -> None:
+    """"unknown" is the answer when no release stamped the build.
+
+    A plausible-looking sha is worse than none: it makes a stale deploy ask a
+    question nobody re-checks.
+    """
+    monkeypatch.delenv("HOJA_RELEASE_SHA", raising=False)
+    monkeypatch.delenv("HOJA_BUILT_AT", raising=False)
+
+    db_path = tmp_path / "version-unstamped.db"
+    engine = make_engine(db_path)
+    migrate(engine)
+    engine.dispose()
+    app = create_app(str(db_path), open_mode=False)
+
+    with TestClient(app) as client:
+        payload = client.get("/api/version").json()
+
+    assert payload["sha"] == "unknown"
+    assert payload["builtAt"] is None or isinstance(payload["builtAt"], str)
+
+
+def test_unknown_api_path_is_json_404_not_the_spa_shell(tmp_path) -> None:
+    """A miss under /api must say 404 in JSON, while client routes still load.
+
+    Without this, /api/<anything> fell into web_fallback and answered 200
+    text/html. That is how a probe reports success against a page.
+    """
+    db_path = tmp_path / "api-miss.db"
+    engine = make_engine(db_path)
+    migrate(engine)
+    engine.dispose()
+    app = create_app(str(db_path), open_mode=False)
+
+    with TestClient(app) as client:
+        miss = client.get("/api/definitely-not-a-route")
+        page = client.get("/some-org/issue/HOJA-1")
+
+    assert miss.status_code == 404
+    assert miss.headers["content-type"].startswith("application/json")
+    assert miss.json()["path"] == "/api/definitely-not-a-route"
+    # The SPA catch-all is deliberate for client-side routes and must survive.
+    # In a test checkout there is no built frontend, so web_fallback answers its
+    # explicit 503 "unbuilt" page; the point is that it still owns this path and
+    # did not become a JSON 404.
+    assert page.status_code in (200, 302, 503)
+    assert not page.headers["content-type"].startswith("application/json")
+
 def test_team_create_graphql_admin_success_and_duplicate_key(tmp_path) -> None:
     db_path = tmp_path / "team-create.db"
     engine = make_engine(db_path)
@@ -1023,6 +1115,9 @@ def test_user_preferences_persist_and_validate_values(tmp_path) -> None:
     assert not store.set_user_preference(seeded["user_id"], "theme", "neon")
     assert not store.set_user_preference(seeded["user_id"], "billing", "enterprise")
     assert store.user_preferences(seeded["user_id"]) == {"theme": "dark", "fontSize": "110"}
+    # HOJA-734: "system" follows the operating system's appearance.
+    assert store.set_user_preference(seeded["user_id"], "theme", "system")
+    assert store.user_preferences(seeded["user_id"])["theme"] == "system"
 
 
 
@@ -1101,11 +1196,15 @@ def test_profile_notification_and_label_settings_graphql_authorization(tmp_path)
         denied_create = client.post("/graphql", headers=member_headers, json={
             "query": "mutation($input:IssueLabelCreateInput!){issueLabelCreate(input:$input){success}}",
             "variables": {"input": {"name": "Member cannot create"}}}).json()
-        assert denied_create["data"]["issueLabelCreate"]["success"] is False
+        # HOJA-490: a refused label mutation is a FORBIDDEN error carrying the
+        # capability, not a success:false payload. Either way, nothing is created.
+        assert denied_create["errors"][0]["extensions"]["code"] == "FORBIDDEN", denied_create
+        assert (denied_create.get("data") or {}).get("issueLabelCreate") is None
         denied_delete = client.post("/graphql", headers=member_headers, json={
             "query": "mutation($id:String!){issueLabelDelete(id:$id){success}}",
             "variables": {"id": label_id}}).json()
-        assert denied_delete["data"]["issueLabelDelete"]["success"] is False
+        assert denied_delete["errors"][0]["extensions"]["code"] == "FORBIDDEN", denied_delete
+        assert (denied_delete.get("data") or {}).get("issueLabelDelete") is None
         deleted = client.post("/graphql", headers=admin_headers, json={
             "query": "mutation($id:String!){issueLabelDelete(id:$id){success}}",
             "variables": {"id": label_id}}).json()
@@ -1705,7 +1804,9 @@ def test_workspace_members_and_admin_update_are_org_scoped(tmp_path) -> None:
     assert invited_user["apiKey"].startswith("hoja_")
     duplicate = gql(one["token"], "mutation($input:MemberInviteInput!){memberInvite(input:$input){success}}",
                     {"input": {"name": "Duplicate", "email": f"new-{suffix}@example.test"}})
-    assert duplicate["data"]["memberInvite"]["success"] is False
+    # A refusal is now typed rather than a bare success:false.
+    assert duplicate["data"]["memberInvite"] is None
+    assert duplicate["errors"][0]["extensions"]["reason"] == "already_member"
     denied_invite = gql(two["token"], "mutation($input:MemberInviteInput!){memberInvite(input:$input){success}}",
                         {"input": {"name": "No admin", "email": f"not-admin-{suffix}@example.test"}})
     assert denied_invite["data"]["memberInvite"]["success"] is True
@@ -1714,8 +1815,9 @@ def test_workspace_members_and_admin_update_are_org_scoped(tmp_path) -> None:
         conn.execute(user_table.update().where(user_table.c.id == one["user_id"]).values(admin=False))
     denied = gql(one["token"], "mutation($input: WorkspaceUpdateInput!){workspaceUpdate(input:$input){success organization{name}}}",
                  {"input": {"name": "Unauthorized"}})
-    assert "errors" not in denied
-    assert denied["data"]["workspaceUpdate"]["success"] is False
+    # HOJA-734: a refusal is a typed FORBIDDEN error, not a bare success:false.
+    assert denied["data"]["workspaceUpdate"] is None
+    assert denied["errors"][0]["extensions"]["code"] == "FORBIDDEN"
     denied_invite = gql(one["token"], "mutation($input:MemberInviteInput!){memberInvite(input:$input){success apiKey}}",
                         {"input": {"name": "No admin", "email": f"not-admin-{suffix}@example.test"}})
     assert denied_invite["data"]["memberInvite"]["success"] is False
@@ -1727,7 +1829,7 @@ def test_first_run_onboarding_bootstraps_admin_session_and_disables_setup(tmp_pa
     db_path = tmp_path / "onboarding.db"
     migrate(make_engine(db_path))
     client = TestClient(create_app(str(db_path), open_mode=False))
-    assert client.get("/onboarding/status").json() == {"initialized": False, "singleOrg": False}
+    assert client.get("/onboarding/status").json() == {"initialized": False, "singleOrg": False, "ownerBound": False}
 
     response = client.post("/onboarding/bootstrap", json={
         "name": "First Admin", "email": "first@example.test",
@@ -1738,7 +1840,7 @@ def test_first_run_onboarding_bootstraps_admin_session_and_disables_setup(tmp_pa
     assert response.json()["status"] == "created"
     assert response.json()["apiKey"].startswith("hoja_")
     assert response.cookies.get("hoja_session")
-    assert client.get("/onboarding/status").json() == {"initialized": True, "singleOrg": False}
+    assert client.get("/onboarding/status").json() == {"initialized": True, "singleOrg": False, "ownerBound": False}
     assert client.get("/auth/me").status_code == 200
     assert client.post("/onboarding/bootstrap", json={
         "name": "Other Admin", "email": "other@example.test",
@@ -1757,7 +1859,7 @@ def test_first_run_onboarding_rejects_invalid_password_without_initializing(tmp_
         "teamName": "Engineering", "teamKey": "ENG",
     })
     assert response.status_code == 400
-    assert client.get("/onboarding/status").json() == {"initialized": False, "singleOrg": False}
+    assert client.get("/onboarding/status").json() == {"initialized": False, "singleOrg": False, "ownerBound": False}
 
 
 def test_new_member_invite_code_acceptance_sets_password_and_is_one_time(tmp_path) -> None:

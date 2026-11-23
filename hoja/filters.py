@@ -24,6 +24,8 @@ def build_issue_filter(
     creator: str | None = None,
     project: str | None = None,
     cycle: str | None = None,
+    parent: str | None = None,
+    no_parent: bool = False,
     label: str | list[str] | None = None,
     priority: int | None = None,
     contains: str | None = None,
@@ -67,6 +69,16 @@ def build_issue_filter(
             f["project"] = {"id": {"eq": project}}
         else:
             f["project"] = {"name": {"containsIgnoreCase": project}}
+
+    if parent:
+        # Direct children of one issue. The CLI resolves the identifier to a UUID
+        # first, because ``parent.id`` compares against ``issue.parent_id``.
+        f["parent"] = {"id": {"eq": parent}}
+    elif no_parent:
+        # Orphans only. ``IssueParentFilter.isNull`` is a Hoja extension: an
+        # explicit ``{"id": {"eq": null}}`` cannot survive the client's
+        # None-stripping of GraphQL variables.
+        f["parent"] = {"isNull": True}
 
     if cycle:
         if cycle.lower() == "current":

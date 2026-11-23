@@ -65,83 +65,60 @@ class Mcp:
 
 @pytest.fixture
 def hoja(tmp_path):
-    client, token = _serve(
-        tmp_path,
-        "mcp-agent.db",
-        {
-            "a": dict(
-                org_name="Agents",
-                org_url_key="agents",
-                team_key="ENG",
-                user_name="Ada Agent",
-                user_email="ada@example.test",
-                demo_issues=True,
-            )
-        },
-    )
-    with client:
-        yield lambda scopes=(READ_SCOPE, WRITE_SCOPE): Mcp(client, token("a", list(scopes)))
-
-
-@pytest.fixture
-def tenants(tmp_path):
-    """Two organizations that both use the team key ENG.
-
-    The shared key is deliberate: identifiers are only unique per organization,
-    so ``ENG-1`` must never resolve across the tenant boundary.
-    """
-    client, token = _serve(
-        tmp_path,
-        "mcp-tenants.db",
-        {
-            "a": dict(
-                org_name="Org A",
-                org_url_key="a",
-                team_key="ENG",
-                user_name="Alice A",
-                user_email="alice@a.test",
-                demo_issues=True,
-            ),
-            "b": dict(
-                org_name="Org B",
-                org_url_key="b",
-                team_key="ENG",
-                user_name="Bob B",
-                user_email="bob@b.test",
-                demo_issues=True,
-            ),
-        },
-    )
-    with client:
-        tokens = {name: token(name, [READ_SCOPE, WRITE_SCOPE]) for name in ("a", "b")}
-        yield SimpleNamespace(
-            a=Mcp(client, tokens["a"]),
-            b=Mcp(client, tokens["b"]),
-            tokens=tokens,
-        )
-
-
-def _serve(tmp_path, name: str, orgs: dict[str, dict]):
-    """Boot the real app over one database seeded with several tenants."""
-    path = tmp_path / name
+    path = tmp_path / "mcp-agent.db"
     engine = make_engine(path)
     migrate(engine)
-    seeds = {org: seed_tenant(engine, **kwargs) for org, kwargs in orgs.items()}
+    seed = seed_tenant(engine, org_name="Agents", org_url_key="agents", team_key="ENG",
+                       user_name="Ada Agent", user_email="ada@example.test", demo_issues=True)
+    from sqlalchemy import select
+
+    row = engine.connect().execute(select(db.api_key).where(db.api_key.c.token_hash == db.token_hash(seed["token"]))).mappings().first()
     provider = HojaOAuthProvider(engine, Store(engine), True)
     with engine.begin() as conn:
         conn.execute(db.oauth_client.insert().values(
             client_id="agent", created_at=now_iso(),
             client_json='{"client_id":"agent","redirect_uris":["https://client.test/cb"],"token_endpoint_auth_method":"none"}'))
 
-    def token(org: str, scopes):
+    def token(scopes):
         with engine.begin() as conn:
-            return provider._mint_pair(
-                conn, "agent", seeds[org]["user_id"], seeds[org]["org_id"], scopes, f"https://{HOST}/mcp"
-            ).access_token
+            return provider._mint_pair(conn, "agent", row["user_id"], row["organization_id"], scopes,
+                                       f"https://{HOST}/mcp").access_token
 
     app = create_app(db_path=str(path), trusted_proxy_cidrs="127.0.0.1/32", trusted_public_host=HOST)
-    return TestClient(app, base_url=f"https://{HOST}", client=("127.0.0.1", 44321)), token
+    with TestClient(app, base_url=f"https://{HOST}", client=("127.0.0.1", 44321)) as client:
+        yield lambda scopes=(READ_SCOPE, WRITE_SCOPE): Mcp(client, token(list(scopes)))
 
+
+
+@pytest.fixture
+def tenants(tmp_path):
+    """Two organizations that both use the team key ENG (HOJA-50).
+
+    The shared key is deliberate: identifiers are only unique per organization,
+    so ``ENG-1`` must never resolve across the tenant boundary.
+    """
+    path = tmp_path / "mcp-tenants.db"
+    engine = make_engine(path)
+    migrate(engine)
+    seeds = {
+        "a": seed_tenant(engine, org_name="Org A", org_url_key="a", team_key="ENG",
+                         user_name="Alice A", user_email="alice@a.test", demo_issues=True),
+        "b": seed_tenant(engine, org_name="Org B", org_url_key="b", team_key="ENG",
+                         user_name="Bob B", user_email="bob@b.test", demo_issues=True),
+    }
+    provider = HojaOAuthProvider(engine, Store(engine), True)
+    with engine.begin() as conn:
+        conn.execute(db.oauth_client.insert().values(
+            client_id="agent", created_at=now_iso(),
+            client_json='{"client_id":"agent","redirect_uris":["https://client.test/cb"],"token_endpoint_auth_method":"none"}'))
+        tokens = {
+            org: provider._mint_pair(conn, "agent", seed["user_id"], seed["org_id"],
+                                     [READ_SCOPE, WRITE_SCOPE], f"https://{HOST}/mcp").access_token
+            for org, seed in seeds.items()
+        }
+    app = create_app(db_path=str(path), trusted_proxy_cidrs="127.0.0.1/32", trusted_public_host=HOST)
+    with TestClient(app, base_url=f"https://{HOST}", client=("127.0.0.1", 44321)) as client:
+        yield SimpleNamespace(a=Mcp(client, tokens["a"]), b=Mcp(client, tokens["b"]), tokens=tokens)
 
 def test_tool_schemas_are_typed_and_annotated(hoja) -> None:
     mcp = hoja()
@@ -164,7 +141,12 @@ def test_tool_schemas_are_typed_and_annotated(hoja) -> None:
     assert "arguments" not in props
     assert update["inputSchema"]["required"] == ["id"]
     assert update["inputSchema"]["additionalProperties"] is False
-    assert create["inputSchema"]["required"] == ["title", "teamId"]
+    # title and teamId are optional now: a template may supply both, so the schema
+    # must not force an agent to send them — and the description must say so, or
+    # an agent that omits everything gets a BAD_USER_INPUT it was never warned of.
+    assert create["inputSchema"].get("required", []) == []
+    assert "templateId" in create["inputSchema"]["properties"]
+    assert "title and teamId are required unless templateId" in create["description"]
     assert tools["hoja_issues"]["annotations"]["readOnlyHint"] is True
     assert tools["hoja_issueDelete"]["annotations"]["destructiveHint"] is True
     # Credential- and admin-plumbing operations are not exposed to agents.
@@ -277,12 +259,41 @@ def test_errors_are_specific_and_actionable(hoja) -> None:
     assert not ok and "No team matches 'NOPE'" in err and "ENG" in err
 
 
-def test_read_only_grant_explains_missing_write_scope(hoja) -> None:
+def test_read_only_grant_gets_an_insufficient_scope_challenge(hoja) -> None:
+    """MCP authorization, scope challenge: 403 + WWW-Authenticate before the tool runs.
+
+    The client then re-authorizes for the scopes named in the challenge, which is
+    what turns "reconnect with write access" into something a client can do.
+    """
     mcp = hoja((READ_SCOPE,))
-    ok, err = mcp.call("hoja_issueCreate", teamId="ENG", title="nope")
-    assert not ok and "read-only" in err and WRITE_SCOPE in err
+    resp = mcp.client.post("/mcp/", headers={**mcp.headers, "MCP-Protocol-Version": mcp.version}, json={
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {**mcp.envelope, "name": "hoja_issueCreate", "arguments": {"teamId": "ENG", "title": "nope"}}})
+    assert resp.status_code == 403, resp.text
+    challenge = resp.headers["www-authenticate"]
+    assert challenge.startswith("Bearer ") and 'error="insufficient_scope"' in challenge
+    assert f'scope="{READ_SCOPE} {WRITE_SCOPE}"' in challenge
+    assert f'resource_metadata="https://{HOST}/.well-known/oauth-protected-resource/mcp"' in challenge
     ok, teams = mcp.call("hoja_teams")
     assert ok, teams
+
+
+def test_read_only_api_key_explains_how_to_get_write(tmp_path) -> None:
+    """An API key cannot step up through OAuth, so the tool error says what to do instead."""
+    path = tmp_path / "ro-key.db"
+    engine = make_engine(path)
+    migrate(engine)
+    seed = seed_tenant(engine, org_name="Keys", org_url_key="keys", team_key="ENG",
+                       user_email="k@example.test", demo_issues=False)
+    with engine.begin() as conn:
+        conn.execute(db.api_key.insert().values(
+            id="ro", token_hash=db.token_hash("read-only-key-token"), label="ro", access="read",
+            user_id=seed["user_id"], organization_id=seed["org_id"], created_at=now_iso()))
+    app = create_app(db_path=str(path), trusted_proxy_cidrs="127.0.0.1/32", trusted_public_host=HOST)
+    with TestClient(app, base_url=f"https://{HOST}", client=("127.0.0.1", 44321)) as client:
+        mcp = Mcp(client, "read-only-key-token")
+        ok, err = mcp.call("hoja_issueCreate", teamId="ENG", title="nope")
+    assert not ok and "API key is read-only" in err and "read-write key" in err
 
 
 def test_one_tenant_cannot_read_or_write_another_tenants_task(tenants) -> None:

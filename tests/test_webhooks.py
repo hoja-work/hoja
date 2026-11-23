@@ -238,6 +238,35 @@ def test_public_target_check_uses_resolution():
         webhooks.check_target("https://rebind.example.com/x", resolve=lambda h, p: ["93.184.216.34", "192.168.1.4"])
 
 
+def test_only_one_sender_can_claim_the_same_expired_lease(world):
+    """F7: the claim CAS compared status and attempts, so two senders that read the same
+    expired lease — attempts unchanged, because attempts only counts failed sends — both
+    matched the update and both POSTed the delivery. The lease is the differing column."""
+    from sqlalchemy import select
+
+    from hoja_server.db import webhook_delivery
+
+    client, token, engine, _ = world
+    make_hook(client, token)
+    new_issue(client, token)
+    assert webhooks.dispatch_once(engine) == 1
+    expired = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    with engine.begin() as conn:  # a sender took this delivery and then died holding the lease
+        conn.execute(webhook_delivery.update().values(status="sending", lease_until=expired, attempts=1))
+    with engine.connect() as conn:  # what a second worker reads before either one writes
+        stale = dict(conn.execute(select(webhook_delivery)).mappings().one())
+    now = datetime.now(timezone.utc)
+    now_s = now.isoformat()
+    with engine.begin() as conn:
+        assert webhooks._lease(conn, stale, now, now_s) is True
+    with engine.begin() as conn:  # same read, replayed: the lease moved, so it no longer matches
+        assert webhooks._lease(conn, stale, now, now_s) is False
+    with engine.connect() as conn:
+        row = conn.execute(select(webhook_delivery)).mappings().one()
+    assert row["status"] == "sending" and row["lease_until"] > now_s
+    assert webhooks._claim(engine, now) == []  # a live lease is not claimable
+
+
 class _Receiver(BaseHTTPRequestHandler):
     received: ClassVar[list[tuple[dict, bytes]]] = []
 

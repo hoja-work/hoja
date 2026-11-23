@@ -26,6 +26,7 @@ from starlette.testclient import TestClient
 from hoja_server import db, extensions, webhooks
 from hoja_server.app import create_app
 from hoja_server.db import make_engine, migrate, seed_tenant
+from tests import rls_mode
 
 INSTALL = """mutation($m: JSON!) { extensionInstall(manifest: $m) {
   success apiKey signingSecret extension { id key access enabled botUser { id name }
@@ -49,6 +50,7 @@ class Ext(BaseHTTPRequestHandler):
 
     calls: ClassVar[list[tuple[str, dict, bytes]]] = []
     routes: ClassVar[dict] = {}
+    app_engine: ClassVar = None
 
     def do_POST(self):
         body = self.rfile.read(int(self.headers["Content-Length"]))
@@ -85,16 +87,19 @@ def world(tmp_path, monkeypatch):
     extensions._BREAKER._state.clear()
     server = ThreadingHTTPServer(("127.0.0.1", 0), Ext)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    path = tmp_path / "ext.db"
-    engine = make_engine(path)
-    migrate(engine)
+    # Under HOJA_TEST_RLS the app (and the webhook workers, via Ext.app_engine) run as a
+    # restricted role under the hosted policies; ``engine`` stays the owner for setup.
+    engine, app_kwargs = rls_mode.workspace(tmp_path, "ext")
+    Ext.app_engine = make_engine(app_kwargs["database_url"]) if app_kwargs.get("database_url") else engine
     token = seed_tenant(engine, org_name="Ext", org_url_key="ext", team_key="ENG",
                         user_name="Admin", user_email="admin@example.test", demo_issues=False)["token"]
     try:
-        with TestClient(create_app(db_path=str(path))) as client:
+        with TestClient(create_app(**app_kwargs)) as client:
             yield client, token, engine, f"http://127.0.0.1:{server.server_port}"
     finally:
         server.shutdown()
+        if Ext.app_engine is not engine:
+            Ext.app_engine.dispose()
 
 
 def gql(client, token, query, variables=None):
@@ -363,13 +368,13 @@ def test_actions_run_once_audited_and_bot_callbacks_skip_own_events(world):
     assert Ext.paths().count("/actions/provision") == 2  # no automatic retry
 
     # Events: the issue creation reaches the extension; its own callback edit does not.
-    webhooks.dispatch_once(engine)
+    webhooks.dispatch_once(Ext.app_engine)
     ok(client, ext["apiKey"], UPDATE_ISSUE, {"id": issue["id"], "input": {"title": "env ready"}})
     ok(client, token, "mutation($i: WebhookCreateInput!) { webhookCreate(input: $i) { success } }",
        {"i": {"url": url + "/plain", "teamId": "ENG", "resourceTypes": ["Issue"]}})
     ok(client, ext["apiKey"], UPDATE_ISSUE, {"id": issue["id"], "input": {"title": "env ready!"}})
-    webhooks.dispatch_once(engine)
-    while webhooks.deliver_due(engine):
+    webhooks.dispatch_once(Ext.app_engine)
+    while webhooks.deliver_due(Ext.app_engine):
         pass
     events = {p: json.loads(b) for p, _h, b in Ext.calls if p in ("/events", "/plain")}  # FIFO is per webhook
     assert sorted((p, e["action"]) for p, e in events.items()) == [("/events", "create"), ("/plain", "update")]
@@ -501,12 +506,12 @@ def test_archive_and_team_move_deliveries(world):
     ok(client, token, "mutation($i: WebhookCreateInput!) { webhookCreate(input: $i) { success } }",
        {"i": {"url": url + "/plain", "teamId": "ENG", "resourceTypes": ["Issue"]}})
     issue = new_issue(client, token, "moving")["data"]["issueCreate"]["issue"]
-    webhooks.dispatch_once(engine)
+    webhooks.dispatch_once(Ext.app_engine)
     ok(client, ext["apiKey"], UPDATE_ISSUE, {"id": issue["id"], "input": {"title": "bot edit"}})
-    webhooks.dispatch_once(engine)
+    webhooks.dispatch_once(Ext.app_engine)
     ok(client, token, 'mutation($id: String!) { issueArchive(id: $id) { success } }', {"id": issue["id"]})
-    webhooks.dispatch_once(engine)
-    while webhooks.deliver_due(engine):
+    webhooks.dispatch_once(Ext.app_engine)
+    while webhooks.deliver_due(Ext.app_engine):
         pass
     archived = [json.loads(b) for p, _h, b in Ext.calls if p == "/plain"][-1]
     assert "archivedAt" in archived["updatedFrom"]
@@ -518,8 +523,8 @@ def test_archive_and_team_move_deliveries(world):
         conn.execute(db.issue.update().where(db.issue.c.id == issue["id"]).values(
             team_id=ops, updated_at="2099-01-01T00:00:00.000Z"))
     before = len([p for p in Ext.paths() if p == "/plain"])
-    webhooks.dispatch_once(engine)
-    while webhooks.deliver_due(engine):
+    webhooks.dispatch_once(Ext.app_engine)
+    while webhooks.deliver_due(Ext.app_engine):
         pass
     plain = [json.loads(b) for p, _h, b in Ext.calls if p == "/plain"]
     assert len(plain) == before + 1 and "teamId" in plain[-1]["updatedFrom"]

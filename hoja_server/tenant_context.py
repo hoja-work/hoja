@@ -25,13 +25,13 @@ task with its own context copy).
 A context set inside a worker thread does NOT come back: whoever authenticates
 with ``run_in_threadpool(auth, ...)`` must ``bind`` after it returns.
 
-Gate: ``HOJA_TEST_RLS=1 HOJA_TEST_POSTGRES_URL=... pytest tests/test_meetings.py
-tests/test_meetings_social.py tests/test_agent_chat.py tests/test_agent_durable.py tests/e2e``
+Gate: ``HOJA_TEST_RLS=1 HOJA_TEST_POSTGRES_URL=... pytest tests/test_agent_chat.py tests/test_agent_durable.py tests/e2e``
 runs those suites with the app as a restricted role under the production
 policies (see tests/rls_mode.py).
 """
 from __future__ import annotations
 
+import os
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, Awaitable, Iterator, TypeVar
@@ -43,6 +43,17 @@ T = TypeVar("T")
 
 _org: ContextVar[str | None] = ContextVar("hoja_tenant_org", default=None)
 _system: ContextVar[bool] = ContextVar("hoja_tenant_system", default=False)
+# Who is writing (revision 64, HOJA-602-A-3). change_event is written by a trigger,
+# so attribution has to travel the same way the tenant does: a transaction-local
+# session setting. Unset means "no actor recorded", which is what every local
+# (SQLite) database and every pre-agent call path keeps getting.
+_actor: ContextVar[tuple[str | None, str | None, str | None]] = ContextVar(
+    "hoja_tenant_actor", default=(None, None, None))
+_credential: ContextVar[tuple[str | None, str | None, str | None]] = ContextVar(
+    "hoja_tenant_credential", default=(None, None, None))
+# user.kind values: "human", "bot" (an extension's identity), "agent" (revision 64).
+ACTOR_KINDS = ("human", "bot", "agent")
+_SAFE_SESSION_RE = None
 
 # Paths that run before a tenant is known, or that are tenant-agnostic by
 # nature. They see every row, exactly as before row-level security. Keep this
@@ -56,7 +67,25 @@ SYSTEM_PATH_PREFIXES = (
 )
 SYSTEM_PATHS = frozenset({"/health", "/ready"})
 
-_SET = "SELECT set_config('hoja.org_id', %s, true), set_config('hoja.system', %s, true)"
+_SET = ("SELECT set_config('hoja.org_id', %s, true), set_config('hoja.system', %s, true), "
+        "set_config('hoja.actor_kind', %s, true), set_config('hoja.actor_id', %s, true), "
+        "set_config('hoja.on_behalf_of', %s, true)")
+_SET_CRED = ("SELECT set_config('hoja.credential_kind', %s, true), "
+             "set_config('hoja.credential_id', %s, true), "
+             "set_config('hoja.session_id', %s, true)")
+
+
+def clean_session_id(value: str | None) -> str | None:
+    """Validate a client-supplied correlation session id, returning None if invalid."""
+    if not value or not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    if not cleaned or len(cleaned) > 128:
+        return None
+    for ch in cleaned:
+        if not (ch.isalnum() or ch in "._:-"):
+            return None
+    return cleaned
 
 
 def bind(org: str | None) -> None:
@@ -64,17 +93,75 @@ def bind(org: str | None) -> None:
     _org.set(org or None)
 
 
-def enter_system() -> None:
-    """Mark the rest of the current context (one request) as a system path.
-
-    For requests whose credential is not a tenant member: a meeting guest token
-    or a public meeting code. The service's own predicates scope those queries.
-    """
-    _system.set(True)
-
-
 def current() -> tuple[str | None, bool]:
     return _org.get(), _system.get()
+
+
+def current_actor() -> tuple[str | None, str | None, str | None]:
+    return _actor.get()
+
+
+def current_credential() -> tuple[str | None, str | None, str | None]:
+    return _credential.get()
+
+
+def set_actor(kind: str, actor_id: str, on_behalf_of: str | None = None) -> None:
+    """Scope the rest of the current context's writes to ``actor_id`` (mirrors ``bind``)."""
+    if kind not in ACTOR_KINDS:
+        raise ValueError(f"actor kind must be one of {ACTOR_KINDS}, not {kind!r}")
+    if not actor_id:
+        raise ValueError("a write must name its actor_id")
+    _actor.set((kind, actor_id, on_behalf_of))
+
+
+def set_credential(credential_kind: str | None = None, credential_id: str | None = None,
+                   session_id: str | None = None) -> None:
+    """Record the credential and correlation session for this context's writes."""
+    _credential.set((credential_kind or None, credential_id or None, clean_session_id(session_id)))
+
+
+def enter(org: str | None, uid: str, kind: str = "human", *,
+          actor_id: str | None = None, on_behalf_of: str | None = None,
+          credential_kind: str | None = None, credential_id: str | None = None,
+          session_id: str | None = None) -> None:
+    """Scope the rest of the request to its tenant and to whoever authenticated.
+
+    ``kind='agent'`` when the credential names an agent principal (a runner, an
+    agent-scoped API key, or a delegated OAuth/MCP client), so its writes are
+    attributed to the agent with ``on_behalf_of`` naming the sponsoring human.
+    """
+    bind(org)
+    set_actor(kind, actor_id or uid, on_behalf_of)
+    set_credential(credential_kind, credential_id, session_id)
+
+
+@contextmanager
+def actor(kind: str, actor_id: str, on_behalf_of: str | None = None, *,
+          credential_kind: str | None = None, credential_id: str | None = None,
+          session_id: str | None = None) -> Iterator[None]:
+    """Attribute every change in this context to ``actor_id`` (revision 64).
+
+    An agent turn runs with ``kind='agent'``, the agent's user id, and the human
+    whose request it serves as ``on_behalf_of``. An ordinary request is already
+    attributed to its human by ``enter``; this context overrides that for the
+    duration of the block, and restores it after.
+
+    Fails closed when an agent write names no agent: an anonymous agent write is
+    exactly the unattributable row this change exists to prevent.
+    """
+    token = _actor.set((None, None, None))
+    cred_token = _credential.set((None, None, None)) if any(
+        v is not None for v in (credential_kind, credential_id, session_id)
+    ) else None
+    try:
+        set_actor(kind, actor_id, on_behalf_of)
+        if cred_token is not None:
+            set_credential(credential_kind, credential_id, session_id)
+        yield
+    finally:
+        if cred_token is not None:
+            _credential.reset(cred_token)
+        _actor.reset(token)
 
 
 @contextmanager
@@ -85,6 +172,103 @@ def system() -> Iterator[None]:
         yield
     finally:
         _system.reset(token)
+
+
+@contextmanager
+def scoped(org: str | None) -> Iterator[None]:
+    """Run as exactly ``org``, with no system context, whatever the caller's context is."""
+    org_token, sys_token = _org.set(org or None), _system.set(False)
+    try:
+        yield
+    finally:
+        _system.reset(sys_token)
+        _org.reset(org_token)
+
+
+def _strict_report(engine: Engine) -> dict[str, Any] | None:
+    """The deployment-side verdict: is row-level security binding this connection?
+
+    Only consulted when ``HOJA_REQUIRE_RLS`` is set, which the production compose
+    file does and local development does not. Reads the same catalog and role
+    facts as ``infra/scripts/hoja-rls check``, but with the app's own credentials,
+    so a deployment that skipped — or predates — the operator command cannot
+    report itself ready.
+    """
+    from hoja_server import rls_policy
+
+    if engine.dialect.name != "postgresql":
+        return {
+            "reason": rls_policy.RLS_UNSUPPORTED,
+            "detail": "HOJA_REQUIRE_RLS is set but this deployment is not PostgreSQL; "
+                      "row-level security only exists on PostgreSQL",
+        }
+    with system(), engine.connect() as conn:
+        report = rls_policy.report(conn)
+    if report["bound"]:
+        return None
+    # Every failing table, with its own reason, in the body: a 503 that only said
+    # "rls_disabled" is what turned a deploy into a 90-second timeout with the
+    # reason lost in a recreated container's logs.
+    return {
+        "reason": report["reason"],
+        "detail": report["detail"],
+        "gaps": report["gaps"],
+        "role": report["role"],
+        "tables": [row for row in report["tables"] if row["reason"]],
+    }
+
+
+def probe_report(engine: Engine) -> dict[str, Any] | None:
+    """Prove tenant isolation is working; return a report to serve, or None.
+
+    A tenant-bound read must see its own organization. Under row-level security
+    it must see no other organization, and a read with no context must see
+    nothing. With HOJA_REQUIRE_RLS set it must also be *bound*: the role must not
+    bypass policies (superuser / BYPASSRLS), must own no table (owners skip
+    unforced policies), and every tenant table must carry both RLS and its
+    policy — not only ``organization``.
+    """
+    from sqlalchemy import func, select, text
+
+    from hoja_server.db import organization
+
+    strict = bool(os.environ.get("HOJA_REQUIRE_RLS"))
+    if strict:
+        report = _strict_report(engine)
+        if report:
+            return report
+
+    count = select(func.count()).select_from(organization)
+    with system(), engine.connect() as conn:
+        org_id = conn.execute(select(organization.c.id).order_by(organization.c.id).limit(1)).scalar()
+    rls = False
+    if engine.dialect.name == "postgresql":
+        with system(), engine.connect() as conn:
+            rls = bool(conn.execute(text(
+                "SELECT relrowsecurity FROM pg_class WHERE oid = 'organization'::regclass")).scalar())
+    if strict and not rls:
+        return {"reason": "rls_disabled", "detail": "row-level security is off on organization"}
+    if org_id is None:
+        return None
+    with scoped(org_id), engine.connect() as conn:
+        if conn.execute(count.where(organization.c.id == org_id)).scalar_one() != 1:
+            return {"reason": "tenant_read_failed",
+                    "detail": "a tenant-bound read could not see its own organization"}
+        if rls and conn.execute(count.where(organization.c.id != org_id)).scalar_one() != 0:
+            return {"reason": "tenant_isolation_failed",
+                    "detail": "a tenant-bound read saw another organization"}
+    if rls:
+        with scoped(None), engine.connect() as conn:
+            if conn.execute(count).scalar_one() != 0:
+                return {"reason": "fail_open",
+                        "detail": "an unbound read saw rows, so the policies fail open"}
+    return None
+
+
+def probe(engine: Engine) -> str | None:
+    """The failure reason ``/ready`` reports, or None. ``probe_report`` for detail."""
+    report = probe_report(engine)
+    return report["reason"] if report else None
 
 
 async def as_system(awaitable: Awaitable[T]) -> T:
@@ -105,11 +289,15 @@ def install(engine: Engine) -> None:
     @event.listens_for(engine, "begin")
     def _set_tenant(conn: Any) -> None:
         org, sys_ = current()
+        actor_kind, actor_id, on_behalf_of = current_actor()
+        cred_kind, cred_id, session_id = current_credential()
         # The raw DBAPI cursor: psycopg opens the transaction implicitly on this
         # first statement, so the settings are local to exactly this transaction.
         cursor = conn.connection.dbapi_connection.cursor()
         try:
-            cursor.execute(_SET, (org or "", "on" if sys_ else ""))
+            cursor.execute(_SET, (org or "", "on" if sys_ else "",
+                                  actor_kind or "", actor_id or "", on_behalf_of or ""))
+            cursor.execute(_SET_CRED, (cred_kind or "", cred_id or "", session_id or ""))
         finally:
             cursor.close()
 

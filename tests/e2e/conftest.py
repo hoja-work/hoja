@@ -181,7 +181,8 @@ def _sign_in(page, base: str) -> None:
     page.locator("input[type=email]").first.wait_for(timeout=15000)
     page.locator("input[type=email]").first.fill("e2e@example.test")
     page.locator("input[type=password]").first.fill(PASSWORD)
-    page.locator("button.primary", has_text="Continue").first.click()
+    # Submit the form itself: the button's styling classes are not a stable contract.
+    page.locator("input[type=password]").first.press("Enter")
     page.wait_for_load_state("networkidle")
 
 

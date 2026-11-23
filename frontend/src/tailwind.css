@@ -1,0 +1,95 @@
+@layer theme, base, vendor, components, utilities;
+@import "tailwindcss";
+
+/* Shell tracks use fixed pixels (244px sidebar, 48px header). Keep spacing
+ * utilities on the same scale, independent of the root font size. React Grab's
+ * dev-only vendor theme also defines --spacing; this unlayered app token must
+ * win over both vendor and Tailwind defaults in every build mode. */
+:root {
+  --spacing: 4px;
+}
+
+/* The app palette lives in CSS variables (styles.css, light and dark). Registering them as
+ * theme colors lets markup style surfaces with utilities (bg-panel, bg-subtle, border-line,
+ * text-muted) instead of hard-coded neutrals that would ignore the theme. */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-foreground: var(--text);
+  --color-sidebar: var(--sidebar-bg);
+  --color-sidebar-drawer: var(--sidebar-drawer-bg);
+  --color-sidebar-hover: var(--sidebar-hover);
+  --color-sidebar-active: var(--sidebar-active);
+  --color-sidebar-icon: var(--sidebar-icon);
+  --color-panel: var(--panel);
+  --color-subtle: var(--subtle);
+  --color-line: var(--line);
+  --color-muted: var(--muted);
+  --color-danger: var(--danger);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  /* Call rooms intentionally retain their always-dark palette. */
+  --color-room-bg: #0e0e10;
+  --color-room-panel: #1a1a1d;
+  --color-room-line: #2c2c31;
+  --color-room-foreground: #f4f4f5;
+  --color-room-muted: #a1a1aa;
+  --color-room-control: #26262a;
+  --color-room-input: #111113;
+  --color-room-waiting: #1f2a20;
+}
+
+/* Application shell breakpoints: drawer <=880px (matching Linear's bisected 880/881px switch)
+ * and landscape phones (<=1000px wide & <=500px tall); persistent sidebar >=881px. */
+@custom-variant shell-desktop {
+  @media (min-width: 881px) and (min-height: 501px), (min-width: 1001px) { @slot; }
+}
+@custom-variant shell-phone {
+  @media (max-width: 880px), (max-width: 1000px) and (max-height: 500px) { @slot; }
+}
+/* Very wide screens: the post's metadata moves into a second column instead of sitting
+   under the text. Same shape as the other shell breakpoints, so screens say
+   `shell-wide:` rather than carrying their own @media. */
+@custom-variant shell-wide {
+  @media (min-width: 1800px) { @slot; }
+}
+@custom-variant rail-collapsed (&:where(.app[data-sidebar-collapsed] *));
+@custom-variant route-fullbleed (&:where(.app:has([data-pulse-page],[data-inbox-page],[data-initiatives-page],[data-projects-reference],[data-project-reference],[data-workspace-views-page],[data-my-issues-view],[data-mt-page],.agent-chat-page,[data-settings-sidebar]) *));
+
+/* Component primitives (src/components/ui, built on radix-ui). These aliases give the
+ * shadcn-style names a meaning in this palette, so a primitive written as bg-popover or
+ * border-input follows the same light/dark variables as the rest of the app. */
+@theme inline {
+  --color-popover: var(--panel);
+  --color-popover-foreground: var(--text);
+  --color-card: var(--panel);
+  --color-card-foreground: var(--text);
+  --color-border: var(--line);
+  --color-input: var(--line);
+  --color-ring: var(--accent);
+  --color-primary: var(--text);
+  --color-primary-foreground: var(--bg);
+  --color-destructive: var(--danger);
+  --color-muted-foreground: var(--muted);
+  --animate-fade-in: ds-fade-in 120ms ease-out;
+  --animate-fade-out: ds-fade-out 100ms ease-in;
+  --animate-pop-in: ds-pop-in 140ms cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-pop-out: ds-pop-out 100ms ease-in;
+  --animate-toast-in: ds-toast-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes ds-fade-in { from { opacity: 0 } to { opacity: 1 } }
+@keyframes ds-fade-out { from { opacity: 1 } to { opacity: 0 } }
+@keyframes ds-pop-in { from { opacity: 0; transform: scale(0.97) } to { opacity: 1; transform: scale(1) } }
+@keyframes ds-pop-out { from { opacity: 1; transform: scale(1) } to { opacity: 0; transform: scale(0.97) } }
+@keyframes ds-toast-in { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: translateY(0) } }
+@media (prefers-reduced-motion: reduce) {
+  [data-slot] { animation-duration: 1ms !important; }
+}
+/* Radix state hooks: state-open:animate-pop-in instead of data-[state=open]:… everywhere. */
+/* dark: follows the app theme (data-theme on <html>, set from the account preference),
+ * not the OS media query: "system" is resolved to light/dark before it is written. */
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+@custom-variant state-open (&[data-state=open]);
+@custom-variant state-closed (&[data-state=closed]);
+@custom-variant state-checked (&[data-state=checked]);
+@custom-variant state-on (&[data-state=on]);
+@custom-variant highlighted (&[data-highlighted]);

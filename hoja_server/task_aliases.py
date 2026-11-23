@@ -15,6 +15,7 @@ ROOT_ALIASES: dict[str, str] = {
     "searchTasks": "searchIssues",
     "taskCreate": "issueCreate",
     "taskUpdate": "issueUpdate",
+    "taskMove": "issueMove",
     "taskDelete": "issueDelete",
     "taskArchive": "issueArchive",
     "taskSubscribe": "issueSubscribe",
@@ -25,6 +26,13 @@ ROOT_ALIASES: dict[str, str] = {
     "taskLabelUpdate": "issueLabelUpdate",
     "taskLabelDelete": "issueLabelDelete",
     "taskLabelSettings": "issueLabelSettings",
+    # cloud-only feature module: decisions
+    "taskDecisions": "issueDecisions",
+    "taskDecision": "issueDecision",
+    "taskDecisionCreate": "issueDecisionCreate",
+    "taskDecisionAnswer": "issueDecisionAnswer",
+    "taskDecisionCancel": "issueDecisionCancel",
+    "taskReviewRequest": "issueReviewRequest",
 }
 
 # aliased types that carry their own field resolvers (everything else is a plain
@@ -44,7 +52,7 @@ SIMPLE_FIELD_ALIASES: dict[str, tuple[str, str]] = {
 }
 
 
-def bind_task_surface(query, mutation, issue, my_issue_activity) -> tuple[list, list[str]]:
+def bind_task_surface(query, mutation, issue, my_issue_activity, extra_roots=()) -> tuple[list, list[str]]:
     """Return (bindables, problems). problems is non-empty if a mapping target is missing."""
     problems: list[str] = []
     bindables: list = []
@@ -82,8 +90,11 @@ def bind_task_surface(query, mutation, issue, my_issue_activity) -> tuple[list, 
         task_type.set_alias(new_field, old_field)
         bindables.append(task_type)
 
+    # Feature modules (decisions, views) contribute their own root bindables, so the
+    # alias must be looked up across all of them before it is declared missing.
+    roots = (query, mutation) + tuple(extra_roots)
     for new, old in ROOT_ALIASES.items():
-        for root in (query, mutation):
+        for root in roots:
             fn = root._resolvers.get(old)
             if fn is not None:
                 root.set_field(new, fn)

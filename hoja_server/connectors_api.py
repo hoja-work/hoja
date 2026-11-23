@@ -1,7 +1,15 @@
 """Connector routes: connect, callback, list, and revoke connected accounts.
 
 Pending OAuth state (user, org, scope, PKCE verifier, expiry) is carried in an AES-GCM sealed
-`state` value, so the callback cannot be forged; a hashed nonce in `oauth_state_nonce` makes each state single-use.
+`state` value, so the callback cannot be forged. The seal is bound to the organization (HKDF key
+plus AAD, `secrets_box`), so a state minted for one workspace cannot be opened for another, and a
+hashed nonce in `connector_oauth_state` -- an organization-scoped, RLS-policed table -- makes each
+state single-use within its workspace.
+
+The redirect URI is per request, not per deployment: one shared app serves every organization, so
+`connector_hosts` derives it from the host the request arrived on after resolving that host to a
+real workspace. A host with no registered callback reports "not available on this workspace host"
+instead of failing at the provider.
 """
 
 from __future__ import annotations
@@ -13,9 +21,10 @@ import os
 import re
 import time
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import urlencode
 
 import httpx
 from calendly import CalendlyOAuthConfig
@@ -94,10 +103,10 @@ from zoom.oauth import authorization_url as zoom_authorization_url
 from zoom.oauth import exchange_code as zoom_exchange_code
 from zoom.oauth import revoke_token as zoom_revoke_token
 
+from hoja_server import connector_hosts
 from hoja_server.connector_actions import Executor, approve_action, reject_action
-from hoja_server.db import connector_account, connector_action, oauth_state_nonce, organization
+from hoja_server.db import connector_account, connector_action, connector_oauth_state
 from hoja_server.github_webhook import github_webhook_routes
-from hoja_server.identity_transfer import tenant_target
 from hoja_server.secrets_box import SecretBoxError, decrypt_secret, encrypt_secret
 
 PROVIDER = "google_workspace"
@@ -137,18 +146,25 @@ GMAIL_PROFILE_URL = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
 GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 
 
-def _consume_state(engine: Engine, nonce: str, expires_at: int) -> bool:
-    """Mark an OAuth state nonce as used. False if it was already used (by any worker)."""
-    if not nonce:
+def _consume_state(engine: Engine, org: str, nonce: str, expires_at: int) -> bool:
+    """Mark an OAuth state nonce as used in ``org``. False if it was already used.
+
+    The primary key is the nonce hash, and the row carries the organization, so
+    two workspaces holding the same nonce cannot collide, and row-level security
+    keeps one workspace from even seeing the other's rows.
+    """
+    if not nonce or not org:
         return False
+    digest = hashlib.sha256(nonce.encode()).hexdigest()
     try:
         with engine.begin() as conn:
             conn.execute(
-                oauth_state_nonce.delete().where(oauth_state_nonce.c.expires_at < time.time())
+                connector_oauth_state.delete().where(connector_oauth_state.c.expires_at < time.time())
             )
             conn.execute(
-                oauth_state_nonce.insert().values(
-                    nonce_hash=hashlib.sha256(nonce.encode()).hexdigest(),
+                connector_oauth_state.insert().values(
+                    nonce_hash=digest,
+                    organization_id=org,
                     expires_at=float(expires_at),
                 )
             )
@@ -188,50 +204,104 @@ def _serialize(row) -> dict:
     }
 
 
-def connector_binding_for(engine: Engine, org: str, uid: str):
-    """Return the MCP binding for this user when they have an active connector account.
+CONNECTOR_PROVIDERS: tuple[tuple[str, str], ...] = (
+    (PROVIDER, "HOJA_GOOGLE_WORKSPACE_MCP_URL"),
+    (GITHUB_PROVIDER, "HOJA_GITHUB_MCP_URL"),
+    (SLACK_PROVIDER, "HOJA_SLACK_MCP_URL"),
+    (NOTION_PROVIDER, "HOJA_NOTION_MCP_URL"),
+    (SENTRY_PROVIDER, "HOJA_SENTRY_MCP_URL"),
+    (GRAFANA_PROVIDER, "HOJA_GRAFANA_MCP_URL"),
+    (CALENDLY_PROVIDER, "HOJA_CALENDLY_MCP_URL"),
+    (ZOOM_PROVIDER, "HOJA_ZOOM_MCP_URL"),
+)
 
-    The connector MCP service registers the Google, Notion and Slack tools on one server, so one
-    binding covers any provider (or several).
+
+def connector_bindings_for(store_or_engine, org_id: str, user_id: str) -> list:
+    """Return MCP bindings for ALL active connectors configured in this workspace.
+
+    Checks each supported connector's dedicated MCP URL environment variable
+    (e.g. ``HOJA_GITHUB_MCP_URL``, ``HOJA_SLACK_MCP_URL``) as well as the unified
+    ``HOJA_CONNECTOR_MCP_URL`` service fallback, and emits a ``ConnectorBinding``
+    only when the org or user has an active account for that provider.
+
+    Accepts either a ``Store`` instance (using ``store.engine``) or a SQLAlchemy ``Engine``.
     """
-    url = os.environ.get("HOJA_CONNECTOR_MCP_URL", "").strip()
     key = os.environ.get("HOJA_CONNECTOR_SIGNING_KEY", "").strip()
-    if not url or not key:
-        return None
+    if not key:
+        return []
+    shared_url = os.environ.get("HOJA_CONNECTOR_MCP_URL", "").strip()
+    engine = store_or_engine.engine if hasattr(store_or_engine, "engine") else store_or_engine
+    all_providers = tuple(provider for provider, _env in CONNECTOR_PROVIDERS)
     with engine.connect() as conn:
-        active = conn.execute(
-            select(connector_account.c.id)
-            .where(
-                and_(
-                    connector_account.c.organization_id == org,
-                    connector_account.c.provider.in_(
-                        (
-                            PROVIDER,
-                            NOTION_PROVIDER,
-                            SLACK_PROVIDER,
-                            CALENDLY_PROVIDER,
-                            SENTRY_PROVIDER,
-                            ZOOM_PROVIDER,
-                            GRAFANA_PROVIDER,
-                        )
-                    ),
-                    connector_account.c.status == "active",
-                    or_(
-                        connector_account.c.owner_user_id == uid,
-                        connector_account.c.owner_user_id.is_(None),
-                    ),
+        active_providers = {
+            row[0]
+            for row in conn.execute(
+                select(connector_account.c.provider)
+                .where(
+                    and_(
+                        connector_account.c.organization_id == org_id,
+                        connector_account.c.provider.in_(all_providers),
+                        connector_account.c.status == "active",
+                        or_(
+                            connector_account.c.owner_user_id == user_id,
+                            connector_account.c.owner_user_id.is_(None),
+                        ),
+                    )
                 )
-            )
-            .limit(1)
-        ).first()
-    if active is None:
-        return None
+                .distinct()
+            ).all()
+        }
+    if not active_providers:
+        return []
+
     from hoja_server.agent_chat import ConnectorBinding
 
-    return ConnectorBinding(
-        url=url,
-        principal=sign_principal(uid, org, "read", key=key),
-    )
+    principal = sign_principal(user_id, org_id, "read", key=key)
+    bindings: list[ConnectorBinding] = []
+    seen_urls: set[str] = set()
+    shared_providers: list[str] = []
+
+    for provider, env_var in CONNECTOR_PROVIDERS:
+        if provider not in active_providers:
+            continue
+        dedicated_url = os.environ.get(env_var, "").strip()
+        if dedicated_url:
+            if dedicated_url not in seen_urls:
+                seen_urls.add(dedicated_url)
+                bindings.append(
+                    ConnectorBinding(
+                        url=dedicated_url,
+                        principal=principal,
+                        provider=provider,
+                        toolset_id=provider.replace("_", "-"),
+                    )
+                )
+        elif shared_url:
+            shared_providers.append(provider)
+
+    if shared_providers and shared_url and shared_url not in seen_urls:
+        # One unified MCP server serves all providers without a dedicated URL;
+        # mount it once to avoid duplicate tool registration.
+        first_provider = PROVIDER if PROVIDER in shared_providers else shared_providers[0]
+        bindings.append(
+            ConnectorBinding(
+                url=shared_url,
+                principal=principal,
+                provider=first_provider,
+                toolset_id="google-workspace",
+            )
+        )
+
+    return bindings
+
+
+def connector_binding_for(engine: Engine, org: str, uid: str):
+    """Return the primary MCP binding for this user when they have an active connector account.
+
+    Backward-compatible single-binding wrapper over ``connector_bindings_for``.
+    """
+    bindings = connector_bindings_for(engine, org, uid)
+    return bindings[0] if bindings else None
 
 
 def make_write_executor(engine: Engine, http: httpx.AsyncClient, config: GoogleOAuthConfig):
@@ -258,7 +328,7 @@ def make_write_executor(engine: Engine, http: httpx.AsyncClient, config: GoogleO
             )
         if row is None or row["owner_user_id"] != requester:
             raise ConnectorAuthError("The account for this action is no longer available.")
-        refresh = decrypt_secret(row["encrypted_refresh_token"])
+        refresh = decrypt_secret(row["encrypted_refresh_token"], row["organization_id"])
 
         async def access_token() -> str:
             tokens = await refresh_access_token(http, config, refresh_token=refresh)
@@ -284,6 +354,25 @@ def connector_routes(
         if not uid:
             return None, None, _error("Authentication required", 401)
         return uid, org, None
+
+    def _unavailable(provider: str, request: Request) -> JSONResponse:
+        """Settings shows this instead of a consent screen that would fail at the provider.
+
+        Which hosts have a registered callback is a provider-side fact, so an
+        unregistered host is a configuration gap, not a user error: it is answered
+        here, before the browser is sent anywhere.
+        """
+        return _error(
+            connector_hosts.UNAVAILABLE,
+            409,
+            hint=connector_hosts.unavailable_detail(
+                provider, connector_hosts.request_host(request), engine
+            ),
+        )
+
+    def _redirect_for(provider: str, request: Request) -> str | None:
+        """This request's registered callback URI for ``provider`` (see ``connector_hosts``)."""
+        return connector_hosts.callback_url(engine, request, provider)
 
     def _is_admin(org: str, uid: str) -> bool:
         actor = store.get_user(org, uid)
@@ -339,6 +428,15 @@ def connector_routes(
                 )
         try:
             config = GoogleOAuthConfig.from_env()
+        except (ConnectorConfigError, SecretBoxError) as exc:
+            return _error(str(exc), 503, getattr(exc, "hint", None))
+        # Configuration first, then reachability: an unconfigured provider is a 503 the
+        # operator fixes, an unregistered host is the 409 Settings renders.
+        redirect_uri = _redirect_for(PROVIDER, request)
+        if redirect_uri is None:
+            return _unavailable(PROVIDER, request)
+        config = replace(config, redirect_uri=redirect_uri)
+        try:
             verifier, challenge = pkce_pair()
             state = encrypt_secret(
                 json.dumps(
@@ -351,7 +449,8 @@ def connector_routes(
                         "exp": int(time.time()) + STATE_TTL_SECONDS,
                         "nonce": uuid.uuid4().hex,
                     }
-                )
+                ),
+                org,
             )
         except (ConnectorConfigError, SecretBoxError) as exc:
             return _error(str(exc), 503, getattr(exc, "hint", None))
@@ -375,9 +474,14 @@ def connector_routes(
         sealed = request.query_params.get("state", "")
         if not code or not sealed:
             return _error("code and state are required", 400)
+        redirect_uri = _redirect_for(PROVIDER, request)
+        if redirect_uri is None:
+            return _unavailable(PROVIDER, request)
         try:
-            pending = json.loads(decrypt_secret(sealed))
-            config = GoogleOAuthConfig.from_env()
+            # The seal is bound to this organization: a state minted in another
+            # workspace does not open here, even with the same master key.
+            pending = json.loads(decrypt_secret(sealed, org))
+            config = replace(GoogleOAuthConfig.from_env(), redirect_uri=redirect_uri)
         except (SecretBoxError, ValueError, ConnectorConfigError) as exc:
             return _error("Invalid or expired connection request.", 400, getattr(exc, "hint", None))
         if pending.get("exp", 0) < time.time():
@@ -386,7 +490,7 @@ def connector_routes(
             return _error("Connection request belongs to a different session.", 403)
         if pending["scope"] == "org" and not _is_admin(org, uid):
             return _error("Only workspace admins can connect organization accounts.", 403)
-        if not _consume_state(engine, str(pending.get("nonce", "")), int(pending["exp"])):
+        if not _consume_state(engine, org, str(pending.get("nonce", "")), int(pending["exp"])):
             return _error("Connection request was already used. Start again.", 400)
 
         async with httpx.AsyncClient(timeout=15) as http:
@@ -481,7 +585,7 @@ def connector_routes(
                 "provider": PROVIDER,
                 "external_account": email,
                 "scopes": " ".join(scopes),
-                "encrypted_refresh_token": encrypt_secret(tokens.refresh_token),
+                "encrypted_refresh_token": encrypt_secret(tokens.refresh_token, org),
                 "status": "active",
                 "created_at": _now(),
                 "updated_at": _now(),
@@ -500,7 +604,7 @@ def connector_routes(
                 )
         # `?connector=<addon>-connected` is what Settings reads to say which grant was just widened.
         marker = f"{addon}-connected" if addon else "google-connected"
-        return RedirectResponse(f"/?connector={marker}", status_code=302)
+        return RedirectResponse(f"/workspace/settings/connections?connector={marker}", status_code=302)
 
     async def notion_start(request: Request):
         """Begin the Notion OAuth flow. Notion grants are always user-scoped (`owner=user`).
@@ -515,6 +619,13 @@ def connector_routes(
             return _error("Notion connections are personal to the installing user.", 400)
         try:
             config = NotionOAuthConfig.from_env()
+        except (NotionConfigError, SecretBoxError) as exc:
+            return _error(str(exc), 503, getattr(exc, "hint", None))
+        redirect_uri = _redirect_for(NOTION_PROVIDER, request)
+        if redirect_uri is None:
+            return _unavailable(NOTION_PROVIDER, request)
+        config = replace(config, redirect_uri=redirect_uri)
+        try:
             state = encrypt_secret(
                 json.dumps(
                     {
@@ -523,7 +634,8 @@ def connector_routes(
                         "exp": int(time.time()) + STATE_TTL_SECONDS,
                         "nonce": uuid.uuid4().hex,
                     }
-                )
+                ),
+                org,
             )
         except (NotionConfigError, SecretBoxError) as exc:
             return _error(str(exc), 503, getattr(exc, "hint", None))
@@ -539,16 +651,19 @@ def connector_routes(
         sealed = request.query_params.get("state", "")
         if not code or not sealed:
             return _error("code and state are required", 400)
+        redirect_uri = _redirect_for(NOTION_PROVIDER, request)
+        if redirect_uri is None:
+            return _unavailable(NOTION_PROVIDER, request)
         try:
-            pending = json.loads(decrypt_secret(sealed))
-            config = NotionOAuthConfig.from_env()
+            pending = json.loads(decrypt_secret(sealed, org))
+            config = replace(NotionOAuthConfig.from_env(), redirect_uri=redirect_uri)
         except (SecretBoxError, ValueError, NotionConfigError) as exc:
             return _error("Invalid or expired connection request.", 400, getattr(exc, "hint", None))
         if pending.get("exp", 0) < time.time():
             return _error("Connection request expired. Start again.", 400)
         if pending.get("uid") != uid or pending.get("org") != org:
             return _error("Connection request belongs to a different session.", 403)
-        if not _consume_state(engine, str(pending.get("nonce", "")), int(pending["exp"])):
+        if not _consume_state(engine, org, str(pending.get("nonce", "")), int(pending["exp"])):
             return _error("Connection request was already used. Start again.", 400)
 
         async with httpx.AsyncClient(timeout=15) as http:
@@ -572,7 +687,7 @@ def connector_routes(
             # Notion has no OAuth scope parameter. This records the integration capability the
             # consent screen showed, so a future write path cannot claim more than was granted.
             "scopes": "read_content",
-            "encrypted_refresh_token": encrypt_secret(token.access_token),
+            "encrypted_refresh_token": encrypt_secret(token.access_token, org),
             "status": "active",
             "created_at": _now(),
             "updated_at": _now(),
@@ -602,7 +717,7 @@ def connector_routes(
                         updated_at=row["updated_at"],
                     )
                 )
-        return RedirectResponse("/?connector=notion-connected", status_code=302)
+        return RedirectResponse("/workspace/settings/connections?connector=notion-connected", status_code=302)
 
     async def slack_start(request: Request):
         """Begin the Slack OAuth flow. The grant is a **user** token, so it carries one person's
@@ -615,6 +730,13 @@ def connector_routes(
             return _error("Slack connections are personal to the installing user.", 400)
         try:
             config = SlackOAuthConfig.from_env()
+        except (SlackConfigError, SecretBoxError) as exc:
+            return _error(str(exc), 503, getattr(exc, "hint", None))
+        redirect_uri = _redirect_for(SLACK_PROVIDER, request)
+        if redirect_uri is None:
+            return _unavailable(SLACK_PROVIDER, request)
+        config = replace(config, redirect_uri=redirect_uri)
+        try:
             state = encrypt_secret(
                 json.dumps(
                     {
@@ -623,7 +745,8 @@ def connector_routes(
                         "exp": int(time.time()) + STATE_TTL_SECONDS,
                         "nonce": uuid.uuid4().hex,
                     }
-                )
+                ),
+                org,
             )
         except (SlackConfigError, SecretBoxError) as exc:
             return _error(str(exc), 503, getattr(exc, "hint", None))
@@ -639,16 +762,19 @@ def connector_routes(
         sealed = request.query_params.get("state", "")
         if not code or not sealed:
             return _error("code and state are required", 400)
+        redirect_uri = _redirect_for(SLACK_PROVIDER, request)
+        if redirect_uri is None:
+            return _unavailable(SLACK_PROVIDER, request)
         try:
-            pending = json.loads(decrypt_secret(sealed))
-            config = SlackOAuthConfig.from_env()
+            pending = json.loads(decrypt_secret(sealed, org))
+            config = replace(SlackOAuthConfig.from_env(), redirect_uri=redirect_uri)
         except (SecretBoxError, ValueError, SlackConfigError) as exc:
             return _error("Invalid or expired connection request.", 400, getattr(exc, "hint", None))
         if pending.get("exp", 0) < time.time():
             return _error("Connection request expired. Start again.", 400)
         if pending.get("uid") != uid or pending.get("org") != org:
             return _error("Connection request belongs to a different session.", 403)
-        if not _consume_state(engine, str(pending.get("nonce", "")), int(pending["exp"])):
+        if not _consume_state(engine, org, str(pending.get("nonce", "")), int(pending["exp"])):
             return _error("Connection request was already used. Start again.", 400)
 
         async with httpx.AsyncClient(timeout=15) as http:
@@ -674,7 +800,7 @@ def connector_routes(
             "scopes": " ".join(token.scopes) if token.scopes else " ".join(USER_READ_SCOPES),
             # Rotation is off, so Slack returns a long-lived `xoxp-` user token and no refresh
             # token. It is sealed into the same credential column every connector uses.
-            "encrypted_refresh_token": encrypt_secret(token.access_token),
+            "encrypted_refresh_token": encrypt_secret(token.access_token, org),
             "status": "active",
             "created_at": _now(),
             "updated_at": _now(),
@@ -704,7 +830,7 @@ def connector_routes(
                         updated_at=row["updated_at"],
                     )
                 )
-        return RedirectResponse("/?connector=slack-connected", status_code=302)
+        return RedirectResponse("/workspace/settings/connections?connector=slack-connected", status_code=302)
 
     def _calendly_broker_origin() -> str:
         """The shared return address, or "" when this deployment has no broker.
@@ -714,37 +840,19 @@ def connector_routes(
         self-hosted install registers its own callback and gets no broker. The broker only
         forwards, so it holds no credential and stores nothing.
         """
-        return (os.environ.get(BROKER_URL_ENV) or "").strip().rstrip("/")
-
-    def _calendly_redirect_uri(config: CalendlyOAuthConfig) -> str:
-        """The one string Calendly compares at both the authorize and token endpoints."""
-        broker = _calendly_broker_origin()
-        return f"{broker}{CALENDLY_REDIRECT_PATH}" if broker else config.redirect_uri
-
-    def _tenant_registered(host: str) -> bool:
-        slug = host.split(".", 1)[0]
-        with engine.connect() as conn:
-            found = conn.execute(
-                select(organization.c.id).where(organization.c.url_key == slug)
-            ).first()
-        return found is not None
+        return connector_hosts.broker_origin()
 
     def _calendly_tenant_origin(value: str | None) -> str | None:
-        """A tenant's https origin, or None.
+        """A workspace origin this deployment really serves, or None.
 
-        `identity_transfer.tenant_target` is this deployment's existing answer to "is this one of
-        our tenant hosts": https, under our apex, never a reserved control-plane name. On top of
-        it the slug must exist in the tenant registry, so a well-formed but unregistered
-        `ghost.hoja.work` cannot be used to bounce a grant somewhere it does not belong.
+        `connector_hosts.tenant_origin` answers both halves: the name must be an https host under
+        our apex and not a reserved control-plane name (`identity_transfer.tenant_target`), and it
+        must be a live ``organization.vanity_host`` row. Under ADR-003 the vanity host, not the
+        url_key, is what identifies a workspace, so `clover.hoja.work` resolves even though the
+        organization's key is `clover4`.
         """
-        target = tenant_target(value)
-        if target is None:
-            return None
-        parts = urlsplit(target)
-        host = (parts.hostname or "").lower()
-        if not _tenant_registered(host):
-            return None
-        return f"{parts.scheme}://{parts.netloc}"
+        resolved = connector_hosts.tenant_origin(engine, value)
+        return resolved[0] if resolved else None
 
     async def calendly_start(request: Request):
         """Begin the Calendly flow under the tenant's session.
@@ -760,31 +868,38 @@ def connector_routes(
             # A Calendly token is one person's calendar. Calling it an organization grant would
             # hand that person's meetings to every member, so it is refused rather than downgraded.
             return _error("Calendly connections are personal to the connecting user.", 400)
+        # Without a broker this install registers its own callback, so there is no
+        # workspace to route through and nothing to bind the return address to.
         tenant: str | None = None
         if _calendly_broker_origin():
-            tenant = _calendly_tenant_origin(str(request.base_url))
+            tenant = connector_hosts.workspace_origin(engine, request)
             if tenant is None:
-                return _error(
-                    "This address is not a workspace on this deployment, so a Calendly "
-                    "connection cannot return to it.",
-                    400,
-                    hint="Open your workspace URL and connect Calendly from there.",
-                )
+                return _unavailable(CALENDLY_PROVIDER, request)
+        redirect_uri = _redirect_for(CALENDLY_PROVIDER, request)
+        if redirect_uri is None:
+            return _unavailable(CALENDLY_PROVIDER, request)
         try:
-            config = CalendlyOAuthConfig.from_env()
+            config = replace(CalendlyOAuthConfig.from_env(), redirect_uri=redirect_uri)
             verifier, _challenge = calendly_pkce_pair()
-            state = encrypt_secret(
-                json.dumps(
-                    {
-                        "uid": uid,
-                        "org": org,
-                        "provider": CALENDLY_PROVIDER,
-                        "verifier": verifier,
-                        "tenant": tenant,
-                        "exp": int(time.time()) + STATE_TTL_SECONDS,
-                        "nonce": uuid.uuid4().hex,
-                    }
-                )
+            # Sealed under this workspace's key; the readable hint tells the broker (which has
+            # no session) which key to try. A rewritten hint fails the AAD check instead of
+            # redirecting a grant somewhere else.
+            state = connector_hosts.wrap_state(
+                encrypt_secret(
+                    json.dumps(
+                        {
+                            "uid": uid,
+                            "org": org,
+                            "provider": CALENDLY_PROVIDER,
+                            "verifier": verifier,
+                            "tenant": tenant,
+                            "exp": int(time.time()) + STATE_TTL_SECONDS,
+                            "nonce": uuid.uuid4().hex,
+                        }
+                    ),
+                    org,
+                ),
+                tenant,
             )
         except (CalendlyConfigError, SecretBoxError) as exc:
             return _error(str(exc), 503, getattr(exc, "hint", None))
@@ -793,7 +908,7 @@ def connector_routes(
                 config,
                 state=state,
                 code_challenge=calendly_s256(verifier),
-                redirect_uri=_calendly_redirect_uri(config),
+                redirect_uri=redirect_uri,
             ),
             status_code=302,
         )
@@ -814,23 +929,31 @@ def connector_routes(
         if request.query_params.get("error"):
             return _error("Calendly did not grant access.", 400)
         code = request.query_params.get("code", "")
-        sealed = request.query_params.get("state", "")
-        if not code or not sealed:
+        raw_state = request.query_params.get("state", "")
+        if not code or not raw_state:
             return _error("code and state are required", 400)
+        sealed, hint = connector_hosts.unwrap_state(raw_state)
+        resolved = connector_hosts.tenant_origin(engine, hint)
+        if resolved is None:
+            # Not a workspace of ours, a reserved control-plane name, or not registered at all:
+            # never bounce a code to an address the state merely claims.
+            return _error("Connection request names no workspace on this deployment.", 403)
+        _tenant, target_org = resolved
         try:
-            pending = json.loads(decrypt_secret(sealed))
+            # The hint only selected the key; the ciphertext must authenticate for it.
+            pending = json.loads(decrypt_secret(sealed, target_org))
         except (SecretBoxError, ValueError):
             return _error("Invalid or expired connection request.", 400)
         if pending.get("exp", 0) < time.time():
             return _error("Connection request expired. Start again.", 400)
         if pending.get("provider") != CALENDLY_PROVIDER:
             return _error("Invalid connection request.", 400)
+        if pending.get("org") != target_org:
+            return _error("Connection request belongs to a different workspace.", 403)
         tenant = _calendly_tenant_origin(pending.get("tenant"))
         if tenant is None:
-            # Not a workspace of ours, a reserved control-plane name, or not registered at all:
-            # never bounce a code to an address the state merely claims.
             return _error("Connection request names no workspace on this deployment.", 403)
-        query = urlencode({"code": code, "state": sealed})
+        query = urlencode({"code": code, "state": raw_state})
         return RedirectResponse(f"{tenant}{CALENDLY_FINISH_PATH}?{query}", status_code=302)
 
     async def calendly_finish(request: Request):
@@ -847,9 +970,13 @@ def connector_routes(
         sealed = request.query_params.get("state", "")
         if not code or not sealed:
             return _error("code and state are required", 400)
+        redirect_uri = _redirect_for(CALENDLY_PROVIDER, request)
+        if redirect_uri is None:
+            return _unavailable(CALENDLY_PROVIDER, request)
+        sealed, _hint = connector_hosts.unwrap_state(sealed)
         try:
-            pending = json.loads(decrypt_secret(sealed))
-            config = CalendlyOAuthConfig.from_env()
+            pending = json.loads(decrypt_secret(sealed, org))
+            config = replace(CalendlyOAuthConfig.from_env(), redirect_uri=redirect_uri)
         except (SecretBoxError, ValueError, CalendlyConfigError) as exc:
             return _error("Invalid or expired connection request.", 400, getattr(exc, "hint", None))
         if pending.get("exp", 0) < time.time():
@@ -862,10 +989,13 @@ def connector_routes(
             return _error("Connection request belongs to a different session.", 403)
         tenant = pending.get("tenant")
         if tenant is not None:
-            here = _calendly_tenant_origin(str(request.base_url))
+            # The state pinned `https://<workspace host>` at start; comparing that against
+            # `request.base_url` made the workspace's own callback look foreign, because behind the
+            # proxy that field is still http unless uvicorn trusts the forwarding headers.
+            here = connector_hosts.workspace_origin(engine, request)
             if here is None or tenant != here:
                 return _error("Connection request belongs to a different workspace.", 403)
-        if not _consume_state(engine, str(pending.get("nonce", "")), int(pending["exp"])):
+        if not _consume_state(engine, org, str(pending.get("nonce", "")), int(pending["exp"])):
             return _error("Connection request was already used. Start again.", 400)
 
         async with httpx.AsyncClient(timeout=15) as http:
@@ -875,7 +1005,7 @@ def connector_routes(
                     config,
                     code=code,
                     code_verifier=str(pending.get("verifier", "")),
-                    redirect_uri=_calendly_redirect_uri(config),
+                    redirect_uri=redirect_uri,
                 )
 
                 class _StaticToken:
@@ -904,8 +1034,8 @@ def connector_routes(
             # Record what Calendly granted, so a later code path cannot claim more than the
             # consent screen showed.
             "scopes": " ".join(tokens.scopes) if tokens.scopes else " ".join(CALENDLY_READ_SCOPES),
-            "encrypted_refresh_token": encrypt_secret(tokens.refresh_token),
-            "encrypted_access_token": encrypt_secret(tokens.access_token),
+            "encrypted_refresh_token": encrypt_secret(tokens.refresh_token, org),
+            "encrypted_access_token": encrypt_secret(tokens.access_token, org),
             "access_token_expires_at": str(expires_at),
             "status": "active",
             "created_at": _now(),
@@ -938,21 +1068,26 @@ def connector_routes(
                         updated_at=row["updated_at"],
                     )
                 )
-        back = f"{tenant}/?connector=calendly-connected" if tenant else "/?connector=calendly-connected"
+        back = f"{tenant}/workspace/settings/connections?connector=calendly-connected" if tenant else "/workspace/settings/connections?connector=calendly-connected"
         return RedirectResponse(back, status_code=302)
 
     def _zoom_origin(request: Request) -> str | None:
-        """This request's own https origin, or None.
+        """The https origin this request's registered callback lives on, or None.
 
-        Zoom's app holds an allow list of full callback URLs, so the origin is the only part the
-        deployment has to derive; the path is fixed. Deriving it from the request (rather than
-        trusting a query parameter) is what keeps a tenant from being handed a callback that
-        belongs to somebody else.
+        Zoom's app holds an allow list of full callback URLs, so the origin is the only part that
+        varies per workspace; the path is fixed. It is read off the callback this deployment
+        derived for the request rather than off ``request.base_url``: behind the reverse proxy
+        uvicorn only rewrites that field's scheme when it trusts the forwarding headers, so an
+        untrusted ``X-Forwarded-Proto`` left every origin looking like ``http://`` and refused Zoom
+        on a deployment that serves https only. Taking it from the derived callback also means a
+        one-host install pins the URI it actually registered, not the address the request arrived
+        on, and that start and callback always agree.
         """
-        parts = urlsplit(str(request.base_url))
-        if parts.scheme != "https" or not parts.netloc:
+        callback = _redirect_for(ZOOM_PROVIDER, request)
+        path = connector_hosts.CALLBACK_PATHS[ZOOM_PROVIDER]
+        if not callback or not callback.endswith(path):
             return None
-        return f"{parts.scheme}://{parts.netloc}"
+        return callback[: -len(path)]
 
     async def zoom_start(request: Request):
         """Begin the Zoom flow on the tenant that owns the registered callback.
@@ -966,22 +1101,15 @@ def connector_routes(
         if request.query_params.get("scope", "user") != "user":
             return _error("Zoom connections are personal to the connecting user.", 400)
         origin = _zoom_origin(request)
-        try:
-            config = ZoomOAuthConfig.from_env()
-        except (ZoomConfigError, SecretBoxError) as exc:
-            return _error(str(exc), 503, getattr(exc, "hint", None))
         # Refuse before Zoom: an unregistered redirect is rejected by Zoom with a consent-screen
         # error the user cannot act on, which looks like an outage rather than a configuration gap.
-        redirect_uri = config.redirect_uri_for(origin) if origin else None
-        if redirect_uri is None:
-            return _error(
-                "This address is not a registered Zoom callback on this deployment.",
-                400,
-                hint=(
-                    "Open your workspace URL and connect Zoom from there, or register "
-                    f"{origin or 'this host'}{ZOOM_REDIRECT_PATH} in the Zoom app's allow list."
-                ),
-            )
+        redirect_uri = _redirect_for(ZOOM_PROVIDER, request)
+        if redirect_uri is None or origin is None:
+            return _unavailable(ZOOM_PROVIDER, request)
+        try:
+            config = replace(ZoomOAuthConfig.from_env(), redirect_uri=redirect_uri)
+        except (ZoomConfigError, SecretBoxError) as exc:
+            return _error(str(exc), 503, getattr(exc, "hint", None))
         try:
             state = encrypt_secret(
                 json.dumps(
@@ -993,7 +1121,8 @@ def connector_routes(
                         "exp": int(time.time()) + STATE_TTL_SECONDS,
                         "nonce": uuid.uuid4().hex,
                     }
-                )
+                ),
+                org,
             )
         except SecretBoxError as exc:
             return _error(str(exc), 503, getattr(exc, "hint", None))
@@ -1013,9 +1142,12 @@ def connector_routes(
         sealed = request.query_params.get("state", "")
         if not code or not sealed:
             return _error("code and state are required", 400)
+        redirect_uri = _redirect_for(ZOOM_PROVIDER, request)
+        if redirect_uri is None:
+            return _unavailable(ZOOM_PROVIDER, request)
         try:
-            pending = json.loads(decrypt_secret(sealed))
-            config = ZoomOAuthConfig.from_env()
+            pending = json.loads(decrypt_secret(sealed, org))
+            config = replace(ZoomOAuthConfig.from_env(), redirect_uri=redirect_uri)
         except (SecretBoxError, ValueError, ZoomConfigError) as exc:
             return _error("Invalid or expired connection request.", 400, getattr(exc, "hint", None))
         if pending.get("exp", 0) < time.time():
@@ -1029,12 +1161,7 @@ def connector_routes(
         origin = _zoom_origin(request)
         if origin is None or pending.get("origin") != origin:
             return _error("Connection request belongs to a different workspace.", 403)
-        redirect_uri = config.redirect_uri_for(origin)
-        if redirect_uri is None:
-            return _error(
-                "This address is not a registered Zoom callback on this deployment.", 403
-            )
-        if not _consume_state(engine, str(pending.get("nonce", "")), int(pending["exp"])):
+        if not _consume_state(engine, org, str(pending.get("nonce", "")), int(pending["exp"])):
             return _error("Connection request was already used. Start again.", 400)
 
         async with httpx.AsyncClient(timeout=15) as http:
@@ -1072,8 +1199,8 @@ def connector_routes(
             # Record what Zoom granted, so a later code path cannot claim more than the consent
             # screen showed.
             "scopes": " ".join(tokens.scopes) if tokens.scopes else " ".join(ZOOM_READ_SCOPES),
-            "encrypted_refresh_token": encrypt_secret(tokens.refresh_token),
-            "encrypted_access_token": encrypt_secret(tokens.access_token),
+            "encrypted_refresh_token": encrypt_secret(tokens.refresh_token, org),
+            "encrypted_access_token": encrypt_secret(tokens.access_token, org),
             "access_token_expires_at": str(expires_at),
             # Zoom's own user id for the grant. Nothing addresses it, but it is what an operator
             # or a support request needs to identify the account inside Zoom.
@@ -1110,7 +1237,7 @@ def connector_routes(
                         updated_at=row["updated_at"],
                     )
                 )
-        return RedirectResponse("/?connector=zoom-connected", status_code=302)
+        return RedirectResponse("/workspace/settings/connections?connector=zoom-connected", status_code=302)
 
     class _GrafanaStaticToken:
         """The stored token as a source the package can ask for, never a string it can persist."""
@@ -1213,7 +1340,7 @@ def connector_routes(
             "external_account": label,
             # No OAuth scopes exist; the role the customer granted is the only meaningful scope.
             "scopes": "viewer",
-            "encrypted_refresh_token": encrypt_secret(token),
+            "encrypted_refresh_token": encrypt_secret(token, org),
             "external_id": user.uid,
             "external_url": instance.url,
             "status": "active",
@@ -1254,17 +1381,22 @@ def connector_routes(
         )
 
     def _github_origin(request: Request) -> str | None:
-        """This request's own https origin, or None.
+        """The https origin this request's registered callback lives on, or None.
 
         GitHub matches the redirect URI by string against the app's registered list, so the origin
-        is the only part the deployment has to derive; the path is fixed. Deriving it from the
-        request (rather than trusting a query parameter) is what keeps a tenant from being handed a
-        callback that belongs to somebody else.
+        is the only part the deployment has to derive; the path is fixed. It is read off the
+        callback ``connector_hosts`` derived for this request, not off ``request.base_url``: behind
+        the reverse proxy uvicorn only rewrites that field's scheme when it trusts the forwarding
+        headers, so an untrusted ``X-Forwarded-Proto`` makes every origin look like ``http://`` and
+        refuses a deployment that serves https only. Taking it from the derived callback also means
+        a host that is not a workspace this deployment serves, or that has no registered callback,
+        is refused here instead of at GitHub.
         """
-        parts = urlsplit(str(request.base_url))
-        if parts.scheme != "https" or not parts.netloc:
+        callback = _redirect_for(GITHUB_PROVIDER, request)
+        path = connector_hosts.CALLBACK_PATHS[GITHUB_PROVIDER]
+        if not callback or not callback.endswith(path):
             return None
-        return f"{parts.scheme}://{parts.netloc}"
+        return callback[: -len(path)]
 
     async def github_start(request: Request):
         """Begin the GitHub App user-to-server flow on the tenant that owns the callback.
@@ -1278,20 +1410,24 @@ def connector_routes(
         if request.query_params.get("scope", "user") != "user":
             return _error("GitHub connections are personal to the connecting user.", 400)
         origin = _github_origin(request)
+        if origin is None:
+            # Not a host we serve, or no callback registered for it: refuse before GitHub so the
+            # person reads a sentence instead of `redirect_uri_mismatch`.
+            return _unavailable(GITHUB_PROVIDER, request)
         try:
             config = GitHubAppConfig.from_env()
         except (GitHubConfigError, SecretBoxError) as exc:
             return _error(str(exc), 503, getattr(exc, "hint", None))
         # Refuse before GitHub: an unregistered redirect is answered with redirect_uri_mismatch on
         # a page the user cannot act on, which reads as an outage rather than a configuration gap.
-        redirect_uri = config.redirect_uri_for(origin) if origin else None
+        redirect_uri = config.redirect_uri_for(origin)
         if redirect_uri is None:
             return _error(
                 "This address is not a registered GitHub callback on this deployment.",
                 400,
                 hint=(
                     "Open your workspace URL and connect GitHub from there, or register "
-                    f"{origin or 'this host'}{GITHUB_REDIRECT_PATH} in the app's callback URLs."
+                    f"{origin}{GITHUB_REDIRECT_PATH} in the app's callback URLs."
                 ),
             )
         try:
@@ -1305,7 +1441,8 @@ def connector_routes(
                         "exp": int(time.time()) + STATE_TTL_SECONDS,
                         "nonce": uuid.uuid4().hex,
                     }
-                )
+                ),
+                org,
             )
         except SecretBoxError as exc:
             return _error(str(exc), 503, getattr(exc, "hint", None))
@@ -1327,7 +1464,7 @@ def connector_routes(
         if not code or not sealed:
             return _error("code and state are required", 400)
         try:
-            pending = json.loads(decrypt_secret(sealed))
+            pending = json.loads(decrypt_secret(sealed, org))
             config = GitHubAppConfig.from_env()
         except (SecretBoxError, ValueError, GitHubConfigError) as exc:
             return _error("Invalid or expired connection request.", 400, getattr(exc, "hint", None))
@@ -1347,7 +1484,7 @@ def connector_routes(
             return _error(
                 "This address is not a registered GitHub callback on this deployment.", 403
             )
-        if not _consume_state(engine, str(pending.get("nonce", "")), int(pending["exp"])):
+        if not _consume_state(engine, org, str(pending.get("nonce", "")), int(pending["exp"])):
             return _error("Connection request was already used. Start again.", 400)
 
         async with httpx.AsyncClient(timeout=15) as http:
@@ -1386,8 +1523,8 @@ def connector_routes(
             # column empty rather than inventing one, and store the app's read set nowhere the UI
             # could mistake for a per-grant scope.
             "scopes": "",
-            "encrypted_refresh_token": encrypt_secret(tokens.refresh_token),
-            "encrypted_access_token": encrypt_secret(tokens.access_token),
+            "encrypted_refresh_token": encrypt_secret(tokens.refresh_token, org),
+            "encrypted_access_token": encrypt_secret(tokens.access_token, org),
             "access_token_expires_at": str(expires_at),
             # GitHub's own numeric user id. Nothing addresses it, but it is what an operator or a
             # support request needs to identify the account inside GitHub.
@@ -1423,7 +1560,7 @@ def connector_routes(
                         updated_at=row["updated_at"],
                     )
                 )
-        return RedirectResponse("/?connector=github-connected", status_code=302)
+        return RedirectResponse("/workspace/settings/connections?connector=github-connected", status_code=302)
 
     def _sentry_redirect_uri(config: SentryOAuthConfig) -> str:
         """The one string registered on the Sentry integration.
@@ -1434,6 +1571,10 @@ def connector_routes(
         """
         broker = _calendly_broker_origin()
         return f"{broker}{SENTRY_REDIRECT_PATH}" if broker else config.redirect_uri
+
+    def _sentry_redirect_uri(request: Request) -> str | None:
+        """Sentry's registered Redirect URL for this request (broker when configured)."""
+        return _redirect_for(SENTRY_PROVIDER, request)
 
     async def sentry_start(request: Request):
         """Begin the Sentry install under the tenant's session.
@@ -1451,29 +1592,33 @@ def connector_routes(
             # installed it. Calling it a workspace-wide grant here would let any member read that
             # organization's issues with the installer's authority, so it is refused.
             return _error("Sentry connections are personal to the user who installs them.", 400)
+        # Same shape as Calendly: the broker needs a workspace to hand the grant to;
+        # a self-hosted install registers its own Redirect URL and needs none.
         tenant: str | None = None
         if _calendly_broker_origin():
-            tenant = _calendly_tenant_origin(str(request.base_url))
+            tenant = connector_hosts.workspace_origin(engine, request)
             if tenant is None:
-                return _error(
-                    "This address is not a workspace on this deployment, so a Sentry connection "
-                    "cannot return to it.",
-                    400,
-                    hint="Open your workspace URL and connect Sentry from there.",
-                )
+                return _unavailable(SENTRY_PROVIDER, request)
+        redirect_uri = _sentry_redirect_uri(request)
+        if redirect_uri is None:
+            return _unavailable(SENTRY_PROVIDER, request)
         try:
-            config = SentryOAuthConfig.from_env()
-            state = encrypt_secret(
-                json.dumps(
-                    {
-                        "uid": uid,
-                        "org": org,
-                        "provider": SENTRY_PROVIDER,
-                        "tenant": tenant,
-                        "exp": int(time.time()) + STATE_TTL_SECONDS,
-                        "nonce": uuid.uuid4().hex,
-                    }
-                )
+            config = replace(SentryOAuthConfig.from_env(), redirect_uri=redirect_uri)
+            state = connector_hosts.wrap_state(
+                encrypt_secret(
+                    json.dumps(
+                        {
+                            "uid": uid,
+                            "org": org,
+                            "provider": SENTRY_PROVIDER,
+                            "tenant": tenant,
+                            "exp": int(time.time()) + STATE_TTL_SECONDS,
+                            "nonce": uuid.uuid4().hex,
+                        }
+                    ),
+                    org,
+                ),
+                tenant,
             )
         except (SentryConfigError, SecretBoxError) as exc:
             return _error(str(exc), 503, getattr(exc, "hint", None))
@@ -1492,17 +1637,24 @@ def connector_routes(
         code = request.query_params.get("code", "")
         installation_id = request.query_params.get("installationId", "")
         org_slug = request.query_params.get("orgSlug", "")
-        sealed = request.query_params.get("state", "")
-        if not code or not installation_id or not sealed:
+        raw_state = request.query_params.get("state", "")
+        if not code or not installation_id or not raw_state:
             return _error("code, installationId and state are required", 400)
+        sealed, hint = connector_hosts.unwrap_state(raw_state)
+        resolved = connector_hosts.tenant_origin(engine, hint)
+        if resolved is None:
+            return _error("Connection request names no workspace on this deployment.", 403)
+        _tenant, target_org = resolved
         try:
-            pending = json.loads(decrypt_secret(sealed))
+            pending = json.loads(decrypt_secret(sealed, target_org))
         except (SecretBoxError, ValueError):
             return _error("Invalid or expired connection request.", 400)
         if pending.get("exp", 0) < time.time():
             return _error("Connection request expired. Start again.", 400)
         if pending.get("provider") != SENTRY_PROVIDER:
             return _error("Invalid connection request.", 400)
+        if pending.get("org") != target_org:
+            return _error("Connection request belongs to a different workspace.", 403)
         tenant = _calendly_tenant_origin(pending.get("tenant"))
         if tenant is None:
             return _error("Connection request names no workspace on this deployment.", 403)
@@ -1511,7 +1663,7 @@ def connector_routes(
                 "code": code,
                 "installationId": installation_id,
                 "orgSlug": org_slug,
-                "state": sealed,
+                "state": raw_state,
             }
         )
         return RedirectResponse(f"{tenant}{SENTRY_FINISH_PATH}?{query}", status_code=302)
@@ -1532,9 +1684,13 @@ def connector_routes(
         sealed = request.query_params.get("state", "")
         if not code or not installation_id or not sealed:
             return _error("code, installationId and state are required", 400)
+        redirect_uri = _sentry_redirect_uri(request)
+        if redirect_uri is None:
+            return _unavailable(SENTRY_PROVIDER, request)
+        sealed, _hint = connector_hosts.unwrap_state(sealed)
         try:
-            pending = json.loads(decrypt_secret(sealed))
-            config = SentryOAuthConfig.from_env()
+            pending = json.loads(decrypt_secret(sealed, org))
+            config = replace(SentryOAuthConfig.from_env(), redirect_uri=redirect_uri)
         except (SecretBoxError, ValueError, SentryConfigError) as exc:
             return _error("Invalid or expired connection request.", 400, getattr(exc, "hint", None))
         if pending.get("exp", 0) < time.time():
@@ -1545,10 +1701,10 @@ def connector_routes(
             return _error("Connection request belongs to a different session.", 403)
         tenant = pending.get("tenant")
         if tenant is not None:
-            here = _calendly_tenant_origin(str(request.base_url))
+            here = connector_hosts.workspace_origin(engine, request)
             if here is None or tenant != here:
                 return _error("Connection request belongs to a different workspace.", 403)
-        if not _consume_state(engine, str(pending.get("nonce", "")), int(pending["exp"])):
+        if not _consume_state(engine, org, str(pending.get("nonce", "")), int(pending["exp"])):
             return _error("Connection request was already used. Start again.", 400)
 
         async with httpx.AsyncClient(timeout=15) as http:
@@ -1598,8 +1754,8 @@ def connector_routes(
             # Record what Sentry granted, so a later code path cannot claim more than the install
             # page showed.
             "scopes": " ".join(tokens.scopes) if tokens.scopes else " ".join(SENTRY_READ_SCOPES),
-            "encrypted_refresh_token": encrypt_secret(tokens.refresh_token),
-            "encrypted_access_token": encrypt_secret(tokens.access_token),
+            "encrypted_refresh_token": encrypt_secret(tokens.refresh_token, org),
+            "encrypted_access_token": encrypt_secret(tokens.access_token, org),
             "access_token_expires_at": str(expires_at),
             "status": "active",
             "created_at": _now(),
@@ -1634,7 +1790,7 @@ def connector_routes(
                         updated_at=row["updated_at"],
                     )
                 )
-        back = f"{tenant}/?connector=sentry-connected" if tenant else "/?connector=sentry-connected"
+        back = f"{tenant}/workspace/settings/connections?connector=sentry-connected" if tenant else "/workspace/settings/connections?connector=sentry-connected"
         return RedirectResponse(back, status_code=302)
 
     async def sentry_webhook(request: Request):
@@ -1747,6 +1903,11 @@ def connector_routes(
         zoom_agent = zoom_available and bool(
             os.environ.get("HOJA_CONNECTOR_SIGNING_KEY", "").strip()
         )
+        # Configured is not the same as reachable from the host this person is on. Under
+        # shared tenancy one deployment serves many hosts and a provider only accepts the
+        # callbacks it has registered, so Settings needs the per-host answer: otherwise the
+        # Connect button sends the browser to a consent screen that fails with
+        # `redirect_uri_mismatch`, which reads as an outage rather than a missing registration.
         try:
             github_config = GitHubAppConfig.from_env()
             github_available = True
@@ -1757,7 +1918,9 @@ def connector_routes(
             os.environ.get("HOJA_CONNECTOR_SIGNING_KEY", "").strip()
         )
         # Grafana has no app credential: connecting needs only the sealing key that protects the
-        # stored token, so the flag is true on any deployment that can seal secrets at all.
+        # stored token, so the flag is true on any deployment that can seal secrets at all. It is
+        # also the only provider here with no callback registered at the provider, so it is
+        # available on every host this deployment serves rather than on a list of registered ones.
         try:
             GrafanaConfig.from_env()
             grafana_available = True
@@ -1766,6 +1929,19 @@ def connector_routes(
         grafana_agent = grafana_available and bool(
             os.environ.get("HOJA_CONNECTOR_SIGNING_KEY", "").strip()
         )
+        host = connector_hosts.request_host(request)
+        host_available = {
+            provider: connector_hosts.callback_url(engine, request, provider) is not None
+            for provider in connector_hosts.CALLBACK_PATHS
+        }
+        host_available[GRAFANA_PROVIDER] = True
+        unavailable_reason = {
+            provider: (
+                None if host_available[provider]
+                else connector_hosts.unavailable_detail(provider, host, engine)
+            )
+            for provider in host_available
+        }
         return JSONResponse(
             {
                 "googleWorkspace": google_available,
@@ -1788,6 +1964,11 @@ def connector_routes(
                 "githubInstallUrl": github_config.install_url() if github_config else None,
                 "grafana": grafana_available,
                 "grafanaAgent": grafana_agent,
+                # Per-host reachability: `available` is (configured AND a registered callback
+                # on this host); `reason` is what Settings shows when it is not.
+                "host": host,
+                "availableOnThisHost": host_available,
+                "unavailableReason": unavailable_reason,
             },
             headers={"cache-control": "no-store"},
         )
@@ -1844,7 +2025,7 @@ def connector_routes(
             return _error("Connected account not found.", 404)
 
         try:
-            refresh = decrypt_secret(row["encrypted_refresh_token"])
+            refresh = decrypt_secret(row["encrypted_refresh_token"], row["organization_id"])
         except SecretBoxError:
             return _error("Stored credential is unreadable; contact an administrator.", 500)
         provider_revoked = False
@@ -1910,7 +2091,9 @@ def connector_routes(
             # GitHub's revocation endpoint is an *application* endpoint: it takes the access token
             # and ends that token's whole refresh chain, which is what the user asked for.
             try:
-                access = decrypt_secret(row["encrypted_access_token"] or "")
+                access = decrypt_secret(
+                    row["encrypted_access_token"] or "", row["organization_id"]
+                )
             except SecretBoxError:
                 return _error("Stored credential is unreadable; contact an administrator.", 500)
             if not access:

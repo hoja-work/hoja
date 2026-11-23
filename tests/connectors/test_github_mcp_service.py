@@ -66,9 +66,9 @@ def _add_github_account(engine, org: str, *, owner: str | None, login: str = "ri
                 provider="github",
                 external_account=login,
                 scopes="",
-                encrypted_refresh_token=encrypt_secret("stored-refresh"),
+                encrypted_refresh_token=encrypt_secret("stored-refresh", org),
                 # Expired on purpose: the grant must refresh on use.
-                encrypted_access_token=encrypt_secret("stale-access"),
+                encrypted_access_token=encrypt_secret("stale-access", org),
                 access_token_expires_at="0",
                 status="active",
                 created_at="2026-01-01T00:00:00+00:00",

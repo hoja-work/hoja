@@ -206,7 +206,9 @@ def test_comment_policy_unit_matrix() -> None:
     assert comment_policy.decide(D, s("u1", admin=True), r("u1", team_visible=False)).rule == "d-hidden"
 
 
-def test_initiative_edit_and_archive_limited_to_creator_or_admin(tmp_path) -> None:
+def test_any_member_edits_an_initiative_but_archive_is_limited(tmp_path) -> None:
+    """As on Linear, any workspace member edits an initiative; archiving stays with its
+    creator, its owner or an admin."""
     engine, app, admin = _setup(tmp_path)
     store = Store(engine)
     with TestClient(app) as client:
@@ -214,7 +216,7 @@ def test_initiative_edit_and_archive_limited_to_creator_or_admin(tmp_path) -> No
         ini = _gql(client, admin["token"], INIT_CREATE,
                    {"i": {"name": "Admin plan"}})["data"]["initiativeCreate"]["initiative"]["id"]
 
-        _denied(_gql(client, member_key, INIT_UPDATE, {"id": ini, "i": {"name": "hijack"}}), "initiativeUpdate")
+        assert _gql(client, member_key, INIT_UPDATE, {"id": ini, "i": {"name": "Shared plan"}})["data"]["initiativeUpdate"]["success"] is True
         _denied(_gql(client, member_key, INIT_ARCHIVE, {"id": ini}), "initiativeArchive")
         assert _gql(client, admin["token"], INIT_UPDATE, {"id": ini, "i": {"name": "Admin plan v2"}})["data"]["initiativeUpdate"]["success"] is True
 

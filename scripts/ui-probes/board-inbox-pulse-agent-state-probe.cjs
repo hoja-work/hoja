@@ -12,7 +12,7 @@ const rgb = s => s;
     await page.goto(url + '/'); await page.waitForTimeout(1200);
     const nav = async n => { await page.getByRole('button', { name: n, exact: true }).first().click(); await page.waitForTimeout(900); };
     await nav('Board');
-    console.log('BOARD counts', JSON.stringify(await page.evaluate(() => ({ lanes: document.querySelectorAll('.kanban-column').length, cards: document.querySelectorAll('.kanban-card').length, empty: document.querySelectorAll('.kanban-empty').length, tabs: [...document.querySelectorAll('.board-page-tabs button')].map(b => b.innerText + (b.className ? '(' + b.className + ')' : '')) }))));
+    console.log('BOARD counts', JSON.stringify(await page.evaluate(() => ({ lanes: document.querySelectorAll('.kanban-column').length, cards: document.querySelectorAll('.kanban-card').length, empty: document.querySelectorAll('.kanban-empty').length, tabs: [...document.querySelectorAll('.my-issue-tabs button')].map(b => b.innerText + (b.className ? '(' + b.className + ')' : '')) }))));
     const trig = page.locator('.status-picker-trigger').first();
     await trig.click(); await page.waitForTimeout(500);
     console.log('STATUS_MENU open=' + await page.locator('.status-menu').count() + ' options=' + await page.locator('.status-menu [role=option]').count());

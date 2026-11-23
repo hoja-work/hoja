@@ -9,6 +9,8 @@ type Organization {
   id: ID!
   name: String!
   urlKey: String!
+  "Where this workspace is served: https://<its own host>, or the canonical app URL. Its GraphQL endpoint is <origin>/graphql and its MCP endpoint <origin>/mcp."
+  origin: String!
 }
 
 type ApiKey {
@@ -20,6 +22,11 @@ type ApiKey {
   lastUsedAt: DateTime
   createdAt: DateTime
   revokedAt: DateTime
+  "Who uses this key: agent | human (null on keys created before attribution tracking)."
+  actorKind: String
+  agentUserId: ID
+  agentMemberId: ID
+  agentName: String
 }
 
 type ApiKeyPayload {
@@ -37,8 +44,28 @@ type UserPreferencesPayload {
 
 type NotificationPreferencesPayload {
   success: Boolean!
-  issueCreated: Boolean!
+  issueAssigned: Boolean!
+  projectMemberAdded: Boolean!
+  issueMention: Boolean!
+  issueComment: Boolean!
+  issueStatusChanged: Boolean!
   issueUpdated: Boolean!
+  issueDecision: Boolean!
+  issueCreated: Boolean!
+  projectUpdatePosted: Boolean!
+  projectUpdateReply: Boolean!
+  projectMention: Boolean!
+  projectLeadAssigned: Boolean!
+  projectUpdated: Boolean!
+  initiativeUpdatePosted: Boolean!
+  initiativeOwnerAssigned: Boolean!
+  initiativeUpdated: Boolean!
+  cycleStarted: Boolean!
+  cycleCompleted: Boolean!
+  "A followed view gained a task."
+  viewIssueAdded: Boolean!
+  "A task in a followed view was completed or canceled."
+  viewIssueCompleted: Boolean!
 }
 
 type WorkspaceMembership {
@@ -47,11 +74,18 @@ type WorkspaceMembership {
   name: String!
   urlKey: String!
   role: String!
+  "Where this workspace is served; see Organization.origin."
+  origin: String!
 }
 
 type OrganizationPayload {
   success: Boolean!
   organization: Organization
+  """
+  Set when the workspace must be opened on another host (its own address): the
+  browser navigates here instead of switching in place. No session was changed.
+  """
+  redirectUrl: String
 }
 
 type UserPayload {
@@ -59,10 +93,12 @@ type UserPayload {
   user: User
   apiKey: String
   inviteCode: String
+  """True when the invitation email was accepted by the mail provider."""
+  emailQueued: Boolean
 }
 
-input InitiativeCreateInput { name: String! summary: String status: String priority: Int ownerId: String targetDate: TimelessDate projectIds: [String!] }
-input InitiativeUpdateInput { name: String summary: String status: String priority: Int ownerId: String targetDate: TimelessDate projectIds: [String!] }
+input InitiativeCreateInput { name: String! summary: String description: String status: String priority: Int ownerId: String targetDate: TimelessDate projectIds: [String!] parentId: String icon: String color: String leadTeamId: String labelIds: [String!] updateReminder: String sortOrder: Float parentIds: [String!] slackChannelId: String slackChannelName: String }
+input InitiativeUpdateInput { name: String summary: String description: String status: String priority: Int ownerId: String targetDate: TimelessDate projectIds: [String!] parentId: String icon: String color: String leadTeamId: String labelIds: [String!] updateReminder: String sortOrder: Float parentIds: [String!] addParentId: String removeParentId: String slackChannelId: String slackChannelName: String }
 
 input WorkspaceUpdateInput {
   name: String
@@ -84,6 +120,8 @@ input MemberInviteInput {
 type Query {
   viewer: User
   myApiKeys: [ApiKey!]!
+  "The workspace's append-only audit ledger, admin only, oldest first, paged."
+  auditEvents(first: Int = 50, after: String, actorId: String, action: String): AuditEventConnection!
   myPreferences: UserPreferencesPayload!
   myNotificationPreferences: NotificationPreferencesPayload!
   issueLabelSettings: [IssueLabel!]! @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
@@ -97,24 +135,26 @@ type Query {
   issues(filter: IssueFilter, first: Int = 50, after: String, orderBy: PaginationOrderBy): IssueConnection @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   issue(id: String!): Issue @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   myIssueActivity(first: Int = 50, after: String): MyIssueActivityConnection @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
-  inboxNotifications(first: Int = 50, after: String, unreadOnly: Boolean = false, archived: Boolean = false): InboxNotificationConnection
+  inboxNotifications(first: Int = 50, after: String, unreadOnly: Boolean = false, archived: Boolean = false, snoozed: Boolean = false): InboxNotificationConnection
   inboxUnreadCount: Int!
   projects(filter: ProjectFilter, first: Int = 50, after: String): ProjectConnection
   initiatives(first: Int = 50, after: String, status: String): InitiativeConnection
   initiative(id: String!): Initiative
   projectUpdates(first: Int = 50, after: String, filter: ProjectUpdateFilter): ProjectUpdateConnection
+  initiativeUpdates(first: Int = 50, after: String, filter: InitiativeUpdateFilter): InitiativeUpdateConnection
   project(id: String!): Project
   workflowStates(filter: WorkflowStateFilter, first: Int = 100, after: String): WorkflowStateConnection
   cycles(filter: CycleFilter, first: Int = 100, after: String): CycleConnection
   cycle(id: String!): Cycle
   teamCycleCadence(teamId: String!): TeamCycleCadence!
   issueLabels(filter: IssueLabelFilter, first: Int = 100, after: String): IssueLabelConnection @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
-  searchIssues(term: String!, first: Int = 20): IssueConnection @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
+  searchIssues(term: String!, first: Int = 20, after: String): IssueConnection @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   rateLimitStatus: RateLimitPayload
 }
 
 type Mutation {
-  apiKeyCreate(label: String!, access: String = "read_write", expiresAt: DateTime): ApiKeyPayload
+  apiKeyCreate(label: String!, access: String = "read_write", expiresAt: DateTime, actorKind: String = "agent", agentMemberId: String): ApiKeyPayload
+  apiKeyUpdate(id: String!, actorKind: String, agentMemberId: String): ApiKeyPayload
   apiKeyRevoke(id: String!): Boolean!
   userPreferenceSet(key: String!, value: String!): UserPreferencesPayload!
   profileNameUpdate(name: String!): UserPayload
@@ -139,9 +179,33 @@ type Mutation {
   teamMemberRemove(teamId: String!, userId: String!): UserPayload
   issueCreate(input: IssueCreateInput!): IssuePayload @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   issueUpdate(id: String!, input: IssueUpdateInput!): IssuePayload @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
+  "Drop a task between two others in manual order, optionally changing the field it is grouped by in the same write (a drag across groups)."
+  issueMove(id: String!, input: IssueMoveInput!): IssuePayload @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   notificationMarkRead(id: String!): Boolean!
   notificationArchive(id: String!): Boolean!
   notificationMarkAllRead: Boolean!
+  notificationMarkUnread(id: String!): Boolean!
+  notificationUnarchive(id: String!): Boolean!
+  notificationSnooze(id: String!, until: DateTime): Boolean!
+  notificationsMarkReadForIssue(issueId: String!, read: Boolean = true): Boolean!
+  notificationsArchiveForIssue(issueId: String!): Boolean!
+  notificationsSnoozeForIssue(issueId: String!, until: DateTime): Boolean!
+  notificationsArchiveAllRead: Boolean!
+  "Read or unread every notification about one subject: a task, project, initiative or cycle."
+  notificationsMarkReadForSubject(subjectId: String!, read: Boolean = true): Boolean!
+  notificationsArchiveForSubject(subjectId: String!): Boolean!
+  "Snooze every notification about one subject until the instant; null brings them back now."
+  notificationsSnoozeForSubject(subjectId: String!, until: DateTime): Boolean!
+  "Follow a project: its updates, replies to your posts, and status, target date or lead changes reach your inbox. Accepts the id or slugId."
+  projectSubscribe(id: String!): Boolean!
+  projectUnsubscribe(id: String!): Boolean!
+  "Follow an initiative: its updates and status, target date or owner changes reach your inbox."
+  initiativeSubscribe(id: String!): Boolean!
+  initiativeUnsubscribe(id: String!): Boolean!
+  "Hear when a cycle starts and when it completes."
+  cycleSubscribe(id: String!): Boolean!
+  cycleUnsubscribe(id: String!): Boolean!
+  githubLinkAdd(issueId: String!, url: String!): GithubLink!
   issueDelete(id: String!): DeletePayload @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   issueArchive(id: String!): DeletePayload @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   issueSubscribe(id: String!): Boolean! @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
@@ -155,11 +219,16 @@ type Mutation {
   projectCreate(input: ProjectCreateInput!): ProjectPayload
   projectUpdate(id: String!, input: ProjectUpdateInput!): ProjectPayload
   projectUpdateCreate(input: ProjectUpdateCreateInput!): ProjectUpdatePayload
+  projectUpdateUpdate(id: String!, input: ProjectUpdateUpdateInput!): ProjectUpdatePayload
+  projectUpdateDelete(id: String!): DeletePayload
   projectArchive(id: String!): DeletePayload
   teamCycleCadenceEnable(teamId: String!, weekday: Int!): TeamCycleCadence!
   cycleUpdate(id: String!, input: CycleUpdateInput!): CyclePayload
   initiativeCreate(input: InitiativeCreateInput!): InitiativePayload
   initiativeUpdate(id: String!, input: InitiativeUpdateInput!): InitiativePayload
+  initiativeUpdateCreate(input: InitiativeUpdateCreateInput!): InitiativeUpdatePayload
+  initiativeUpdateUpdate(id: String!, input: InitiativeUpdateUpdateInput!): InitiativeUpdatePayload
+  initiativeUpdateDelete(id: String!): DeletePayload
   initiativeArchive(id: String!): DeletePayload
   attachmentCreate(input: AttachmentCreateInput!): AttachmentPayload
 }
@@ -173,14 +242,53 @@ type PageInfo {
   endCursor: String
 }
 
+"""
+One append-only audit event: who asked for what, and the hash that chains it to
+the event before it in the same workspace. Admins read this; nothing writes it
+through the API, and the storage layer refuses every update and delete.
+"""
+type AuditEvent {
+  seq: Int!
+  action: String!
+  actorKind: String!
+  actorId: String!
+  "For an agent turn: the human whose request the agent acted on."
+  onBehalfOf: String
+  targetKind: String
+  targetId: String
+  ip: String
+  runner: String
+  requestId: String
+  "Non-secret context only; a credential never appears here."
+  detail: String
+  prevHash: String!
+  rowHash: String!
+  createdAt: DateTime!
+}
+
+type AuditEventConnection { nodes: [AuditEvent!]! pageInfo: PageInfo! }
+
 type InboxNotification {
   id: ID!
-  issue: Issue!
+  "What the notification is about: issue, project, initiative or cycle."
+  subjectType: String!
+  subjectId: ID!
+  "Null when the notification is about a project, initiative or cycle."
+  issue: Issue
+  project: Project
+  initiative: Initiative
+  cycle: Cycle
+  "The project update a post, reply or mention points at; null once deleted."
+  projectUpdate: ProjectUpdate
+  initiativeUpdate: InitiativeUpdate
   actor: User
   kind: String!
   createdAt: DateTime!
   readAt: DateTime
   archivedAt: DateTime
+  snoozedUntil: DateTime
+  data: JSON
+  comment: Comment
 }
 type InboxNotificationConnection { nodes: [InboxNotification!]! pageInfo: PageInfo! }
 
@@ -193,6 +301,7 @@ type User {
   isMe: Boolean
   admin: Boolean
   avatarUrl: String
+  avatarSeed: String
   url: String
   timezone: String
   statusEmoji: String
@@ -222,6 +331,8 @@ type Team {
   autoAddStarted: Boolean
   autoAddCompleted: Boolean
   autoAddBacklog: Boolean
+  "Where a task lands in manual order when its status changes outside a drag: first, last or noAction (Linear's setIssueSortOrderOnStateChange)."
+  issueSortOrderOnStateChange: String!
 }
 
 type WorkflowState {
@@ -243,6 +354,15 @@ type IssueLabel {
   description: String
   createdAt: DateTime
   updatedAt: DateTime
+  "A label group (Linear's isGroup): organizes its labels and cannot be applied to a task itself."
+  isGroup: Boolean!
+  "For a group: a task may hold only one of its labels."
+  exclusive: Boolean!
+  parentId: ID
+  "The group this label belongs to."
+  parent: IssueLabel
+  "A group's labels; empty for a plain label."
+  children: [IssueLabel!]!
 }
 
 type TeamCycleCadence { enabled: Boolean! weekday: Int timezone: String! policyVersion: Int! activeCycle: Cycle upcomingCycles: [Cycle!]! }
@@ -259,6 +379,9 @@ type Cycle {
   createdAt: DateTime
   updatedAt: DateTime
   team: Team
+  subscribers(first: Int = 50): UserConnection
+  "Whether the signed-in user follows this cycle."
+  viewerSubscribed: Boolean!
 }
 
 type Project {
@@ -282,6 +405,9 @@ type Project {
   health: String
   createdAt: DateTime
   updatedAt: DateTime
+  subscribers(first: Int = 50): UserConnection
+  "Whether the signed-in user follows this project."
+  viewerSubscribed: Boolean!
 }
 
 input ProjectUpdateFilter { project: ProjectFilter }
@@ -292,11 +418,31 @@ type ProjectUpdate {
   status: String
   body: String!
   createdAt: DateTime!
+  updatedAt: DateTime!
   actor: User
   progress: Float
   health: String
+  "Replies to this update. Pulse comments hang off the update, not an issue."
+  comments(first: Int = 50): CommentConnection
 }
 type ProjectUpdatePayload { success: Boolean! projectUpdate: ProjectUpdate }
+
+input InitiativeUpdateFilter { initiative: InitiativeFilter }
+
+input InitiativeFilter { id: IDComparator }
+
+type InitiativeUpdate {
+  id: ID!
+  initiative: Initiative!
+  status: String
+  body: String!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  actor: User
+  health: String
+}
+type InitiativeUpdatePayload { success: Boolean! initiativeUpdate: InitiativeUpdate }
+type InitiativeUpdateConnection { nodes: [InitiativeUpdate!]! pageInfo: PageInfo! }
 
 type Comment {
   id: ID!
@@ -317,6 +463,10 @@ type Issue {
   id: ID!
   identifier: String!
   title: String!
+  "Manual order across every list (Linear's sortOrder): a fractional-index key, compared byte-wise; smaller first."
+  rank: String
+  "Order within one priority when a list is ordered by priority (Linear's prioritySortOrder)."
+  priorityRank: String
   description: String
   priority: Int
   priorityLabel: String
@@ -334,6 +484,9 @@ type Issue {
   snoozedUntilAt: DateTime
   state: WorkflowState
   assignee: User
+  "The agent this task is delegated to; separate from the assignee."
+  delegate: User
+  delegateId: ID
   creator: User
   team: Team
   project: Project
@@ -346,6 +499,10 @@ type Issue {
   attachments(first: Int = 50): AttachmentConnection
   githubLinks: [GithubLink!]
   activity(first: Int = 50, after: String): IssueActivityConnection
+  "True while at least one decision on this issue is open (docs/decisions.md)."
+  decisionNeeded: Boolean!
+  "Questions asked on this issue, newest first."
+  decisions(status: String, first: Int = 50): [IssueDecision!]!
 }
 
 type UserConnection { nodes: [User!]! pageInfo: PageInfo! }
@@ -356,7 +513,7 @@ type IssueConnection { nodes: [Issue!]! pageInfo: PageInfo! }
 type IssueLabelConnection { nodes: [IssueLabel!]! pageInfo: PageInfo! }
 type ProjectConnection { nodes: [Project!]! pageInfo: PageInfo! }
 type InitiativeConnection { nodes: [Initiative!]! pageInfo: PageInfo! }
-type Initiative { id: ID! name: String! summary: String status: String! priority: Int! owner: User creator: User targetDate: TimelessDate createdAt: DateTime! updatedAt: DateTime! projects: ProjectConnection! }
+type Initiative { id: ID! name: String! summary: String "Long-form Markdown body of the initiative page." description: String status: String! priority: Int! owner: User creator: User targetDate: TimelessDate createdAt: DateTime! updatedAt: DateTime! projects: ProjectConnection! subscribers(first: Int = 50): UserConnection "Whether the signed-in user follows this initiative." viewerSubscribed: Boolean! }
 type InitiativePayload { success: Boolean! initiative: Initiative }
 type ProjectUpdateConnection { nodes: [ProjectUpdate!]! pageInfo: PageInfo! }
 type CycleConnection { nodes: [Cycle!]! pageInfo: PageInfo! }
@@ -379,12 +536,15 @@ type Attachment {
   url: String!
   title: String!
   subtitle: String
+  contentType: String
   issue: Issue
   createdAt: DateTime
 }
 
 type GithubLink {
   id: ID!
+  "The task this GitHub object is linked to."
+  issue: Issue
   kind: String!
   externalId: String!
   url: String!
@@ -395,6 +555,50 @@ type GithubLink {
   environment: String
   createdAt: DateTime
   updatedAt: DateTime
+  additions: Int
+  deletions: Int
+  baseRef: String
+  headRef: String
+  behind: Int
+  ahead: Int
+  mergeable: Boolean
+  mergeState: String
+  reviewDecision: String
+  reviewers: JSON
+  checksState: String
+  checksTotal: Int
+  checksPassing: Int
+  checksFailing: Int
+  body: String
+  mergedAt: DateTime
+  githubUpdatedAt: DateTime
+  "Per-file diff of the pull request; empty when it is not a pull request or not fetched yet."
+  files: [GithubFile!]!
+}
+
+"One file changed by a pull request."
+type GithubFile {
+  path: String!
+  additions: Int!
+  deletions: Int!
+  "added | modified | removed | renamed (GitHub's lesser states fold into modified)."
+  status: String!
+  "Unified diff. Null when GitHub omits it (binary file) or it exceeded the stored size cap."
+  patch: String
+  "Old path, only for a rename."
+  previousPath: String
+  "True when the blob is proven non-text: GitHub legitimately sends no patch for it (HOJA-513)."
+  binary: Boolean
+  "True when a patch exists but was not stored: over the per-patch cap, over the row budget, or a text diff GitHub refuses to render."
+  oversize: Boolean
+  "The measured size for an oversize entry: patch characters when a patch exists, blob bytes when GitHub renders nothing."
+  oversizeSize: Int
+  "True for the empty blob: there is no content to diff."
+  empty: Boolean
+  "True for a pure rename with no content change."
+  unchanged: Boolean
+  "True when this patch was loaded on demand and cached back into the row (HOJA-513)."
+  cached: Boolean
 }
 
 type RateLimitPayload {
@@ -426,13 +630,16 @@ input UserFilter { id: IDComparator email: StringComparator displayName: StringC
 input WorkflowStateFilter { name: StringComparator type: StringComparator team: TeamFilter }
 input CycleFilter { id: IDComparator name: StringComparator team: TeamFilter isActive: BooleanComparator isNext: BooleanComparator }
 input ProjectRelFilter { id: IDComparator name: StringComparator }
-input LabelRelFilter { name: StringComparator }
+"Linear's IssueLabelCollectionFilter: label fields at the top level mean some label matches; parent filters on the label's group."
+input LabelRelFilter { id: IDComparator name: StringComparator isGroup: BooleanComparator parent: LabelRelFilter and: [LabelRelFilter!] or: [LabelRelFilter!] some: LabelRelFilter none: LabelRelFilter null: Boolean }
 
 input IssueFilter {
   identifier: StringComparator
   team: TeamFilter
   state: WorkflowStateFilter
   assignee: UserFilter
+  "The agent member a task is delegated to. Same shape and semantics as `assignee`."
+  delegate: UserFilter
   creator: UserFilter
   project: ProjectRelFilter
   cycle: CycleFilter
@@ -450,21 +657,31 @@ input IssueFilter {
 }
 
 input ProjectFilter { id: IDComparator slugId: StringComparator name: StringComparator state: StringComparator team: TeamFilter }
-input IssueParentFilter { id: IDComparator }
+input IssueParentFilter {
+  id: IDComparator
+  "Hoja extension: true selects issues with no parent, false only issues that have one."
+  isNull: Boolean
+}
 input IssueLabelFilter { team: TeamFilter name: StringComparator }
 
 # ---- Mutation inputs ----
-input TeamUpdateInput { name: String key: String description: String autoAddStarted: Boolean autoAddCompleted: Boolean autoAddBacklog: Boolean visibility: String parentTeamId: String }
+input TeamUpdateInput { name: String key: String description: String autoAddStarted: Boolean autoAddCompleted: Boolean autoAddBacklog: Boolean visibility: String parentTeamId: String "first, last or noAction" issueSortOrderOnStateChange: String }
 input CycleUpdateInput { name: String description: String startsAt: DateTime endsAt: DateTime }
 type CyclePayload { success: Boolean! cycle: Cycle }
 input TeamCreateInput { name: String! key: String! description: String color: String icon: String visibility: String parentTeamId: String timezone: String memberIds: [String!] }
 input IssueCreateInput {
-  title: String!
-  teamId: String!
+  "Required unless templateId supplies it; an explicit value always wins."
+  title: String
+  "Required unless templateId supplies it (a team-scoped template); an explicit value always wins."
+  teamId: String
+  "A stored task template whose defaults fill the fields left absent."
+  templateId: String
   description: String
   priority: Int
   stateId: String
   assigneeId: String
+  "An agent member of this workspace; delegating to anyone else is rejected."
+  delegateId: String
   projectId: String
   cycleId: String
   parentId: String
@@ -478,6 +695,7 @@ input IssueUpdateInput {
   priority: Int
   stateId: String
   assigneeId: String
+  delegateId: String
   projectId: String
   cycleId: String
   parentId: String
@@ -485,11 +703,30 @@ input IssueUpdateInput {
   dueDate: DateTime
   labelIds: [String!]
 }
-input CommentCreateInput { issueId: String! body: String! }
+input IssueMoveInput {
+  "The task that should end up directly above; omit for the top."
+  afterId: String
+  "The task that should end up directly below; omit for the bottom."
+  beforeId: String
+  "sortOrder (manual lists, the default) or prioritySortOrder (lists ordered by priority)."
+  field: String
+  "Set with the move when the task is dropped into another group."
+  stateId: String
+  assigneeId: String
+  priority: Int
+  projectId: String
+  cycleId: String
+  labelIds: [String!]
+}
+input CommentCreateInput { issueId: String projectUpdateId: String initiativeUpdateId: String body: String! }
 input CommentUpdateInput { body: String }
-input IssueLabelUpdateInput { name: String color: String description: String }
-input IssueLabelCreateInput { name: String! teamId: String color: String description: String }
-input ProjectCreateInput { name: String! description: String teamIds: [String!] leadId: String state: String color: String icon: String startDate: TimelessDate targetDate: TimelessDate }
-input ProjectUpdateInput { name: String description: String leadId: String state: String color: String icon: String startDate: TimelessDate targetDate: TimelessDate teamIds: [String!] }
-input ProjectUpdateCreateInput { projectId: String! body: String! status: String }
+input IssueLabelUpdateInput { name: String color: String description: String "Move into a group, or null to take it out." parentId: String isGroup: Boolean exclusive: Boolean }
+input IssueLabelCreateInput { name: String! teamId: String color: String description: String "The group to create the label in." parentId: String "Create a label group instead of a label." isGroup: Boolean "For a group: one label per task (default true)." exclusive: Boolean }
+input ProjectCreateInput { name: String! description: String teamIds: [String!] "People working on the project. The creator is always a member; members follow the project." memberIds: [String!] leadId: String state: String color: String icon: String startDate: TimelessDate targetDate: TimelessDate "Apply a workspace project template: absent fields fall back to the template's, and its task set is created as tasks." templateId: String }
+input ProjectUpdateInput { name: String description: String "Replaces the member list. Anyone added follows the project and is told; removing someone leaves their subscription alone." memberIds: [String!] leadId: String state: String color: String icon: String startDate: TimelessDate targetDate: TimelessDate teamIds: [String!] }
+input ProjectUpdateCreateInput { projectId: String! body: String! status: String health: String }
+input ProjectUpdateUpdateInput { body: String status: String health: String }
+
+input InitiativeUpdateCreateInput { initiativeId: String! body: String! status: String health: String }
+input InitiativeUpdateUpdateInput { body: String status: String health: String }
 input AttachmentCreateInput { issueId: String! url: String! title: String! subtitle: String }

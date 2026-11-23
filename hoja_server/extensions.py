@@ -36,7 +36,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 
-from hoja_server import secrets_box, tenant_context, webhooks
+from hoja_server import activity, secrets_box, tenant_context, webhooks
 from hoja_server.db import (
     api_key,
     extension,
@@ -47,7 +47,6 @@ from hoja_server.db import (
     extension_hook,
     gen_token,
     issue,
-    issue_activity,
     new_id,
     now_iso,
     team,
@@ -297,7 +296,7 @@ def install(engine: Engine, org_id: str, installer_id: str, raw_manifest: Any) -
     """Install in one transaction. Returns the extension plus the one-time credentials."""
     manifest = parse_manifest(raw_manifest)  # network (DNS) happens here, before any write
     secret = "hoja_ext_" + secrets.token_hex(24)
-    sealed = secrets_box.encrypt_secret(secret)
+    sealed = secrets_box.encrypt_secret(secret, org_id)
     raw_token = gen_token()
     ts = now_iso()
     ext_id, bot_id, key_id = new_id(), new_id(), new_id()
@@ -526,7 +525,7 @@ _EXT_COLUMNS = (extension.c.name, extension.c.url, extension.c.secret_sealed,
 def _call(row: dict, path: str, payload: dict, event: str, timeout: float) -> tuple[int, Any]:
     url = row["url"] + path
     webhooks.check_target(url)
-    body, headers = webhooks.build_request(secrets_box.decrypt_secret(row["secret_sealed"]), payload,
+    body, headers = webhooks.build_request(secrets_box.decrypt_secret(row["secret_sealed"], row["organization_id"]), payload,
                                            new_id(), event)
     status, raw = webhooks.post_capped(url, body, headers, timeout=timeout)
     try:
@@ -659,10 +658,10 @@ def record_patches(engine: Engine, org_id: str, issue_id: str, patches) -> None:
         return
     with engine.begin() as conn:
         for bot_id, hook_key, fields in patches:
-            conn.execute(issue_activity.insert().values(
-                id=new_id(), organization_id=org_id, issue_id=issue_id, actor_id=bot_id,
-                event_type="extensionPatched", changes=json.dumps({"hook": hook_key, "fields": fields}),
-                created_at=now_iso()))
+            activity.record(conn, org_id=org_id, issue_id=issue_id, actor_id=bot_id,
+                            event_type="extensionPatched",
+                            changes=json.dumps({"hook": hook_key, "fields": fields}),
+                            created_at=now_iso())
 
 
 def run_action(engine: Engine, store, org_id: str, actor_id: str, action_id: str, entity_id: str) -> dict:

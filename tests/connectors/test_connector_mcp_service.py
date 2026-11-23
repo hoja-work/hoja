@@ -68,7 +68,7 @@ def _add_account(
                 provider="google_workspace",
                 external_account=email,
                 scopes="https://www.googleapis.com/auth/gmail.readonly",
-                encrypted_refresh_token=encrypt_secret(refresh) if refresh else "",
+                encrypted_refresh_token=encrypt_secret(refresh, org) if refresh else "",
                 status=status,
                 created_at="2026-01-01T00:00:00+00:00",
                 updated_at="2026-01-01T00:00:00+00:00",

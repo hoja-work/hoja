@@ -255,6 +255,11 @@ const skips = new Map();
   const attack = render('<img src=x onerror="window.__pwned=1"> <script>window.__pwned=1</script>');
   check('raw HTML is inert text, not nodes', !/<(img|script)/i.test(attack) && attack.includes('&lt;script&gt;') || attack.includes('&lt;img'), attack.slice(0, 120));
 
+  const marked = render('Body text.\n\n<!-- hoja-task:s:1 -->\n\n<!-- hoja-managed:start -->\n**Acceptance criteria**\n\n- [ ] One <!-- inline -->\n<!-- hoja-managed:end -->');
+  check('HTML comments are hidden, the text around them is kept', !/hoja-|&lt;!--|inline/.test(marked) && marked.includes('Body text.') && marked.includes('Acceptance criteria') && marked.includes('One'), marked);
+  const mixed = render('<!-- note --><b>x</b>');
+  check('a comment does not hide raw HTML beside it', mixed.includes('&lt;b&gt;'), mixed);
+
   const js = render('[click me](javascript:window.__pwned=1)');
   check('javascript: href is stripped, label kept', js.includes('click me') && !/href="javascript:/i.test(js), js.slice(0, 120));
 
@@ -277,7 +282,7 @@ const skips = new Map();
   check('issue identifiers inside code stay literal', !fenced.includes('/workspace/issue/TREBOL-12') && !fenced.includes('/workspace/issue/TREBOL-13'), fenced);
 
   const table = render('| a | b |\n| - | - |\n| 1 | 2 |');
-  check('tables get their own scroll box', table.includes('class="md-table"') && table.includes('<table>'), table);
+  check('tables get their own scroll box', table.includes('data-md-table') && /<table(?:\s|>)/.test(table), table);
 
   const tasks = render('- [x] done\n- [ ] todo');
   check('task list checkboxes are read-only', (tasks.match(/disabled/g) || []).length === 2 && /aria-label="Completed task"/.test(tasks) && /aria-label="Open task"/.test(tasks), tasks);

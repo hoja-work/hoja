@@ -48,13 +48,21 @@ hoja-serve connector-mcp --database-url "$HOJA_DATABASE_URL" --host 0.0.0.0 --po
 
 ## Redirect URI
 
-`HOJA_NOTION_REDIRECT_URI` is used verbatim in the authorization request and again in the token
-exchange; it is not derived from the incoming `Host`. Each deployment therefore has exactly one
-redirect URI. A shared control-plane callback cannot serve several tenants: the `state` is sealed
-with the tenant's own `HOJA_SECRET_KEY`, so another host could not decrypt it.
+Under ADR-003 one app serves every organization, so the redirect is **derived per request** from
+the host the request arrived on, after that host has been resolved to a real workspace in
+`organization.vanity_host` (or the canonical `HOJA_TRUSTED_PUBLIC_HOST`). A raw `Host` header is
+never trusted on its own.
+
+`HOJA_CONNECTOR_REDIRECT_HOSTS` lists the hosts whose callbacks are registered on the provider app;
+only those hosts get a Connect button. Any other host reports *not available on this workspace
+host* in Settings instead of sending the browser to a consent screen that fails with
+`redirect_uri_mismatch`.
+
+`HOJA_NOTION_REDIRECT_URI` is still read, but only by a **single-host install** — a deployment with no
+`HOJA_TRUSTED_PUBLIC_HOST`. There is exactly one host in that shape, so there is nothing to derive.
 
 Notion does **not** reject an unregistered redirect at the authorize endpoint; its install app and
-token exchange do. That was observed during provisioning and is recorded in the contract, so the
+the token exchange do. That was observed during provisioning and is recorded in the contract, so the
 redirect allow-list is a client-side boundary, not a reason to skip registering every host.
 
 ## Token model

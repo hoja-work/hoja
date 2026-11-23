@@ -1,0 +1,166 @@
+/*
+ * Hoja design tokens — every number here was MEASURED, and the comment names where.
+ *
+ * Primary source: artifacts/reviews-parity-20261112T020716Z.json, written by
+ * scripts/ui-probes/reviews-parity.mjs through one probe body in a fresh CDP tab
+ * (1440x900, dsf 1, cache disabled) against reference=https://linear.app/hoja/reviews
+ * and target=https://hoja.hoja.work/workspace/reviews. Secondary source: the winning
+ * cascade in src/styles.css, which the HOJA-417/418 rounds measured into place.
+ *
+ * Rules this file exists to enforce:
+ *  - tokens.css is the ONLY place a measured number is written;
+ *  - every consumer says var(--ds-…) so changing a number here changes the product;
+ *  - the citation is the field name in the artifact, not prose about the reference.
+ */
+:root{
+  /* Split view. Artifact: target .reviews-col rect.w = 482 @1440 (reference band right 716,
+     row right 716). The column is a CAP: it yields space below 1227px (see --ds-split-breakpoint). */
+  --ds-ledger-width:482px;
+  --ds-pane-min-width:664px;
+  --ds-split-breakpoint:1227px;
+
+  /* List row. Artifact rows[].height = 40 on BOTH sides at every viewport measured. */
+  --ds-row-height:40px;
+  --ds-row-gap:8px;
+  --ds-row-padding:0;                  /* artifact: reference row padding "0px" (HOJA-500); the
+                                          6px/4px inset this token used to carry was our invention,
+                                          not the reference's — it now lives on .ds-list-row-main */
+  --ds-row-radius:6px;
+  --ds-row-main-padding:0 8px 0 18px;
+  /* One-pane and below: the reference timestamp ends 16px from the row's right edge, not 8px
+     (measured at 1227, 1100 and 390; 8px at 1228 and above). */
+  --ds-row-main-padding-narrow:0 16px 0 18px;  /* glyph lands 18px into the row (glyphInset=18) and the
+                                          timestamp ends 8px short of the row's right edge
+                                          (reference time inset = 8px @1440) */
+  --ds-row-time-width:44px;
+  --ds-row-glyph-size:14px;            /* artifact glyph.size = 14, viewBox 0 0 16 16 */
+  /* The ledger's right inset: the reference's rows and bands end at 716 inside a ledger whose
+     content column ends at 726 (reference row right 716, band right 716, column right 726).
+     Ours ran full-bleed to the column edge, which is the 10px the "row padding" delta was
+     really reporting. Measured by scripts/ui-probes/reviews-residual.mjs at 390/1024/1440. */
+  --ds-list-inset-right:10px;
+
+  /* Group bar. Artifact bands[].h = 28 both sides; padding/margin/radius identical on both
+     sides in the 02:07Z run, so these are measured agreement, not a guess. */
+  --ds-group-bar-height:28px;
+  --ds-group-bar-padding:0 9px 0 10px;
+  --ds-group-bar-margin:0 0 0 10px;
+  /* At 1227px and below the reference band gains an 8px right margin (measured at 1227 and
+     1100: "0px 8px 0px 10px"; at 1228 and above it is "0px 0px 0px 10px"). */
+  --ds-group-bar-margin-narrow:0 8px 0 10px;    /* artifact: reference "0px 0px 0px 10px" — the 2px
+                                          vertical margin was ours, and it pushed every band
+                                          2px off the reference rhythm (HOJA-500) */
+  --ds-group-bar-radius:8px;
+  --ds-group-bar-gap:6px;
+
+  /* Tab strips (ledger pills + pane tabs). */
+  --ds-tabstrip-height:44px;
+  --ds-tabstrip-gap:6px;
+  --ds-tabstrip-padding:0 8px;
+  --ds-tab-height:28px;
+  --ds-tab-padding:0 11px;
+  --ds-tab-radius:6px;
+  --ds-tab-font-size:12px;
+  --ds-pane-head-height:52px;   /* measured pane breadcrumb band */
+  --ds-pane-tabs-height:44px;
+
+  /* Property rows: fixed label column, 20px line rhythm. */
+  --ds-prop-label-width:96px;
+  --ds-prop-line-height:20px;
+  --ds-prop-gap:10px;
+  --ds-prop-min-height:20px;
+
+  /* Composer. Not mounted on Reviews (a dead "not connected" composer was removed in
+     HOJA-418); the primitive is measured here so Pulse/Settings reuse these numbers. */
+  --ds-composer-height:48px;
+  --ds-composer-height-narrow:44px;
+  --ds-composer-padding:0 8px 0 14px;
+  --ds-composer-gap:6px;
+  --ds-composer-radius:8px;
+  --ds-composer-max-width:640px;
+  --ds-composer-action:24px;
+
+  /* Scroll areas. */
+  --ds-scroll-pad-bottom:8px;
+  --ds-scroll-detail-padding:18px 24px 28px;
+  --ds-scroll-detail-padding-narrow:14px 14px 24px;
+
+  /* Empty state. */
+  --ds-empty-gap:10px;
+
+  /* Pulse feed. Artifact: artifacts/pulse-reference-<viewport>.json, measured from the
+     Linear project Activity feed at 7 viewports (390x844 … 2560x1440). At 1440 the feed
+     column is 776px, the Comment/Update tab is 24px high with radius 9999px and 0 8px
+     padding, the update meta line is 12px/16.8px, the avatar is 24px, and the page
+     heading is 13px/500. No horizontal overflow at any of the 7 viewports.
+     --ds-feed-title-size is the existing PulsePage h2 size (existing_code), not measured. */
+  /* The feed's width is derived, not chosen: a reading measure in ch (so it scales with
+     the reader's font size instead of pinning a pixel count) plus a gutter that grows
+     with the viewport. The column's content box IS the measure, so rules, margins and
+     text share one right edge at every size.
+
+     The cap is 60ch because ch is the width of "0", not of an average glyph: measured on
+     this type (Inter 14px) a 72ch measure produced 91 characters per line and 60ch
+     produces 75, which is the readable end of the 60-80 range. Do not raise the cap
+     without re-measuring characters per line — the two units differ by ~20%. */
+  --ds-feed-measure:clamp(44ch,40vw,60ch);
+  --ds-feed-gutter:clamp(1rem,2.2vw,2.625rem);
+  --ds-feed-width:calc(var(--ds-feed-measure) + 2 * var(--ds-feed-gutter));
+  /* shell-wide only: the metadata rail and the gap between it and the text. rem, so it
+     follows the root font size like every other measure here. */
+  --ds-feed-rail:14rem;
+  --ds-feed-rail-gap:2rem;
+  --ds-feed-tab-height:24px;
+  --ds-feed-tab-radius:9999px;
+  --ds-feed-tab-padding:0 8px;
+  --ds-feed-meta-size:12px;
+  --ds-feed-meta-line:16.8px;
+  --ds-feed-avatar-size:24px;
+  --ds-feed-page-title-size:13px;
+  --ds-feed-title-size:19px;
+
+  /* Settings shell (HOJA-421). Artifact: reference/linear/settings-artifacts/linear-settings-*.json,
+     written by scripts/ui-probes/cdp-tab.mjs against linear.app/hoja/settings/account/preferences at
+     7 viewports; SETTINGS-SPEC.md is generated from those artifacts by settings-spec.mjs. A number
+     here is a measurement, never an intention. */
+  --ds-settings-nav-width:244px;        /* artifact value.nav.w @1440 (persistent column) */
+  --ds-settings-nav-drawer-width:330px; /* artifact value.nav.w @390/@600 while off-canvas */
+  --ds-settings-nav-padding:20px 16px 14px;
+  --ds-settings-nav-row-height:28px;    /* artifact value.link.h @every viewport */
+  --ds-settings-nav-row-radius:8px;     /* artifact value.linkStyle.border-radius */
+  --ds-settings-nav-row-padding:0 8px 0 10px; /* artifact value.linkStyle.padding, right inset added */
+  --ds-settings-nav-row-gap:1px;        /* rows sit 29px apart: 28px row + 1px */
+  --ds-settings-nav-font-size:13px;     /* artifact value.linkText.font-size */
+  --ds-settings-nav-font-weight:500;    /* artifact value.linkText.font-weight */
+  --ds-settings-nav-icon-size:16px;     /* artifact value.linkIcon.w */
+  --ds-settings-group-label-size:13px;  /* artifact value.groupText.font-size */
+  --ds-settings-group-label-height:16px;/* artifact value.group.h */
+  --ds-settings-group-gap:22px;         /* label top to first row top: 135 - 113 */
+  --ds-settings-search-height:28px;     /* artifact value.search.h */
+  --ds-settings-back-height:28px;       /* artifact value.back.h */
+  --ds-settings-column-width:640px;     /* artifact value.titleChain.2.r.w: the cap, wider screens do not grow it */
+  --ds-settings-column-padding:16px;    /* artifact value.titleChain.2.style.padding-left */
+  --ds-settings-column-margin:40px;     /* artifact value.titleChain.4.style.margin-left @1440 */
+  --ds-settings-title-size:24px;        /* artifact value.titleChain.0.style.font-size */
+  --ds-settings-title-weight:500;       /* artifact value.titleChain.0.style.font-weight */
+  --ds-settings-title-line:32px;        /* artifact value.titleChain.0.style.line-height */
+  --ds-settings-section-size:15px;      /* artifact value.sectionText.font-size */
+  --ds-settings-section-weight:500;     /* artifact value.sectionText.font-weight */
+  --ds-settings-section-line:23px;      /* artifact value.sectionText.line-height */
+  --ds-settings-row-height:66px;        /* artifact value.card.h: 34px control + 16px padding, measured not derived */
+  --ds-settings-row-padding:16px;       /* artifact value.cardStyle.padding @1440 */
+  --ds-settings-row-radius:10px;        /* artifact value.cardStyle.border-radius (first row of a card) */
+  --ds-settings-main-radius:12px;       /* artifact value.mainStyle.border-radius */
+  --ds-settings-main-inset:8px;         /* artifact value.mainStyle.margin: the card inset inside the shell */
+  --ds-settings-drawer-breakpoint:881px;/* bisected: drawer at 880, persistent column at 881 */
+}
+
+/* Project health is semantic, not decorative: "at risk" and "on track" must not
+ * share --accent, which is a neutral. Both clear 4.5:1 against --bg per theme. */
+:root { --health-risk:#b73a30; --health-ok:#1a7f4b; }
+:root[data-theme=dark] { --health-risk:#ef8a7a; --health-ok:#5fd08a; }
+
+/* Chart series, fixed order (never cycled), validated for CVD separation per theme.
+ * Light slots 3-5 sit under 3:1 on the surface, so charts ship a legend and a table. */
+:root { --series-1:#2a78d6; --series-2:#eb6834; --series-3:#1baf7a; --series-4:#eda100; --series-5:#e87ba4; --series-6:#008300; --series-7:#6250d6; --series-8:#e34948; }
+:root[data-theme=dark] { --series-1:#3987e5; --series-2:#d95926; --series-3:#199e70; --series-4:#c98500; --series-5:#d55181; --series-6:#0ca30c; --series-7:#9085e9; --series-8:#e66767; }

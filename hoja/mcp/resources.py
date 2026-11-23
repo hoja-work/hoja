@@ -19,12 +19,13 @@ import json
 from typing import Any
 
 from hoja.client import GraphClient
-from hoja.config import load_config, resolve_account, resolve_token
+from hoja.config import load_config, resolve_account
+from hoja.credentials import resolve_auth
 from hoja.errors import AuthError, HojaError
 from hoja.graphql import queries
 from hoja.models.cycle import Cycle
-from hoja.models.task import Issue
 from hoja.models.project import Project
+from hoja.models.task import Issue
 from hoja.models.team import Team
 from hoja.models.user import User
 from hoja.models.workflow import WorkflowState
@@ -36,22 +37,26 @@ from hoja.models.workflow import WorkflowState
 def _client() -> GraphClient:
     """Build a GraphClient using the same resolution rules as the CLI.
 
-    Order: $HOJA_TOKEN env var (deprecated alias $LINEAR_TOKEN) > config.toml.
-    The `--token` CLI flag is not applicable here (the MCP server has no CLI
-    args for the token).
+    Order: $HOJA_TOKEN env var (deprecated alias $LINEAR_TOKEN) > OAuth
+    credentials from `hoja auth login` > a token in config.toml. The `--token`
+    CLI flag is not applicable here (the MCP server has no CLI args for it).
     """
     cfg = load_config()
     try:
-        _account_name, account_cfg = resolve_account(None, cfg)
-        token = resolve_token(None, account_cfg)
+        account_name, account_cfg = resolve_account(None, cfg)
+        resolved = resolve_auth(None, account_name, account_cfg)
     except AuthError as e:
         raise RuntimeError(
-            "hoja-mcp could not resolve an API token. "
-            "Set $HOJA_TOKEN, or run `hoja init` and put your token in "
-            "~/.config/hoja/config.toml. "
+            "hoja-mcp could not resolve credentials. "
+            "Run `hoja auth login <workspace>`, or set $HOJA_TOKEN and "
+            "$HOJA_API_URL for automation. "
             f"Underlying error: {e}"
         ) from e
-    return GraphClient(token)
+    if resolved.session is not None:
+        return GraphClient(base_url=resolved.base_url or resolved.session.base_url, credential=resolved.session)
+    if resolved.base_url:
+        return GraphClient(resolved.token, base_url=resolved.base_url)
+    return GraphClient(resolved.token)
 
 
 def _to_json(model: Any) -> str:

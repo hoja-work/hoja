@@ -46,8 +46,8 @@ Environment on the Hoja server (all required unless noted):
 |---|---|
 | `HOJA_ZOOM_CLIENT_ID` | Client ID of the Zoom General App |
 | `HOJA_ZOOM_CLIENT_SECRET` | Client secret (confidential client; HTTP Basic at the token endpoint) |
-| `HOJA_ZOOM_REDIRECT_URI` | The canonical registered callback, matched byte for byte |
-| `HOJA_ZOOM_REDIRECT_URIS` | Optional. Space- or comma-separated extra tenant callbacks that are also registered in the Zoom app |
+| `HOJA_ZOOM_REDIRECT_URI` | The registered callback of a **single-host** install (no `HOJA_TRUSTED_PUBLIC_HOST`). On the shared tier the callback is derived per request — see "Per-tenant callbacks" |
+| `HOJA_CONNECTOR_REDIRECT_HOSTS` | On the shared tier: the workspace hosts whose Zoom callback is registered. Only those hosts offer Connect; any other reports *not available on this workspace host* |
 | `HOJA_ZOOM_SECRET_TOKEN` | Optional. Zoom's event Secret Token. Accepted and held; unused, because no event subscriptions are configured |
 | `HOJA_ZOOM_API_BASE` | Optional. Defaults to `https://api.zoom.us/v2`. Set it when the account lives in a region-pinned cluster (the token response's `api_url`) |
 | `HOJA_SECRET_KEY` | Required by Hoja generally; seals the stored grant |
@@ -80,9 +80,12 @@ https://pmoell.hoja.work/api/connectors/zoom/callback
 The flow:
 
 1. `GET /api/connectors/zoom/start` runs on the tenant under its session. It derives
-   `https://<tenant>/api/connectors/zoom/callback` from the request origin and **refuses the flow
-   before Zoom** if that exact string is not in the configured allow list, because Zoom would
-   otherwise refuse it with a message the user cannot act on.
+   `https://<tenant>/api/connectors/zoom/callback` from the host the request arrived on — after
+   resolving that host to a real workspace (`organization.vanity_host`), never from a raw `Host`
+   header — and **refuses the flow before Zoom** when the host is not in
+   `HOJA_CONNECTOR_REDIRECT_HOSTS`, because Zoom would otherwise refuse it with a message the user
+   cannot act on. The refusal is `409 not available on this workspace host`, which Settings
+   renders in place of the Connect button.
 2. It mints a sealed, single-use state carrying the user, the organization, the tenant origin, an
    expiry and a nonce. There is no PKCE verifier to carry.
 3. Zoom returns the browser to that tenant's own callback. `/callback` re-verifies the seal, the

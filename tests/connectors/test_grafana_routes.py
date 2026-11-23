@@ -87,7 +87,7 @@ def test_connect_validates_live_then_stores_a_sealed_token_and_the_origin(tmp_pa
     with engine.connect() as conn:
         stored = conn.execute(select(connector_account)).mappings().one()
     assert stored["encrypted_refresh_token"] != TOKEN
-    assert decrypt_secret(stored["encrypted_refresh_token"]) == TOKEN
+    assert decrypt_secret(stored["encrypted_refresh_token"], admin["org_id"]) == TOKEN
     assert stored["external_url"] == URL
 
 
@@ -161,7 +161,7 @@ def test_reconnecting_the_same_instance_replaces_the_row(tmp_path) -> None:
     with engine.connect() as conn:
         rows = conn.execute(select(connector_account)).mappings().all()
     assert len(rows) == 1
-    assert decrypt_secret(rows[0]["encrypted_refresh_token"]).endswith("Z")
+    assert decrypt_secret(rows[0]["encrypted_refresh_token"], admin["org_id"]).endswith("Z")
 
 
 @respx.mock

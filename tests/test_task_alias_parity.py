@@ -136,3 +136,16 @@ def test_mcp_exposes_both_name_families(world) -> None:
         assert f"hoja_{op}" in names, f"missing new tool hoja_{op}"
     for op in ("issues", "issue", "issueCreate", "issueUpdate", "issueDelete", "searchIssues"):
         assert f"hoja_{op}" in names, f"the old tool hoja_{op} must keep working"
+
+
+def test_text_fields_carry_markdown_guidance(world) -> None:
+    """Agents writing through the hosted MCP see how a description or comment should read."""
+    from hoja_server.mcp_tools import build_tools
+    from hoja_server.resolvers import build_schema
+
+    tools = {t.name: t for t in build_tools(build_schema(), lambda write: {})}
+    for name, field in (("hoja_taskCreate", "description"), ("hoja_taskUpdate", "description"),
+                        ("hoja_issueCreate", "description"), ("hoja_commentCreate", "body")):
+        hint = tools[name].parameters["properties"][field].get("description", "")
+        assert hint.startswith("Markdown, shown as written."), (name, hint)
+        assert "HTML comments" in hint, (name, hint)

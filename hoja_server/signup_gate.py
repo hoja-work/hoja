@@ -65,6 +65,7 @@ class SignupReason(str, Enum):
     TURNSTILE_MISSING = "turnstile_missing"
     TURNSTILE_FAILED = "turnstile_failed"
     TURNSTILE_REPLAYED = "turnstile_replayed"
+    ALREADY_MEMBER = "already_member"
     INVITE_REQUIRED = "invite_required"
     IDENTITY_CAP_EXCEEDED = "identity_cap_exceeded"
     IP_CAP_EXCEEDED = "ip_cap_exceeded"
@@ -297,6 +298,21 @@ class SignupGate:
                 human_verified=human_verified,
                 eligibility=already,
                 created=False,
+            )
+
+        # 5c. An address that already belongs to a workspace needs that
+        #     workspace, not a second one. A tenant told us so when it invited
+        #     them; without this the gate happily forked their identity.
+        hints = store.membership_hints_for(identity.get("email"))
+        if hints:
+            return _refuse(
+                SignupState.HUMAN_VERIFIED,
+                SignupReason.ALREADY_MEMBER,
+                f"You're already a member of {hints[0]['slug']}. "
+                "Sign in there instead of creating another workspace.",
+                409,
+                google_verified=google_verified,
+                human_verified=human_verified,
             )
 
         # 6. Mode=invite: the address must have an open invitation.

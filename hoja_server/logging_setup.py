@@ -23,6 +23,13 @@ from typing import IO
 
 _HANDLER_MARKER = "_hoja_security_handler"
 
+# Loggers that are noisy at INFO and say nothing an operator can act on. The MCP
+# SDK logs "Terminating session: <id>" — and, over stateless HTTP, one per request
+# with the id ``None`` — every time a response stream ends. During an incident
+# those lines were most of the log without answering what any client did, which is
+# what ``hoja_server.ops`` exists to answer instead.
+_QUIET_LOGGERS = ("mcp.server.streamable_http", "mcp.server.streamable_http_manager")
+
 #: Query-style credentials that can reach a log line through an exception message
 #: or a hand-built string. ``t`` is the identity-handoff ticket, ``code``/``state``
 #: are OAuth parameters, the cookie names are session identifiers.
@@ -35,15 +42,93 @@ _EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 
 REDACTED = "<redacted>"
 
+# Secret VALUES an agent policy injected into a lease (WP12), watched by value so
+# that any log line mentioning one is scrubbed. The registry is process-local and
+# bounded: it exists to catch a leak through an exception message or a
+# hand-written debug line, not to be a secret store (that is ``agent_secret``,
+# sealed). Redaction is by value, so nothing here needs to know which secret it
+# was — which is also why an empty registry leaks nothing it was not given.
+_WATCHED: list[str] = []
+_WATCHED_SET: set[str] = set()
+MAX_WATCHED_SECRETS = 256
+
+
+def watch_secret(value: str | None) -> None:
+    """Register one secret value so log lines containing it are scrubbed."""
+    if not value or value in _WATCHED_SET:
+        return
+    if len(_WATCHED) >= MAX_WATCHED_SECRETS:
+        # Bounded on purpose: a registry that grows without limit would be a
+        # memory leak in every long-lived server process.
+        return
+    _WATCHED.append(value)
+    _WATCHED_SET.add(value)
+
+
+def watch_secrets(values) -> None:
+    for value in values or ():
+        watch_secret(value)
+
+
+def forget_secrets() -> None:
+    """Drop every watched value. Used by tests and by a fresh worker start."""
+    _WATCHED.clear()
+    _WATCHED_SET.clear()
+
+
+def _scrub_watched(text: str) -> str:
+    if not _WATCHED or not text:
+        return text
+    # Longest first: a short secret that is a substring of a longer one must not
+    # win and leave the tail of the longer value in the line.
+    for value in sorted(_WATCHED, key=len, reverse=True):
+        if value in text:
+            text = text.replace(value, REDACTED)
+    return text
+
+
+def scrub_secrets(text: str) -> str:
+    """Scrub watched secret values only.
+
+    Deliberately narrower than :func:`redact`, which also masks anything
+    credential-shaped and every email. A stored audit detail that legitimately
+    names an email must keep it; a stored detail that quotes an injected secret
+    must not, and that is exactly the difference between the two functions.
+    """
+    return _scrub_watched(text)
+
 
 def redact(text: str) -> str:
     """Remove credential-shaped values from a message.
 
     Belt and braces: callers are expected not to log secrets, and this catches the
-    case where one arrives through a redirect target or an exception.
+    case where one arrives through a redirect target or an exception. Watched
+    secret values (an agent lease's injected secrets, WP12) are scrubbed too,
+    because their shape carries no marker the regex could recognise.
     """
     text = _SECRET_PARAM.sub(lambda m: f"{m.group(1)}={REDACTED}", text)
-    return _EMAIL.sub(REDACTED, text)
+    return _scrub_watched(_EMAIL.sub(REDACTED, text))
+
+
+class SecretFilter(logging.Filter):
+    """Scrub watched secret values out of the record itself, before any handler.
+
+    A formatter-only redaction leaves ``caplog``, a JSON handler or a second
+    handler on another logger holding the raw value. Rewriting ``msg`` and
+    ``args`` on the record is what makes the promise hold for every sink at once.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not _WATCHED:
+            return True
+        try:
+            message = record.getMessage()
+        except Exception:  # a broken format string is not this filter's problem
+            return True
+        scrubbed = _scrub_watched(message)
+        if scrubbed != message:
+            record.msg, record.args = scrubbed, ()
+        return True
 
 
 class RedactingFormatter(logging.Formatter):
@@ -68,9 +153,17 @@ def configure_logging(
     """
     logger = logging.getLogger("hoja_server")
     logger.setLevel(logging.getLevelName(level.upper()))
+    for name in _QUIET_LOGGERS:
+        # Only the level is raised: the handlers a deployment installed stay where
+        # they are, so a genuine warning from the SDK is still delivered.
+        logging.getLogger(name).setLevel(logging.WARNING)
     # Do not hand records to the root logger: it has no handlers, and the last
     # resort handler only emits WARNING and above.
     logger.propagate = False
+    if not any(isinstance(f, SecretFilter) for f in logger.filters):
+        # Before the handler, so every sink that later receives this record
+        # (a second handler, caplog, a JSON exporter) sees the scrubbed message.
+        logger.addFilter(SecretFilter())
     if not any(getattr(h, _HANDLER_MARKER, False) for h in logger.handlers):
         handler = logging.StreamHandler(stream or sys.stderr)
         handler.setFormatter(

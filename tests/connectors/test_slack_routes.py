@@ -143,7 +143,7 @@ def test_callback_stores_the_sealed_user_token_and_lists_the_workspace(tmp_path)
                 follow_redirects=False,
             )
         assert res.status_code == 302
-        assert res.headers["location"] == "/?connector=slack-connected"
+        assert res.headers["location"] == "/workspace/settings/connections?connector=slack-connected"
         listing = client.get(
             "/api/connectors/accounts",
             headers={"Authorization": f"Bearer {admin['token']}"},
@@ -159,7 +159,7 @@ def test_callback_stores_the_sealed_user_token_and_lists_the_workspace(tmp_path)
     rows = _account_rows(engine, admin["org_id"])
     assert len(rows) == 1
     assert rows[0]["encrypted_refresh_token"] != "xoxp-fixture"
-    assert decrypt_secret(rows[0]["encrypted_refresh_token"]) == "xoxp-fixture"
+    assert decrypt_secret(rows[0]["encrypted_refresh_token"], rows[0]["organization_id"]) == "xoxp-fixture"
 
 
 def test_callback_refuses_a_bot_token_grant(tmp_path) -> None:
@@ -229,7 +229,8 @@ def test_callback_rejects_an_expired_state(tmp_path) -> None:
                 "exp": int(time.time()) - 1,
                 "nonce": "n",
             }
-        )
+        ),
+        admin["org_id"],
     )
     with TestClient(app) as client:
         res = client.get(
@@ -292,7 +293,7 @@ def test_revoke_calls_slack_and_clears_the_stored_token(tmp_path) -> None:
                 provider=SLACK_PROVIDER,
                 external_account="Hoja",
                 scopes=GRANTED_SCOPES,
-                encrypted_refresh_token=encrypt_secret("xoxp-fixture"),
+                encrypted_refresh_token=encrypt_secret("xoxp-fixture", admin["org_id"]),
                 status="active",
                 created_at="2026-11-09T00:00:00+00:00",
                 updated_at="2026-11-09T00:00:00+00:00",
@@ -326,7 +327,7 @@ def test_revoke_reports_a_slack_failure_instead_of_claiming_success(tmp_path) ->
                 provider=SLACK_PROVIDER,
                 external_account="Hoja",
                 scopes=GRANTED_SCOPES,
-                encrypted_refresh_token=encrypt_secret("xoxp-fixture"),
+                encrypted_refresh_token=encrypt_secret("xoxp-fixture", admin["org_id"]),
                 status="active",
                 created_at="2026-11-09T00:00:00+00:00",
                 updated_at="2026-11-09T00:00:00+00:00",
@@ -367,7 +368,7 @@ def test_a_slack_only_account_alone_binds_the_agent_toolset(tmp_path, monkeypatc
                 provider=SLACK_PROVIDER,
                 external_account="Hoja",
                 scopes=GRANTED_SCOPES,
-                encrypted_refresh_token=encrypt_secret("xoxp-fixture"),
+                encrypted_refresh_token=encrypt_secret("xoxp-fixture", admin["org_id"]),
                 status="active",
                 created_at="2026-11-09T00:00:00+00:00",
                 updated_at="2026-11-09T00:00:00+00:00",

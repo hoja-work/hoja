@@ -66,9 +66,9 @@ def _add_zoom_account(engine, org: str, *, owner: str | None, email: str = "luis
                 provider="zoom",
                 external_account=email,
                 scopes="user:read:user",
-                encrypted_refresh_token=encrypt_secret("stored-refresh"),
+                encrypted_refresh_token=encrypt_secret("stored-refresh", org),
                 # Expired on purpose: the grant must refresh on use.
-                encrypted_access_token=encrypt_secret("stale-access"),
+                encrypted_access_token=encrypt_secret("stale-access", org),
                 access_token_expires_at="0",
                 status="active",
                 created_at="2026-01-01T00:00:00+00:00",

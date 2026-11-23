@@ -41,6 +41,9 @@ def test_admin_sees_archive_and_delete_on_issue_and_can_archive_initiative(serve
         page.get_by_role("button", name="Task options").click()
         # LinMenu rows are role="menuitem", not buttons (frontend/src/graph/shared.tsx:239).
         page.get_by_role("menuitem", name="Delete task").wait_for(timeout=15000)
-        page.goto(f"{server}/workspace/initiatives")
-        page.get_by_role("button", name="Archive").first.wait_for(timeout=15000)
+        # Archive lives in the initiative page's options menu (initiatives/InitiativeDetail.tsx).
+        initiative_id = initiative["data"]["initiativeCreate"]["initiative"]["id"]
+        page.goto(f"{server}/workspace/initiative/{initiative_id}")
+        page.get_by_role("button", name="Initiative options").first.click(timeout=15000)
+        page.get_by_role("menuitem", name="Archive initiative").wait_for(timeout=15000)
         browser.close()

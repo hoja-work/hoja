@@ -60,13 +60,21 @@ and omitted `HOJA_GOOGLE_REDIRECT_URI` from the install steps.
 
 ## Redirect URI
 
-`HOJA_GOOGLE_REDIRECT_URI` is used verbatim in the authorization request; it is not derived from
-the incoming `Host`. Each deployment therefore has exactly one redirect URI, and a shared
-control-plane callback cannot serve several tenants: the `state` is sealed with the tenant's own
-`HOJA_SECRET_KEY`, so another host could not decrypt it.
+Under ADR-003 one app serves every organization, so the redirect is **derived per request** from
+the host the request arrived on, after that host has been resolved to a real workspace in
+`organization.vanity_host` (or the canonical `HOJA_TRUSTED_PUBLIC_HOST`). A raw `Host` header is
+never trusted on its own.
 
-Google allows roughly 100 redirect URIs per client, which caps one client at about 100 tenants
-(fewer once custom domains are added). Beyond that, use one client per tenant or a broker.
+`HOJA_CONNECTOR_REDIRECT_HOSTS` lists the hosts whose callbacks are registered on the provider app;
+only those hosts get a Connect button. Any other host reports *not available on this workspace
+host* in Settings instead of sending the browser to a consent screen that fails with
+`redirect_uri_mismatch`.
+
+`HOJA_GOOGLE_REDIRECT_URI` is still read, but only by a **single-host install** — a deployment with no
+`HOJA_TRUSTED_PUBLIC_HOST`. There is exactly one host in that shape, so there is nothing to derive.
+
+Google allows roughly 100 redirect URIs per client, which caps one client at about 100 workspace
+hosts (fewer once custom domains are added).
 
 ## Scopes
 
@@ -281,9 +289,16 @@ forever.
 
 ## Schema
 
-Migration revision 23 adds `connector_account` (connected accounts, encrypted refresh token,
-status) and `connector_action` (pending and completed write actions). Revision 25 adds
-`oauth_state_nonce`, which makes each OAuth `state` single-use.
+Revision 23 adds `connector_account` (connected accounts, encrypted refresh token, status) and
+`connector_action` (pending and completed write actions). Revisions 48 and 49 add the access-token
+half of a rotating grant and the provider installation id. Revision 50 adds **connector_oauth_state**
+— the single-use OAuth nonce ledger, carrying `organization_id` so it is under row-level security
+like every other connector table. The platform table `oauth_state_nonce` stays global because an MCP
+OAuth code is consumed before a tenant is known; a connector flow always starts inside one workspace,
+so its nonce belongs to that workspace.
+
+The grant itself is sealed per organization (HKDF key + `organization_id` as AAD, `secrets_box`), so
+a ciphertext copied into another organization's row does not open.
 
 ## Status
 

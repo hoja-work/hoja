@@ -155,6 +155,7 @@ def _team_keys(engine: Engine, organization_id: str) -> frozenset[str]:
 def _issue_by_identifier(engine: Engine, organization_id: str, identifier: str):
     """Resolve one identifier to an issue id, or None."""
     from hoja_server.db import issue
+    from hoja_server.identifiers import issue_ref_clause
 
     with engine.connect() as conn:
         row = conn.execute(
@@ -162,7 +163,9 @@ def _issue_by_identifier(engine: Engine, organization_id: str, identifier: str):
             .where(
                 and_(
                     issue.c.organization_id == organization_id,
-                    issue.c.identifier == identifier,
+                    # A GitHub link or commit message may quote the retired
+                    # flat identifier; the alias ledger keeps it resolvable.
+                    issue_ref_clause(organization_id, identifier),
                 )
             )
             .limit(1)
@@ -197,6 +200,18 @@ def _links_for_pull_request(engine: Engine, org_id: str, payload: dict) -> int:
     pr = payload.get("pull_request") or {}
     if not isinstance(pr, dict):
         return 0
+    # The canonical key is "<owner>/<repo>#<number>", the same string a pasted GitHub URL
+    # produces (github_linking.parse_github_url) and the same one the Reviews pane parses to
+    # show a PR number. GitHub's numeric pull-request id used to be written here instead, so
+    # one pull request arriving through the webhook and through a pasted URL produced two
+    # unrelated rows and the pane lost the number.
+    repo = ((pr.get("base") or {}).get("repo") or {}).get("full_name") or \
+        (payload.get("repository") or {}).get("full_name")
+    number = pr.get("number")
+    if repo and number is not None:
+        external_id = f"{repo}#{number}"
+    else:
+        external_id = str(pr.get("id") or number or "")
     keys = _team_keys(engine, org_id)
     if not keys:
         return 0
@@ -220,7 +235,7 @@ def _links_for_pull_request(engine: Engine, org_id: str, payload: dict) -> int:
                 "organization_id": org_id,
                 "issue_id": issue_id,
                 "kind": "pr",
-                "external_id": str(pr.get("id") or pr.get("number") or ""),
+                "external_id": external_id,
                 "url": str(pr.get("html_url") or ""),
                 "title": str(pr.get("title") or ""),
                 "state": state,

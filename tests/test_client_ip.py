@@ -3,8 +3,8 @@
 HOJA-43: ``_client_ip`` took the *leftmost* ``x-forwarded-for`` entry whenever
 the peer was a configured proxy. nginx's ``$proxy_add_x_forwarded_for`` appends,
 so that entry is whatever the caller typed: rotating it per request meant the
-per-IP budget was never reached. Only the login limiter exists in OSS, so the
-invite-probe half of the cloud issue has no endpoint here.
+per-IP budget was never reached, for the login limiter and the invite probe
+alike.
 
 These are behavioural tests: they drive the real handlers and read the status
 codes, so they fail if the bucket key changes even when the helper still looks
@@ -109,6 +109,24 @@ def test_an_untrusted_peer_cannot_use_the_forwarded_header(tmp_path) -> None:
     for n in range(LOGIN_LIMIT):
         assert _fail_login(client, f"10.0.0.{n}") == 401
     assert _fail_login(client, "10.0.0.250") == 429
+
+
+def test_the_invite_probe_shares_the_same_bucket_key(tmp_path) -> None:
+    """The probe limiter is the other caller of _client_ip; rotating must not work."""
+    client = _client(tmp_path, proxy=CF_EDGE, peer=CF_EDGE, name="probe.db")
+    for n in range(20):
+        response = client.post(
+            "/auth/invite/probe",
+            json={"code": f"nope-{n}"},
+            headers={"x-forwarded-for": f"10.5.5.{n}, {REAL_CLIENT}"},
+        )
+        assert response.status_code == 404, response.text
+    blocked = client.post(
+        "/auth/invite/probe",
+        json={"code": "nope-final"},
+        headers={"x-forwarded-for": f"10.5.5.200, {REAL_CLIENT}"},
+    )
+    assert blocked.status_code == 429, blocked.text
 
 
 def test_the_forwarded_walk_ignores_an_unparsable_chain() -> None:

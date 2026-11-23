@@ -10,6 +10,7 @@ const DISPLAY_LABELS: Record<string, string> = {
   'Recent issues': 'Recent tasks',
   'New issues': 'New tasks',
   'Favorite views': 'Saved views',
+  'Issue detail': 'Task',
 };
 
 export function displayLabel(view: string): string {

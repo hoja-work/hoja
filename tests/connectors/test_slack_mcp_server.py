@@ -224,7 +224,7 @@ async def test_the_shared_toolset_serves_slack_for_a_connected_workspace(
                 provider="slack",
                 external_account="Hoja",
                 scopes="channels:read groups:read",
-                encrypted_refresh_token=encrypt_secret("xoxp-fixture"),
+                encrypted_refresh_token=encrypt_secret("xoxp-fixture", admin["org_id"]),
                 status="active",
                 created_at="2026-11-09T00:00:00+00:00",
                 updated_at="2026-11-09T00:00:00+00:00",

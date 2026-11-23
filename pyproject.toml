@@ -45,6 +45,10 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
     "pytest-cov>=5.0",
+    # The local check (scripts/check.sh) shards the suite across one worker per
+    # core; each worker gets its own throwaway database, so the suite stays
+    # isolated while the wall clock drops. Test-only: nothing imports xdist.
+    "pytest-xdist>=3.6",
     "ruff>=0.7",
     "mypy>=1.13",
     "respx>=0.21",
@@ -95,6 +99,9 @@ agent = [
 ]
 
 [tool.uv.sources]
+# uv resolves these editable path packages; pip does not read this table, so
+# every pip-based install must also pass each connector path explicitly
+# (Dockerfile, scripts/dev-tailscale.sh).
 google-workspace-connector = { path = "connectors/google_workspace", editable = true }
 notion-connector = { path = "connectors/notion", editable = true }
 slack-connector = { path = "connectors/slack", editable = true }
@@ -155,3 +162,7 @@ disallow_untyped_defs = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# A full run writes ~1,500 SQLite files (~3 GB) under /tmp, which is RAM-backed on the
+# dev box; pytest's default keeps three runs. Keep only failing tests' directories.
+tmp_path_retention_policy = "failed"
+tmp_path_retention_count = 1

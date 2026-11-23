@@ -5,12 +5,12 @@ FastAPI middleware in app.py. Every resolver reads ctx and stays org-scoped.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import base64
 import binascii
 import json
+import logging
+from datetime import datetime, timedelta, timezone
 
-from graphql import GraphQLError
 from ariadne import (
     MutationType,
     ObjectType,
@@ -18,8 +18,19 @@ from ariadne import (
     ScalarType,
     make_executable_schema,
 )
+from graphql import GraphQLError
+
+from hoja_server import mail_events
+from hoja_server import notifications
+from hoja_server import audit
+
+logger = logging.getLogger(__name__)
 from hoja_server import extensions
+from hoja_server import agent_members
+from hoja_server import permissions
+from hoja_server import store as store_module
 from hoja_server.deployment import single_org_mode
+from hoja_server.github_linking import parse_github_url
 
 query = QueryType()
 mutation = MutationType()
@@ -30,14 +41,26 @@ Team = ObjectType("Team")
 Initiative.set_field("owner", lambda obj, info: info.context["store"].get_user(info.context["org_id"], obj.get("_owner_id")) if obj.get("_owner_id") else None)
 Initiative.set_field("creator", lambda obj, info: info.context["store"].get_user(info.context["org_id"], obj.get("_creator_id")) if obj.get("_creator_id") else None)
 Issue = ObjectType("Issue")
+# Label groups (revision 96): a label's group and a group's labels, on both vocabularies.
+IssueLabel = ObjectType("IssueLabel")
+TaskLabel = ObjectType("TaskLabel")
+for _label_type in (IssueLabel, TaskLabel):
+    _label_type.set_field("parent", lambda obj, info: info.context["store"].label_by_id(
+        info.context["org_id"], obj.get("parentId")))
+    _label_type.set_field("children", lambda obj, info: info.context["store"].label_children(
+        info.context["org_id"], obj["id"]) if obj.get("isGroup") else [])
 IssueActivity = ObjectType("IssueActivity")
 MyIssueActivity = ObjectType("MyIssueActivity")
 Project = ObjectType("Project")
 ProjectUpdate = ObjectType("ProjectUpdate")
+InitiativeUpdate = ObjectType("InitiativeUpdate")
 Comment = ObjectType("Comment")
 WorkflowState = ObjectType("WorkflowState")
+Organization = ObjectType("Organization")
+Organization.set_field("origin", lambda obj, info: obj.get("origin") or info.context["store"].workspace_origin(obj["id"]))
 Cycle = ObjectType("Cycle")
 Attachment = ObjectType("Attachment")
+GithubLink = ObjectType("GithubLink")
 
 datetime_scalar = ScalarType("DateTime")
 timeless_scalar = ScalarType("TimelessDate")
@@ -119,6 +142,7 @@ def _user_row(info, user_id):
 def _prime_issue_nodes(info, nodes) -> None:
     """Per-row lookups of an issue page (labels, subscribers, people) become one query each."""
     ids = [n["id"] for n in nodes if n]
+    _prime(info, "state", [n.get("_state_id") for n in nodes if n])
     _prime(info, "issue_labels", ids)
     _prime(info, "issue_subscribers", ids)
     _prime(info, "user_row", [n.get(k) for n in nodes if n for k in ("_assignee_id", "_creator_id")])
@@ -192,7 +216,10 @@ def _decode_activity_cursor(cursor):
 
 
 def _project_update_cursor(row):
-    raw = json.dumps([row["created_at"], row["id"]], separators=(",", ":")).encode()
+    # Feed cursors encode the sort key: updated_at where the row has one (change
+    # feeds), created_at where the caller passes it explicitly (projects, initiatives).
+    sort_key = row.get("updated_at") or row["created_at"]
+    raw = json.dumps([sort_key, row["id"]], separators=(",", ":")).encode()
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
@@ -210,21 +237,42 @@ def _decode_project_update_cursor(cursor, label="project update"):
 
 # ----------------------------------------------------------------- Query
 @query.field("inboxNotifications")
-def r_inbox_notifications(_, info, first=50, after=None, unreadOnly=False, archived=False):
+def r_inbox_notifications(_, info, first=50, after=None, unreadOnly=False, archived=False,
+                          snoozed=False):
     store, _w, org, uid = _ctx(info)
     first = _page_size(first)
     cursor = _decode_activity_cursor(after)
-    rows = store.inbox_notifications(org, uid, cursor, first + 1,
-                                     unread_only=unreadOnly, archived=archived)
-    nodes = [dict(row, createdAt=row["created_at"], readAt=row["read_at"],
-                  archivedAt=row["archived_at"], _actor_id=row["actor_id"],
-                  _issue_id=row["issue_id"]) for row in rows[:first]]
-    _prime(info, "issue_obj", [n["_issue_id"] for n in nodes])
+    rows = store.inbox_notifications(org, uid, cursor, first + 1, unread_only=unreadOnly,
+                                     archived=archived, snoozed=snoozed)
+    page = rows[:first]
+    # A row whose subject the viewer can no longer see (a task or project behind a
+    # team made private to them) is left out rather than shown with a blank subject.
+    issue_ids = list({row["issue_id"] for row in page if row.get("issue_id")})
+    visible = store.issues_by_ids(org, issue_ids, viewer_id=uid) if issue_ids else {}
+    _prime_issue_nodes(info, list(visible.values()))
+    entry = _batch_entry(info, "issue_obj")
+    if entry is not None:
+        entry["loaded"].update(visible)
+    other_visible = store.visible_inbox_subjects(org, uid, page)
+    nodes = []
+    for row in page:
+        subject_type, subject_id = notifications.subject_of(row)
+        if subject_type is None or subject_id not in (visible if subject_type == "issue"
+                                                       else other_visible):
+            continue
+        nodes.append(dict(row, createdAt=row["created_at"], readAt=row["read_at"],
+                          archivedAt=row["archived_at"], snoozedUntil=row.get("snoozed_until"),
+                          subjectType=subject_type, subjectId=subject_id,
+                          _actor_id=row["actor_id"], _issue_id=row.get("issue_id"),
+                          _comment_id=row.get("comment_id")))
     _prime(info, "user_row", [n["_actor_id"] for n in nodes])
+    _prime(info, "inbox_comment", [n["_comment_id"] for n in nodes])
+    for kind in ("project", "initiative", "cycle"):
+        _prime(info, f"inbox_{kind}", [n.get(f"{kind}_id") for n in nodes])
     return {"nodes": nodes, "pageInfo": {
         "hasNextPage": len(rows) > first, "hasPreviousPage": after is not None,
-        "startCursor": _activity_cursor(nodes[0]) if nodes else None,
-        "endCursor": _activity_cursor(nodes[-1]) if nodes else None,
+        "startCursor": _activity_cursor(page[0]) if page else None,
+        "endCursor": _activity_cursor(page[-1]) if page else None,
     }}
 
 
@@ -234,16 +282,90 @@ def r_inbox_unread_count(_, info):
     return store.inbox_unread_count(org, uid)
 
 
+def _snooze_until(until):
+    """Normalize a client instant to the stored UTC ISO form, so string order is time order."""
+    if until in (None, ""):
+        return None
+    from datetime import datetime, timezone
+    try:
+        parsed = datetime.fromisoformat(str(until).replace("Z", "+00:00"))
+    except ValueError:
+        raise GraphQLError("until must be an ISO-8601 date-time.",
+                           extensions={"code": "BAD_USER_INPUT", "field": "until"}) from None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat()
+
+
 @mutation.field("notificationMarkRead")
 def m_notification_mark_read(_, info, id):
     store, _w, org, uid = _ctx(info)
     return store.inbox_mark(org, uid, id, "read_at")
 
 
+@mutation.field("notificationMarkUnread")
+def m_notification_mark_unread(_, info, id):
+    store, _w, org, uid = _ctx(info)
+    return store.inbox_clear(org, uid, id, "read_at")
+
+
 @mutation.field("notificationArchive")
 def m_notification_archive(_, info, id):
     store, _w, org, uid = _ctx(info)
     return store.inbox_mark(org, uid, id, "archived_at")
+
+
+@mutation.field("notificationUnarchive")
+def m_notification_unarchive(_, info, id):
+    store, _w, org, uid = _ctx(info)
+    return store.inbox_clear(org, uid, id, "archived_at")
+
+
+@mutation.field("notificationSnooze")
+def m_notification_snooze(_, info, id, until=None):
+    store, _w, org, uid = _ctx(info)
+    return store.inbox_snooze(org, uid, id, _snooze_until(until))
+
+
+@mutation.field("notificationsMarkReadForIssue")
+def m_notifications_mark_read_for_issue(_, info, issueId, read=True):
+    store, _w, org, uid = _ctx(info)
+    return store.inbox_issue_update(org, uid, issueId, "read", read=read)
+
+
+@mutation.field("notificationsArchiveForIssue")
+def m_notifications_archive_for_issue(_, info, issueId):
+    store, _w, org, uid = _ctx(info)
+    return store.inbox_issue_update(org, uid, issueId, "archive")
+
+
+@mutation.field("notificationsSnoozeForIssue")
+def m_notifications_snooze_for_issue(_, info, issueId, until=None):
+    store, _w, org, uid = _ctx(info)
+    return store.inbox_issue_update(org, uid, issueId, "snooze", until=_snooze_until(until))
+
+
+@mutation.field("notificationsArchiveAllRead")
+def m_notifications_archive_all_read(_, info):
+    store, _w, org, uid = _ctx(info)
+    return store.inbox_archive_all_read(org, uid)
+
+
+@mutation.field("githubLinkAdd")
+def m_github_link_add(_, info, issueId, url):
+    """Attach a GitHub issue, PR, commit or release URL to a task as a reference."""
+    store, _w, org, _uid = _ctx(info)
+    reference = parse_github_url(url)
+    if reference is None:
+        raise GraphQLError(
+            "Not a GitHub issue, pull request, commit or release URL.",
+            extensions={"code": "BAD_USER_INPUT", "field": "url"})
+    link = store.github_link_add(
+        org, issueId, kind=reference.kind, external_id=reference.external_id,
+        url=reference.url, title=reference.title)
+    if link is None:
+        raise GraphQLError("Issue not found.", extensions={"code": "NOT_FOUND", "field": "issueId"})
+    return link
 
 
 @mutation.field("notificationMarkAllRead")
@@ -255,9 +377,45 @@ def m_notification_mark_all_read(_, info):
 InboxNotification = ObjectType("InboxNotification")
 
 
+@GithubLink.field("issue")
+def github_link_issue(obj, info):
+    """The task a link belongs to, batched with the rest of the page."""
+    return _issue_obj(info, obj["_issue_id"])
+
+
 @InboxNotification.field("issue")
 def inbox_issue(obj, info):
-    return _issue_obj(info, obj["_issue_id"])
+    return _issue_obj(info, obj["_issue_id"]) if obj.get("_issue_id") else None
+
+
+def _inbox_subject(kind):
+    def resolve(obj, info):
+        sid = obj.get(f"{kind}_id")
+        if not sid:
+            return None
+        store, _w, org, uid = _ctx(info)
+        return _batched(info, f"inbox_{kind}", sid,
+                        lambda ids: store.subjects_by_ids(org, kind, ids, viewer_id=uid),
+                        lambda: store.subjects_by_ids(org, kind, [sid], viewer_id=uid).get(sid))
+    return resolve
+
+
+for _kind in ("project", "initiative", "cycle"):
+    InboxNotification.set_field(_kind, _inbox_subject(_kind))
+
+
+@InboxNotification.field("projectUpdate")
+def inbox_project_update(obj, info):
+    store, _w, org, _uid = _ctx(info)
+    ref = obj.get("project_update_id")
+    return store.project_update_by_id(org, ref) if ref else None
+
+
+@InboxNotification.field("initiativeUpdate")
+def inbox_initiative_update(obj, info):
+    store, _w, org, _uid = _ctx(info)
+    ref = obj.get("initiative_update_id")
+    return store.initiative_update_by_id(org, ref) if ref else None
 
 
 def _issue_obj(info, issue_id):
@@ -270,6 +428,29 @@ def _issue_obj(info, issue_id):
 
     return _batched(info, "issue_obj", issue_id, load_many,
                     lambda: store.issue_by_id_or_identifier(org, issue_id, viewer_id=uid))
+
+
+@InboxNotification.field("data")
+def inbox_data(obj, _info):
+    raw = obj.get("data")
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+@InboxNotification.field("comment")
+def inbox_comment(obj, info):
+    """The comment a comment or mention notification points at; null once deleted."""
+    cid = obj.get("_comment_id")
+    if not cid:
+        return None
+    store, _w, org, _uid = _ctx(info)
+    return _batched(info, "inbox_comment", cid,
+                    lambda ids: store.comments_by_ids(org, ids),
+                    lambda: store.comments_by_ids(org, [cid]).get(cid))
 
 
 @InboxNotification.field("actor")
@@ -290,6 +471,24 @@ def r_my_api_keys(_, info):
     return store.list_api_keys(org, uid)
 
 
+@query.field("auditEvents")
+def r_audit_events(_, info, first=50, after=None, actorId=None, action=None):
+    """The organization's audit ledger, admin only, paged, never unbounded.
+
+    An explicit admin check rather than a capability: reading the ledger is not
+    a grant anyone hands out, and a non-admin is refused instead of being told
+    the rows exist by an empty connection.
+    """
+    store, _w, org, uid = _ctx(info)
+    actor = store.get_user(org, uid)
+    if not actor or not actor.get("admin"):
+        raise GraphQLError("Only workspace admins can read the audit log.",
+                           extensions={"code": "FORBIDDEN"})
+    return audit.read_events(store.engine, org, first=first,
+                             after=int(after) if after not in (None, "") else None,
+                             actor_id=actorId, action=action)
+
+
 def _preference_payload(store, uid, *, success=True):
     values = store.user_preferences(uid)
     if values is None:
@@ -304,19 +503,22 @@ def r_my_preferences(_, info):
     return _preference_payload(store, uid)
 
 
+def _notification_preferences(store, uid, success):
+    """One boolean per kind: the person's choice, else the workspace default, else on."""
+    return {"success": success, **store.notification_kinds_enabled(uid)}
+
+
 @query.field("myNotificationPreferences")
 def r_my_notification_preferences(_, info):
     store, _w, _org, uid = _ctx(info)
-    prefs = store.user_preferences(uid) or {}
-    return {"success": True,
-            "issueCreated": prefs.get("notification:issueCreated", "true") == "true",
-            "issueUpdated": prefs.get("notification:issueUpdated", "true") == "true"}
+    return _notification_preferences(store, uid, True)
 
 
 @query.field("issueLabelSettings")
 def r_issue_label_settings(_, info):
-    store, _w, org, _uid = _ctx(info)
-    return store.labels(org)
+    # Scoped like issueLabels: a private team's labels are invisible to non-members (HOJA-735).
+    store, _w, org, uid = _ctx(info)
+    return store.labels(org, viewer_id=uid)
 
 
 @query.field("myWorkspaces")
@@ -340,7 +542,7 @@ def r_organization_members(_, info, first=100):
 
 @query.field("archivedMembers")
 def r_archived_members(_, info):
-    """Removed members, visible only to admins so a removal can be audited and undone."""
+    """Removed members, admin-only, so a removal can be audited and undone."""
     store, _w, org, uid = _ctx(info)
     actor = store.get_user(org, uid)
     if not actor or not actor.get("admin"):
@@ -421,10 +623,10 @@ def r_projects(_, info, filter=None, first=50, after=None):
 
 @query.field("initiatives")
 def r_initiatives(_, info, first=50, after=None, status=None):
-    store, _w, org, _uid = _ctx(info)
+    store, _w, org, uid = _ctx(info)
     first = _page_size(first)
     cursor = _decode_project_update_cursor(after, "initiative")
-    rows = store.initiatives(org, after=cursor, status=status, limit=first + 1)
+    rows = store.initiatives(org, after=cursor, status=status, limit=first + 1, viewer_id=uid)
     nodes = rows[:first]
     result = _conn(nodes)
     result["pageInfo"].update({"hasNextPage": len(rows) > first, "hasPreviousPage": after is not None, "startCursor": _project_update_cursor({"created_at": nodes[0]["createdAt"], "id": nodes[0]["id"]}) if nodes else None, "endCursor": _project_update_cursor({"created_at": nodes[-1]["createdAt"], "id": nodes[-1]["id"]}) if nodes else None})
@@ -432,8 +634,8 @@ def r_initiatives(_, info, first=50, after=None, status=None):
 
 @query.field("initiative")
 def r_initiative(_, info, id):
-    store, _w, org, _uid = _ctx(info)
-    return store.initiative_by_id(org, id)
+    store, _w, org, uid = _ctx(info)
+    return store.initiative_by_id(org, id, viewer_id=uid)
 
 
 @query.field("projectUpdates")
@@ -446,6 +648,28 @@ def r_project_updates(_, info, first=50, after=None, filter=None):
     rows = store.project_updates(org, after=cursor, project_id=project_id, limit=first + 1)
     nodes = rows[:first]
     _prime(info, "project", [n.get("_project_id") for n in nodes])
+    _prime(info, "user_row", [n.get("_actor_id") for n in nodes])
+    result = _conn(nodes)
+    result["pageInfo"].update({
+        "hasNextPage": len(rows) > first, "hasPreviousPage": after is not None,
+        "startCursor": _project_update_cursor(nodes[0]) if nodes else None,
+        "endCursor": _project_update_cursor(nodes[-1]) if nodes else None,
+    })
+    return result
+
+
+@query.field("initiativeUpdates")
+def r_initiative_updates(_, info, first=50, after=None, filter=None):
+    store, _w, org, uid = _ctx(info)
+    first = _page_size(first)
+    initiative_filter = (filter or {}).get("initiative") or {}
+    initiative_id = (initiative_filter.get("id") or {}).get("eq")
+    cursor = _decode_project_update_cursor(after, "initiative update")
+    rows = store.initiative_updates(org, after=cursor, initiative_id=initiative_id, limit=first + 1)
+    # Updates of an initiative led by a private team the viewer is not on stay hidden.
+    visible = {i["id"] for i in store.initiatives(org, limit=100000, viewer_id=uid)}
+    rows = [r for r in rows if r.get("initiative_id", r.get("_initiative_id")) in visible]
+    nodes = rows[:first]
     _prime(info, "user_row", [n.get("_actor_id") for n in nodes])
     result = _conn(nodes)
     result["pageInfo"].update({
@@ -516,12 +740,23 @@ def r_labels(_, info, filter=None, first=100, after=None):
 
 
 @query.field("searchIssues")
-def r_search(_, info, term, first=20):
+def r_search(_, info, term, first=20, after=None):
     store, _w, org, uid = _ctx(info)
     first = _page_size(first, 20)
-    nodes = store.search_issues(org, term, viewer_id=uid)[:first]
+    cursor = _decode_issue_cursor(after)
+    rows = store.search_issues(org, term, viewer_id=uid, after=cursor, limit=first + 1)
+    nodes = rows[:first]
     _prime_issue_nodes(info, nodes)
-    return _conn(nodes)
+    result = _conn(nodes)
+    # hasNextPage is only honest if the cursor it ships can be passed back as
+    # `after`; agent_chat.py tells the reader to do exactly that.
+    result["pageInfo"].update({
+        "hasNextPage": len(rows) > first,
+        "hasPreviousPage": after is not None,
+        "startCursor": _issue_cursor(nodes[0], "updatedAt") if nodes else None,
+        "endCursor": _issue_cursor(nodes[-1], "updatedAt") if nodes else None,
+    })
+    return result
 
 
 @query.field("rateLimitStatus")
@@ -604,8 +839,13 @@ def reference_team(obj, info):
 @Issue.field("state")
 def i_state(obj, info):
     store, _w, org, _uid = _ctx(info)
-    return _memo(info, "state", (org, obj["_state_id"]),
-                 lambda: store.state_by_id(org, obj["_state_id"])) if obj.get("_state_id") else None
+    state_id = obj.get("_state_id")
+    if not state_id:
+        return None
+    return _memo(info, "state", (org, state_id),
+                 lambda: _batched(info, "state", state_id,
+                                  lambda ids: store.states_by_ids(org, ids),
+                                  lambda: store.state_by_id(org, state_id)))
 
 
 @Issue.field("assignee")
@@ -620,6 +860,18 @@ def i_creator(obj, info):
     store, _w, org, uid = _ctx(info)
     return _memo(info, "user", (org, obj["_creator_id"]),
                  lambda: store.ser_user(_user_row(info, obj["_creator_id"]), uid)) if obj.get("_creator_id") else None
+
+
+@Issue.field("delegate")
+def i_delegate(obj, info):
+    store, _w, org, uid = _ctx(info)
+    return _memo(info, "user", (org, obj["_delegate_id"]),
+                 lambda: store.ser_user(_user_row(info, obj["_delegate_id"]), uid)) if obj.get("_delegate_id") else None
+
+
+@Issue.field("delegateId")
+def i_delegate_id(obj, info):
+    return obj.get("_delegate_id")
 
 
 @Issue.field("team")
@@ -796,6 +1048,19 @@ def p_lead(obj, info):
     return store.ser_user(_user_row(info, obj["_lead_id"]), uid) if obj.get("_lead_id") else None
 
 
+@ProjectUpdate.field("comments")
+def p_comments(obj, info, first=50):
+    store, _w, org, _uid = _ctx(info)
+    first = _page_size(first)
+    def load():
+        # The newest window, reversed: the badge is a count of recent replies, and the
+        # list still reads oldest-first like every other thread in the app.
+        comments = store.comments_for_update(org, obj["id"], limit=first, newest_first=True)
+        _prime(info, "user_row", [c.get("_user_id") for c in comments])
+        return _conn(comments)
+    return _memo(info, "project_update_comments", (org, obj["id"], first), load)
+
+
 @ProjectUpdate.field("project")
 def pu_project(obj, info):
     store, _w, org, _uid = _ctx(info)
@@ -806,6 +1071,18 @@ def pu_project(obj, info):
 
 @ProjectUpdate.field("actor")
 def pu_actor(obj, info):
+    store, _w, _org, uid = _ctx(info)
+    return store.ser_user(_user_row(info, obj["_actor_id"]), uid) if obj.get("_actor_id") else None
+
+
+@InitiativeUpdate.field("initiative")
+def iu_initiative(obj, info):
+    store, _w, org, _uid = _ctx(info)
+    return store.initiative_by_id(org, obj["_initiative_id"])
+
+
+@InitiativeUpdate.field("actor")
+def iu_actor(obj, info):
     store, _w, _org, uid = _ctx(info)
     return store.ser_user(_user_row(info, obj["_actor_id"]), uid) if obj.get("_actor_id") else None
 
@@ -902,6 +1179,13 @@ def m_workspace_create(_, info, input):
         identity_id = membership.get("identity_id") if membership else None
     if not identity_id:
         raise ValueError("Workspace identity is unavailable")
+    if info.context.get("pinned_org"):
+        # A workspace with its own address accepts only its own sessions, so a
+        # workspace created from here could never be switched into on this host.
+        raise GraphQLError(
+            "Create new workspaces from the Hoja sign-up page, not from inside a workspace "
+            "that has its own address.",
+            extensions={"code": "WORKSPACE_HOST_PINNED", "field": "input"})
     created = writer.workspace_create(org, uid, input)
     created.pop("_identity_id", None)
     info.context["switch_target"] = {
@@ -940,28 +1224,84 @@ def m_team_delete(_, info, id, deleteIssues=False):
 
 @mutation.field("workspaceUpdate")
 def m_workspace_update(_, info, input):
+    """Rename the workspace or change its URL key (admins only).
+
+    Refusals are typed errors, not ``success: false``: FORBIDDEN for a non-admin and
+    BAD_USER_INPUT (with ``field``) for an empty name, a malformed key or a key another
+    workspace already uses — the same key rules as workspaceCreate (HOJA-734).
+    """
+    from sqlalchemy import func as sa_func, select as sa_select
+    from sqlalchemy.exc import IntegrityError
+    from hoja_server.db import organization as organization_table
+    from hoja_server.writer import normalize_workspace_url_key
+
     store, _w, org, uid = _ctx(info)
     actor = store.get_user(org, uid)
     if not actor or not actor.get("admin"):
-        return {"success": False, "organization": None}
-    updated = store.update_workspace(org, input)
-    return {"success": bool(updated), "organization": updated}
+        raise GraphQLError("Only workspace admins can change workspace settings.",
+                           extensions={"code": "FORBIDDEN"})
+    values = dict(input or {})
+    if values.get("name") is not None:
+        if not str(values["name"]).strip():
+            raise GraphQLError("Workspace name is required",
+                               extensions={"code": "BAD_USER_INPUT", "field": "name"})
+    if values.get("urlKey") is not None:
+        key = normalize_workspace_url_key(values["urlKey"])
+        with store.engine.connect() as conn:
+            taken = conn.execute(sa_select(organization_table.c.id).where(
+                sa_func.lower(organization_table.c.url_key) == key,
+                organization_table.c.id != org)).first()
+        if taken:
+            raise GraphQLError("Workspace key already exists",
+                               extensions={"code": "BAD_USER_INPUT", "field": "urlKey"})
+        values["urlKey"] = key
+    try:
+        updated = store.update_workspace(org, values)
+    except IntegrityError:  # a concurrent update took the key between the check and the write
+        raise GraphQLError("Workspace key already exists",
+                           extensions={"code": "BAD_USER_INPUT", "field": "urlKey"}) from None
+    if not updated:
+        raise GraphQLError("Workspace not found", extensions={"code": "NOT_FOUND"})
+    return {"success": True, "organization": updated}
 
 
 @mutation.field("apiKeyCreate")
-def m_api_key_create(_, info, label, access="read_write", expiresAt=None):
+def m_api_key_create(_, info, label, access="read_write", expiresAt=None, actorKind="agent", agentMemberId=None):
     store, _w, org, uid = _ctx(info)
-    created = store.create_api_key(org, uid, label, access, expiresAt)
+    created = store.create_api_key(org, uid, label, access, expiresAt,
+                                   actor_kind=actorKind or "agent",
+                                   agent_member_id=agentMemberId)
     if not created:
         return {"success": False, "apiKey": None, "secret": None}
     metadata, secret = created
+    # Audit after the key exists; never the secret, only what the admin chose.
+    audit.record_request(store, info, user_id=uid, action="api_key.create",
+                         target_kind="api_key", target_id=metadata["id"],
+                         detail={"label": metadata["label"], "access": metadata["access"],
+                                 "actorKind": metadata.get("actorKind")})
     return {"success": True, "apiKey": metadata, "secret": secret}
+
+
+@mutation.field("apiKeyUpdate")
+def m_api_key_update(_, info, id, actorKind=None, agentMemberId=None):
+    store, _w, org, uid = _ctx(info)
+    updated = store.update_api_key(org, uid, id, actor_kind=actorKind, agent_member_id=agentMemberId)
+    if not updated:
+        return {"success": False, "apiKey": None, "secret": None}
+    audit.record_request(store, info, user_id=uid, action="api_key.update",
+                         target_kind="api_key", target_id=id,
+                         detail={"actorKind": updated.get("actorKind")})
+    return {"success": True, "apiKey": updated, "secret": None}
 
 
 @mutation.field("apiKeyRevoke")
 def m_api_key_revoke(_, info, id):
     store, _w, org, uid = _ctx(info)
-    return store.revoke_api_key(org, uid, id)
+    revoked = store.revoke_api_key(org, uid, id)
+    if revoked:
+        audit.record_request(store, info, user_id=uid, action="api_key.revoke",
+                             target_kind="api_key", target_id=id)
+    return revoked
 
 
 @mutation.field("userPreferenceSet")
@@ -982,10 +1322,7 @@ def m_profile_name_update(_, info, name):
 def m_notification_preference_set(_, info, kind, enabled):
     store, _w, _org, uid = _ctx(info)
     success = store.set_notification_preference(uid, kind, enabled)
-    prefs = store.user_preferences(uid) or {}
-    return {"success": success,
-            "issueCreated": prefs.get("notification:issueCreated", "true") == "true",
-            "issueUpdated": prefs.get("notification:issueUpdated", "true") == "true"}
+    return _notification_preferences(store, uid, success)
 
 
 @mutation.field("workspaceSwitch")
@@ -1001,6 +1338,11 @@ def m_workspace_switch(_, info, organizationId):
     target = store.switch_membership(member.get("identity_id") if member else None, organizationId)
     if not target:
         return {"success": False, "organization": None}
+    # A workspace that lives on another host is opened there: the session here is
+    # a host-only cookie, and a pinned host refuses any other organization's.
+    redirect = (info.context.get("org_redirect") or (lambda _org: None))(target["organization_id"])
+    if redirect:
+        return {"success": True, "organization": target["organization"], "redirectUrl": redirect}
     info.context["switch_target"] = target
     return {"success": True, "organization": target["organization"]}
 
@@ -1008,13 +1350,39 @@ def m_workspace_switch(_, info, organizationId):
 @mutation.field("membershipInvitationCreate")
 def m_membership_invitation_create(_, info, userId):
     store, _w, org, uid = _ctx(info)
-    actor = store.get_user(org, uid)
     target = store.get_user(org, userId)
-    if not actor or not actor.get("admin") or not target:
-        return {"success": False, "user": None, "inviteCode": None}
+    if not permissions.can(store, org, uid, "member.invite") or not target:
+        return {"success": False, "user": None, "inviteCode": None, "emailQueued": False}
+    _refuse_admin_target(store, org, uid, userId)
     code = store.create_membership_invitation(org, userId, uid)
+    email_queued = False
+    if code and target.get("email"):
+        workspace = store.workspace(org) or {}
+        # Delivery is best-effort on purpose: the invite row is already committed,
+        # and the caller still gets the link to share if sending fails.
+        inviter = store.get_user(org, uid) or {}
+        delivery = mail_events.send_invite(
+            store.engine,
+            organization_id=org,
+            organization_name=workspace.get("name") or "your workspace",
+            inviter_name=inviter.get("name") or "",
+            invitee_name=target.get("name") or "",
+            invitee_email=target.get("email"),
+            code=code,
+            # A hosted workspace invites onto its own host: the member who
+            # accepts must land in the workspace that invited them.
+            workspace_url=store.workspace_origin(org),
+        )
+        email_queued = delivery == "sent"
+        if not email_queued:
+            logger.info("mail.invite_not_sent reason=%s", delivery)
+        # Deliberately NOT announced here. An invitation is an offer that names
+        # an address; it proves nothing about who controls it, and a hint built
+        # from an unverified claim would let one tenant route a stranger's
+        # sign-in to itself. The announcement happens when the address is
+        # proven: on acceptance, or on a Google sign-in to this workspace.
     return {"success": bool(code), "user": store.ser_user(store.get_user(org, userId), uid),
-            "inviteCode": code}
+            "inviteCode": code, "emailQueued": email_queued}
 
 
 @query.field("pendingMembershipInvitations")
@@ -1029,10 +1397,25 @@ def q_pending_membership_invitations(_, info):
 @mutation.field("membershipInvitationRevoke")
 def m_membership_invitation_revoke(_, info, userId):
     store, _w, org, uid = _ctx(info)
-    actor = store.get_user(org, uid)
-    if not actor or not actor.get("admin"):
+    if not permissions.can(store, org, uid, "member.invite"):
         return {"success": False}
     return {"success": store.revoke_membership_invitation(org, userId)}
+
+
+def _actor_is_admin(store, org, uid) -> bool:
+    actor = store.get_user(org, uid)
+    return bool(actor and actor.get("admin"))
+
+
+def _refuse_admin_target(store, org, uid, user_id) -> None:
+    """member.invite manages members, never admins: changing an admin's access (deactivate,
+    remove, restore, a fresh invite link that would let someone claim the admin profile) is
+    for admins only (HOJA-735)."""
+    target = store.get_user(org, user_id) or next(
+        (m for m in store.archived_members(org) if m.get("id") == user_id), None)
+    if target and target.get("admin") and not _actor_is_admin(store, org, uid):
+        raise GraphQLError("Only workspace admins can change another admin's access.",
+                           extensions={"code": "FORBIDDEN"})
 
 
 @mutation.field("memberDeactivate")
@@ -1047,32 +1430,43 @@ def m_member_reactivate(_, info, userId):
 
 @mutation.field("memberArchive")
 def m_member_archive(_, info, userId):
-    """Remove a member from the workspace: archived, keys revoked, re-invitable."""
+    """Remove a member: archived, sessions and keys ended, re-invitable."""
     store, _w, org, uid = _ctx(info)
-    actor = store.get_user(org, uid)
-    if not actor or not actor.get("admin"):
+    if not permissions.can(store, org, uid, "member.invite"):
         return {"success": False, "user": None}
+    _refuse_admin_target(store, org, uid, userId)
     target = store.archive_member(org, uid, userId)
+    if target:
+        audit.record_request(store, info, user_id=uid, action="member.archive",
+                             target_kind="user", target_id=userId)
     return {"success": bool(target), "user": store.ser_user(target, uid)}
 
 
 @mutation.field("memberRestore")
 def m_member_restore(_, info, userId):
-    """Undo a removal so the admin does not have to re-invite to get someone back."""
+    """Undo a removal without making the admin re-invite the person."""
     store, _w, org, uid = _ctx(info)
-    actor = store.get_user(org, uid)
-    if not actor or not actor.get("admin"):
+    if not permissions.can(store, org, uid, "member.invite"):
         return {"success": False, "user": None}
+    _refuse_admin_target(store, org, uid, userId)
     target = store.restore_member(org, uid, userId)
+    if target:
+        audit.record_request(store, info, user_id=uid, action="member.restore",
+                             target_kind="user", target_id=userId)
     return {"success": bool(target), "user": store.ser_user(target, uid)}
 
 
 def _set_member_active(info, user_id, *, active: bool):
     store, _w, org, uid = _ctx(info)
-    actor = store.get_user(org, uid)
-    if not actor or not actor.get("admin"):
+    if not permissions.can(store, org, uid, "member.invite"):
         return {"success": False, "user": None}
+    _refuse_admin_target(store, org, uid, user_id)
     target = store.set_member_active(org, uid, user_id, active)
+    if target:
+        audit.record_request(
+            store, info, user_id=uid,
+            action="member.reactivate" if active else "member.deactivate",
+            target_kind="user", target_id=user_id, detail={"active": bool(active)})
     return {"success": bool(target), "user": store.ser_user(target, uid)}
 
 
@@ -1091,31 +1485,48 @@ def m_member_role_update(_, info, userId, admin):
     if not actor or not actor.get("admin"):
         return {"success": False, "user": None}
     target = store.set_member_admin_role(org, userId, admin)
+    if target:
+        audit.record_request(store, info, user_id=uid, action="member.role.change",
+                             target_kind="user", target_id=userId,
+                             detail={"admin": bool(admin)})
     return {"success": bool(target), "user": store.ser_user(target, uid)}
 
 
 @mutation.field("memberInvite")
 def m_member_invite(_, info, input):
     store, _w, org, uid = _ctx(info)
-    actor = store.get_user(org, uid)
-    if not actor or not actor.get("admin"):
+    if not permissions.can(store, org, uid, "member.invite"):
         return {"success": False, "user": None, "apiKey": None}
+    if input.get("admin") and not _actor_is_admin(store, org, uid):
+        # member.invite brings people in as members; making an admin is an admin decision.
+        raise GraphQLError("Only workspace admins can invite someone as an admin.",
+                           extensions={"code": "FORBIDDEN", "field": "admin"})
     team_ids = input.get("teamIds") or []
     for team_id in team_ids:
         if not store.team_by_id_or_key(org, team_id, viewer_id=uid):
             raise GraphQLError("Team not found", extensions={"code": "BAD_USER_INPUT", "field": "teamIds"})
-    created = store.invite_member(org, input.get("name", ""), input.get("email", ""),
-                                  bool(input.get("admin", False)), team_ids)
+    try:
+        created = store.invite_member(org, input.get("name", ""), input.get("email", ""),
+                                      bool(input.get("admin", False)), team_ids)
+    except store_module.InviteRefused as refused:
+        # A stable reason so the screen can offer the one action that fixes it
+        # instead of four guesses behind a single "invite failed".
+        raise GraphQLError(refused.message, extensions={
+            "code": "INVITE_REFUSED", "reason": refused.reason}) from refused
     if not created:
         return {"success": False, "user": None, "apiKey": None}
     user_row, api_key = created
+    audit.record_request(store, info, user_id=uid, action="member.invite",
+                         target_kind="user",
+                         target_id=user_row["id"] if user_row is not None else None,
+                         detail={"admin": bool(input.get("admin", False)),
+                                 "teamIds": list(team_ids)})
     return {"success": True, "user": store.ser_user(user_row, uid), "apiKey": api_key}
 
 
 def _set_team_membership(info, team_id, user_id, *, add: bool, role: str = "member"):
     store, _w, org, uid = _ctx(info)
-    actor = store.get_user(org, uid)
-    if not actor or not actor.get("admin"):
+    if not permissions.can(store, org, uid, "member.invite"):
         return {"success": False, "user": None, "apiKey": None}
     if not store.team_by_id_or_key(org, team_id, viewer_id=uid):
         raise GraphQLError("Team not found", extensions={"code": "BAD_USER_INPUT", "field": "teamId"})
@@ -1149,7 +1560,14 @@ def _extension_hooks(info, store, org, uid, event, input, current, input_type):
 @mutation.field("issueCreate")
 def m_issue_create(_, info, input):
     store, w, org, uid = _ctx(info)
-    if store.team_by_id_or_key(org, str(input.get("teamId") or ""), viewer_id=uid):
+    # A templated create may carry no teamId until the template supplies one;
+    # resolve the team the write will target so the extension gate still runs
+    # (and still refuses) for a team the caller cannot see.
+    team_ref = input.get("teamId")
+    if not team_ref and input.get("templateId"):
+        from hoja_server import task_templates
+        team_ref = task_templates.team_id_for(store.engine, org, input["templateId"])
+    if store.team_by_id_or_key(org, str(team_ref or ""), viewer_id=uid):
         # Only ask extensions about a write the caller is allowed to attempt.
         input, patches = _extension_hooks(info, store, org, uid, "issue.beforeCreate", input, None,
                                           "IssueCreateInput")
@@ -1178,8 +1596,39 @@ def m_issue_update(_, info, id, input):
     return {"success": True, "issue": store.issue_by_id_or_identifier(org, iid, viewer_id=uid)}
 
 
+@mutation.field("issueMove")
+def m_issue_move(_, info, id, input):
+    """A drag: the new rank and any group change land in one write (Linear sends one
+    IssueUpdate carrying both, linear-capture/s3-*). Group fields pass the same extension
+    hooks and validation as issueUpdate."""
+    store, w, org, uid = _ctx(info)
+    current = store.issue_by_id_or_identifier(org, id, viewer_id=uid)
+    if current is None:
+        return {"success": False, "issue": None}
+    field = input.get("field") or "sortOrder"
+    if field not in ("sortOrder", "prioritySortOrder"):
+        raise GraphQLError("field must be sortOrder or prioritySortOrder.",
+                           extensions={"code": "BAD_USER_INPUT", "field": "field"})
+    updates = {k: v for k, v in input.items() if k not in ("afterId", "beforeId", "field")}
+    if updates:
+        updates, patches = _extension_hooks(info, store, org, uid, "issue.beforeUpdate", updates,
+                                            extensions.issue_data(store.engine, org, current["id"]),
+                                            "IssueUpdateInput")
+    else:
+        patches = []
+    move = {"afterId": input.get("afterId"), "beforeId": input.get("beforeId"), "field": field}
+    iid = w.issue_update(org, id, {**updates, "_move": move}, actor_id=uid)
+    if not iid:
+        return {"success": False, "issue": None}
+    extensions.record_patches(store.engine, org, iid, patches)
+    return {"success": True, "issue": store.issue_by_id_or_identifier(org, iid, viewer_id=uid)}
+
+
 @mutation.field("issueDelete")
 def m_issue_delete(_, info, id):
+    # Authorization lives in writer._authorize_issue_change: creator, admin, or a
+    # holder of task.delete. Demanding the capability here would take away the
+    # creator's own right to delete their task.
     _s, w, org, uid = _ctx(info)
     return {"success": w.issue_delete(org, uid, id)}
 
@@ -1217,9 +1666,7 @@ def m_comment_delete(_, info, id):
 @mutation.field("issueLabelCreate")
 def m_label_create(_, info, input):
     store, w, org, uid = _ctx(info)
-    actor = store.get_user(org, uid)
-    if not actor or not actor.get("admin"):
-        return {"success": False, "issueLabel": None}
+    permissions.require(store, org, uid, "label.manage")
     name = str(input.get("name", "")).strip()
     if not name or len(name) > 64:
         return {"success": False, "issueLabel": None}
@@ -1233,6 +1680,7 @@ def m_label_create(_, info, input):
 @mutation.field("issueLabelUpdate")
 def m_label_update(_, info, id, input):
     store, w, org, uid = _ctx(info)
+    permissions.require(store, org, uid, "label.manage")
     if not w.label_update(org, uid, id, input):
         return {"success": False, "issueLabel": None}
     node = next((label for label in store.labels(org) if label["id"] == id), None)
@@ -1242,9 +1690,7 @@ def m_label_update(_, info, id, input):
 @mutation.field("issueLabelDelete")
 def m_label_delete(_, info, id):
     store, w, org, uid = _ctx(info)
-    actor = store.get_user(org, uid)
-    if not actor or not actor.get("admin"):
-        return {"success": False}
+    permissions.require(store, org, uid, "label.manage")
     return {"success": w.label_delete(org, id)}
 
 
@@ -1269,6 +1715,39 @@ def m_project_update_create(_, info, input):
     rows = store.project_updates(org, project_id=input["projectId"], limit=1) if update_id else []
     created = next((row for row in rows if row["id"] == update_id), None)
     return {"success": bool(created), "projectUpdate": created}
+
+
+@mutation.field("projectUpdateUpdate")
+def m_project_update_update(_, info, id, input):
+    store, w, org, uid = _ctx(info)
+    update_id = w.project_update_update(org, uid, id, input)
+    return {"success": bool(update_id), "projectUpdate": store.project_update_by_id(org, update_id) if update_id else None}
+
+
+@mutation.field("projectUpdateDelete")
+def m_project_update_delete(_, info, id):
+    _s, w, org, uid = _ctx(info)
+    return {"success": w.project_update_delete(org, uid, id)}
+
+
+@mutation.field("initiativeUpdateCreate")
+def m_initiative_update_create(_, info, input):
+    store, w, org, uid = _ctx(info)
+    update_id = w.initiative_update_create(org, input["initiativeId"], uid, input)
+    return {"success": bool(update_id), "initiativeUpdate": store.initiative_update_by_id(org, update_id) if update_id else None}
+
+
+@mutation.field("initiativeUpdateUpdate")
+def m_initiative_update_update(_, info, id, input):
+    store, w, org, uid = _ctx(info)
+    update_id = w.initiative_update_update(org, uid, id, input)
+    return {"success": bool(update_id), "initiativeUpdate": store.initiative_update_by_id(org, update_id) if update_id else None}
+
+
+@mutation.field("initiativeUpdateDelete")
+def m_initiative_update_delete(_, info, id):
+    _s, w, org, uid = _ctx(info)
+    return {"success": w.initiative_update_delete(org, uid, id)}
 
 
 @mutation.field("projectArchive")
@@ -1301,6 +1780,73 @@ def m_attachment_create(_, info, input):
     return {"success": bool(created), "attachment": created}
 
 
+def _subject_subscribers(kind):
+    def resolve(obj, info, first=50):
+        store, _w, org, _uid = _ctx(info)
+        subs = _batched(info, f"{kind}_subscribers", obj["id"],
+                        lambda ids: store.subject_subscribers_for_many(org, kind, ids),
+                        lambda: store.subject_subscribers_for_many(org, kind, [obj["id"]])
+                        .get(obj["id"], []), default=[])
+        return _conn(subs[:_page_size(first)])
+    return resolve
+
+
+def _viewer_subscribed(kind):
+    def resolve(obj, info):
+        store, _w, org, uid = _ctx(info)
+        subs = _batched(info, f"{kind}_subscribers", obj["id"],
+                        lambda ids: store.subject_subscribers_for_many(org, kind, ids),
+                        lambda: store.subject_subscribers_for_many(org, kind, [obj["id"]])
+                        .get(obj["id"], []), default=[])
+        return any(u and u.get("id") == uid for u in subs)
+    return resolve
+
+
+for _kind, _type in (("project", Project), ("initiative", Initiative), ("cycle", Cycle)):
+    _type.set_field("subscribers", _subject_subscribers(_kind))
+    _type.set_field("viewerSubscribed", _viewer_subscribed(_kind))
+
+
+def _follow(kind, subscribed):
+    def resolve(_, info, id):
+        store, w, org, uid = _ctx(info)
+        # Resolve through the same reads that decide what the viewer may see, so an
+        # id from a private team behaves exactly like an id that does not exist.
+        if kind == "project":
+            found = store.project_by_id(org, id, viewer_id=uid) or store.project_by_slug(org, id, viewer_id=uid)
+        elif kind == "initiative":
+            found = store.initiative_by_id(org, id, viewer_id=uid)
+        else:
+            found = store.cycle_by_id(org, id, viewer_id=uid)
+        if not found:
+            return False
+        return w.subject_subscribe(org, uid, kind, found["id"], subscribed)
+    return resolve
+
+
+for _kind in ("project", "initiative", "cycle"):
+    mutation.set_field(f"{_kind}Subscribe", _follow(_kind, True))
+    mutation.set_field(f"{_kind}Unsubscribe", _follow(_kind, False))
+
+
+@mutation.field("notificationsMarkReadForSubject")
+def m_notifications_mark_read_for_subject(_, info, subjectId, read=True):
+    store, _w, org, uid = _ctx(info)
+    return store.inbox_subject_update(org, uid, subjectId, "read", read=read)
+
+
+@mutation.field("notificationsArchiveForSubject")
+def m_notifications_archive_for_subject(_, info, subjectId):
+    store, _w, org, uid = _ctx(info)
+    return store.inbox_subject_update(org, uid, subjectId, "archive")
+
+
+@mutation.field("notificationsSnoozeForSubject")
+def m_notifications_snooze_for_subject(_, info, subjectId, until=None):
+    store, _w, org, uid = _ctx(info)
+    return store.inbox_subject_update(org, uid, subjectId, "snooze", until=_snooze_until(until))
+
+
 @mutation.field("issueSubscribe")
 def m_issue_subscribe(_, info, id):
     _store, w, org, uid = _ctx(info)
@@ -1315,9 +1861,21 @@ def m_issue_unsubscribe(_, info, id):
 
 @mutation.field("cycleUpdate")
 def m_cycle_update(_, info, id, input):
-    _store, w, org, _uid = _ctx(info)
+    """Rename or re-date a cycle. Allowed where the caller can see the cycle's team, the same
+    rule as editing that team's tasks; a cycle on a team the caller cannot see answers
+    NOT_FOUND rather than confirming it exists (HOJA-735)."""
+    store, w, org, uid = _ctx(info)
+    if not store.cycle_by_id(org, id, viewer_id=uid):
+        raise GraphQLError("Cycle not found", extensions={"code": "NOT_FOUND"})
     updated = w.cycle_update(org, id, input)
     return {"success": bool(updated), "cycle": updated}
+
+
+@Issue.field("decisions")
+def i_decisions(obj, info, status=None, first=None):
+    store, _w, org, uid = _ctx(info)
+    return store.decisions_for_issue(org, uid, obj["id"], status=status,
+                                     limit=min(max(int(first or 50), 1), 200))
 
 
 @Attachment.field("issue")
@@ -1338,25 +1896,50 @@ def _get_comment(store, org, cid):
 def build_schema():
     from pathlib import Path
     sdl = (Path(__file__).parent / "schema.graphql").read_text()
+    from hoja_server import authorized_apps, decisions_api, extensions_api, model_providers, permissions, project_settings, sla, task_templates, views_api, webhooks_api, workspace_templates
+    from hoja_server.agent_conversations import SDL as CONVERSATION_SDL
+    from hoja_server.agent_conversations import query as conversation_query
     from hoja_server.model_providers import SDL as PROVIDER_SDL
-    from hoja_server import model_providers
-    from hoja_server.agent_conversations import SDL as CONVERSATION_SDL, query as conversation_query
-    from hoja_server import webhooks_api
-    from hoja_server import extensions_api
     from hoja_server.task_aliases import bind_task_surface
+    from hoja_server import initiative_api
+    initiative_api.bind(Initiative, InitiativeUpdate, Project, Team)
     tasks_sdl = (Path(__file__).parent / "schema_tasks.graphql").read_text()
-    task_bindables, problems = bind_task_surface(query, mutation, Issue, MyIssueActivity)
+    # HOJA-491: bind Issue.sla before the alias surface copies Issue's resolvers
+    # onto Task, so the agent-facing vocabulary carries the clock too.
+    sla.bind(Issue)
+    task_bindables, problems = bind_task_surface(
+        query, mutation, Issue, MyIssueActivity,
+        extra_roots=(views_api.query, views_api.mutation, decisions_api.query, decisions_api.mutation),
+    )
     if problems:
         # A partial alias surface is worse than none: fail the whole schema instead.
         raise RuntimeError("HOJA-288 task alias wiring incomplete: " + "; ".join(problems))
     return make_executable_schema(
-        [sdl, PROVIDER_SDL, CONVERSATION_SDL, webhooks_api.SDL, extensions_api.SDL, tasks_sdl],
+        [sdl, PROVIDER_SDL, CONVERSATION_SDL, webhooks_api.SDL, extensions_api.SDL,
+         views_api.SDL, decisions_api.SDL, project_settings.SDL, permissions.SDL,
+         task_templates.SDL, sla.SDL, agent_members.SDL,
+         authorized_apps.SDL, initiative_api.SDL, workspace_templates.SDL, tasks_sdl],
         query, mutation, *task_bindables,
+        workspace_templates.query, workspace_templates.mutation,
         model_providers.query, model_providers.mutation,
+        project_settings.query, project_settings.mutation,
+        permissions.query, permissions.mutation,
+        authorized_apps.query, authorized_apps.mutation, authorized_apps.authorized_app_type,
+        task_templates.query, task_templates.mutation,
+        agent_members.query, agent_members.mutation,
+        sla.query, sla.mutation,
         webhooks_api.query, webhooks_api.mutation, webhooks_api.webhook_type,
         extensions_api.query, extensions_api.mutation, extensions_api.extension_type,
+        views_api.query, views_api.mutation, views_api.view_type, views_api.preview_type,
+        views_api.subscription_type, views_api.custom_view_type, IssueLabel, TaskLabel,
+        initiative_api.query, initiative_api.mutation,
+        decisions_api.query, decisions_api.mutation, decisions_api.decision_type,
         conversation_query,
-        model_providers.model_provider_type, Team, Initiative, Issue, IssueActivity, MyIssueActivity, Project, ProjectUpdate, Comment,
-        WorkflowState, Cycle, Attachment,
+        model_providers.model_provider_type, project_settings.project_status_type,
+        project_settings.project_template_type, task_templates.task_template_type,
+        sla.sla_policy_type, sla.sla_clock_type, agent_members.agent_member_type,
+        Team, Initiative, InitiativeUpdate, Issue, IssueActivity, MyIssueActivity, Project, ProjectUpdate, Comment,
+        permissions.workspace_permission_type, permissions.workspace_security_policy_type,
+        WorkflowState, Cycle, Attachment, GithubLink, Organization,
         datetime_scalar, timeless_scalar, json_scalar, InboxNotification,
     )

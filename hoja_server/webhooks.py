@@ -41,14 +41,15 @@ from sqlalchemy.engine import Connection, Engine
 
 from hoja_server import secrets_box, tenant_context
 from hoja_server.db import (
-    app_url,
     change_event,
+    entity_url,
     extension,
     issue,
     issue_activity,
     issue_label_link,
     new_id,
     now_iso,
+    org_links,
     team,
     user,
     webhook,
@@ -211,7 +212,7 @@ def create_webhook(engine: Engine, org_id: str, creator_id: str, inp: dict[str, 
     url = (inp.get("url") or "").strip()
     check_target(url)
     secret = inp.get("secret") or "hoja_wh_" + secrets.token_hex(24)
-    sealed = secrets_box.encrypt_secret(secret)
+    sealed = secrets_box.encrypt_secret(secret, org_id)
     with engine.begin() as conn:
         wid = insert_webhook(conn, org_id, creator_id, dict(inp, url=url), sealed_secret=sealed)
     return get_webhook(engine, org_id, wid)
@@ -227,7 +228,7 @@ def update_webhook(engine: Engine, org_id: str, wid: str, inp: dict[str, Any]) -
     if "label" in inp:
         values["label"] = inp["label"]
     if inp.get("secret"):
-        values["secret_sealed"] = secrets_box.encrypt_secret(inp["secret"])
+        values["secret_sealed"] = secrets_box.encrypt_secret(inp["secret"], org_id)
     with engine.begin() as conn:
         row = conn.execute(select(webhook).where(and_(
             webhook.c.id == wid, webhook.c.organization_id == org_id,
@@ -270,7 +271,7 @@ def _ser(conn: Connection, row: dict) -> dict:
     )).order_by(webhook_delivery.c.updated_at.desc()).limit(50)).mappings().all()
     return {
         "id": row["id"], "url": row["url"], "label": row["label"], "enabled": row["enabled"],
-        "secret": secrets_box.decrypt_secret(row["secret_sealed"]),
+        "secret": secrets_box.decrypt_secret(row["secret_sealed"], row["organization_id"]),
         "resourceTypes": json.loads(row["resource_types"]),
         "allPublicTeams": row["all_public_teams"],
         "teamIds": [row["team_id"]] if row["team_id"] else None,
@@ -304,6 +305,18 @@ def list_webhooks(engine: Engine, org_id: str) -> list[dict]:
 # ------------------------------------------------------------------ dispatch
 
 
+def _issue_link(conn: Connection, row: dict) -> str:
+    """The issue's link for a payload, built the way the writer builds it.
+
+    Only a row written before the workspace host became part of the link reaches
+    this fallback, and it still names its own workspace: the key and the origin
+    come from the same organization row in one read, never from the process-wide
+    ``HOJA_APP_URL`` alone.
+    """
+    url_key, base_url = org_links(conn, row["organization_id"])
+    return entity_url(url_key, "issue", row["identifier"], base_url)
+
+
 def _issue_data(conn: Connection, row: dict) -> dict:
     state = conn.execute(select(workflow_state).where(
         workflow_state.c.id == row["state_id"])).mappings().first() if row.get("state_id") else None
@@ -316,7 +329,7 @@ def _issue_data(conn: Connection, row: dict) -> dict:
         "title": row["title"], "description": row.get("description"),
         "priority": row.get("priority") or 0, "priorityLabel": row.get("priority_label"),
         "estimate": row.get("estimate"), "branchName": row.get("branch_name"),
-        "url": row.get("url") or f"{app_url()}/issue/{row['identifier']}",
+        "url": row.get("url") or _issue_link(conn, row),
         "stateId": row.get("state_id"),
         "state": {"id": state["id"], "name": state["name"], "type": state["type"],
                   "color": state["color"]} if state else None,
@@ -380,11 +393,11 @@ def _actor(conn: Connection, org_id: str, issue_id: str, changed_at: str | None)
 def dispatch_once(engine: Engine) -> int:
     """Turn committed change events into queued deliveries. Returns deliveries queued."""
     queued = 0
-    with tenant_context.system():
-        with engine.connect() as conn:
-            orgs = list(conn.execute(select(webhook.c.organization_id).where(and_(
-                webhook.c.enabled.is_(True), webhook.c.archived_at.is_(None))).distinct()).scalars())
-        for org_id in orgs:
+    with tenant_context.system(), engine.connect() as conn:
+        orgs = list(conn.execute(select(webhook.c.organization_id).where(and_(
+            webhook.c.enabled.is_(True), webhook.c.archived_at.is_(None))).distinct()).scalars())
+    for org_id in orgs:
+        with tenant_context.scoped(org_id):
             queued += _dispatch_org(engine, org_id)
     return queued
 
@@ -479,6 +492,28 @@ def _iso(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat()
 
 
+def _lease_predicate(row: dict):
+    """Identify the delivery *as the claimant read it*: id, status, attempts and lease.
+
+    The lease belongs in the compare-and-swap (HOJA-602-A-1, F7). ``attempts`` only
+    counts failed sends, so two senders that both read the same expired ``sending``
+    row see identical status and attempts; the lease is the only column that differs
+    between their reads. Without it in the predicate both updates match and both
+    POST the same delivery.
+    """
+    lease = webhook_delivery.c.lease_until
+    held = lease.is_(None) if row["lease_until"] is None else lease == row["lease_until"]
+    return and_(webhook_delivery.c.id == row["id"], webhook_delivery.c.status == row["status"],
+                webhook_delivery.c.attempts == row["attempts"], held)
+
+
+def _lease(conn: Connection, row: dict, now: datetime, now_s: str) -> bool:
+    """Take the lease on ``row``; False when another sender won the same read."""
+    result = conn.execute(webhook_delivery.update().where(_lease_predicate(row)).values(
+        status="sending", lease_until=_iso(now + LEASE), updated_at=now_s))
+    return result.rowcount == 1
+
+
 def _claim(engine: Engine, now: datetime) -> list[dict]:
     """Lease the oldest due delivery of each webhook (strict per-webhook order)."""
     now_s = _iso(now)
@@ -496,11 +531,7 @@ def _claim(engine: Engine, now: datetime) -> list[dict]:
                 continue
             if row["status"] == "sending" and (row["lease_until"] or "") > now_s:
                 continue
-            result = conn.execute(webhook_delivery.update().where(and_(
-                webhook_delivery.c.id == row["id"], webhook_delivery.c.status == row["status"],
-                webhook_delivery.c.attempts == row["attempts"],
-            )).values(status="sending", lease_until=_iso(now + LEASE), updated_at=now_s))
-            if result.rowcount == 1:
+            if _lease(conn, dict(row), now, now_s):
                 claimed.append(dict(row))
     return claimed
 
@@ -551,7 +582,9 @@ def deliver_due(engine: Engine, post: Poster | None = None, now: datetime | None
     post = post or _http_post
     delivered = 0
     with tenant_context.system():
-        for row in _claim(engine, now or datetime.now(timezone.utc)):
+        rows = _claim(engine, now or datetime.now(timezone.utc))
+    for row in rows:
+        with tenant_context.scoped(row["organization_id"]):
             delivered += _send_one(engine, row, post)
     return delivered
 
@@ -565,7 +598,7 @@ def _send_one(engine: Engine, row: dict, post: Poster) -> int:
         return 0
     try:
         check_target(hook["url"])
-        body, headers = build_request(secrets_box.decrypt_secret(hook["secret_sealed"]),
+        body, headers = build_request(secrets_box.decrypt_secret(hook["secret_sealed"], hook["organization_id"]),
                                       json.loads(row["payload"]), row["id"], row["event"])
         status_code = post(hook["url"], body, headers)
         if 200 <= status_code < 300:

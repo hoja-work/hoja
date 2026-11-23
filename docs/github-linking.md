@@ -6,11 +6,25 @@ plainly, how much of it exists today.
 
 **Implemented:** identifier detection (`hoja_server/github_linking.py`), the `github_link` and
 `github_delivery` tables, the signed webhook receiver for `pull_request` and `push`, the
-`Issue.githubLinks` GraphQL field, and the GitHub section on the task page.
+`Issue.githubLinks` GraphQL field, the
+GitHub section on the task page, and `scripts/sync-github-links.py` — the backfill/poll below.
 
-**Follow-up work, specified here but not built:** the backfill/poll for repositories without a
-webhook, and the authenticated "deployed to prod at <sha>" endpoint. The `deploy` and `check`
+**Not built:** the authenticated "deployed to prod at <sha>" endpoint. The `deploy` and `check`
 link kinds are recorded in the data model and rendered by the panel, but nothing writes them yet.
+
+**Why the poll had to exist:** linking was webhook-only, and the App's webhooks are off, so
+every pull request opened after the one-off backfill on 2026-11-11 stayed unlinked — 24 of 32
+open pull requests named a task and none of them were recorded. Run
+`./scripts/sync-github-links.py --workspace <url-key>` to plan, `--apply` to write; it is safe on
+a schedule because the natural key makes a second run an update, not a duplicate.
+
+Two rules the writer must keep:
+
+- **One key for one GitHub object** — `"<owner>/<repo>#<number>"` for a pull request, the same
+  string a pasted URL produces, so the webhook and `githubLinkAdd` cannot create two rows for
+  one pull request.
+- A child identifier is matched in full (`HOJA-416-A-10`, not its parent `HOJA-416`), with slot
+  case taken from its depth.
 
 ## Why identifiers and not a mapping table
 
@@ -30,6 +44,8 @@ deliberately strict:
   keys they can resolve.
 - **Identifiers must stand alone.** `XHOJA-1`, `HOJA-1x` and `HOJA_1` are rejected, so hashes and
   version strings do not become references.
+- **Recursive identifiers are matched in full.** `HOJA-416-A-10` is one reference, not
+  `HOJA-416`; a generated branch's slug cannot extend it, because a segment needs an ordinal.
 - **Case-insensitive, normalised to upper case,** because Hoja lowercases the identifier when it
   generates a branch.
 - **Closing keywords** `close`/`closes`/`closed`, `fix`/`fixes`/`fixed`,
@@ -128,9 +144,9 @@ the owner must:
    it as `HOJA_GITHUB_WEBHOOK_SECRET` on the server.
 2. **Subscribe to events:** `Pull request`, `Push`, `Issues`, `Deployment`,
    `Deployment status`, `Check suite`.
-3. **Permissions, all read-only:** `Metadata: read` (always required), `Contents: read`,
-   `Issues: read`, `Pull requests: read`, `Deployments: read`, `Checks: read`. No write
-   permission is needed and none should be granted.
+3. **Permissions for linking, all read-only:** `Metadata: read` (always required),
+   `Contents: read`, `Issues: read`, `Pull requests: read`, `Deployments: read`,
+   `Checks: read`, `Commit statuses: read`.
 4. **Optionally**, to test from a non-production origin, add that origin's
    `/api/connectors/github/callback` to the redirect allow-list. GitHub compares redirect URIs as
    strings, so a local server cannot complete the OAuth flow until its callback is listed.

@@ -47,7 +47,7 @@ BOOTSTRAP = {
 GOOGLE_ENV = {
     "HOJA_GOOGLE_CLIENT_ID": "cid.apps.googleusercontent.com",
     "HOJA_GOOGLE_CLIENT_SECRET": "GOCSPX-never-return-this",
-    "HOJA_GOOGLE_REDIRECT_URI": "http://localhost/api/connectors/google/callback",
+    "HOJA_GOOGLE_REDIRECT_URI": "https://localhost/api/connectors/google/callback",
     # Encrypts the OAuth state; any non-empty deployment key is accepted.
     "HOJA_SECRET_KEY": "test-only-master-key",
 }
@@ -70,7 +70,11 @@ def test_status_and_bootstrap_are_a_single_irreversible_step(app):
     client = TestClient(application)
     client.__enter__()
     try:
-        assert client.get("/onboarding/status").json() == {"initialized": False, "singleOrg": False}
+        assert client.get("/onboarding/status").json() == {
+            "initialized": False,
+            "singleOrg": False,
+            "ownerBound": False,
+        }
 
         created = client.post("/onboarding/bootstrap", json=BOOTSTRAP)
         assert created.status_code == 200, created.text
@@ -127,7 +131,11 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
         # Public capability flags: available before a session, and still no secret.
         anonymous = client.get("/api/connectors/config")
         assert anonymous.status_code == 200
-        assert anonymous.json() == {
+        flags = {key: value for key, value in anonymous.json().items()
+                 if key.endswith("Agent") or key in (
+                     "googleWorkspace", "notion", "slack", "calendly", "sentry", "zoom",
+                     "github", "grafana", "githubInstallUrl")}
+        assert flags == {
             "googleWorkspace": False,
             "googleWorkspaceAgent": False,
             "notion": False,
@@ -140,11 +148,11 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
             "sentryAgent": False,
             "zoom": False,
             "zoomAgent": False,
+            "grafana": False,
+            "grafanaAgent": False,
             "github": False,
             "githubAgent": False,
             "githubInstallUrl": None,
-            "grafana": False,
-            "grafanaAgent": False,
         }
 
         client.post("/onboarding/bootstrap", json=BOOTSTRAP)
@@ -164,7 +172,13 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
             monkeypatch.delenv(name, raising=False)
         off = client.get("/api/connectors/config")
         assert off.status_code == 200
-        assert off.json() == {
+        body = off.json()
+        assert {key: body[key] for key in (
+            "googleWorkspace", "googleWorkspaceAgent", "notion", "notionAgent",
+            "slack", "slackAgent", "calendly", "calendlyAgent", "sentry", "sentryAgent",
+            "zoom", "zoomAgent",
+            "github", "githubAgent", "githubInstallUrl",
+            "grafana", "grafanaAgent")} == {
             "googleWorkspace": False,
             "googleWorkspaceAgent": False,
             "notion": False,
@@ -177,21 +191,31 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
             "sentryAgent": False,
             "zoom": False,
             "zoomAgent": False,
+            "grafana": False,
+            "grafanaAgent": False,
             "github": False,
             "githubAgent": False,
             "githubInstallUrl": None,
-            "grafana": False,
-            "grafanaAgent": False,
         }
+        # Under shared tenancy "configured" is not "reachable from this host": the per-host
+        # answer is what Settings renders, and here nothing is registered for `testserver`.
+        assert body["availableOnThisHost"]["google_workspace"] is False
+        assert body["unavailableReason"]["google_workspace"]
         assert off.headers["cache-control"] == "no-store"
 
         for name, value in GOOGLE_ENV.items():
             monkeypatch.setenv(name, value)
         on = client.get("/api/connectors/config")
         assert on.status_code == 200
-        # The wizard only needs `googleWorkspace`; `googleWorkspaceAgent` stays false here
-        # because this deployment has no signing key yet (covered by the route tests).
-        assert on.json() == {
+        # The wizard only needs `googleWorkspace`; `googleWorkspaceAgent` stays false here because
+        # this deployment has no signing key yet, and is covered by the connector route tests.
+        on_body = on.json()
+        assert {key: on_body[key] for key in (
+            "googleWorkspace", "googleWorkspaceAgent", "notion", "notionAgent",
+            "slack", "slackAgent", "calendly", "calendlyAgent", "sentry", "sentryAgent",
+            "zoom", "zoomAgent",
+            "github", "githubAgent", "githubInstallUrl",
+            "grafana", "grafanaAgent")} == {
             "googleWorkspace": True,
             "googleWorkspaceAgent": False,
             "notion": False,
@@ -204,12 +228,12 @@ def test_connector_config_is_public_and_reveals_no_secret(app, monkeypatch):
             "sentryAgent": False,
             "zoom": False,
             "zoomAgent": False,
-            "github": False,
-            "githubAgent": False,
-            "githubInstallUrl": None,
             # Grafana needs no app credential, only the sealing key this fixture sets.
             "grafana": True,
             "grafanaAgent": False,
+            "github": False,
+            "githubAgent": False,
+            "githubInstallUrl": None,
         }
         assert "GOCSPX" not in on.text
         assert "cid.apps" not in on.text
@@ -253,7 +277,7 @@ def test_invitation_flow_is_reconcilable_by_email(app):
         user_id = first["data"]["memberInvite"]["user"]["id"]
 
         duplicate = client.post("/graphql", json={"query": invite, "variables": {"i": {"name": "Sam", "email": "sam@example.com", "teamIds": [team_id]}}}).json()
-        assert duplicate["data"]["memberInvite"]["success"] is False
+        assert duplicate["errors"][0]["extensions"]["reason"] == "already_member"
 
         members = client.post("/graphql", json={"query": "{ organizationMembers(first:100){nodes{id email}} }"}).json()
         emails = [row["email"] for row in members["data"]["organizationMembers"]["nodes"]]
@@ -265,6 +289,29 @@ def test_invitation_flow_is_reconcilable_by_email(app):
 
         pending = client.post("/graphql", json={"query": "{ pendingMembershipInvitations{userId name email} }"}).json()
         assert pending["data"]["pendingMembershipInvitations"][0]["email"] == "sam@example.com"
+    finally:
+        client.__exit__(None, None, None)
+
+
+def test_owner_bound_tenant_refuses_a_different_address(app, monkeypatch):
+    """A provisioned tenant cannot be claimed by whoever finds the hostname first."""
+    engine, application = app
+    monkeypatch.setenv("HOJA_OWNER_EMAIL", "Owner@Example.com")
+    client = TestClient(application)
+    client.__enter__()
+    try:
+        assert client.get("/onboarding/status").json()["ownerBound"] is True
+        stranger = dict(BOOTSTRAP, email="stranger@example.com")
+        refused = client.post("/onboarding/bootstrap", json=stranger)
+        assert refused.status_code == 403
+        assert "reserved" in refused.json()["error"].lower()
+        with engine.connect() as conn:
+            assert conn.execute(select(organization.c.id)).first() is None
+
+        owner = dict(BOOTSTRAP, email="owner@example.com")
+        allowed = client.post("/onboarding/bootstrap", json=owner)
+        assert allowed.status_code == 200
+        assert client.get("/onboarding/status").json()["initialized"] is True
     finally:
         client.__exit__(None, None, None)
 

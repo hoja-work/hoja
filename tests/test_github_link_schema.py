@@ -114,3 +114,35 @@ def test_the_same_external_id_may_exist_for_another_kind_or_org(tmp_path) -> Non
 
     with engine.connect() as conn:
         assert len(conn.execute(select(github_link.c.id)).all()) == 3
+
+
+def test_revision_55_adds_the_nullable_files_column(tmp_path) -> None:
+    """Revision 55 stores the pull request's per-file diff as JSON text on the row."""
+    engine = make_engine(tmp_path / "files.db")
+    migrate(engine)
+
+    columns = {c["name"]: c for c in inspect(engine).get_columns(github_link.name)}
+    assert "files" in columns
+    # Nullable: a link the enrichment has not reached is a supported state.
+    assert columns["files"]["nullable"] is True
+
+
+def test_revision_55_upgrades_a_revision_54_database(tmp_path) -> None:
+    """The ALTER probe keeps the migration a no-op where the column was added by hand."""
+    engine = make_engine(tmp_path / "hand.db")
+    metadata.create_all(engine)
+    with engine.begin() as conn:
+        # Simulate a database that already ran every older revision: the column is
+        # absent (added later by hand) and the ledger stops at 54.
+        conn.exec_driver_sql("ALTER TABLE github_link DROP COLUMN files")
+        for revision in range(1, 55):
+            conn.execute(
+                schema_revision.insert().values(revision=revision, applied_at=now_iso())
+            )
+    with engine.begin() as conn:
+        conn.exec_driver_sql("ALTER TABLE github_link ADD COLUMN files TEXT")
+
+    migrate(engine)
+
+    assert applied_schema_revision(engine) == CURRENT_SCHEMA_REVISION
+    assert "files" in {c["name"] for c in inspect(engine).get_columns(github_link.name)}

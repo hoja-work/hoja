@@ -66,12 +66,14 @@ every tenant. It registers a single **broker** callback on a host that is not an
 https://api.hoja.work/api/connectors/sentry/callback
 ```
 
-1. `GET /api/connectors/sentry/start` runs on the tenant under its session and mints a sealed,
-   single-use state carrying the user, the organization, the tenant origin and an expiry. The user is
-   redirected to the external install URL with that state.
+1. `GET /api/connectors/sentry/start` runs on the tenant under its session and mints the same
+   two-part state as Calendly: a readable routing hint (`hcs1.<b64url(origin)>`) plus a payload
+   sealed under the organization's HKDF key with `organization_id` as AAD. The user is redirected to
+   the external install URL with that state.
 2. Sentry returns the browser to the broker with `code`, `installationId`, `orgSlug` and `state`.
-   The broker verifies the seal and expiry, checks the tenant origin against the tenant registry,
-   and redirects to `https://<tenant>/api/connectors/sentry/finish?…`.
+   The broker resolves the hint to a live `organization.vanity_host`, opens the seal with **that**
+   organization's key (a rewritten hint fails authentication), verifies the expiry and the payload's
+   organization, and redirects to `https://<tenant>/api/connectors/sentry/finish?…`.
    **It never stores a token, never sees the client secret and never calls Sentry**, so a
    compromised broker can misdirect a grant but cannot mint one.
 3. `/finish` runs on the tenant under the same session, re-verifies the state (single use, bound to

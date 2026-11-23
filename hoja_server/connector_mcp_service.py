@@ -30,6 +30,7 @@ from google_workspace.tools import AccountGrant
 from sqlalchemy import and_, or_, select
 from sqlalchemy.engine import Engine
 
+from hoja_server import tenant_context
 from hoja_server.connectors_api import (
     CALENDLY_PROVIDER,
     GITHUB_PROVIDER,
@@ -49,8 +50,14 @@ DEFAULT_PATH = "/mcp"
 
 
 def _active_rows(engine: Engine, principal: Principal, account: str, provider: str):
-    """Active accounts this principal may use, narrowed to `account` (email or id) when given."""
-    with engine.connect() as conn:
+    """Active accounts this principal may use, narrowed to `account` (email or id) when given.
+
+    The read is scoped to the principal's organization *in this process* as well as filtered by
+    it: the service connects as the app role, so under row-level security an unbound transaction
+    sees no rows at all. Binding here — one chokepoint every resolver goes through — is what keeps
+    the agent's toolset working on the shared tier instead of silently answering "no account".
+    """
+    with tenant_context.scoped(principal.org_id), engine.connect() as conn:
         rows = conn.execute(
             select(connector_account)
             .where(
@@ -95,7 +102,7 @@ def make_grant_resolver(
         grants: list[AccountGrant] = []
         for row in _active_rows(engine, principal, account, PROVIDER):
             try:
-                refresh_token = decrypt_secret(row["encrypted_refresh_token"])
+                refresh_token = decrypt_secret(row["encrypted_refresh_token"], row["organization_id"])
             except (SecretBoxError, ValueError):
                 log.warning("connector account %s has an unreadable token; skipping", row["id"])
                 continue
@@ -123,7 +130,7 @@ def _long_lived_grants(
         grants: list[Any] = []
         for row in _active_rows(engine, principal, account, provider):
             try:
-                token = decrypt_secret(row["encrypted_refresh_token"])
+                token = decrypt_secret(row["encrypted_refresh_token"], row["organization_id"])
             except (SecretBoxError, ValueError):
                 log.warning("%s account %s has an unreadable token; skipping", provider, row["id"])
                 continue
@@ -195,7 +202,7 @@ def make_calendly_grant_resolver(
                 CalendlyGrant(
                     account_id=row["id"],
                     external_account=row["external_account"],
-                    tokens=store.source(row["id"]),
+                    tokens=store.source(row["id"], row["organization_id"]),
                 )
             )
         return grants
@@ -240,7 +247,7 @@ def make_sentry_grant_resolver(
                 SentryGrant(
                     account_id=row["id"],
                     external_account=row["external_account"],
-                    tokens=store.source(row["id"]),
+                    tokens=store.source(row["id"], row["organization_id"]),
                 )
             )
         return grants
@@ -285,7 +292,7 @@ def make_zoom_grant_resolver(
                 ZoomGrant(
                     account_id=row["id"],
                     external_account=row["external_account"],
-                    tokens=store.source(row["id"]),
+                    tokens=store.source(row["id"], row["organization_id"]),
                 )
             )
         return grants
@@ -306,7 +313,7 @@ def make_grafana_grant_resolver(
             if not row["encrypted_refresh_token"] or not row["external_url"]:
                 continue
             try:
-                token = decrypt_secret(row["encrypted_refresh_token"])
+                token = decrypt_secret(row["encrypted_refresh_token"], row["organization_id"])
             except (SecretBoxError, ValueError):
                 log.warning("grafana account %s has an unreadable token; skipping", row["id"])
                 continue
@@ -379,7 +386,7 @@ def make_github_grant_resolver(
                 GitHubGrant(
                     account_id=row["id"],
                     external_account=row["external_account"],
-                    tokens=store.source(row["id"]),
+                    tokens=store.source(row["id"], row["organization_id"]),
                 )
             )
         return grants

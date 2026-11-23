@@ -12,6 +12,8 @@ Filters are applied server-side via the upstream contract's `IssueFilter` GraphQ
 --creator <NAME|me>           Issue creator.
 --project <NAME|ID>           Project name or ID.
 --cycle <current|ID>          'current' for active cycle, or cycle ID.
+--parent <ID|identifier>      Only direct children of that issue.
+--no-parent                   Only issues with no parent (orphans).
 --label <NAME>                Label name. Repeatable or comma-separated.
 --priority <N|N,N,...>        Priority levels (0=none 1=urgent 2=high 3=med 4=low).
 --contains <TEXT>             Full-text match against title + description.
@@ -22,6 +24,7 @@ Filters are applied server-side via the upstream contract's `IssueFilter` GraphQ
 --due-before <DATE>
 --has-due-date                Only issues with a due date set.
 --include-archived            Include archived issues (default: false).
+--view <NAME|SLUG|ID>         Run a saved task view on the server; other flags narrow it.
 -n, --limit <N>               Max issues (default 50).
 --sort-by <FIELD>             Sort field: createdAt|updatedAt|priority.
 --order <asc|desc>            Sort order.
@@ -80,9 +83,31 @@ hoja issue list --cycle current --team ENG --label blocked
 hoja issue list --creator me --no-assignee
 ```
 
+### Children of an issue, and orphans
+```bash
+hoja issue list --parent ENG-42          # direct sub-issues of ENG-42
+hoja issue list --no-parent --team ENG   # issues not nested under anything
+```
+
+`--parent` accepts an identifier or a UUID and returns direct children only;
+walk the tree level by level. `--parent` and `--no-parent` are mutually exclusive.
+
+### Saved views
+```bash
+hoja issue list --view "Urgent tasks"             # by name (case-insensitive)
+hoja issue list --view urgent-tasks-3f2a9c1b --assignee me -n 20
+```
+
+`--view` runs the view on the server (`customView.issues`): its saved filters, scope and
+ordering, for you ("me" in a view is you). Other flags are ANDed with it. `--cycle current`,
+`--cycle next` and `--cycle <part of a name>` are resolved to cycle ids first, so they select
+what they select without `--view`. A flag the view grammar cannot express (`--assignee` or
+`--creator` given as part of a display name) is refused rather than dropped, and `--project`
+must name one project. When two views share a name, pass the slug.
+
 ## When filters aren't enough
 
-For complex predicates not expressible in the flags (e.g. "issues with parent X", "issues where description contains regex Y"):
+For complex predicates not expressible in the flags (e.g. "issues where description contains regex Y"):
 
 1. **Try `hoja issue search`** for full-text needs.
 2. **Fall back to `--output json | jq`** only for projections (selecting fields), not for filtering. Filter at the API; project in the shell.

@@ -8,9 +8,13 @@ clean.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from hoja.client import GraphClient
 from hoja.config import Config
+
+if TYPE_CHECKING:
+    from hoja.credentials import OAuthSession
 from hoja.models.enums import OutputFormat
 
 
@@ -28,6 +32,11 @@ class CLIState:
     timeout: float = 30.0
     account_name: str = ""  # active account name for context display
     base_url: str | None = None  # GraphQL endpoint override (local backend)
+    # Where the credential came from: "--token", "$HOJA_TOKEN", "oauth", "config".
+    credential_source: str = ""
+    session: OAuthSession | None = None  # set when the account uses `hoja auth login`
+    # Why no credential could be resolved, raised on the first API call.
+    auth_error: Exception | None = None
 
 
 _state = CLIState()
@@ -45,11 +54,16 @@ def set_state(state: CLIState) -> None:
 def build_client(state: CLIState | None = None) -> GraphClient:
     """Construct a GraphClient configured from the current CLI state."""
     s = state or _state
-    kwargs = dict(
-        token=s.token,
-        timeout=s.timeout,
-        verbose=s.verbose,
-    )
+    if s.session is not None:
+        # An OAuth account always carries its own endpoint.
+        return GraphClient(
+            base_url=s.base_url or s.session.base_url,
+            timeout=s.timeout,
+            verbose=s.verbose,
+            credential=s.session,
+        )
+    if not s.token and s.auth_error is not None:
+        raise s.auth_error
     if s.base_url:
-        kwargs["base_url"] = s.base_url
-    return GraphClient(**kwargs)
+        return GraphClient(s.token, base_url=s.base_url, timeout=s.timeout, verbose=s.verbose)
+    return GraphClient(s.token, timeout=s.timeout, verbose=s.verbose)

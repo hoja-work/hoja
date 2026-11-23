@@ -116,6 +116,21 @@ def _rollover_cycle_issues(conn, org_id: str, team_id: str,
     return result.rowcount or 0
 
 
+def _cycle_tally(conn, org_id: str, cycle_id: str) -> tuple[int, int, int]:
+    """(completed, total, carried over) for a cycle's live issues: total leaves out
+    canceled work, and carried over is what the rollover is about to move."""
+    from sqlalchemy import and_, func, select
+    from hoja_server.db import issue, workflow_state
+    rows = conn.execute(select(workflow_state.c.type, func.count()).select_from(
+        issue.join(workflow_state, workflow_state.c.id == issue.c.state_id)).where(and_(
+            issue.c.organization_id == org_id, issue.c.cycle_id == cycle_id,
+            issue.c.archived_at.is_(None))).group_by(workflow_state.c.type)).all()
+    by_type = {kind: n for kind, n in rows}
+    total = sum(n for kind, n in by_type.items() if kind != "canceled")
+    carried = by_type.get("unstarted", 0) + by_type.get("started", 0)
+    return by_type.get("completed", 0), total, carried
+
+
 def reconcile_team_cadence(conn, org_id: str, row, now: datetime) -> dict:
     """Within a caller-held team write transaction, ensure Current and two Upcoming.
 
@@ -123,6 +138,7 @@ def reconcile_team_cadence(conn, org_id: str, row, now: datetime) -> dict:
     returning an apparently complete but stale schedule.
     """
     from sqlalchemy import and_, select
+    from hoja_server import notifications
     from hoja_server.db import cycle, new_id, now_iso, team
 
     zone_name = row.get("timezone") or "UTC"
@@ -214,11 +230,21 @@ def reconcile_team_cadence(conn, org_id: str, row, now: datetime) -> dict:
                 conn.execute(cycle.update().where(cycle.c.id == past["id"]).values(completed_at=past["ends_at"], updated_at=timestamp))
                 newly_completed.append(past["id"])
         if newly_completed:
+            # Tally each closing cycle before its unfinished issues move, so the
+            # "cycle completed" notification can say what was done and what carried over.
+            tallies = {cid: _cycle_tally(conn, org_id, cid) for cid in newly_completed}
             # carry-over-style rollover: unfinished issues follow the active pointer.
             _rollover_cycle_issues(conn, org_id, team_id, newly_completed, active["id"], timestamp)
+            for past in persisted:
+                if past["id"] in tallies:
+                    completed, total, carried = tallies[past["id"]]
+                    notifications.on_cycle_completed(conn, org_id, dict(past), row.get("key"),
+                                                     completed, total, carried, timestamp)
     if row.get("active_cycle_id") != (active["id"] if active else None):
         conn.execute(team.update().where(and_(team.c.organization_id == org_id,
             team.c.id == team_id)).values(active_cycle_id=active["id"] if active else None, updated_at=timestamp))
+        if active:
+            notifications.on_cycle_started(conn, org_id, dict(active), row.get("key"), timestamp)
     upcoming = conn.execute(select(cycle).where(and_(cycle.c.organization_id == org_id,
         cycle.c.team_id == team_id, cycle.c.number > (active_number or 0))).order_by(cycle.c.number).limit(2)).mappings().all()
     def serialize(r):

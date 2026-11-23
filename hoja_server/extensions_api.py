@@ -70,6 +70,16 @@ def _admin(info):
     return store, org, uid
 
 
+def _extension_manager(info):
+    """HOJA-490: `extension.manage`, so a workspace can delegate installing and
+    updating extensions without handing out admin. Default False = revision 58."""
+    from hoja_server import permissions
+    ctx = info.context
+    store, org, uid = ctx["store"], ctx["org_id"], ctx["user_id"]
+    permissions.require(store, org, uid, "extension.manage")
+    return store, org, uid
+
+
 def _bad(exc: Exception) -> GraphQLError:
     if isinstance(exc, extensions.ExtensionError):
         return GraphQLError(str(exc), extensions={"code": "BAD_USER_INPUT", "field": exc.field})
@@ -82,13 +92,13 @@ def _not_found():
 
 @query.field("extensions")
 def q_extensions(_, info):
-    store, org, _uid = _admin(info)
+    store, org, _uid = _extension_manager(info)
     return extensions.list_installed(store.engine, org)
 
 
 @query.field("extension")
 def q_extension(_, info, id):
-    store, org, _uid = _admin(info)
+    store, org, _uid = _extension_manager(info)
     found = extensions.get(store.engine, org, id)
     if not found:
         raise _not_found()
@@ -103,7 +113,7 @@ def q_extension_actions(_, info, entity):
 
 @mutation.field("extensionInstall")
 def m_extension_install(_, info, manifest):
-    store, org, uid = _admin(info)
+    store, org, uid = _extension_manager(info)
     try:
         result = extensions.install(store.engine, org, uid, manifest)
     except (extensions.ExtensionError, secrets_box.SecretBoxError) as exc:
@@ -113,7 +123,7 @@ def m_extension_install(_, info, manifest):
 
 @mutation.field("extensionUpdate")
 def m_extension_update(_, info, id, manifest):
-    store, org, _uid = _admin(info)
+    store, org, _uid = _extension_manager(info)
     try:
         updated = extensions.update(store.engine, org, id, manifest)
     except (extensions.ExtensionError, secrets_box.SecretBoxError) as exc:
@@ -125,7 +135,7 @@ def m_extension_update(_, info, id, manifest):
 
 @mutation.field("extensionUninstall")
 def m_extension_uninstall(_, info, id):
-    store, org, _uid = _admin(info)
+    store, org, _uid = _extension_manager(info)
     return {"success": extensions.uninstall(store.engine, org, id)}
 
 

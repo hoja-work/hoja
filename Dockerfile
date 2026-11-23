@@ -10,10 +10,17 @@ RUN groupadd --system hoja && useradd --system --gid hoja --home /app --shell /u
 WORKDIR /app
 COPY . .
 COPY --from=frontend-build /frontend/dist /app/web
+# Same build identity as the production image: GET /api/version reports the
+# commit this image was built from, and when (never a hardcoded version).
+ARG HOJA_RELEASE_SHA=unknown
+ARG HOJA_BUILT_AT=
+ENV HOJA_RELEASE_SHA=$HOJA_RELEASE_SHA
+RUN if [ -n "$HOJA_BUILT_AT" ]; then printf '%s\n' "$HOJA_BUILT_AT" > /app/BUILD_TIME; \
+    else date -u +%Y-%m-%dT%H:%M:%SZ > /app/BUILD_TIME; fi
 # pip is part of the shipped image's attack surface (12 advisories on 25.0.1),
 # so it is upgraded before the project install rather than left at the base tag.
 RUN python -m pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir '.[server,mcp]' \
+    && pip install --no-cache-dir '.[server]' \
     && chown -R hoja:hoja /app
 ENV HOJA_WEB_ROOT=/app/web
 USER hoja

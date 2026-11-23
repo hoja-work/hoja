@@ -58,8 +58,8 @@ def test_a_tenant_defers_sign_in_to_the_control_plane(client):
     r = c.get("/auth/google/start", follow_redirects=False)
     assert r.status_code == 302
     assert r.headers["location"] == (
-        "https://app.hoja.work/auth/google/start"
-        "?return_to=https%3A%2F%2Facme.hoja.work%2F"
+        "https://app.hoja.work/signin"
+        "?next=https%3A%2F%2Facme.hoja.work%2F"
     )
 
 
