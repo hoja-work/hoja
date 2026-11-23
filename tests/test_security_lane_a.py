@@ -124,7 +124,7 @@ def test_agent_graphql_tool_refuses_mutation_for_read_access(tmp_path) -> None:
 
 
 def test_agent_graphql_tool_blocks_mutations_for_read_access(tmp_path) -> None:
-    from hoja_server.agent_chat import read_only_violation
+    from hoja_server.denials import read_only_violation
 
     assert read_only_violation("mutation { teamCreate(input:{}) { success } }", "read") is True
     assert read_only_violation("{ viewer { id } }", "read") is False
