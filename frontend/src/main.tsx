@@ -10,6 +10,7 @@ import React, {
   useState,
 } from "react";
 import { createRoot } from "react-dom/client";
+import { lazyRoute } from "./lazyRoute";
 import { cn } from "cn";
 import { Dialog as StackDialog } from "radix-ui";
 import { ReactGrabDev } from "./dev/ReactGrabDev";
@@ -114,11 +115,21 @@ import {
   type ServerView,
   type ViewInput,
 } from "./views";
-import { AgentChatPage } from "./AgentChatPage";
-import { AgentsSurface } from "./agents/AgentsSurface";
-import { ProjectRepository } from "./agents/ProjectRepository";
-import { LeaderboardPage } from "./profiles/LeaderboardPage";
-import { MemberProfilePage } from "./profiles/MemberProfilePage";
+const AgentChatPage = lazyRoute(() =>
+  import("./AgentChatPage").then((m) => m.AgentChatPage),
+);
+const AgentsSurface = lazyRoute(() =>
+  import("./agents/AgentsSurface").then((m) => m.AgentsSurface),
+);
+const ProjectRepository = lazyRoute(() =>
+  import("./agents/ProjectRepository").then((m) => m.ProjectRepository), { fallback: null },
+);
+const LeaderboardPage = lazyRoute(() =>
+  import("./profiles/LeaderboardPage").then((m) => m.LeaderboardPage),
+);
+const MemberProfilePage = lazyRoute(() =>
+  import("./profiles/MemberProfilePage").then((m) => m.MemberProfilePage),
+);
 import {
   setWorkspaceAgentsEnabled,
   useAgentsSurfaceEnabled,
@@ -137,7 +148,9 @@ import {
   type Layer,
 } from "./localFirst";
 import { Markdown } from "./markdown";
-import { ReviewsInbox } from "./reviews/ReviewsInbox";
+const ReviewsInbox = lazyRoute(() =>
+  import("./reviews/ReviewsInbox").then((m) => m.ReviewsInbox),
+);
 import type { TaskInReviewInput } from "./reviews/inbox";
 import type { ReviewLink } from "./reviews/types";
 import {
@@ -155,7 +168,9 @@ import {
 import "./graph/styles.css";
 import "./settings.css";
 import { SettingsSelect } from "./SettingsSelect";
-import { SettingsRoute } from "./settings/SettingsRoute";
+const SettingsRoute = lazyRoute(() =>
+  import("./settings/SettingsRoute").then((m) => m.SettingsRoute),
+);
 import { SettingsNav } from "./settings/SettingsNav";
 import {
   SidebarTooltip,
@@ -165,7 +180,9 @@ import {
 import type { Capability } from "./settings/context";
 import { GraphIssueDetail } from "./graph/tasks";
 import { Avatar, AvatarFallback, AvatarGroup } from "./components/ui/avatar";
-import { ProjectActivity } from "./ProjectActivity";
+const ProjectActivity = lazyRoute(() =>
+  import("./ProjectActivity").then((m) => m.ProjectActivity),
+);
 import {
   Avatar as GraphAvatar,
   blobatarSrc,
@@ -204,13 +221,21 @@ import {
   useIssueSelect,
   useSyncMeta,
 } from "./sync";
-import { SignupPage } from "./signup/SignupPage";
-import { SetupWizard } from "./setup/SetupWizard";
+// Its mobile input-zoom guard is global CSS, so it stays in the entry stylesheet.
+import "./signup/signup.css";
+const SignupPage = lazyRoute(() =>
+  import("./signup/SignupPage").then((m) => m.SignupPage),
+);
+const SetupWizard = lazyRoute(() =>
+  import("./setup/SetupWizard").then((m) => m.SetupWizard),
+);
 import { createCloudAdapter } from "./setup/cloudAdapter";
 import { loadDraft } from "./setup/draft";
 
 const setupAdapter = createCloudAdapter();
-import { InboxPage } from "./inbox/InboxPage";
+const InboxPage = lazyRoute(() =>
+  import("./inbox/InboxPage").then((m) => m.InboxPage),
+);
 import { FollowButton } from "./inbox/follow";
 import { ProjectMembers } from "./ProjectMembers";
 import { useInboxUnread, useInboxUnreadSync } from "./inbox/model";
@@ -247,13 +272,21 @@ function InboxTooltip({
     </SidebarTooltip>
   );
 }
-import {
-  GraphTeamCycles,
-  GraphCycleDetail,
-  GraphTeamCycle,
-  GraphTeamCycleSettings,
-  GraphWorkspaceCycles,
-} from "./graph/cycles";
+const GraphTeamCycles = lazyRoute(() =>
+  import("./graph/cycles").then((m) => m.GraphTeamCycles),
+);
+const GraphCycleDetail = lazyRoute(() =>
+  import("./graph/cycles").then((m) => m.GraphCycleDetail),
+);
+const GraphTeamCycle = lazyRoute(() =>
+  import("./graph/cycles").then((m) => m.GraphTeamCycle),
+);
+const GraphTeamCycleSettings = lazyRoute(() =>
+  import("./graph/cycles").then((m) => m.GraphTeamCycleSettings),
+);
+const GraphWorkspaceCycles = lazyRoute(() =>
+  import("./graph/cycles").then((m) => m.GraphWorkspaceCycles),
+);
 
 /* Dev-only: says once which backend the Vite proxy targets. `import.meta.env.DEV` is a
  * compile-time false in `npm run build`, so the import and the log leave the production bundle. */
@@ -4860,10 +4893,16 @@ function IssueDetailPage({
     />
   );
 }
-import { InitiativeRoute } from "./initiatives/InitiativeDetail";
+const InitiativeRoute = lazyRoute(() =>
+  import("./initiatives/InitiativeDetail").then((m) => m.InitiativeRoute),
+);
 import { PhoneSignInDialog } from "./PhoneSignIn";
-import { InitiativesList } from "./initiatives/InitiativesList";
-import { CreateInitiativeDialog } from "./initiatives/CreateInitiativeDialog";
+const InitiativesList = lazyRoute(() =>
+  import("./initiatives/InitiativesList").then((m) => m.InitiativesList),
+);
+const CreateInitiativeDialog = lazyRoute(() =>
+  import("./initiatives/CreateInitiativeDialog").then((m) => m.CreateInitiativeDialog), { fallback: null },
+);
 import { fetchAllInitiatives, type InitiativeRef } from "./initiatives/api";
 // Local-first helpers for the projects / initiatives / pulse pages (see projectStore.ts).
 import {
