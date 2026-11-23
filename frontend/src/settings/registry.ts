@@ -42,6 +42,7 @@ export type SettingsSectionId =
   | "project-templates"
   | "initiatives"
   | "workspace"
+  | "workspace-templates"
   | "teams"
   | "members"
   | "permissions"
@@ -150,6 +151,15 @@ export const SETTINGS_SECTIONS: SettingsSectionDef[] = [
     icon: Building2,
     admin: true,
     keywords: "workspace name url features delete",
+  },
+  {
+    id: "workspace-templates",
+    label: "Templates",
+    group: "Workspace",
+    icon: LayoutTemplate,
+    admin: true,
+    keywords:
+      "workspace template preset defaults setup import export sla labels agents",
   },
   { id: "teams", label: "Teams", group: "Workspace", icon: Users },
   {

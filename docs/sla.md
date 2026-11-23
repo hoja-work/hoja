@@ -68,3 +68,7 @@ in every `Backlog` state:
 
 Nothing is applied until a policy exists, so a workspace that never opens this
 pane has exactly the behaviour it had before.
+
+Workspace templates (`docs/workspace-templates.md`) can also create policies. The
+"Agents do most of the writing" template sets the same targets without the Backlog
+pause, because agents file work into Backlog and a paused clock never comes due.

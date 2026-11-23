@@ -47,6 +47,7 @@ DURABLE_DOCS = {
     "docs/github-linking.md",
     "docs/hierarchy-rendering.md",
     "docs/sla.md",
+    "docs/workspace-templates.md",
     "docs/views.md",
     "docs/notifications/android-and-ux.md",
 }

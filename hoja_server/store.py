@@ -2167,10 +2167,26 @@ class Store:
             stmt = _scope_teams(conn, stmt, org_id, viewer_id, issue.c.team_id)
             return [self.ser_issue(row) for row in _conn_rows(conn, stmt)]
 
+    def notification_kinds_enabled(self, user_id: str) -> dict[str, bool]:
+        """Whether each notification kind reaches this person.
+
+        Their own choice wins. A kind they never set follows the workspace default
+        (HOJA-742, set by a workspace template), and a kind neither names is on.
+        """
+        from hoja_server.notifications import KINDS
+        from hoja_server.workspace_templates import notification_defaults
+        prefs = self.user_preferences(user_id) or {}
+        with self.engine.connect() as conn:
+            org = conn.execute(select(user.c.organization_id).where(user.c.id == user_id)).scalar()
+            defaults = notification_defaults(conn, org) if org else {}
+        out = {}
+        for kind in KINDS:
+            stored = prefs.get(f"notification:{kind}")
+            out[kind] = stored == "true" if stored is not None else bool(defaults.get(kind, True))
+        return out
+
     def _disabled_notification_kinds(self, user_id: str) -> list[str]:
-        return [key.removeprefix("notification:") for key, value
-                in (self.user_preferences(user_id) or {}).items()
-                if key.startswith("notification:") and value == "false"]
+        return [kind for kind, on in self.notification_kinds_enabled(user_id).items() if not on]
 
     def inbox_notifications(self, org_id: str, user_id: str, after=None, limit=51,
                             unread_only=False, archived=False, snoozed=False) -> list[dict]:

@@ -76,6 +76,9 @@ ACTIONS = frozenset({
     # and after of the policy document; ``agent.policy.secret`` names the secret
     # and never its value, which is not readable here by construction.
     "agent.policy.change",
+    # A workspace template created or updated settings (HOJA-742). ``detail`` names the
+    # template and every step that changed something; it never carries setting values.
+    "workspace.template.apply",
     "agent.policy.secret",
     # The repository a project's agent tasks work in (HOJA-602): granting it is an admin act,
     # so the before and after are on the record.

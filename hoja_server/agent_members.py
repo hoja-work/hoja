@@ -214,6 +214,13 @@ def m_create(_, info, input):
                 created_at=ts, updated_at=ts, **values))
         except IntegrityError:
             _bad("name", "That agent identity already has a member row.")
+        # HOJA-742: a workspace template may set the policy every new agent starts
+        # with. Without one the agent is granted nothing, exactly as before.
+        from hoja_server import agent_policy
+        from hoja_server.workspace_templates import AGENT_POLICY_KEY, get_default
+        default_policy = get_default(conn, org, AGENT_POLICY_KEY)
+        if default_policy:
+            agent_policy.save_policy(conn, org, member_id, default_policy, actor_id=uid, at=ts)
         row = dict(conn.execute(select(agent_member).where(
             agent_member.c.id == member_id)).first()._mapping)
     return {"success": True, "agentMember": serialize(store, org, row)}

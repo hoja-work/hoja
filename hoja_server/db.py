@@ -40,7 +40,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 96
+CURRENT_SCHEMA_REVISION = 97
 
 log = logging.getLogger(__name__)
 
@@ -2024,6 +2024,21 @@ workspace_knowledge = Table(
     Index("ix_workspace_knowledge_org_scope", "organization_id", "scope", "scope_id"),
 )
 
+# HOJA-742: workspace-level defaults a workspace template can set and that no other
+# table holds: the notification kinds a member gets when they have not chosen, and the
+# policy a new agent member starts with. One JSON document per key, so a new default
+# is a new key rather than a migration. Carries organization_id NOT NULL, so
+# rls_policy binds it as a direct tenant table.
+workspace_default = Table(
+    "workspace_default",
+    metadata,
+    Column("organization_id", String, ForeignKey("organization.id"), primary_key=True),
+    Column("key", String, primary_key=True),
+    Column("value", Text, nullable=False),
+    Column("updated_by", String, ForeignKey("user.id")),
+    Column("updated_at", String, nullable=False),
+)
+
 # HOJA-491: SLA policies and the per-task clock they start. A NULL team_id is a
 # workspace-wide policy; a team id scopes it, and a team's policy wins over the
 # workspace one for the same priority. The clock is a row of its own so a task
@@ -3931,6 +3946,15 @@ def _apply_workspace_knowledge(conn):
     workspace_knowledge.create(conn, checkfirst=True)
 
 
+def _apply_workspace_defaults(conn):
+    """``workspace_default``: per-workspace default documents (revision 97, HOJA-742).
+
+    Additive and idempotent; no existing row changes meaning, because a workspace
+    without a stored default behaves exactly as before.
+    """
+    workspace_default.create(conn, checkfirst=True)
+
+
 def _apply_agent_run_log(conn):
     """``agent_run_log``: the per-run timeline GraphQL serves (HOJA-602)."""
     agent_run_log.create(conn, checkfirst=True)
@@ -4321,6 +4345,9 @@ _MIGRATIONS = {
     # 96: manual order for tasks (sort_order, priority_sort_order, backfilled newest first),
     # the team's placement-on-status-change setting, and task label groups.
     96: _apply_views_depth,
+    # 97: workspace defaults (HOJA-742): notification and agent-policy defaults that a
+    # workspace template sets.
+    97: _apply_workspace_defaults,
 }
 
 
