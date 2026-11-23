@@ -105,6 +105,7 @@ import {
   VisualDecisionOptions,
 } from "../VisualDecisionOptions";
 import { getAgentsAdapter, type AgentChoice } from "../agents/adapter";
+import { TaskRunSection } from "../agents/TaskRunSection";
 
 /* Linear 1:1 Issues list + board + detail. */
 
@@ -2428,6 +2429,8 @@ export function GraphIssueDetail({
   const [moreOpen, setMoreOpen] = useState(false);
   const narrow = useNarrowDetail();
   const [layers, setLayers] = useState<{ patch: Partial<LinIssue> }[]>([]);
+  /* Bumped after a delegate write, so the Run section re-reads (HOJA-712). */
+  const [runRefresh, setRunRefresh] = useState(0);
   const [updateError, setUpdateError] = useState("");
   // Ids whose preview failed to load, so a dead URL degrades to an icon instead of
   // leaving the browser's torn-page glyph in the row.
@@ -3329,7 +3332,14 @@ export function GraphIssueDetail({
         icon={<Bot size={14} />}
         value={detail.delegate?.name || "No delegate"}
         onOpen={loadAgentChoices}
-        onPick={(id) => void change({ delegateId: id })}
+        /* Delegating opens the run on the server, and the Run section below the description
+           is already mounted: the counter is what makes it read the run the write just
+           created instead of showing the state from before it. */
+        onPick={(id) =>
+          void change({ delegateId: id }).then((done) => {
+            if (done) setRunRefresh((n) => n + 1);
+          })
+        }
         options={[
           {
             id: null,
@@ -4292,6 +4302,16 @@ export function GraphIssueDetail({
                 </section>
               );
             })()}
+
+            {/* The run behind this task (HOJA-712). It draws nothing at all for a task that was
+                never delegated and has no runs, and reads `agentSessions(issueId)` itself so the
+                issue query this page already makes is not asked for session fields it may not
+                have. */}
+            <TaskRunSection
+              issueId={detail.id}
+              delegated={Boolean(detail.delegateId)}
+              refresh={runRefresh}
+            />
 
             <DetailSection
               title="Activity"

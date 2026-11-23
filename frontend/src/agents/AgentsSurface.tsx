@@ -20,7 +20,8 @@
  */
 
 import { useEffect, useState } from "react";
-import { getAgentsAdapter } from "./adapter";
+import { navigateTo } from "../localFirst";
+import { getAgentsAdapter, taskPath } from "./adapter";
 import { setWorkspaceAgentsEnabled, useAgentsSurfaceEnabled } from "./flag";
 import { AgentDetailPage } from "./AgentDetail";
 import { AgentsPane } from "./AgentsPane";
@@ -163,9 +164,13 @@ export function AgentsSurface({
         tab={tab}
         onTab={onTab}
         onOpenAgent={(key) => go(`${AGENTS_ROOT}/${encodeURIComponent(key)}`)}
-        /* The adapter resolves a session's agent user id to its routable member id. */
+        /* A run is a task being worked on, so opening it opens that task (HOJA-712). This used to
+         * push `<agentId>/queue` — the queue the row was already in — which made every row a
+         * no-op. The agent is still one click away through the row's own agent chip
+         * (`onOpenAgent`), which is where the transcript lives. `navigateTo` goes through the
+         * shell's popstate handler so the task route resolves like any other link into it. */
         onOpenRun={(run) =>
-          go(`${AGENTS_ROOT}/${encodeURIComponent(run.agentId)}/queue`)
+          navigateTo(taskPath(run.issueIdentifier, run.issueTitle))
         }
       />
     );

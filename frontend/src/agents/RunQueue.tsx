@@ -19,7 +19,7 @@ import {
   type IssueRowModel,
   type LinDisplay,
 } from "../graph/tasks";
-import { getAgentsAdapter } from "./adapter";
+import { getAgentsAdapter, sessionLabel } from "./adapter";
 import {
   AGENTS_TABS,
   AgentsListShell,
@@ -357,10 +357,18 @@ export function RunQueue({
                       trailing={
                         <>
                           <PhoneRowBreak />
-                          <span
-                            className="inline-flex min-w-0 max-w-full shell-phone:max-w-3/5 items-center whitespace-nowrap border border-line gap-1 h-6 text-[12px] font-[450] border-solid border-(--card-line) rounded-[48px] pt-0 pr-2 pb-0 pl-2 text-(--card-meta) bg-panel"
+                          {/* The row opens its task (AgentsSurface.onOpenRun), so the agent stays
+                              reachable here: the chip is the way to the agent, and the transcript
+                              is on that page. A chip stops the row's own click from firing. */}
+                          <button
+                            type="button"
+                            className="inline-flex min-w-0 max-w-full shell-phone:max-w-3/5 items-center whitespace-nowrap border border-line gap-1 h-6 text-[12px] font-[450] border-solid border-(--card-line) rounded-[48px] pt-0 pr-2 pb-0 pl-2 text-(--card-meta) bg-panel hover:text-foreground hover:border-accent"
                             data-session-chip={s.status}
-                            title={`${s.agentName} · ${sessionStatusName(s.status)} · ${s.state}${s.reason ? ` · ${s.reason}` : ""}${s.harness ? ` · harness ${s.harness}` : ""}`}
+                            title={`${s.agentName} · ${sessionLabel(s.state, s.status)} · ${s.state}${s.reason ? ` · ${s.reason}` : ""}${s.harness ? ` · harness ${s.harness}` : ""} — opens ${s.agentName}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onOpenAgent(s.agentId);
+                            }}
                           >
                             <i
                               className="flex-none not-italic w-2.25 h-2.25 rounded-[50%]"
@@ -369,7 +377,7 @@ export function RunQueue({
                               }}
                             />
                             <span className="truncate">{s.agentName}</span>
-                          </span>
+                          </button>
                           {/* A queued lease naming a harness waits for a runner that
                               declares it, rather than being held by the schedule. */}
                           {s.status === "queued" && s.harness && (
@@ -474,8 +482,8 @@ export function RunQueue({
         </p>
       )}
       <p className="text-[12px] text-muted pt-0 pr-5 pb-6 pl-5">
-        A queue row opens that agent's queue. The run's transcript is on the
-        agent page.
+        A queue row opens its task. The agent's name opens the agent, where the
+        run's transcript is.
       </p>
     </AgentsListShell>
   );

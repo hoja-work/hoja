@@ -1,7 +1,12 @@
 import React, { useEffect, useState } from "react";
 import { authHeaders, IssueChip } from "./markdown";
-import { sessionStatus } from "./agents/adapter";
-import { SESSION_TYPE, sessionStatusName } from "./agents/types";
+import {
+  queueReasonText,
+  sessionLabel,
+  sessionPolling,
+  sessionStatus,
+} from "./agents/adapter";
+import { SESSION_TYPE } from "./agents/types";
 
 /* One task the chat handed to an agent. The server appends a fenced `hoja-delegation` block per
  * task to the reply (agent_chat.delegation_blocks); this card reads the session it names and keeps
@@ -32,18 +37,12 @@ export function splitDelegations(content: string): {
   return { text: content.replace(DELEGATION_BLOCK, "").trim(), delegations };
 }
 
-/* agent_schedule.REASON_ORDER, in words. */
-const REASON_TEXT: Record<string, string> = {
-  capacity: "the agent is at capacity",
-  budget: "the monthly budget is spent",
-  window: "outside the agent's working hours",
-  blocked: "the task is blocked",
-  approval: "waiting for approval",
-  lease_held: "another run holds the task",
-};
-
-const SETTLED = new Set(["in_review", "done", "failed", "cancelled"]);
+/* Two cadences, because two different things are being waited on (HOJA-712). A run that is
+ * moving is re-read every five seconds; a run in `verifying` is settled *for now* — nobody in this
+ * browser can move it, and the verdict arrives when a human or a verifier acts — so it is re-read
+ * on a slow cadence instead of the five-second loop that never ended. */
 const POLL_MS = 5000;
+const SLOW_MS = 30000;
 const SESSION_QUERY =
   "query ChatDelegation($id:String!){agentSession(id:$id){state status queueReason}}";
 
@@ -74,7 +73,9 @@ function useSession(sessionId: string | null): Live | null | "unavailable" {
             return;
           }
           setLive(row);
-          if (!SETTLED.has(row.state)) timer = setTimeout(read, POLL_MS);
+          const waiting = sessionPolling(row.state);
+          if (waiting !== "settled")
+            timer = setTimeout(read, waiting === "moving" ? POLL_MS : SLOW_MS);
         })
         .catch(() => {
           if (!cancelled) timer = setTimeout(read, POLL_MS);
@@ -93,17 +94,16 @@ export function DelegationCard({ delegation }: { delegation: Delegation }) {
   const live = useSession(delegation.sessionId);
   const agent = delegation.agentName || "The agent";
   const known = live && live !== "unavailable" ? live : null;
+  /* `Live.status` is the wire enum as text; the mapping is `sessionStatus`'s own. */
   const group = known
     ? sessionStatus(known.state, known.status as never)
     : "queued";
-  const reasons = known?.queueReason?.length
-    ? known.queueReason.map((r) => REASON_TEXT[r] || r).join(", ")
-    : "";
+  const reasons = queueReasonText(known?.queueReason);
   const label =
     live === "unavailable" || !delegation.sessionId
       ? "Status unavailable"
       : known
-        ? sessionStatusName(group)
+        ? sessionLabel(known.state, known.status)
         : "Checking…";
   return (
     <div

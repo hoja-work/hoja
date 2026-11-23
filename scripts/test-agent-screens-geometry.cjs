@@ -403,7 +403,16 @@ const focusStop = page => page.evaluate(() => {
   await page.waitForTimeout(300);
   // On a phone the sidebar is a drawer: open it first, as a person would.
   const drawerOpen = await page.evaluate(() => { const s = document.querySelector('[data-workspace-sidebar]'); return !s || s.getBoundingClientRect().left >= 0; });
-  if (!drawerOpen) await page.click('button[data-mobile-nav-toggle][aria-expanded="false"]');
+  /* A drawer with no control that opens it is a finding, not a reason to stop the run: this used
+   * to `page.click` a selector the shell no longer emits (`data-mobile-nav-toggle`), so every
+   * assertion after this point — sections 5 to 10, over a hundred of them — never ran at phone
+   * width. The control is looked for by either shape and its absence is recorded as the failure it
+   * is, then the run continues. */
+  if (!drawerOpen) {
+    const drawerToggle = page.locator('button[data-mobile-nav-toggle], button[aria-label="Open navigation"]').first();
+    if (await drawerToggle.count()) await drawerToggle.click({ timeout: 5000 }).catch(() => undefined);
+    else ok(false, 'flagged-on build: the phone shell offers a control that opens the sidebar', 'no [data-mobile-nav-toggle] and no aria-label="Open navigation"');
+  }
   await page.waitForTimeout(350);
   const entry = page.locator('[data-workspace-sidebar] :is(button,a)').filter({ hasText: /^\s*Agents\s*$/ }).first();
   ok(await entry.count() > 0, 'flagged-on build: the sidebar carries an Agents entry');
@@ -816,6 +825,98 @@ const focusStop = page => page.evaluate(() => {
     'task page: the session is a real WP06 row, in the state machine\'s own vocabulary', JSON.stringify(delegatedRun));
   await page.screenshot({ path: path.join(shots, `issue-delegate-${W}.png`) });
 
+  /* ---- 7a. the task page shows the run (HOJA-712) ----
+   *
+   * Delegating a task opened an `agent_session` and nowhere on the task page said so: the run was
+   * only visible in the queue or on the agent's page. The section is asserted against
+   * `issue.agentSessions` — the server's own per-task read — so a fixture or a stale row cannot
+   * pass it. Two near-misses matter as much as the positive case: an undelegated task must draw
+   * no Run heading at all, and a row must not claim a verdict the server has not recorded.
+   */
+  const runSessions = (await gql(
+    `query($id:String!){issue(id:$id){agentSessions(first:20){id state status queueReason verdict agent{id name displayName}}}}`,
+    { id: reference.identifier })).issue.agentSessions;
+  await page.waitForSelector('[data-task-runs]', { timeout: 15000 }).catch(() => undefined);
+  /* The section reads on its own cadence while the run is unsettled, so a row appears on the read
+   * after the one the delegate write raced. Wait for the count the server reports rather than for
+   * a fixed delay: that is the thing under test. */
+  await page.waitForFunction(
+    (n) => document.querySelectorAll('[data-task-runs] [data-run-session]').length >= n,
+    runSessions.length, { timeout: 20000 }).catch(() => undefined);
+  const runBlock = await page.evaluate(() => {
+    const section = document.querySelector('[data-task-runs]');
+    if (!section) return null;
+    return {
+      label: section.getAttribute('aria-label'),
+      heading: section.querySelector('header')?.innerText.replace(/\s+/g, ' ') || '',
+      count: Number(section.getAttribute('data-task-runs-count')),
+      rows: [...section.querySelectorAll('[data-run-session]')].map(r => ({
+        id: r.getAttribute('data-run-session'),
+        state: r.getAttribute('data-run-state'),
+        chip: r.querySelector('[data-run-chip]')?.getAttribute('data-run-chip') || '',
+        verdict: r.querySelector('[data-run-verdict]')?.getAttribute('data-run-verdict') || '',
+        text: r.innerText.replace(/\s+/g, ' '),
+      })),
+    };
+  });
+  ok(Boolean(runBlock), 'task page: a delegated task carries the Run section');
+  ok(runBlock && runBlock.label === 'Run' && /^Run\b/.test(runBlock.heading),
+    'task page: the section is headed Run', JSON.stringify(runBlock && runBlock.heading));
+  ok(runBlock && runBlock.count === runSessions.length && runBlock.rows.length === runSessions.length,
+    'task page: one Run row per session the server holds for this task',
+    `${runBlock && runBlock.count} vs ${runSessions.length}`);
+  ok(runSessions.every(s => runBlock && runBlock.rows.some(r => r.id === s.id && r.state === s.state)),
+    'task page: every Run row is the session the server stored, in the server\'s state',
+    JSON.stringify(runBlock && runBlock.rows.map(r => [r.id, r.state])));
+  ok(runSessions.every(s => {
+    const row = runBlock && runBlock.rows.find(r => r.id === s.id);
+    const name = s.agent?.name || s.agent?.displayName || '';
+    return Boolean(row) && Boolean(name) && row.text.includes(name);
+  }), 'task page: a Run row names the agent the session is filed under',
+  JSON.stringify(runBlock && runBlock.rows.map(r => r.text).slice(0, 2)));
+  ok(runBlock && runSessions.every(s => {
+    const row = runBlock.rows.find(r => r.id === s.id);
+    return Boolean(row) && (s.verdict ? row.verdict === s.verdict : row.verdict === '');
+  }), 'task page: a Run row shows the verdict the server recorded, and none it has not');
+  const queuedRun = runSessions.find(s => (s.queueReason || []).length);
+  if (queuedRun) {
+    ok(runBlock && /Queued: /.test(runBlock.rows.find(r => r.id === queuedRun.id)?.text || ''),
+      'task page: a queued Run row says why it waits', JSON.stringify(queuedRun.queueReason));
+  } else {
+    console.log('NOTE no queued session on the delegated task this run; the queue-reason row is not asserted');
+  }
+  if (runBlock) await page.locator('[data-task-runs]').scrollIntoViewIfNeeded().catch(() => undefined);
+  await page.screenshot({ path: path.join(shots, `task-run-section-${W}.png`) });
+  /* The rows are chips, a name and a timestamp on one line; at phone width they must wrap inside
+   * the column rather than widen it. (The task page's own phone overflow is measured by the detail
+   * comparisons above; this is about the section adding none of its own.) */
+  const runBox = await page.evaluate(() => {
+    const section = document.querySelector('[data-task-runs]');
+    const main = document.querySelector('[data-style-hooks~="lin-detail-main"]');
+    if (!section || !main) return null;
+    const s = section.getBoundingClientRect(), m = main.getBoundingClientRect();
+    return {left: Math.round(s.left), right: Math.round(s.right),
+      mainRight: Math.round(m.right), scrollWidth: section.scrollWidth,
+      clientWidth: section.clientWidth};
+  });
+  ok(Boolean(runBox) && runBox.right <= runBox.mainRight + 1 && runBox.scrollWidth <= runBox.clientWidth + 1,
+    'task page: the Run section stays inside the main column at this width', JSON.stringify(runBox));
+
+  /* The other half: a task nobody delegated draws no Run heading. */
+  const plain = (await gql('{issues(first:20){nodes{identifier title}}}')).issues.nodes
+    .find(n => n.title === 'Draft the migration plan');
+  assert.ok(plain, 'an undelegated task exists to prove the section is conditional');
+  const plainState = (await gql('query($id:String!){issue(id:$id){delegateId agentSessions{id}}}', { id: plain.identifier })).issue;
+  assert.ok(!plainState.delegateId && plainState.agentSessions.length === 0,
+    'the task used for the near-miss is undelegated and has no runs');
+  await page.goto(`${base}/workspace/task/${encodeURIComponent(plain.identifier)}/issue`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-style-hooks~="lin-detail-main"]', { timeout: 15000 });
+  await page.waitForTimeout(700);
+  ok(await page.evaluate(() => !document.querySelector('[data-task-runs]')),
+    'task page: an undelegated task with no runs draws no Run section at all');
+  await page.goto(`${base}${referencePath}`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-style-hooks~="lin-detail-main"]', { timeout: 15000 });
+
   /* ---- 7b. Connect grants (WP09): the policy the server already enforced, now a field ----
    *
    * The server has stored and audited Connect grants since WP09; until now an admin had to call
@@ -1063,6 +1164,41 @@ const focusStop = page => page.evaluate(() => {
     'run queue: a queued run shows the schedule check\'s queue_reason',
     JSON.stringify(queueRows.find(r => r.text.includes('Regenerate'))));
   ok(queueRows.some(r => r.text.includes('Triage agent')), 'run queue: the session chip names the agent the server filed the run under');
+
+  /* ---- 8a. a queue row opens its task, and the agent stays one click away (HOJA-712) ----
+   *
+   * `onOpenRun` used to push `<agentId>/queue` — the queue the row was already in — so a row that
+   * looked like a link went nowhere. The row now opens the task it runs; the agent moved onto the
+   * row's own chip, which is where the transcript lives. Both are read back from the URL and the
+   * page that rendered, not from a chip's colour.
+   */
+  const firstQueueRow = page.locator('[data-surface="run-queue"] [data-style-hooks~="lin-row"]').first();
+  const firstQueueIdent = (await firstQueueRow.innerText()).trim().split(/\s+/)[0];
+  await firstQueueRow.locator('[data-style-hooks~="title"]').first().click();
+  const openedPath = await page.waitForSelector('[data-style-hooks~="lin-detail-main"]', { timeout: 15000 })
+    .then(() => new URL(page.url()).pathname).catch(() => null);
+  ok(Boolean(openedPath) && openedPath.includes('/workspace/task/'),
+    'run queue: a row opens its task, not the queue it is already in', String(openedPath));
+  ok(decodeURIComponent((openedPath || '').split('/').filter(Boolean)[2] || '') === firstQueueIdent,
+    'run queue: the task that opened is the identifier the row shows',
+    `${decodeURIComponent((openedPath || '').split('/').filter(Boolean)[2] || '')} vs ${firstQueueIdent}`);
+  ok(new URL(page.url()).pathname !== '/workspace/agents/queue'
+    && !/^\/workspace\/agents\/[^/]+\/queue$/.test(new URL(page.url()).pathname),
+    'run queue: opening a row never lands back on a queue route', new URL(page.url()).pathname);
+
+  await page.goto(`${base}/workspace/agents/queue`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-surface="run-queue"] [data-session-chip]', { timeout: 15000 });
+  const chip = await page.evaluate(() => {
+    const el = document.querySelector('[data-surface="run-queue"] [data-session-chip]');
+    return {tag: el ? el.tagName : null, text: (el?.textContent || '').trim(),
+      title: el?.getAttribute('title') || ''};
+  });
+  ok(chip.tag === 'BUTTON', 'run queue: the agent chip is a control, so the agent is still reachable', JSON.stringify(chip));
+  await page.click('[data-surface="run-queue"] [data-session-chip]');
+  const agentPath = await page.waitForSelector('[data-surface="agent-detail"] [data-style-hooks~="lin-detail-main"]', { timeout: 15000 })
+    .then(() => new URL(page.url()).pathname).catch(() => null);
+  ok(Boolean(agentPath) && /^\/workspace\/agents\/[^/]+$/.test(agentPath || ''),
+    'run queue: the agent chip opens that agent\'s page', String(agentPath));
 
   await page.goto(`${base}/workspace/agents/${encodeURIComponent(triage.id)}`, { waitUntil: 'networkidle' });
   await page.waitForSelector('[data-surface="agent-detail"] [data-style-hooks~="lin-detail-main"]', { timeout: 15000 });

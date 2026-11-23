@@ -32,6 +32,7 @@ import type {
   ConnectEndpointRow, ConnectExposure, Runner, RunnerEnrollment, RunnerEnrollmentGrant, RunnerLease,
   SessionStatus, VerificationCheck, Verdict,
 } from './types';
+import { sessionStatusName } from './types';
 
 export type PolicyPatch = Partial<AgentPolicy>;
 
@@ -97,6 +98,10 @@ export type AgentsAdapter = {
   /** One page of the workspace run queue, newest first. `agentId` is an `AgentMember.id`, so a
    * screen can pass the same value it uses in a route. */
   listSessions(options?: {agentId?: string; after?: string}): Promise<SessionPage>;
+  /** Every run on one task, newest first (`agentSessions(issueId)`). The task page's Run section
+   * reads this: one task's runs, keyed by the task id the page already holds, with the agent named
+   * by the session's own `agent` field so the read costs one query. */
+  listIssueSessions(issueId: string, first?: number): Promise<AgentSession[]>;
   /** Stops a run through `agentSessionStop`. A terminal session is returned unchanged by the
    * server's machine, which refuses the event rather than pretending it happened. */
   stopSession(sessionId: string): Promise<{session: AgentSession; audit: null}>;
@@ -364,6 +369,10 @@ type ServerSession = {
   verdict: Verdict | null; verifiedAt: string | null;
   verifierId: string | null; verifierModel: string | null;
   issue: {id: string; identifier: string; title: string; priority: number | null} | null;
+  /** `AgentSession.agent`, the user row the session is filed under. Selected only by reads that
+   * have no `AgentMember` lookup of their own (the task page's Run section), so a caller that does
+   * not ask for it keeps the row it had. */
+  agent?: {id: string; name: string | null; displayName: string | null} | null;
   activities?: ServerActivity[];
 };
 
@@ -391,6 +400,56 @@ export function sessionStatus(state: string, status: ServerSession['status']): S
   return STATUS_BY_STATE[state] || 'active';
 }
 
+/* How long a screen may wait before it re-reads a run, by where the run stands. `verifying` is not
+ * settled — a verifier still has to sign — but nothing this browser can do will move it, so it is
+ * "settled for now": the slow cadence is what catches the verdict, and the five-second loop is
+ * reserved for a run that is actually moving. The four terminal states are settled outright. */
+export type SessionPolling = 'moving' | 'verifying' | 'settled';
+
+const TERMINAL_STATES = new Set(['in_review', 'done', 'failed', 'cancelled']);
+
+export function sessionPolling(state: string): SessionPolling {
+  if (TERMINAL_STATES.has(state)) return 'settled';
+  if (state === 'verifying') return 'verifying';
+  return 'moving';
+}
+
+/* The sentence a run's state is shown with. `in_review` is its own answer and not "Done": the work
+ * is finished but nobody has accepted it, and folding the two together is how a run that is still
+ * waiting on a human reads as finished. `awaiting-verification` is the same fact one step earlier —
+ * a verifier has not signed yet. A cancelled run stopped where it was and does not read "Done"
+ * either. Every other state keeps the queue's own vocabulary. */
+export function sessionLabel(state: string, status: string): string {
+  if (state === 'in_review') return 'In review';
+  if (state === 'cancelled') return 'Cancelled';
+  return sessionStatusName(sessionStatus(state, status as ServerSession['status']));
+}
+
+/* `agent_schedule.REASON_ORDER`, in words. One mapping for every screen that says why a run waits. */
+const REASON_TEXT: Record<string, string> = {
+  capacity: 'the agent is at capacity',
+  budget: 'the monthly budget is spent',
+  window: "outside the agent's working hours",
+  blocked: 'the task is blocked',
+  approval: 'waiting for approval',
+  lease_held: 'another run holds the task',
+};
+
+export function queueReasonText(reasons: string[] | undefined | null): string {
+  return (Array.isArray(reasons) ? reasons : []).map(r => REASON_TEXT[r] || r).join(', ');
+}
+
+/* The task page's route for a run's task, built exactly as the shell's `openIssue` builds it
+ * (identifier names it, the slug mirrors the title), so a row that opens its task lands on the URL
+ * the lists would have produced. */
+export function taskPath(identifier: string, title?: string | null): string {
+  const slug = String(title || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
+  return `/workspace/task/${encodeURIComponent(identifier)}/${slug}`;
+}
+
 function issueOf(row: ServerSession) {
   return {
     issueId: row.issueId,
@@ -405,7 +464,7 @@ function fromSession(row: ServerSession, agent?: {id: string; name: string}): Ag
   return {
     id: row.id,
     agentId: agent?.id || '',
-    agentName: agent?.name || 'agent',
+    agentName: agent?.name || row.agent?.name || row.agent?.displayName || 'agent',
     agentUserId: row.agentUserId,
     status: sessionStatus(row.state, row.status),
     state: row.state,
@@ -873,6 +932,19 @@ function createGraphqlAdapter(fallback: AgentsAdapter): AgentsAdapter {
       };
     },
 
+    async listIssueSessions(issueId, first) {
+      /* `agentSessions(issueId)` is the one-task read the task page needs. The session's own
+       * `agent` field names the agent, so this costs one query where the queue pays for a second
+       * `agentMembers` read to translate ids into names. */
+      const data = await request<{agentSessions: ServerSession[]}>(
+        `query IssueRuns($id: String!, $first: Int) {
+           agentSessions(issueId: $id, first: $first) {
+             ${SESSION_FIELDS}
+             agent { id name displayName } } }`,
+        {id: issueId, first: first ?? SESSION_PAGE});
+      return (data.agentSessions || []).map(row => fromSession(row));
+    },
+
     async stopSession(sessionId: string) {
       const data = await request<{agentSessionStop: {success: boolean; agentSession: ServerSession | null}}>(
         `mutation Stop($id: String!) {
@@ -1281,6 +1353,7 @@ function createFallbackAdapter(): AgentsAdapter {
     async updateConnectPolicy() { return serverOnly('an agent\'s Connect grants'); },
 
     async listSessions() { return serverOnly('the run queue'); },
+    async listIssueSessions() { return serverOnly('a task\'s runs'); },
     async listAuditEvents() { return serverOnly('the audit log'); },
     async stopSession() { return serverOnly('stopping a session'); },
     async answerSession() { return serverOnly('answering a session'); },
