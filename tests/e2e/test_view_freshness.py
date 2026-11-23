@@ -34,9 +34,22 @@ def test_team_home_reflects_new_issue(browser_pair, gql):
 
 def test_team_views_reflects_new_issue(browser_pair, gql):
     base, (_, viewer) = browser_pair
-    _settle(viewer, base, "/workspace/team/eng/views/issues")
+    team_id = _team_id(gql)
+    view_id = "e2e-all-tasks"
+    viewer.goto(base + "/")
+    viewer.wait_for_load_state("networkidle")
+    # Views are browser-local saved views: frontend/src/main.tsx ViewsPage renders
+    # results only when a saved view is active (`{active && ...results...}`), and the
+    # page otherwise shows its empty state. Seed an "All tasks" view so this test
+    # measures realtime freshness rather than the empty state.
+    viewer.evaluate(
+        "([key, id]) => localStorage.setItem(key, JSON.stringify(["
+        "{id, name: 'All tasks', query: '', state: '', kind: 'issues'}]))",
+        [f"hoja_saved_views_{team_id}", view_id],
+    )
+    _settle(viewer, base, f"/workspace/team/eng/views/issues/{view_id}")
     title = f"Views fresh {time.time_ns()}"
-    _create_issue(gql, title, _team_id(gql))
+    _create_issue(gql, title, team_id)
     assert _wait_for_text(viewer, title, present=True), "team views did not refresh"
 
 

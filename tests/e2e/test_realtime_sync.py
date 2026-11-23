@@ -88,8 +88,13 @@ def _socket_events(base: str, token: str | None, after: int, count: int) -> list
         async with connect(url, subprotocols=protocols) as ws:
             events = []
             while len(events) < count:
-                events.append(json.loads(await asyncio.wait_for(ws.recv(), timeout=10)))
-            return events
+                frame = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+                # v1 frames are JSON arrays of ChangeEvent objects
+                # (hoja_server/realtime.py "Wire protocol"); the first frame after
+                # connect may be empty, so flatten the frames into events instead
+                # of treating a frame as one event.
+                events.extend(frame)
+            return events[:count]
 
     return asyncio.run(collect())
 

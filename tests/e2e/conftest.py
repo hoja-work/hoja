@@ -19,6 +19,43 @@ pytest.importorskip("sqlalchemy")
 
 from playwright.sync_api import sync_playwright  # noqa: E402
 
+
+def _chromium_is_installed() -> bool:
+    """True when playwright can find a chromium binary, not merely the package.
+
+    `importorskip` above only proves the Python package exists. A runner with
+    the package but no browser would otherwise fail 16 cases with a driver
+    error, and a machine with neither would skip them silently. Distinguishing
+    the two makes the skip say which one happened, and lets the `pytest-e2e`
+    job fail on any skip instead of inheriting a green run over zero cases.
+    """
+    try:
+        with sync_playwright() as playwright:
+            return Path(playwright.chromium.executable_path).exists()
+    except Exception:  # driver missing, unreadable, or not executable
+        return False
+
+
+if not _chromium_is_installed():
+    pytest.skip(
+        "chromium is not installed for playwright; "
+        "run `python -m playwright install --with-deps chromium`, "
+        "or let the `pytest-e2e` CI job supply it",
+        allow_module_level=True,
+    )
+
+_WEB_BUNDLE = Path(__file__).resolve().parents[2] / "frontend" / "dist" / "index.html"
+if not _WEB_BUNDLE.exists():
+    # hoja_server/app.py serves frontend/dist and, when it is absent, answers
+    # the root with an instruction page instead of the app. Every case here
+    # then fails on the sign-in form rather than skipping, for a reason that is
+    # a missing build, not a broken product. Say so, visibly.
+    pytest.skip(
+        f"the web bundle is missing at {_WEB_BUNDLE}; "
+        "run `npm ci && npm run build` in frontend/ before the browser suite",
+        allow_module_level=True,
+    )
+
 from hoja_server.db import make_engine, migrate, seed_tenant  # noqa: E402
 from tests import rls_mode  # noqa: E402
 
