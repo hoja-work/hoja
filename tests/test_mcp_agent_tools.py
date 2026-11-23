@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -87,6 +88,37 @@ def hoja(tmp_path):
     with TestClient(app, base_url=f"https://{HOST}", client=("127.0.0.1", 44321)) as client:
         yield lambda scopes=(READ_SCOPE, WRITE_SCOPE): Mcp(client, token(list(scopes)))
 
+
+
+@pytest.fixture
+def tenants(tmp_path):
+    """Two organizations that both use the team key ENG (HOJA-50).
+
+    The shared key is deliberate: identifiers are only unique per organization,
+    so ``ENG-1`` must never resolve across the tenant boundary.
+    """
+    path = tmp_path / "mcp-tenants.db"
+    engine = make_engine(path)
+    migrate(engine)
+    seeds = {
+        "a": seed_tenant(engine, org_name="Org A", org_url_key="a", team_key="ENG",
+                         user_name="Alice A", user_email="alice@a.test", demo_issues=True),
+        "b": seed_tenant(engine, org_name="Org B", org_url_key="b", team_key="ENG",
+                         user_name="Bob B", user_email="bob@b.test", demo_issues=True),
+    }
+    provider = HojaOAuthProvider(engine, Store(engine), True)
+    with engine.begin() as conn:
+        conn.execute(db.oauth_client.insert().values(
+            client_id="agent", created_at=now_iso(),
+            client_json='{"client_id":"agent","redirect_uris":["https://client.test/cb"],"token_endpoint_auth_method":"none"}'))
+        tokens = {
+            org: provider._mint_pair(conn, "agent", seed["user_id"], seed["org_id"],
+                                     [READ_SCOPE, WRITE_SCOPE], f"https://{HOST}/mcp").access_token
+            for org, seed in seeds.items()
+        }
+    app = create_app(db_path=str(path), trusted_proxy_cidrs="127.0.0.1/32", trusted_public_host=HOST)
+    with TestClient(app, base_url=f"https://{HOST}", client=("127.0.0.1", 44321)) as client:
+        yield SimpleNamespace(a=Mcp(client, tokens["a"]), b=Mcp(client, tokens["b"]), tokens=tokens)
 
 def test_tool_schemas_are_typed_and_annotated(hoja) -> None:
     mcp = hoja()
@@ -262,3 +294,41 @@ def test_read_only_api_key_explains_how_to_get_write(tmp_path) -> None:
         mcp = Mcp(client, "read-only-key-token")
         ok, err = mcp.call("hoja_issueCreate", teamId="ENG", title="nope")
     assert not ok and "API key is read-only" in err and "read-write key" in err
+
+
+def test_one_tenant_cannot_read_or_write_another_tenants_task(tenants) -> None:
+    ok, mine = tenants.a.call("hoja_tasks", first=1)
+    assert ok, mine
+    task = mine["tasks"]["nodes"][0]
+
+    ok, hidden = tenants.b.call("hoja_task", id=task["id"])
+    assert not ok and "nothing found" in hidden
+
+    ok, edited = tenants.b.call("hoja_taskUpdate", id=task["id"], title="stolen")
+    assert not ok and "did not apply" in edited
+
+    ok, listed = tenants.b.call("hoja_tasks", filter={"team": {"id": {"eq": task["team"]["id"]}}})
+    assert ok and listed["tasks"]["nodes"] == []
+
+    ok, searched = tenants.b.call("hoja_searchTasks", term=task["identifier"])
+    assert ok
+    assert task["id"] not in [node["id"] for node in searched["searchTasks"]["nodes"]]
+
+    # Identifiers are unique per organization, not globally: B's ENG-1 is B's own task.
+    ok, own = tenants.b.call("hoja_task", id=task["identifier"])
+    assert ok, own
+    assert own["task"]["identifier"] == task["identifier"]
+    assert own["task"]["id"] != task["id"]
+
+
+def test_tool_responses_never_echo_the_access_token(tenants) -> None:
+    secret = tenants.tokens["b"]
+    assert secret not in json.dumps(tenants.b.tools())
+    failures = (
+        tenants.b.call("hoja_task", id="NOPE-9999"),
+        tenants.b.call("hoja_teams", workspaceId="x"),
+        tenants.b.call("hoja_taskUpdate", id="ENG-1", assigneeId="Nobody At All"),
+    )
+    for ok, text in failures:
+        assert not ok, text
+        assert secret not in text

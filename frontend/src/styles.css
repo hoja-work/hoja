@@ -274,7 +274,6 @@ html.hoja-modal-open{overflow:hidden;scrollbar-gutter:stable}
    as a flex column with a bounded height, and the cards area is the scroller. */
 .kanban [data-kanban-cards]{
   scrollbar-width:thin}
-/* ---- Reviews: the shell the reference shows -------------------------------------- */
 /* Tree layout (IssueLayout='Tree'): hierarchy from issue.parent, same rows as the list. */
 /* Hierarchy inside the grouped list: the row keeps its normal grid columns and only
    gains a disclosure gutter plus a left offset, so status, priority, labels, assignee
@@ -283,53 +282,6 @@ html.hoja-modal-open{overflow:hidden;scrollbar-gutter:stable}
 /* Board hierarchy (HOJA-33): a sub-task card is indented under the parent card in the same
    column, with a rail so the nesting survives without a second colour. A sub-task whose
    parent sits in another column keeps the parent chip instead of pretending to be a root. */
-
-/* Reviews ledger — geometry measured from Linear at 1440x900 */
-
-/* Reviews: full-bleed split view (Linear: 482px list + detail pane).
-   The page height comes from a flex chain (app -> body -> content -> main -> page),
-   never from 100dvh on the page itself, so a header that is hidden, shown or
-   collapsed can never push the ledger past the bottom of the viewport. Column
-   geometry (482px ledger cap, 664px pane floor, ledger yields first, pane dropped
-   below 1228px) lives in the measured responsive block at the end of this file. */
-/* Filled state glyph, measured from the reference: 14px box, 4 paths when open
-   (fill #43bc58) and 5 when draft (fill #5c5c5e), never a stroke. */
-
-/* Reviews: selectable rows in the ledger. The row stays a flat 38px line; the click
-   target is a button inside it and the GitHub link is a sibling so neither nests in the
-   other. Selection is local state, so a row opens the right pane instead of leaving Hoja. */
-
-/* Reviews: detail pane (right side of the split view). Geometry mirrors the measured
-   reference: 52px breadcrumb band, 44px tab row, 96px property label column, 24px/600
-   title. Everything a githubLink does not carry is labelled unknown rather than faked. */
-
-/* ---- Reviews: responsive geometry, measured from Linear ---------------------------
-   Linear at 1920/1600/1440: 244px sidebar, 482px ledger, detail pane fills the rest.
-   At 1280 the ledger yields first (381px) because the pane keeps a 664px floor; the
-   ledger only re-caps at 482px once vw >= 1391. At 1228 the pane becomes the whole
-   page (one pane, ledger full width) and stays that way down to the phone. Below
-   890px the sidebar stops being a column and becomes the off-canvas drawer.
-   Which pane is on screen is decided by width only; the geometry uses flex
-   grow/shrink + min/max clamps so the widths in between degrade instead of snapping. */
-
-/* One pane: the ledger is the page and a selected review opens over it. */
-@media (max-width:1227px){
-  /* Measured at 1227 and 1100: the reference band keeps its 10px left margin and gains 8px
-     on the right once the ledger is the whole width. */
-}
-
-/* Drawer: no sidebar column, so the ledger takes the whole width. */
-
-/* Phones: Linear keeps the row rhythm (40px rows, 28px group bars) and only trims
-   the chrome, so the ledger stays a full-bleed list and the pane keeps phone padding. */
-
-/* Reviews: Diff tab. The pane body swaps from the overview scroll to a diff panel that
-   never widens the page: the file list and every patch line live inside their own
-   horizontal scroller, and the panel itself is a min-width:0 flex child of .reviews-detail
-   so a 200-character line scrolls inside .reviews-diff-patch instead of pushing the
-   ledger or the one-pane overlay sideways. Line colours come from the patch prefix only
-   (data-kind from reviewLineKind): additions green, deletions red, hunk headers muted,
-   context in normal ink, file headers/"no newline" notices muted italic. */
 
 /* Board hierarchy (HOJA-33): the flat card carries the nesting itself — the wrapper
    div is gone, so the depth offset lands on the card and the rail hangs off its edge. */

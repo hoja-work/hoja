@@ -5,8 +5,6 @@ Subcommands:
   seed    Create an organization, user, team, states, and token.
   token   Mint a token for an existing organization user.
   rls-report  Print the per-table row-level-security verdict /ready enforces.
-  create-workspace  Create (or repair) a workspace in the shared database.
-  tenant-doctor  Read-only check that a workspace host is provisioned and reachable.
   connector-mcp  Serve the connector MCP tools (Google Workspace, Notion and Slack) on HOJA_CONNECTOR_MCP_URL.
 """
 from __future__ import annotations
@@ -298,81 +296,6 @@ def _cmd_reseal_secrets(args):
     raise SystemExit(0 if not report.unopenable else 1)
 
 
-def _cmd_merge_tenant(args):
-    """Copy one dedicated tenant database into the shared database (dry run unless --apply)."""
-    import os
-
-    from hoja_server.tenant_merge import MergeError, merge
-
-    source_secret = os.environ.get(args.source_secret_env, "")
-    if not source_secret:
-        raise SystemExit(f"set {args.source_secret_env} to the tenant's HOJA_SECRET_KEY")
-    source_url = args.source_url or os.environ.get("HOJA_MERGE_SOURCE_URL")
-    target_url = args.target_url or os.environ.get("HOJA_MERGE_TARGET_URL")
-    if not source_url or not target_url:
-        raise SystemExit("pass --source-url and --target-url, or set HOJA_MERGE_SOURCE_URL and HOJA_MERGE_TARGET_URL")
-    try:
-        report = merge(make_engine(source_url), make_engine(target_url), source_secret=source_secret,
-                       vanity_host=args.vanity_host, apply=args.apply, replace_stale=args.replace_stale,
-                       carry_over=args.carry_over)
-    except MergeError as exc:
-        raise SystemExit(f"merge refused: {exc}") from exc
-    print("\n".join(report.lines()))
-
-
-def _cmd_create_workspace(args):
-    """Create a workspace in the shared database; an included model provider may arrive as JSON on stdin.
-
-    Prints one JSON line. Re-running with the same arguments changes nothing and
-    reports the stored state; ``repaired`` lists what an older provisioning run
-    had left out and this run filled in. Refusals exit 2 with ``error``/``message``.
-    """
-    import json
-
-    from hoja_server.workspace_provision import ProvisionError, provision
-
-    provider = None
-    if args.provider_stdin:
-        provider = json.loads(sys.stdin.read())
-    engine = make_engine(_database_target(args))
-    try:
-        result = provision(engine, slug=args.slug, owner_email=args.owner_email, name=args.name,
-                           provider=provider, vanity_host=args.vanity_host)
-    except ProvisionError as exc:
-        print(json.dumps({"error": exc.reason, "message": exc.message}))
-        print(f"create-workspace refused: {exc.message}", file=sys.stderr)
-        raise SystemExit(2) from exc
-    finally:
-        engine.dispose()
-    print(json.dumps(result, sort_keys=True))
-
-
-def _cmd_tenant_doctor(args):
-    """Read-only: can the owner get into the workspace on this host? Exit 1 on a blocking problem."""
-    from hoja_server import tenant_doctor
-
-    route_text = None
-    if args.route_file == "-":
-        route_text = sys.stdin.read()
-    elif args.route_file:
-        try:
-            with open(args.route_file, encoding="utf-8") as handle:
-                route_text = handle.read()
-        except FileNotFoundError:
-            route_text = ""
-    engine = make_engine(_database_target(args))
-    try:
-        report = tenant_doctor.diagnose(engine, args.host, owner_email=args.owner_email,
-                                        route_text=route_text, routes_dir=args.routes_dir)
-    finally:
-        engine.dispose()
-    if args.json:
-        print(json.dumps(report.as_dict(), indent=2, sort_keys=True))
-    else:
-        print("\n".join(report.lines()))
-    raise SystemExit(0 if report.ok else 1)
-
-
 def _cmd_connector_mcp(args):
     """Serve the connector MCP tools. The Hoja server signs a principal per turn and hands the
     agent this address as HOJA_CONNECTOR_MCP_URL; nothing else authenticates the caller."""
@@ -486,49 +409,6 @@ def main(argv=None):
     rr.add_argument("--db", default=None)
     rr.add_argument("--json", action="store_true", help="print the report as JSON")
     rr.set_defaults(func=_cmd_rls_report)
-
-    mt = sub.add_parser("merge-tenant", help="copy a dedicated tenant database into the shared database")
-    mt.add_argument("--source-url", default=None, help="tenant database, superuser (or HOJA_MERGE_SOURCE_URL)")
-    mt.add_argument("--target-url", default=None, help="shared database, superuser (or HOJA_MERGE_TARGET_URL)")
-    mt.add_argument("--source-secret-env", default="HOJA_SOURCE_SECRET_KEY",
-                    help="environment variable holding the tenant's HOJA_SECRET_KEY")
-    mt.add_argument("--vanity-host", default=None, help="keep serving the workspace on this host")
-    mt.add_argument("--replace-stale", action="store_true",
-                    help="replace an older copy of the same organization in the shared database")
-    mt.add_argument("--carry-over", action="store_true",
-                    help="replace an older copy but keep its rows the tenant lacks (issues renumbered)")
-    mt.add_argument("--apply", action="store_true", help="commit; without it the merge is verified and rolled back")
-    mt.set_defaults(func=_cmd_merge_tenant)
-
-    cw = sub.add_parser("create-workspace", help="create a workspace in the shared database")
-    cw.add_argument("--slug", required=True)
-    cw.add_argument("--owner-email", required=True)
-    cw.add_argument("--name", default=None, help="display name (ignored when the workspace exists)")
-    cw.add_argument("--vanity-host", default=None,
-                    help="serve the workspace on its own host, exactly <slug>.<HOJA_TENANT_BASE_DOMAIN>")
-    cw.add_argument("--provider-stdin", action="store_true",
-                    help="read the included model provider, with its key, as JSON from stdin")
-    cw.add_argument("--tenant", default="default")
-    cw.add_argument("--database-url", default=None)
-    cw.add_argument("--db", default=None)
-    cw.set_defaults(func=_cmd_create_workspace)
-
-    td = sub.add_parser("tenant-doctor",
-                        help="read-only check that a workspace host is provisioned and its owner can sign in")
-    td.add_argument("host", help="the workspace host, e.g. acme.hoja.work")
-    td.add_argument("--owner-email", default=None,
-                    help="address to test admission for (default: the sign-up owner or oldest admin)")
-    td.add_argument("--route-file", default=None,
-                    help="the host's Traefik route file; '-' reads it from stdin")
-    td.add_argument("--routes-dir", default=None,
-                    help="Traefik dynamic directory (default $HOJA_TRAEFIK_DYNAMIC_DIR or "
-                         "/opt/hoja/deploy/traefik/dynamic)")
-    td.add_argument("--json", action="store_true", help="print the report as JSON")
-    td.add_argument("--tenant", default="default")
-    td.add_argument("--database-url", default=None)
-    td.add_argument("--db", default=None)
-    td.set_defaults(func=_cmd_tenant_doctor)
-
 
     cm = sub.add_parser(
         "connector-mcp",

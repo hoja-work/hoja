@@ -3,7 +3,6 @@ import { Collapsible } from "radix-ui";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   AlertCircle,
-  Bot,
   Check,
   CheckCircle2,
   ChevronRight,
@@ -31,8 +30,6 @@ function ToolGlyph({ kind }: { kind: ToolIconKind }) {
       return <Database className={cls} aria-hidden="true" />;
     case "schema":
       return <FileCode2 className={cls} aria-hidden="true" />;
-    case "delegate":
-      return <Bot className={cls} aria-hidden="true" />;
     case "connector":
       return <Plug className={cls} aria-hidden="true" />;
     default:

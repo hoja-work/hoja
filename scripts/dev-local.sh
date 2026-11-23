@@ -171,7 +171,7 @@ fi
 BACKEND_ENV=(env)
 if [[ "$SNAPSHOT" == "1" ]]; then
   BACKEND_ENV=(env -i "PATH=$PATH" "HOME=$RUNTIME_DIR" "PYTHONPATH=$ROOT"
-    HOJA_WEBHOOK_WORKER=0 HOJA_LEASE_REAPER=0)
+    HOJA_WEBHOOK_WORKER=0)
 fi
 
 # --- Processes ---------------------------------------------------------------

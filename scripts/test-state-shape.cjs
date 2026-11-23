@@ -180,7 +180,7 @@ async function routes(page, base) {
     await wait(300);
     paths.add(new URL(page.url()).pathname);
   }
-  for (const id of ['account', 'preferences', 'notifications', 'members', 'teams', 'labels', 'api', 'billing']) paths.add(`/workspace/settings/${id}`);
+  for (const id of ['account', 'preferences', 'notifications', 'members', 'teams', 'labels', 'api']) paths.add(`/workspace/settings/${id}`);
   const issue = await page.evaluate(async () => {
     const r = await fetch('/graphql', { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${localStorage.getItem('hoja_token')}` }, body: JSON.stringify({ query: 'query{issues(first:1){nodes{identifier}} projects(first:1){nodes{id}}}' }) });
     return (await r.json()).data;

@@ -171,10 +171,8 @@ const PANE_CONTRACTS = {
   'project-templates': /^\s*projectTemplates\s*:/m,
   'permissions': /^\s*workspacePermissions\s*:/m,
   'security': /^\s*workspaceSecurityPolicy\s*:/m,
-  'billing': /^\s*usageSummary\s*[(:]/m,
   'cycles': /^\s*cycles\s*[(:]/m,
   'extensions': /^\s*extensions\s*[(:]/m,
-  'knowledge': /^\s*knowledgeDocs\s*[(:]/m,
 };
 const CLIENT_ONLY_PANES = new Set([
   'preferences', 'profile', 'notifications', 'api-keys', 'agent-conversations',

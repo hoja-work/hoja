@@ -82,8 +82,8 @@ const invariants = () => {
     const sectionMatch = src.match(/const sections\s*=\s*\[[\s\S]*?\]\s*(?:as const)?;/);
     assert.ok(sectionMatch, 'sidebar sections not found in main.tsx');
     const labels = [...sectionMatch[0].matchAll(/\[\s*['"]([^'"]+)['"]\s*,\s*[A-Za-z][A-Za-z0-9]*\s*\]/g)].map(m => m[1]);
-    assert.ok(labels.length >= 9 && labels.includes('Leaderboard'), `expected sidebar entries including Leaderboard, found ${labels.length}: ${labels.join(', ')}`);
-    const details = [`/workspace/issue/${issues[0]}`, `/workspace/project/${projectId}`, '/workspace/member'];
+    assert.ok(labels.length >= 7 && labels.includes('Projects'), `expected sidebar entries including Projects, found ${labels.length}: ${labels.join(', ')}`);
+    const details = [`/workspace/issue/${issues[0]}`, `/workspace/project/${projectId}`, '/workspace/members'];
     const extraCss = process.env.PAGE_EXTRA_CSS ? fs.readFileSync(process.env.PAGE_EXTRA_CSS, 'utf8') : '';
 
     browser = await chromium.launch({ headless: true });

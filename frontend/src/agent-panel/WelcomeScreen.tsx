@@ -1,10 +1,4 @@
-import {
-  Activity,
-  Bug,
-  CalendarClock,
-  ListTodo,
-  Sparkles,
-} from "lucide-react";
+import { Activity, Bug, CalendarClock, ListTodo, Sparkles } from "lucide-react";
 
 interface StarterItem {
   title: string;
@@ -22,7 +16,7 @@ const STARTERS: StarterItem[] = [
   },
   {
     title: "What is in progress this cycle?",
-    subtitle: "Check active issues and blockers in the cycle",
+    subtitle: "Check active tasks and blockers in the cycle",
     prompt: "What is in progress in the active cycle?",
     icon: Activity,
   },
@@ -62,8 +56,8 @@ export function WelcomeScreen({
         Ask the {name} agent
       </h1>
       <p className="m-0 max-w-md text-center text-sm text-muted">
-        Search issues, inspect cycles, update tasks, or delegate work to an
-        agent. Tool activity stays neatly collapsed until you want the details.
+        Search and update tasks, or inspect cycles. Tool activity stays neatly
+        collapsed until you want the details.
       </p>
 
       <div className="mt-6 grid w-full grid-cols-1 gap-2.5 sm:grid-cols-2">

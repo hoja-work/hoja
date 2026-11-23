@@ -128,7 +128,7 @@ export function RouteLoading() {
 
 /**
  * Wrap a page module in its own chunk. `load` resolves the named export, e.g.
- * `lazyRoute(() => import("./profiles/LeaderboardPage").then((m) => m.LeaderboardPage))`.
+ * `lazyRoute(() => import("./inbox/InboxPage").then((m) => m.InboxPage))`.
  * `fallback: null` suits dialogs and inline panels that should simply appear when ready.
  */
 export function lazyRoute<P extends object = AnyProps>(

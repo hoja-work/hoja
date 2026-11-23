@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useReducedMotion } from "framer-motion";
 import { AlertCircle, Check, Copy, RotateCcw } from "lucide-react";
 import { Markdown } from "../markdown";
-import { DelegationCard, splitDelegations } from "../DelegationCard";
 import { ReasoningBlock } from "./ReasoningBlock";
 import { ToolCallGroup } from "./ToolCallGroup";
 import { splitAsk, type ChatMessage } from "./types";
@@ -88,16 +87,11 @@ export function MessageItem({
     );
   }
 
-  const { text: withoutCards, delegations } = splitDelegations(
-    message.content ?? "",
-  );
-  const { text, questions } = splitAsk(withoutCards);
+  const { text, questions } = splitAsk(message.content ?? "");
   const hasTools = Boolean(message.toolCalls && message.toolCalls.length > 0);
   const hasThinking = Boolean(message.thinking && message.thinking.trim());
   const hasVisibleBody =
-    Boolean(text.trim()) ||
-    delegations.length > 0 ||
-    Boolean(questions && questions.length > 0);
+    Boolean(text.trim()) || Boolean(questions && questions.length > 0);
   const waitingForFirstEvent =
     isStreaming && !hasVisibleBody && !hasTools && !hasThinking;
 
@@ -120,14 +114,6 @@ export function MessageItem({
       {text.trim() !== "" && (
         <div className="min-w-0 text-sm leading-relaxed text-foreground break-words wrap-anywhere">
           <Markdown text={text} density="compact" />
-        </div>
-      )}
-
-      {delegations.length > 0 && (
-        <div className="flex flex-col gap-2">
-          {delegations.map((d) => (
-            <DelegationCard key={d.issueId} delegation={d} />
-          ))}
         </div>
       )}
 

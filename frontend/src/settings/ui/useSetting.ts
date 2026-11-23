@@ -62,7 +62,6 @@ export function useSetting<T>({
     if (inFlight.current) return;
     committed.current = value;
     setLocal(value);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only an external value change resyncs
   }, [value]);
   useEffect(() => () => window.clearTimeout(timer.current), []);
 

@@ -37,12 +37,6 @@ query($id: String!) {
 }
 """
 
-# What the Reviews queue asks for. It reads links, not tasks, so it must keep returning a
-# linked pull request no matter how many other tasks were touched afterwards.
-REVIEWS_QUERY = """
-query { pullRequests(first: 50) { id kind externalId state issue { identifier } } }
-"""
-
 
 def _setup(tmp_path):
     db_path = tmp_path / "github-links-graphql.db"
@@ -221,76 +215,3 @@ def test_files_survives_a_malformed_stored_payload(tmp_path):
     body = response.json()
     assert "errors" not in body, body
     assert body["data"]["issue"]["githubLinks"][0]["files"] == []
-
-
-# --- the Reviews queue ---------------------------------------------------------------------
-
-
-def _bulk_issues(engine, seeded, count):
-    """`count` tasks touched after the linked one, to push it out of any newest-N window."""
-    team_id = engine.connect().execute(
-        select(issue.c.team_id).where(issue.c.identifier == "ENG-1")
-    ).scalar_one()
-    stamp = now_iso()
-    with engine.begin() as conn:
-        conn.execute(issue.insert(), [
-            {
-                "id": new_id(), "organization_id": seeded["org_id"], "team_id": team_id,
-                "number": 900_000 + i, "identifier": f"ENG-{900_000 + i}", "title": f"filler {i}",
-                "priority": 0, "created_at": stamp, "updated_at": stamp,
-            }
-            for i in range(count)
-        ])
-
-
-def test_reviews_queue_returns_linked_pull_requests(tmp_path):
-    _engine, app, seeded = _setup(tmp_path)
-
-    response = _post(app, seeded["token"], REVIEWS_QUERY, None)
-
-    body = response.json()
-    assert "errors" not in body, body
-    links = body["data"]["pullRequests"]
-    assert len(links) == 1
-    assert links[0]["kind"] == "pr"
-    # The pane labels a row with the task it belongs to, so the link must carry it.
-    assert links[0]["issue"]["identifier"] == "ENG-1"
-
-
-def test_reviews_queue_survives_a_busy_workspace(tmp_path):
-    """The regression this pins: the queue used to be issues(first:100, orderBy updatedAt).
-
-    Once 100+ tasks were touched after the linked one, the pull request fell outside the
-    window and the pane reported an empty queue while the link still existed.
-    """
-    engine, app, seeded = _setup(tmp_path)
-    _bulk_issues(engine, seeded, 120)
-
-    response = _post(app, seeded["token"], REVIEWS_QUERY, None)
-
-    body = response.json()
-    assert "errors" not in body, body
-    links = body["data"]["pullRequests"]
-    assert [link["externalId"] for link in links] == ["4242"]
-
-
-def test_reviews_queue_excludes_commit_links(tmp_path):
-    """Only pull requests belong in the review queue; a commit link is task detail."""
-    engine, app, seeded = _setup(tmp_path)
-    with engine.begin() as conn:
-        issue_id = conn.execute(
-            select(github_link.c.issue_id).where(github_link.c.external_id == "4242")
-        ).scalar_one()
-        conn.execute(github_link.insert().values(
-            id=new_id(), organization_id=seeded["org_id"], issue_id=issue_id,
-            kind="commit", external_id="hoja-work/hoja@abc1234",
-            url="https://github.com/hoja-work/hoja/commit/abc1234",
-            title="hoja-work/hoja@abc1234", state=None, author=None, sha="abc1234",
-            environment=None, created_at=now_iso(), updated_at=now_iso(),
-        ))
-
-    response = _post(app, seeded["token"], REVIEWS_QUERY, None)
-
-    body = response.json()
-    assert "errors" not in body, body
-    assert [link["kind"] for link in body["data"]["pullRequests"]] == ["pr"]

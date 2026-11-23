@@ -45,7 +45,7 @@ const ISSUE_RE = /\/[A-Z]{2,10}-\d+/g;
 
 export function normalizeRoute(pathname: string): string {
   const clean = (pathname || "/").split("?")[0].split("#")[0] || "/";
-  const norm = clean.replace(UUID_RE, "/:uuid").replace(ISSUE_RE, "/:issue");
+  const norm = clean.replace(UUID_RE, "/:uuid").replace(ISSUE_RE, "/:task");
   return norm.length > 120 ? norm.slice(0, 120) : norm;
 }
 

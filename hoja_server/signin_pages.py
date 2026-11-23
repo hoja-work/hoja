@@ -469,34 +469,3 @@ def no_workspace_page(
         "</div>"
     )
     return _page("No workspace yet · Hoja", body)
-
-
-def _js(value: str) -> str:
-    """A JS string literal safe inside an inline <script> (no ``</script>`` break-out)."""
-    import json
-
-    return json.dumps(value).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
-
-
-def pair_page(*, host: str) -> str:
-    """``/m/pair``: a "Sign in on your phone" QR opened by the phone's camera (HOJA-733).
-
-    The code is in the URL fragment, which browsers never send. The script reads
-    it and builds the app link; without the app, the page says how to get it.
-    """
-    body = (
-        "<h1>Open this in the Hoja app</h1>"
-        "<p class=\"lede\">This code signs your phone in to "
-        f"<strong>{_e(host)}</strong>. Open it with the Hoja app, or scan it from "
-        "the app's sign-in screen.</p>"
-        "<p><a class=\"button primary\" id=\"open\" href=\"#\">Open in the Hoja app</a></p>"
-        "<p class=\"muted\">Don't have the app? Install Hoja from Google Play or the App Store, "
-        "then scan the code again.</p>"
-        "<script>(function(){var f=location.hash.slice(1);"
-        "if(!/^[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{20,}$/.test(f)){"
-        "document.getElementById('open').remove();return;}"
-        "history.replaceState(null,'',location.pathname);"
-        f"document.getElementById('open').href='hoja://pair?host='+encodeURIComponent({_js(host)})"
-        "+'&h='+encodeURIComponent(f);})();</script>"
-    )
-    return _page("Open in the Hoja app", body)

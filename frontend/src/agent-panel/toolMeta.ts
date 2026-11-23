@@ -3,7 +3,6 @@ import type { ToolCallRecord } from "./types";
 export type ToolIconKind =
   | "database"
   | "schema"
-  | "delegate"
   | "connector"
   | "wrench";
 
@@ -62,16 +61,6 @@ export function describeToolCall(tc: ToolCallRecord): ToolDisplayMeta {
       runningLabel: isMutation ? "Updating workspace" : "Querying workspace",
       doneLabel: isMutation ? "Updated workspace" : "Queried workspace",
       preview: field,
-    };
-  }
-
-  if (tc.name === "delegate") {
-    const issue = typeof args?.issue === "string" ? args.issue : null;
-    return {
-      icon: "delegate",
-      runningLabel: "Delegating task",
-      doneLabel: "Delegated task",
-      preview: issue,
     };
   }
 

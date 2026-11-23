@@ -51,7 +51,7 @@ type Pending = {
  * removal and team changes need `member.invite` (admins hold it; a workspace can grant it);
  * role changes, pending invites and the removed list are admin-only on the server. */
 export default function MembersSettings() {
-  const { isAdmin, can, viewer, workspace, onTeamsChanged, openMember } =
+  const { isAdmin, can, viewer, workspace, onTeamsChanged } =
     useSettings();
   const canInvite = can("member.invite");
   const data = useResource(() => loadMembers(isAdmin), [isAdmin]);
@@ -196,9 +196,6 @@ export default function MembersSettings() {
                       menuLabel={`Actions for ${label}`}
                       actions={
                         <>
-                          <DropdownMenuItem onSelect={() => openMember(m.id)}>
-                            View profile
-                          </DropdownMenuItem>
                           <DropdownMenuItem
                             disabled={!isAdmin || status === "deactivated"}
                             onSelect={() => setRoleFor(m)}

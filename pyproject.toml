@@ -73,8 +73,6 @@ server = [
     "sqlalchemy>=2.0",
     "aiosqlite>=0.20",
     "psycopg[binary]>=3.2",
-    # Tailscale SSH to a workspace's machines (hoja_server/tailnet.py).
-    "paramiko>=3.4,<5",
 ]
 saas = [
     "asyncpg>=0.29",
@@ -103,8 +101,7 @@ agent = [
 [tool.uv.sources]
 # uv resolves these editable path packages; pip does not read this table, so
 # every pip-based install must also pass each connector path explicitly
-# (.github/workflows/mobile.yml, infra/Dockerfile.hoja, scripts/dev-tailscale.sh,
-# mobile/README.md, mobile/scripts/verify-backend.sh).
+# (Dockerfile, scripts/dev-tailscale.sh).
 google-workspace-connector = { path = "connectors/google_workspace", editable = true }
 notion-connector = { path = "connectors/notion", editable = true }
 slack-connector = { path = "connectors/slack", editable = true }

@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { AppWindow, LogOut, Monitor, Smartphone, Trash2 } from "lucide-react";
-import { PhoneSignInDialog } from "../../../PhoneSignIn";
 import { Button } from "../../../components/ui/button";
 import { DropdownMenuItem } from "../../../components/ui/menu";
 import {
@@ -175,7 +174,6 @@ export function SessionsSection() {
   );
   const [signingOut, setSigningOut] = useState<Session | null>(null);
   const [signingOutOthers, setSigningOutOthers] = useState(false);
-  const [phoneOpen, setPhoneOpen] = useState(false);
   const others = (sessions.data || []).filter((s) => !s.current);
   const drop = (id: string) =>
     sessions.setData((list) => list?.filter((s) => s.id !== id));
@@ -186,27 +184,14 @@ export function SessionsSection() {
       description="Browsers and phones signed in to this workspace as you. Sign out any you don't recognise."
       bare
       action={
-        <>
-          <Button onClick={() => setPhoneOpen(true)}>
-            <Smartphone className="size-3.5" aria-hidden="true" />
-            Sign in on your phone
+        others.length > 0 && (
+          <Button onClick={() => setSigningOutOthers(true)}>
+            <LogOut className="size-3.5" aria-hidden="true" />
+            Sign out other browsers
           </Button>
-          {others.length > 0 && (
-            <Button onClick={() => setSigningOutOthers(true)}>
-              <LogOut className="size-3.5" aria-hidden="true" />
-              Sign out other browsers
-            </Button>
-          )}
-        </>
+        )
       }
     >
-      <PhoneSignInDialog
-        open={phoneOpen}
-        onClose={() => {
-          setPhoneOpen(false);
-          void sessions.reload();
-        }}
-      />
       <Loadable resource={sessions} rows={2}>
         {(data) => (
           <SettingsCard>

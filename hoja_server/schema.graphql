@@ -150,16 +150,6 @@ type Query {
   issueLabels(filter: IssueLabelFilter, first: Int = 100, after: String): IssueLabelConnection @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   searchIssues(term: String!, first: Int = 20, after: String): IssueConnection @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   rateLimitStatus: RateLimitPayload
-  "The live merge gate for one linked pull request, read from GitHub now, never from the cached row."
-  reviewGate(linkId: String!): ReviewGate!
-  """
-  Pull requests linked to a task in this workspace, newest link first.
-
-  The Reviews queue reads this. It used to be derived from the newest N tasks and their
-  links, which silently emptied the queue once more than N tasks had been touched — the
-  queue is a property of the links, not of task recency.
-  """
-  pullRequests(first: Int = 250): [GithubLink!]!
 }
 
 type Mutation {
@@ -216,16 +206,6 @@ type Mutation {
   cycleSubscribe(id: String!): Boolean!
   cycleUnsubscribe(id: String!): Boolean!
   githubLinkAdd(issueId: String!, url: String!): GithubLink!
-  "Approve a pull request as the connected GitHub user, attributed to the Hoja actor."
-  reviewApprove(linkId: String!, body: String): ReviewActionPayload!
-  "Request changes on a pull request. A body is required by GitHub's own review semantics."
-  reviewRequestChanges(linkId: String!, body: String!): ReviewActionPayload!
-  "Comment on a pull request without approving or requesting changes."
-  reviewComment(linkId: String!, body: String!): ReviewActionPayload!
-  "Squash-merge exactly `sha`. Refuses when the head moved, checks fail or are undecided, the branch is dirty, or mergeability is unknown."
-  reviewMerge(linkId: String!, sha: String!, method: String = "squash"): ReviewActionPayload!
-  "Load one file's diff on demand (HOJA-513): fetches it from GitHub, applies the stored cap, and caches it back under `cached: true` when it fits."
-  githubFilePatchLoad(linkId: String!, path: String!, sha: String): GithubFilePatchLoadResult!
   issueDelete(id: String!): DeletePayload @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   issueArchive(id: String!): DeletePayload @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
   issueSubscribe(id: String!): Boolean! @deprecated(reason: "Use the task* field instead; this name is kept as a wire-compatible alias.")
@@ -619,63 +599,6 @@ type GithubFile {
   unchanged: Boolean
   "True when this patch was loaded on demand and cached back into the row (HOJA-513)."
   cached: Boolean
-}
-
-"The merge gate for one pull request, as GitHub reported it at the moment of the call."
-type ReviewGate {
-  "The commit this gate describes. This is the sha a merge would merge."
-  sha: String!
-  "GitHub's mergeable flag. Null means GitHub has not computed it yet — not 'yes'."
-  mergeable: Boolean
-  "clean | dirty | blocked | behind | unstable | draft | unknown"
-  mergeState: String
-  "success | pending | failure | unknown"
-  checksState: String
-  checksTotal: Int
-  checksPassing: Int
-  checksFailing: Int
-  checksPending: Int
-  "True when GitHub refused the check read itself (the app lacks Checks / Commit statuses), which is not the same as having no checks."
-  checksUnavailable: Boolean!
-  "open | closed | merged"
-  state: String
-  title: String
-  url: String
-  "Why a merge would be refused right now, from the same check the merge itself runs. Null when it would proceed."
-  refusalCode: String
-  refusalMessage: String
-}
-
-"The answer to loading one file's diff on demand (HOJA-513). Every absent patch carries a stable reason: over_cap, github_omitted, not_in_pull, head_moved."
-type GithubFilePatchLoadResult {
-  path: String!
-  "The patch, when one is loadable within the stored cap."
-  patch: String
-  binary: Boolean
-  oversize: Boolean
-  oversizeSize: Int
-  empty: Boolean
-  unchanged: Boolean
-  cached: Boolean
-  "Why no patch is available, when it is not. Stable codes, not prose."
-  reason: String
-  "The link with its refreshed files payload."
-  link: GithubLink
-}
-
-"The result of a review write, returned only after GitHub confirmed it."
-type ReviewActionPayload {
-  "approve | request_changes | comment | merge"
-  action: String!
-  "The commit the action applied to."
-  sha: String
-  "The commit GitHub reports as the merge commit; empty for non-merge actions."
-  mergeSha: String
-  "The gate read immediately before the action, so the recorded merge names its own state."
-  gate: ReviewGate
-  "The attributed actor, e.g. 'Hoja, on behalf of Luis'."
-  actor: String
-  link: GithubLink
 }
 
 type RateLimitPayload {

@@ -43,7 +43,6 @@ export type SettingsContextValue = {
   fontScale: string;
   savePreference: (key: "theme" | "fontSize", value: string) => Promise<void>;
   openSection: (id: string) => void;
-  openMember: (id: string) => void;
   openTeamCycleSettings: (team: SettingsTeam) => void;
 };
 

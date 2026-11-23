@@ -21,7 +21,12 @@ function composingTrigger(node) {
   const holder = node.parent && node.parent.parent;
   if (!holder || holder.type !== 'JSXElement') return null;
   const opening = holder.openingElement;
-  const name = opening.name && opening.name.type === 'JSXIdentifier' ? opening.name.name : null;
+  // `<PopoverTrigger asChild>` and `<Popover.Trigger asChild>` compose the same way.
+  const tag = opening.name;
+  const name = !tag ? null
+    : tag.type === 'JSXIdentifier' ? tag.name
+    : tag.type === 'JSXMemberExpression' && tag.property.type === 'JSXIdentifier' ? tag.property.name
+    : null;
   if (!name || !/Trigger$/.test(name)) return null;
   return opening.attributes.some(a => attrName(a) === 'asChild') ? name : null;
 }
@@ -47,6 +52,9 @@ export default {
             if (composingTrigger(node)) return;
             const names = attrs.map(attrName).filter(Boolean);
             if (names.some(n => ACTION_PROPS.has(n) || n === 'disabled')) return;
+            // aria-disabled="true" keeps an unavailable control focusable so it can say why; that is a stated refusal.
+            const ariaDisabled = attrs.find(a => attrName(a) === 'aria-disabled');
+            if (ariaDisabled && ariaDisabled.value && ariaDisabled.value.type === 'Literal' && ariaDisabled.value.value === 'true') return;
             const typeAttr = attrs.find(a => attrName(a) === 'type');
             // A <button> with no type submits its form by default, so a bare <button> inside a form is not dead.
             if (name === 'button' && !typeAttr) return;

@@ -46,7 +46,6 @@ from hoja_server.agent_threads import _owned as _owned_thread
 from hoja_server.agent_threads import _title_from
 from hoja_server.db import model_provider
 from hoja_server.denials import DENY_HINT, READ_ONLY_HINT, read_only_violation
-from hoja_server.knowledge import resolve_knowledge_context
 from hoja_server.model_providers import validate_model_base_url
 from hoja_server.secrets_box import decrypt_secret
 
@@ -63,7 +62,6 @@ How to work:
 - Assign people only after confirming they are members of the team.
 - To filter to the signed-in user, first run `{ viewer { id } }`, then use the returned id, e.g. `issues(filter: { assignee: { id: { eq: "<id>" } } })`. `UserFilter` has only id, email, displayName, and name; there is no `isMe` field.
 - After a write, read it back to confirm it exists and is linked to the right project.
-- To hand a task to an agent, call the `delegate` tool with the task and the agent's user id. Find agents with `{ agentMembers { userId user { name } archivedAt } }`; only agents with no `archivedAt` can take work. Delegate only when the user asks for an agent to do the work. If they did not say which agent and more than one exists, ask with `ask_user`. The tool returns the agent session: report its state, and when it is queued, say why in plain words (the `queueReason` values are capacity, budget, window, blocked, approval and lease_held). The chat shows a live card for each delegation, so do not poll for progress.
 
 How to answer:
 - Reply in Markdown. Use short paragraphs, bullet lists for multiple items, and fenced code blocks for queries or IDs.
@@ -75,19 +73,6 @@ How to answer:
 
 
 ASK_FENCE = "hoja-ask"
-DELEGATION_FENCE = "hoja-delegation"
-
-DELEGATE_MUTATION = """
-mutation Delegate($id: String!, $agent: String!) {
-  issueUpdate(id: $id, input: { delegateId: $agent }) {
-    success
-    issue {
-      id identifier title
-      delegate { id name }
-      agentSession { id state status queueReason admitted }
-    }
-  }
-}"""
 
 
 class AskOption(BaseModel):
@@ -114,24 +99,14 @@ def ask_block(ask: AskUser) -> str:
     return f"\n\n```{ASK_FENCE}\n{ask.model_dump_json(exclude_none=True)}\n```\n"
 
 
-def delegation_blocks(delegations: list[dict]) -> str:
-    """Fenced blocks the chat UI renders as live cards, one per delegated task (the last one wins)."""
-    latest = {d["issueId"]: d for d in delegations}
-    return "".join(f"\n\n```{DELEGATION_FENCE}\n{json.dumps(d, separators=(',', ':'))}\n```\n"
-                   for d in latest.values())
-
-
 class AgentDeps:
     def __init__(self, schema, context: dict, graphql_runner=None, sink=None):
         self.schema = schema
         self.context = context
         self.snapshot: str | None = None
-        self.knowledge: str | None = None
         # Durable runs route the graphql tool through a checkpointed step and stream text to a sink.
         self.graphql_runner = graphql_runner
         self.sink = sink
-        # Tasks this turn handed to an agent; the reply ends with one card per task.
-        self.delegations: list[dict] = []
 
 
 async def _run_graphql(deps: AgentDeps, query: str, variables: dict) -> dict:
@@ -191,23 +166,15 @@ def build_agent(
 
     @agent.instructions
     async def workspace_instructions(ctx: RunContext[AgentDeps]) -> str:
-        """Compose the system prompt per run from the fixed working examples, live workspace state, and company knowledge."""
-        # Instructions are re-evaluated on every model step; load snapshot & knowledge once per run.
+        """Compose the system prompt per run from the fixed working examples and live workspace state."""
+        # Instructions are re-evaluated on every model step; load the snapshot once per run.
         if ctx.deps.snapshot is None:
             async def fetch(query: str, variables: dict) -> dict:
                 _ok, result = await graphql_run(ctx.deps.schema, query, variables, ctx.deps.context)
                 return result.get("data") or {}
 
             ctx.deps.snapshot = await workspace_snapshot(fetch, ctx.deps.context.get("user_id"))
-        if ctx.deps.knowledge is None:
-            store = ctx.deps.context.get("store")
-            org_id = ctx.deps.context.get("org_id")
-            if store is not None and org_id:
-                with store.engine.connect() as conn:
-                    ctx.deps.knowledge = resolve_knowledge_context(conn, org_id)
-            else:
-                ctx.deps.knowledge = ""
-        return compose_prompt(INSTRUCTIONS, ctx.deps.snapshot, knowledge=ctx.deps.knowledge)
+        return compose_prompt(INSTRUCTIONS, ctx.deps.snapshot)
 
     @agent.tool
     async def schema(ctx: RunContext[AgentDeps]) -> str:
@@ -219,27 +186,6 @@ def build_agent(
         """Run a GraphQL query or mutation against Hoja as the signed-in user.
         `query` is REQUIRED and must be a non-empty GraphQL string. Call `schema` first if you need field names."""
         return await _run_graphql(ctx.deps, query, variables or {})
-
-    @agent.tool
-    async def delegate(ctx: RunContext[AgentDeps], issue: str, agent_user_id: str) -> dict:
-        """Hand a task to an agent member to work on.
-        `issue` is the task's id or identifier (e.g. TREBOL-12); `agent_user_id` is the agent's
-        `userId` from `agentMembers`. Returns the task and its agent session (state, status and, when
-        queued, queueReason). The server checks that the agent belongs to this workspace."""
-        result = await _run_graphql(ctx.deps, DELEGATE_MUTATION, {"id": issue, "agent": agent_user_id})
-        # issueUpdate, not taskUpdate: TaskUpdateInput has no delegateId; the task page uses this too.
-        payload = (result.get("data") or {}).get("issueUpdate") or {}
-        task = payload.get("issue")
-        if payload.get("success") and task:
-            session = task.get("agentSession") or {}
-            ctx.deps.delegations.append({
-                "issueId": task["id"],
-                "identifier": task.get("identifier"),
-                "title": task.get("title"),
-                "agentName": (task.get("delegate") or {}).get("name"),
-                "sessionId": session.get("id"),
-            })
-        return result
 
     return agent
 
@@ -620,10 +566,6 @@ async def stream_reply(
                 block = ask_block(run.result.output)
                 reply_parts.append(block)
                 yield _chunk(completion_id, {"content": block})
-            if deps.delegations:
-                cards = delegation_blocks(deps.delegations)
-                reply_parts.append(cards)
-                yield _chunk(completion_id, {"content": cards})
     except UnexpectedModelBehavior:
         reply_parts = ["The assistant could not complete that request. Please try again."]
         yield _chunk(completion_id, {"content": reply_parts[0]})

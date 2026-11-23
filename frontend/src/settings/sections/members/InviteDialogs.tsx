@@ -136,7 +136,7 @@ export function InviteDialog({
                 [
                   "admin",
                   "Admin",
-                  "Full access: settings, billing, members and every team.",
+                  "Full access: settings, members and every team.",
                 ],
               ] as const
             ).map(([value, label, help]) => (

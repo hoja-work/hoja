@@ -404,9 +404,8 @@ async def agent_turn(turn: dict) -> dict:
                          actor_id=agent_user_id, on_behalf_of=turn["user_id"],
                          target_kind="conversation", target_id=turn["conversation_id"],
                          runner="durable")
-    cards = chat.delegation_blocks(deps.delegations) if deps.delegations else ""
-    await _save_reply(turn["conversation_id"], text + (ask or "") + cards, tool_calls_json)
-    return {"text": text, "ask": ask, "delegations": cards or None}
+    await _save_reply(turn["conversation_id"], text + (ask or ""), tool_calls_json)
+    return {"text": text, "ask": ask}
 
 
 async def stream_reply(store, org_id: str, uid: str, messages: list[dict], base_context: dict,
@@ -484,8 +483,6 @@ async def stream_reply(store, org_id: str, uid: str, messages: list[dict], base_
             yield chat._chunk(completion_id, {"content": FAILED_REPLY})
         if outcome.get("ask"):
             yield chat._chunk(completion_id, {"content": outcome["ask"]})
-        if outcome.get("delegations"):
-            yield chat._chunk(completion_id, {"content": outcome["delegations"]})
     finally:
         _sinks.pop(workflow_id, None)
     yield chat._chunk(completion_id, {}, "stop")

@@ -389,9 +389,10 @@ def test_the_spa_routes_signup_to_the_page():
     # whitespace, quote style and the parentheses around a returned element: the
     # claim is that the route, the page import and their order exist, not that
     # they are spaced one particular way.
+    # Route pages are code-split (lazyRoute), so either a static or a dynamic import counts.
     imported = re.search(
         r"import\s*\{\s*SignupPage\s*\}\s*from\s*['\"]\./signup/SignupPage['\"]", main,
-    )
+    ) or re.search(r"import\(\s*['\"]\./signup/SignupPage['\"]\s*\)", main)
     assert imported, "SignupPage is not imported"
     route = re.search(r"location\.pathname\s*===\s*['\"]/signup['\"]", main)
     assert route, "the /signup route is not wired"

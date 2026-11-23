@@ -10,13 +10,6 @@ RUN groupadd --system hoja && useradd --system --gid hoja --home /app --shell /u
 WORKDIR /app
 COPY . .
 COPY --from=frontend-build /frontend/dist /app/web
-# The customer-side daemon's wheel, if the release placed one here (HOJA-712). The
-# build context is this directory — `COPY frontend/` above depends on that — so the
-# sibling `runner/` tree is not reachable from a Dockerfile stage, and the wheel has to
-# exist before the build: `scripts/build-runner-wheel.sh` writes it into ./downloads, and
-# this `COPY . .` carries it to /app/downloads, which GET /downloads reads. Absent (a
-# plain `docker compose build` from a checkout), the app still serves; the enrollment
-# screen then says the wheel is unpublished instead of printing a URL that would 404.
 # Same build identity as the production image: GET /api/version reports the
 # commit this image was built from, and when (never a hardcoded version).
 ARG HOJA_RELEASE_SHA=unknown
@@ -30,9 +23,6 @@ RUN python -m pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir '.[server]' \
     && chown -R hoja:hoja /app
 ENV HOJA_WEB_ROOT=/app/web
-# The runner wheel lives in /app/downloads, but `pip install .` puts hoja_server in
-# site-packages, so the module's own default (next to the package) is not where the wheel is.
-ENV HOJA_DOWNLOAD_ROOT=/app/downloads
 USER hoja
 EXPOSE 8787
 # exec, so hoja-serve *is* PID 1: the shell that runs migrate is replaced by

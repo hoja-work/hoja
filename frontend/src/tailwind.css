@@ -52,14 +52,7 @@
 @custom-variant shell-wide {
   @media (min-width: 1800px) { @slot; }
 }
-@custom-variant review-single {
-  @media (max-width: 1227px) { @slot; }
-}
-@custom-variant review-drawer {
-  @media (max-width: 889px) { @slot; }
-}
 @custom-variant rail-collapsed (&:where(.app[data-sidebar-collapsed] *));
-@custom-variant route-review (&:where(body:has([data-reviews-page]) *));
 @custom-variant route-fullbleed (&:where(.app:has([data-pulse-page],[data-inbox-page],[data-initiatives-page],[data-projects-reference],[data-project-reference],[data-workspace-views-page],[data-my-issues-view],[data-mt-page],.agent-chat-page,[data-settings-sidebar]) *));
 
 /* Component primitives (src/components/ui, built on radix-ui). These aliases give the

@@ -1,4 +1,4 @@
-"""Actor attribution, delegation (on_behalf_of), credential tracking, and causal trace ingestion."""
+"""Actor attribution, delegation (on_behalf_of), and credential tracking."""
 from __future__ import annotations
 
 import contextlib
@@ -15,7 +15,6 @@ from hoja_server.db import (
     CURRENT_SCHEMA_REVISION,
     FIRST_PARTY_CLIENT_ID,
     applied_schema_revision,
-    attachment,
     audit_event,
     change_event,
     make_engine,
@@ -310,79 +309,6 @@ def test_oauth_grant_attribution_and_sla_first_response(workspace):
             assert mcp_ce["on_behalf_of"] == alpha["user_id"]
             assert mcp_ce["credential_kind"] == "oauth"
             assert mcp_ce["credential_id"] == third_grant
-
-
-def test_causal_trace_ingestion_correlates_by_session_id_and_upserts(workspace):
-    engine, client, alpha = workspace
-    _, agent_tok = Store(engine).create_api_key(alpha["org_id"], alpha["user_id"], "Plugin", "read_write")
-
-    # Issue created with session correlation header (Postgres records session_id on change_event;
-    # on SQLite explicit issues list also works, and we test both paths).
-    created = _gql(client, agent_tok, '''
-        mutation($t: String!) {
-          issueCreate(input: { teamId: $t, title: "No TaskManage issue" }) { success issue { id identifier } }
-        }''', {"t": alpha["team_id"]}, extra_headers={"X-Hoja-Session-Id": "conv-abc-1"})
-    ident = created["data"]["issueCreate"]["issue"]["identifier"]
-    iid = created["data"]["issueCreate"]["issue"]["id"]
-
-    trace_doc = {
-        "schema": "hoja.trace/v1",
-        "id": "conv-abc-1@2026-11-23T17:00:00Z",
-        "createdAt": "2026-11-23T17:00:00Z",
-        "source": {"host": "claude-code", "plugin": "hoja@0.5.3", "detail": "full"},
-        "session": {
-            "id": "conv-abc-1",
-            "title": "Fix bug with sk-ant-api03-1234567890abcdef123456",
-            "models": ["claude-sonnet-4"],
-            "start": "2026-11-23T16:59:00Z",
-            "end": "2026-11-23T17:00:00Z",
-            "durationMs": 60000,
-            "basis": "transcript",
-        },
-        "totals": {
-            "turns": 1, "llmCalls": 1, "toolCalls": 2, "toolErrors": 0, "blocked": 0,
-            "subagents": 0, "compactions": 0,
-            "tokens": {"input_tokens": 100, "output_tokens": 50, "cache_read_tokens": 0, "cache_creation_tokens": 0},
-            "tokensByModel": {}, "llmMs": 500, "toolMs": 100, "filesTouched": [],
-        },
-        "tools": [], "tasks": [], "issues": [], "spans": [], "events": [],
-    }
-
-    # On Postgres, omitting `issues` still correlates via change_event.session_id!
-    # On SQLite, pass explicit issues if session_id wasn't captured by trigger.
-    explicit = [] if engine.dialect.name == "postgresql" else [ident]
-    res1 = client.post(
-        "/api/traces",
-        headers={"Authorization": f"Bearer {agent_tok}"},
-        json={"trace": trace_doc, "issues": explicit, "reason": "turn"},
-    )
-    assert res1.status_code == 200, res1.text
-    body1 = res1.json()
-    assert body1["issues"] == [ident]
-    assert len(body1["attachments"]) == 1
-    assert body1["attachments"][0]["updated"] is False
-
-    # Re-ingesting updated trace for the same session updates in place (no duplicate attachment).
-    trace_doc["totals"]["turns"] = 2
-    res2 = client.post(
-        "/api/traces",
-        headers={"Authorization": f"Bearer {agent_tok}"},
-        json={"trace": trace_doc, "issues": [ident], "reason": "session-end"},
-    )
-    assert res2.status_code == 200, res2.text
-    body2 = res2.json()
-    assert body2["attachments"][0]["updated"] is True
-    assert body2["attachments"][0]["id"] == body1["attachments"][0]["id"]
-
-    # Verify stored attachment and server-side secret scrubbing.
-    with engine.connect() as conn:
-        rows = conn.execute(select(attachment).where(attachment.c.issue_id == iid)).mappings().all()
-        assert len(rows) == 1
-        assert rows[0]["session_id"] == "conv-abc-1"
-    blob_res = client.get(body2["url"], headers={"Authorization": f"Bearer {agent_tok}"})
-    assert blob_res.status_code == 200
-    assert "sk-ant-api03" not in blob_res.text
-    assert "<redacted>" in blob_res.text
 
 
 def test_revision_97_to_98_upgrade_succeeds(tmp_path):

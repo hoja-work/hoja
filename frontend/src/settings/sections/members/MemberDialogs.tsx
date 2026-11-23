@@ -57,7 +57,7 @@ export function RoleDialog({
             [
               "admin",
               "Admin",
-              "Full access: workspace settings, billing, members, roles and every team, including private ones.",
+              "Full access: workspace settings, members, roles and every team, including private ones.",
             ],
           ] as const
         ).map(([value, label, help]) => (

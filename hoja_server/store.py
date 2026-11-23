@@ -17,7 +17,7 @@ from graphql import GraphQLError
 from sqlalchemy import String, and_, case, false, func, or_, select, true, update
 from sqlalchemy.engine import Engine
 
-from hoja_server import activity, addresses, identifiers, ranking
+from hoja_server import addresses, identifiers, ranking
 from hoja_server import decisions as decisiondocs
 from hoja_server import views as viewdocs
 
@@ -2848,33 +2848,6 @@ class Store:
                 stmt = stmt.limit(limit)
             return [self.ser_github_link(r) for r in _conn_rows(conn, stmt)]
 
-    def pull_request_links(self, org_id: str, limit: int = 250) -> list[dict]:
-        """Every pull request linked to a task in this workspace, newest link first.
-
-        The Reviews queue is a property of the links, not of task recency. Reading it as
-        "the newest N tasks, then their links" tied the queue to how busy the workspace was:
-        once more than N tasks had been touched, every linked pull request fell outside the
-        window and the pane showed an empty queue while the links still existed.
-
-        ``_issue_id`` rides along for the ``GithubLink.issue`` resolver; GraphQL ignores keys
-        that are not fields, so the serialized shape stays the one the task panel already uses.
-        """
-        with self.engine.connect() as conn:
-            stmt = select(github_link).where(and_(
-                github_link.c.organization_id == org_id,
-                github_link.c.kind == "pr",
-            )).order_by(
-                github_link.c.updated_at.desc(), github_link.c.id.desc()
-            ).limit(limit)
-            rows = _conn_rows(conn, stmt)
-            links = []
-            for row in rows:
-                link = self.ser_github_link(row)
-                if link is not None:
-                    link["_issue_id"] = row.get("issue_id")
-                    links.append(link)
-            return links
-
     def github_link_add(self, org_id: str, issue_id: str, *, kind: str,
                         external_id: str, url: str, title: str) -> dict | None:
         """Record a GitHub reference a person wrote into a task.
@@ -2914,96 +2887,6 @@ class Store:
                     created_at=stamp, updated_at=stamp))
             rows = _conn_rows(conn, select(github_link).where(github_link.c.id == link_id))
             return self.ser_github_link(rows[0]) if rows else None
-
-    def github_link_by_id(self, org_id: str, link_id: str) -> dict | None:
-        """One linked GitHub object, scoped to the organization that owns it."""
-        with self.engine.connect() as conn:
-            rows = _conn_rows(conn, select(github_link).where(and_(
-                github_link.c.organization_id == org_id,
-                github_link.c.id == link_id)).limit(1))
-            return self.ser_github_link(rows[0]) if rows else None
-
-    def github_review_recorded(self, org_id: str, link: dict, *, event_type: str,
-                               actor_id: str, changes: dict,
-                               merged_sha: str | None = None) -> dict | None:
-        """Record a review write GitHub actually confirmed.
-
-        Called only after the provider answered, which is what keeps a failed or ambiguous
-        response from flipping the row to "merged". The activity row carries the attribution in
-        `changes`, and the merge updates the link in the same transaction so the feed and the
-        list cannot disagree.
-        """
-        from hoja_server.db import now_iso
-
-        stamp = now_iso()
-        with self.engine.begin() as conn:
-            row = conn.execute(select(github_link).where(and_(
-                github_link.c.organization_id == org_id,
-                github_link.c.id == link["id"])).limit(1)).mappings().first()
-            if row is None:
-                return None
-            if merged_sha:
-                # `sha` stays the head commit that was merged. Writing the merge commit here
-                # would make the pane claim that commit was the PR head, and the next gate
-                # read would compare against a sha the pull request never had.
-                conn.execute(update(github_link).where(github_link.c.id == row["id"]).values(
-                    state="merged", merged_at=stamp, updated_at=stamp))
-            activity.record(conn, org_id=org_id, issue_id=row["issue_id"], actor_id=actor_id,
-                            event_type=event_type, changes=json.dumps(changes, sort_keys=True),
-                            created_at=stamp)
-            refreshed = _conn_rows(conn, select(github_link).where(
-                github_link.c.id == row["id"]))
-            return self.ser_github_link(refreshed[0]) if refreshed else None
-
-    def github_link_cache_file_patch(self, org_id: str, link_id: str, path: str,
-                                     patch: str) -> dict | None:
-        """Cache one on-demand-loaded patch back into the link's files payload (HOJA-513).
-
-        The entry keeps its identity fields and gains ``cached: true`` plus the patch,
-        and loses the ``oversize`` marker the patch replaces. The write happens only
-        when the recomputed payload differs from what is stored, so a second load of an
-        already-cached patch writes nothing — the same idempotency contract the bulk
-        enrichment script keeps. A missing link, a missing entry or a malformed stored
-        payload leaves the row exactly as it was and reports None.
-        """
-        from hoja_server.db import now_iso
-
-        stamp = now_iso()
-        with self.engine.begin() as conn:
-            row = conn.execute(select(github_link).where(and_(
-                github_link.c.organization_id == org_id,
-                github_link.c.id == link_id)).limit(1)).mappings().first()
-            if row is None or not isinstance(row["files"], str):
-                return None
-            try:
-                entries = json.loads(row["files"])
-            except ValueError:
-                return None
-            if not isinstance(entries, list):
-                return None
-            updated = False
-            for entry in entries:
-                if not (isinstance(entry, dict)
-                        and str(entry.get("path") or "") == (path or "").strip()):
-                    continue
-                if entry.get("cached") is True and entry.get("patch") == patch:
-                    return self.ser_github_link(dict(row))  # already cached: no write
-                entry["patch"] = patch
-                entry["cached"] = True
-                entry.pop("oversize", None)
-                entry.pop("size", None)
-                updated = True
-                break
-            if not updated:
-                return None
-            payload = json.dumps(entries, separators=(",", ":"), sort_keys=True,
-                                 ensure_ascii=False)
-            conn.execute(update(github_link).where(
-                github_link.c.id == row["id"]).values(
-                files=payload, updated_at=stamp))
-            refreshed = _conn_rows(conn, select(github_link).where(
-                github_link.c.id == row["id"]))
-            return self.ser_github_link(refreshed[0]) if refreshed else None
 
     def upload_visible(self, org_id: str, viewer_id: str, file_id: str) -> bool:
         """May this viewer fetch an uploaded file?

@@ -2,19 +2,15 @@ import { useEffect, useId } from "react";
 import { ArrowRight } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
-import { Switch } from "../../components/ui/switch";
-import { setWorkspaceAgentsEnabled } from "../../agents/flag";
 import { useSettings, type SettingsWorkspace } from "../context";
 import {
   ConfirmAction,
   CopyField,
-  Loadable,
   SettingRow,
   SettingsPage,
   SettingsSection,
   gql,
   useResource,
-  useSetting,
   useSettingText,
 } from "../ui";
 import { useConfirmedSettingText } from "./workspace/useConfirmedSettingText";
@@ -25,8 +21,7 @@ import {
   urlKeyProblem,
 } from "./workspace/urlKey";
 
-/* General: the workspace's identity (name, URL key, ID) and the switches that change what
- * everyone in it sees. Creating teams lives on the Teams page; this page links there instead
+/* General: the workspace's identity (name, URL key, ID). Creating teams lives on the Teams page; this page links there instead
  * of keeping a second, smaller create form. There is no workspace delete or leave operation
  * on the server, so this page has no danger zone. */
 
@@ -115,16 +110,10 @@ export default function WorkspaceSettings() {
   });
   const previewKey = normalizeUrlKey(urlKey.draft);
 
-  const features = useResource(() =>
-    gql<{ workspaceFeatures: { agentsEnabled: boolean } }>(
-      `query{workspaceFeatures{agentsEnabled}}`,
-    ).then((d) => d.workspaceFeatures),
-  );
-
   return (
     <SettingsPage
       title="General"
-      description="Your workspace's name and address, and the features everyone in it sees."
+      description="Your workspace's name and address."
     >
       <SettingsSection title="Workspace">
         <SettingRow
@@ -199,20 +188,6 @@ export default function WorkspaceSettings() {
         </SettingRow>
       </SettingsSection>
 
-      <SettingsSection
-        title="Features"
-        description="These apply to everyone in the workspace."
-      >
-        <Loadable resource={features} rows={1}>
-          {(data) => (
-            <AgentsRow
-              enabled={data.agentsEnabled}
-              onSaved={(on) => features.setData({ agentsEnabled: on })}
-            />
-          )}
-        </Loadable>
-      </SettingsSection>
-
       <SettingsSection title="Teams">
         <SettingRow
           label="Create and manage teams"
@@ -249,50 +224,5 @@ export default function WorkspaceSettings() {
         onConfirm={urlKey.confirm}
       />
     </SettingsPage>
-  );
-}
-
-function AgentsRow({
-  enabled,
-  onSaved,
-}: {
-  enabled: boolean;
-  onSaved: (on: boolean) => void;
-}) {
-  const id = useId();
-  const agents = useSetting({
-    value: enabled,
-    undoLabel: enabled ? "Agents turned off" : "Agents turned on",
-    save: async (next) => {
-      setWorkspaceAgentsEnabled(next);
-      try {
-        const d = await gql<{
-          workspaceFeaturesUpdate: { agentsEnabled: boolean };
-        }>(
-          `mutation($on:Boolean!){workspaceFeaturesUpdate(agentsEnabled:$on){agentsEnabled}}`,
-          { on: next },
-        );
-        const saved = Boolean(d.workspaceFeaturesUpdate.agentsEnabled);
-        setWorkspaceAgentsEnabled(saved);
-        onSaved(saved);
-      } catch (e) {
-        setWorkspaceAgentsEnabled(!next);
-        throw e;
-      }
-    },
-  });
-  return (
-    <SettingRow
-      label="Agents"
-      htmlFor={id}
-      description="Shows the Agents screens (agents, run queue, runners and audit) to everyone. Each change is recorded in the audit log."
-      status={agents.status}
-    >
-      <Switch
-        id={id}
-        checked={agents.value}
-        onCheckedChange={(on) => void agents.set(on)}
-      />
-    </SettingRow>
   );
 }

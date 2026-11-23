@@ -1,7 +1,7 @@
 // Rendered shell top-alignment invariants against the built frontend and a seeded backend.
 // Verifies that [data-workspace-content] and [data-workspace-page] stay anchored to the top of
-// the desktop viewport (and directly below the mobile topbar on phones) across Leaderboard,
-// Member profile, and sibling workspace routes — preventing an implicit grid row from inserting
+// the desktop viewport (and directly below the mobile topbar on phones) across the workspace
+// routes — preventing an implicit grid row from inserting
 // a blank vertical gap above shorter views (HOJA-744).
 const { chromium } = require('../local-e2e/node_modules/playwright');
 const { spawn, spawnSync } = require('node:child_process');
@@ -35,8 +35,6 @@ const server = spawn(path.join(repo, '.venv/bin/hoja-serve'), ['serve', '--db', 
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
 const ROUTES = [
-  '/workspace/leaderboard',
-  '/workspace/member',
   '/workspace/inbox',
   '/workspace/my-issues/assigned',
   '/workspace/pulse',
@@ -57,11 +55,9 @@ async function measureShell(page) {
     const content = document.querySelector('[data-workspace-content]');
     const shell = document.querySelector('[data-workspace-page]');
     const topbar = document.querySelector('[data-topbar]');
-    const leaderboard = document.querySelector('[data-leaderboard-page]');
     const topAnchor = topbar && visible(topbar) ? topbar.getBoundingClientRect().bottom : 0;
     const cr = content ? content.getBoundingClientRect() : null;
     const sr = shell ? shell.getBoundingClientRect() : null;
-    const lr = leaderboard ? leaderboard.getBoundingClientRect() : null;
     const cs = content ? getComputedStyle(content) : null;
     const as = app ? getComputedStyle(app) : null;
     return {
@@ -74,7 +70,6 @@ async function measureShell(page) {
       appGridRows: as ? as.gridTemplateRows : null,
       shellTop: sr ? Math.round(sr.top) : null,
       shellHeight: sr ? Math.round(sr.height) : null,
-      leaderboardTop: lr ? Math.round(lr.top) : null,
     };
   });
 }
@@ -109,23 +104,18 @@ async function measureShell(page) {
         if (isDesktop && m.contentHeight !== null && Math.abs(m.contentHeight - vp.height) > 2) {
           failures.push(`${vp.width}x${vp.height} ${route}: desktop [data-workspace-content] height ${m.contentHeight}px != viewport ${vp.height}px (gridRow=${m.contentGridRow}, appRows=${m.appGridRows})`);
         }
-        if (route === '/workspace/leaderboard') {
-          if (m.leaderboardTop === null || m.shellTop === null || m.leaderboardTop - m.shellTop > 4) {
-            failures.push(`${vp.width}x${vp.height} ${route}: [data-leaderboard-page] offset inside shell (${m.leaderboardTop} vs ${m.shellTop})`);
-          }
-        }
       }
 
-      // Also verify client-side sidebar transition from Inbox -> Leaderboard on desktop.
+      // Also verify client-side sidebar transition from Inbox -> Views on desktop.
       if (isDesktop) {
         await page.goto(`${base}/workspace/inbox`);
         await page.waitForSelector('[aria-label="Workspace navigation"] [data-nav-item]');
-        await page.locator('[aria-label="Workspace navigation"] [data-nav-item]').filter({ hasText: /^\s*Leaderboard\s*$/ }).first().click();
-        await page.waitForSelector('[data-leaderboard-page]', { timeout: 10000 });
+        await page.locator('[aria-label="Workspace navigation"] [data-nav-item]').filter({ hasText: /^\s*Views\s*$/ }).first().click();
+        await page.waitForSelector('[data-workspace-views-page]', { timeout: 10000 });
         await wait(350);
         const m = await measureShell(page);
         if (m.shellTop - m.topAnchor > 16 || Math.abs(m.contentHeight - vp.height) > 2) {
-          failures.push(`${vp.width}x${vp.height} nav Inbox->Leaderboard: shellTop=${m.shellTop}, contentHeight=${m.contentHeight}/${vp.height}`);
+          failures.push(`${vp.width}x${vp.height} nav Inbox->Views: shellTop=${m.shellTop}, contentHeight=${m.contentHeight}/${vp.height}`);
         }
       }
 

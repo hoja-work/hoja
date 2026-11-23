@@ -1171,11 +1171,11 @@ def build_server(provider: HojaOAuthProvider, public_host: str | None = None) ->
         # WP12 (finding F10): an agent authenticates with its own user row, and this
         # is where the dispatcher learns that the caller is an agent rather than the
         # human who delegated the work. A human has no member row and gets None.
-        from hoja_server import agent_policy, tenant_context
+        from hoja_server import agent_members, tenant_context
 
         try:
             with tenant_context.scoped(org_id), provider.store.engine.connect() as conn:
-                member = agent_policy.member_row_for_user(conn, org_id, user_id)
+                member = agent_members.member_row_for_user(conn, org_id, user_id)
         except Exception as exc:  # fail closed: an unresolvable principal is not a human
             raise ToolError("The caller's identity could not be resolved. " + DENY_HINT) from exc
         agent_member_id = member["id"] if member else None

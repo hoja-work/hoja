@@ -26,7 +26,7 @@ from hoja_server import audit
 
 logger = logging.getLogger(__name__)
 from hoja_server import extensions
-from hoja_server import agent_members, agent_policy
+from hoja_server import agent_members
 from hoja_server import permissions
 from hoja_server import store as store_module
 from hoja_server.deployment import single_org_mode
@@ -366,294 +366,6 @@ def m_github_link_add(_, info, issueId, url):
     if link is None:
         raise GraphQLError("Issue not found.", extensions={"code": "NOT_FOUND", "field": "issueId"})
     return link
-
-
-def _review_account(store, org_id, user_id):
-    """The GitHub account Hoja may act through for this user.
-
-    Prefers the user's own grant over a workspace-wide one, and never returns a revoked row: an
-    action attributed to a person must run on that person's authorization.
-    """
-    from sqlalchemy import and_, or_, select
-
-    from hoja_server import tenant_context
-    from hoja_server.db import connector_account
-
-    with tenant_context.scoped(org_id), store.engine.connect() as conn:
-        return conn.execute(
-            select(connector_account).where(and_(
-                connector_account.c.organization_id == org_id,
-                connector_account.c.provider == "github",
-                connector_account.c.status == "active",
-                connector_account.c.revoked_at.is_(None),
-                or_(connector_account.c.owner_user_id == user_id,
-                    connector_account.c.owner_user_id.is_(None)),
-            )).order_by(connector_account.c.owner_user_id.is_(None),
-                        connector_account.c.created_at).limit(1)
-        ).mappings().first()
-
-
-def _run_coro(coro):
-    """Run one review operation to completion inside the resolver's thread.
-
-    The HTTP schema executes every operation through `graphql_sync` in a worker thread (app.py),
-    so a resolver cannot await: returning a coroutine would hand GraphQL an object it cannot
-    serialize and the field would come back null. `asyncio.run` is safe here only because this
-    thread owns no running loop, which is exactly the contract `run_in_threadpool` provides.
-    """
-    import asyncio
-
-    return asyncio.run(coro)
-
-
-async def _run_review_async(info, link_id, action, *, body=None, sha=None, method="squash"):
-    """One review write, end to end.
-
-    The row is updated only from the provider's confirmed answer, so a refusal or an ambiguous
-    response leaves the review exactly as it was — there is no path here that flips a pull request
-    to Merged on the strength of our own optimism.
-    """
-    import httpx
-    from github import GitHubAppConfig
-    from github.errors import ConnectorAPIError
-    from github.writes import GitHubWriteClient
-
-    from hoja_server.github_review_actions import ReviewRefused, perform
-    from hoja_server.github_tokens import GitHubTokenStore
-
-    store, _w, org, uid = _ctx(info)
-    link = store.github_link_by_id(org, link_id)
-    if link is None:
-        raise GraphQLError("Review not found.",
-                           extensions={"code": "NOT_FOUND", "field": "linkId"})
-    account = _review_account(store, org, uid)
-    if account is None or not account.get("encrypted_refresh_token"):
-        raise GraphQLError(
-            "GitHub is not connected for this workspace, so Hoja cannot act on your behalf.",
-            extensions={
-                "code": "not_connected",
-                "hint": "Connect GitHub in Settings > Connections, then try again.",
-            })
-    viewer = store.viewer(org, uid) or {}
-    user_name = viewer.get("displayName") or viewer.get("name") or "a teammate"
-    async with httpx.AsyncClient(timeout=30.0) as http:
-        tokens = GitHubTokenStore(store.engine, http, GitHubAppConfig.from_env())
-        writes = GitHubWriteClient(http, tokens.source(account["id"], org))
-        try:
-            outcome = await perform(
-                writes, link=link, action=action, user_name=user_name,
-                body=body, sha=sha, method=method)
-        except ReviewRefused as exc:
-            raise GraphQLError(exc.message, extensions={
-                "code": exc.code,
-                "gate": exc.gate.as_dict() if exc.gate else None,
-            }) from exc
-        except ConnectorAPIError as exc:
-            raise GraphQLError(str(exc), extensions={
-                "code": "github_error", "hint": getattr(exc, "hint", None),
-            }) from exc
-
-    gate = outcome.get("gate")
-    gate_json = gate.as_dict() if gate else None
-    updated = store.github_review_recorded(
-        org, link, event_type=outcome["eventType"], actor_id=uid,
-        changes={
-            "via": "github",
-            "action": outcome["action"],
-            "pullRequest": link.get("url"),
-            "sha": outcome.get("sha") or None,
-            "mergeSha": outcome.get("mergeSha") or None,
-            "actor": outcome["actor"],
-            "onBehalfOf": user_name,
-            "gate": gate_json,
-        },
-        merged_sha=outcome.get("mergeSha") or None)
-    return {
-        "action": outcome["action"],
-        "sha": outcome.get("sha") or None,
-        "mergeSha": outcome.get("mergeSha") or None,
-        "gate": gate_json,
-        "actor": outcome["actor"],
-        "link": updated,
-    }
-
-
-@mutation.field("reviewApprove")
-def m_review_approve(_, info, linkId, body=None):
-    return _run_coro(_run_review_async(info, linkId, "approve", body=body))
-
-
-@mutation.field("reviewRequestChanges")
-def m_review_request_changes(_, info, linkId, body):
-    return _run_coro(_run_review_async(info, linkId, "request_changes", body=body))
-
-
-@mutation.field("reviewComment")
-def m_review_comment(_, info, linkId, body):
-    return _run_coro(_run_review_async(info, linkId, "comment", body=body))
-
-
-@mutation.field("reviewMerge")
-def m_review_merge(_, info, linkId, sha, method="squash"):
-    return _run_coro(_run_review_async(info, linkId, "merge", sha=sha, method=method))
-
-
-@query.field("reviewGate")
-def r_review_gate(_, info, linkId):
-    return _run_coro(_review_gate_async(info, linkId))
-
-
-@query.field("pullRequests")
-def r_pull_requests(_, info, first=250):
-    """The Reviews queue: every linked pull request, independent of task recency."""
-    store, _w, org, _uid = _ctx(info)
-    first = _page_size(first)
-    links = store.pull_request_links(org, limit=first)
-    # One batched issue lookup for the whole page instead of one per row.
-    _prime(info, "issue_obj", [link.get("_issue_id") for link in links])
-    return links
-
-
-@mutation.field("githubFilePatchLoad")
-def m_github_file_patch_load(_, info, linkId, path, sha=None):
-    return _run_coro(_github_file_patch_load_async(info, linkId, path, sha))
-
-
-async def _github_file_patch_load_async(info, link_id, path, sha=None):
-    """Load one file's patch on demand and cache it back (HOJA-513).
-
-    The row is written only when GitHub actually returned a patch that fits the cap,
-    and only through the account's existing TokenSource — the same one credential
-    discipline the review writes keep. A sha that no longer matches the link's stored
-    head refuses instead of silently loading a diff from another commit.
-    """
-    import httpx
-    from github import GitHubAppConfig
-    from github.errors import ConnectorAPIError
-    from github.writes import GitHubWriteClient
-
-    from hoja_server import github_file_patches
-    from hoja_server.github_review_actions import split_repository
-    from hoja_server.github_tokens import GitHubTokenStore
-
-    store, _w, org, uid = _ctx(info)
-    link = store.github_link_by_id(org, link_id)
-    if link is None:
-        raise GraphQLError("Review not found.",
-                           extensions={"code": "NOT_FOUND", "field": "linkId"})
-    target = split_repository(link.get("url"))
-    if target is None:
-        raise GraphQLError("This link is not a pull request.",
-                           extensions={"code": "not_a_pull_request", "field": "linkId"})
-    if sha and link.get("sha") and sha != link.get("sha"):
-        raise GraphQLError(
-            "The pull request head moved since this review was read; load the diff "
-            "again for the new commit.",
-            extensions={"code": github_file_patches.HEAD_MOVED, "field": "sha"})
-    account = _review_account(store, org, uid)
-    if account is None or not account.get("encrypted_refresh_token"):
-        raise GraphQLError(
-            "GitHub is not connected for this workspace, so there is no diff to load.",
-            extensions={
-                "code": "not_connected",
-                "hint": "Connect GitHub in Settings > Connections, then try again.",
-            })
-    repository, number = target
-    stored_entry = next(
-        (f for f in (link.get("files") or [])
-         if isinstance(f, dict) and str(f.get("path") or "") == (path or "").strip()),
-        None)
-    async with httpx.AsyncClient(timeout=30.0) as http:
-        tokens = GitHubTokenStore(store.engine, http, GitHubAppConfig.from_env())
-        writes = GitHubWriteClient(http, tokens.source(account["id"], org))
-        try:
-            outcome = await github_file_patches.load_file_patch(
-                writes, repository, number, path, stored_entry=stored_entry)
-        except ConnectorAPIError as exc:
-            raise GraphQLError(str(exc), extensions={
-                "code": "github_error", "hint": getattr(exc, "hint", None),
-            }) from exc
-    marker = outcome["marker"]
-    patch = outcome["patch"]
-    cached = False
-    if patch is not None:
-        updated = store.github_link_cache_file_patch(org, link_id, path, patch)
-        if updated is not None:
-            link = updated
-            cached = True
-    result = github_file_patches.result_for(path, patch, marker, cached=cached,
-                                            reason=outcome["reason"])
-    result["link"] = link
-    return result
-
-
-async def _review_gate_async(info, linkId):
-    """Read the gate from GitHub now.
-
-    The merge mutation runs this same `refusal()` against the same live read, so what the UI
-    offers to merge and what the server permits cannot drift apart. A disabled Merge button here
-    is the server's answer, not a client-side guess.
-    """
-    import httpx
-    from github import GitHubAppConfig
-    from github.errors import ConnectorAPIError
-    from github.writes import GitHubWriteClient
-
-    from hoja_server.github_review_actions import gate_from, refusal, split_repository
-    from hoja_server.github_tokens import GitHubTokenStore
-
-    store, _w, org, uid = _ctx(info)
-    link = store.github_link_by_id(org, linkId)
-    if link is None:
-        raise GraphQLError("Review not found.",
-                           extensions={"code": "NOT_FOUND", "field": "linkId"})
-    target = split_repository(link.get("url"))
-    if target is None:
-        raise GraphQLError("This link is not a pull request.",
-                           extensions={"code": "not_a_pull_request", "field": "linkId"})
-    repository, number = target
-    account = _review_account(store, org, uid)
-    if account is None or not account.get("encrypted_refresh_token"):
-        raise GraphQLError(
-            "GitHub is not connected for this workspace, so there is no gate to read.",
-            extensions={
-                "code": "not_connected",
-                "hint": "Connect GitHub in Settings > Connections, then try again.",
-            })
-    async with httpx.AsyncClient(timeout=30.0) as http:
-        tokens = GitHubTokenStore(store.engine, http, GitHubAppConfig.from_env())
-        writes = GitHubWriteClient(http, tokens.source(account["id"], org))
-        try:
-            pull = await writes.fetch_pull(repository, number)
-        except ConnectorAPIError as exc:
-            # The pull request itself is unreadable: there is no gate to show.
-            raise GraphQLError(str(exc), extensions={
-                "code": "github_error", "hint": getattr(exc, "hint", None),
-            }) from exc
-        head = (pull.get("head") or {}).get("sha") or ""
-        # A failed *check* read is different: GitHub answers 403 for an app without Checks and
-        # Commit statuses permissions, which is a fact about the install, not about this pull
-        # request. Losing the whole gate hid mergeability and the review decision behind
-        # "cannot read that resource"; instead the gate is returned undecided, the pane keeps
-        # showing what GitHub did answer, and refusal() blocks the merge with the reason.
-        checks_unavailable = False
-        check_runs: list[dict] = []
-        combined: dict = {}
-        if head:
-            try:
-                check_runs = await writes.fetch_check_runs(repository, head)
-            except ConnectorAPIError:
-                checks_unavailable = True
-            try:
-                combined = await writes.fetch_combined_status(repository, head)
-            except ConnectorAPIError:
-                checks_unavailable = True
-        gate = gate_from(pull, check_runs, combined, checks_unavailable=checks_unavailable)
-    blocked = refusal(gate)
-    payload = gate.as_dict()
-    payload["refusalCode"] = blocked[0] if blocked else None
-    payload["refusalMessage"] = blocked[1] if blocked else None
-    return payload
 
 
 @mutation.field("notificationMarkAllRead")
@@ -2184,14 +1896,7 @@ def _get_comment(store, org, cid):
 def build_schema():
     from pathlib import Path
     sdl = (Path(__file__).parent / "schema.graphql").read_text()
-    from hoja_server import authorized_apps, decisions_api, extensions_api, knowledge, model_providers, permissions, profile_metrics, project_settings, sla, task_templates, usage_ledger, views_api, webhooks_api, workspace_templates
-    # HOJA-602-A-16 slice 5: the read-only runner/lease and claim/verdict surfaces the
-    # review screens need. Both are admin-gated and org-scoped, and neither adds a table.
-    from hoja_server import agent_claims, agent_runners, connect_endpoints
-    # HOJA-635: the write half of the runner surface — mint and revoke enrollment
-    # tokens, revoke a machine. Kept out of agent_runners.py so that module's
-    # read-only invariant stays true.
-    from hoja_server import agent_ops, agent_runner_admin, project_repos, tailnet_ops
+    from hoja_server import authorized_apps, decisions_api, extensions_api, model_providers, permissions, project_settings, sla, task_templates, views_api, webhooks_api, workspace_templates
     from hoja_server.agent_conversations import SDL as CONVERSATION_SDL
     from hoja_server.agent_conversations import query as conversation_query
     from hoja_server.model_providers import SDL as PROVIDER_SDL
@@ -2202,11 +1907,6 @@ def build_schema():
     # HOJA-491: bind Issue.sla before the alias surface copies Issue's resolvers
     # onto Task, so the agent-facing vocabulary carries the clock too.
     sla.bind(Issue)
-    # HOJA-602-A-7: same reason — a delegated Task exposes the session a delegated
-    # Issue does.
-    from hoja_server import agent_sessions
-
-    agent_sessions.bind(Issue)
     task_bindables, problems = bind_task_surface(
         query, mutation, Issue, MyIssueActivity,
         extra_roots=(views_api.query, views_api.mutation, decisions_api.query, decisions_api.mutation),
@@ -2217,11 +1917,9 @@ def build_schema():
     return make_executable_schema(
         [sdl, PROVIDER_SDL, CONVERSATION_SDL, webhooks_api.SDL, extensions_api.SDL,
          views_api.SDL, decisions_api.SDL, project_settings.SDL, permissions.SDL,
-         task_templates.SDL, sla.SDL, agent_members.SDL, agent_sessions.SDL,
-         agent_policy.SDL, agent_runners.SDL, agent_runner_admin.SDL,
-         agent_claims.SDL, usage_ledger.SDL, profile_metrics.SDL, connect_endpoints.SDL, authorized_apps.SDL, agent_ops.SDL, project_repos.SDL, tailnet_ops.SDL, initiative_api.SDL, knowledge.SDL, workspace_templates.SDL, tasks_sdl],
+         task_templates.SDL, sla.SDL, agent_members.SDL,
+         authorized_apps.SDL, initiative_api.SDL, workspace_templates.SDL, tasks_sdl],
         query, mutation, *task_bindables,
-        knowledge.query, knowledge.mutation, knowledge.knowledge_doc_type,
         workspace_templates.query, workspace_templates.mutation,
         model_providers.query, model_providers.mutation,
         project_settings.query, project_settings.mutation,
@@ -2240,21 +1938,6 @@ def build_schema():
         model_providers.model_provider_type, project_settings.project_status_type,
         project_settings.project_template_type, task_templates.task_template_type,
         sla.sla_policy_type, sla.sla_clock_type, agent_members.agent_member_type,
-        agent_sessions.query, agent_sessions.mutation,
-        agent_sessions.agent_session_type, agent_sessions.agent_activity_type,
-        agent_policy.query, agent_policy.mutation, agent_policy.agent_policy_type,
-        agent_runners.query, agent_runners.runner_type, agent_runners.agent_lease_type,
-        agent_runner_admin.query, agent_runner_admin.mutation,
-        agent_ops.query, agent_ops.mutation,
-        project_repos.query, project_repos.mutation, project_repos.project_type,
-        tailnet_ops.query, tailnet_ops.mutation,
-        connect_endpoints.query, connect_endpoints.mutation,
-        connect_endpoints.connect_endpoint_type,
-        agent_claims.query, agent_claims.verifier_claim_type,
-        agent_claims.agent_verification_type,
-        usage_ledger.query, usage_ledger.usage_summary_type,
-        usage_ledger.usage_row_type, usage_ledger.usage_event_type,
-        profile_metrics.query,
         Team, Initiative, InitiativeUpdate, Issue, IssueActivity, MyIssueActivity, Project, ProjectUpdate, Comment,
         permissions.workspace_permission_type, permissions.workspace_security_policy_type,
         WorkflowState, Cycle, Attachment, GithubLink, Organization,

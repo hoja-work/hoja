@@ -47,7 +47,7 @@ const SECTIONS = [...registrySrc.matchAll(/\{\s*id:\s*"([a-z-]+)",\s*label:\s*"(
 }));
 // A member with no grants is refused both kinds of gated section; the copy differs.
 const REFUSED = /Only workspace admins can open this page|You don't have access to this page/;
-const WIDE = new Set(['billing', 'members']);
+const WIDE = new Set(['members']);
 const passed = [], failed = [];
 const ok = (m) => { passed.push(m); console.log('  ok   ' + m); };
 const bad = (m) => { failed.push(m); console.log('  FAIL ' + m); };

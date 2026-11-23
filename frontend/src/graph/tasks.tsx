@@ -14,7 +14,6 @@ import {
 } from "./detail";
 import { StateGlyph } from "./stateGlyph";
 import { actorLabel, eventPhrase } from "./activityEvents";
-import { TaskUsageSection } from "../profiles/TaskUsageSection";
 import React, {
   memo,
   useEffect,
@@ -25,13 +24,11 @@ import React, {
 } from "react";
 import { confirmDialog } from "../dialogs";
 import {
-  Bot,
   Check,
   ChevronDown,
   ChevronRight,
   Copy,
   ExternalLink,
-  Activity,
   FileText,
   Link2,
   Plus,
@@ -55,8 +52,6 @@ import type {
 } from "../main";
 import { Markdown } from "../markdown";
 import { MobileNavTrigger } from "../mobileNav";
-import { isTraceAttachment } from "../traces/trace";
-import { TraceViewer } from "../traces/TraceViewer";
 import {
   addLocalIssue,
   getSync,
@@ -104,8 +99,6 @@ import {
   ChosenDecisionMediaPreview,
   VisualDecisionOptions,
 } from "../VisualDecisionOptions";
-import { getAgentsAdapter, type AgentChoice } from "../agents/adapter";
-import { TaskRunSection } from "../agents/TaskRunSection";
 
 /* Linear 1:1 Issues list + board + detail. */
 
@@ -185,22 +178,9 @@ export const emptyFilters: LinFilters = {
 };
 
 export type LinDisplay = {
-  /** The agent surface groups by `runner`, and the audit log by `actor` or `action`
-   * (HOJA-602-A-16). The issue list never sets those; `groupLinIssues` treats any grouping it
-   * does not implement as one ungrouped list, so a stored value cannot hide rows. */
-  grouping:
-    | "none"
-    | "status"
-    | "priority"
-    | "assignee"
-    | "labels"
-    | "project"
-    | "runner"
-    | "actor"
-    | "action"
-    | "agent"
-    | "model"
-    | "month";
+  /** `groupLinIssues` treats any grouping it does not implement as one ungrouped list, so a
+   * stored value cannot hide rows. */
+  grouping: "none" | "status" | "priority" | "assignee" | "labels" | "project";
   ordering: "created" | "updated" | "priority";
   direction: "desc" | "asc";
   hideCompleted: boolean;
@@ -1564,8 +1544,7 @@ function DecisionPanel({
 
 /* Memoized: with stable onSelect/onOpen only rows whose issue/selection changed re-render. */
 /* The fields a list row actually reads. Narrower than LinIssue so a surface that is not the
- * issue store — the agent run queue, which renders a delegated task from its session record
- * (HOJA-602-A-16) — can build a row without inventing a whole issue. LinIssue satisfies it. */
+ * issue store can build a row without inventing a whole issue. LinIssue satisfies it. */
 export type IssueRowModel = {
   id: string;
   identifier: string;
@@ -1724,12 +1703,11 @@ export const IssueRow = memo(function IssueRow({
   childDone?: number;
   showCheckbox: boolean;
   /** A caller-owned glyph for the row's second 14 px slot, where an issue shows priority. A
-   * surface whose rows have no priority — the runner list (HOJA-602-A-16) — fills the column with
-   * its own scarce resource instead of leaving a blank, and keeps the identifier column where the
-   * issue list puts it. Absent by default, so every existing caller is unchanged. */
+   * surface whose rows have no priority fills the column with its own glyph instead of leaving a
+   * blank, and keeps the identifier column where the issue list puts it. Absent by default, so every existing caller is unchanged. */
   leading?: React.ReactNode;
-  /** A caller-owned chip that belongs to this row but not to the issue model, such as the agent
-   * session badge on the run queue. Rendered beside the row's own flags so it inherits the row's
+  /** A caller-owned chip that belongs to this row but not to the issue model, such as an SLA
+   * chip. Rendered beside the row's own flags so it inherits the row's
    * height and alignment instead of becoming a second, separately styled row. */
   trailing?: React.ReactNode;
 }) {
@@ -1774,7 +1752,7 @@ export const IssueRow = memo(function IssueRow({
           down the left edge; priority and identifier follow. */}
       {p.status && <StatusAgeIcon issue={issue} />}
       {leading ?? (p.priority && <PriorityIcon priority={issue.priority} />)}
-      {/* A long identifier — a runner's column is a full UUID — may shrink and ellipsize on a phone
+      {/* A long identifier may shrink and ellipsize on a phone
           rather than push the title and chips off the row. The cap is 14ch, wider than any issue
           identifier this app issues (`HOJA-667-A-34` is 14), so the issue list renders identically;
           the geometry suite asserts the identifier column is the same on both. */}
@@ -2429,17 +2407,10 @@ export function GraphIssueDetail({
   const [moreOpen, setMoreOpen] = useState(false);
   const narrow = useNarrowDetail();
   const [layers, setLayers] = useState<{ patch: Partial<LinIssue> }[]>([]);
-  /* Bumped after a delegate write, so the Run section re-reads (HOJA-712). */
-  const [runRefresh, setRunRefresh] = useState(0);
   const [updateError, setUpdateError] = useState("");
   // Ids whose preview failed to load, so a dead URL degrades to an icon instead of
   // leaving the browser's torn-page glyph in the row.
   const [brokenThumbs, setBrokenThumbs] = useState<Record<string, boolean>>({});
-  // An agent session trace attachment (hoja.trace/v1) opens in the trace viewer.
-  const [openTrace, setOpenTrace] = useState<{
-    url: string;
-    title: string;
-  } | null>(null);
   const [comment, setComment] = useState("");
   const [commentError, setCommentError] = useState("");
   const commentRef = useRef<HTMLTextAreaElement | null>(null);
@@ -2462,22 +2433,6 @@ export function GraphIssueDetail({
   const [parentSearch, setParentSearch] = useState(false);
   const [parentQuery, setParentQuery] = useState("");
   const [parentResults, setParentResults] = useState<LinIssue[]>([]);
-  /* The Delegate picker's options are agent members (WP04, admin-only), fetched the first time the
-   * menu opens rather than on every task page: a non-admin reading a task must not be shown an
-   * error about a control they did not ask for, and a refused read is stated in the menu itself. */
-  const [agentChoices, setAgentChoices] = useState<AgentChoice[] | null>(null);
-  const [agentChoicesError, setAgentChoicesError] = useState("");
-  const [agentChoicesLoading, setAgentChoicesLoading] = useState(false);
-  const loadAgentChoices = () => {
-    if (agentChoices || agentChoicesLoading) return;
-    setAgentChoicesError("");
-    setAgentChoicesLoading(true);
-    getAgentsAdapter()
-      .listAgentChoices()
-      .then((rows) => setAgentChoices(rows))
-      .catch((e: Error) => setAgentChoicesError(e.message))
-      .finally(() => setAgentChoicesLoading(false));
-  };
   const [attachMenu, setAttachMenu] = useState(false);
   const [attachUrl, setAttachUrl] = useState("");
   const [attachTitle, setAttachTitle] = useState("");
@@ -2740,17 +2695,6 @@ export function GraphIssueDetail({
       out.assignee = m
         ? { id: m.id, name: m.name || m.email || "" }
         : undefined;
-    }
-    /* The delegate is an agent member, so its label comes from the agent list rather than the
-     * team's members: `delegateId` holds a `user.id`, and `agent_member` is where it is named. */
-    if (has("delegateId")) {
-      const choice = agentChoices?.find((x) => x.id === input.delegateId);
-      out.delegate = choice
-        ? { id: choice.id, name: choice.name }
-        : input.delegateId
-          ? detail.delegate
-          : null;
-      out.delegateId = (input.delegateId as string | null) ?? null;
     }
     if (has("cycleId")) {
       const c = teamCycles.find((x) => x.id === input.cycleId);
@@ -3216,7 +3160,7 @@ export function GraphIssueDetail({
   const subsView = [...(entry?.subs || []), ...pendingSubs];
   const subsDone = subsView.filter((s) => s.state?.type === "completed").length;
 
-  // Status, priority, assignee, delegate, cycle, project (and SLA): the properties
+  // Status, priority, assignee, cycle, project (and SLA): the properties
   // a phone user changes most. On a narrow screen they sit right under the title
   // instead of at the very bottom of the stacked page.
   const coreProps = (
@@ -3323,77 +3267,6 @@ export function GraphIssueDetail({
             ),
           })),
         ]}
-      />
-      {/* The agent this task is delegated to — `issue.delegate_id` (WP04), separate from the
-        assignee: the assignee is the person accountable, the delegate is the agent that runs
-        it. Same control, same row height and same keyboard behaviour as the Assignee row. */}
-      <PropDropdown
-        label="Delegate"
-        icon={<Bot size={14} />}
-        value={detail.delegate?.name || "No delegate"}
-        onOpen={loadAgentChoices}
-        /* Delegating opens the run on the server, and the Run section below the description
-           is already mounted: the counter is what makes it read the run the write just
-           created instead of showing the state from before it. */
-        onPick={(id) =>
-          void change({ delegateId: id }).then((done) => {
-            if (done) setRunRefresh((n) => n + 1);
-          })
-        }
-        options={[
-          {
-            id: null,
-            selected: !detail.delegate,
-            label: "No delegate",
-            hint: "Nothing is delegated",
-          },
-          ...(agentChoices || []).map((a) => ({
-            id: a.id as string | null,
-            selected: a.id === detail.delegate?.id,
-            hint: a.name,
-            label: (
-              <span
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 8,
-                }}
-              >
-                <Bot size={14} aria-hidden="true" />
-                {a.name}
-              </span>
-            ),
-          })),
-        ]}
-        footer={
-          agentChoicesError ? (
-            <p
-              className={styleClasses("text-[12px] text-muted")}
-              data-style-hooks={styleHooks("lin-note text-[12px] text-muted")}
-              role="alert"
-              style={{ padding: "8px 10px" }}
-            >
-              {agentChoicesError}
-            </p>
-          ) : agentChoicesLoading || !agentChoices ? (
-            <p
-              className={styleClasses("text-[12px] text-muted")}
-              data-style-hooks={styleHooks("lin-note text-[12px] text-muted")}
-              style={{ padding: "8px 10px" }}
-              role="status"
-            >
-              Loading agents…
-            </p>
-          ) : !agentChoices.length ? (
-            <p
-              className={styleClasses("text-[12px] text-muted")}
-              data-style-hooks={styleHooks("lin-note text-[12px] text-muted")}
-              style={{ padding: "8px 10px" }}
-            >
-              This workspace has no active agent member to delegate to.
-            </p>
-          ) : undefined
-        }
       />
       <PropDropdown
         label="Cycle"
@@ -4135,12 +4008,6 @@ export function GraphIssueDetail({
                             setBrokenThumbs((m) => ({ ...m, [a.id]: true }))
                           }
                         />
-                      ) : isTraceAttachment(a) ? (
-                        <Activity
-                          size={16}
-                          color="var(--accent)"
-                          aria-hidden="true"
-                        />
                       ) : (
                         <FileText
                           size={16}
@@ -4148,29 +4015,13 @@ export function GraphIssueDetail({
                           aria-hidden="true"
                         />
                       )}
-                      {isTraceAttachment(a) ? (
-                        <button
-                          type="button"
-                          className="min-w-0 truncate text-left font-semibold text-foreground hover:underline"
-                          aria-haspopup="dialog"
-                          onClick={() =>
-                            setOpenTrace({
-                              url: a.url || "",
-                              title: a.title || "",
-                            })
-                          }
-                        >
-                          {a.title}
-                        </button>
-                      ) : (
-                        <a
-                          href={a.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          {a.title}
-                        </a>
-                      )}
+                      <a
+                        href={a.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        {a.title}
+                      </a>
                       {a.subtitle && <small>{a.subtitle}</small>}
                       <small
                         className="flex-none whitespace-nowrap"
@@ -4182,13 +4033,6 @@ export function GraphIssueDetail({
                   );
                 })}
               </div>
-              {openTrace && (
-                <TraceViewer
-                  url={openTrace.url}
-                  title={openTrace.title}
-                  onClose={() => setOpenTrace(null)}
-                />
-              )}
               {!(detail.attachments?.nodes || []).length && (
                 <p
                   className={styleClasses("text-[12px] text-muted")}
@@ -4302,16 +4146,6 @@ export function GraphIssueDetail({
                 </section>
               );
             })()}
-
-            {/* The run behind this task (HOJA-712). It draws nothing at all for a task that was
-                never delegated and has no runs, and reads `agentSessions(issueId)` itself so the
-                issue query this page already makes is not asked for session fields it may not
-                have. */}
-            <TaskRunSection
-              issueId={detail.id}
-              delegated={Boolean(detail.delegateId)}
-              refresh={runRefresh}
-            />
 
             <DetailSection
               title="Activity"
@@ -5081,8 +4915,6 @@ export function GraphIssueDetail({
                 </span>
               )}
             </div>
-
-            <TaskUsageSection issueId={detail.id} />
 
             <div
               className={styleClasses(

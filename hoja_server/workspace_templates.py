@@ -1,14 +1,15 @@
 """Workspace templates: portable bundles of workspace settings (HOJA-742).
 
 A template is one JSON document that describes how a workspace should be set up:
-workspace labels, task templates, project templates, SLA policies, workspace
-knowledge (the house rules agents read), the policy a new agent starts with, and
-the notification kinds a member gets until they choose for themselves.
+workspace labels, task templates, project templates, SLA policies, and the
+notification kinds a member gets until they choose for themselves. The
+``knowledge`` and ``agentPolicyDefault`` sections that Hoja Cloud templates carry
+are accepted and ignored, so a Cloud template or export still loads here.
 
 Three rules shape this module.
 
 **Portable.** A template never carries a row id. Labels, templates, policies and
-documents are matched by name (knowledge by title), workflow states by their
+documents are matched by name, workflow states by their
 *type* ("backlog"), and project statuses by name. Anything that only means
 something in one workspace (a team, a person, a project, a repository) is left
 out, so the same file loads into any workspace, Cloud or self-hosted.
@@ -35,8 +36,6 @@ from ariadne import MutationType, QueryType, gql
 from graphql import GraphQLError
 from sqlalchemy import and_, select
 
-from hoja_server import agent_policy as agent_policy_module
-from hoja_server import knowledge as knowledge_module
 from hoja_server import sla as sla_module
 from hoja_server import task_templates as task_templates_module
 from hoja_server.db import (
@@ -49,7 +48,6 @@ from hoja_server.db import (
     task_template,
     workflow_state,
     workspace_default,
-    workspace_knowledge,
 )
 from hoja_server.notifications import KINDS as NOTIFICATION_KINDS
 
@@ -57,19 +55,13 @@ FORMAT = "hoja.workspace-template"
 VERSION = 1
 
 NOTIFICATION_DEFAULTS_KEY = "notification_defaults"
-AGENT_POLICY_KEY = "agent_policy"
-
-SECTIONS = ("labels", "taskTemplates", "projectTemplates", "slaPolicies", "knowledge",
-            "agentPolicyDefault", "notificationDefaults")
-TOP_LEVEL = {"format", "version", "id", "name", "description", *SECTIONS}
+SECTIONS = ("labels", "taskTemplates", "projectTemplates", "slaPolicies", "notificationDefaults")
+# Sections a Hoja Cloud template may carry (agent knowledge and agent policy). They are
+# accepted so the same file loads everywhere, and ignored because this edition has
+# neither feature.
+CLOUD_ONLY_SECTIONS = ("knowledge", "agentPolicyDefault")
+TOP_LEVEL = {"format", "version", "id", "name", "description", *SECTIONS, *CLOUD_ONLY_SECTIONS}
 MAX_ITEMS = 100
-
-# Agent policy fields that mean the same thing in every workspace. Teams, projects,
-# repositories, connectors, secrets, egress hosts, delegators and approvers name rows
-# or hosts of one workspace, so a template may not carry them.
-PORTABLE_AGENT_FIELDS = ("readTools", "writeTools", "approvalTools", "tasksDelegatedOnly",
-                         "maxConcurrency", "runMinuteLimit", "monthlyCreditBudget",
-                         "budgetAction", "harnessAllowlist", "defaultHarness")
 
 ITEM_FIELDS = {
     "labels": {"name", "color", "description", "group", "isGroup", "exclusive"},
@@ -78,7 +70,6 @@ ITEM_FIELDS = {
     "projectTemplates": {"name", "description", "color", "icon", "state"},
     "slaPolicies": {"name", "appliesPriorities", "firstResponseMinutes", "resolutionMinutes",
                     "pauseStateTypes", "cycleBound", "stopsOn", "businessDaysOnly", "enabled"},
-    "knowledge": {"title", "body", "enabled"},
 }
 STATE_TYPES = ("triage", "backlog", "unstarted", "started", "completed", "canceled")
 
@@ -98,9 +89,9 @@ SDL = gql(
 
     "One change a template makes, or would make."
     type WorkspaceTemplateStep {
-      "labels | taskTemplates | projectTemplates | slaPolicies | knowledge | agentPolicyDefault | notificationDefaults"
+      "labels | taskTemplates | projectTemplates | slaPolicies | notificationDefaults"
       section: String!
-      "The item's name (a knowledge document's title)."
+      "The item's name."
       name: String!
       "create | update | unchanged"
       action: String!
@@ -205,7 +196,7 @@ def _items(doc, section) -> list[dict]:
     if len(raw) > MAX_ITEMS:
         _bad(section, f"may hold at most {MAX_ITEMS} items.")
     out, seen = [], set()
-    name_field = "title" if section == "knowledge" else "name"
+    name_field = "name"
     for i, item in enumerate(raw):
         path = f"{section}[{i}]"
         if not isinstance(item, dict):
@@ -214,8 +205,7 @@ def _items(doc, section) -> list[dict]:
         if unknown:
             _bad(f"{path}.{sorted(unknown)[0]}",
                  "is not a field a template can carry in this section.")
-        name = _text(item.get(name_field), f"{path}.{name_field}", required=True,
-                     limit=200 if section == "knowledge" else 120)
+        name = _text(item.get(name_field), f"{path}.{name_field}", required=True, limit=120)
         if _key(name) in seen:
             _bad(f"{path}.{name_field}", f"'{name}' appears twice in {section}.")
         seen.add(_key(name))
@@ -246,20 +236,6 @@ def parse(doc: Any) -> dict:
     for item in parsed["labels"]:
         if item.get("group") is not None:
             item["group"] = _text(item["group"], f"{item['_path']}.group", required=True)
-    agent = doc.get("agentPolicyDefault")
-    if agent is not None:
-        if not isinstance(agent, dict):
-            _bad("agentPolicyDefault", "must be an object.")
-        unknown = set(agent) - set(PORTABLE_AGENT_FIELDS)
-        if unknown:
-            _bad(f"agentPolicyDefault.{sorted(unknown)[0]}",
-                 "names something only one workspace has (a team, project, repository, "
-                 "secret or host), so a template cannot carry it.")
-        try:
-            agent_policy_module.clean_input(agent)
-        except agent_policy_module.PolicyError as error:
-            _bad(f"agentPolicyDefault.{error.field}", error.message)
-    parsed["agentPolicyDefault"] = agent
     notif = doc.get("notificationDefaults")
     if notif is not None:
         if not isinstance(notif, dict):
@@ -475,24 +451,8 @@ def plan(conn, org: str, parsed: dict) -> list[dict]:
         values = _wrap(path, sla_module._values, conn, org, inp, creating=current is None)
         steps.append(_step("slaPolicies", item["name"], current, values))
 
-    # Knowledge: workspace scope, matched by title.
-    docs = _by_name(_live(conn, workspace_knowledge, org, workspace_knowledge.c.scope == "workspace"),
-                    "title")
-    for item in parsed["knowledge"]:
-        path = item["_path"]
-        values = {"title": _wrap(f"{path}.title", knowledge_module._validate_title, item["title"])}
-        if "body" in item:
-            values["body"] = _wrap(f"{path}.body", knowledge_module._validate_body, item["body"])
-        elif _key(item["title"]) not in docs:
-            _bad(f"{path}.body", "is required for a new document.")
-        if "enabled" in item:
-            values["enabled"] = _bool(item["enabled"], f"{path}.enabled")
-        current = docs.get(_key(item["title"]))
-        steps.append(_step("knowledge", item["title"], current, values))
-
     # Workspace defaults: one document each, replaced as a whole.
-    for section, key, label in (("agentPolicyDefault", AGENT_POLICY_KEY, "New agents"),
-                                ("notificationDefaults", NOTIFICATION_DEFAULTS_KEY, "New members")):
+    for section, key, label in (("notificationDefaults", NOTIFICATION_DEFAULTS_KEY, "New members"),):
         wanted = parsed.get(section)
         if wanted is None:
             continue
@@ -580,17 +540,6 @@ def execute(conn, org: str, uid: str, steps: list[dict], *, start_sla_clocks: bo
                 row = dict(conn.execute(select(sla_policy).where(sla_policy.c.id == pid)).first()._mapping)
                 if row["enabled"]:
                     started += sla_module.apply_to_open(conn, org, row, at)
-        elif section == "knowledge":
-            if step["action"] == "create":
-                conn.execute(workspace_knowledge.insert().values(
-                    id=new_id(), organization_id=org, scope="workspace", scope_id=None,
-                    enabled=values.pop("enabled", True), created_by=uid, updated_by=uid,
-                    created_at=at, updated_at=at, **values))
-            else:
-                conn.execute(workspace_knowledge.update().where(and_(
-                    workspace_knowledge.c.organization_id == org,
-                    workspace_knowledge.c.id == step["id"])).values(
-                        updated_by=uid, updated_at=at, **values))
         else:
             _set_default(conn, org, step["_key"], values, uid, at)
     return started
@@ -675,24 +624,13 @@ def export(conn, org: str) -> tuple[dict, list[str]]:
         item["businessDaysOnly"] = bool(r["business_days_only"])
         out_policies.append(item)
 
-    docs = _live(conn, workspace_knowledge, org)
-    scoped = [d for d in docs if d["scope"] != "workspace"]
-    if scoped:
-        omitted.append(f"{len(scoped)} team or project knowledge documents")
-    out_docs = [{"title": d["title"], "body": d["body"], "enabled": bool(d["enabled"])}
-                for d in sorted(docs, key=lambda d: d["title"]) if d["scope"] == "workspace"]
-
     document: dict[str, Any] = {
         "format": FORMAT, "version": VERSION,
         "name": "Exported workspace settings",
         "description": "",
         "labels": out_labels, "taskTemplates": out_templates,
         "projectTemplates": out_projects, "slaPolicies": out_policies,
-        "knowledge": out_docs,
     }
-    agent = get_default(conn, org, AGENT_POLICY_KEY)
-    if agent is not None:
-        document["agentPolicyDefault"] = agent
     notif = get_default(conn, org, NOTIFICATION_DEFAULTS_KEY)
     if notif is not None:
         document["notificationDefaults"] = notif
@@ -718,8 +656,11 @@ def r_templates(_, info):
     from hoja_server.workspace_template_builtins import BUILTINS
     store, org, uid = _ctx(info)
     _require_admin(store, org, uid)
+    # The built-ins are shared with Hoja Cloud; serve them without the sections this
+    # edition ignores, so nothing offers what applying would not do.
     return [{"id": t["id"], "name": t["document"]["name"],
-             "description": t["document"]["description"], "document": t["document"]}
+             "description": t["document"]["description"],
+             "document": {k: v for k, v in t["document"].items() if k not in CLOUD_ONLY_SECTIONS}}
             for t in BUILTINS]
 
 
@@ -771,7 +712,6 @@ def m_apply(_, info, document, **arguments):
 
 
 __all__ = [
-    "AGENT_POLICY_KEY",
     "SDL",
     "execute",
     "export",

@@ -35,13 +35,6 @@ ARCHIVE = "mutation($u: String!) { memberArchive(userId: $u) { success } }"
 RESTORE = "mutation($u: String!) { memberRestore(userId: $u) { success } }"
 NEW_LINK = "mutation($u: String!) { membershipInvitationCreate(userId: $u) { success inviteCode } }"
 ROLE = "mutation($u: String!, $a: Boolean!) { memberRoleUpdate(userId: $u, admin: $a) { success } }"
-DOC_CREATE = ("mutation($i: KnowledgeDocInput!) { knowledgeDocCreate(input: $i) "
-              "{ success knowledgeDoc { id } } }")
-DOC_UPDATE = ("mutation($id: String!, $i: KnowledgeDocUpdateInput!) { knowledgeDocUpdate(id: $id, input: $i) "
-              "{ success } }")
-DOC_DELETE = "mutation($id: String!) { knowledgeDocDelete(id: $id) }"
-DOCS = "{ knowledgeDocs { id title scope } }"
-CONTEXT = "query($t: String) { knowledgeContext(teamId: $t) }"
 LABEL_CREATE = ("mutation($i: IssueLabelCreateInput!) { issueLabelCreate(input: $i) "
                 "{ success issueLabel { id } } }")
 LABEL_SETTINGS = "{ issueLabelSettings { id name } }"
@@ -137,32 +130,6 @@ def test_last_active_admin_cannot_be_demoted_when_the_other_admin_is_deactivated
         assert _gql(client, admin["token"], REACTIVATE, {"u": ann})["data"]["memberReactivate"]["success"] is True
         stepped = _gql(client, admin["token"], ROLE, {"u": admin["user_id"], "a": False})
         assert stepped["data"]["memberRoleUpdate"]["success"] is True, stepped
-
-
-def test_private_team_knowledge_is_invisible_to_non_members(tmp_path) -> None:
-    engine, app, admin = _setup(tmp_path)
-    store = Store(engine)
-    with TestClient(app) as client:
-        _member_id, key = _member(store, client, admin)
-        secret = _private_team(client, admin)
-        doc = _gql(client, admin["token"], DOC_CREATE, {"i": {"scope": "team", "scopeId": secret,
-                                                              "title": "Acquisition plan", "body": "Confidential."}})
-        doc_id = doc["data"]["knowledgeDocCreate"]["knowledgeDoc"]["id"]
-        workspace_doc = _gql(client, key, DOC_CREATE, {"i": {"scope": "workspace", "title": "Style guide",
-                                                             "body": "Be brief."}})
-        assert workspace_doc["data"]["knowledgeDocCreate"]["success"] is True, workspace_doc
-
-        listed = [d["title"] for d in _gql(client, key, DOCS)["data"]["knowledgeDocs"]]
-        assert "Acquisition plan" not in listed and "Style guide" in listed, listed
-        assert "Acquisition plan" in [d["title"] for d in _gql(client, admin["token"], DOCS)["data"]["knowledgeDocs"]]
-        assert _code(_gql(client, key, CONTEXT, {"t": secret})) == "NOT_FOUND"
-        assert _code(_gql(client, key, DOC_UPDATE, {"id": doc_id, "i": {"body": "Leaked"}})) == "NOT_FOUND"
-        assert _gql(client, key, DOC_DELETE, {"id": doc_id})["data"]["knowledgeDocDelete"] is False
-        planted = _gql(client, key, DOC_CREATE, {"i": {"scope": "team", "scopeId": secret,
-                                                       "title": "Planted", "body": "Injected into their agents."}})
-        assert _code(planted) == "BAD_USER_INPUT", planted
-        # The admin's doc is intact.
-        assert "Acquisition plan" in [d["title"] for d in _gql(client, admin["token"], DOCS)["data"]["knowledgeDocs"]]
 
 
 def test_private_team_labels_are_invisible_to_non_members(tmp_path) -> None:

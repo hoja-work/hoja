@@ -104,9 +104,6 @@ def test_agent_template_removes_backlog_pause_and_sets_the_triage_target(tmp_pat
         triage = policies["Triage: needs a person"]
         assert triage["appliesPriorities"] == [0]
         assert triage["stopsOn"] == "prioritized" and triage["resolutionMinutes"] == 2 * 24 * 60
-        # What an agent is handed as workspace context now carries the house rules.
-        context = _ok(_gql(client, admin["token"], "{ knowledgeContext }"), "knowledgeContext")
-        assert "Write results, not progress" in context
 
 
 def test_backlog_pause_types_resolve_to_every_backlog_state(tmp_path) -> None:
@@ -153,7 +150,6 @@ def test_apply_is_additive_and_only_changes_named_fields(tmp_path) -> None:
     (lambda d: d.update(format="something-else"), "format"),
     (lambda d: d.update(version=2), "version"),
     (lambda d: d.update(extra=[]), "extra"),
-    (lambda d: d["agentPolicyDefault"].update(teams=["t1"]), "agentPolicyDefault.teams"),
     (lambda d: d["taskTemplates"][0].update(defaultLabels=["No such label"]),
      "taskTemplates[0].defaultLabels"),
     (lambda d: d["projectTemplates"][0].update(state="Nowhere"), "projectTemplates[0].state"),
@@ -198,25 +194,21 @@ def test_notification_defaults_apply_to_members_who_never_chose(tmp_path) -> Non
         assert mine["issueUpdated"] is True, "a person's own choice beats the workspace default"
 
 
-def test_a_new_agent_starts_with_the_default_policy(tmp_path) -> None:
+def test_cloud_only_sections_are_accepted_and_ignored(tmp_path) -> None:
+    """A Hoja Cloud template carries knowledge and an agent policy default. This edition has
+    neither, so it loads the template, plans no step for them, and never serves them."""
     _engine, app, admin = _setup(tmp_path)
-    create = ('mutation { agentMemberCreate(input: { name: "%s" }) '
-              "{ success agentMember { id } } }")
-    policy = ("query($id: String!) { agentPolicy(agentMemberId: $id) "
-              "{ version tasksDelegatedOnly maxConcurrency budgetAction } }")
+    doc = copy.deepcopy(AGENTS_DO_THE_WRITING)
+    assert doc.get("knowledge") and doc.get("agentPolicyDefault"), "the fixture must carry both"
     with TestClient(app) as client:
-        first = _ok(_gql(client, admin["token"], create % "Before"), "agentMemberCreate")
-        assert _ok(_gql(client, admin["token"], policy, {"id": first["agentMember"]["id"]}),
-                   "agentPolicy") is None, "without a template nothing changes"
-
-        doc = copy.deepcopy(AGENTS_DO_THE_WRITING)
-        doc["agentPolicyDefault"]["maxConcurrency"] = 2
-        _ok(_gql(client, admin["token"], APPLY, {"d": doc}), "workspaceTemplateApply")
-        second = _ok(_gql(client, admin["token"], create % "After"), "agentMemberCreate")
-        got = _ok(_gql(client, admin["token"], policy, {"id": second["agentMember"]["id"]}),
-                  "agentPolicy")
-        assert got["version"] == 1 and got["maxConcurrency"] == 2
-        assert got["tasksDelegatedOnly"] is True and got["budgetAction"] == "queue"
+        applied = _ok(_gql(client, admin["token"], APPLY, {"d": doc}), "workspaceTemplateApply")
+        sections = {step["section"] for step in applied["steps"]}
+        assert not sections & {"knowledge", "agentPolicyDefault"}, sections
+        listed = _ok(_gql(client, admin["token"], "{ workspaceTemplates { id document } }"),
+                     "workspaceTemplates")
+        for template in listed:
+            assert "knowledge" not in template["document"], template["id"]
+            assert "agentPolicyDefault" not in template["document"], template["id"]
 
 
 def test_export_rebuilds_the_same_settings_in_another_workspace(tmp_path) -> None:

@@ -60,8 +60,7 @@ export function TeamDetail({
   onRemoved: (message: string) => void;
   onKeyChanged: (key: string) => void;
 }) {
-  const { isAdmin, can, viewer, openMember, openTeamCycleSettings } =
-    useSettings();
+  const { isAdmin, can, viewer, openTeamCycleSettings } = useSettings();
   const canManageMembers = can("member.invite");
   const membersCount = team.members.length;
 
@@ -285,19 +284,14 @@ export function TeamDetail({
                 badges={m.id === viewer.id ? <Badge>You</Badge> : undefined}
                 menuLabel={`Actions for ${personLabel(m)}`}
                 actions={
-                  <>
-                    <DropdownMenuItem onSelect={() => openMember(m.id)}>
-                      View profile
+                  canManageMembers ? (
+                    <DropdownMenuItem
+                      destructive
+                      onSelect={() => setRemoving(m)}
+                    >
+                      Remove from team…
                     </DropdownMenuItem>
-                    {canManageMembers && (
-                      <DropdownMenuItem
-                        destructive
-                        onSelect={() => setRemoving(m)}
-                      >
-                        Remove from team…
-                      </DropdownMenuItem>
-                    )}
-                  </>
+                  ) : undefined
                 }
               />
             ))

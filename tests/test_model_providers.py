@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 import pytest
 
 pytest.importorskip("sqlalchemy")
@@ -179,65 +176,11 @@ def test_public_urls_unaffected_by_allowlist(monkeypatch):
     assert validate_model_base_url(None) is None
 
 
-# --- the included cloud offering is the workspace default --------------------
+# --- no implicit default provider ---------------------------------------------
 #
-# The row a new workspace gets does not come from a runtime fallback: it is seeded
-# into the tenant's own `model_provider` table by
-# infra/scripts/hoja-trefoil-default from infra/tenants/default-provider.json (a
-# Cloud-only file; the OSS repo has neither). These tests pin that contract - the
-# offering resolves as the workspace's enabled provider, and a workspace without
-# the seed is unchanged.
-
-OFFERING_PATH = Path(__file__).resolve().parents[2] / "infra" / "tenants" / "default-provider.json"
-
-
-def _offering() -> dict:
-    return json.loads(OFFERING_PATH.read_text())
-
-
-def _seed_offering_row(engine, org_id: str) -> dict:
-    """Insert the offering's row the way `hoja-trefoil-default seed --apply` does."""
-    provider = _offering()["provider"]
-    with engine.begin() as conn:
-        conn.execute(model_provider.insert().values(
-            id=provider["row_id"],
-            organization_id=org_id,
-            name=provider["name"],
-            provider=provider["provider"],
-            model_id=provider["model_id"],
-            base_url=provider["base_url"],
-            context_window=provider.get("context_window"),
-            encrypted_api_key="ciphertext",
-            enabled=provider.get("enabled", True),
-            created_at="2026-11-08T00:00:00Z",
-            updated_at="2026-11-08T00:00:00Z",
-        ))
-    return provider
-
-
-def test_included_offering_is_the_workspace_default(tmp_path) -> None:
-    engine, app, admin = _setup(tmp_path)
-    provider = _seed_offering_row(engine, admin["org_id"])
-
-    # The agent resolves the first enabled provider for the org; the seeded offering
-    # must be it, with the wafer model id and the context window it registers.
-    row = _enabled_provider(Store(engine), admin["org_id"])
-    assert row is not None
-    assert row["id"] == provider["row_id"]
-    assert row["model_id"] == "wafer-deepseek-v4.1-flash-1017"
-    assert row["context_window"] == 350000
-    assert row["provider"] == "openai"
-
-    with TestClient(app) as client:
-        listed = _gql(client, admin["token"],
-                      "{ modelProviders { id name modelId contextWindow managed baseUrl enabled } }")
-    assert "errors" not in listed, listed
-    [shown] = listed["data"]["modelProviders"]
-    assert shown["modelId"] == "wafer-deepseek-v4.1-flash-1017"
-    assert shown["contextWindow"] == 350000
-    assert shown["managed"] is True
-    assert shown["baseUrl"] is None, "internal trefoil endpoint leaked to the API"
-    assert "100.77" not in json.dumps(listed)
+# A workspace's provider comes only from its own `model_provider` rows; there is no
+# runtime fallback. (Hoja Cloud seeds a managed offering into that table at
+# provisioning; OSS has no such seed.)
 
 
 def test_workspace_without_the_seed_has_no_implicit_default(tmp_path) -> None:

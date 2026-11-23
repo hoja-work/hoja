@@ -104,7 +104,7 @@ function flushIssueChipBatch(): void {
     const selections = chunk
       .map(
         (_, i) =>
-          `i${i}:issue(id:$id${i}){identifier title state{name type color}}`,
+          `i${i}:task(id:$id${i}){identifier title state{name type color}}`,
       )
       .join(" ");
     const variables: Record<string, string> = {};
@@ -212,7 +212,7 @@ export function IssueChip({ identifier }: { identifier: string }) {
     </button>
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Content side="top" align="start" sideOffset={8} onOpenAutoFocus={(event) => event.preventDefault()} onPointerEnter={cancelClose} onPointerLeave={(event) => { if (event.pointerType === "mouse") scheduleClose(); }} className="z-150 w-80 max-w-[calc(100vw-24px)] rounded-xl border border-line bg-panel p-3 text-foreground shadow-(--shadow)" aria-label={`Issue preview: ${identifier}`}>
+        <Popover.Content side="top" align="start" sideOffset={8} onOpenAutoFocus={(event) => event.preventDefault()} onPointerEnter={cancelClose} onPointerLeave={(event) => { if (event.pointerType === "mouse") scheduleClose(); }} className="z-150 w-80 max-w-[calc(100vw-24px)] rounded-xl border border-line bg-panel p-3 text-foreground shadow-(--shadow)" aria-label={`Task preview: ${identifier}`}>
           <p className="m-0 text-[11px] text-muted">{identifier}</p>
           {issue?.state?.name && (
             <span className="mt-1.5 inline-flex items-center gap-1.5 rounded-full border border-line bg-subtle px-2 py-0.5 text-[11px] text-foreground">
@@ -222,7 +222,7 @@ export function IssueChip({ identifier }: { identifier: string }) {
           )}
           <p className="mt-1 mb-3 whitespace-normal break-words text-[13px] font-medium">{issue?.title || identifier}</p>
 <div className="flex justify-end items-center">
-          <a href={`/workspace/issue/${identifier}`} className="inline-flex items-center  rounded-full border border-line shadow-xs hover:bg-neutral-100 px-2.5 py-1.5 text-[12px] text-foreground no-underline ">Open issue</a>
+          <a href={`/workspace/task/${identifier}`} className="inline-flex items-center  rounded-full border border-line shadow-xs hover:bg-neutral-100 px-2.5 py-1.5 text-[12px] text-foreground no-underline ">Open task</a>
 </div>
         </Popover.Content>
       </Popover.Portal>

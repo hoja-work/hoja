@@ -39,7 +39,6 @@ import {
   Command,
   ExternalLink,
   FolderKanban,
-  GitBranch,
   GitMerge,
   GitPullRequest,
   Home,
@@ -62,7 +61,6 @@ import {
   Tags,
   LayoutTemplate,
   Target,
-  Trophy,
   UserRound,
   Users,
   X,
@@ -119,23 +117,6 @@ import {
 const AgentChatPage = lazyRoute(() =>
   import("./AgentChatPage").then((m) => m.AgentChatPage),
 );
-const AgentsSurface = lazyRoute(() =>
-  import("./agents/AgentsSurface").then((m) => m.AgentsSurface),
-);
-const ProjectRepository = lazyRoute(() =>
-  import("./agents/ProjectRepository").then((m) => m.ProjectRepository), { fallback: null },
-);
-const LeaderboardPage = lazyRoute(() =>
-  import("./profiles/LeaderboardPage").then((m) => m.LeaderboardPage),
-);
-const MemberProfilePage = lazyRoute(() =>
-  import("./profiles/MemberProfilePage").then((m) => m.MemberProfilePage),
-);
-import {
-  setWorkspaceAgentsEnabled,
-  useAgentsSurfaceEnabled,
-  useWorkspaceAgentsEnabled,
-} from "./agents/flag";
 import {
   bodyLayer,
   errorText,
@@ -149,11 +130,6 @@ import {
   type Layer,
 } from "./localFirst";
 import { Markdown } from "./markdown";
-const ReviewsInbox = lazyRoute(() =>
-  import("./reviews/ReviewsInbox").then((m) => m.ReviewsInbox),
-);
-import type { TaskInReviewInput } from "./reviews/inbox";
-import type { ReviewLink } from "./reviews/types";
 import {
   SplitPane,
   ScrollArea,
@@ -230,10 +206,10 @@ const SignupPage = lazyRoute(() =>
 const SetupWizard = lazyRoute(() =>
   import("./setup/SetupWizard").then((m) => m.SetupWizard),
 );
-import { createCloudAdapter } from "./setup/cloudAdapter";
+import { createOssAdapter } from "./setup/ossAdapter";
 import { loadDraft } from "./setup/draft";
 
-const setupAdapter = createCloudAdapter();
+const setupAdapter = createOssAdapter();
 const InboxPage = lazyRoute(() =>
   import("./inbox/InboxPage").then((m) => m.InboxPage),
 );
@@ -566,7 +542,6 @@ const sections = [
     [
       ["Inbox", Inbox],
       ["My issues", CircleDot],
-      ["Reviews", MessageCircle],
       ["Pulse", Zap],
       ["Agent", Bot],
     ],
@@ -577,7 +552,6 @@ const sections = [
       ["Initiatives", Target],
       ["Projects", FolderKanban],
       ["Views", ListFilter],
-      ["Leaderboard", Trophy],
     ],
   ],
   // Filled per person: each favorited view (and task favorites kept in this browser).
@@ -691,9 +665,6 @@ const SHELL_VIEWS = new Set([
   "Pulse",
   "Inbox",
   "Agent",
-  "Agents",
-  "Agent detail",
-  "Reviews",
   "Initiatives",
   "Projects",
   "Views",
@@ -709,8 +680,6 @@ const SHELL_VIEWS = new Set([
   "Board",
   "Cycles",
   "Members",
-  "Leaderboard",
-  "Member profile",
   "Settings",
   "Issue detail",
   "Initiative detail",
@@ -718,10 +687,7 @@ const SHELL_VIEWS = new Set([
 const HEADERLESS_VIEWS = new Set([
   "Issue detail",
   "Initiative detail",
-  "Reviews",
   "Agent",
-  "Agents",
-  "Agent detail",
   "Team Home",
   "Team cycles",
   "Team cycle",
@@ -1329,27 +1295,6 @@ function App() {
     name: string;
     urlKey: string;
   }>({ id: "", name: "", urlKey: "" });
-  const agentsOn = useAgentsSurfaceEnabled();
-  // The workspace's Agents switch (Settings -> Workspace). Read per workspace; until it answers,
-  // and if it fails, the switch reads as off.
-  useEffect(() => {
-    setWorkspaceAgentsEnabled(null);
-    if (!workspace.id) return;
-    let live = true;
-    gql(`{ workspaceFeatures { agentsEnabled } }`)
-      .then((d) => {
-        if (live)
-          setWorkspaceAgentsEnabled(
-            Boolean(d.workspaceFeatures?.agentsEnabled),
-          );
-      })
-      .catch(() => {
-        if (live) setWorkspaceAgentsEnabled(false);
-      });
-    return () => {
-      live = false;
-    };
-  }, [workspace.id]);
   const [workspaces, setWorkspaces] = useState<
     { organizationId: string; name: string; urlKey: string; role: string }[]
   >([]);
@@ -1415,49 +1360,6 @@ function App() {
           : "Assigned",
   );
   const [boardTab, setBoardTab] = useState<BoardTab>("All issues");
-  const [reviewsLinks, setReviewsLinks] = useState<ReviewLink[]>([]);
-  const [reviewsReload, setReviewsReload] = useState(0);
-  const [reviewsError, setReviewsError] = useState("");
-  const [reviewsTasks, setReviewsTasks] = useState<TaskInReviewInput[]>([]);
-  const [reviewsTasksError, setReviewsTasksError] = useState("");
-  /* The queue is read from the links themselves, not from the newest N tasks. Deriving it from
-     issues(first:100,orderBy:updatedAt) tied the pane to how busy the workspace was: once more
-     than 100 tasks had been touched, every linked pull request fell out of the window and the
-     pane showed an empty queue while the links still existed. A failure is also shown now —
-     `.catch(()=>{})` used to render an outage as the ordinary empty state. */
-  useEffect(() => {
-    if (view !== "Reviews") return;
-    gql(
-      `query ReviewsLinks{ pullRequests(first:250){ id kind externalId url title state author sha environment createdAt updatedAt additions deletions baseRef headRef behind ahead mergeable mergeState reviewDecision reviewers checksState checksTotal checksPassing checksFailing body mergedAt githubUpdatedAt files { path additions deletions status patch previousPath } issue { identifier } } }`,
-    )
-      .then((d: { pullRequests?: ReviewLink[] }) => {
-        setReviewsLinks(
-          (d.pullRequests || []).map((l) => ({
-            ...l,
-            key: l.issue?.identifier || "",
-          })),
-        );
-        setReviewsError("");
-      })
-      .catch((e) => {
-        setReviewsError(`Reviews could not load: ${(e as Error).message}`);
-        setReviewsLinks([]);
-      });
-    // Tasks in review are a separate read: a failure here must not hide the pull requests.
-    gql(
-      `query ReviewsTasks{ issues(first:250, orderBy:updatedAt, filter:{state:{name:{eq:"In Review"}}}){ nodes { identifier title url updatedAt stateChangedAt githubLinks { id kind externalId url title state mergeable mergeState reviewDecision checksState checksTotal checksPassing checksFailing updatedAt issue { identifier } } } } }`,
-    )
-      .then((d: { issues?: { nodes?: TaskInReviewInput[] } }) => {
-        setReviewsTasks(d.issues?.nodes ?? []);
-        setReviewsTasksError("");
-      })
-      .catch((e) => {
-        setReviewsTasks([]);
-        setReviewsTasksError(
-          `Tasks in review could not load: ${(e as Error).message}`,
-        );
-      });
-  }, [view, reviewsReload]);
   const [boardTeam, setBoardTeam] = useState("");
   const [issueLayout, setIssueLayout] = useState<IssueLayout>(() =>
     localStorage.getItem("hoja_issue_layout") === "Board" ? "Board" : "List",
@@ -1581,7 +1483,6 @@ function App() {
   useEffect(() => {
     if (!commandOpen) setCommandViews(false);
   }, [commandOpen]);
-  const [phoneSignInOpen, setPhoneSignInOpen] = useState(false);
   /* The app-level "New initiative" dialog: N then I, the command palette and the list. */
   const [initiativeCreate, setInitiativeCreate] = useState<Record<
     string,
@@ -1758,7 +1659,7 @@ function App() {
   }, []);
   useEffect(() => {
     if (!token || !workspace.id || setupResume) return;
-    const saved = loadDraft(localStorage, { edition: "cloud" });
+    const saved = loadDraft(localStorage, { edition: "oss" });
     if (!saved || saved.step === "ready") return;
     const sameWorkspace = saved.workspaceId === workspace.id;
     const googleReturn = Boolean(saved.googleStarted && !saved.workspaceId);
@@ -1791,11 +1692,9 @@ function App() {
               ? "/workspace/inbox"
               : next === "Views"
                 ? "/workspace/views/issues"
-                : next === "Reviews"
-                  ? "/workspace/reviews"
-                  : next === "Initiatives"
-                    ? "/workspace/initiatives/active"
-                    : `/workspace/${slug}`);
+                : next === "Initiatives"
+                  ? "/workspace/initiatives/active"
+                  : `/workspace/${slug}`);
     if (next === "Settings" && view !== "Settings")
       settingsReturn.current = location.pathname;
     history.pushState({}, "", path);
@@ -1823,11 +1722,6 @@ function App() {
     navigate(
       "Initiative detail",
       `/workspace/initiative/${encodeURIComponent(id)}`,
-    );
-  const openMember = (userId: string) =>
-    navigate(
-      "Member profile",
-      `/workspace/member/${encodeURIComponent(userId)}`,
     );
   const openTaskByRef = (identifier: string, title: string) => {
     const existing = issues.find(
@@ -1928,7 +1822,7 @@ function App() {
         !mobile &&
         (t.clientX > 28 ||
           target?.closest(
-            "[data-kanban-columns],[data-my-issue-tabs],[data-reviews-diff-patch]",
+            "[data-kanban-columns],[data-my-issue-tabs]",
           ))
       ) {
         tracking = false;
@@ -2668,7 +2562,7 @@ function App() {
     return (
       <div className="app min-h-dvh has-data-workspace-page:h-dvh has-data-workspace-page:min-w-0 has-data-workspace-page:overflow-x-clip shell-phone:has-data-workspace-page:flex shell-phone:has-data-workspace-page:flex-col shell-phone:has-data-workspace-page:overflow-hidden shell-desktop:grid shell-desktop:grid-cols-[244px_minmax(0,1fr)] shell-desktop:grid-rows-[48px_minmax(calc(100dvh-48px),auto)]">
         <header
-          className="border-b border-line shadow-[0_2px_10px_#1b1b1b08] h-17 flex items-center gap-5.5 pt-0 pr-7 pb-0 pl-7 bg-panel sticky top-0 z-30 max-sm:pt-0 max-sm:pr-3.5 max-sm:pb-0 max-sm:pl-3.5 max-sm:gap-2 max-lg:pt-0 max-lg:pr-4 max-lg:pb-0 max-lg:pl-4 max-lg:gap-3 max-md:h-12 max-md:pt-0 max-md:pr-5 max-md:pb-0 max-md:pl-5 max-md:min-w-0 max-md:overflow-visible shell-phone:relative shell-phone:z-40 shell-phone:h-15 shell-phone:px-3 shell-phone:gap-2 shell-desktop:col-start-2 shell-desktop:row-start-1 shell-desktop:h-12 shell-desktop:px-5 route-fullbleed:hidden shell-phone:route-fullbleed:flex shell-phone:route-fullbleed:h-15 shell-phone:route-fullbleed:relative shell-phone:route-fullbleed:z-40 shell-desktop:data-headerless:hidden! route-review:hidden! [@media_(max-width:560px)]:pt-0 [@media_(max-width:560px)]:pr-3.5 [@media_(max-width:560px)]:pb-0 [@media_(max-width:560px)]:pl-3.5 [@media_(max-width:560px)]:gap-3 [@media_(max-width:900px)]:pt-0 [@media_(max-width:900px)]:pr-4.5 [@media_(max-width:900px)]:pb-0 [@media_(max-width:900px)]:pl-4.5 [@media_(max-width:900px)]:gap-3 shell-phone:pt-0 shell-phone:pr-3 shell-phone:pb-0 shell-phone:pl-3 shell-phone:min-w-0 [@media_(max-width:420px)]:gap-2 shell-desktop:pt-0 shell-desktop:pr-5 shell-desktop:pb-0 shell-desktop:pl-5"
+          className="border-b border-line shadow-[0_2px_10px_#1b1b1b08] h-17 flex items-center gap-5.5 pt-0 pr-7 pb-0 pl-7 bg-panel sticky top-0 z-30 max-sm:pt-0 max-sm:pr-3.5 max-sm:pb-0 max-sm:pl-3.5 max-sm:gap-2 max-lg:pt-0 max-lg:pr-4 max-lg:pb-0 max-lg:pl-4 max-lg:gap-3 max-md:h-12 max-md:pt-0 max-md:pr-5 max-md:pb-0 max-md:pl-5 max-md:min-w-0 max-md:overflow-visible shell-phone:relative shell-phone:z-40 shell-phone:h-15 shell-phone:px-3 shell-phone:gap-2 shell-desktop:col-start-2 shell-desktop:row-start-1 shell-desktop:h-12 shell-desktop:px-5 route-fullbleed:hidden shell-phone:route-fullbleed:flex shell-phone:route-fullbleed:h-15 shell-phone:route-fullbleed:relative shell-phone:route-fullbleed:z-40 shell-desktop:data-headerless:hidden! [@media_(max-width:560px)]:pt-0 [@media_(max-width:560px)]:pr-3.5 [@media_(max-width:560px)]:pb-0 [@media_(max-width:560px)]:pl-3.5 [@media_(max-width:560px)]:gap-3 [@media_(max-width:900px)]:pt-0 [@media_(max-width:900px)]:pr-4.5 [@media_(max-width:900px)]:pb-0 [@media_(max-width:900px)]:pl-4.5 [@media_(max-width:900px)]:gap-3 shell-phone:pt-0 shell-phone:pr-3 shell-phone:pb-0 shell-phone:pl-3 shell-phone:min-w-0 [@media_(max-width:420px)]:gap-2 shell-desktop:pt-0 shell-desktop:pr-5 shell-desktop:pb-0 shell-desktop:pl-5"
           data-topbar
         >
           <span className="inline-flex items-center gap-2.25 bg-transparent pt-0 pr-0 pb-0 pl-0 text-[16px] font-bold tracking-[-.02em] flex flex-none max-md:hidden">
@@ -3072,7 +2966,7 @@ function App() {
           if (ret) navigate(ret.view, ret.path);
           else navigate("My issues");
         }}
-        backLabel={issueReturn?.label || "My issues"}
+        backLabel={displayLabel(issueReturn?.label || "My issues")}
         onRetry={() => setIssueRetry((r) => r + 1)}
         onComment={async (body) => {
           const d = await gql(
@@ -3333,7 +3227,6 @@ function App() {
           savePreference: persistPreference,
           openSection: (id) =>
             navigate("Settings", `/workspace/settings/${id}`),
-          openMember,
           openTeamCycleSettings: (team) =>
             navigate(
               "Team cycle settings",
@@ -3341,42 +3234,12 @@ function App() {
             ),
         }}
       />
-    ) : view === "Leaderboard" ? (
-      <LeaderboardPage
-        key={workspace.id}
-        viewerId={viewer.id}
-        onOpenMember={openMember}
-        onOpenTask={openTaskByRef}
-      />
-    ) : view === "Member profile" ? (
-      <MemberProfilePage
-        key={`${workspace.id}:${window.location.pathname}`}
-        userId={
-          window.location.pathname.includes("/member/")
-            ? decodeURIComponent(
-                window.location.pathname.split("/member/")[1]?.split("/")[0] ||
-                  viewer.id ||
-                  "",
-              )
-            : viewer.id || ""
-        }
-        viewerId={viewer.id}
-        onBack={() => navigate("Members", "/workspace/members")}
-        onOpenLeaderboard={() =>
-          navigate("Leaderboard", "/workspace/leaderboard")
-        }
-        onOpenTask={openTaskByRef}
-        onOpenSettingsProfile={() =>
-          navigate("Settings", "/workspace/settings/profile")
-        }
-      />
     ) : view === "Members" ? (
       <MembersPage
         teams={teams}
         onTeamsChanged={setTeams}
         revision={revision}
         viewer={viewer}
-        onOpenMember={openMember}
       />
     ) : view === "Projects" ? (
       <ProjectsPage
@@ -3549,28 +3412,6 @@ function App() {
         actions={issueActions}
         revision={revision}
       />
-    ) : view === "Reviews" ? (
-      <ReviewsInbox
-        links={reviewsLinks}
-        tasks={reviewsTasks}
-        tasksError={reviewsTasksError}
-        error={reviewsError}
-        gql={gql}
-        onOpenNav={() => setMobile(true)}
-        onRefresh={() => setReviewsReload((n) => n + 1)}
-      />
-    ) : view === "Agents" ? (
-      <AgentsSurface
-        workspaceName={workspace.name}
-        viewerName={viewer.name || viewer.email || "You"}
-        canEnable={Boolean(viewer.admin)}
-      />
-    ) : view === "Agent detail" ? (
-      <AgentsSurface
-        workspaceName={workspace.name}
-        viewerName={viewer.name || viewer.email || "You"}
-        canEnable={Boolean(viewer.admin)}
-      />
     ) : view === "Board" ? (
       <BoardPage
         teams={teams}
@@ -3615,7 +3456,7 @@ function App() {
           className="mt-6 inline-flex min-h-11 items-center justify-center border border-line bg-panel px-4 font-medium text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:w-full"
           onClick={() => navigate("My issues")}
         >
-          Go to My issues
+          Go to My tasks
         </button>
       </section>
     ) : view === "My issues" ? (
@@ -3812,48 +3653,46 @@ function App() {
       className="app min-h-dvh has-data-workspace-page:h-dvh has-data-workspace-page:min-w-0 has-data-workspace-page:overflow-x-clip shell-phone:has-data-workspace-page:flex shell-phone:has-data-workspace-page:flex-col shell-phone:has-data-workspace-page:overflow-hidden shell-desktop:grid shell-desktop:grid-cols-[244px_minmax(0,1fr)] shell-desktop:grid-rows-[48px_minmax(calc(100dvh-48px),auto)]"
       data-sidebar-collapsed={railCollapsed ? "" : undefined}
     >
-      {view !== "Reviews" && (
-        <header
-          data-topbar
-          className="hidden h-15 flex-none items-center gap-2 border-b border-line bg-panel px-3 text-foreground shell-phone:relative shell-phone:z-40 shell-phone:flex"
+      <header
+        data-topbar
+        className="hidden h-15 flex-none items-center gap-2 border-b border-line bg-panel px-3 text-foreground shell-phone:relative shell-phone:z-40 shell-phone:flex"
+      >
+        <button
+          type="button"
+          className="inline-flex min-h-11 min-w-11 flex-none items-center justify-center rounded-lg bg-transparent text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent"
+          aria-label={mobile ? "Close navigation" : "Open navigation"}
+          aria-expanded={mobile}
+          aria-controls="workspace-sidebar"
+          onClick={() => setMobile((open) => !open)}
         >
-          <button
-            type="button"
-            className="inline-flex min-h-11 min-w-11 flex-none items-center justify-center rounded-lg bg-transparent text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent"
-            aria-label={mobile ? "Close navigation" : "Open navigation"}
-            aria-expanded={mobile}
-            aria-controls="workspace-sidebar"
-            onClick={() => setMobile((open) => !open)}
-          >
-            {mobile ? (
-              <X size={18} aria-hidden="true" />
-            ) : (
-              <Menu size={18} aria-hidden="true" />
-            )}
-          </button>
-          <span className="min-w-0 flex-1 truncate text-base font-semibold text-foreground">
-            {workspace.name || "Hoja"}
-          </span>
-          <button
-            type="button"
-            className="inline-flex min-h-11 min-w-11 flex-none items-center justify-center rounded-lg bg-transparent text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent"
-            aria-label="Search workspace"
-            hidden={mobile}
-            onClick={() => setCommandOpen(true)}
-          >
-            <Search size={18} aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            className="inline-flex min-h-11 min-w-11 flex-none items-center justify-center rounded-lg bg-transparent text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent"
-            aria-label="Create new task"
-            hidden={mobile}
-            onClick={() => openNewIssue()}
-          >
-            <Plus size={18} aria-hidden="true" />
-          </button>
-        </header>
-      )}
+          {mobile ? (
+            <X size={18} aria-hidden="true" />
+          ) : (
+            <Menu size={18} aria-hidden="true" />
+          )}
+        </button>
+        <span className="min-w-0 flex-1 truncate text-base font-semibold text-foreground">
+          {workspace.name || "Hoja"}
+        </span>
+        <button
+          type="button"
+          className="inline-flex min-h-11 min-w-11 flex-none items-center justify-center rounded-lg bg-transparent text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent"
+          aria-label="Search workspace"
+          hidden={mobile}
+          onClick={() => setCommandOpen(true)}
+        >
+          <Search size={18} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          className="inline-flex min-h-11 min-w-11 flex-none items-center justify-center rounded-lg bg-transparent text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent"
+          aria-label="Create new task"
+          hidden={mobile}
+          onClick={() => openNewIssue()}
+        >
+          <Plus size={18} aria-hidden="true" />
+        </button>
+      </header>
       <div
         className="flex shell-phone:flex shell-phone:flex-1 shell-phone:min-h-0 shell-phone:overflow-hidden shell-desktop:contents shell-phone:min-h-[calc(100dvh-60px)] min-h-[calc(100dvh-68px)]"
         data-app-body=""
@@ -3876,7 +3715,7 @@ function App() {
             id="workspace-sidebar"
             data-workspace-sidebar
             data-open={mobile || undefined}
-            className="flex min-h-0 min-w-0 flex-none flex-col overflow-x-hidden overflow-y-auto overscroll-contain bg-sidebar px-3 pt-3 pb-0 text-foreground shell-desktop:sticky shell-desktop:top-0 shell-desktop:col-start-1 shell-desktop:row-span-2 shell-desktop:h-dvh shell-desktop:max-h-dvh shell-desktop:w-61 shell-desktop:rail-collapsed:w-11 shell-desktop:rail-collapsed:px-2 shell-desktop:rail-collapsed:py-3 shell-desktop:rail-collapsed:overflow-hidden shell-phone:fixed shell-phone:z-35 shell-phone:inset-y-0 shell-phone:top-15 shell-phone:left-0 shell-phone:w-[min(290px,85vw)] shell-phone:max-w-full shell-phone:-translate-x-full shell-phone:data-open:transform-[translateX(0)]! shell-phone:data-open:translate-x-0 shell-phone:transition-transform shell-phone:duration-150 shell-phone:shadow-xl route-review:relative route-review:top-auto route-review:self-stretch route-review:col-auto route-review:row-auto review-drawer:route-review:fixed! review-drawer:route-review:z-35! review-drawer:route-review:inset-y-0! review-drawer:route-review:left-0! review-drawer:route-review:w-[min(290px,85vw)]! review-drawer:route-review:-translate-x-full! review-drawer:route-review:data-open:translate-x-0! review-drawer:route-review:shadow-xl!"
+            className="flex min-h-0 min-w-0 flex-none flex-col overflow-x-hidden overflow-y-auto overscroll-contain bg-sidebar px-3 pt-3 pb-0 text-foreground shell-desktop:sticky shell-desktop:top-0 shell-desktop:col-start-1 shell-desktop:row-span-2 shell-desktop:h-dvh shell-desktop:max-h-dvh shell-desktop:w-61 shell-desktop:rail-collapsed:w-11 shell-desktop:rail-collapsed:px-2 shell-desktop:rail-collapsed:py-3 shell-desktop:rail-collapsed:overflow-hidden shell-phone:fixed shell-phone:z-35 shell-phone:inset-y-0 shell-phone:top-15 shell-phone:left-0 shell-phone:w-[min(290px,85vw)] shell-phone:max-w-full shell-phone:-translate-x-full shell-phone:data-open:transform-[translateX(0)]! shell-phone:data-open:translate-x-0 shell-phone:transition-transform shell-phone:duration-150 shell-phone:shadow-xl"
             aria-label={
               view === "Settings" ? "Settings sidebar" : "Workspace sidebar"
             }
@@ -4090,18 +3929,6 @@ function App() {
                             ))}
                           </>
                         )}
-                        <button
-                          type="button"
-                          role="menuitem"
-                          onClick={() => {
-                            setOrgMenu(false);
-                            setMobile(false);
-                            setPhoneSignInOpen(true);
-                          }}
-                          className="flex w-full min-h-9 items-center justify-between gap-2 rounded-lg bg-transparent p-2 text-left text-sm text-inherit hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
-                        >
-                          Sign in on your phone
-                        </button>
                         <button
                           type="button"
                           role="menuitem"
@@ -4555,22 +4382,8 @@ function App() {
                                 </div>
                               );
                             })}
-                          {[
-                            ...items,
-                            /* Admins always see the entry, so the screens can be found and turned on
-                             * from where they live; the page offers the switch while it is off. */
-                            ...(section === "primary" &&
-                            (agentsOn || viewer.admin)
-                              ? ([["Agents", GitBranch]] as [
-                                  string,
-                                  typeof GitBranch,
-                                ][])
-                              : []),
-                          ].map(([label, Icon]) => {
-                            const navLabel =
-                              label === "Favorite views"
-                                ? "Saved views"
-                                : label;
+                          {items.map(([label, Icon]) => {
+                            const navLabel = displayLabel(label);
                             const button = (
                               <button
                                 type="button"
@@ -4775,10 +4588,6 @@ function App() {
             }}
           />
         )}
-        <PhoneSignInDialog
-          open={phoneSignInOpen}
-          onClose={() => setPhoneSignInOpen(false)}
-        />
         {commandOpen && (
           <CommandPalette
             viewsOnly={commandViews}
@@ -4897,7 +4706,6 @@ function IssueDetailPage({
 const InitiativeRoute = lazyRoute(() =>
   import("./initiatives/InitiativeDetail").then((m) => m.InitiativeRoute),
 );
-import { PhoneSignInDialog } from "./PhoneSignIn";
 const InitiativesList = lazyRoute(() =>
   import("./initiatives/InitiativesList").then((m) => m.InitiativesList),
 );
@@ -7969,7 +7777,7 @@ function KanbanCard({
         subtasks.length ? (subtasksOpen ? "open" : "closed") : undefined
       }
     >
-      {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- drag surface only; the keyboard path (alt+arrow) lives on the inner button */}
+      {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events -- drag surface only; the keyboard path (alt+arrow) lives on the inner button */}
       <div
         className="relative z-10 border flex flex-col gap-2.25 text-left cursor-grab touch-manipulation rounded-2xl shadow-sm border-line bg-panel p-4 hover:border-line active:cursor-grabbing focus-visible:relative focus-visible:z-1 data-dragging:opacity-45 [&[data-depth]:not([data-depth=0])]:relative [&[data-depth]:not([data-depth=0])::before]:absolute [&[data-depth]:not([data-depth=0])::before]:-left-2 [&[data-depth]:not([data-depth=0])::before]:top-1.5 [&[data-depth]:not([data-depth=0])::before]:bottom-1.5 [&[data-depth]:not([data-depth=0])::before]:w-0.5 [&[data-depth]:not([data-depth=0])::before]:rounded-sm [&[data-depth]:not([data-depth=0])::before]:bg-line focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 pointer-coarse:cursor-auto [&[data-depth]:not([data-depth=0])]:before:content-['']"
         data-stack-layer=""
@@ -11847,7 +11655,6 @@ function ProjectDetails({
                     "No teams"}
                 </b>
               </div>
-              <ProjectRepository projectId={project.id} />
               <button
                 type="button"
                 className="inline-flex items-center justify-center gap-1.75 rounded-md border border-line bg-panel pl-2.75 pr-2.75 pt-2 pb-2 text-inherit transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 w-full text-[12px] max-w-full font-sans shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 group"

@@ -215,7 +215,7 @@ op request_id=req-1 host=app.example.com org=<org id> actor=human:<user id> tran
 - `outcome` is `ok` or `error:<code>`. GraphQL answers HTTP 200 when it fails,
   so the code is read from the first error rather than from the status.
 - `audit_event.request_id` records the same id, which ties an audit row to the
-  operation that produced it. A row written by a system path — a runner loop or
+  operation that produced it. A row written by a system path — a background worker or
   a durable agent turn — has no id, because no request caused it.
 - No values are logged: no variables, arguments, bodies, `Authorization` headers
   or tokens. A field that is not known for the operation prints `-`.

@@ -27,12 +27,7 @@ export const KNOWN_WORKSPACE_PAGES = [
   "cycle",
   "favorite-views",
   "more",
-  "reviews",
-  "agents",
   "initiative",
-  "leaderboard",
-  "member",
-  "profile",
 ];
 
 // First path segments that are real entry points outside /workspace/.
@@ -49,7 +44,6 @@ const TOP_LEVEL_ENTRY_POINTS = [
 export function routeView(path: string): string {
   const p = path.toLowerCase();
 
-  if (p.includes("/reviews")) return "Reviews";
   // Team-scoped routes first: they can contain segments that look like other routes.
   if (p.includes("/team/") && p.includes("/cycles/settings"))
     return "Team cycle settings";
@@ -84,25 +78,7 @@ export function routeView(path: string): string {
   if (p.includes("/views")) return "Views";
   if (p.includes("/projects")) return "Projects";
   if (p.includes("/cycles")) return "Cycles";
-  if (p.includes("/leaderboard")) return "Leaderboard";
-  if (p.includes("/member/") || p.endsWith("/profile")) return "Member profile";
   if (p.includes("/members")) return "Members";
-  // Before '/agent': every agent-surface URL contains '/agents', which the Agent page's
-  // substring test would otherwise swallow (HOJA-602-A-16).
-  //
-  // The detail page is its own view, for the same reason 'Issue detail' is: the app puts the
-  // list views inside the rounded workspace shell and lets a detail page be full-bleed. One
-  // view name cannot be both, so the shape of the URL decides, exactly as it does for tasks.
-  if (p.includes("/agents")) {
-    const rest = p.split("/").filter(Boolean);
-    const tail = rest.slice(rest.indexOf("agents") + 1);
-    // `runners/<id>` is a detail page for the same reason `<key>` is: it is full-bleed like the
-    // issue page, while `runners` itself is a list and stays in the rounded shell (HOJA-602-A-16).
-    const detail =
-      (tail.length === 1 && !["queue", "audit", "runners"].includes(tail[0])) ||
-      (tail.length === 2 && tail[0] === "runners");
-    return detail ? "Agent detail" : "Agents";
-  }
   if (p.includes("/agent")) return "Agent";
 
   const parts = p.split("/").filter(Boolean);

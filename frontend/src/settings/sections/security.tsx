@@ -18,32 +18,29 @@ import {
 } from "../ui";
 import { MAX_ALLOWLIST, parseAllowlist } from "./security/cidr";
 
-/* Security: the workspace's sign-in and session policy, plus the Hoja Connect kill switch.
+/* Security: the workspace's sign-in and session policy.
  *
  * The policy is one form with one Save button on purpose: idle timeout, sign-in methods and the
  * IP allowlist interact, and a careless allowlist or method change can sign people out. So the
  * form validates every line before it sends anything and asks for confirmation when a save
- * would newly refuse someone. Connect is a single kill switch and saves instantly.
+ * would newly refuse someone.
  *
- * The server clears any of the three policy fields a save omits, so every write here (the
- * Connect switch included) sends the full saved policy. */
+ * The server clears any of the three policy fields a save omits, so every write here sends the
+ * full saved policy. */
 
 type Policy = {
   idleTimeoutMinutes: number | null;
   allowedSigninMethods: string[];
   ipAllowlist: string[];
-  connectEnabled: boolean;
   updatedAt: string | null;
 };
 type PolicyInput = {
   idleTimeoutMinutes: number | null;
   allowedSigninMethods: string[];
   ipAllowlist: string[];
-  connectEnabled?: boolean;
 };
 
-const FIELDS =
-  "idleTimeoutMinutes allowedSigninMethods ipAllowlist connectEnabled updatedAt";
+const FIELDS = "idleTimeoutMinutes allowedSigninMethods ipAllowlist updatedAt";
 const METHODS = [
   { id: "password", label: "Email and password" },
   { id: "google", label: "Google" },
@@ -101,7 +98,6 @@ export default function SecuritySettings() {
         {(saved) => (
           <>
             <PolicyForm saved={saved} onSaved={(p) => policy.setData(p)} />
-            <ConnectSection saved={saved} onSaved={(p) => policy.setData(p)} />
             <Notice title="Single sign-on and domain capture aren't available">
               Hoja doesn't run a SAML or OIDC sign-in flow yet, so there is
               nothing here to configure for them.
@@ -393,48 +389,5 @@ function PolicyForm({
         }}
       />
     </form>
-  );
-}
-
-function ConnectSection({
-  saved,
-  onSaved,
-}: {
-  saved: Policy;
-  onSaved: (p: Policy) => void;
-}) {
-  const id = useId();
-  const [confirmOff, setConfirmOff] = useState(false);
-  const connect = useSetting({
-    value: saved.connectEnabled,
-    save: async (next) =>
-      onSaved(await savePolicy({ ...savedInput(saved), connectEnabled: next })),
-  });
-  return (
-    <SettingsSection title="Hoja Connect">
-      <SettingRow
-        label="Allow Hoja Connect"
-        htmlFor={id}
-        description="Lets agent runners share a port from their machine, such as a running app preview, with this workspace. Turning it off stops runners from opening new ones."
-        status={connect.status}
-      >
-        <Switch
-          id={id}
-          checked={connect.value}
-          onCheckedChange={(on) => {
-            if (on) void connect.set(true);
-            else setConfirmOff(true);
-          }}
-        />
-      </SettingRow>
-      <ConfirmAction
-        open={confirmOff}
-        onOpenChange={setConfirmOff}
-        title="Turn off Hoja Connect?"
-        description="Agent runners in this workspace can't open new Connect exposures until an admin turns it back on. Work that needs a shared preview will fail."
-        confirmLabel="Turn off Connect"
-        onConfirm={() => connect.set(false)}
-      />
-    </SettingsSection>
   );
 }

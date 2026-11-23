@@ -6,8 +6,6 @@ NULL, which the timeline rendered as "Someone updated the task". This file pins:
 * the shared writer refuses a user-driven event with no actor;
 * only the system's own events (SLA clock, ``runner.*``) may be actor-less;
 * archiving a task records the person who archived it;
-* a runner event on a delegated task is attributed to that agent, and one on a
-  task nobody delegated stays a system event;
 * no module writes ``issue_activity`` except through ``activity.record``, so a
   new call site cannot reintroduce an anonymous row.
 """
@@ -17,19 +15,34 @@ import ast
 from pathlib import Path
 
 import pytest
-from sqlalchemy import and_, select
+from sqlalchemy import select
+from starlette.testclient import TestClient
 
-from hoja_server import activity
-from hoja_server.db import issue, issue_activity
-from tests.agent.test_usage_ledger import (  # noqa: F401  (``world`` is a fixture)
-    _agent,
-    _granted_lease,
-    _post,
-    _set_policy,
-    world,
-)
+from hoja_server import activity, logging_setup
+from hoja_server.app import create_app
+from hoja_server.db import issue, issue_activity, seed_tenant
+from tests import rls_mode
 
 SERVER = Path(__file__).resolve().parents[2] / "hoja_server"
+
+
+def _post(client: TestClient, token: str, query: str, variables: dict | None = None) -> dict:
+    return client.post("/graphql", json={"query": query, "variables": variables or {}},
+                       headers={"Authorization": f"Bearer {token}"}).json()
+
+
+@pytest.fixture
+def world(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOJA_SECRET_KEY", "activity-actor-master")
+    monkeypatch.setenv("HOJA_WEBHOOK_WORKER", "0")
+    logging_setup.forget_secrets()
+    engine, kwargs = rls_mode.workspace(tmp_path, "activity-actor")
+    alpha = seed_tenant(engine, org_name="Alpha", org_url_key="alpha",
+                        user_email="admin@alpha.test", token="alpha-tok", demo_issues=True)
+    app = create_app(kwargs.get("db_path"), database_url=kwargs.get("database_url"),
+                     open_mode=False)
+    yield {"engine": engine, "client": TestClient(app), "alpha": alpha}
+    logging_setup.forget_secrets()
 
 
 def _activity_rows(engine, task_id: str, *, prefix: str | None = None,
@@ -77,21 +90,6 @@ def test_archiving_a_task_records_who_archived_it(world):
     assert "errors" not in body, body
     rows = _activity_rows(world["engine"], task_id, event_type="issueArchived")
     assert [r["actor_id"] for r in rows] == [tenant["user_id"]]
-
-
-def test_runner_events_on_a_delegated_task_name_the_agent(world):
-    agent = _agent(world)
-    _set_policy(world, agent["id"], {"teams": [world["alpha"]["team_id"]]})
-    lease, identity = _granted_lease(world, agent)
-    response = world["client"].post("/runner/events", json={
-        "lease_id": lease["lease_id"], "run_id": lease["run_id"],
-        "fence": lease["fence"], "token": lease["token"],
-        "events": [{"seq": 1, "kind": "harness.spawned", "payload": {"pid": 1}}],
-    }, headers={"Authorization": f"Bearer {identity['token']}"})
-    assert response.status_code == 200, response.text
-    rows = _activity_rows(world["engine"], lease["task_id"], prefix="runner.")
-    assert rows, "the runner event never reached the task timeline"
-    assert {r["actor_id"] for r in rows} == {agent["userId"]}
 
 
 def _inserts_issue_activity(node: ast.AST) -> bool:

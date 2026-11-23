@@ -104,87 +104,12 @@ keys. Admins see every member's apps and can restrict approvals to Hoja's own
 apps (`WorkspaceSecurityPolicy.oauthClients = "first_party"`), in which case
 other apps are refused on the approval page.
 
-## Agent policy
+## Agent principals
 
-An MCP caller whose identity is an agent (`user.kind = 'agent'`) is subject to
-that agent's policy in addition to OAuth scope and resolver authorization. There
-is one row per agent member and no row means no grant: an agent with no policy
-can call no tool. `readTools` and `writeTools` are separate allowlists, and a tool
-that is irreversible (deleting, archiving, changing team membership) additionally
-needs a human's approval, which is a refusal to the agent rather than an in-band
-prompt — a run cannot wait on an approver. The check runs in the dispatcher before
-any resolver executes, so a tool argument cannot bypass it, and a refusal names
-the missing grant and is recorded as `agent.tool.call`. Human callers are
-unchanged.
-
-Admins read and write the policy with `agentPolicy`, `agentPolicyUpdate`,
-`agentSecretSet`, `agentSecretDelete` and `agentSecretNames`; every write appends
-an `audit_event` containing the before and after (and, for a secret, its name and
-never its value). A policy also covers team and project scope, repo and branch
-grants (a default branch can never be granted), connector grants, named secrets,
-runner egress and Hoja Connect endpoints, concurrency and run-minute/credit
-ceilings with a queue-or-stop action, and who may delegate or approve. The runner
-receives the secrets it may use and its egress allowlist in the lease payload for
-that lease only — never in the prompt — and those values are redacted from the
-activity stream, the audit detail and the logs.
-
-## Usage and budgets
-
-A run's usage is recorded in `usage_event`, an append-only ledger: there is no
-update path and no delete path, so a correction is a new row whose `source` is
-`correction` and the original figure stays visible beside it. Runners report
-cumulative token counts on `/runner/events` while a run goes and on
-`/runner/finish` at the end; the ledger stores the difference from what it already
-holds for that run, so a run that streamed to the end is counted once and the sum
-of a run's rows equals the runner's last report.
-
-One credit is 1,000 processed tokens — fresh input, cache reads and output. Money
-is never a float and never taken from the harness: it is computed from those token
-counts at a versioned price card, and each row records the card version it was
-priced with, so a new card prices future rows without rewriting a past one. Managed
-compute is charged per run-minute with a fifteen-minute floor applied to the run
-rather than to each report; a run on a bring-your-own key records its credits and
-costs nothing.
-
-A credit ceiling set on an agent policy (or on the agent member's own budget) is
-compared against that month's ledger rows for the same agent: the schedule check
-reports the `budget` reason and queues the delegation, and a policy set to `stop`
-refuses the lease. Admins read the ledger with `usageSummary(month, groupBy)` —
-grouped by `agent`, `model` or `month` — `usageEvents` for the newest rows and
-`usageBudget(agentUserId, month)` for one agent's ceiling; members are refused. The
-same data appears under Settings → Billing.
-
-## Hoja Connect
-
-Connect publishes one port of the machine a run is executing on, for as long as that
-lease lives. The runner opens a `tailcat serve` per exposure with a fresh key, an
-explicit port allowlist and exactly one pinned peer (the worker's node key), and
-keeps the resulting address in its own memory: the address is a bearer secret, it
-is never written to the database, to the activity stream, to the audit ledger or to
-a log line.
-
-The runner reports an exposure over the lease routes it already drives:
-`POST /runner/connect/open` with the lease id, fence and lease token, the exposure
-id, ports, host and pinned peer, and `POST /runner/connect/close` when the process
-is gone. Both are fenced like every other lease call — a superseded attempt gets
-`409 stale_fence` and cannot publish or close anything — and both are refused
-unless the agent policy that governs the lease's task names a `connect` grant for
-that `(host, port)`. A task nobody delegated has no policy, so it has no grant.
-
-`connect_endpoint` (revision 71) stores one row per published port: organization,
-runner, lease, session, agent, port, host, pinned peer, `opened_at`, `expires_at`,
-`closed_at` and a `state` of `open` or `closed`, with `close_reason` naming why it
-closed. An exposure cannot outlive its lease: finishing, releasing, cancelling or
-reaping the lease closes its rows, with the reason that is actually true.
-
-Admins read the rows with `connectEndpoints(first, after, runnerId, leaseId, live)`
-and `connectEndpoint(id)`; members are refused rather than shown an empty list.
-`connectEndpointClose(exposureId)` withdraws one — it closes the rows, appends a
-`connect.exposure.close` audit event and marks the exposure for revocation, which
-the runner receives on its next heartbeat (`connect_revoke`) and answers by killing
-the process. The workspace-wide switch is `workspaceSecurityPolicy.connectEnabled`
-(written through `workspaceSecurityUpdate`): off means no exposure can be opened,
-which is a state a person set rather than an empty screen.
+An MCP caller whose identity is an agent (`user.kind = 'agent'`, with an
+`agent_member` row) is refused every tool before any resolver runs: per-agent tool
+policies are a Hoja Cloud feature, and with no policy there is no grant. Human
+callers, and API keys that only attribute their writes to an agent, are unchanged.
 
 ## Task hierarchies
 

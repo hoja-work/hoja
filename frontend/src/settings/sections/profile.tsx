@@ -106,7 +106,7 @@ export default function ProfileSettings() {
           label="Role"
           description={
             isAdmin
-              ? "You can change workspace settings, members and billing."
+              ? "You can change workspace settings and members."
               : "You can work on tasks and change your own settings."
           }
           locked={

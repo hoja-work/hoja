@@ -13,11 +13,10 @@ const CASES = [
   { name: 'team-subrow-focus', route: '/', vp: [1280, 800], sel: 'button:has-text("Cycles")', state: 'focus', pad: [40, 10, 20, 10] },
   { name: 'settings-row-focus', route: '/workspace/settings/preferences', vp: [1280, 800], sel: '[data-settings-sidebar] [data-nav-item]', state: 'focus', pad: [12, 10, 20, 10] },
   { name: 'my-issues-tab-focus', route: '/workspace/my-issues/assigned', vp: [1280, 800], sel: '[data-my-issue-tabs] button', state: 'focus', pad: [16, 12, 60, 12] },
-  { name: 'leaderboard-row-focus', route: '/workspace/leaderboard', vp: [1280, 800], sel: '[data-leaderboard-people] button', state: 'focus', pad: [8, 8, 8, 8] },
   { name: 'phone-group-header-hover', route: '/', vp: [390, 844], sel: '[aria-label="Collapse Todo"]', state: 'hover', pad: [16, 16, 320, 24] },
   { name: 'phone-group-header-focus', route: '/', vp: [390, 844], sel: '[aria-label="Collapse Todo"]', state: 'focus', pad: [16, 16, 320, 24] },
   { name: 'phone-inbox-filter-focus', route: '/workspace/inbox', vp: [390, 844], sel: '[aria-label="Show unread only"]', state: 'focus', pad: [16, 12, 16, 12] },
-  { name: 'phone-nav-trigger-focus', route: '/workspace/reviews', vp: [390, 844], sel: '[data-mobile-nav-toggle]', state: 'focus', pad: [8, 12, 60, 12] },
+  { name: 'phone-nav-trigger-focus', route: '/workspace/inbox', vp: [390, 844], sel: '[data-mobile-nav-toggle]', state: 'focus', pad: [8, 12, 60, 12] },
   { name: 'sidebar-full', route: '/', vp: [1280, 800], full: [0, 0, 250, 800] },
 ];
 (async () => {

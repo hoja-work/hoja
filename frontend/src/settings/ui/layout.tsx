@@ -33,7 +33,7 @@ export function SettingsPage({
   description?: React.ReactNode;
   actions?: React.ReactNode;
   children: React.ReactNode;
-  /** Tables (members, billing ledger) get a wider column; forms keep the measured 640px. */
+  /** Tables (members) get a wider column; forms keep the measured 640px. */
   wide?: boolean;
 }) {
   return (
@@ -173,7 +173,8 @@ export function SettingRow({
           : "flex-wrap items-center justify-between gap-x-6 gap-y-3",
       )}
     >
-      <div className="grid min-w-0 flex-1 basis-44 gap-0.5">
+      {/* basis-44 is a width only in a row; in the stacked column it would become a 176px height. */}
+      <div className={cn("grid min-w-0 gap-0.5", !stacked && "flex-1 basis-44")}>
         <Label
           htmlFor={htmlFor}
           className="text-base font-medium text-foreground"

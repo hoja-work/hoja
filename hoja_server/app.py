@@ -64,7 +64,6 @@ from hoja_server import (
     uploads,
     workspace_directory,
 )
-from hoja_server.connect_api import connect_routes
 from hoja_server.connectors_api import connector_binding_for, connector_bindings_for, connector_routes
 from hoja_server.db import (
     _seed_demo_issues,
@@ -96,9 +95,7 @@ from hoja_server.db import (
 )
 from hoja_server.denials import DENY_HINT, READ_ONLY_HINT, hint_for, read_only_violation
 from hoja_server.deployment import single_org_mode
-from hoja_server import runner_release
 from hoja_server.resolvers import build_schema
-from hoja_server.runner_api import runner_routes
 from hoja_server.secrets_box import SecretBoxError
 from hoja_server.signup_config import (
     TURNSTILE_SCRIPT_URL,
@@ -112,7 +109,6 @@ from hoja_server.signup_gate import (
 )
 from hoja_server.signup_store import SignupStore
 from hoja_server.store import APP_SESSION_DAYS, Store
-from hoja_server import session_handoff as session_handoff_flow
 from hoja_server.writer import Writer
 
 _schema = build_schema()
@@ -3428,8 +3424,7 @@ def create_app(
         return response
 
     # ------------------------------------------------------------------
-    # HOJA-733: mobile sign-in. "Sign in on your phone" (QR handoff) and
-    # Google from the app without a web view. Contract: docs/mobile-signin.md
+    # HOJA-733: mobile sign-in. Google from the app without a web view.
     # ------------------------------------------------------------------
 
     def _app_session_args(request: Request, via: str) -> dict:
@@ -3438,180 +3433,6 @@ def create_app(
 
         name = device_label(request.query_params.get("device")) or "Phone"
         return {"days": APP_SESSION_DAYS, "kind": "app", "label": f"{name} · Hoja app · {via}"}
-
-    def _handoff_error(exc: session_handoff_flow.HandoffError) -> JSONResponse:
-        return JSONResponse({"error": exc.message, "reason": exc.reason},
-                            status_code=exc.status, headers={"cache-control": "no-store"})
-
-    def _handoff_creator(request: Request):
-        """The browser session that may make and approve codes, or a refusal.
-
-        Only a person in a browser: an API key or OAuth token (an agent, the CLI)
-        must never be able to mint a human session for a phone.
-        """
-        if request.headers.get("authorization"):
-            return None, JSONResponse(
-                {"error": "Sign in on your phone needs a signed-in browser.",
-                 "reason": "browser_session_required"}, status_code=403)
-        uid, _org, _identity_id, is_browser = _auth(request)
-        raw = request.cookies.get("hoja_session")
-        if not uid or not is_browser or not raw:
-            return None, JSONResponse(
-                {"error": "Sign in on your phone needs a signed-in browser.",
-                 "reason": "browser_session_required"}, status_code=403)
-        csrf = _cookie_csrf_error(request, json_only=True)
-        if csrf:
-            return None, csrf
-        session = store.resolve_browser_session(raw)
-        if not session:
-            return None, JSONResponse({"error": "Session expired.", "reason": "browser_session_required"},
-                                      status_code=403)
-        return session, None
-
-    async def handoff_create(request: Request):
-        session, refusal = await run_in_threadpool(_handoff_creator, request)
-        if refusal:
-            return refusal
-        try:
-            body = await request.json()
-        except ValueError:
-            body = {}
-        body = body if isinstance(body, dict) else {}
-        # The QR names this exact origin. Plain http only for a loopback dev
-        # server; everything else is https, whatever the proxy hop says.
-        authority = _signup_host(request).lower()
-        loopback = authority.split(":")[0] in ("localhost", "127.0.0.1")
-        origin = f"{'http' if loopback else 'https'}://{authority}"
-        try:
-            with tenant_context.system():
-                created = await run_in_threadpool(
-                    session_handoff_flow.create, engine, session=session,
-                    creator_ip=_client_ip(request), origin=origin, replaces=body.get("replaces"))
-        except session_handoff_flow.HandoffError as exc:
-            return _handoff_error(exc)
-        _security_log.info("auth.handoff.create org=%s user=%s rotated=%s",
-                           session["organization_id"], session["user_id"], bool(body.get("replaces")))
-        return JSONResponse(created, status_code=201, headers={"cache-control": "no-store"})
-
-    async def handoff_status(request: Request):
-        session, refusal = await run_in_threadpool(_handoff_creator, request)
-        if refusal:
-            return refusal
-        try:
-            with tenant_context.system():
-                result = session_handoff_flow.status(
-                    engine, request.path_params["handoff_id"], creator_session_id=session["id"])
-        except session_handoff_flow.HandoffError as exc:
-            return _handoff_error(exc)
-        return JSONResponse(result, headers={"cache-control": "no-store"})
-
-    async def handoff_decision(request: Request):
-        session, refusal = await run_in_threadpool(_handoff_creator, request)
-        if refusal:
-            return refusal
-        try:
-            body = await request.json()
-        except ValueError:
-            body = {}
-        decision = str((body or {}).get("decision") or "")
-        from hoja_server import permissions as permission_rules
-
-        def approve_check(row: dict):
-            # Membership is re-checked when the session is minted; here the
-            # workspace's network rule is applied to the PHONE's address. An
-            # admin is exempt, exactly as _auth exempts them.
-            policy = _org_security_policy(row["organization_id"])
-            actor = store.get_user(row["organization_id"], row["user_id"])
-            if (policy.get("ipAllowlist") and not (actor and actor.get("admin"))
-                    and not permission_rules.ip_allowed(policy, row.get("claim_ip"))):
-                return session_handoff_flow.HandoffError(
-                    "ip_not_allowed", "This workspace does not allow sign-in from the phone's network.", 403)
-            return None
-
-        try:
-            with tenant_context.system():
-                result = await run_in_threadpool(
-                    session_handoff_flow.decide, engine, request.path_params["handoff_id"], decision,
-                    creator_session_id=session["id"], approve_check=approve_check)
-        except session_handoff_flow.HandoffError as exc:
-            _security_log.info("auth.handoff.decision outcome=%s", exc.reason)
-            return _handoff_error(exc)
-        _security_log.info("auth.handoff.decision outcome=%s", result["status"])
-        return JSONResponse(result, headers={"cache-control": "no-store"})
-
-    async def handoff_claim(request: Request):
-        ip = _client_ip(request)
-        if rate_limit_blocked(engine, "handoff_claim", [ip], 20, 60.0):
-            return JSONResponse({"error": "Too many attempts. Wait a minute.", "reason": "rate_limited"},
-                                status_code=429, headers={"Retry-After": "60"})
-        rate_limit_record(engine, "handoff_claim", [ip], 60.0)
-        try:
-            body = await request.json()
-        except ValueError:
-            body = None
-        if not isinstance(body, dict):
-            return JSONResponse({"error": "Expected a JSON object.", "reason": "bad_request"}, status_code=400)
-        try:
-            with tenant_context.system():
-                result = await run_in_threadpool(
-                    session_handoff_flow.claim, engine,
-                    handoff_id=body.get("id"), secret=body.get("secret"),
-                    code=body.get("code") if body.get("id") is None else None,
-                    challenge=body.get("challenge"), name=body.get("deviceName"),
-                    platform=body.get("platform"), ip=ip,
-                    user_agent=request.headers.get("user-agent"))
-        except session_handoff_flow.HandoffError as exc:
-            _security_log.info("auth.handoff.claim outcome=%s ip=%s", exc.reason, ip)
-            return _handoff_error(exc)
-        result["workspace"]["host"] = _signup_host(request).split(":")[0].lower()
-        _security_log.info("auth.handoff.claim outcome=claimed ip=%s", ip)
-        return JSONResponse(result, headers={"cache-control": "no-store"})
-
-    async def handoff_redeem(request: Request):
-        content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
-        as_form = content_type == "application/x-www-form-urlencoded"
-        try:
-            body = dict(await request.form()) if as_form else await request.json()
-        except ValueError:
-            body = None
-        if not isinstance(body, dict):
-            return JSONResponse({"error": "Expected a JSON object.", "reason": "bad_request"}, status_code=400)
-        try:
-            with tenant_context.system():
-                result = await run_in_threadpool(
-                    session_handoff_flow.redeem, engine,
-                    handoff_id=str(body.get("id") or ""), verifier=body.get("verifier"))
-        except session_handoff_flow.HandoffError as exc:
-            _security_log.info("auth.handoff.redeem outcome=%s", exc.reason)
-            return _handoff_error(exc)
-        if result["status"] == session_handoff_flow.CLAIMED:
-            return JSONResponse(result, status_code=202, headers={"cache-control": "no-store"})
-        session_token, _details = store.create_session_for_membership(
-            result.get("identity_id"), result["user_id"], result["organization_id"],
-            days=APP_SESSION_DAYS, kind="app", label=session_handoff_flow.session_label(result))
-        if not session_token:
-            # The person left the workspace (or was deactivated) between the
-            # code and the scan: the copy of their session dies with them.
-            _security_log.info("auth.handoff.redeem outcome=membership_gone")
-            return JSONResponse({"error": "That account no longer has access to this workspace.",
-                                 "reason": "membership_gone"}, status_code=403)
-        _security_log.info("auth.handoff.redeem outcome=consumed org=%s user=%s",
-                           result["organization_id"], result["user_id"])
-        response = (RedirectResponse("/", status_code=302) if as_form
-                    else JSONResponse({"status": "consumed", "redirect": "/"},
-                                      headers={"cache-control": "no-store"}))
-        response.set_cookie("hoja_session", session_token, max_age=_APP_COOKIE_MAX_AGE,
-                            **_session_cookie_attrs(request))
-        return response
-
-    async def mobile_pair_page(request: Request):
-        """Where a QR code lands when opened by a phone's own camera, not the app.
-
-        The code is in the fragment, which never reaches this server; the page's
-        script reads it and offers to open the app with it.
-        """
-        return HTMLResponse(signin_pages.pair_page(host=_signup_host(request).split(":")[0].lower()),
-                            headers={"cache-control": "no-store"})
 
     async def google_native_sign_in(request: Request):
         """Google ID token from the app's native account sheet -> a transfer bound to the app.
@@ -4036,43 +3857,6 @@ def create_app(
             payload["expiresAt"] = info["expires_at"]
         return JSONResponse(payload)
 
-    async def trace_ingest(request: Request):
-        from hoja_server import traces as trace_ingest_mod
-
-        uid, org, _identity_id, _browser_session = await run_in_threadpool(_auth, request)
-        if not uid:
-            return _auth_required(request)
-        _enter_request_context(request, org, uid)
-        csrf = _cookie_csrf_error(request, json_only=False)
-        if csrf:
-            return csrf
-        if getattr(request.state, "api_key_access", "read_write") == "read":
-            return JSONResponse({"error": "This credential is read-only."}, status_code=403)
-        raw = await request.body()
-        if len(raw) > uploads.MAX_BYTES:
-            return JSONResponse({"error": "Trace too large (10 MB max)"}, status_code=413)
-        try:
-            body = json.loads(raw)
-        except ValueError:
-            return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
-        if not isinstance(body, dict):
-            return JSONResponse({"error": "Request body must be a JSON object"}, status_code=400)
-        trace_doc = body.get("trace")
-        explicit_issues = body.get("issues") if isinstance(body.get("issues"), list) else None
-        reason = str(body.get("reason") or "")[:32] or None
-        try:
-            res = await run_in_threadpool(
-                lambda: trace_ingest_mod.ingest_trace(
-                    store, org_id=org, viewer_id=uid, trace=trace_doc,
-                    explicit_issues=explicit_issues, reason=reason,
-                )
-            )
-        except ValueError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=400)
-        except OverflowError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=413)
-        return JSONResponse(res)
-
     async def upload_serve(request: Request):
         uid, org, _identity_id, _browser_session = _auth(request)
         if not uid:
@@ -4326,22 +4110,11 @@ def create_app(
                 built_at = (_WEB_ROOT.parent / "BUILD_TIME").read_text().strip()
             except OSError:
                 built_at = ""
-
-        # HOJA-712: which runner wheel this deployment serves, if any. A release can
-        # then prove the artifact it built is in the image (`/downloads` answers 200)
-        # instead of learning about a missing one from an operator's 404. Null, never a
-        # URL: the pointer route is the one place a URL is composed.
-        wheel = runner_release.latest_wheel()
         return JSONResponse(
             {
                 "version": __version__,
                 "sha": sha or "unknown",
                 "builtAt": built_at or None,
-                "runnerWheel": (
-                    {"version": runner_release.wheel_version(wheel),
-                     "path": runner_release.download_path(wheel)}
-                    if wheel else None
-                ),
             },
             headers={"Cache-Control": "no-store"},
         )
@@ -4563,15 +4336,6 @@ def create_app(
             ThreadPoolExecutor(max_workers=32, thread_name_prefix="hoja"))
         await hub.ensure_started()
         maintenance = asyncio.create_task(_sqlite_maintenance()) if engine.dialect.name == "sqlite" else None
-        # The lease reaper (WP07 T033): Hoja's own clock decides when a run is
-        # lost. It never asks a runner or the DBOS process whether it is alive,
-        # because a database outage blocks DBOS silently (plan D9).
-        lease_reaper = None
-        if os.environ.get("HOJA_LEASE_REAPER", "1").strip().lower() not in ("0", "false", "no"):
-            from hoja_server import runner_api as runner_lease_api
-
-            lease_reaper = asyncio.create_task(
-                tenant_context.as_system(runner_lease_api.run_reaper_forever(engine)))
         webhook_worker = None
         if os.environ.get("HOJA_WEBHOOK_WORKER", "1").strip().lower() not in ("0", "false", "no"):
             from hoja_server import webhooks
@@ -4623,10 +4387,6 @@ def create_app(
         await hub.stop()
         if maintenance is not None:
             maintenance.cancel()
-        if lease_reaper is not None:
-            lease_reaper.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await lease_reaper
         if webhook_worker is not None:
             webhook_worker.cancel()
         if cycle_sweeper is not None:
@@ -4655,14 +4415,6 @@ def create_app(
             Route("/api/agent/threads/update/{thread_id}", agent_thread_update, methods=["PATCH"]),
             Route("/api/agent/threads/delete/{thread_id}", agent_thread_delete, methods=["DELETE"]),
             *connector_routes(engine, store, _auth),
-            # The runner lease API (HOJA-602-A-6). Each route authenticates its
-            # own runner bearer token, so it sits before the /api catch-all and
-            # outside the browser session/cookie path.
-            *runner_routes(engine),
-            # Hoja Connect exposures (HOJA-602-A-10, WP09). Same runner bearer
-            # token and the same lease fence as the routes above; a separate
-            # module only so the two work packages do not edit one file.
-            *connect_routes(engine),
             WebSocketRoute("/ws", realtime_socket),
             Route("/signin", sign_in_entry, methods=["GET"]),
             Route("/signin/signout", sign_in_signout, methods=["GET"]),
@@ -4685,12 +4437,6 @@ def create_app(
             Route("/auth/google/callback", google_sign_in_callback, methods=["GET"]),
             Route("/auth/google/finish", google_sign_in_finish, methods=["GET"]),
             Route("/auth/google/native", google_native_sign_in, methods=["POST"]),
-            Route("/auth/handoff", handoff_create, methods=["POST"]),
-            Route("/auth/handoff/claim", handoff_claim, methods=["POST"]),
-            Route("/auth/handoff/redeem", handoff_redeem, methods=["POST"]),
-            Route("/auth/handoff/{handoff_id}", handoff_status, methods=["GET"]),
-            Route("/auth/handoff/{handoff_id}/decision", handoff_decision, methods=["POST"]),
-            Route("/m/pair", mobile_pair_page, methods=["GET"]),
             Route("/.well-known/assetlinks.json", android_asset_links, methods=["GET"]),
             Route("/auth/google/logout", signup_logout, methods=["POST"]),
             Route("/api/signup/config", signup_public_config, methods=["GET"]),
@@ -4698,18 +4444,12 @@ def create_app(
             Route("/api/signup", signup_endpoint, methods=["GET", "POST"]),
             Route("/api/uploads", upload_create, methods=["POST"]),
             Route("/api/uploads/{file_id}", upload_serve, methods=["GET"]),
-            Route("/api/traces", trace_ingest, methods=["POST"]),
             Route("/api/perf/rum", perf_rum_ingest, methods=["POST"]),
             Route("/api/views/{view_id}/export.csv", view_export_csv, methods=["GET"]),
             Route("/sync/bootstrap", sync_bootstrap, methods=["GET"]),
             Route("/sync/delta", sync_delta, methods=["GET"]),
             Route("/health", health, methods=["GET"]),
             Route("/api/version", build_version, methods=["GET"]),
-            # The runner daemon's own wheel (HOJA-712). Public, like the SPA bundle and
-            # for the same reason: the machine that runs `pipx install` has not enrolled
-            # yet and holds no credential. The release builds it into the image's
-            # ./downloads (app/scripts/build-runner-wheel.sh) before the image is built.
-            *runner_release.downloads_routes(),
             # Every real /api route above; anything else under /api is a miss
             # and must say so in JSON instead of serving the SPA shell.
             Route(

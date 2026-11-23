@@ -38,7 +38,7 @@ from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase, FuncMetad
 from mcp.types import ToolAnnotations
 from pydantic import ConfigDict
 
-from hoja_server import agent_policy, observability, tenant_context
+from hoja_server import observability, tenant_context
 from hoja_server.denials import DENY_HINT
 
 log = logging.getLogger("hoja.mcp")
@@ -99,14 +99,6 @@ READ_TOOLS: dict[str, str] = {
         "human's answer: an answered row carries answer, chosenOption, answeredBy and answeredAt."
     ),
     "taskDecision": "One decision by id - the poll target for a single question.",
-    "knowledgeDocs": (
-        "List workspace, team, and project knowledge documents (company standards, architecture notes, "
-        "and conventions). Optionally filter by scope ('workspace', 'team', or 'project') and scopeId."
-    ),
-    "knowledgeContext": (
-        "Return the merged Markdown company knowledge context in hierarchy order "
-        "(workspace -> team -> project). Pass teamId and/or projectId to include scoped standards."
-    ),
 }
 
 WRITE_TOOLS: dict[str, str] = {
@@ -227,14 +219,6 @@ WRITE_TOOLS: dict[str, str] = {
     ),
     "taskDecisionAnswer": "Answer a decision by id (or option key). Idempotent.",
     "taskDecisionCancel": "Withdraw an open decision (asker or admin only).",
-    "knowledgeDocCreate": (
-        "Create a workspace, team, or project knowledge document (Markdown). "
-        "Enabled documents are automatically fed to Agent Chat, delegated runners, and MCP clients."
-    ),
-    "knowledgeDocUpdate": (
-        "Update a workspace, team, or project knowledge document by id "
-        "(title, body, scope, scopeId, or enabled)."
-    ),
     "taskReviewRequest": (
         "Submit a review request on a task in one call: upload or link visual artifacts, move the "
         "task to In Review (unless moveToInReview is false), post the summary comment, and optionally "
@@ -674,10 +658,6 @@ def write_tool_names() -> frozenset[str]:
 
 def build_tools(schema: GraphQLSchema, principal: Callable[[bool], dict]) -> list[Tool]:
     """principal(write) -> GraphQL context for the authenticated caller; raises ToolError."""
-    # Tell the policy layer which tool names exist, so a policy cannot grant a
-    # tool this build does not serve (and a new tool is denied by default because
-    # no policy names it).
-    agent_policy.register_tools(READ_TOOLS, WRITE_TOOLS)
     tools = []
     specs = [(op, False, d) for op, d in READ_TOOLS.items()] + [(op, True, d) for op, d in WRITE_TOOLS.items()]
     for op, write, description in specs:
@@ -716,18 +696,13 @@ def _make_tool(schema: GraphQLSchema, spec: _Spec, principal: Callable[[bool], d
         context: dict | None = None
         try:
             context = principal(spec.write)
-            # WP12 (T052): an agent principal is checked against its policy before any
-            # resolver runs, so a refusal cannot be talked past by a tool argument and
-            # nothing is read or written first. A human caller returns None here and
-            # keeps exactly the surface it had.
-            store = context.get("store") if isinstance(context, dict) else None
-            if store is not None:
-                refused = agent_policy.dispatch_check(
-                    store.engine, context, spec.op,
-                    write=spec.write, irreversible=spec.op in DESTRUCTIVE,
-                )
-                if refused is not None and not refused.allowed:
-                    raise ToolError(agent_policy.refusal_message(spec.op, refused) + " " + DENY_HINT)
+            # An agent principal (its own user row) is governed by a per-agent policy that
+            # this edition does not ship. Absence of a policy is denial, so it is refused
+            # before any resolver runs. A human caller keeps exactly the surface it had.
+            if isinstance(context, dict) and context.get("agent_member_id"):
+                raise ToolError(
+                    f"hoja_{spec.op} was refused: agent principals have no tool policy on this "
+                    "server. Nothing was read or changed. " + DENY_HINT)
 
             def internal(query: str, variables: dict | None) -> dict:
                 result = execute(schema, parse(query), variable_values=variables or {}, context_value=context)

@@ -2,8 +2,8 @@
 // Settings → General (section id "workspace"), end to end (HOJA-734).
 // Admin: rename (Enter saves, Undo toast restores, Escape reverts, empty is refused), change the
 // URL key (client validation, confirm dialog, cancel keeps the old key, confirm saves, live server
-// refuses a malformed key with BAD_USER_INPUT, a duplicate shows a plain message), Agents switch
-// (instant, reload, API read-back), forced failures roll back with a visible error and Retry.
+// refuses a malformed key with BAD_USER_INPUT, a duplicate shows a plain message), forced
+// failures roll back with a visible error and Retry.
 // Member: page is admin-only and the API refuses workspaceUpdate with FORBIDDEN.
 // Screenshots light/dark at 1440 and 390; no horizontal overflow at 320. Restores everything.
 const path = require('node:path');
@@ -56,7 +56,7 @@ async function run({ baseUrl, adminToken, memberToken, screenshotsDir }) {
     try { await fn(); passed.push(name); } catch (e) { failed.push(`${name}: ${String(e.message || e).split('\n')[0]}`); }
   };
   const stamp = Date.now().toString(36);
-  const ws = async () => (await api(baseUrl, adminToken, '{workspace{name urlKey} workspaceFeatures{agentsEnabled}}')).data;
+  const ws = async () => (await api(baseUrl, adminToken, '{workspace{name urlKey}}')).data;
   const original = await ws();
   const browser = await chromium.launch();
   const open = async (token, viewport = { width: 1440, height: 900 }) => {
@@ -70,7 +70,7 @@ async function run({ baseUrl, adminToken, memberToken, screenshotsDir }) {
   const goto = async (p) => {
     await p.goto(`${baseUrl}/workspace/settings/${SECTION}`);
     await p.getByRole('heading', { level: 1, name: 'General' }).waitFor({ timeout: 20000 });
-    await p.getByRole('switch', { name: 'Agents' }).waitFor({ timeout: 15000 });
+    await p.getByLabel('Name', { exact: true }).waitFor({ timeout: 15000 });
   };
   const waitValue = async (loc, v) => {
     const deadline = Date.now() + 10000;
@@ -197,26 +197,6 @@ async function run({ baseUrl, adminToken, memberToken, screenshotsDir }) {
       if ((await ws()).workspace.name !== `${NEW_NAME} fail`) throw new Error('Retry did not save');
     });
 
-    const agents = page.getByRole('switch', { name: 'Agents' });
-    await step('admin: Agents switch saves instantly, survives reload, read back from API', async () => {
-      const before = (await agents.getAttribute('aria-checked')) === 'true';
-      await agents.click();
-      await saved(page);
-      if ((await ws()).workspaceFeatures.agentsEnabled !== !before) throw new Error('API not updated');
-      await page.reload();
-      await agents.waitFor();
-      if (((await agents.getAttribute('aria-checked')) === 'true') !== !before) throw new Error('not kept after reload');
-    });
-
-    await step('admin: Agents switch failure rolls back with an error', async () => {
-      const before = await agents.getAttribute('aria-checked');
-      await page.route('**/graphql', (route) => ((route.request().postData() || '').includes('workspaceFeaturesUpdate') ? route.fulfill({ status: 500, contentType: 'text/html', body: '<html>boom</html>' }) : route.continue()));
-      await agents.click();
-      await page.getByRole('alert').filter({ hasText: /server is unavailable/i }).waitFor();
-      await page.unroute('**/graphql');
-      if ((await agents.getAttribute('aria-checked')) !== before) throw new Error('switch did not roll back');
-    });
-
     await step('admin: Teams link opens the Teams page', async () => {
       await page.getByRole('button', { name: 'Open Teams' }).click();
       await page.waitForURL(/\/workspace\/settings\/teams/);
@@ -238,7 +218,6 @@ async function run({ baseUrl, adminToken, memberToken, screenshotsDir }) {
 
     // Restore before screenshots so they show the real workspace.
     await api(baseUrl, adminToken, 'mutation($i:WorkspaceUpdateInput!){workspaceUpdate(input:$i){success}}', { i: { name: original.workspace.name, urlKey: original.workspace.urlKey } });
-    await api(baseUrl, adminToken, 'mutation($on:Boolean!){workspaceFeaturesUpdate(agentsEnabled:$on){agentsEnabled}}', { on: original.workspaceFeatures.agentsEnabled });
 
     await step('no horizontal overflow at 320px', async () => {
       const p = await open(adminToken, { width: 320, height: 700 });
@@ -250,7 +229,6 @@ async function run({ baseUrl, adminToken, memberToken, screenshotsDir }) {
     await step('screenshots light/dark at 1440 and 390', () => shots(browser, baseUrl, adminToken, screenshotsDir, SECTION));
   } finally {
     await api(baseUrl, adminToken, 'mutation($i:WorkspaceUpdateInput!){workspaceUpdate(input:$i){success}}', { i: { name: original.workspace.name, urlKey: original.workspace.urlKey } });
-    await api(baseUrl, adminToken, 'mutation($on:Boolean!){workspaceFeaturesUpdate(agentsEnabled:$on){agentsEnabled}}', { on: original.workspaceFeatures.agentsEnabled });
     await browser.close();
   }
   return { passed, failed };

@@ -151,8 +151,16 @@ def test_reminder_reaches_the_owner_once_per_overdue_period(ws):
     with ws["engine"].begin() as conn:
         old = (datetime.now(timezone.utc) - timedelta(days=9)).isoformat()
         conn.execute(initiative.update().where(initiative.c.id == i["id"]).values(created_at=old))
-    assert initiative_api.sweep_reminders(ws["engine"]) == 1
-    assert initiative_api.sweep_reminders(ws["engine"]) == 0, "the period is claimed once"
+        # Sweep just after the latest slot. A sweep a working day or more past it would
+        # legitimately send the first follow-up, so a wall-clock sweep fails on some weekdays.
+        org = ws["seed"]["org_id"]
+        policy = initiative_api.reminder_policy(conn, org)
+        slot = initiative_api.schedule_slot(
+            datetime.now(timezone.utc), "weekly", policy["weekday"], policy["hour"],
+            initiative_api.owner_zone(conn, org, owner))
+    at = (slot + timedelta(minutes=5)).isoformat()
+    assert initiative_api.sweep_reminders(ws["engine"], now=at) == 1
+    assert initiative_api.sweep_reminders(ws["engine"], now=at) == 0, "the period is claimed once"
     due = gql(ws, f'{{initiative(id:"{i["id"]}"){{updateDueAt}}}}')["data"]["initiative"]["updateDueAt"]
     assert due is not None
     with ws["engine"].connect() as conn:

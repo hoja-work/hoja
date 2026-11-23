@@ -1,10 +1,8 @@
 import type React from "react";
 import type { Capability } from "./context";
 import {
-  BarChart3,
   Bell,
   Blocks,
-  BookOpen,
   Bot,
   Building2,
   CalendarDays,
@@ -33,7 +31,6 @@ export type SettingsSectionId =
   | "api-keys"
   | "agent-conversations"
   | "connections"
-  | "knowledge"
   | "issue-labels"
   | "issue-templates"
   | "slas"
@@ -47,7 +44,6 @@ export type SettingsSectionId =
   | "members"
   | "permissions"
   | "security"
-  | "billing"
   | "model-providers"
   | "extensions";
 
@@ -187,14 +183,6 @@ export const SETTINGS_SECTIONS: SettingsSectionDef[] = [
     keywords: "sso login domains sessions",
   },
   {
-    id: "billing",
-    label: "Billing & usage",
-    group: "Workspace",
-    icon: BarChart3,
-    admin: true,
-    keywords: "plan cost spend usage ledger",
-  },
-  {
     id: "model-providers",
     label: "Model providers",
     group: "Agents & integrations",
@@ -214,13 +202,6 @@ export const SETTINGS_SECTIONS: SettingsSectionDef[] = [
     group: "Agents & integrations",
     icon: Plug,
     keywords: "github slack google integrations",
-  },
-  {
-    id: "knowledge",
-    label: "Knowledge",
-    group: "Agents & integrations",
-    icon: BookOpen,
-    keywords: "docs context",
   },
   {
     id: "extensions",
@@ -243,7 +224,6 @@ export const SETTINGS_GROUPS: SettingsSectionDef["group"][] = [
 /** Old ids that still arrive through bookmarks and links. */
 export const SETTINGS_ALIASES: Record<string, SettingsSectionId> = {
   account: "profile",
-  usage: "billing",
   "mcp-connectors": "connections",
 };
 
