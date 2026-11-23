@@ -413,12 +413,11 @@ def m_issue_review_request(_, info, input):
             None,
         )
         if in_review and issue_row.get("_state_id") != in_review["id"]:
-            writer.issue_update(
-                org,
-                issue_row["id"],
-                {"stateId": in_review["id"]},
-                actor_id=uid,
-            )
+            # Through the issueUpdate resolver, so extension hooks see the state change
+            # like any other issue write (tests/test_extensions.py).
+            from hoja_server.resolvers import m_issue_update
+
+            m_issue_update(None, info, issue_row["id"], {"stateId": in_review["id"]})
 
     writer.comment_create(
         org,
