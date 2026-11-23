@@ -5,7 +5,7 @@ RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
-FROM python:3.12-slim
+FROM python:3.15-slim
 RUN groupadd --system hoja && useradd --system --gid hoja --home /app --shell /usr/sbin/nologin hoja
 WORKDIR /app
 COPY . .
