@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import type { IssueLabel } from "../main";
 import { blobatarUri } from "blobatar/uri";
 import { statusAgeLabel, type StatusAgeIssue } from "./statusAge";
+import { useMenuDismiss } from "../menu";
 import {
   Popover,
   PopoverAnchor,
@@ -49,19 +50,23 @@ export function blobatarSrc(source: string): string {
   let uri = blobatarUris.get(source);
   if (uri === undefined) {
     const locked = HUE_SEED.exec(source);
-    uri = locked ? blobatarUri(source, { hue: Number(locked[1]) }) : blobatarUri(source);
+    uri = locked
+      ? blobatarUri(source, { hue: Number(locked[1]) })
+      : blobatarUri(source);
     blobatarUris.set(source, uri);
   }
   return uri;
 }
 
 /** The blobatar for a Hoja user; falls back to the name for anyone without a seed. */
-export function userSource(user?: {
-  id?: string;
-  name?: string | null;
-  email?: string | null;
-  avatarSeed?: string | null;
-} | null): string {
+export function userSource(
+  user?: {
+    id?: string;
+    name?: string | null;
+    email?: string | null;
+    avatarSeed?: string | null;
+  } | null,
+): string {
   return user?.avatarSeed || user?.name || user?.email || user?.id || "?";
 }
 
@@ -638,6 +643,10 @@ export function fmtRange(start?: string | null, end?: string | null): string {
 /** Inline primitive adapter preserving inherited style hooks and existing triggers.
  * Virtual anchoring lets callers keep their existing controlled trigger buttons.
  */
+/* Open LinPopovers, oldest first, so Escape closes only the newest. */
+const openLayers: number[] = [];
+let nextLayer = 0;
+
 export function LinPopover({
   onClose,
   className,
@@ -678,6 +687,35 @@ export function LinPopover({
     position,
     ...visualStyle
   } = style || {};
+  /* Escape and outside presses dismiss through the shared hook (DESIGN.md). Radix's own
+   * Escape never reached the menu when focus sat inside it, so menus stayed open. Only
+   * the newest open menu answers Escape, so a menu inside a dialog closes first. */
+  const layer = useRef(0);
+  useEffect(() => {
+    const id = ++nextLayer;
+    layer.current = id;
+    openLayers.push(id);
+    return () => {
+      const at = openLayers.indexOf(id);
+      if (at >= 0) openLayers.splice(at, 1);
+    };
+  }, []);
+  useMenuDismiss({
+    open: true,
+    alsoWithin: (node) =>
+      Boolean(
+        (node instanceof Element ? node : node.parentElement)?.closest?.(
+          '[data-slot="popover-content"]',
+        ) || trigger.current?.contains(node),
+      ),
+    onDismiss: onClose,
+    onEscape: (event) => {
+      if (layer.current !== openLayers[openLayers.length - 1]) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onClose();
+    },
+  });
   return (
     <Popover
       open

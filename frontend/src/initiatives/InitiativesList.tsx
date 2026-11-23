@@ -4,13 +4,23 @@
  * nest); drag a row to reorder it, or hold Alt (Option) while dropping it on another
  * row to nest it there. Dropping a sub-initiative on "Move to top level" un-nests it. */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronRight, ListFilter, Plus, Settings2, X } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ChevronRight,
+  CornerLeftUp,
+  ListFilter,
+  MoreHorizontal,
+  Plus,
+  Settings2,
+  X,
+} from "lucide-react";
 import { confirmDialog, promptDialog } from "../dialogs";
 import { useMenuDismiss } from "../menu";
 import { FollowButton } from "../inbox/follow";
 import type { Viewer } from "../main";
 import { useProjectEntityVersion } from "../projectStore";
-import { Avatar, fmtDate, Ring } from "../graph/shared";
+import { Avatar, fmtDate, IconBtn, LinPopover, Ring } from "../graph/shared";
 import { HEALTH, healthLabel } from "../graph/health";
 import {
   deleteInitiativeView,
@@ -19,6 +29,7 @@ import {
   progressFraction,
   saveInitiativeView,
   updateInitiative,
+  type InitiativeRef,
   type InitiativeRow,
   type InitiativeView,
 } from "./api";
@@ -28,6 +39,7 @@ import {
   InitiativeStatusIcon,
   initiativeStatusLabel,
   INITIATIVE_STATUSES,
+  InitiativeMenu,
   LabelDot,
   useInitiativeLabels,
   useMembers,
@@ -50,6 +62,21 @@ type Display = {
   ordering: Ordering;
   nested: boolean;
   summary: boolean;
+};
+
+type ListEntry = {
+  row: InitiativeRow;
+  depth: number;
+  childCount: number;
+  parentId: string | null;
+  key: string;
+};
+type RowActions = {
+  moveUp: () => void;
+  moveDown: () => void;
+  addParent: (id: string) => void;
+  removeParent?: () => void;
+  parentOptions: InitiativeRef[];
 };
 
 const EMPTY: Filters = {
@@ -124,15 +151,18 @@ function sorter(ordering: Ordering) {
 
 export function InitiativesList({
   path,
-  viewer,
   onOpenInitiative,
   onNew,
+  team,
 }: {
   path: string;
   viewer: Viewer;
   onOpenInitiative: (id: string) => void;
   onNew: (defaults?: Record<string, unknown>) => void;
+  /** Team initiatives: those the team leads, and optionally those it contributes to. */
+  team?: { id: string; name: string; key: string };
 }) {
+  const [leadOnly, setLeadOnly] = useState(true);
   const [tab, setTab] = useState<Tab>(() => tabFromPath(path));
   const [rows, setRows] = useState<InitiativeRow[] | null>(null);
   const [error, setError] = useState("");
@@ -141,6 +171,7 @@ export function InitiativesList({
   const [display, setDisplay] = useState<Display>(DEFAULT_DISPLAY);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [dragId, setDragId] = useState<string | null>(null);
+  const [dragFrom, setDragFrom] = useState<string | null>(null);
   const [dropHint, setDropHint] = useState<{
     id: string;
     nest: boolean;
@@ -179,9 +210,6 @@ export function InitiativesList({
     if (legacy) onOpenInitiative(legacy);
   }, [onOpenInitiative]);
 
-  const canEdit = (i: InitiativeRow) =>
-    Boolean(viewer.admin || (viewer.id && i.creator?.id === viewer.id));
-
   const view = tab.startsWith("view:")
     ? views.find((v) => `view:${v.id}` === tab)
     : undefined;
@@ -210,6 +238,15 @@ export function InitiativesList({
   );
   const matches = useCallback(
     (i: InitiativeRow) => {
+      if (
+        team &&
+        i.leadTeam?.id !== team.id &&
+        (leadOnly ||
+          !(i.allProjects || []).some((p) =>
+            (p.teams?.nodes || []).some((t) => t.id === team.id),
+          ))
+      )
+        return false;
       if (!view && tab !== "all" && i.status !== tab) return false;
       if (filters.status.length && !filters.status.includes(i.status))
         return false;
@@ -232,7 +269,7 @@ export function InitiativesList({
         return false;
       return true;
     },
-    [filters, tab, view],
+    [filters, tab, view, team, leadOnly],
   );
   const visible = useMemo(() => (rows || []).filter(matches), [rows, matches]);
 
@@ -269,20 +306,39 @@ export function InitiativesList({
     const present = new Set(list.map((r) => r.id));
     const kids = new Map<string, InitiativeRow[]>();
     const roots: InitiativeRow[] = [];
+    /* An initiative with several parents is listed under each of them. */
     for (const r of list) {
-      const p = r.parent?.id;
-      if (display.nested && p && present.has(p)) {
+      const parents = (r.parents || [])
+        .map((p) => p.id)
+        .filter((p) => display.nested && present.has(p));
+      if (!parents.length) roots.push(r);
+      for (const p of parents) {
         if (!kids.has(p)) kids.set(p, []);
         kids.get(p)!.push(r);
-      } else roots.push(r);
+      }
     }
-    const out: { row: InitiativeRow; depth: number; childCount: number }[] = [];
-    const walk = (r: InitiativeRow, depth: number) => {
+    const out: ListEntry[] = [];
+    const walk = (
+      r: InitiativeRow,
+      depth: number,
+      parentId: string | null,
+      path: string,
+    ) => {
       const children = (kids.get(r.id) || []).sort(sort);
-      out.push({ row: r, depth, childCount: children.length });
-      if (!collapsed.has(r.id)) children.forEach((c) => walk(c, depth + 1));
+      out.push({
+        row: r,
+        depth,
+        childCount: children.length,
+        parentId,
+        key: path,
+      });
+      if (!collapsed.has(r.id))
+        children.forEach((c) => {
+          if (!path.split("/").includes(c.id))
+            walk(c, depth + 1, r.id, `${path}/${c.id}`);
+        });
     };
-    roots.sort(sort).forEach((r) => walk(r, 0));
+    roots.sort(sort).forEach((r) => walk(r, 0, null, r.id));
     return out;
   };
 
@@ -299,7 +355,11 @@ export function InitiativesList({
       )
         return;
       const parents = (rows || [])
-        .filter((r) => (rows || []).some((c) => c.parent?.id === r.id))
+        .filter((r) =>
+          (rows || []).some((c) =>
+            (c.parents || []).some((p) => p.id === r.id),
+          ),
+        )
         .map((r) => r.id);
       setCollapsed((cur) => (cur.size ? new Set() : new Set(parents)));
     };
@@ -307,60 +367,70 @@ export function InitiativesList({
     return () => window.removeEventListener("keydown", onKey);
   }, [rows]);
 
+  /* Reorder by placing ``dragged`` just before ``target`` among the target's siblings
+   * (manual order), nest it under ``target`` (adds a parent), or take it out of
+   * ``fromParent`` (the parent it was listed under). Any member may move initiatives. */
   const move = async (
     dragged: string,
     target: string | null,
-    nest: boolean,
+    mode: "before" | "nest" | "unnest" | "end",
+    fromParent: string | null = null,
+    siblingsOf: string | null = null,
   ) => {
     const d = byId.get(dragged);
     if (!d || dragged === target) return;
-    if (!canEdit(d)) {
-      setError("Only the initiative's creator or an admin can move it.");
-      return;
-    }
     let input: Record<string, unknown>;
-    if (target === null) input = { parentId: null };
-    else if (nest) input = { parentId: target };
-    else {
-      const t = byId.get(target);
-      if (!t) return;
+    if (mode === "unnest") {
+      if (!fromParent) return;
+      input = { removeParentId: fromParent };
+    } else if (mode === "nest") {
+      if (!target) return;
+      input = { addParentId: target };
+    } else {
+      /* Renumber the siblings so the new order holds even where some never had a
+       * manual position (those sort last). Only rows whose number changes are written. */
+      const parentKey = siblingsOf;
       const siblings = (rows || [])
         .filter(
           (r) =>
-            (r.parent?.id || null) === (t.parent?.id || null) &&
-            r.id !== dragged,
+            r.id !== dragged &&
+            (parentKey
+              ? (r.parents || []).some((p) => p.id === parentKey)
+              : !(r.parents || []).length),
         )
         .sort(sorter("manual"));
-      const at = siblings.findIndex((r) => r.id === target);
-      const before = siblings[at - 1]?.sortOrder;
-      const here = t.sortOrder ?? at * 1000;
-      const sortOrder =
-        before !== undefined && before !== null
-          ? (before + here) / 2
-          : here - 1000;
-      input = { parentId: t.parent?.id || null, sortOrder };
+      const at =
+        mode === "end" || !target
+          ? siblings.length
+          : Math.max(
+              0,
+              siblings.findIndex((r) => r.id === target),
+            );
+      const ordered = [...siblings];
+      ordered.splice(at, 0, d);
+      const numbers = new Map(ordered.map((r, n) => [r.id, (n + 1) * 1000]));
       if (display.ordering !== "manual")
         setDisplay((x) => ({ ...x, ordering: "manual" }));
+      setRows((cur) =>
+        (cur || []).map((r) =>
+          numbers.has(r.id) ? { ...r, sortOrder: numbers.get(r.id) } : r,
+        ),
+      );
+      try {
+        await Promise.all(
+          ordered
+            .filter((r) => r.sortOrder !== numbers.get(r.id))
+            .map((r) =>
+              updateInitiative(r.id, { sortOrder: numbers.get(r.id) }),
+            ),
+        );
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        void reload();
+      }
+      return;
     }
-    setRows((cur) =>
-      (cur || []).map((r) =>
-        r.id === dragged
-          ? {
-              ...r,
-              parent:
-                "parentId" in input
-                  ? input.parentId
-                    ? { id: input.parentId as string }
-                    : null
-                  : r.parent,
-              sortOrder:
-                "sortOrder" in input
-                  ? (input.sortOrder as number)
-                  : r.sortOrder,
-            }
-          : r,
-      ),
-    );
     try {
       await updateInitiative(d.id, input);
     } catch (e) {
@@ -413,7 +483,9 @@ export function InitiativesList({
       data-initiatives-page=""
     >
       <header className="flex h-11 flex-none items-center justify-between border-b border-line px-4">
-        <h1 className="m-0 text-sm font-medium">Initiatives</h1>
+        <h1 className="m-0 text-sm font-medium">
+          {team ? `${team.name} · Initiatives` : "Initiatives"}
+        </h1>
         <button
           type="button"
           className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted hover:bg-subtle hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent"
@@ -496,7 +568,13 @@ export function InitiativesList({
           teams={teams}
           labels={labels}
         />
-        <DisplayButton display={display} onChange={setDisplay} />
+        <DisplayButton
+          display={display}
+          onChange={setDisplay}
+          team={team}
+          leadOnly={leadOnly}
+          onLeadOnly={setLeadOnly}
+        />
       </div>
       {filterCount > 0 && (
         <div className="flex flex-wrap items-center gap-1.5 px-4 pb-2 text-xs">
@@ -616,45 +694,111 @@ export function InitiativesList({
                     <span className="text-muted">{g.rows.length}</span>
                   </div>
                 )}
-                {flatten(g.rows).map(({ row: i, depth, childCount }) => (
-                  <InitiativeListRow
-                    key={i.id}
-                    row={i}
-                    depth={depth}
-                    childCount={childCount}
-                    collapsed={collapsed.has(i.id)}
-                    showSummary={display.summary}
-                    dragging={dragId === i.id}
-                    dropHint={dropHint?.id === i.id ? dropHint : null}
-                    onToggle={() =>
-                      setCollapsed((cur) => {
-                        const next = new Set(cur);
-                        if (next.has(i.id)) next.delete(i.id);
-                        else next.add(i.id);
-                        return next;
-                      })
-                    }
-                    onOpen={() => onOpenInitiative(i.identifier || i.id)}
-                    onDragStart={() => setDragId(i.id)}
-                    onDragEnd={() => {
-                      setDragId(null);
-                      setDropHint(null);
-                    }}
-                    onDragOver={(nest) =>
-                      dragId &&
-                      dragId !== i.id &&
-                      setDropHint({ id: i.id, nest })
-                    }
-                    onDrop={(nest) => {
-                      if (dragId) void move(dragId, i.id, nest);
-                      setDragId(null);
-                      setDropHint(null);
-                    }}
-                  />
-                ))}
+                {flatten(g.rows).map(
+                  (
+                    { row: i, depth, childCount, parentId, key: entryKey },
+                    n,
+                    all,
+                  ) => (
+                    <InitiativeListRow
+                      key={entryKey}
+                      row={i}
+                      depth={depth}
+                      childCount={childCount}
+                      parentName={
+                        parentId ? byId.get(parentId)?.name : undefined
+                      }
+                      actions={{
+                        moveUp: () => {
+                          const sib = all
+                            .slice(0, n)
+                            .reverse()
+                            .find(
+                              (e) =>
+                                e.parentId === parentId && e.depth === depth,
+                            );
+                          if (sib)
+                            void move(
+                              i.id,
+                              sib.row.id,
+                              "before",
+                              null,
+                              parentId,
+                            );
+                        },
+                        moveDown: () => {
+                          const later = all
+                            .slice(n + 1)
+                            .filter(
+                              (e) =>
+                                e.parentId === parentId && e.depth === depth,
+                            );
+                          if (later[1])
+                            void move(
+                              i.id,
+                              later[1].row.id,
+                              "before",
+                              null,
+                              parentId,
+                            );
+                          else if (later[0])
+                            void move(i.id, null, "end", null, parentId);
+                        },
+                        addParent: (pid: string) =>
+                          void move(i.id, pid, "nest"),
+                        removeParent: parentId
+                          ? () => void move(i.id, null, "unnest", parentId)
+                          : undefined,
+                        parentOptions: (rows || []).filter(
+                          (r) =>
+                            r.id !== i.id &&
+                            !(i.parents || []).some((p) => p.id === r.id),
+                        ),
+                      }}
+                      collapsed={collapsed.has(i.id)}
+                      showSummary={display.summary}
+                      dragging={dragId === i.id}
+                      dropHint={dropHint?.id === i.id ? dropHint : null}
+                      onToggle={() =>
+                        setCollapsed((cur) => {
+                          const next = new Set(cur);
+                          if (next.has(i.id)) next.delete(i.id);
+                          else next.add(i.id);
+                          return next;
+                        })
+                      }
+                      onOpen={() => onOpenInitiative(i.identifier || i.id)}
+                      onDragStart={() => {
+                        setDragId(i.id);
+                        setDragFrom(parentId);
+                      }}
+                      onDragEnd={() => {
+                        setDragId(null);
+                        setDropHint(null);
+                      }}
+                      onDragOver={(nest) =>
+                        dragId &&
+                        dragId !== i.id &&
+                        setDropHint({ id: i.id, nest })
+                      }
+                      onDrop={(nest) => {
+                        if (dragId)
+                          void move(
+                            dragId,
+                            i.id,
+                            nest ? "nest" : "before",
+                            null,
+                            parentId,
+                          );
+                        setDragId(null);
+                        setDropHint(null);
+                      }}
+                    />
+                  ),
+                )}
               </div>
             ))}
-            {dragId && byId.get(dragId)?.parent && (
+            {dragId && dragFrom && (
               /* A pointer-only drop target shown while dragging; the keyboard path to the
                * same change is the Parent property on the initiative page. */
               // eslint-disable-next-line jsx-a11y/no-static-element-interactions
@@ -663,17 +807,18 @@ export function InitiativesList({
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={(e) => {
                   e.preventDefault();
-                  void move(dragId, null, false);
+                  void move(dragId, null, "unnest", dragFrom);
                   setDragId(null);
                 }}
               >
-                Drop here to move to the top level
+                Drop here to take it out of {byId.get(dragFrom)?.name}
               </div>
             )}
             <p className="hidden px-4 pt-3 text-xs text-muted md:block">
               Drag a row to reorder it. Hold Alt (Option) while dropping it on
-              another initiative to nest it. Press T to collapse or expand
-              sub-initiatives.
+              another initiative to add that one as a parent; an initiative can
+              have several. Each row's menu does the same from the keyboard.
+              Press T to collapse or expand sub-initiatives.
             </p>
           </div>
         )}
@@ -703,6 +848,8 @@ function InitiativeListRow({
   row: i,
   depth,
   childCount,
+  parentName,
+  actions,
   collapsed,
   showSummary,
   dragging,
@@ -717,6 +864,8 @@ function InitiativeListRow({
   row: InitiativeRow;
   depth: number;
   childCount: number;
+  parentName?: string;
+  actions: RowActions;
   collapsed: boolean;
   showSummary: boolean;
   dragging: boolean;
@@ -854,8 +1003,104 @@ function InitiativeListRow({
         <span className="ml-auto hidden text-xs text-muted xl:inline">
           {i.identifier}
         </span>
+        <RowMenu name={i.name} parentName={parentName} actions={actions} />
       </span>
     </div>
+  );
+}
+
+/** The row's menu: the keyboard path to everything dragging does. */
+function RowMenu({
+  name,
+  parentName,
+  actions,
+}: {
+  name: string;
+  parentName?: string;
+  actions: RowActions;
+}) {
+  const [open, setOpen] = useState(false);
+  const [picking, setPicking] = useState(false);
+  const close = () => {
+    setOpen(false);
+    setPicking(false);
+  };
+  const item =
+    "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-none";
+  return (
+    <span className="relative z-10 flex-none">
+      <IconBtn
+        label={`Actions for ${name}`}
+        title="Move or nest"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <MoreHorizontal size={14} />
+      </IconBtn>
+      {open && (
+        <LinPopover
+          onClose={close}
+          className="absolute top-full right-0 z-50 mt-1 grid w-64 max-w-xs gap-0.5 rounded-lg border border-line bg-panel p-1 shadow-lg"
+          data-style-hooks="lin-dd-right"
+          role="menu"
+          aria-label={`Actions for ${name}`}
+        >
+          {picking ? (
+            <InitiativeMenu
+              label="Add parent initiative"
+              options={actions.parentOptions}
+              close={close}
+              onPick={(id) => id && actions.addParent(id)}
+            />
+          ) : (
+            <>
+              <button
+                type="button"
+                role="menuitem"
+                className={item}
+                onClick={() => {
+                  close();
+                  actions.moveUp();
+                }}
+              >
+                <ArrowUp size={14} aria-hidden /> Move up
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className={item}
+                onClick={() => {
+                  close();
+                  actions.moveDown();
+                }}
+              >
+                <ArrowDown size={14} aria-hidden /> Move down
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className={item}
+                onClick={() => setPicking(true)}
+              >
+                <CornerLeftUp size={14} aria-hidden /> Add parent…
+              </button>
+              {actions.removeParent && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className={item}
+                  onClick={() => {
+                    close();
+                    actions.removeParent!();
+                  }}
+                >
+                  <X size={14} aria-hidden /> Remove from {parentName}
+                </button>
+              )}
+            </>
+          )}
+        </LinPopover>
+      )}
+    </span>
   );
 }
 
@@ -1047,9 +1292,15 @@ function FilterButton({
 function DisplayButton({
   display,
   onChange,
+  team,
+  leadOnly,
+  onLeadOnly,
 }: {
   display: Display;
   onChange: (d: Display) => void;
+  team?: { name: string };
+  leadOnly?: boolean;
+  onLeadOnly?: (v: boolean) => void;
 }) {
   const select =
     "rounded-md border border-line bg-bg px-2 py-1 text-sm text-foreground";
@@ -1100,6 +1351,16 @@ function DisplayButton({
             />
             Nest sub-initiatives
           </label>
+          {team && (
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={!leadOnly}
+                onChange={(e) => onLeadOnly?.(!e.target.checked)}
+              />
+              Include initiatives {team.name} contributes to
+            </label>
+          )}
           <label className="flex items-center gap-2">
             <input
               type="checkbox"

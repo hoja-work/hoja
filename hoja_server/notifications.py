@@ -384,15 +384,18 @@ def on_initiative_update_reply(conn, org_id: str, update_row: dict, comment_id: 
                    initiative_update_id=update_id, comment_id=comment_id)
 
 
-def on_initiative_update_due(conn, org_id: str, initiative_row: dict, ts: str) -> set[str]:
-    """Remind the owner that an update is due (the reminder sweep claims the period first)."""
+def on_initiative_update_due(conn, org_id: str, initiative_row: dict, ts: str,
+                             follow_up: int = 0) -> set[str]:
+    """Remind the owner that an update is due (the reminder sweep claims each send first).
+    ``follow_up`` is 1 or 2 for the nudges after the first reminder."""
     owner = initiative_row.get("owner_id")
     if not owner:
         return set()
     return notify_subject(conn, org_id, "initiative", initiative_row["id"], None, [owner],
                           "initiativeUpdateDue", ts,
                           data={"name": initiative_row.get("name"),
-                                "cadence": initiative_row.get("update_reminder")})
+                                "cadence": initiative_row.get("update_reminder"),
+                                "followUp": follow_up})
 
 
 # -------------------------------------------------------------------- cycles

@@ -2752,8 +2752,13 @@ class Store:
             return self.ser_project(_one(conn, stmt))
 
     def initiatives(self, org_id: str, after: tuple[str, str] | None = None, status: str | None = None,
-                    statuses: list[str] | None = None, limit: int = 51) -> list[dict]:
+                    statuses: list[str] | None = None, limit: int = 51,
+                    viewer_id: str | None = None, lead_team_id: str | None = None) -> list[dict]:
+        """Live initiatives, newest first. With a viewer, initiatives led by a team the viewer
+        cannot see (a private team they are not on) are left out, as on Linear."""
         stmt = select(initiative).where(and_(initiative.c.organization_id == org_id, initiative.c.archived_at.is_(None)))
+        if lead_team_id:
+            stmt = stmt.where(initiative.c.lead_team_id == lead_team_id)
         if status:
             stmt = stmt.where(initiative.c.status == status)
         if statuses:
@@ -2761,15 +2766,19 @@ class Store:
         if after:
             stmt = stmt.where(initiative.c.created_at <= after[0]).where((initiative.c.created_at < after[0]) | ((initiative.c.created_at == after[0]) & (initiative.c.id < after[1])))
         with self.engine.connect() as conn:
+            stmt = _scope_teams(conn, stmt, org_id, viewer_id, initiative.c.lead_team_id, nullable=True)
             rows = _conn_rows(conn, stmt.order_by(initiative.c.created_at.desc(), initiative.c.id.desc()).limit(limit))
             return [self.ser_initiative(conn, row) for row in rows]
 
-    def initiative_by_id(self, org_id: str, ident: str) -> dict | None:
-        """By id, or by the readable ``I-<number>``."""
+    def initiative_by_id(self, org_id: str, ident: str, viewer_id: str | None = None) -> dict | None:
+        """By id, or by the readable ``I-<number>``. With a viewer, one led by a private team
+        the viewer is not on reads as missing."""
         match = re.fullmatch(r"[Ii]-(\d+)", ident or "")
         with self.engine.connect() as conn:
             key = initiative.c.number == int(match.group(1)) if match else initiative.c.id == ident
-            row = _one(conn, select(initiative).where(and_(initiative.c.organization_id == org_id, key, initiative.c.archived_at.is_(None))))
+            stmt = select(initiative).where(and_(initiative.c.organization_id == org_id, key, initiative.c.archived_at.is_(None)))
+            stmt = _scope_teams(conn, stmt, org_id, viewer_id, initiative.c.lead_team_id, nullable=True)
+            row = _one(conn, stmt)
             return self.ser_initiative(conn, row) if row else None
 
     @staticmethod

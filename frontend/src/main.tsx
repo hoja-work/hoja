@@ -223,6 +223,8 @@ export type Team = {
   name: string;
   key: string;
   description?: string;
+  /** The team's sidebar lists Initiatives. */
+  showInitiatives?: boolean;
   states: {
     nodes: { id: string; name: string; color: string; type: string }[];
   };
@@ -380,7 +382,7 @@ export type PulsePost = {
   comments?: { nodes: PulseComment[] };
 };
 export const issueFields = `{ id identifier title description createdAt updatedAt stateChangedAt dueDate priority priorityLabel state { id name color type } team { id key name } githubLinks { id kind externalId url title state author } project{id name} assignee { id name avatarSeed } delegate { id name avatarSeed } delegateId creator { id name avatarSeed } subscribers { nodes { id } } cycle { id name number } parent { id identifier title } labels { nodes { id name color } } }`;
-const query = `query Dashboard { viewer { id name avatarSeed email admin } teams { nodes { id name key description states { nodes { id name color type } } members { nodes { id name avatarSeed email } } activeCycle { id name number startsAt endsAt progress } } } issues(first:100, orderBy:createdAt) { nodes ${issueFields} pageInfo { hasNextPage endCursor } } }`;
+const query = `query Dashboard { viewer { id name avatarSeed email admin } teams { nodes { id name key description showInitiatives states { nodes { id name color type } } members { nodes { id name avatarSeed email } } activeCycle { id name number startsAt endsAt progress } } } issues(first:100, orderBy:createdAt) { nodes ${issueFields} pageInfo { hasNextPage endCursor } } }`;
 export function storedApiToken(): string | null {
   const t = localStorage.getItem("hoja_token");
   return t && t !== "session" ? t : null;
@@ -517,6 +519,7 @@ const SHELL_VIEWS = new Set([
   "Team cycles",
   "Team cycle",
   "Team projects",
+  "Team initiatives",
   "Team views",
   "Board",
   "Cycles",
@@ -2754,6 +2757,27 @@ function App() {
         }
         onNavigate={navigate}
       />
+    ) : view === "Team initiatives" ? (
+      <InitiativesList
+        key={`team-initiatives-${location.pathname.split("/")[3] || ""}`}
+        viewer={viewer}
+        path={window.location.pathname}
+        team={teams.find(
+          (t) =>
+            t.key.toLowerCase() ===
+            location.pathname.split("/")[3]?.toLowerCase(),
+        )}
+        onNew={() =>
+          setInitiativeCreate({
+            leadTeamId: teams.find(
+              (t) =>
+                t.key.toLowerCase() ===
+                location.pathname.split("/")[3]?.toLowerCase(),
+            )?.id,
+          })
+        }
+        onOpenInitiative={openInitiative}
+      />
     ) : view === "Team projects" ? (
       <TeamProjectsPage
         team={teams.find(
@@ -3767,6 +3791,31 @@ function App() {
                                   >
                                     Projects
                                   </button>
+                                  {team.showInitiatives && (
+                                    <button
+                                      className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                      type="button"
+                                      data-team-initiatives=""
+                                      onClick={() => {
+                                        navigate(
+                                          "Team initiatives",
+                                          `/workspace/team/${team.key.toLowerCase()}/initiatives`,
+                                        );
+                                        setMobile(false);
+                                      }}
+                                      aria-current={
+                                        view === "Team initiatives" &&
+                                        location.pathname
+                                          .split("/")[3]
+                                          ?.toLowerCase() ===
+                                          team.key.toLowerCase()
+                                          ? "page"
+                                          : undefined
+                                      }
+                                    >
+                                      Initiatives
+                                    </button>
+                                  )}
                                   <button
                                     className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
                                     type="button"
@@ -4086,6 +4135,7 @@ function IssueDetailPage({
 }
 import { InitiativeRoute } from "./initiatives/InitiativeDetail";
 import { InitiativesList } from "./initiatives/InitiativesList";
+import { InitiativeSettings } from "./initiatives/InitiativeSettings";
 import { CreateInitiativeDialog } from "./initiatives/CreateInitiativeDialog";
 import { fetchAllInitiatives, type InitiativeRef } from "./initiatives/api";
 // Local-first helpers for the projects / initiatives / pulse pages (see projectStore.ts).
@@ -12278,6 +12328,7 @@ function SettingsSidebar({
         ["project-templates", "Project templates", Layers3],
       ],
     ],
+    ["Initiatives", [["initiatives", "Initiatives", Target]]],
     [
       "Administration",
       [
@@ -13686,6 +13737,8 @@ function WorkspaceSettings({
   onBack: () => void;
   onOpenCycleSettings: (team: Team) => void;
 }) {
+  if (section === "initiatives")
+    return <InitiativeSettings viewer={viewer} teams={teams} />;
   if (section === "cycles")
     return (
       <CycleSettingsIndex
@@ -16909,7 +16962,7 @@ type OrgMember = {
   admin?: boolean;
   active?: boolean;
 };
-const TEAMS_QUERY = `query Teams{teams{nodes{id name key description states{nodes{id name color type}} members{nodes{id name avatarSeed email}} activeCycle{id name number startsAt endsAt progress}}}}`;
+const TEAMS_QUERY = `query Teams{teams{nodes{id name key description showInitiatives states{nodes{id name color type}} members{nodes{id name avatarSeed email}} activeCycle{id name number startsAt endsAt progress}}}}`;
 /* Teams come from the synced workspace metadata (falls back to the App prop before the first sync).
    After a team mutation the overlay stays until a sync pull (or a GraphQL reload without sync) has the server's version. */
 function useSyncedTeams(teams: Team[], onTeamsChanged?: (t: Team[]) => void) {

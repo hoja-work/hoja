@@ -45,6 +45,8 @@ export function routeView(path: string): string {
   if (p.includes("/team/") && p.endsWith("/active")) return "Team issues";
   if (p.includes("/team/") && p.includes("/cycles")) return "Team cycles";
   if (p.includes("/team/") && p.includes("/views")) return "Team views";
+  if (p.includes("/team/") && p.includes("/initiatives"))
+    return "Team initiatives";
   if (p.includes("/team/") && p.includes("/projects")) return "Team projects";
 
   // Workspace settings. Only reached when no team-scoped route matched.

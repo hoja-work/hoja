@@ -88,8 +88,8 @@ type UserPayload {
   emailQueued: Boolean
 }
 
-input InitiativeCreateInput { name: String! summary: String description: String status: String priority: Int ownerId: String targetDate: TimelessDate projectIds: [String!] parentId: String icon: String color: String leadTeamId: String labelIds: [String!] updateReminder: String sortOrder: Float }
-input InitiativeUpdateInput { name: String summary: String description: String status: String priority: Int ownerId: String targetDate: TimelessDate projectIds: [String!] parentId: String icon: String color: String leadTeamId: String labelIds: [String!] updateReminder: String sortOrder: Float }
+input InitiativeCreateInput { name: String! summary: String description: String status: String priority: Int ownerId: String targetDate: TimelessDate projectIds: [String!] parentId: String icon: String color: String leadTeamId: String labelIds: [String!] updateReminder: String sortOrder: Float parentIds: [String!] slackChannelId: String slackChannelName: String }
+input InitiativeUpdateInput { name: String summary: String description: String status: String priority: Int ownerId: String targetDate: TimelessDate projectIds: [String!] parentId: String icon: String color: String leadTeamId: String labelIds: [String!] updateReminder: String sortOrder: Float parentIds: [String!] addParentId: String removeParentId: String slackChannelId: String slackChannelName: String }
 
 input WorkspaceUpdateInput {
   name: String

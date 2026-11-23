@@ -1,4 +1,5 @@
-/* Types, GraphQL fields and calls shared by the initiative list, page and dialogs. */
+/* Types, GraphQL fields and calls shared by the initiative list, page, dialogs and
+ * settings. */
 import { gql } from "../main";
 
 export type Person = { id: string; name?: string; avatarSeed?: string | null };
@@ -6,6 +7,9 @@ export type InitiativeLabel = {
   id: string;
   name: string;
   color?: string | null;
+  isGroup?: boolean;
+  exclusive?: boolean;
+  parent?: { id: string; name: string } | null;
 };
 export type InitiativeRef = {
   id: string;
@@ -23,6 +27,7 @@ export type InitiativeProject = {
   health?: string | null;
   targetDate?: string | null;
   lead?: { name?: string } | null;
+  teams?: { nodes: { id: string; name?: string; key?: string }[] };
 };
 export type InitiativeRow = InitiativeRef & {
   summary?: string | null;
@@ -35,14 +40,14 @@ export type InitiativeRow = InitiativeRef & {
   health?: string | null;
   owner?: Person | null;
   creator?: { id: string } | null;
-  parent?: { id: string } | null;
+  parents?: { id: string }[];
   leadTeam?: { id: string; name: string; key: string } | null;
   labels?: InitiativeLabel[];
   projects?: { nodes: InitiativeProject[] };
   allProjects?: InitiativeProject[];
 };
 
-export const LIST_FIELDS = `id identifier number name summary status priority targetDate createdAt sortOrder icon color viewerSubscribed health owner{id name avatarSeed} creator{id} parent{id} leadTeam{id name key} labels{id name color} projects{nodes{id name progress health}} allProjects{id progress state}`;
+export const LIST_FIELDS = `id identifier number name summary status priority targetDate createdAt sortOrder icon color viewerSubscribed health owner{id name avatarSeed} creator{id} parents{id} leadTeam{id name key} labels{id name color} projects{nodes{id name progress health}} allProjects{id progress state teams{nodes{id}}}`;
 
 export const INITIATIVE_STATUS_IDS = [
   "planned",
@@ -74,17 +79,62 @@ export async function fetchAllInitiatives(): Promise<InitiativeRow[]> {
   return rows;
 }
 
+const LABEL_FIELDS = "id name color isGroup exclusive parent{id name}";
+
 export async function fetchLabels(): Promise<InitiativeLabel[]> {
-  const d = await gql(`query{initiativeLabels{id name color}}`);
+  const d = await gql(`query{initiativeLabels{${LABEL_FIELDS}}}`);
   return d.initiativeLabels || [];
 }
 
-export async function createLabel(name: string): Promise<InitiativeLabel> {
+export async function createLabel(
+  name: string,
+  opts: {
+    parentId?: string | null;
+    isGroup?: boolean;
+    color?: string | null;
+  } = {},
+): Promise<InitiativeLabel> {
   const d = await gql(
-    `mutation($name:String!){initiativeLabelCreate(name:$name){id name color}}`,
-    { name },
+    `mutation($name:String!,$p:String,$g:Boolean,$c:String){initiativeLabelCreate(name:$name,parentId:$p,isGroup:$g,color:$c){${LABEL_FIELDS}}}`,
+    {
+      name,
+      p: opts.parentId || null,
+      g: Boolean(opts.isGroup),
+      c: opts.color || null,
+    },
   );
   return d.initiativeLabelCreate;
+}
+
+export async function updateLabel(
+  id: string,
+  patch: {
+    name?: string;
+    color?: string;
+    exclusive?: boolean;
+    parentId?: string;
+  },
+): Promise<InitiativeLabel> {
+  const d = await gql(
+    `mutation($id:String!,$n:String,$c:String,$x:Boolean,$p:String){initiativeLabelUpdate(id:$id,name:$n,color:$c,exclusive:$x,parentId:$p){${LABEL_FIELDS}}}`,
+    {
+      id,
+      n: patch.name ?? null,
+      c: patch.color ?? null,
+      x: patch.exclusive ?? null,
+      p: patch.parentId ?? null,
+    },
+  );
+  return d.initiativeLabelUpdate;
+}
+
+export async function archiveLabel(id: string) {
+  const d = await gql(
+    `mutation($id:String!){initiativeLabelArchive(id:$id){success}}`,
+    { id },
+  );
+  if (!d.initiativeLabelArchive?.success)
+    throw Error("The label could not be archived.");
 }
 
 export async function updateInitiative(
@@ -113,9 +163,10 @@ export async function createInitiative(
   return d.initiativeCreate.initiative;
 }
 
-/* Saved views of kind "initiative". `filters` uses the server's view filter language
- * ({status|health|owner|leadTeam|label: {is|isEitherOf: ...}}); `display` holds the
- * list's grouping, ordering and nesting. */
+/* Saved views. On the list they are kind "initiative" with the server's filter language
+ * ({status|health|owner|leadTeam|label: {is|isEitherOf: ...}}) and a display document
+ * (grouping, ordering, nesting). On an initiative page they are kind "project", scoped
+ * to the initiative, filtering its projects by state and team. */
 export type InitiativeView = {
   id: string;
   name: string;
@@ -149,4 +200,90 @@ export async function deleteInitiativeView(id: string) {
     id,
   });
   if (!d.viewDelete?.success) throw Error("The view could not be deleted.");
+}
+
+export type PageView = InitiativeView & { initiative?: { id: string } | null };
+
+export async function fetchPageViews(
+  initiativeId: string,
+): Promise<PageView[]> {
+  const d = await gql(
+    `query{views(kind:"project",scope:"initiative"){id name filters display initiative{id}}}`,
+  );
+  return ((d.views || []) as PageView[]).filter(
+    (v) => v.initiative?.id === initiativeId,
+  );
+}
+
+export async function savePageView(
+  initiativeId: string,
+  name: string,
+  filters: InitiativeView["filters"],
+): Promise<PageView> {
+  const d = await gql(
+    `mutation($input:ViewCreateInput!){viewCreate(input:$input){success view{id name filters display initiative{id}}}}`,
+    {
+      input: {
+        name,
+        kind: "project",
+        scope: "initiative",
+        initiativeId,
+        filters,
+      },
+    },
+  );
+  if (!d.viewCreate?.success || !d.viewCreate.view)
+    throw Error("The view could not be saved.");
+  return d.viewCreate.view;
+}
+
+export type ReminderPolicy = {
+  cadence: string;
+  weekday: number;
+  hour: number;
+  followUps: boolean;
+};
+export const WEEKDAYS = [
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+  "Sunday",
+];
+
+export async function fetchReminderPolicy(): Promise<ReminderPolicy> {
+  const d = await gql(
+    `query{initiativeReminderPolicy{cadence weekday hour followUps}}`,
+  );
+  return d.initiativeReminderPolicy;
+}
+
+export async function saveReminderPolicy(
+  input: Partial<ReminderPolicy>,
+): Promise<ReminderPolicy> {
+  const d = await gql(
+    `mutation($i:InitiativeReminderPolicyInput!){initiativeReminderPolicyUpdate(input:$i){cadence weekday hour followUps}}`,
+    { i: input },
+  );
+  return d.initiativeReminderPolicyUpdate;
+}
+
+export const policyLabel = (p?: ReminderPolicy | null) =>
+  !p || p.cadence === "never"
+    ? "No workspace schedule"
+    : `${{ weekly: "Every", biweekly: "Every other", monthly: "First" }[p.cadence] || ""} ${WEEKDAYS[p.weekday]}${p.cadence === "monthly" ? " of the month" : ""} at ${String(p.hour).padStart(2, "0")}:00`;
+
+export type SlackChannel = { id: string; name: string; isPrivate: boolean };
+export async function fetchSlackChannels(): Promise<SlackChannel[]> {
+  const d = await gql(`query{slackChannels{id name isPrivate}}`);
+  return d.slackChannels || [];
+}
+
+export async function setTeamShowsInitiatives(teamId: string, show: boolean) {
+  await gql(
+    `mutation($t:String!,$s:Boolean!){teamShowInitiatives(teamId:$t,show:$s){id}}`,
+    { t: teamId, s: show },
+  );
 }

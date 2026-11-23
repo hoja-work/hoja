@@ -53,7 +53,7 @@ RELOAD_ENTITIES = {"team", "teamMember"}
 META_QUERY = """query SyncMeta {
   viewer { id name email admin }
   workspace { id name urlKey }
-  teams { nodes { id name key description states { nodes { id name color type } }
+  teams { nodes { id name key description showInitiatives states { nodes { id name color type } }
     members { nodes { id name email } } activeCycle { id name number startsAt endsAt progress } } }
   projects(first: 250) { nodes { id name description state progress startDate targetDate health
     lead { name } teams { nodes { id name key } } } pageInfo { hasNextPage endCursor } }

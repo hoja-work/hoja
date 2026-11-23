@@ -217,9 +217,9 @@ def v_project(obj, info):
 
 @view_type.field("initiative")
 def v_initiative(obj, info):
-    store, _w, org, _uid = _ctx(info)
+    store, _w, org, uid = _ctx(info)
     initiative_id = obj.get("_initiative_id")
-    return store.initiative_by_id(org, initiative_id) if initiative_id else None
+    return store.initiative_by_id(org, initiative_id, viewer_id=uid) if initiative_id else None
 
 
 @view_type.field("issues")
@@ -257,7 +257,7 @@ def v_projects(obj, info, first=None):
 
 @view_type.field("initiatives")
 def v_initiatives(obj, info, first=None):
-    store, _w, org, _uid = _ctx(info)
+    store, _w, org, uid = _ctx(info)
     if obj["kind"] != "initiative":
         return _connection([])
     limit = _page(first)
@@ -267,10 +267,10 @@ def v_initiatives(obj, info, first=None):
     if extra:
         from hoja_server import initiative_api
 
-        rows = [r for r in initiative_api.with_filter_fields(store, org, store.initiatives(org, statuses=statuses, limit=500))
+        rows = [r for r in initiative_api.with_filter_fields(store, org, store.initiatives(org, statuses=statuses, limit=500, viewer_id=uid))
                 if viewdocs.initiative_matches(extra, r)][:limit + 1]
     else:
-        rows = store.initiatives(org, statuses=statuses, limit=limit + 1)
+        rows = store.initiatives(org, statuses=statuses, limit=limit + 1, viewer_id=uid)
     nodes = rows[:limit]
     if (obj.get("display") or {}).get("reverse"):
         nodes.reverse()

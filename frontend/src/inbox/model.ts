@@ -84,6 +84,7 @@ export type NotificationData = {
   total?: number;
   carriedOver?: number;
   unfinished?: number;
+  followUp?: number;
 } | null;
 
 export type InboxNotification = {
@@ -309,7 +310,9 @@ export function describe(n: InboxNotification): string {
     case "initiativeUpdateReply":
       return "replied to an update";
     case "initiativeUpdateDue":
-      return "An update on this initiative is due";
+      return data?.followUp
+        ? "Reminder: an update on this initiative is still due"
+        : "An update on this initiative is due";
     case "projectUpdated":
       return changesText(data, "updated the project");
     case "initiativeUpdated":

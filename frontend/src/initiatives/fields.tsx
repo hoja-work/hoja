@@ -34,6 +34,7 @@ export const INITIATIVE_STATUSES = [
 ] as const;
 export const PRIORITIES = ["No priority", "Urgent", "High", "Medium", "Low"];
 export const REMINDERS = [
+  { id: "default", label: "Workspace schedule" },
   { id: "never", label: "Never" },
   { id: "weekly", label: "Every week" },
   { id: "biweekly", label: "Every two weeks" },
@@ -166,6 +167,12 @@ const labelListeners = new Set<(rows: InitiativeLabel[]) => void>();
 function publishLabels(rows: InitiativeLabel[]) {
   labelCache = rows;
   labelListeners.forEach((fn) => fn(rows));
+}
+/** Reload the shared label list, after labels are edited elsewhere (Settings). */
+export function refreshInitiativeLabels() {
+  return fetchLabels()
+    .then(publishLabels)
+    .catch(() => undefined);
 }
 export function useInitiativeLabels() {
   const [rows, setRows] = useState<InitiativeLabel[]>(labelCache || []);
@@ -342,29 +349,47 @@ export function LabelMenu({
       multi
       onClose={close}
       placeholder="Search or create a label…"
-      onPick={(id) =>
-        id &&
-        onChange(
-          value.includes(id) ? value.filter((x) => x !== id) : [...value, id],
-        )
-      }
+      onPick={(id) => {
+        if (!id) return;
+        if (value.includes(id)) return onChange(value.filter((x) => x !== id));
+        /* In an exclusive group a new pick replaces the group's other label. */
+        const group = labels.find((l) => l.id === id)?.parent?.id;
+        const exclusive =
+          group && labels.find((l) => l.id === group)?.exclusive !== false;
+        const keep = exclusive
+          ? value.filter(
+              (x) => labels.find((l) => l.id === x)?.parent?.id !== group,
+            )
+          : value;
+        onChange([...keep, id]);
+      }}
       onCreate={(name) => {
         setError("");
         create(name)
           .then((l) => onChange([...value, l.id]))
           .catch((e: Error) => setError(e.message));
       }}
-      options={labels.map((l) => ({
-        id: l.id,
-        keywords: l.name,
-        selected: value.includes(l.id),
-        label: (
-          <span className="inline-flex items-center gap-2">
-            <LabelDot color={l.color} />
-            {l.name}
-          </span>
-        ),
-      }))}
+      options={labels
+        .filter((l) => !l.isGroup)
+        .sort((a, b) =>
+          `${a.parent?.name || ""} ${a.name}`.localeCompare(
+            `${b.parent?.name || ""} ${b.name}`,
+          ),
+        )
+        .map((l) => ({
+          id: l.id,
+          keywords: `${l.parent?.name || ""} ${l.name}`,
+          selected: value.includes(l.id),
+          label: (
+            <span className="inline-flex min-w-0 items-center gap-2">
+              <LabelDot color={l.color} />
+              {l.parent && (
+                <span className="text-muted">{l.parent.name} ›</span>
+              )}
+              <span className="truncate">{l.name}</span>
+            </span>
+          ),
+        }))}
       footer={
         error ? (
           <p className="m-0 p-2 text-xs text-danger" role="alert">
@@ -459,11 +484,11 @@ export function ReminderMenu({
     <PickerMenu
       label="Update reminders"
       onClose={close}
-      onPick={(id) => onPick(id === "never" ? null : id)}
+      onPick={(id) => onPick(id === "default" ? null : id)}
       options={REMINDERS.map((r) => ({
         id: r.id,
         keywords: r.label,
-        selected: (value || "never") === r.id,
+        selected: (value || "default") === r.id,
         label: r.label,
       }))}
     />

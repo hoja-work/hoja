@@ -905,10 +905,10 @@ def r_projects(_, info, filter=None, first=50, after=None):
 
 @query.field("initiatives")
 def r_initiatives(_, info, first=50, after=None, status=None):
-    store, _w, org, _uid = _ctx(info)
+    store, _w, org, uid = _ctx(info)
     first = _page_size(first)
     cursor = _decode_project_update_cursor(after, "initiative")
-    rows = store.initiatives(org, after=cursor, status=status, limit=first + 1)
+    rows = store.initiatives(org, after=cursor, status=status, limit=first + 1, viewer_id=uid)
     nodes = rows[:first]
     result = _conn(nodes)
     result["pageInfo"].update({"hasNextPage": len(rows) > first, "hasPreviousPage": after is not None, "startCursor": _project_update_cursor({"created_at": nodes[0]["createdAt"], "id": nodes[0]["id"]}) if nodes else None, "endCursor": _project_update_cursor({"created_at": nodes[-1]["createdAt"], "id": nodes[-1]["id"]}) if nodes else None})
@@ -916,8 +916,8 @@ def r_initiatives(_, info, first=50, after=None, status=None):
 
 @query.field("initiative")
 def r_initiative(_, info, id):
-    store, _w, org, _uid = _ctx(info)
-    return store.initiative_by_id(org, id)
+    store, _w, org, uid = _ctx(info)
+    return store.initiative_by_id(org, id, viewer_id=uid)
 
 
 @query.field("projectUpdates")
@@ -942,12 +942,15 @@ def r_project_updates(_, info, first=50, after=None, filter=None):
 
 @query.field("initiativeUpdates")
 def r_initiative_updates(_, info, first=50, after=None, filter=None):
-    store, _w, org, _uid = _ctx(info)
+    store, _w, org, uid = _ctx(info)
     first = _page_size(first)
     initiative_filter = (filter or {}).get("initiative") or {}
     initiative_id = (initiative_filter.get("id") or {}).get("eq")
     cursor = _decode_project_update_cursor(after, "initiative update")
     rows = store.initiative_updates(org, after=cursor, initiative_id=initiative_id, limit=first + 1)
+    # Updates of an initiative led by a private team the viewer is not on stay hidden.
+    visible = {i["id"] for i in store.initiatives(org, limit=100000, viewer_id=uid)}
+    rows = [r for r in rows if r.get("initiative_id", r.get("_initiative_id")) in visible]
     nodes = rows[:first]
     _prime(info, "user_row", [n.get("_actor_id") for n in nodes])
     result = _conn(nodes)
@@ -1994,7 +1997,7 @@ def _follow(kind, subscribed):
         if kind == "project":
             found = store.project_by_id(org, id, viewer_id=uid) or store.project_by_slug(org, id, viewer_id=uid)
         elif kind == "initiative":
-            found = store.initiative_by_id(org, id)
+            found = store.initiative_by_id(org, id, viewer_id=uid)
         else:
             found = store.cycle_by_id(org, id, viewer_id=uid)
         if not found:
@@ -2083,7 +2086,7 @@ def build_schema():
     from hoja_server.model_providers import SDL as PROVIDER_SDL
     from hoja_server.task_aliases import bind_task_surface
     from hoja_server import initiative_api
-    initiative_api.bind(Initiative, InitiativeUpdate, Project)
+    initiative_api.bind(Initiative, InitiativeUpdate, Project, Team)
     tasks_sdl = (Path(__file__).parent / "schema_tasks.graphql").read_text()
     # HOJA-491: bind Issue.sla before the alias surface copies Issue's resolvers
     # onto Task, so the agent-facing vocabulary carries the clock too.

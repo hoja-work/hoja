@@ -10,6 +10,7 @@ import {
   Box,
   Calendar,
   CornerLeftUp,
+  Hash,
   Link2,
   PanelRight,
   Pencil,
@@ -44,6 +45,7 @@ import {
   DetailTitle,
   MarkdownField,
   PropertiesGroup,
+  PickerMenu,
   PropertiesPanel,
   PropertyChip,
 } from "../graph/detail";
@@ -59,14 +61,24 @@ import {
 } from "../graph/shared";
 import { PropDropdown, PropStatic } from "../graph/tasks";
 import {
+  deleteInitiativeView,
   fetchAllInitiatives,
+  fetchPageViews,
+  fetchReminderPolicy,
+  fetchSlackChannels,
+  policyLabel,
   progressFraction,
+  updateInitiative,
+  type PageView,
+  type ReminderPolicy,
+  type SlackChannel,
   type InitiativeLabel,
   type InitiativeProject,
   type InitiativeRef,
   type Person,
 } from "./api";
 import { CreateInitiativeDialog } from "./CreateInitiativeDialog";
+import { AddPageView, InsightsTab, PageViewTab } from "./InitiativeTabs";
 import {
   DateMenu,
   HealthBadge,
@@ -111,7 +123,8 @@ export type InitiativeDetailData = {
   updateDueAt?: string | null;
   owner?: Person | null;
   creator?: Person | null;
-  parent?: InitiativeRef | null;
+  parents?: InitiativeRef[];
+  slackChannel?: { id: string; name: string } | null;
   children?: (InitiativeRef & {
     status: string;
     health?: string | null;
@@ -154,10 +167,12 @@ export type InitiativeUpdatePost = {
   reactions?: Reaction[];
   comments?: { nodes: Reply[] };
 };
-export type InitiativeTab = "overview" | "updates";
+export type InitiativeTab =
+  "overview" | "updates" | "insights" | `view:${string}`;
 
-const PROJECT_FIELDS = "id name state progress health targetDate lead{name}";
-const DETAIL_FIELDS = `id identifier number name summary description status priority targetDate createdAt updatedAt viewerSubscribed icon color health updateReminder updateDueAt owner{id name avatarSeed} creator{id name avatarSeed} subscribers{nodes{id name avatarSeed}} parent{id identifier name icon color} children{id identifier name icon color status health targetDate owner{id name avatarSeed}} leadTeam{id name key} labels{id name color} resources{id title url} projects{nodes{${PROJECT_FIELDS}}} allProjects{${PROJECT_FIELDS}} projectHealth{onTrack atRisk offTrack noUpdate} progressHistory(weeks:12){project{id name} scope points{weekStart completed}}`;
+const PROJECT_FIELDS =
+  "id name state progress health targetDate lead{name} teams{nodes{id name key}}";
+const DETAIL_FIELDS = `id identifier number name summary description status priority targetDate createdAt updatedAt viewerSubscribed icon color health updateReminder updateDueAt owner{id name avatarSeed} creator{id name avatarSeed} subscribers{nodes{id name avatarSeed}} parents{id identifier name icon color} slackChannel{id name} children{id identifier name icon color status health targetDate owner{id name avatarSeed}} leadTeam{id name key} labels{id name color} resources{id title url} projects{nodes{${PROJECT_FIELDS}}} allProjects{${PROJECT_FIELDS}} projectHealth{onTrack atRisk offTrack noUpdate} progressHistory(weeks:12){project{id name} scope points{weekStart completed}}`;
 const UPDATE_FIELDS =
   "id body health createdAt updatedAt actor{id name avatarSeed} reactions{emoji count viewerReacted users{id name}} comments{nodes{id body createdAt user{id name avatarSeed}}}";
 const REACTIONS = ["👍", "🎉", "❤️", "🚀", "👀", "🙏"];
@@ -220,7 +235,7 @@ export function InitiativeDetailPage({
   const [composing, setComposing] = useState(false);
   const [creatingSub, setCreatingSub] = useState(false);
   const [others, setOthers] = useState<
-    (InitiativeRef & { parent?: { id: string } | null })[]
+    (InitiativeRef & { parents?: { id: string }[] })[]
   >([]);
   const narrow = useNarrow();
   const [panelPref, setPanelPref] = useState(readPanelPref);
@@ -295,9 +310,29 @@ export function InitiativeDetailPage({
 
   const members = useMembers();
   const teams = useTeams();
-  const canEdit = Boolean(
-    data && (viewer.admin || (viewer.id && data.creator?.id === viewer.id)),
+  /* Any member edits an initiative, as on Linear; archiving stays with its owner, its
+   * creator or an admin. */
+  const canEdit = Boolean(data && viewer.id);
+  const canArchive = Boolean(
+    data &&
+    (viewer.admin ||
+      (viewer.id &&
+        (data.creator?.id === viewer.id || data.owner?.id === viewer.id))),
   );
+  const [policy, setPolicy] = useState<ReminderPolicy | null>(null);
+  useEffect(() => {
+    fetchReminderPolicy()
+      .then(setPolicy)
+      .catch(() => undefined);
+  }, []);
+  const [pageViews, setPageViews] = useState<PageView[]>([]);
+  const [addingView, setAddingView] = useState(false);
+  useEffect(() => {
+    if (data?.id)
+      fetchPageViews(data.id)
+        .then(setPageViews)
+        .catch(() => undefined);
+  }, [data?.id]);
 
   /* Property edits apply at once and roll back if the server refuses them. */
   const change = async (
@@ -493,7 +528,7 @@ export function InitiativeDetailPage({
     while (grew) {
       grew = false;
       for (const o of others) {
-        if (o.parent?.id && out.has(o.parent.id) && !out.has(o.id)) {
+        if (!out.has(o.id) && (o.parents || []).some((p) => out.has(p.id))) {
           out.add(o.id);
           grew = true;
         }
@@ -501,16 +536,38 @@ export function InitiativeDetailPage({
     }
     return out;
   }, [data, others]);
-  const parentOptions = others.filter((o) => !below.has(o.id));
+  const currentParents = new Set((data?.parents || []).map((p) => p.id));
+  const parentOptions = others.filter(
+    (o) => !below.has(o.id) && !currentParents.has(o.id),
+  );
+  /* Existing initiatives that can become a sub-initiative here: not this one, not
+   * already a child, and not above it (that would close a loop). */
+  const above = useMemo(() => {
+    const out = new Set<string>();
+    let frontier = (data?.parents || []).map((p) => p.id);
+    while (frontier.length) {
+      frontier.forEach((id) => out.add(id));
+      frontier = others
+        .filter((o) => frontier.includes(o.id))
+        .flatMap((o) => (o.parents || []).map((p) => p.id))
+        .filter((id) => !out.has(id));
+    }
+    return out;
+  }, [data, others]);
+  const childIds = new Set((data?.children || []).map((c) => c.id));
+  const childOptions = others.filter(
+    (o) => o.id !== data?.id && !childIds.has(o.id) && !above.has(o.id),
+  );
+  const firstParent = data?.parents?.[0];
 
   const crumbs = (
     <>
       <Crumb onClick={onBack}>Initiatives</Crumb>
       <CrumbSep />
-      {data?.parent && (
+      {firstParent && (
         <>
-          <Crumb onClick={() => onOpenInitiative(data.parent!.id)}>
-            {data.parent.name}
+          <Crumb onClick={() => onOpenInitiative(firstParent.id)}>
+            {firstParent.name}
           </Crumb>
           <CrumbSep />
         </>
@@ -670,18 +727,25 @@ export function InitiativeDetailPage({
         label="Reminders"
         icon={<BellRing size={14} aria-hidden />}
         value={
-          REMINDERS.find((r) => r.id === (data.updateReminder || "never"))
-            ?.label || "Never"
+          data.updateReminder
+            ? REMINDERS.find((r) => r.id === data.updateReminder)?.label ||
+              data.updateReminder
+            : `Workspace: ${policyLabel(policy)}`
         }
         disabled={!canEdit}
         onPick={(rid) => {
-          const updateReminder = rid === "never" ? null : rid;
-          void change({ updateReminder }, { updateReminder });
+          const updateReminder = rid === "default" ? null : rid;
+          void change({ updateReminder }, { updateReminder }).then(() =>
+            load(),
+          );
         }}
         options={REMINDERS.map((r) => ({
           id: r.id,
-          selected: (data.updateReminder || "never") === r.id,
-          label: r.label,
+          selected: (data.updateReminder || "default") === r.id,
+          label:
+            r.id === "default"
+              ? `Workspace schedule (${policyLabel(policy)})`
+              : r.label,
         }))}
       />
       {data.updateDueAt && (
@@ -724,47 +788,104 @@ export function InitiativeDetailPage({
           <span className="text-sm text-muted">No labels</span>
         )}
       </div>
-      <PropertiesGroup>Parent initiative</PropertiesGroup>
-      <div className="flex flex-wrap items-center gap-1.5 py-1">
-        {data.parent && (
-          <button
-            type="button"
-            className="inline-flex min-w-0 items-center gap-1.5 text-sm hover:underline"
-            onClick={() => onOpenInitiative(data.parent!.id)}
+      <PropertiesGroup>Parent initiatives</PropertiesGroup>
+      <div
+        className="flex flex-wrap items-center gap-1.5 py-1"
+        data-initiative-parents=""
+      >
+        {(data.parents || []).map((p) => (
+          <span
+            key={p.id}
+            className="inline-flex max-w-full items-center gap-1 rounded-md border border-line px-1.5 py-0.5 text-sm"
           >
-            <InitiativeIcon icon={data.parent.icon} color={data.parent.color} />
-            <span className="truncate">{data.parent.name}</span>
-          </button>
-        )}
+            <button
+              type="button"
+              className="inline-flex min-w-0 items-center gap-1.5 hover:underline"
+              onClick={() => onOpenInitiative(p.id)}
+            >
+              <InitiativeIcon icon={p.icon} color={p.color} />
+              <span className="truncate">{p.name}</span>
+            </button>
+            {canEdit && (
+              <button
+                type="button"
+                aria-label={`Remove parent ${p.name}`}
+                className="grid place-items-center rounded text-muted hover:text-foreground"
+                onClick={() =>
+                  void change(
+                    { removeParentId: p.id },
+                    {
+                      parents: (data.parents || []).filter(
+                        (x) => x.id !== p.id,
+                      ),
+                    },
+                  ).then(loadOthers)
+                }
+              >
+                <X size={12} />
+              </button>
+            )}
+          </span>
+        ))}
         {canEdit ? (
           <PropertyChip
-            label="Set parent initiative"
+            label="Add parent initiative"
             icon={<CornerLeftUp size={13} aria-hidden />}
             menu={(close) => (
               <InitiativeMenu
                 label="Parent initiative"
-                value={data.parent?.id}
                 options={parentOptions}
                 close={close}
                 onPick={(parentId) =>
+                  parentId &&
                   void change(
-                    { parentId },
+                    { addParentId: parentId },
                     {
-                      parent:
-                        (others.find(
-                          (o) => o.id === parentId,
-                        ) as InitiativeRef) || null,
+                      parents: [
+                        ...(data.parents || []),
+                        others.find((o) => o.id === parentId) as InitiativeRef,
+                      ],
                     },
                   ).then(loadOthers)
                 }
               />
             )}
           >
-            {data.parent ? "Change" : "Set parent"}
+            {(data.parents || []).length ? "Add" : "Add parent"}
           </PropertyChip>
         ) : (
-          !data.parent && <span className="text-sm text-muted">None</span>
+          !(data.parents || []).length && (
+            <span className="text-sm text-muted">None</span>
+          )
         )}
+      </div>
+      <PropertiesGroup>Slack channel</PropertiesGroup>
+      <div className="flex flex-wrap items-center gap-1.5 py-1">
+        <PropertyChip
+          label={`Slack channel: ${data.slackChannel?.name || "none"}`}
+          icon={<Hash size={13} aria-hidden />}
+          menu={
+            canEdit
+              ? (close) => (
+                  <SlackChannelMenu
+                    value={data.slackChannel?.id}
+                    close={close}
+                    onPick={(ch) =>
+                      void change(
+                        {
+                          slackChannelId: ch?.id || null,
+                          slackChannelName: ch?.name || null,
+                        },
+                        { slackChannel: ch },
+                      )
+                    }
+                  />
+                )
+              : undefined
+          }
+        >
+          {data.slackChannel ? `#${data.slackChannel.name}` : "Link a channel"}
+        </PropertyChip>
       </div>
       <PropertiesGroup>Health</PropertiesGroup>
       <div className="flex min-h-8 items-center gap-2 text-sm">
@@ -860,6 +981,10 @@ export function InitiativeDetailPage({
                             icon: <Plus size={14} />,
                             onSelect: () => setCreatingSub(true),
                           },
+                        ]
+                      : []),
+                    ...(canArchive
+                      ? [
                           {
                             key: "archive",
                             label: "Archive initiative",
@@ -905,8 +1030,25 @@ export function InitiativeDetailPage({
                   ),
                   href: `/workspace/initiative/${data.identifier}/updates`,
                 },
+                {
+                  id: "insights",
+                  label: "Insights",
+                  href: `/workspace/initiative/${data.identifier}/insights`,
+                },
+                ...pageViews.map((v) => ({
+                  id: `view:${v.id}` as InitiativeTab,
+                  label: v.name,
+                  href: `/workspace/initiative/${data.identifier}/view/${v.id}`,
+                })),
               ]}
             />
+            <IconBtn
+              label="New view of this initiative"
+              title="New view"
+              onClick={() => setAddingView(true)}
+            >
+              <Plus size={14} />
+            </IconBtn>
             <IconBtn
               label={panelShown ? "Hide properties" : "Show properties"}
               title={panelShown ? "Hide properties" : "Show properties"}
@@ -930,7 +1072,45 @@ export function InitiativeDetailPage({
                 {actionError}
               </DetailNotice>
             )}
-            {tab === "updates" ? (
+            {addingView ? (
+              <AddPageView
+                initiativeId={data.id}
+                projects={allProjects}
+                onCancel={() => setAddingView(false)}
+                onSaved={(v) => {
+                  setPageViews((cur) => [...cur, v]);
+                  setAddingView(false);
+                  onTab(`view:${v.id}`);
+                }}
+              />
+            ) : tab === "insights" ? (
+              <InsightsTab id={data.id} />
+            ) : tab.startsWith("view:") ? (
+              (() => {
+                const v = pageViews.find((x) => `view:${x.id}` === tab);
+                return v ? (
+                  <PageViewTab
+                    view={v}
+                    projects={allProjects}
+                    onOpenProject={onOpenProject}
+                    onDelete={() =>
+                      void deleteInitiativeView(v.id)
+                        .then(() => {
+                          setPageViews((cur) =>
+                            cur.filter((x) => x.id !== v.id),
+                          );
+                          onTab("overview");
+                        })
+                        .catch((e: Error) => setActionError(e.message))
+                    }
+                  />
+                ) : (
+                  <p className="text-sm text-muted" role="status">
+                    Loading view…
+                  </p>
+                );
+              })()
+            ) : tab === "updates" ? (
               <UpdatesFeed
                 updates={updates}
                 viewer={viewer}
@@ -1031,13 +1211,38 @@ export function InitiativeDetailPage({
                   }
                   actions={
                     canEdit && (
-                      <IconBtn
-                        label="New sub-initiative"
-                        title="New sub-initiative"
-                        onClick={() => setCreatingSub(true)}
-                      >
-                        <Plus size={14} />
-                      </IconBtn>
+                      <>
+                        <PropertyChip
+                          label="Add an existing initiative as a sub-initiative"
+                          menu={(close) => (
+                            <InitiativeMenu
+                              label="Add existing"
+                              options={childOptions}
+                              close={close}
+                              onPick={(childId) =>
+                                childId &&
+                                void run(() =>
+                                  updateInitiative(childId, {
+                                    addParentId: data.id,
+                                  }),
+                                ).then(() => {
+                                  void load();
+                                  loadOthers();
+                                })
+                              }
+                            />
+                          )}
+                        >
+                          Add existing
+                        </PropertyChip>
+                        <IconBtn
+                          label="New sub-initiative"
+                          title="New sub-initiative"
+                          onClick={() => setCreatingSub(true)}
+                        >
+                          <Plus size={14} />
+                        </IconBtn>
+                      </>
                     )
                   }
                 >
@@ -1677,9 +1882,15 @@ export function parseInitiativePath(path: string): {
 } {
   const rest = path.split("/").filter(Boolean);
   const at = rest.indexOf("initiative");
+  const sub = rest[at + 2];
   return {
     id: decodeURIComponent(rest[at + 1] || ""),
-    tab: rest[at + 2] === "updates" ? "updates" : "overview",
+    tab:
+      sub === "updates" || sub === "insights"
+        ? sub
+        : sub === "view" && rest[at + 3]
+          ? `view:${rest[at + 3]}`
+          : "overview",
   };
 }
 
@@ -1698,10 +1909,16 @@ export function InitiativeRoute(
     return () => window.removeEventListener("popstate", onPop);
   }, []);
   const go = (id: string, tab: InitiativeTab) => {
+    const suffix =
+      tab === "overview"
+        ? ""
+        : tab.startsWith("view:")
+          ? `/view/${tab.slice(5)}`
+          : `/${tab}`;
     history.pushState(
       {},
       "",
-      `/workspace/initiative/${encodeURIComponent(id)}${tab === "updates" ? "/updates" : ""}`,
+      `/workspace/initiative/${encodeURIComponent(id)}${suffix}`,
     );
     setRoute({ id, tab });
   };
@@ -2209,5 +2426,62 @@ function InitiativeActivity({
         <b>{data.creator?.name || "Someone"}</b> created the initiative
       </ActivityLine>
     </div>
+  );
+}
+
+/** Pick the Slack channel whose messages feed "Write with agent". Lists what the
+ * viewer's connected Slack account can read. */
+function SlackChannelMenu({
+  value,
+  onPick,
+  close,
+}: {
+  value?: string | null;
+  onPick: (channel: { id: string; name: string } | null) => void;
+  close: () => void;
+}) {
+  const [channels, setChannels] = useState<SlackChannel[] | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    fetchSlackChannels()
+      .then(setChannels)
+      .catch((e: Error) => setError(e.message));
+  }, []);
+  if (error)
+    return (
+      <p className="m-0 p-2 text-sm text-danger" role="alert">
+        {error}
+      </p>
+    );
+  if (!channels)
+    return (
+      <p className="m-0 p-2 text-sm text-muted" role="status">
+        Loading channels…
+      </p>
+    );
+  if (!channels.length)
+    return (
+      <p className="m-0 p-2 text-sm text-muted">
+        Connect Slack under Settings → Connections to link a channel. Drafts
+        then read what was said there since the last update.
+      </p>
+    );
+  return (
+    <PickerMenu
+      label="Slack channel"
+      onClose={close}
+      onPick={(id) =>
+        onPick(id ? channels.find((c) => c.id === id) || null : null)
+      }
+      options={[
+        { id: null, keywords: "none", selected: !value, label: "No channel" },
+        ...channels.map((c) => ({
+          id: c.id,
+          keywords: c.name,
+          selected: c.id === value,
+          label: `${c.isPrivate ? "🔒 " : "#"}${c.name}`,
+        })),
+      ]}
+    />
   );
 }

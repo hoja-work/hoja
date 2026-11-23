@@ -40,7 +40,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 89
+CURRENT_SCHEMA_REVISION = 90
 
 log = logging.getLogger(__name__)
 
@@ -1070,6 +1070,8 @@ team = Table(
     # Departments are teams with children. Not an access boundary: visibility is.
     Column("parent_team_id", String, ForeignKey("team.id"), index=True),
     Column("visibility", String, nullable=False, default="public"),
+    # Revision 90: the team's sidebar lists Initiatives (Linear's team initiatives).
+    Column("show_initiatives", Boolean, nullable=False, default=False),
     Column("timezone", String),
     Column("cadence_enabled", Boolean, nullable=False, default=False),
     Column("cadence_weekday", Integer),
@@ -1691,6 +1693,37 @@ initiative = Table(
     Column("update_reminder", String),
     # When the owner was last reminded, so one overdue period sends one reminder.
     Column("reminder_sent_at", String),
+    # Revision 90: follow-ups sent for the current reminder (0, 1 or 2), and the Slack
+    # channel whose recent messages feed "write with agent" drafts.
+    Column("reminder_followups", Integer),
+    Column("slack_channel_id", String),
+    Column("slack_channel_name", String),
+)
+
+# Revision 90: an initiative may have several parents (Linear's sub-initiatives).
+# ``initiative.parent_id`` is kept only as the legacy single-parent column; reads and
+# writes go through this table.
+initiative_parent = Table(
+    "initiative_parent",
+    metadata,
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("initiative_id", String, ForeignKey("initiative.id"), primary_key=True),
+    Column("parent_id", String, ForeignKey("initiative.id"), primary_key=True, index=True),
+    Column("created_at", String, nullable=False),
+)
+
+# Revision 90: the workspace's initiative update schedule (Settings > Initiatives).
+initiative_reminder_policy = Table(
+    "initiative_reminder_policy",
+    metadata,
+    Column("organization_id", String, ForeignKey("organization.id"), primary_key=True),
+    # never, weekly, biweekly or monthly
+    Column("cadence", String, nullable=False, default="never"),
+    # 0 = Monday ... 6 = Sunday, in the owner's timezone
+    Column("weekday", Integer, nullable=False, default=4),
+    Column("hour", Integer, nullable=False, default=9),
+    Column("follow_ups", Boolean, nullable=False, default=True),
+    Column("updated_at", String, nullable=False),
 )
 
 # Revision 88: workspace-wide initiative labels, and which initiatives carry them.
@@ -1703,6 +1736,11 @@ initiative_label = Table(
     Column("color", String),
     Column("created_at", String, nullable=False),
     Column("archived_at", String),
+    # Revision 90: label groups. A group is a label with is_group set; its members point
+    # at it with parent_id. An exclusive group allows one of its labels per initiative.
+    Column("parent_id", String, index=True),
+    Column("is_group", Boolean, nullable=False, default=False),
+    Column("exclusive", Boolean, nullable=False, default=True),
 )
 
 initiative_label_link = Table(
@@ -3585,6 +3623,33 @@ def _apply_initiative_structure(conn):
         "CREATE INDEX IF NOT EXISTS ix_comment_initiative_update_id ON comment (initiative_update_id)")
 
 
+def _apply_initiative_enterprise(conn):
+    """Revision 90: several parents per initiative, label groups, the workspace update
+    schedule with follow-ups, an initiative Slack channel, and team initiatives."""
+    def add(table_name: str, columns: tuple) -> None:
+        existing = {column["name"] for column in inspect(conn).get_columns(table_name)}
+        for name, sql_type in columns:
+            if name not in existing:
+                conn.exec_driver_sql(f"ALTER TABLE {table_name} ADD COLUMN {name} {sql_type}")
+    add("initiative", (("reminder_followups", "INTEGER"), ("slack_channel_id", "VARCHAR"),
+                       ("slack_channel_name", "VARCHAR")))
+    add("initiative_label", (("parent_id", "VARCHAR"),
+                             ("is_group", "BOOLEAN NOT NULL DEFAULT FALSE"),
+                             ("exclusive", "BOOLEAN NOT NULL DEFAULT TRUE")))
+    add("team", (("show_initiatives", "BOOLEAN NOT NULL DEFAULT FALSE"),))
+    initiative_parent.create(conn, checkfirst=True)
+    initiative_reminder_policy.create(conn, checkfirst=True)
+    ts = now_iso()
+    rows = conn.execute(select(initiative.c.id, initiative.c.parent_id, initiative.c.organization_id)
+                        .where(initiative.c.parent_id.is_not(None))).all()
+    for ident, parent, org_id in rows:
+        exists = conn.execute(select(initiative_parent.c.parent_id).where(and_(
+            initiative_parent.c.initiative_id == ident, initiative_parent.c.parent_id == parent))).first()
+        if not exists:
+            conn.execute(initiative_parent.insert().values(
+                organization_id=org_id, initiative_id=ident, parent_id=parent, created_at=ts))
+
+
 def _apply_tailnet(conn):
     """``tailnet`` and ``tailnet_machine``: Tailscale-connected machines (HOJA-602)."""
     tailnet.create(conn, checkfirst=True)
@@ -4028,6 +4093,9 @@ _MIGRATIONS = {
     # 89: OAuth app sign-in: authorized apps, device codes, the hoja-cli client,
     # and the workspace oauthClients policy.
     89: _apply_oauth_app_signin,
+    # 90: several parents per initiative, label groups, the update schedule with
+    # follow-ups, an initiative Slack channel, and team initiatives.
+    90: _apply_initiative_enterprise,
 }
 
 
