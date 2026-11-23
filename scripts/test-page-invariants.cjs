@@ -46,7 +46,10 @@ const invariants = () => {
   if (main && shell) {
     const mr = main.getBoundingClientRect(), sr = shell.getBoundingClientRect();
     const ms = getComputedStyle(main), ss = getComputedStyle(shell);
+    const topbar = document.querySelector('[data-topbar]');
+    const topAnchor = topbar && visible(topbar) ? topbar.getBoundingClientRect().bottom : 0;
     if (Math.abs(sr.left - mr.left) > 1) out.push(`content shell has a left gap (${Math.round(sr.left - mr.left)}px)`);
+    if (sr.top - topAnchor > 16) out.push(`content shell has a top gap (${Math.round(sr.top - topAnchor)}px)`);
     if (sr.right > mr.right + 1) out.push('content shell overflows the main surface');
     if (sr.width < 1 || sr.height < 1) out.push('content shell has no size');
     if (ms.borderTopLeftRadius !== '0px') out.push(`main gap surface is rounded (${ms.borderTopLeftRadius})`);
@@ -76,11 +79,11 @@ const invariants = () => {
     assert.ok(issues.length && projectId, 'seed data missing');
 
     const src = fs.readFileSync(path.join(repo, 'frontend/src/main.tsx'), 'utf8');
-    const sectionLine = src.split('\n').find(l => l.includes('const sections='));
-    assert.ok(sectionLine, 'sidebar sections not found in main.tsx');
-    const labels = [...sectionLine.matchAll(/\['([^']+)',\s*[A-Za-z]+\]/g)].map(m => m[1]);
-    assert.ok(labels.length >= 10, `expected sidebar entries, found ${labels.length}`);
-    const details = [`/workspace/issue/${issues[0]}`, `/workspace/project/${projectId}`];
+    const sectionMatch = src.match(/const sections\s*=\s*\[[\s\S]*?\]\s*(?:as const)?;/);
+    assert.ok(sectionMatch, 'sidebar sections not found in main.tsx');
+    const labels = [...sectionMatch[0].matchAll(/\[\s*['"]([^'"]+)['"]\s*,\s*[A-Za-z][A-Za-z0-9]*\s*\]/g)].map(m => m[1]);
+    assert.ok(labels.length >= 9 && labels.includes('Leaderboard'), `expected sidebar entries including Leaderboard, found ${labels.length}: ${labels.join(', ')}`);
+    const details = [`/workspace/issue/${issues[0]}`, `/workspace/project/${projectId}`, '/workspace/member'];
     const extraCss = process.env.PAGE_EXTRA_CSS ? fs.readFileSync(process.env.PAGE_EXTRA_CSS, 'utf8') : '';
 
     browser = await chromium.launch({ headless: true });

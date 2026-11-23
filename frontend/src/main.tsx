@@ -4652,7 +4652,7 @@ function App() {
           </aside>
         </>
         <div
-          className="min-w-0 flex-1 bg-bg min-h-0 overflow-hidden shell-phone:flex shell-phone:flex-col shell-desktop:col-start-2 shell-desktop:row-start-2 has-data-my-issues-view:row-span-2 has-data-pulse-page:row-span-2 has-data-inbox-page:row-span-2 has-data-initiatives-page:row-span-2 has-data-projects-reference:row-span-2 has-data-project-reference:row-span-2 has-data-workspace-views-page:row-span-2 has-data-mt-page:row-span-2 has-data-settings-page:row-span-2 shell-desktop:data-headerless:row-start-1! shell-desktop:data-headerless:row-span-2"
+          className="min-w-0 flex-1 bg-bg min-h-0 overflow-hidden shell-phone:flex shell-phone:flex-col shell-desktop:col-start-2 shell-desktop:row-start-1 shell-desktop:row-span-2"
           data-workspace-content=""
           data-headerless={HEADERLESS_VIEWS.has(view) ? "" : undefined}
         >
