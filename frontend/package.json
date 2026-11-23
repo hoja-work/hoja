@@ -19,6 +19,7 @@
     "test:task-parity": "node ../scripts/test-task-surface-parity.cjs",
     "test:board-prefill": "node ../scripts/ui-probes/board-create-prefill.cjs",
     "test:board-swipe": "node ../scripts/ui-probes/board-swipe-scroll.cjs",
+    "test:task-toolbar": "node ../scripts/ui-probes/task-toolbar-placement.cjs",
     "test:project-overview": "node ../scripts/test-project-overview.cjs",
     "test:project-activity": "node ../scripts/test-project-activity.cjs",
     "test:markdown": "node ../scripts/test-markdown-conformance.cjs && node ../scripts/test-markdown-surfaces.cjs",

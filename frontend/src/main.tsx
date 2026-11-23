@@ -3299,43 +3299,40 @@ function App() {
       </section>
     ) : view === "My issues" ? (
       <>
-        <div
-          className="m-0 flex h-11 min-h-11 flex-none items-center gap-1 border-b border-line bg-bg px-4 py-0 text-foreground"
-          data-page-head=""
-          data-my-issues-head=""
-        >
-          <MobileNavTrigger />
-          <div>
-            <h1 className="text-sm font-medium leading-normal tracking-[-.045em] text-foreground">
-              {displayLabel("My issues")}
-            </h1>
-            <p className="mt-1.5 mr-0 mb-0 ml-0 text-muted max-sm:text-xs hidden [@media_(max-width:560px)]:text-[12px]">
-              {viewer.name} · {workspace.name}
-            </p>
-          </div>
-          <div
-            className="flex items-center gap-2 max-md:gap-1.5 hidden shell-phone:gap-1.5"
-            data-page-actions=""
-          >
-            <button
-              className="inline-flex items-center justify-center gap-1.75 rounded-md border border-line bg-panel pl-2.75 pr-2.75 pt-2 pb-2 text-inherit transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 max-md:pt-2 max-md:pr-2 max-md:pb-2 max-md:pl-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:pt-2 shell-phone:pr-2 shell-phone:pb-2 shell-phone:pl-2"
-              data-control-outline=""
-              onClick={() => setCommandOpen(true)}
-            >
-              <Search size={15} />
-              Search
-            </button>
-            <button
-              className="inline-flex min-h-11 items-center justify-center gap-1.75 rounded-lg bg-accent pl-3.5 pr-3.5 pt-2.25 pb-2.25 text-white font-[650] shadow-[none] transition-colors duration-150 ease-out hover:brightness-110 hover:transition-none active:translate-y-px disabled:cursor-wait disabled:opacity-65 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 max-sm:pt-2 max-sm:pr-2 max-sm:pb-2 max-sm:pl-2 max-md:w-auto max-md:text-xs max-md:pt-2 max-md:pr-2.5 max-md:pb-2 max-md:pl-2.5 max-md:text-sm shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 [@media_(max-width:560px)]:text-[0] [@media_(max-width:560px)]:pt-2.25 [@media_(max-width:560px)]:pr-2.25 [@media_(max-width:560px)]:pb-2.25 [@media_(max-width:560px)]:pl-2.25 disabled:opacity-[.65] shell-phone:w-auto shell-phone:text-[12px] shell-phone:pt-2 shell-phone:pr-2.5 shell-phone:pb-2 shell-phone:pl-2.5"
-              data-control-primary=""
-              onClick={() => openNewIssue()}
-            >
-              <Plus size={16} />
-              New task
-            </button>
-          </div>
-        </div>
         <MyIssuesContent
+          head={
+            <>
+              <div>
+                <h1 className="text-sm font-medium leading-normal tracking-[-.045em] text-foreground">
+                  {displayLabel("My issues")}
+                </h1>
+                <p className="mt-1.5 mr-0 mb-0 ml-0 text-muted max-sm:text-xs hidden [@media_(max-width:560px)]:text-[12px]">
+                  {viewer.name} · {workspace.name}
+                </p>
+              </div>
+              <div
+                className="flex items-center gap-2 max-md:gap-1.5 hidden shell-phone:gap-1.5"
+                data-page-actions=""
+              >
+                <button
+                  className="inline-flex items-center justify-center gap-1.75 rounded-md border border-line bg-panel pl-2.75 pr-2.75 pt-2 pb-2 text-inherit transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 max-md:pt-2 max-md:pr-2 max-md:pb-2 max-md:pl-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:pt-2 shell-phone:pr-2 shell-phone:pb-2 shell-phone:pl-2"
+                  data-control-outline=""
+                  onClick={() => setCommandOpen(true)}
+                >
+                  <Search size={15} />
+                  Search
+                </button>
+                <button
+                  className="inline-flex min-h-11 items-center justify-center gap-1.75 rounded-lg bg-accent pl-3.5 pr-3.5 pt-2.25 pb-2.25 text-white font-[650] shadow-[none] transition-colors duration-150 ease-out hover:brightness-110 hover:transition-none active:translate-y-px disabled:cursor-wait disabled:opacity-65 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 max-sm:pt-2 max-sm:pr-2 max-sm:pb-2 max-sm:pl-2 max-md:w-auto max-md:text-xs max-md:pt-2 max-md:pr-2.5 max-md:pb-2 max-md:pl-2.5 max-md:text-sm shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 [@media_(max-width:560px)]:text-[0] [@media_(max-width:560px)]:pt-2.25 [@media_(max-width:560px)]:pr-2.25 [@media_(max-width:560px)]:pb-2.25 [@media_(max-width:560px)]:pl-2.25 disabled:opacity-[.65] shell-phone:w-auto shell-phone:text-[12px] shell-phone:pt-2 shell-phone:pr-2.5 shell-phone:pb-2 shell-phone:pl-2.5"
+                  data-control-primary=""
+                  onClick={() => openNewIssue()}
+                >
+                  <Plus size={16} />
+                  New task
+                </button>
+              </div>
+            </>
+          }
           tabs={
             <TaskViewTabs
               label="My task views"
@@ -5313,6 +5310,7 @@ function MyIssuesContent({
   onOpenIssue,
   tab,
   tabs,
+  head,
   activityEvents = NO_EVENTS,
   activityHasMore = false,
   activityLoading = false,
@@ -5339,6 +5337,10 @@ function MyIssuesContent({
   onOpenIssue: (issue: Issue) => void;
   tab: MyIssuesTab;
   tabs?: React.ReactNode;
+  /* The page title. When given, the content draws the page's title bar itself and puts the
+   * layout, filter and display buttons on its right, so they sit on the title row instead of
+   * taking a row of their own under the tabs. */
+  head?: React.ReactNode;
   activityEvents?: IssueActivityEvent[];
   activityHasMore?: boolean;
   activityLoading?: boolean;
@@ -5675,900 +5677,925 @@ function MyIssuesContent({
   const toolbarRef = useRef<HTMLDivElement>(null),
     filterPanelRef = useRef<HTMLDivElement>(null),
     displayPanelRef = useRef<HTMLDivElement>(null);
-  return (
+  const toolbar = (
     <div
-      className="relative flex p-4 gap-4 min-h-0 min-w-0 flex-1 flex-col bg-bg text-foreground max-md:flex-1 max-md:flex max-md:flex-col max-md:min-h-0 max-md:h-auto [&_[data-my-issue-group]>header_button:last-child:not(:first-child)]:ml-auto shell-phone:flex-1 shell-desktop:min-h-0 shell-phone:min-h-0 shell-phone:h-auto [@media(max-height:500px)]:has-[[data-issues-board]]:overflow-y-auto [@media(max-height:500px)]:has-[[data-issues-board]]:overscroll-contain"
-      data-my-issues-view=""
+      className="ml-auto flex flex-none items-center gap-1.5 bg-bg  text-foreground"
+      data-my-issue-toolbar=""
+      ref={toolbarRef}
     >
-      <div
-        className="flex min-w-0 shrink-0 flex-wrap items-center gap-2"
-        data-my-issue-header=""
+      <LayoutSwitch layout={layout} onChange={onLayoutChange} />
+      <UIPopover
+        open={filterOpen}
+        onOpenChange={(open) => {
+          setFilterOpen(open);
+          if (open) setDisplayOpen(false);
+        }}
       >
-        {tabs}
-        <div
-          className="ml-auto flex flex-none items-center gap-1.5 bg-bg  text-foreground"
-          data-my-issue-toolbar=""
-          ref={toolbarRef}
-        >
-          <LayoutSwitch layout={layout} onChange={onLayoutChange} />
-          <UIPopover
-            open={filterOpen}
-            onOpenChange={(open) => {
-              setFilterOpen(open);
-              if (open) setDisplayOpen(false);
-            }}
+        <PopoverTrigger asChild>
+          <button
+            className="inline-flex size-7 flex-none items-center justify-center gap-1.5 rounded-full border border-line bg-panel  text-sm text-foreground hover:bg-subtle aria-expanded:bg-accent-soft aria-expanded:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 pointer-coarse:min-h-11"
+            aria-label="Add filter"
+            aria-expanded={filterOpen}
           >
-            <PopoverTrigger asChild>
-              <button
-                className="inline-flex size-7 flex-none items-center justify-center gap-1.5 rounded-full border border-line bg-panel  text-sm text-foreground hover:bg-subtle aria-expanded:bg-accent-soft aria-expanded:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 pointer-coarse:min-h-11"
-                aria-label="Add filter"
-                aria-expanded={filterOpen}
-              >
-                <ListFilter size={16} />
-              </button>
-            </PopoverTrigger>
-            <PopoverContent
-              align="end"
-              side="bottom"
-              sideOffset={4}
-              collisionPadding={8}
-              className="z-50 grid w-[min(245px,calc(100vw-35px))] max-w-full max-h-[min(calc(100dvh-110px),var(--radix-popover-content-available-height))] content-start gap-2.5 overflow-y-auto overscroll-contain rounded-[9px] border-line bg-panel p-3 text-[12px] text-foreground shadow-[0_12px_32px_#0002] max-sm:w-[calc(100vw-16px)] max-sm:p-4 max-sm:text-sm"
-              data-my-issue-popover=""
-              aria-label="Task filters"
-              onCloseAutoFocus={(event) => event.preventDefault()}
-              onEscapeKeyDown={() =>
-                toolbarRef.current
-                  ?.querySelector<HTMLButtonElement>(
-                    '[aria-label="Add filter"]',
-                  )
-                  ?.focus()
-              }
-              ref={filterPanelRef}
+            <ListFilter size={16} />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="end"
+          side="bottom"
+          sideOffset={4}
+          collisionPadding={8}
+          className="z-50 grid w-[min(245px,calc(100vw-35px))] max-w-full max-h-[min(calc(100dvh-110px),var(--radix-popover-content-available-height))] content-start gap-2.5 overflow-y-auto overscroll-contain rounded-[9px] border-line bg-panel p-3 text-[12px] text-foreground shadow-[0_12px_32px_#0002] max-sm:w-[calc(100vw-16px)] max-sm:p-4 max-sm:text-sm"
+          data-my-issue-popover=""
+          aria-label="Task filters"
+          onCloseAutoFocus={(event) => event.preventDefault()}
+          onEscapeKeyDown={() =>
+            toolbarRef.current
+              ?.querySelector<HTMLButtonElement>('[aria-label="Add filter"]')
+              ?.focus()
+          }
+          ref={filterPanelRef}
+        >
+          <div
+            className="grid gap-1"
+            data-my-status-filter=""
+            role="group"
+            aria-label="Status"
+          >
+            <span>Status</span>
+            <button
+              type="button"
+              aria-pressed={!status}
+              className="flex w-full items-center rounded-md bg-transparent pl-1.5 pr-1.5 pt-1 pb-1 text-left text-[#4f5d9d] aria-pressed:bg-accent-soft aria-pressed:font-semibold shell-phone:min-h-11 shell-phone:px-2"
+              data-my-status-filter-all=""
+              onClick={() => setStatus("")}
             >
-              <div
-                className="grid gap-1"
-                data-my-status-filter=""
-                role="group"
-                aria-label="Status"
-              >
-                <span>Status</span>
+              All statuses
+            </button>
+            <div
+              className="grid grid-cols-2 gap-x-2 gap-y-0.5"
+              data-my-status-filter-grid=""
+            >
+              {states.map((s) => (
                 <button
+                  key={s.id}
                   type="button"
-                  aria-pressed={!status}
-                  className="flex w-full items-center rounded-md bg-transparent pl-1.5 pr-1.5 pt-1 pb-1 text-left text-[#4f5d9d] aria-pressed:bg-accent-soft aria-pressed:font-semibold shell-phone:min-h-11 shell-phone:px-2"
-                  data-my-status-filter-all=""
-                  onClick={() => setStatus("")}
+                  aria-pressed={status === stateKey(s)}
+                  className="flex min-w-0 items-center gap-2 rounded-md bg-transparent pl-1.5 pr-1.5 pt-1 pb-1 text-left text-[#4f5d9d] aria-pressed:bg-accent-soft aria-pressed:font-semibold shell-phone:min-h-11 shell-phone:px-2"
+                  onClick={() =>
+                    setStatus(status === stateKey(s) ? "" : stateKey(s))
+                  }
                 >
-                  All statuses
+                  <StatusIcon state={s} />
+                  {s.name}
                 </button>
-                <div
-                  className="grid grid-cols-2 gap-x-2 gap-y-0.5"
-                  data-my-status-filter-grid=""
-                >
-                  {states.map((s) => (
-                    <button
-                      key={s.id}
-                      type="button"
-                      aria-pressed={status === stateKey(s)}
-                      className="flex min-w-0 items-center gap-2 rounded-md bg-transparent pl-1.5 pr-1.5 pt-1 pb-1 text-left text-[#4f5d9d] aria-pressed:bg-accent-soft aria-pressed:font-semibold shell-phone:min-h-11 shell-phone:px-2"
-                      onClick={() =>
-                        setStatus(status === stateKey(s) ? "" : stateKey(s))
-                      }
-                    >
-                      <StatusIcon state={s} />
-                      {s.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
+              ))}
+            </div>
+          </div>
+          <label className="grid gap-1.25">
+            Priority
+            <select
+              className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              value={priority}
+              onChange={(e) => setPriority(e.target.value)}
+            >
+              <option value="">All priorities</option>
+              <option value="1">Urgent</option>
+              <option value="2">High</option>
+              <option value="3">Medium</option>
+              <option value="4">Low</option>
+            </select>
+          </label>
+          <label className="grid gap-1.25">
+            Team
+            <select
+              className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              value={teamId}
+              onChange={(e) => setTeamId(e.target.value)}
+            >
+              <option value="">All teams</option>
+              {teams.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-1.25">
+            Project
+            <select
+              className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              value={projectId}
+              onChange={(e) => setProjectId(e.target.value)}
+            >
+              <option value="">All projects</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-1.25">
+            Cycle
+            <select
+              className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              value={cycleOnly ? "current" : ""}
+              onChange={(e) => setCycleOnly(Boolean(e.target.value))}
+            >
+              <option value="">Any cycle</option>
+              <option value="current">Has cycle</option>
+            </select>
+          </label>
+          <label className="grid gap-1.25">
+            Label
+            <select
+              className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              value={labelId}
+              onChange={(e) => setLabelId(e.target.value)}
+            >
+              <option value="">All labels</option>
+              {availableLabels.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-1.25">
+            Assignee
+            <select
+              className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              value={assigneeId}
+              onChange={(e) => setAssigneeId(e.target.value)}
+            >
+              <option value="">Any assignee</option>
+              {availableUsers.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name || u.id}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-1.25">
+            Creator
+            <select
+              className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              value={creatorId}
+              onChange={(e) => setCreatorId(e.target.value)}
+            >
+              <option value="">Any creator</option>
+              {availableUsers.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name || u.id}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-1.25">
+            Subscriber
+            <select
+              className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              value={subscriberId}
+              onChange={(e) => setSubscriberId(e.target.value)}
+            >
+              <option value="">Any subscriber</option>
+              {availableUsers.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name || u.id}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-1.25">
+            Date field
+            <select
+              className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              value={dateField}
+              onChange={(e) => setDateField(e.target.value)}
+            >
+              <option value="">Any date</option>
+              <option value="createdAt">Created date</option>
+              <option value="updatedAt">Updated date</option>
+              <option value="dueDate">Due date</option>
+            </select>
+          </label>
+          {dateField && (
+            <>
               <label className="grid gap-1.25">
-                Priority
-                <select
-                  className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                  value={priority}
-                  onChange={(e) => setPriority(e.target.value)}
-                >
-                  <option value="">All priorities</option>
-                  <option value="1">Urgent</option>
-                  <option value="2">High</option>
-                  <option value="3">Medium</option>
-                  <option value="4">Low</option>
-                </select>
-              </label>
-              <label className="grid gap-1.25">
-                Team
-                <select
-                  className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                  value={teamId}
-                  onChange={(e) => setTeamId(e.target.value)}
-                >
-                  <option value="">All teams</option>
-                  {teams.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="grid gap-1.25">
-                Project
-                <select
-                  className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                  value={projectId}
-                  onChange={(e) => setProjectId(e.target.value)}
-                >
-                  <option value="">All projects</option>
-                  {projects.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="grid gap-1.25">
-                Cycle
-                <select
-                  className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                  value={cycleOnly ? "current" : ""}
-                  onChange={(e) => setCycleOnly(Boolean(e.target.value))}
-                >
-                  <option value="">Any cycle</option>
-                  <option value="current">Has cycle</option>
-                </select>
-              </label>
-              <label className="grid gap-1.25">
-                Label
-                <select
-                  className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                  value={labelId}
-                  onChange={(e) => setLabelId(e.target.value)}
-                >
-                  <option value="">All labels</option>
-                  {availableLabels.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {l.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="grid gap-1.25">
-                Assignee
-                <select
-                  className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                  value={assigneeId}
-                  onChange={(e) => setAssigneeId(e.target.value)}
-                >
-                  <option value="">Any assignee</option>
-                  {availableUsers.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.name || u.id}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="grid gap-1.25">
-                Creator
-                <select
-                  className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                  value={creatorId}
-                  onChange={(e) => setCreatorId(e.target.value)}
-                >
-                  <option value="">Any creator</option>
-                  {availableUsers.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.name || u.id}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="grid gap-1.25">
-                Subscriber
-                <select
-                  className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                  value={subscriberId}
-                  onChange={(e) => setSubscriberId(e.target.value)}
-                >
-                  <option value="">Any subscriber</option>
-                  {availableUsers.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.name || u.id}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="grid gap-1.25">
-                Date field
-                <select
-                  className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                  value={dateField}
-                  onChange={(e) => setDateField(e.target.value)}
-                >
-                  <option value="">Any date</option>
-                  <option value="createdAt">Created date</option>
-                  <option value="updatedAt">Updated date</option>
-                  <option value="dueDate">Due date</option>
-                </select>
-              </label>
-              {dateField && (
-                <>
-                  <label className="grid gap-1.25">
-                    From
-                    <input
-                      className="max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 border shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                      type="text"
-                      inputMode="numeric"
-                      placeholder="YYYY-MM-DD"
-                      pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}"
-                      value={dateFrom}
-                      onChange={(e) =>
-                        setDateFrom(
-                          e.target.value.replace(/[^0-9-]/g, "").slice(0, 10),
-                        )
-                      }
-                    />
-                  </label>
-                  <label className="grid gap-1.25">
-                    Through
-                    <input
-                      className="max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 border shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                      type="text"
-                      inputMode="numeric"
-                      placeholder="YYYY-MM-DD"
-                      pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}"
-                      value={dateTo}
-                      onChange={(e) =>
-                        setDateTo(
-                          e.target.value.replace(/[^0-9-]/g, "").slice(0, 10),
-                        )
-                      }
-                    />
-                  </label>
-                </>
-              )}
-              <label className="grid gap-1.25">
-                Content
+                From
                 <input
-                  className="w-full pt-1.5 pr-1.5 pb-1.5 pl-1.5 rounded-md bg-panel text-foreground max-md:text-base border-line placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 border shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                  type="search"
-                  value={textQuery}
-                  onChange={(e) => setTextQuery(e.target.value)}
-                  placeholder="Title or ID"
+                  className="max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 border shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="YYYY-MM-DD"
+                  pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}"
+                  value={dateFrom}
+                  onChange={(e) =>
+                    setDateFrom(
+                      e.target.value.replace(/[^0-9-]/g, "").slice(0, 10),
+                    )
+                  }
                 />
               </label>
-              <button
-                className="justify-self-start pt-1 pr-0 pb-1 pl-0 bg-transparent text-[#4f5d9d] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                onClick={clearMyFilters}
-              >
-                Clear filters
-              </button>
-            </PopoverContent>
-          </UIPopover>
-          <UIPopover
-            open={displayOpen}
-            onOpenChange={(open) => {
-              setDisplayOpen(open);
-              if (open) setFilterOpen(false);
-            }}
-          >
-            <PopoverTrigger asChild>
-              <button
-                className="inline-flex size-7 flex-none items-center justify-center gap-1.5 rounded-full border border-line bg-panel  text-sm text-foreground hover:bg-subtle aria-expanded:bg-accent-soft aria-expanded:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 pointer-coarse:min-h-11"
-                aria-label="Display options"
-                aria-expanded={displayOpen}
-              >
-                <Settings size={16} />
-              </button>
-            </PopoverTrigger>
-            <PopoverContent
-              align="end"
-              side="bottom"
-              sideOffset={4}
-              collisionPadding={8}
-              className="z-50 grid w-[min(245px,calc(100vw-35px))] max-w-full max-h-[min(calc(100dvh-110px),var(--radix-popover-content-available-height))] content-start gap-2.5 overflow-y-auto overscroll-contain rounded-[9px] border-line bg-panel p-3 text-[12px] text-foreground shadow-[0_12px_32px_#0002] max-sm:w-[calc(100vw-16px)] max-sm:p-4 max-sm:text-sm"
-              data-my-issue-popover=""
-              aria-label="Display options"
-              onCloseAutoFocus={(event) => event.preventDefault()}
-              onEscapeKeyDown={() =>
-                toolbarRef.current
-                  ?.querySelector<HTMLButtonElement>(
-                    '[aria-label="Display options"]',
-                  )
-                  ?.focus()
-              }
-              ref={displayPanelRef}
-            >
               <label className="grid gap-1.25">
-                Grouping
-                <select
-                  className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                  value={grouping}
-                  onChange={(e) => setGrouping(e.target.value)}
-                  disabled={tab !== "Assigned"}
-                >
-                  <option>Focus</option>
-                  <option>Status</option>
-                  <option>Project</option>
-                  <option>Priority</option>
-                  <option>Cycle</option>
-                  <option>Label</option>
-                  <option>Team</option>
-                </select>
-              </label>
-              {tab === "Assigned" && (
-                <label className="grid gap-1.25">
-                  Completed tasks
-                  <select
-                    className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                    value={completedRange}
-                    onChange={(e) =>
-                      setCompletedRange(e.target.value as CompletedRange)
-                    }
-                  >
-                    <option value="none">None</option>
-                    <option value="week">Past week</option>
-                    <option value="month">Past month</option>
-                    <option value="all">All</option>
-                  </select>
-                </label>
-              )}
-              <label className="flex items-center gap-2 cursor-pointer shell-phone:min-h-11 pointer-coarse:min-h-11">
+                Through
                 <input
-                  className="m-0 size-4 flex-none pointer-coarse:size-5 max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
-                  type="checkbox"
-                  checked={showProject}
-                  onChange={(e) => setShowProject(e.target.checked)}
-                />{" "}
-                Project
+                  className="max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 border shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="YYYY-MM-DD"
+                  pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}"
+                  value={dateTo}
+                  onChange={(e) =>
+                    setDateTo(
+                      e.target.value.replace(/[^0-9-]/g, "").slice(0, 10),
+                    )
+                  }
+                />
               </label>
-              <label className="flex items-center gap-2 cursor-pointer shell-phone:min-h-11 pointer-coarse:min-h-11">
-                <input
-                  className="m-0 size-4 flex-none pointer-coarse:size-5 max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
-                  type="checkbox"
-                  checked={showDate}
-                  onChange={(e) => setShowDate(e.target.checked)}
-                />{" "}
-                Created date
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer shell-phone:min-h-11 pointer-coarse:min-h-11">
-                <input
-                  className="m-0 size-4 flex-none pointer-coarse:size-5 max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
-                  type="checkbox"
-                  checked={showAssignee}
-                  onChange={(e) => setShowAssignee(e.target.checked)}
-                />{" "}
-                Assignee
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer shell-phone:min-h-11 pointer-coarse:min-h-11">
-                <input
-                  className="m-0 size-4 flex-none pointer-coarse:size-5 max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
-                  type="checkbox"
-                  checked={showPriority}
-                  onChange={(e) => setShowPriority(e.target.checked)}
-                />{" "}
-                Priority
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer shell-phone:min-h-11 pointer-coarse:min-h-11">
-                <input
-                  className="m-0 size-4 flex-none pointer-coarse:size-5 max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
-                  type="checkbox"
-                  checked={showStatus}
-                  onChange={(e) => setShowStatus(e.target.checked)}
-                />{" "}
-                Status
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer shell-phone:min-h-11 pointer-coarse:min-h-11">
-                <input
-                  className="m-0 size-4 flex-none pointer-coarse:size-5 max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
-                  type="checkbox"
-                  checked={showLabels}
-                  onChange={(e) => setShowLabels(e.target.checked)}
-                />{" "}
-                Labels
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer shell-phone:min-h-11 pointer-coarse:min-h-11">
-                <input
-                  className="m-0 size-4 flex-none pointer-coarse:size-5 max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
-                  type="checkbox"
-                  checked={showDue}
-                  onChange={(e) => setShowDue(e.target.checked)}
-                />{" "}
-                Due date
-              </label>
-              <small className="text-[#666]">
-                {tab === "Assigned"
-                  ? "Group assigned tasks by focus or status."
-                  : "This view uses Linear’s flat or date-grouped layout."}
-              </small>
-            </PopoverContent>
-          </UIPopover>
-        </div>
-      </div>
-
-      {(status ||
-        priority ||
-        teamId ||
-        projectId ||
-        cycleOnly ||
-        textQuery ||
-        labelId ||
-        assigneeId ||
-        creatorId ||
-        subscriberId ||
-        dateField) && (
-        <p
-          className="mt-0 mr-0 mb-0 ml-0 pt-1.5 pr-3 pb-1.5 pl-3 text-[12px] text-muted"
-          data-my-filter-summary=""
-        >
-          Showing {visible.length} of {scoped.length} tasks{" "}
+            </>
+          )}
+          <label className="grid gap-1.25">
+            Content
+            <input
+              className="w-full pt-1.5 pr-1.5 pb-1.5 pl-1.5 rounded-md bg-panel text-foreground max-md:text-base border-line placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 border shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              type="search"
+              value={textQuery}
+              onChange={(e) => setTextQuery(e.target.value)}
+              placeholder="Title or ID"
+            />
+          </label>
           <button
-            className="justify-self-start pt-1 pr-0 pb-1 pl-0 bg-transparent text-[#4f5d9d] ml-2 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+            className="justify-self-start pt-1 pr-0 pb-1 pl-0 bg-transparent text-[#4f5d9d] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
             onClick={clearMyFilters}
           >
             Clear filters
           </button>
-        </p>
+        </PopoverContent>
+      </UIPopover>
+      <UIPopover
+        open={displayOpen}
+        onOpenChange={(open) => {
+          setDisplayOpen(open);
+          if (open) setFilterOpen(false);
+        }}
+      >
+        <PopoverTrigger asChild>
+          <button
+            className="inline-flex size-7 flex-none items-center justify-center gap-1.5 rounded-full border border-line bg-panel  text-sm text-foreground hover:bg-subtle aria-expanded:bg-accent-soft aria-expanded:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 pointer-coarse:min-h-11"
+            aria-label="Display options"
+            aria-expanded={displayOpen}
+          >
+            <Settings size={16} />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="end"
+          side="bottom"
+          sideOffset={4}
+          collisionPadding={8}
+          className="z-50 grid w-[min(245px,calc(100vw-35px))] max-w-full max-h-[min(calc(100dvh-110px),var(--radix-popover-content-available-height))] content-start gap-2.5 overflow-y-auto overscroll-contain rounded-[9px] border-line bg-panel p-3 text-[12px] text-foreground shadow-[0_12px_32px_#0002] max-sm:w-[calc(100vw-16px)] max-sm:p-4 max-sm:text-sm"
+          data-my-issue-popover=""
+          aria-label="Display options"
+          onCloseAutoFocus={(event) => event.preventDefault()}
+          onEscapeKeyDown={() =>
+            toolbarRef.current
+              ?.querySelector<HTMLButtonElement>(
+                '[aria-label="Display options"]',
+              )
+              ?.focus()
+          }
+          ref={displayPanelRef}
+        >
+          <label className="grid gap-1.25">
+            Grouping
+            <select
+              className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              value={grouping}
+              onChange={(e) => setGrouping(e.target.value)}
+              disabled={tab !== "Assigned"}
+            >
+              <option>Focus</option>
+              <option>Status</option>
+              <option>Project</option>
+              <option>Priority</option>
+              <option>Cycle</option>
+              <option>Label</option>
+              <option>Team</option>
+            </select>
+          </label>
+          {tab === "Assigned" && (
+            <label className="grid gap-1.25">
+              Completed tasks
+              <select
+                className="w-full bg-panel text-foreground max-md:text-base border border-line rounded-md pt-2 pr-2.5 pb-2 pl-2.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                value={completedRange}
+                onChange={(e) =>
+                  setCompletedRange(e.target.value as CompletedRange)
+                }
+              >
+                <option value="none">None</option>
+                <option value="week">Past week</option>
+                <option value="month">Past month</option>
+                <option value="all">All</option>
+              </select>
+            </label>
+          )}
+          <label className="flex items-center gap-2 cursor-pointer shell-phone:min-h-11 pointer-coarse:min-h-11">
+            <input
+              className="m-0 size-4 flex-none pointer-coarse:size-5 max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
+              type="checkbox"
+              checked={showProject}
+              onChange={(e) => setShowProject(e.target.checked)}
+            />{" "}
+            Project
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer shell-phone:min-h-11 pointer-coarse:min-h-11">
+            <input
+              className="m-0 size-4 flex-none pointer-coarse:size-5 max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
+              type="checkbox"
+              checked={showDate}
+              onChange={(e) => setShowDate(e.target.checked)}
+            />{" "}
+            Created date
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer shell-phone:min-h-11 pointer-coarse:min-h-11">
+            <input
+              className="m-0 size-4 flex-none pointer-coarse:size-5 max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
+              type="checkbox"
+              checked={showAssignee}
+              onChange={(e) => setShowAssignee(e.target.checked)}
+            />{" "}
+            Assignee
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer shell-phone:min-h-11 pointer-coarse:min-h-11">
+            <input
+              className="m-0 size-4 flex-none pointer-coarse:size-5 max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
+              type="checkbox"
+              checked={showPriority}
+              onChange={(e) => setShowPriority(e.target.checked)}
+            />{" "}
+            Priority
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer shell-phone:min-h-11 pointer-coarse:min-h-11">
+            <input
+              className="m-0 size-4 flex-none pointer-coarse:size-5 max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
+              type="checkbox"
+              checked={showStatus}
+              onChange={(e) => setShowStatus(e.target.checked)}
+            />{" "}
+            Status
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer shell-phone:min-h-11 pointer-coarse:min-h-11">
+            <input
+              className="m-0 size-4 flex-none pointer-coarse:size-5 max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
+              type="checkbox"
+              checked={showLabels}
+              onChange={(e) => setShowLabels(e.target.checked)}
+            />{" "}
+            Labels
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer shell-phone:min-h-11 pointer-coarse:min-h-11">
+            <input
+              className="m-0 size-4 flex-none pointer-coarse:size-5 max-md:text-base bg-panel border-line text-foreground placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 accent-accent border shell-phone:text-[16px]"
+              type="checkbox"
+              checked={showDue}
+              onChange={(e) => setShowDue(e.target.checked)}
+            />{" "}
+            Due date
+          </label>
+          <small className="text-[#666]">
+            {tab === "Assigned"
+              ? "Group assigned tasks by focus or status."
+              : "This view uses Linear’s flat or date-grouped layout."}
+          </small>
+        </PopoverContent>
+      </UIPopover>
+    </div>
+  );
+  return (
+    <>
+      {head && (
+        <div
+          className="m-0 flex h-11 min-h-11 flex-none items-center gap-1 border-b border-line bg-bg px-4 py-0 text-foreground shell-phone:h-14 shell-phone:pl-2 shell-phone:pr-2 [&_[data-my-issue-toolbar]]:gap-0.5 shell-phone:[&_[data-my-issue-toolbar]_button]:border-transparent shell-phone:[&_[data-my-issue-toolbar]_button]:bg-transparent"
+          data-page-head=""
+          data-my-issues-head=""
+        >
+          <MobileNavTrigger />
+          <div className="min-w-0">{head}</div>
+          {toolbar}
+        </div>
       )}
       <div
-        className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overscroll-contain [@media(max-height:500px)]:has-[[data-issues-board]]:flex-none [@media(max-height:500px)]:has-[[data-issues-board]]:overflow-visible"
-        data-my-issues-list=""
+        className="relative flex p-4 gap-4 min-h-0 min-w-0 flex-1 flex-col bg-bg text-foreground max-md:flex-1 max-md:flex max-md:flex-col max-md:min-h-0 max-md:h-auto [&_[data-my-issue-group]>header_button:last-child:not(:first-child)]:ml-auto shell-phone:flex-1 shell-desktop:min-h-0 shell-phone:min-h-0 shell-phone:h-auto [@media(max-height:500px)]:has-[[data-issues-board]]:overflow-y-auto [@media(max-height:500px)]:has-[[data-issues-board]]:overscroll-contain"
+        data-my-issues-view=""
       >
-        {layout === "Board" ? (
-          <IssueBoard
-            issues={visible}
-            states={states}
-            teams={teams}
-            onSelect={onOpenIssue}
-            onNew={onNew}
-            onMoved={onMoved}
-            onUpdate={onUpdate}
-          />
-        ) : (
-          <div className="my-issue-groups shrink-0" ref={listRef}>
-            {buckets.map((g) => {
-              const open = !collapsed.includes(g.name);
-              const n = open ? g.items.length : 0;
-              const rowsTop = y + (g.name ? headH : 0);
-              const [start, end] = windowed
-                ? visibleRange(win, rowsTop, rowH, n)
-                : [0, n];
-              y = rowsTop + n * rowH;
-              /* Parent then children, so a sub-task is never rendered above the task that
-                 created it. Activity rows are events, not a hierarchy, and stay flat. */
-              const treeRows =
-                tab === "Activity" || !open
-                  ? []
-                  : orderTree(g.items, treeCollapsed);
-              const items =
-                tab === "Activity"
-                  ? (start > 0 || end < n
-                      ? g.items.slice(start, end)
-                      : g.items
-                    ).map((issue, index) => ({
-                      issue,
-                      index,
-                      depth: 0,
-                      isLast: true,
-                      openRails: [] as number[],
-                      childCount: 0,
-                      doneCount: 0,
-                      parentOutside: false,
-                    }))
-                  : treeRows.slice(start, end).map((row, index) => ({
-                      issue: row.node,
-                      index,
-                      depth: row.depth,
-                      isLast: row.isLast,
-                      openRails: row.openRails,
-                      childCount: row.childCount,
-                      doneCount: row.doneCount,
-                      parentOutside: row.parentOutside,
-                    }));
-              const dayEvents =
-                tab === "Activity"
-                  ? (eventsByDate.get(g.name) || []).slice(start, end)
-                  : [];
-              return (
-                <section
-                  className="mt-0 mr-0 mb-0 ml-0"
-                  data-my-issue-group=""
-                  key={g.name || "flat"}
-                >
-                  {g.name && (
-                    <header className="flex items-center gap-1.75 h-8.5 pt-0 pr-2 pb-0 pl-2 text-muted text-[12px] mt-0 mr-2.5 mb-0.5 ml-2.5 rounded-[7px] bg-subtle">
-                      <button
-                        className="grid place-items-center w-5.5 h-5.5 ml-0 rounded-md bg-transparent text-[#626269] hover:bg-subtle mt-0 mr-0 mb-0 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 group"
-                        aria-label={`${collapsed.includes(g.name) ? "Expand" : "Collapse"} ${tab === "Activity" ? activityDayLabel(g.name) : g.name}`}
-                        aria-expanded={!collapsed.includes(g.name)}
-                        onClick={() =>
-                          setCollapsed((old) =>
-                            old.includes(g.name)
-                              ? old.filter((x) => x !== g.name)
-                              : [...old, g.name],
-                          )
-                        }
-                      >
-                        <ChevronDown
-                          size={14}
-                          className="group-aria-[expanded=false]:-rotate-90"
-                        />
-                      </button>
-                      {g.state && <StatusIcon state={g.state} />}
-                      <b className="text-foreground font-medium">
-                        {tab === "Activity" ? activityDayLabel(g.name) : g.name}
-                      </b>
-                      <span className="text-muted text-[11px]">
-                        {g.items.length}
-                      </span>
-                      {tab === "Assigned" && (
+        <div
+          className="flex min-w-0 shrink-0 flex-wrap items-center gap-2"
+          data-my-issue-header=""
+        >
+          {tabs}
+          {!head && toolbar}
+        </div>
+
+        {(status ||
+          priority ||
+          teamId ||
+          projectId ||
+          cycleOnly ||
+          textQuery ||
+          labelId ||
+          assigneeId ||
+          creatorId ||
+          subscriberId ||
+          dateField) && (
+          <p
+            className="mt-0 mr-0 mb-0 ml-0 pt-1.5 pr-3 pb-1.5 pl-3 text-[12px] text-muted"
+            data-my-filter-summary=""
+          >
+            Showing {visible.length} of {scoped.length} tasks{" "}
+            <button
+              className="justify-self-start pt-1 pr-0 pb-1 pl-0 bg-transparent text-[#4f5d9d] ml-2 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+              onClick={clearMyFilters}
+            >
+              Clear filters
+            </button>
+          </p>
+        )}
+        <div
+          className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overscroll-contain [@media(max-height:500px)]:has-[[data-issues-board]]:flex-none [@media(max-height:500px)]:has-[[data-issues-board]]:overflow-visible"
+          data-my-issues-list=""
+        >
+          {layout === "Board" ? (
+            <IssueBoard
+              issues={visible}
+              states={states}
+              teams={teams}
+              onSelect={onOpenIssue}
+              onNew={onNew}
+              onMoved={onMoved}
+              onUpdate={onUpdate}
+            />
+          ) : (
+            <div className="my-issue-groups shrink-0" ref={listRef}>
+              {buckets.map((g) => {
+                const open = !collapsed.includes(g.name);
+                const n = open ? g.items.length : 0;
+                const rowsTop = y + (g.name ? headH : 0);
+                const [start, end] = windowed
+                  ? visibleRange(win, rowsTop, rowH, n)
+                  : [0, n];
+                y = rowsTop + n * rowH;
+                /* Parent then children, so a sub-task is never rendered above the task that
+                   created it. Activity rows are events, not a hierarchy, and stay flat. */
+                const treeRows =
+                  tab === "Activity" || !open
+                    ? []
+                    : orderTree(g.items, treeCollapsed);
+                const items =
+                  tab === "Activity"
+                    ? (start > 0 || end < n
+                        ? g.items.slice(start, end)
+                        : g.items
+                      ).map((issue, index) => ({
+                        issue,
+                        index,
+                        depth: 0,
+                        isLast: true,
+                        openRails: [] as number[],
+                        childCount: 0,
+                        doneCount: 0,
+                        parentOutside: false,
+                      }))
+                    : treeRows.slice(start, end).map((row, index) => ({
+                        issue: row.node,
+                        index,
+                        depth: row.depth,
+                        isLast: row.isLast,
+                        openRails: row.openRails,
+                        childCount: row.childCount,
+                        doneCount: row.doneCount,
+                        parentOutside: row.parentOutside,
+                      }));
+                const dayEvents =
+                  tab === "Activity"
+                    ? (eventsByDate.get(g.name) || []).slice(start, end)
+                    : [];
+                return (
+                  <section
+                    className="mt-0 mr-0 mb-0 ml-0"
+                    data-my-issue-group=""
+                    key={g.name || "flat"}
+                  >
+                    {g.name && (
+                      <header className="flex items-center gap-1.75 h-8.5 pt-0 pr-2 pb-0 pl-2 text-muted text-[12px] mt-0 mr-2.5 mb-0.5 ml-2.5 rounded-[7px] bg-subtle">
                         <button
-                          className="grid place-items-center w-5.5 h-5.5 ml-0 rounded-md bg-transparent text-[#626269] hover:bg-subtle mt-0 mr-0 mb-0 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                          aria-label={`Create task in ${g.name}`}
-                          onClick={() => onNew(g.state?.id)}
+                          className="grid place-items-center w-5.5 h-5.5 ml-0 rounded-md bg-transparent text-[#626269] hover:bg-subtle mt-0 mr-0 mb-0 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 group"
+                          aria-label={`${collapsed.includes(g.name) ? "Expand" : "Collapse"} ${tab === "Activity" ? activityDayLabel(g.name) : g.name}`}
+                          aria-expanded={!collapsed.includes(g.name)}
+                          onClick={() =>
+                            setCollapsed((old) =>
+                              old.includes(g.name)
+                                ? old.filter((x) => x !== g.name)
+                                : [...old, g.name],
+                            )
+                          }
                         >
-                          <Plus size={14} />
+                          <ChevronDown
+                            size={14}
+                            className="group-aria-[expanded=false]:-rotate-90"
+                          />
                         </button>
-                      )}
-                    </header>
-                  )}
-                  {start > 0 && (
-                    <div aria-hidden="true" style={{ height: start * rowH }} />
-                  )}
-                  {items.map(
-                    ({
-                      issue: i,
-                      index,
-                      depth,
-                      isLast,
-                      openRails,
-                      childCount,
-                      doneCount,
-                      parentOutside,
-                    }) => (
-                      <div
-                        className="relative flex w-full min-w-0 min-h-9 items-center gap-2 bg-transparent py-0 pr-6 text-left text-foreground hover:bg-subtle cursor-pointer max-md:gap-1.5 shell-phone:pr-3 [@media_(max-width:650px)]:gap-1.5 max-sm:flex-wrap max-sm:gap-y-0 max-sm:pb-2 [--row-inset:42px] max-sm:[--row-inset:14px]"
-                        style={{
-                          paddingLeft: `calc(var(--row-inset) + ${depth * SIBLING_STEP}px)`,
-                        }}
-                        data-my-issue-row=""
-                        data-depth={depth}
-                        role="presentation"
-                        key={
-                          tab === "Activity"
-                            ? `${g.name}-${dayEvents[index]?.id || index}`
-                            : i.id
-                        }
-                        onClick={() => onOpenIssue(i)}
-                      >
-                        {/* Ancestry rails: one 2px line per open ancestor, then this row's own
-                          connector — a T for a middle child, a rounded corner for the last. */}
-                        {openRails.map((column) => (
-                          <span
-                            key={`rail-${column}`}
-                            aria-hidden="true"
-                            className="absolute top-0 bottom-0 w-0.5 bg-line"
-                            style={{ left: railAt(column) }}
-                            data-tree-rail=""
-                          />
-                        ))}
-                        {depth > 0 && isLast && (
-                          <span
-                            aria-hidden="true"
-                            className="absolute w-2.5 border-l-2 border-b-2 border-line rounded-bl-[6px]"
-                            style={{
-                              left: railAt(depth - 1),
-                              top: 0,
-                              height: 18,
-                            }}
-                            data-tree-rail="last"
-                          />
+                        {g.state && <StatusIcon state={g.state} />}
+                        <b className="text-foreground font-medium">
+                          {tab === "Activity"
+                            ? activityDayLabel(g.name)
+                            : g.name}
+                        </b>
+                        <span className="text-muted text-[11px]">
+                          {g.items.length}
+                        </span>
+                        {tab === "Assigned" && (
+                          <button
+                            className="grid place-items-center w-5.5 h-5.5 ml-0 rounded-md bg-transparent text-[#626269] hover:bg-subtle mt-0 mr-0 mb-0 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                            aria-label={`Create task in ${g.name}`}
+                            onClick={() => onNew(g.state?.id)}
+                          >
+                            <Plus size={14} />
+                          </button>
                         )}
-                        {depth > 0 && !isLast && (
-                          <>
+                      </header>
+                    )}
+                    {start > 0 && (
+                      <div
+                        aria-hidden="true"
+                        style={{ height: start * rowH }}
+                      />
+                    )}
+                    {items.map(
+                      ({
+                        issue: i,
+                        index,
+                        depth,
+                        isLast,
+                        openRails,
+                        childCount,
+                        doneCount,
+                        parentOutside,
+                      }) => (
+                        <div
+                          className="relative flex w-full min-w-0 min-h-9 items-center gap-2 bg-transparent py-0 pr-6 text-left text-foreground hover:bg-subtle cursor-pointer max-md:gap-1.5 shell-phone:pr-3 [@media_(max-width:650px)]:gap-1.5 max-sm:flex-wrap max-sm:gap-y-0 max-sm:pb-2 [--row-inset:42px] max-sm:[--row-inset:14px]"
+                          style={{
+                            paddingLeft: `calc(var(--row-inset) + ${depth * SIBLING_STEP}px)`,
+                          }}
+                          data-my-issue-row=""
+                          data-depth={depth}
+                          role="presentation"
+                          key={
+                            tab === "Activity"
+                              ? `${g.name}-${dayEvents[index]?.id || index}`
+                              : i.id
+                          }
+                          onClick={() => onOpenIssue(i)}
+                        >
+                          {/* Ancestry rails: one 2px line per open ancestor, then this row's own
+                            connector — a T for a middle child, a rounded corner for the last. */}
+                          {openRails.map((column) => (
                             <span
+                              key={`rail-${column}`}
                               aria-hidden="true"
                               className="absolute top-0 bottom-0 w-0.5 bg-line"
-                              style={{ left: railAt(depth - 1) }}
-                              data-tree-rail="through"
+                              style={{ left: railAt(column) }}
+                              data-tree-rail=""
                             />
+                          ))}
+                          {depth > 0 && isLast && (
                             <span
                               aria-hidden="true"
-                              className="absolute h-0.5 w-2.5 bg-line"
-                              style={{ left: railAt(depth - 1), top: 18 }}
-                            />
-                          </>
-                        )}
-                        {/* Reserved 16px so every column lines up whether or not a row has children. */}
-                        <span className="relative grid place-items-center w-4 h-4 flex-none">
-                          {childCount > 0 && (
-                            <button
-                              type="button"
-                              aria-expanded={!treeCollapsed[i.id]}
-                              aria-label={`${treeCollapsed[i.id] ? "Expand" : "Collapse"} ${childCount} sub-tasks of ${i.identifier}`}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                setTreeCollapsed((old) => ({
-                                  ...old,
-                                  [i.id]: !old[i.id],
-                                }));
+                              className="absolute w-2.5 border-l-2 border-b-2 border-line rounded-bl-[6px]"
+                              style={{
+                                left: railAt(depth - 1),
+                                top: 0,
+                                height: 18,
                               }}
-                              className="relative grid place-items-center w-4 h-4 rounded bg-transparent text-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent before:absolute before:inset-0 pointer-coarse:before:-inset-3.5 shell-phone:before:-inset-3.5"
-                              data-tree-toggle=""
-                            >
-                              <ChevronDown
-                                size={12}
-                                className={
-                                  treeCollapsed[i.id] ? "-rotate-90" : ""
-                                }
+                              data-tree-rail="last"
+                            />
+                          )}
+                          {depth > 0 && !isLast && (
+                            <>
+                              <span
+                                aria-hidden="true"
+                                className="absolute top-0 bottom-0 w-0.5 bg-line"
+                                style={{ left: railAt(depth - 1) }}
+                                data-tree-rail="through"
                               />
-                            </button>
+                              <span
+                                aria-hidden="true"
+                                className="absolute h-0.5 w-2.5 bg-line"
+                                style={{ left: railAt(depth - 1), top: 18 }}
+                              />
+                            </>
                           )}
-                        </span>
-                        {showPriority && (
-                          <span
-                            className="text-muted text-[13px] data-[p=1]:text-danger"
-                            data-my-issue-priority=""
-                            data-p={i.priority}
-                          >
-                            ≡
-                          </span>
-                        )}
-                        <code className="shrink-0 whitespace-nowrap text-muted text-[12px] font-[inherit]">
-                          {i.identifier}
-                        </code>
-                        {i.decisionNeeded ? (
-                          <span
-                            className="inline-grid place-items-center w-3.75 h-3.75 ml-1.5 rounded-[50%] text-[10px] font-bold leading-none cursor-default bg-[#fdf3cf] text-[#5b4a0f] align-middle border border-amber-400"
-                            data-my-issue-decision=""
-                            role="img"
-                            aria-label="Needs a decision"
-                            title="Needs a decision"
-                          >
-                            ?
-                          </span>
-                        ) : null}
-                        {showStatus && (
-                          <span
-                            className="text-[12px] text-[#89948d] data-[status=started]:text-foreground max-sm:-my-2"
-                            data-my-issue-status=""
-                            data-status={i.state?.type}
-                          >
-                            <StatusPicker
-                              compact
-                              issue={i}
-                              teams={teams}
-                              icon={<StateGlyph state={i.state} />}
-                              onChange={(stateId) => {
-                                const st = teamStates(i)?.find(
-                                  (x) => x.id === stateId,
-                                );
-                                if (!st) throw Error("Status not found");
-                                return onMoved(i.id, st);
-                              }}
-                            />
-                          </span>
-                        )}
-                        {/* A sub-task whose parent sits in another status section cannot nest
-                          there, so it carries the parent identifier instead of reading as an
-                          orphan. The board does the same. */}
-                        {parentOutside && i.parent?.identifier ? (
-                          <span
-                            className="shrink-0 rounded border border-line py-0 px-1 text-[10px] text-muted shell-phone:hidden"
-                            data-my-issue-parent=""
-                            title={i.parent.title}
-                          >
-                            ↳{i.parent.identifier}
-                          </span>
-                        ) : null}
-                        <button
-                          type="button"
-                          className="overflow-hidden text-ellipsis whitespace-nowrap text-[12px] flex-1 min-w-0 [background:none] border-0 pt-0 pr-0 pb-0 pl-0 mt-0 mr-0 mb-0 ml-0 text-inherit text-left cursor-pointer block font-[inherit] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 max-sm:order-last max-sm:basis-full max-sm:min-h-0! max-sm:pl-6 max-sm:text-sm max-sm:leading-snug max-sm:whitespace-normal max-sm:line-clamp-2 max-sm:wrap-break-word"
-                          data-my-issue-title=""
-                          data-my-issue-title-open=""
-                          aria-label={`Open ${i.identifier}: ${i.title}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onOpenIssue(i);
-                          }}
-                        >
-                          {i.title}
-                          {tab === "Activity" && (
-                            <small
-                              className="text-[11px] font-normal text-[#777]"
-                              data-my-activity-kind=""
-                            >
-                              {" "}
-                              · {activityKindLabel(dayEvents[index]?.eventType)}
-                            </small>
-                          )}
-                        </button>
-                        {childCount > 0 && (
-                          <SubIssuePill done={doneCount} total={childCount} />
-                        )}
-                        {showLabels && i.labels?.nodes.length ? (
-                          <span
-                            className="max-w-25 overflow-hidden text-ellipsis whitespace-nowrap text-[#777] text-[11px] max-md:hidden"
-                            data-my-issue-labels=""
-                            title={i.labels.nodes.map((l) => l.name).join(", ")}
-                          >
-                            {i.labels.nodes.map((l) => l.name).join(", ")}
-                          </span>
-                        ) : null}
-                        {showAssignee && (
-                          <span
-                            className={
-                              i.assignee
-                                ? "grid place-items-center w-5.5 h-5.5 flex-none max-sm:ml-auto"
-                                : "grid place-items-center w-5.5 h-5.5 rounded-[50%] bg-[#e5e5e7] text-[#46464b] text-[10px] flex-none max-sm:ml-auto"
-                            }
-                            data-my-issue-assignee=""
-                            title={i.assignee?.name || "Unassigned"}
-                          >
-                            {i.assignee ? (
-                              <UserBlobatar user={i.assignee} />
-                            ) : (
-                              "·"
+                          {/* Reserved 16px so every column lines up whether or not a row has children. */}
+                          <span className="relative grid place-items-center w-4 h-4 flex-none">
+                            {childCount > 0 && (
+                              <button
+                                type="button"
+                                aria-expanded={!treeCollapsed[i.id]}
+                                aria-label={`${treeCollapsed[i.id] ? "Expand" : "Collapse"} ${childCount} sub-tasks of ${i.identifier}`}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setTreeCollapsed((old) => ({
+                                    ...old,
+                                    [i.id]: !old[i.id],
+                                  }));
+                                }}
+                                className="relative grid place-items-center w-4 h-4 rounded bg-transparent text-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent before:absolute before:inset-0 pointer-coarse:before:-inset-3.5 shell-phone:before:-inset-3.5"
+                                data-tree-toggle=""
+                              >
+                                <ChevronDown
+                                  size={12}
+                                  className={
+                                    treeCollapsed[i.id] ? "-rotate-90" : ""
+                                  }
+                                />
+                              </button>
                             )}
                           </span>
-                        )}
-                        {showDue && i.dueDate && (
-                          <span
-                            className="whitespace-nowrap text-[#ad5757] text-[11px] max-md:hidden"
-                            data-my-issue-due=""
+                          {showPriority && (
+                            <span
+                              className="text-muted text-[13px] data-[p=1]:text-danger"
+                              data-my-issue-priority=""
+                              data-p={i.priority}
+                            >
+                              ≡
+                            </span>
+                          )}
+                          <code className="shrink-0 whitespace-nowrap text-muted text-[12px] font-[inherit]">
+                            {i.identifier}
+                          </code>
+                          {i.decisionNeeded ? (
+                            <span
+                              className="inline-grid place-items-center w-3.75 h-3.75 ml-1.5 rounded-[50%] text-[10px] font-bold leading-none cursor-default bg-[#fdf3cf] text-[#5b4a0f] align-middle border border-amber-400"
+                              data-my-issue-decision=""
+                              role="img"
+                              aria-label="Needs a decision"
+                              title="Needs a decision"
+                            >
+                              ?
+                            </span>
+                          ) : null}
+                          {showStatus && (
+                            <span
+                              className="text-[12px] text-[#89948d] data-[status=started]:text-foreground max-sm:-my-2"
+                              data-my-issue-status=""
+                              data-status={i.state?.type}
+                            >
+                              <StatusPicker
+                                compact
+                                issue={i}
+                                teams={teams}
+                                icon={<StateGlyph state={i.state} />}
+                                onChange={(stateId) => {
+                                  const st = teamStates(i)?.find(
+                                    (x) => x.id === stateId,
+                                  );
+                                  if (!st) throw Error("Status not found");
+                                  return onMoved(i.id, st);
+                                }}
+                              />
+                            </span>
+                          )}
+                          {/* A sub-task whose parent sits in another status section cannot nest
+                            there, so it carries the parent identifier instead of reading as an
+                            orphan. The board does the same. */}
+                          {parentOutside && i.parent?.identifier ? (
+                            <span
+                              className="shrink-0 rounded border border-line py-0 px-1 text-[10px] text-muted shell-phone:hidden"
+                              data-my-issue-parent=""
+                              title={i.parent.title}
+                            >
+                              ↳{i.parent.identifier}
+                            </span>
+                          ) : null}
+                          <button
+                            type="button"
+                            className="overflow-hidden text-ellipsis whitespace-nowrap text-[12px] flex-1 min-w-0 [background:none] border-0 pt-0 pr-0 pb-0 pl-0 mt-0 mr-0 mb-0 ml-0 text-inherit text-left cursor-pointer block font-[inherit] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 max-sm:order-last max-sm:basis-full max-sm:min-h-0! max-sm:pl-6 max-sm:text-sm max-sm:leading-snug max-sm:whitespace-normal max-sm:line-clamp-2 max-sm:wrap-break-word"
+                            data-my-issue-title=""
+                            data-my-issue-title-open=""
+                            aria-label={`Open ${i.identifier}: ${i.title}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onOpenIssue(i);
+                            }}
                           >
-                            {new Date(i.dueDate).toLocaleDateString(undefined, {
-                              month: "short",
-                              day: "numeric",
-                            })}
-                          </span>
-                        )}
-                        {showProject && (
-                          <span
-                            className="overflow-hidden text-ellipsis whitespace-nowrap text-muted text-[11px] max-md:hidden max-w-37.5"
-                            data-my-issue-project=""
-                          >
-                            {i.project?.name || i.team?.name || ""}
-                          </span>
-                        )}
-                        {showDate && (
-                          <span
-                            className="text-right whitespace-nowrap text-[11px] text-muted min-w-11.5 shell-phone:hidden"
-                            data-my-issue-date=""
-                          >
-                            {tab === "Activity"
-                              ? new Date(
-                                  dayEvents[index]?.createdAt || "",
-                                ).toLocaleDateString(undefined, {
+                            {i.title}
+                            {tab === "Activity" && (
+                              <small
+                                className="text-[11px] font-normal text-[#777]"
+                                data-my-activity-kind=""
+                              >
+                                {" "}
+                                ·{" "}
+                                {activityKindLabel(dayEvents[index]?.eventType)}
+                              </small>
+                            )}
+                          </button>
+                          {childCount > 0 && (
+                            <SubIssuePill done={doneCount} total={childCount} />
+                          )}
+                          {showLabels && i.labels?.nodes.length ? (
+                            <span
+                              className="max-w-25 overflow-hidden text-ellipsis whitespace-nowrap text-[#777] text-[11px] max-md:hidden"
+                              data-my-issue-labels=""
+                              title={i.labels.nodes
+                                .map((l) => l.name)
+                                .join(", ")}
+                            >
+                              {i.labels.nodes.map((l) => l.name).join(", ")}
+                            </span>
+                          ) : null}
+                          {showAssignee && (
+                            <span
+                              className={
+                                i.assignee
+                                  ? "grid place-items-center w-5.5 h-5.5 flex-none max-sm:ml-auto"
+                                  : "grid place-items-center w-5.5 h-5.5 rounded-[50%] bg-[#e5e5e7] text-[#46464b] text-[10px] flex-none max-sm:ml-auto"
+                              }
+                              data-my-issue-assignee=""
+                              title={i.assignee?.name || "Unassigned"}
+                            >
+                              {i.assignee ? (
+                                <UserBlobatar user={i.assignee} />
+                              ) : (
+                                "·"
+                              )}
+                            </span>
+                          )}
+                          {showDue && i.dueDate && (
+                            <span
+                              className="whitespace-nowrap text-[#ad5757] text-[11px] max-md:hidden"
+                              data-my-issue-due=""
+                            >
+                              {new Date(i.dueDate).toLocaleDateString(
+                                undefined,
+                                {
                                   month: "short",
                                   day: "numeric",
-                                })
-                              : i.createdAt
-                                ? new Date(i.createdAt).toLocaleDateString(
-                                    undefined,
-                                    { month: "short", day: "numeric" },
-                                  )
-                                : ""}
-                          </span>
-                        )}
-                      </div>
-                    ),
-                  )}
-                  {end < n && (
-                    <div
-                      aria-hidden="true"
-                      style={{ height: (n - end) * rowH }}
-                    />
-                  )}
-                </section>
-              );
-            })}
-          </div>
-        )}
-        {!visible.length && !activityLoading && (
-          <section
-            className="flex flex-col items-center gap-3.5 min-h-75 justify-center text-[#65656a] text-[13px] [@media_(max-width:650px)]:min-h-[calc(100dvh-280px)]"
-            data-my-issues-empty=""
-            aria-labelledby="my-issues-empty-title"
-          >
-            <Inbox size={30} />
-            <h2
-              className="mt-0 mr-0 mb-0 ml-0 text-[16px] text-foreground"
-              id="my-issues-empty-title"
+                                },
+                              )}
+                            </span>
+                          )}
+                          {showProject && (
+                            <span
+                              className="overflow-hidden text-ellipsis whitespace-nowrap text-muted text-[11px] max-md:hidden max-w-37.5"
+                              data-my-issue-project=""
+                            >
+                              {i.project?.name || i.team?.name || ""}
+                            </span>
+                          )}
+                          {showDate && (
+                            <span
+                              className="text-right whitespace-nowrap text-[11px] text-muted min-w-11.5 shell-phone:hidden"
+                              data-my-issue-date=""
+                            >
+                              {tab === "Activity"
+                                ? new Date(
+                                    dayEvents[index]?.createdAt || "",
+                                  ).toLocaleDateString(undefined, {
+                                    month: "short",
+                                    day: "numeric",
+                                  })
+                                : i.createdAt
+                                  ? new Date(i.createdAt).toLocaleDateString(
+                                      undefined,
+                                      { month: "short", day: "numeric" },
+                                    )
+                                  : ""}
+                            </span>
+                          )}
+                        </div>
+                      ),
+                    )}
+                    {end < n && (
+                      <div
+                        aria-hidden="true"
+                        style={{ height: (n - end) * rowH }}
+                      />
+                    )}
+                  </section>
+                );
+              })}
+            </div>
+          )}
+          {!visible.length && !activityLoading && (
+            <section
+              className="flex flex-col items-center gap-3.5 min-h-75 justify-center text-[#65656a] text-[13px] [@media_(max-width:650px)]:min-h-[calc(100dvh-280px)]"
+              data-my-issues-empty=""
+              aria-labelledby="my-issues-empty-title"
             >
-              {scoped.length ? "No matching tasks" : emptyCopy[0]}
-            </h2>
-            <p className="mt-0 mr-0 mb-0 ml-0">
-              {scoped.length
-                ? "Clear filters to see these tasks."
-                : emptyCopy[1]}
-            </p>
-            {!scoped.length && tab !== "Activity" && (
-              <button
-                className="inline-flex min-h-11 items-center justify-center gap-1.75 rounded-[999px] bg-[#6567d8] pl-3.5 pr-3.5 pt-2 pb-2 text-white font-[650] shadow-[none] transition-colors duration-150 ease-out hover:brightness-110 hover:transition-none active:translate-y-px disabled:cursor-wait disabled:opacity-65 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.65]"
-                data-control-primary=""
-                onClick={() => onNew()}
+              <Inbox size={30} />
+              <h2
+                className="mt-0 mr-0 mb-0 ml-0 text-[16px] text-foreground"
+                id="my-issues-empty-title"
               >
-                <Plus size={15} />
-                Create task
+                {scoped.length ? "No matching tasks" : emptyCopy[0]}
+              </h2>
+              <p className="mt-0 mr-0 mb-0 ml-0">
+                {scoped.length
+                  ? "Clear filters to see these tasks."
+                  : emptyCopy[1]}
+              </p>
+              {!scoped.length && tab !== "Activity" && (
+                <button
+                  className="inline-flex min-h-11 items-center justify-center gap-1.75 rounded-[999px] bg-[#6567d8] pl-3.5 pr-3.5 pt-2 pb-2 text-white font-[650] shadow-[none] transition-colors duration-150 ease-out hover:brightness-110 hover:transition-none active:translate-y-px disabled:cursor-wait disabled:opacity-65 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.65]"
+                  data-control-primary=""
+                  onClick={() => onNew()}
+                >
+                  <Plus size={15} />
+                  Create task
+                </button>
+              )}
+            </section>
+          )}
+          {activityLoading && tab === "Activity" && (
+            <p
+              role="status"
+              className="pt-3 pr-6 pb-3 pl-6 text-[11px] text-muted"
+              data-my-activity-note=""
+            >
+              Loading activity…
+            </p>
+          )}
+          {activityError && tab === "Activity" && (
+            <p
+              role="alert"
+              className="pt-2.5 pr-5 pb-2.5 pl-5 text-[12px] text-[#b42318]"
+              data-my-issue-page-error=""
+            >
+              {activityError}{" "}
+              <button
+                onClick={onLoadActivity}
+                className="focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+              >
+                Retry
               </button>
-            )}
-          </section>
-        )}
-        {activityLoading && tab === "Activity" && (
-          <p
-            role="status"
-            className="pt-3 pr-6 pb-3 pl-6 text-[11px] text-muted"
-            data-my-activity-note=""
-          >
-            Loading activity…
-          </p>
-        )}
-        {activityError && tab === "Activity" && (
-          <p
-            role="alert"
-            className="pt-2.5 pr-5 pb-2.5 pl-5 text-[12px] text-[#b42318]"
-            data-my-issue-page-error=""
-          >
-            {activityError}{" "}
+            </p>
+          )}
+          {tab === "Activity" && (
+            <div
+              ref={loadMoreRef}
+              className="my-issue-load-sentinel"
+              aria-hidden="true"
+            />
+          )}
+          {activityHasMore && tab === "Activity" && (
             <button
+              className="block mt-4 mr-auto mb-4 ml-auto pt-2 pr-3.5 pb-2 pl-3.5 rounded-md bg-white text-[12px] text-[#333] disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 border border-line shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.6]"
+              data-my-issue-load-more=""
               onClick={onLoadActivity}
-              className="focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+              disabled={activityLoading}
             >
-              Retry
+              {activityLoading ? "Loading…" : "Load more activity"}
             </button>
-          </p>
-        )}
-        {tab === "Activity" && (
-          <div
-            ref={loadMoreRef}
-            className="my-issue-load-sentinel"
-            aria-hidden="true"
-          />
-        )}
-        {activityHasMore && tab === "Activity" && (
-          <button
-            className="block mt-4 mr-auto mb-4 ml-auto pt-2 pr-3.5 pb-2 pl-3.5 rounded-md bg-white text-[12px] text-[#333] disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 border border-line shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.6]"
-            data-my-issue-load-more=""
-            onClick={onLoadActivity}
-            disabled={activityLoading}
-          >
-            {activityLoading ? "Loading…" : "Load more activity"}
-          </button>
-        )}
-        {needStatus === "loading" && (
-          <p
-            role="status"
-            className="pt-3 pr-6 pb-3 pl-6 text-[11px] text-muted"
-            data-my-activity-note=""
-          >
-            Loading older closed tasks…
-          </p>
-        )}
-        {need && needStatus === "error" && (
-          <p
-            role="alert"
-            className="pt-2.5 pr-5 pb-2.5 pl-5 text-[12px] text-[#b42318]"
-            data-my-issue-page-error=""
-          >
-            Couldn’t load older closed tasks: {older?.error}{" "}
-            <button
-              onClick={() => onLoadOlder?.(true)}
-              className="focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+          )}
+          {needStatus === "loading" && (
+            <p
+              role="status"
+              className="pt-3 pr-6 pb-3 pl-6 text-[11px] text-muted"
+              data-my-activity-note=""
             >
-              Retry
-            </button>
-          </p>
-        )}
-        {tab === "Activity" && (
-          <p
-            className="pt-3 pr-6 pb-3 pl-6 text-[11px] text-muted"
-            data-my-activity-note=""
-          >
-            Activity is recorded from this server’s event-log migration onward;
-            earlier changes are unavailable.
-          </p>
-        )}
+              Loading older closed tasks…
+            </p>
+          )}
+          {need && needStatus === "error" && (
+            <p
+              role="alert"
+              className="pt-2.5 pr-5 pb-2.5 pl-5 text-[12px] text-[#b42318]"
+              data-my-issue-page-error=""
+            >
+              Couldn’t load older closed tasks: {older?.error}{" "}
+              <button
+                onClick={() => onLoadOlder?.(true)}
+                className="focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+              >
+                Retry
+              </button>
+            </p>
+          )}
+          {tab === "Activity" && (
+            <p
+              className="pt-3 pr-6 pb-3 pl-6 text-[11px] text-muted"
+              data-my-activity-note=""
+            >
+              Activity is recorded from this server’s event-log migration
+              onward; earlier changes are unavailable.
+            </p>
+          )}
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 
@@ -11636,22 +11663,19 @@ function TeamIssuesPage({
     );
   return (
     <>
-      <div
-        className="m-0 flex h-11 min-h-11 flex-none items-center gap-1 border-b border-line bg-bg px-4 py-0 text-foreground"
-        data-page-head=""
-        data-my-issues-head=""
-      >
-        <MobileNavTrigger />
-        <div>
-          <h1 className="text-sm font-medium leading-normal tracking-[-.045em] text-foreground">
-            {team.name}
-          </h1>
-          <p className="mt-1.5 mr-0 mb-0 ml-0 text-muted max-sm:text-xs hidden [@media_(max-width:560px)]:text-[12px]">
-            Team tasks
-          </p>
-        </div>
-      </div>
       <MyIssuesContent
+        head={
+          <>
+            <div>
+              <h1 className="text-sm font-medium leading-normal tracking-[-.045em] text-foreground">
+                {team.name}
+              </h1>
+              <p className="mt-1.5 mr-0 mb-0 ml-0 text-muted max-sm:text-xs hidden [@media_(max-width:560px)]:text-[12px]">
+                Team tasks
+              </p>
+            </div>
+          </>
+        }
         tabs={
           <TaskViewTabs
             label="Team task views"
@@ -11728,22 +11752,19 @@ function BoardPage({
   );
   return (
     <>
-      <div
-        className="m-0 flex h-11 min-h-11 flex-none items-center gap-1 border-b border-line bg-bg px-4 py-0 text-foreground"
-        data-page-head=""
-        data-my-issues-head=""
-      >
-        <MobileNavTrigger />
-        <div>
-          <h1 className="text-sm font-medium leading-normal tracking-[-.045em] text-foreground">
-            Board
-          </h1>
-          <p className="mt-1.5 mr-0 mb-0 ml-0 text-muted max-sm:text-xs hidden [@media_(max-width:560px)]:text-[12px]">
-            All teams
-          </p>
-        </div>
-      </div>
       <MyIssuesContent
+        head={
+          <>
+            <div>
+              <h1 className="text-sm font-medium leading-normal tracking-[-.045em] text-foreground">
+                Board
+              </h1>
+              <p className="mt-1.5 mr-0 mb-0 ml-0 text-muted max-sm:text-xs hidden [@media_(max-width:560px)]:text-[12px]">
+                All teams
+              </p>
+            </div>
+          </>
+        }
         tabs={
           <nav
             className="mt-0 -mr-1 -ml-1 flex h-13 min-w-0 flex-1 items-center gap-1.5 border-0 bg-bg pl-1 pr-1 pt-0 pb-0 text-foreground overflow-x-auto [@media_(max-width:650px)]:gap-1 [@media_(max-width:650px)]:h-12"
