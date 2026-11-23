@@ -111,24 +111,24 @@ const UPDATE = ['**Update** — we shipped the queue.', '', '- retries are cappe
 
   /* ---------------- issue detail ---------------- */
   await page.goto(issueUrl, { waitUntil: 'networkidle' });
-  await page.waitForSelector('.lin-comment .md', { timeout: 15000 });
+  await page.waitForSelector('[data-issue-comment] [data-md]', { timeout: 15000 });
   await shot('issue');
 
-  const comments = await page.evaluate(() => [...document.querySelectorAll('.lin-comment')].map(c => ({
+  const comments = await page.evaluate(() => [...document.querySelectorAll('[data-issue-comment]')].map(c => ({
     text: c.innerText,
-    md: !!c.querySelector('.md'),
-    bullets: c.querySelectorAll('.md ul > li').length,
-    ordered: c.querySelectorAll('.md ol > li').length,
-    strong: c.querySelectorAll('.md strong').length,
-    code: c.querySelectorAll('.md code').length,
-    pre: c.querySelectorAll('.md pre').length,
-    quote: c.querySelectorAll('.md blockquote').length,
-    tasks: c.querySelectorAll('.md input[type=checkbox]').length,
-    headings: [...c.querySelectorAll('.md h1,.md h2,.md h3,.md h4,.md h5,.md h6')].map(h => h.tagName),
-    tables: c.querySelectorAll('.md .md-table').length,
-    chips: c.querySelectorAll('.md .agent-issue-chip').length,
-    imgs: c.querySelectorAll('.md img').length,
-    scripts: c.querySelectorAll('.md script').length,
+    md: !!c.querySelector('[data-md]'),
+    bullets: c.querySelectorAll('[data-md] ul > li').length,
+    ordered: c.querySelectorAll('[data-md] ol > li').length,
+    strong: c.querySelectorAll('[data-md] strong').length,
+    code: c.querySelectorAll('[data-md] code').length,
+    pre: c.querySelectorAll('[data-md] pre').length,
+    quote: c.querySelectorAll('[data-md] blockquote').length,
+    tasks: c.querySelectorAll('[data-md] input[type=checkbox]').length,
+    headings: [...c.querySelectorAll('[data-md] h1,[data-md] h2,[data-md] h3,[data-md] h4,[data-md] h5,[data-md] h6')].map(h => h.tagName),
+    tables: c.querySelectorAll('[data-md] [data-md-table]').length,
+    chips: c.querySelectorAll('[data-md] [data-agent-issue-chip]').length,
+    imgs: c.querySelectorAll('[data-md] img').length,
+    scripts: c.querySelectorAll('[data-md] script').length,
   })));
   ok(comments.length === 4, 'issue: four comments render', `${comments.length}`);
   ok(comments.every(c => c.md), 'issue: every comment body is a markdown body');
@@ -146,7 +146,7 @@ const UPDATE = ['**Update** — we shipped the queue.', '', '- retries are cappe
   const pageHeads = await page.evaluate(() => ({
     h1: document.querySelectorAll('h1').length,
     hscroll: document.documentElement.scrollWidth > document.documentElement.clientWidth,
-    tableScrolls: [...document.querySelectorAll('.md-table')].every(t => getComputedStyle(t).overflowX === 'auto'),
+    tableScrolls: [...document.querySelectorAll('[data-md-table]')].every(t => getComputedStyle(t).overflowX === 'auto'),
   }));
   ok(pageHeads.h1 <= 1, 'issue: at most one h1 on the page (bodies cannot compete)', `${pageHeads.h1}`);
   ok(pageHeads.tableScrolls, 'tables scroll inside their own box');
@@ -158,9 +158,9 @@ const UPDATE = ['**Update** — we shipped the queue.', '', '- retries are cappe
 
   /* description: rendered, editable, source-preserving */
   const desc = await page.evaluate(() => {
-    const el = document.querySelector('.lin-detail-desc .md');
+    const el = document.querySelector('[data-issue-description] [data-md]');
     return el && {
-      headings: [...el.querySelectorAll('.md-h')].map(h => h.tagName),
+      headings: [...el.querySelectorAll('h3,h4,h5,h6')].map(h => h.tagName),
       ordered: el.querySelectorAll('ol > li').length,
       external: [...el.querySelectorAll('a')].filter(a => a.host && a.host !== location.host).map(a => [a.getAttribute('target'), a.getAttribute('rel')]),
       internal: [...el.querySelectorAll('a')].filter(a => !a.host || a.host === location.host).map(a => a.getAttribute('href')),
@@ -173,13 +173,13 @@ const UPDATE = ['**Update** — we shipped the queue.', '', '- retries are cappe
   ok(desc.internal.length === 1 && desc.internal[0] === '/workspace/issue/TREBOL-2', 'description: workspace link stays internal', JSON.stringify(desc.internal));
 
   const editBefore = await page.locator('textarea[aria-label="Description"]').count();
-  await page.evaluate(() => document.querySelector('.lin-detail-desc a').click());
+  await page.evaluate(() => document.querySelector('[data-issue-description] a').click());
   await page.waitForTimeout(250);
   ok(editBefore === 0 && await page.locator('textarea[aria-label="Description"]').count() === 0,
     'description: clicking a link does not open the editor');
   await page.goto(issueUrl, { waitUntil: 'networkidle' });
-  await page.waitForSelector('.lin-detail-desc .md');
-  await page.click('[aria-label="Edit description"]');
+  await page.waitForSelector('[data-issue-description] [data-md]');
+  await page.click('[title="Click to edit description"]');
   const editorText = await page.inputValue('textarea[aria-label="Description"]');
   ok(editorText.includes('## Steps') && !editorText.includes('<h3'), 'description: editor shows the original markdown source', editorText.slice(0, 40));
 
@@ -188,14 +188,14 @@ const UPDATE = ['**Update** — we shipped the queue.', '', '- retries are cappe
 
   /* ---------------- pulse ---------------- */
   await page.goto(`${base}/workspace/pulse/all`, { waitUntil: 'networkidle' });
-  await page.waitForSelector('.pulse-post-body .md', { timeout: 15000 });
+  await page.waitForSelector('[data-pulse-post-body] [data-md]', { timeout: 15000 });
   await shot('pulse');
   const pulse = await page.evaluate(() => {
-    const el = document.querySelector('.pulse-post-body .md');
+    const el = document.querySelector('[data-pulse-post-body] [data-md]');
     return {
       bullets: el.querySelectorAll('ul > li').length,
       strong: el.querySelectorAll('strong').length,
-      tables: el.querySelectorAll('.md-table table').length,
+      tables: el.querySelectorAll('[data-md-table] table').length,
       hscroll: document.documentElement.scrollWidth > document.documentElement.clientWidth,
     };
   });
@@ -205,24 +205,24 @@ const UPDATE = ['**Update** — we shipped the queue.', '', '- retries are cappe
 
   /* ---------------- project overview + activity ---------------- */
   await page.goto(`${base}/workspace/project/${projectId}`, { waitUntil: 'networkidle' });
-  await page.waitForSelector('.project-overview-description', { timeout: 15000 });
+  await page.waitForSelector('[data-project-overview-description]', { timeout: 15000 });
   const overview = await page.evaluate(() => ({
-    descriptionMd: !!document.querySelector('.project-overview-description .md'),
-    descriptionBullets: document.querySelectorAll('.project-overview-description .md ul > li').length,
-    updateMd: !!document.querySelector('.project-overview-update .md'),
-    tables: document.querySelectorAll('.project-overview-update .md-table').length,
+    descriptionMd: !!document.querySelector('[data-project-overview-description] [data-md]'),
+    descriptionBullets: document.querySelectorAll('[data-project-overview-description] [data-md] ul > li').length,
+    updateMd: !!document.querySelector('[data-project-overview-update] [data-md]'),
+    tables: document.querySelectorAll('[data-project-overview-update] [data-md-table]').length,
   }));
   ok(overview.descriptionMd && overview.descriptionBullets === 2, 'overview: project description is markdown with its list', JSON.stringify(overview));
   ok(overview.updateMd && overview.tables === 1, 'overview: latest update is markdown with a table', JSON.stringify(overview));
   await shot('overview');
 
   await page.goto(`${base}/workspace/project/${projectId}/activity`, { waitUntil: 'networkidle' });
-  await page.waitForSelector('.activity-update .md', { timeout: 15000 });
+  await page.waitForSelector('[data-activity-update] [data-md]', { timeout: 15000 });
   const activity = await page.evaluate(() => {
-    const el = document.querySelector('.activity-update .md');
+    const el = document.querySelector('[data-activity-update] [data-md]');
     return {
       bullets: el.querySelectorAll('ul > li').length,
-      tables: el.querySelectorAll('.md-table').length,
+      tables: el.querySelectorAll('[data-md-table]').length,
       hscroll: document.documentElement.scrollWidth > document.documentElement.clientWidth,
     };
   });

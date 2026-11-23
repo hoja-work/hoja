@@ -73,8 +73,13 @@ def _state_from(response) -> str:
     return parse_qs(urlparse(response.headers["location"]).query)["state"][0]
 
 
-def _seal(pending: dict) -> str:
-    """Craft a state the way the server would, so a guard can be probed directly."""
+def _seal(pending: dict, *, seal_org: str | None = None) -> str:
+    """Craft a state the way the server would, so a guard can be probed directly.
+
+    Sealed under the organization the payload names unless ``seal_org`` says otherwise, which is
+    how a state copied from another workspace is simulated: the payload then authenticates for a
+    different key and cannot be opened at all.
+    """
     body = {
         "uid": "user-1",
         "org": "org-1",
@@ -84,7 +89,7 @@ def _seal(pending: dict) -> str:
         "nonce": uuid.uuid4().hex,
     }
     body.update(pending)
-    return encrypt_secret(json.dumps(body))
+    return encrypt_secret(json.dumps(body), seal_org or str(body.get("org") or "org-1"))
 
 
 def _token_response(**overrides) -> httpx.Response:
@@ -186,12 +191,39 @@ def test_start_redirects_to_github_with_the_tenant_callback_and_no_scope(tmp_pat
     assert query["state"][0]
 
 
-def test_start_refuses_a_host_that_is_not_in_the_callback_allow_list(tmp_path) -> None:
+def test_start_refuses_a_host_with_no_registered_callback_under_shared_tenancy(
+    tmp_path, monkeypatch
+) -> None:
+    """One deployment serves many hosts, so the refusal is per host, not per deployment.
+
+    ``single_host`` installs answer with their one registered callback whatever Host arrived; a
+    shared deployment must refuse, because GitHub would answer an unregistered redirect with
+    ``redirect_uri_mismatch`` on a page the person cannot act on.
+    """
+    monkeypatch.setenv("HOJA_TRUSTED_PUBLIC_HOST", "app.hoja.work")
+    monkeypatch.setenv("HOJA_CONNECTOR_REDIRECT_HOSTS", "github-org.app.hoja.work")
     _, app, admin = _setup(tmp_path)
     with _client(app, base="https://ghost.hoja.work") as client:
         res = _start(client, admin["token"])
-    assert res.status_code == 400
-    assert "callback" in (res.json().get("hint") or "").lower()
+    assert res.status_code == 409
+    assert "not available on this workspace host" in res.json()["error"]
+
+
+def test_start_registers_the_callback_of_the_host_it_serves(tmp_path, monkeypatch) -> None:
+    """The redirect URI comes from the registered callback, never from ``request.base_url``."""
+    monkeypatch.setenv("HOJA_TRUSTED_PUBLIC_HOST", "app.hoja.work")
+    monkeypatch.setenv("HOJA_CONNECTOR_REDIRECT_HOSTS", "github-org.app.hoja.work")
+    monkeypatch.setenv("HOJA_TENANT_BASE_DOMAIN", "app.hoja.work")
+    tenant_callback = "https://github-org.app.hoja.work/api/connectors/github/callback"
+    monkeypatch.setenv("HOJA_GITHUB_REDIRECT_URIS", tenant_callback)
+    _, app, admin = _setup(tmp_path)
+    # An http:// base is what the app sees behind a proxy whose X-Forwarded-Proto it does not
+    # trust; the answer must still be the https callback it registered.
+    with _client(app, base="http://github-org.app.hoja.work") as client:
+        res = _start(client, admin["token"])
+    assert res.status_code == 302
+    query = parse_qs(urlparse(res.headers["location"]).query)
+    assert query["redirect_uri"] == [tenant_callback]
 
 
 def test_an_unconfigured_deployment_reports_503(tmp_path, monkeypatch) -> None:
@@ -304,8 +336,8 @@ def test_the_happy_path_stores_a_sealed_grant_and_githubs_user_id(tmp_path) -> N
     assert row["external_id"] == "68679193"
     assert row["owner_user_id"] == admin["user_id"]
     assert row["scopes"] == ""
-    assert decrypt_secret(row["encrypted_refresh_token"]) == "ghr_refresh_fixture"
-    assert decrypt_secret(row["encrypted_access_token"]) == "ghu_access_fixture"
+    assert decrypt_secret(row["encrypted_refresh_token"], admin["org_id"]) == "ghr_refresh_fixture"
+    assert decrypt_secret(row["encrypted_access_token"], admin["org_id"]) == "ghu_access_fixture"
     assert int(row["access_token_expires_at"]) > time.time() + 28_000
 
 

@@ -1,11 +1,11 @@
 // Run from repo root: node scripts/test-brand-and-welcome-composer.cjs
-// Checks two live-app contracts: the brand mark is served as SVG (not the SPA shell), and the empty-state composer is styled as a bounded card.
+// Checks that the empty-state welcome screen and composer card stay bounded with a borderless textarea.
 const { chromium } = require('../local-e2e/node_modules/playwright');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const css = fs.readFileSync(path.resolve(__dirname, process.env.UI_LAYOUT_CSS || '../frontend/src/styles.css'), 'utf8');
-const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><section class="agent-chat-page"><div class="openui-agent-welcome-screen"><div class="openui-agent-welcome-screen__desktop-composer"><div class="openui-agent-desktop-welcome-composer"><textarea class="openui-agent-desktop-welcome-composer__input" placeholder="Type your query here"></textarea><div class="openui-agent-desktop-welcome-composer__action-bar"><button class="openui-agent-desktop-welcome-composer__submit-button" aria-label="Send">↑</button></div></div></div></div></section></body></html>`;
+const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><section class="agent-chat-page" data-agent-panel="" style="padding:16px"><div data-agent-welcome="" style="max-width:672px;margin:0 auto"><h1>Ask the Hoja agent</h1></div><form data-agent-composer="" style="max-width:768px;margin:0 auto"><div class="agent-welcome-composer-card" style="display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:16px;border:1px solid var(--line);background:var(--panel)"><textarea class="agent-welcome-composer-input" placeholder="Ask about tasks, projects, or cycles…" style="width:100%;border:0;outline:none;background:transparent"></textarea><div style="display:flex;justify-content:flex-end"><button type="submit" class="agent-welcome-composer-submit" aria-label="Send message" style="width:32px;height:32px;border-radius:9999px">↑</button></div></div></form></section></body></html>`;
 (async () => {
   const browser = await chromium.launch({ headless: true });
   try {
@@ -14,10 +14,16 @@ const html = `<!doctype html><html><head><meta name="viewport" content="width=de
       await page.setContent(html);
       await page.addStyleTag({ content: css });
       const r = await page.evaluate(() => {
-        const card = document.querySelector('.openui-agent-desktop-welcome-composer').getBoundingClientRect();
-        const btn = document.querySelector('.openui-agent-desktop-welcome-composer__submit-button').getBoundingClientRect();
-        const input = getComputedStyle(document.querySelector('.openui-agent-desktop-welcome-composer__input'));
-        return { cardRight: card.right, btnRight: btn.right, inputBorder: input.borderTopWidth, cardRadius: getComputedStyle(document.querySelector('.openui-agent-desktop-welcome-composer')).borderTopLeftRadius, scroll: document.documentElement.scrollWidth };
+        const card = document.querySelector('.agent-welcome-composer-card').getBoundingClientRect();
+        const btn = document.querySelector('.agent-welcome-composer-submit').getBoundingClientRect();
+        const input = getComputedStyle(document.querySelector('.agent-welcome-composer-input'));
+        return {
+          cardRight: card.right,
+          btnRight: btn.right,
+          inputBorder: input.borderTopWidth,
+          cardRadius: getComputedStyle(document.querySelector('.agent-welcome-composer-card')).borderTopLeftRadius,
+          scroll: document.documentElement.scrollWidth,
+        };
       });
       assert.ok(r.btnRight <= r.cardRight + 1, `${width}px: welcome send button outside composer card`);
       assert.equal(r.inputBorder, '0px', `${width}px: welcome input must not draw its own border`);

@@ -25,22 +25,37 @@ const only = process.argv.find(arg => arg.startsWith('--case='))?.slice(7);
       assert.ok(!result.overlap, `${width}px: Activity tab is covered by toolbar`);
       await page.close();
     }
-    // A status menu opened on the final card must remain inside the visible
-    // board viewport rather than being clipped by its scrollable column.
+    // A board status menu renders as a popover: opening it must not enter the
+    // card's layout or grow the scrolling column.
     if (!only || only === 'board') {
     const board = await browser.newPage({ viewport: { width: 390, height: 568 } });
-    await board.setContent(`<div class="issues-board" style="height:400px"><div class="kanban-columns"><div class="kanban-column" style="height:360px"><div class="kanban-cards" style="height:340px">${Array(8).fill('<div class="kanban-card-wrap"><div class="kanban-card" style="min-height:70px">Card</div></div>').join('')}<div class="kanban-card-wrap"><div class="kanban-card" style="min-height:70px"><div class="status-picker"><button class="status-picker-trigger">Status</button><ul class="status-menu">${['Backlog','Started','Done','Paused','Canceled','Queued','Review','Blocked'].map(s=>`<li><button>${s}</button></li>`).join('')}</ul></div></div></div></div></div></div>`);
+    await board.setContent(`<div class="issues-board" style="height:400px"><div class="kanban-columns"><div class="kanban-column" style="height:360px"><div class="kanban-cards" style="height:340px">${Array(8).fill('<div class="kanban-card" style="min-height:70px">Card</div>').join('')}<div class="kanban-card" style="min-height:70px"><div class="status-picker"><button class="status-picker-trigger">Status</button><ul class="status-menu">${['Backlog','Started','Done','Paused','Canceled','Queued','Review','Blocked'].map(s=>`<li><button>${s}</button></li>`).join('')}</ul></div></div></div></div></div>`);
     await board.addStyleTag({ content: css });
-    await board.locator('.kanban-cards').evaluate(el => { el.scrollTop = el.scrollHeight; });
     const boardBoxes = await board.evaluate(() => {
-      const box = selector => document.querySelector(selector).getBoundingClientRect();
-      const menu = box('.status-menu');
-      const visible = box('.kanban-cards');
-      return { menuTop: menu.top, menuBottom: menu.bottom, visibleTop: visible.top, visibleBottom: visible.bottom };
+      const card = document.querySelector('.kanban-card:last-of-type');
+      const menu = document.querySelector('.status-menu');
+      const position = getComputedStyle(menu).position;
+      const withMenu = card.getBoundingClientRect().height;
+      menu.remove();
+      const withoutMenu = card.getBoundingClientRect().height;
+      return { position, withMenu, withoutMenu };
     });
-    assert.ok(boardBoxes.menuTop >= boardBoxes.visibleTop && boardBoxes.menuBottom <= boardBoxes.visibleBottom,
-      'Last-card status menu is clipped by scrolling board column');
+    assert.notEqual(boardBoxes.position, 'static', 'Board status menu must be out of flow');
+    assert.equal(boardBoxes.withMenu, boardBoxes.withoutMenu, 'Board status menu must not change card height');
     await board.close();
+    }
+    // Column headers keep their height when the card list scrolls instead of
+    // letting the flex column shrink the header to make room for cards.
+    if (!only || only === 'board') {
+      const heights = await browser.newPage({ viewport: { width: 390, height: 568 } });
+      const cards = Array(12).fill('<div class="kanban-card" style="min-height:70px">Card</div>').join('');
+      await heights.setContent(`<div class="issues-board" style="height:400px"><div class="kanban-columns"><div class="kanban-column" style="height:360px"><header><b>Empty</b></header><div class="kanban-cards"></div></div><div class="kanban-column" style="height:360px"><header><b>Overflow</b></header><div class="kanban-cards">${cards}</div></div></div></div>`);
+      await heights.addStyleTag({ content: css });
+      const boxes = await heights.evaluate(() => ({ empty: document.querySelectorAll('.kanban-column header')[0].getBoundingClientRect().height, overflow: document.querySelectorAll('.kanban-column header')[1].getBoundingClientRect().height, scrolls: document.querySelectorAll('.kanban-cards')[1].scrollHeight > document.querySelectorAll('.kanban-cards')[1].clientHeight }));
+      assert.ok(boxes.scrolls, 'Overflowing column cards should scroll');
+      assert.equal(boxes.overflow, boxes.empty, `Column header must not shrink when cards overflow (${boxes.empty}px empty, ${boxes.overflow}px overflow)`);
+      assert.equal(boxes.empty, 48, 'Column header keeps the 48px height');
+      await heights.close();
     }
     // The filter panel has more fields than fit on short screens. The final
     // action must be scrollable inside the visible panel, not lost below it.

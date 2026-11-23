@@ -24,7 +24,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from sqlalchemy import and_, case, func, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from hoja_server.db import (
@@ -34,6 +34,7 @@ from hoja_server.db import (
     signup_flow,
     signup_identity,
     signup_invite,
+    tenant_membership_hint,
     signup_session,
     token_hash,
     turnstile_use,
@@ -82,6 +83,7 @@ class SignupStore:
         redirect_uri: str,
         return_to: str | None,
         ttl_seconds: int,
+        client_challenge: str | None = None,
         now: datetime | None = None,
     ) -> str:
         moment = _now(now)
@@ -96,6 +98,7 @@ class SignupStore:
                     code_verifier=code_verifier,
                     redirect_uri=redirect_uri,
                     return_to=return_to,
+                    client_challenge=client_challenge,
                     created_at=_utc_iso(moment),
                     expires_at=_utc_iso(moment + timedelta(seconds=ttl_seconds)),
                 )
@@ -466,6 +469,94 @@ class SignupStore:
                 )
                 .limit(1),
             )
+
+    def record_membership_hint(self, *, slug: str, email: str, role: str = "member",
+                               expires_at: str | None = None,
+                               now: datetime | None = None) -> None:
+        """Remember that a tenant said this address belongs to it.
+
+        Idempotent per (slug, email): a tenant re-announcing the same invitation
+        refreshes the row rather than growing the table.
+        """
+        moment = _now(now)
+        stamp = _utc_iso(moment)
+        address = (email or "").strip().lower()
+        with self.engine.begin() as conn:
+            existing = _one(conn, select(tenant_membership_hint).where(and_(
+                tenant_membership_hint.c.slug == slug,
+                tenant_membership_hint.c.email == address,
+            )))
+            if existing is not None:
+                conn.execute(tenant_membership_hint.update().where(
+                    tenant_membership_hint.c.id == existing["id"]
+                ).values(role=role, expires_at=expires_at, updated_at=stamp))
+                return
+            conn.execute(tenant_membership_hint.insert().values(
+                id=new_id(), slug=slug, email=address, role=role,
+                expires_at=expires_at, created_at=stamp, updated_at=stamp,
+            ))
+
+    def membership_hints_for(self, email: str | None) -> list[dict]:
+        """Workspaces a tenant has said this address belongs to."""
+        address = (email or "").strip().lower()
+        if not address:
+            return []
+        marker = _utc_iso(_now(None))
+        with self.engine.connect() as conn:
+            rows = conn.execute(select(tenant_membership_hint).where(and_(
+                tenant_membership_hint.c.email == address,
+                or_(tenant_membership_hint.c.expires_at.is_(None),
+                    tenant_membership_hint.c.expires_at > marker),
+            ))).all()
+        return [{"slug": row.slug, "status": "active", "role": row.role} for row in rows]
+
+    def workspaces_for(self, *, subject: str | None, email: str | None) -> list[dict]:
+        """Every workspace this verified identity can be routed to, most useful first.
+
+        This is the control plane's only directory: the workspaces whose sign-up
+        it accepted, matched by the stable Google subject (preferred) or the
+        verified address. A tenant that was provisioned out of band has no row
+        here, which is why the sign-in page still honours the ``next`` workspace
+        the person arrived from.
+        """
+        subject = (subject or "").strip()
+        address = (email or "").strip().lower()
+        if not subject and not address:
+            return []
+        match = []
+        if subject:
+            match.append(signup_eligibility.c.google_sub == subject)
+        if address:
+            match.append(signup_eligibility.c.email == address)
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                select(signup_eligibility)
+                .where(
+                    and_(
+                        or_(*match),
+                        signup_eligibility.c.status.in_(("active", "provisioning", "eligible")),
+                    )
+                )
+                .order_by(
+                    case((signup_eligibility.c.status == "active", 1), else_=0).desc(),
+                    signup_eligibility.c.created_at.desc(),
+                )
+            ).all()
+        seen: set[str] = set()
+        workspaces: list[dict] = []
+        # A tenant's own word outranks the absence of a sign-up row: this is the
+        # whole reason an invited member used to look like a stranger here.
+        for hint in self.membership_hints_for(address):
+            if hint["slug"] not in seen:
+                seen.add(hint["slug"])
+                workspaces.append(hint)
+        for row in rows:
+            slug = str(row.slug)
+            if slug in seen:
+                continue
+            seen.add(slug)
+            workspaces.append({"slug": slug, "status": str(row.status)})
+        return workspaces
 
     def eligibility_by_subject_slug(self, subject: str, slug: str) -> dict | None:
         with self.engine.connect() as conn:

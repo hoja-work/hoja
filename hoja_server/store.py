@@ -7,47 +7,72 @@ hoja's Pydantic models expect.
 from __future__ import annotations
 
 import hashlib
-import json
 import hmac
+import json
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 
 from graphql import GraphQLError
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import String, and_, case, false, func, or_, select, true, update
 from sqlalchemy.engine import Engine
 
+from hoja_server import activity, addresses, identifiers, ranking
+from hoja_server import decisions as decisiondocs
+from hoja_server import views as viewdocs
+
+
+class InviteRefused(Exception):
+    """An invitation the workspace will not issue. ``reason`` is a stable code."""
+
+    def __init__(self, reason: str, message: str):
+        super().__init__(message)
+        self.reason = reason
+        self.message = message
+
+
 from hoja_server.db import (
+    agent_member,
     api_key,
     attachment,
-    github_link,
-    change_event,
     browser_session,
+    change_event,
     comment,
     cycle,
-    issue,
-    issue_activity,
+    github_link,
+    global_identity,
+    identity_credential,
     inbox_notification,
     initiative,
     initiative_project,
-    organization,
-    global_identity,
-    organization_membership,
-    identity_credential,
-    membership_invitation,
-    new_id,
+    initiative_update,
+    issue,
+    issue_activity,
+    issue_decision,
     issue_label,
     issue_label_link,
     issue_subscriber,
+    membership_invitation,
+    new_id,
+    org_base_url,
+    organization,
+    organization_membership,
+    password_credential,
     project,
-    project_update,
     project_member,
     project_team,
+    project_update,
+    saved_view,
+    saved_view_favorite,
     team,
     team_member,
+    tenant_base_url,
     token_hash,
-    password_credential,
     user,
     user_preference,
+    view_preference,
+    view_subscription,
+    workspace_security_policy,
     workflow_state,
 )
 
@@ -90,6 +115,8 @@ def _normalize_expiry(value: str | None):
 
 
 _MAX_SEARCH_TERM = 256
+#: HOJA-733: how long a mobile-app session lives after its last use (sliding).
+APP_SESSION_DAYS = 90
 _PBKDF2_ITERATIONS = 600_000
 _LEGACY_PBKDF2_ITERATIONS = 310_000
 
@@ -222,9 +249,276 @@ def _scope_projects(conn, stmt, org_id, viewer_id):
     return stmt.where(or_(~project.c.id.in_(any_linked), project.c.id.in_(visible_ids)))
 
 
+def _scope_views(conn, stmt, org_id, viewer_id):
+    """Apply view visibility: private → owner only, team → that team's members, else workspace.
+
+    A private row is filtered here rather than after the query, so a copied id cannot leak
+    the view's name or filters to a non-owner (docs/views.md#sharing-and-visibility).
+    """
+    if viewer_id is None:
+        return stmt
+    team_clause = visible_team_clause(conn, org_id, viewer_id, saved_view.c.team_id)
+    shared = saved_view.c.visibility == "workspace"
+    private = and_(saved_view.c.visibility == "private",
+                   saved_view.c.owner_id == viewer_id)
+    team_shared = saved_view.c.visibility == "team"
+    if team_clause is not None:
+        team_shared = and_(team_shared, team_clause)
+    return stmt.where(or_(shared, private, team_shared))
+
+
 class Store:
     def __init__(self, engine: Engine) -> None:
         self.engine = engine
+
+    # ----------------------------------------------------------------- views
+    def ser_view(self, row: dict, *, favorite: bool = False) -> dict:
+        """saved_view row → View. Documents are decoded here so callers never parse JSON."""
+        return {
+            "id": row["id"], "name": row["name"], "description": row.get("description"),
+            "icon": row.get("icon"), "color": row.get("color"), "slugId": row.get("slug_id"),
+            "kind": row.get("kind"), "scope": row.get("scope"),
+            "visibility": row.get("visibility"), "shared": row.get("visibility") != "private",
+            "filters": viewdocs.load(row.get("filters")),
+            "display": viewdocs.load(row.get("display")),
+            "favorite": favorite,
+            "pinned": bool(row.get("pinned")), "sortOrder": row.get("sort_order"),
+            "archivedAt": row.get("archived_at"),
+            "createdAt": row.get("created_at"), "updatedAt": row.get("updated_at"),
+            "_owner_id": row.get("owner_id"), "_creator_id": row.get("creator_id"),
+            "_updated_by_id": row.get("updated_by_id"), "_team_id": row.get("team_id"),
+            "_project_id": row.get("project_id"), "_initiative_id": row.get("initiative_id"),
+        }
+
+    @staticmethod
+    def _favorite_ids(conn, org_id: str, user_id: str | None) -> set[str]:
+        if not user_id:
+            return set()
+        return set(conn.execute(select(saved_view_favorite.c.view_id).where(and_(
+            saved_view_favorite.c.organization_id == org_id,
+            saved_view_favorite.c.user_id == user_id))).scalars())
+
+    def views(self, org_id: str, viewer_id: str, *, kind: str | None = None,
+              scope: str | None = None, include_archived: bool = False,
+              limit: int = 200) -> list[dict]:
+        """Views the viewer may read; private rows are the owner's alone."""
+        with self.engine.connect() as conn:
+            stmt = select(saved_view).where(saved_view.c.organization_id == org_id)
+            if not include_archived:
+                stmt = stmt.where(saved_view.c.archived_at.is_(None))
+            stmt = _scope_views(conn, stmt, org_id, viewer_id)
+            if kind:
+                stmt = stmt.where(saved_view.c.kind == kind)
+            if scope:
+                stmt = stmt.where(saved_view.c.scope == scope)
+            stmt = stmt.order_by(saved_view.c.created_at, saved_view.c.id).limit(limit)
+            favorites = self._favorite_ids(conn, org_id, viewer_id)
+            return [self.ser_view(row, favorite=row["id"] in favorites)
+                    for row in _conn_rows(conn, stmt)]
+
+    def view_by_id(self, org_id: str, viewer_id: str, ident: str,
+                   *, include_archived: bool = True) -> dict | None:
+        """Resolve by id or slug; visibility applies, so a copied link grants nothing."""
+        with self.engine.connect() as conn:
+            stmt = select(saved_view).where(and_(
+                saved_view.c.organization_id == org_id,
+                or_(saved_view.c.id == ident, saved_view.c.slug_id == ident)))
+            if not include_archived:
+                stmt = stmt.where(saved_view.c.archived_at.is_(None))
+            stmt = _scope_views(conn, stmt, org_id, viewer_id)
+            row = _one(conn, stmt)
+            if not row:
+                return None
+            favorites = self._favorite_ids(conn, org_id, viewer_id)
+            return self.ser_view(row, favorite=row["id"] in favorites)
+
+    def view_preference_layers(self, org_id: str, viewer_id: str, view_id: str | None,
+                               view_type: str | None, *,
+                               view_display: dict | None = None) -> dict:
+        """The three preference layers: ``default`` (the view's display, or the built-in
+        page's organization row), the caller's ``user`` layer (None when unset), and
+        ``effective`` (default with the user layer over it). The caller has already
+        checked that ``view_id``/``view_type`` is visible."""
+        with self.engine.connect() as conn:
+            clauses = [view_preference.c.organization_id == org_id]
+            if view_id:
+                clauses.append(view_preference.c.view_id == view_id)
+            else:
+                clauses += [view_preference.c.view_id.is_(None),
+                            view_preference.c.view_type == view_type]
+            rows = _conn_rows(conn, select(view_preference).where(and_(
+                *clauses, or_(view_preference.c.user_id.is_(None),
+                              view_preference.c.user_id == viewer_id)))
+                .order_by(view_preference.c.created_at))
+        org_row = next((r for r in rows if r["user_id"] is None), None)
+        user_row = next((r for r in rows if r["user_id"] == viewer_id), None)
+        default = dict(view_display or {}) if view_id else viewdocs.load(
+            (org_row or {}).get("values"))
+        mine = viewdocs.load(user_row["values"]) if user_row else None
+        return {"viewId": view_id, "viewType": view_type, "default": default,
+                "user": mine, "effective": viewdocs.layer(default, mine or {}),
+                "hasUserOverrides": bool(mine),
+                "_org_row": org_row, "_user_row": user_row}
+
+    def view_user_preference_rows(self, org_id: str, viewer_id: str) -> dict[str, dict]:
+        """The viewer's own preference row of every saved view, keyed by view id: one query
+        for a whole ``views`` list instead of one per view."""
+        with self.engine.connect() as conn:
+            rows = _conn_rows(conn, select(view_preference).where(and_(
+                view_preference.c.organization_id == org_id,
+                view_preference.c.user_id == viewer_id,
+                view_preference.c.view_id.is_not(None))).order_by(
+                    view_preference.c.created_at.desc()))
+        return {r["view_id"]: r for r in rows}  # the oldest row wins, as in the writer
+
+    def view_subscriptions_of(self, org_id: str, viewer_id: str) -> dict[str, dict]:
+        """The viewer's subscriptions keyed by view id (one query per request)."""
+        with self.engine.connect() as conn:
+            rows = _conn_rows(conn, select(view_subscription).where(and_(
+                view_subscription.c.organization_id == org_id,
+                view_subscription.c.user_id == viewer_id)))
+        return {r["view_id"]: {"id": r["id"], "onAdded": bool(r["on_added"]),
+                               "onCompleted": bool(r["on_completed"]),
+                               "createdAt": r["created_at"], "updatedAt": r["updated_at"],
+                               "_view_id": r["view_id"]} for r in rows}
+
+    def view_subscriber_counts(self, org_id: str) -> dict[str, int]:
+        """Followers per view in the organization, one grouped query."""
+        with self.engine.connect() as conn:
+            return dict(conn.execute(select(view_subscription.c.view_id, func.count())
+                                     .where(view_subscription.c.organization_id == org_id)
+                                     .group_by(view_subscription.c.view_id)).all())
+
+    def org_link_parts(self, org_id: str) -> tuple[str, str]:
+        """(url_key, origin) the workspace's links are built from (db.org_links)."""
+        from hoja_server.db import org_links
+
+        with self.engine.connect() as conn:
+            return org_links(conn, org_id)
+
+    def view_subscription_for(self, org_id: str, viewer_id: str, view_id: str) -> dict | None:
+        with self.engine.connect() as conn:
+            row = _one(conn, select(view_subscription).where(and_(
+                view_subscription.c.organization_id == org_id,
+                view_subscription.c.view_id == view_id,
+                view_subscription.c.user_id == viewer_id)))
+        if not row:
+            return None
+        return {"id": row["id"], "onAdded": bool(row["on_added"]),
+                "onCompleted": bool(row["on_completed"]), "createdAt": row["created_at"],
+                "updatedAt": row["updated_at"], "_view_id": view_id}
+
+    def view_subscriber_count(self, org_id: str, view_id: str) -> int:
+        with self.engine.connect() as conn:
+            return conn.execute(select(func.count()).select_from(view_subscription).where(and_(
+                view_subscription.c.organization_id == org_id,
+                view_subscription.c.view_id == view_id))).scalar() or 0
+
+    def view_export_rows(self, org_id: str, issues: list[dict]) -> list[dict]:
+        """CSV columns for a view's issues, every name resolved in one query per table."""
+        def names(table, ids, column):
+            ids = sorted({i for i in ids if i})
+            if not ids:
+                return {}
+            with self.engine.connect() as conn:
+                return dict(conn.execute(select(table.c.id, column).where(and_(
+                    table.c.organization_id == org_id, table.c.id.in_(ids)))).all())
+
+        states = names(workflow_state, [i["_state_id"] for i in issues], workflow_state.c.name)
+        people = names(user, [i["_assignee_id"] for i in issues],
+                       func.coalesce(user.c.display_name, user.c.name, user.c.email))
+        projects = names(project, [i["_project_id"] for i in issues], project.c.name)
+        cycles = names(cycle, [i["_cycle_id"] for i in issues],
+                       func.coalesce(cycle.c.name, func.cast(cycle.c.number, String)))
+        labels: dict[str, list[str]] = {}
+        ids = [i["id"] for i in issues]
+        if ids:
+            with self.engine.connect() as conn:
+                for issue_id, name in conn.execute(select(
+                        issue_label_link.c.issue_id, issue_label.c.name).select_from(
+                        issue_label_link.join(issue_label,
+                                              issue_label.c.id == issue_label_link.c.label_id))
+                        .where(issue_label_link.c.issue_id.in_(ids))
+                        .order_by(issue_label.c.name)).all():
+                    labels.setdefault(issue_id, []).append(name)
+        return [{"identifier": i["identifier"], "title": i["title"],
+                 "status": states.get(i["_state_id"], ""),
+                 "priority": i.get("priorityLabel") or "",
+                 "assignee": people.get(i["_assignee_id"], ""),
+                 "labels": ", ".join(labels.get(i["id"], [])),
+                 "project": projects.get(i["_project_id"], ""),
+                 "cycle": cycles.get(i["_cycle_id"], "") or "",
+                 "dueDate": i.get("dueDate") or "", "createdAt": i.get("createdAt") or "",
+                 "updatedAt": i.get("updatedAt") or "", "url": i.get("url") or ""}
+                for i in issues]
+
+    # ------------------------------------------------------------- decisions
+    def ser_decision(self, row: dict) -> dict:
+        """issue_decision row → IssueDecision; options decode here, never in callers."""
+        opts = decisiondocs.load_options(row.get("options"))
+        return {
+            "id": row["id"], "question": row["question"],
+            "options": opts,
+            "typedOptions": opts,
+            "context": row.get("context"), "status": row.get("status"),
+            "answered": row.get("status") == decisiondocs.ANSWERED,
+            "answer": row.get("answer"), "chosenOption": row.get("chosen_option"),
+            "askedByAgent": row.get("asked_by_agent"),
+            "answeredAt": row.get("answered_at"), "canceledAt": row.get("canceled_at"),
+            "createdAt": row.get("created_at"), "updatedAt": row.get("updated_at"),
+            "_issue_id": row.get("issue_id"), "_asked_by_id": row.get("asked_by_id"),
+            "_answered_by_id": row.get("answered_by_id"),
+        }
+
+    def decisions_for_issue(self, org_id: str, viewer_id: str, issue_ref: str,
+                            *, status: str | None = None,
+                            limit: int = 50) -> list[dict]:
+        """Decisions on one issue, newest first. The issue must be readable by the viewer."""
+        with self.engine.connect() as conn:
+            issue_row = self._issue_ref_row(conn, org_id, viewer_id, issue_ref)
+            if not issue_row:
+                return []
+            stmt = select(issue_decision).where(and_(
+                issue_decision.c.organization_id == org_id,
+                issue_decision.c.issue_id == issue_row["id"]))
+            if status:
+                stmt = stmt.where(issue_decision.c.status == status)
+            stmt = stmt.order_by(issue_decision.c.created_at.desc(),
+                                 issue_decision.c.id.desc()).limit(limit)
+            return [self.ser_decision(row) for row in _conn_rows(conn, stmt)]
+
+    def decision_by_id(self, org_id: str, viewer_id: str, decision_id: str) -> dict | None:
+        """One decision the viewer may read; another org's id is indistinguishable from missing."""
+        with self.engine.connect() as conn:
+            row = _one(conn, select(issue_decision).where(and_(
+                issue_decision.c.organization_id == org_id,
+                issue_decision.c.id == decision_id)))
+            if not row:
+                return None
+            issue_row = self._issue_ref_row(conn, org_id, viewer_id, row["issue_id"])
+            if not issue_row:
+                return None
+            return self.ser_decision(row)
+
+    def _issue_ref_row(self, conn, org_id: str, viewer_id: str, issue_ref: str) -> dict | None:
+        """Resolve an issue by identifier or id, honouring team visibility."""
+        stmt = select(issue.c.id, issue.c.identifier, issue.c.team_id).where(and_(
+            issue.c.organization_id == org_id,
+            identifiers.issue_ref_clause(org_id, issue_ref)))
+        clause = visible_team_clause(conn, org_id, viewer_id, issue.c.team_id)
+        if clause is not None:
+            stmt = stmt.where(clause)
+        row = conn.execute(stmt).mappings().first()
+        return dict(row) if row else None
+
+    def project_visible(self, org_id: str, viewer_id: str | None, project_id: str) -> bool:
+        """Whether a project is visible to the viewer, using the same rule as project lists."""
+        with self.engine.connect() as conn:
+            stmt = select(project.c.id).where(and_(
+                project.c.organization_id == org_id, project.c.id == project_id,
+                project.c.archived_at.is_(None)))
+            stmt = _scope_projects(conn, stmt, org_id, viewer_id)
+            return conn.execute(stmt).first() is not None
 
     def is_initialized(self) -> bool:
         """Whether this database already contains any workspace."""
@@ -244,9 +538,9 @@ class Store:
             return {row.preference_key: row.value for row in rows}
 
     def set_user_preference(self, user_id: str, preference_key: str, value: str) -> bool:
-        allowed = {"theme": {"light", "dark"}, "fontSize": {"90", "100", "110"},
-                   "notification:issueCreated": {"true", "false"},
-                   "notification:issueUpdated": {"true", "false"}}
+        from hoja_server.notifications import KINDS
+        allowed = {"theme": {"light", "dark", "system"}, "fontSize": {"90", "100", "110"},
+                   **{f"notification:{kind}": {"true", "false"} for kind in KINDS}}
         if preference_key not in allowed or value not in allowed[preference_key]:
             return False
         now = datetime.now(timezone.utc).isoformat()
@@ -417,11 +711,13 @@ class Store:
                                     or_(api_key.c.expires_at.is_(None), api_key.c.expires_at > now),
                                     user.c.active.is_(True), user.c.archived_at.is_(None)))):
                     out[("key", th)] = (uid, org)
+            session_rows = []
             for start in range(0, len(sessions), 500):
                 chunk = sessions[start:start + 500]
-                for th, uid, org in conn.execute(
+                for th, uid, org, last_seen, created in conn.execute(
                         select(browser_session.c.token_hash, browser_session.c.user_id,
-                               browser_session.c.organization_id)
+                               browser_session.c.organization_id,
+                               browser_session.c.last_seen_at, browser_session.c.created_at)
                         .join(user, and_(user.c.id == browser_session.c.user_id,
                                          user.c.organization_id == browser_session.c.organization_id))
                         .join(organization_membership, and_(
@@ -432,16 +728,42 @@ class Store:
                                     browser_session.c.revoked_at.is_(None),
                                     browser_session.c.expires_at > now,
                                     user.c.active.is_(True), user.c.archived_at.is_(None)))):
+                    session_rows.append((th, uid, org, last_seen, created))
+            # HOJA-490: a websocket must not outlive its session's idle window
+            # either. One policy query for every organization in the batch, so
+            # revalidating N sockets stays two round trips.
+            orgs = {row[2] for row in session_rows}
+            policies: dict[str, dict] = {}
+            if orgs:
+                for row in conn.execute(
+                        select(workspace_security_policy)
+                        .where(workspace_security_policy.c.organization_id.in_(orgs))
+                ).mappings():
+                    policies[row["organization_id"]] = {
+                        "idleTimeoutMinutes": row["idle_timeout_minutes"],
+                        "allowedSigninMethods": json.loads(row["allowed_signin_methods"] or "[]"),
+                        "ipAllowlist": json.loads(row["ip_allowlist"] or "[]"),
+                    }
+            from hoja_server import permissions as permission_rules
+            for th, uid, org, last_seen, created in session_rows:
+                policy = policies.get(org) or {"idleTimeoutMinutes": None}
+                if permission_rules.session_idle_ok(policy, last_seen, created):
                     out[("session", th)] = (uid, org)
         return out
 
     def resolve_token(self, token: str) -> dict | None:
-        """token → {user_id, organization_id} or None."""
+        """token → {id, user_id, organization_id, kind, actor_id, on_behalf_of, ...} or None.
+
+        ``kind`` is the effective actor kind: an agent principal's own key or an
+        agent-scoped key owned by a person both resolve to ``agent`` (with
+        ``on_behalf_of`` naming the sponsoring human when owned by a person).
+        """
         th = token_hash(token)
+        now = datetime.now(timezone.utc).isoformat()
         with self.engine.connect() as conn:
             row = _one(
                 conn,
-                select(api_key)
+                select(api_key, user.c.kind.label("user_kind"))
                 .join(
                     user,
                     and_(
@@ -454,12 +776,38 @@ class Store:
                         api_key.c.token_hash == th,
                         api_key.c.revoked_at.is_(None),
                         or_(api_key.c.expires_at.is_(None),
-                            api_key.c.expires_at > datetime.now(timezone.utc).isoformat()),
+                            api_key.c.expires_at > now),
                         user.c.active.is_(True),
                         user.c.archived_at.is_(None),
                     )
                 ),
             )
+            if not row:
+                return None
+            user_kind = row.get("user_kind") or "human"
+            agent_uid = row.get("agent_user_id")
+            if agent_uid:
+                bound = conn.execute(select(user.c.id).where(and_(
+                    user.c.id == agent_uid,
+                    user.c.organization_id == row["organization_id"],
+                    user.c.kind == "agent",
+                    user.c.active.is_(True),
+                    user.c.archived_at.is_(None),
+                ))).first()
+                if not bound:
+                    return None
+            if user_kind == "agent":
+                row["kind"] = "agent"
+                row["actor_id"] = row["user_id"]
+                row["on_behalf_of"] = None
+            elif row.get("actor_kind") == "agent" or agent_uid:
+                row["kind"] = "agent"
+                row["actor_id"] = agent_uid or row["user_id"]
+                row["on_behalf_of"] = row["user_id"]
+            else:
+                row["kind"] = user_kind
+                row["actor_id"] = row["user_id"]
+                row["on_behalf_of"] = None
             return row
 
     def touch_api_key(self, key_id: str, last_used_at: str | None = None) -> None:
@@ -476,6 +824,7 @@ class Store:
 
     def list_api_keys(self, org_id: str, user_id: str) -> list[dict]:
         """Return metadata for this user's keys in the active workspace only."""
+        agent_user = user.alias("agent_user")
         with self.engine.connect() as conn:
             return _conn_rows(conn, select(
                 api_key.c.id, api_key.c.label, api_key.c.access, api_key.c.hint,
@@ -483,16 +832,50 @@ class Store:
                 api_key.c.last_used_at.label("lastUsedAt"),
                 api_key.c.created_at.label("createdAt"),
                 api_key.c.revoked_at.label("revokedAt"),
+                api_key.c.actor_kind.label("actorKind"),
+                api_key.c.agent_user_id.label("agentUserId"),
+                agent_member.c.id.label("agentMemberId"),
+                agent_user.c.name.label("agentName"),
+            ).select_from(
+                api_key
+                .outerjoin(agent_member, and_(
+                    agent_member.c.user_id == api_key.c.agent_user_id,
+                    agent_member.c.organization_id == api_key.c.organization_id,
+                ))
+                .outerjoin(agent_user, and_(
+                    agent_user.c.id == api_key.c.agent_user_id,
+                    agent_user.c.organization_id == api_key.c.organization_id,
+                ))
             ).where(and_(api_key.c.organization_id == org_id,
                          api_key.c.user_id == user_id)).order_by(api_key.c.created_at))
 
+    def _resolve_agent_user_id(self, conn, org_id: str, agent_member_id: str | None) -> str | None | bool:
+        """Resolve an active agent_member id (or agent user id) in ``org_id``. Returns False on invalid."""
+        if not agent_member_id:
+            return None
+        row = conn.execute(select(agent_member.c.user_id).join(
+            user, and_(user.c.id == agent_member.c.user_id,
+                       user.c.organization_id == agent_member.c.organization_id),
+        ).where(and_(
+            agent_member.c.organization_id == org_id,
+            or_(agent_member.c.id == agent_member_id, agent_member.c.user_id == agent_member_id),
+            agent_member.c.archived_at.is_(None),
+            user.c.kind == "agent",
+            user.c.active.is_(True),
+            user.c.archived_at.is_(None),
+        ))).first()
+        return row[0] if row else False
+
     def create_api_key(self, org_id: str, user_id: str, label: str, access: str,
-                       expires_at: str | None = None) -> tuple[dict, str] | None:
+                       expires_at: str | None = None, *, actor_kind: str = "agent",
+                       agent_member_id: str | None = None) -> tuple[dict, str] | None:
         from hoja_server.db import gen_token
         clean_label = label.strip()
         if not clean_label or len(clean_label) > 80:
             return None
         if access not in ("read", "read_write"):
+            return None
+        if actor_kind not in ("human", "agent"):
             return None
         expires_at = _normalize_expiry(expires_at)
         if expires_at is False:
@@ -501,17 +884,69 @@ class Store:
         key_id = new_id()
         now = datetime.now(timezone.utc).isoformat()
         with self.engine.begin() as conn:
-            if not conn.execute(select(user.c.id).where(and_(
-                    user.c.id == user_id, user.c.organization_id == org_id,
-                    user.c.active.is_(True), user.c.archived_at.is_(None)))).first():
+            owner = conn.execute(select(user.c.id, user.c.kind).where(and_(
+                user.c.id == user_id, user.c.organization_id == org_id,
+                user.c.active.is_(True), user.c.archived_at.is_(None)))).first()
+            if not owner:
                 return None
+            eff_kind = "agent" if owner.kind == "agent" else actor_kind
+            if eff_kind == "human" and agent_member_id:
+                return None
+            agent_uid = None
+            agent_name = None
+            resolved_member_id = None
+            if eff_kind == "agent" and agent_member_id:
+                agent_uid = self._resolve_agent_user_id(conn, org_id, agent_member_id)
+                if agent_uid is False:
+                    return None
+                info_row = conn.execute(select(agent_member.c.id, user.c.name).join(
+                    user, user.c.id == agent_member.c.user_id).where(and_(
+                        agent_member.c.organization_id == org_id,
+                        agent_member.c.user_id == agent_uid))).first()
+                if info_row:
+                    resolved_member_id, agent_name = info_row.id, info_row.name
             conn.execute(api_key.insert().values(
                 id=key_id, token_hash=token_hash(raw_token), label=clean_label,
                 hint=raw_token[-4:], access=access, expires_at=expires_at,
-                user_id=user_id, organization_id=org_id, created_at=now))
+                user_id=user_id, organization_id=org_id, created_at=now,
+                actor_kind=eff_kind, agent_user_id=agent_uid))
         return {"id": key_id, "label": clean_label, "access": access, "hint": raw_token[-4:],
                 "expiresAt": expires_at, "lastUsedAt": None,
-                "createdAt": now, "revokedAt": None}, raw_token
+                "createdAt": now, "revokedAt": None,
+                "actorKind": eff_kind, "agentUserId": agent_uid,
+                "agentMemberId": resolved_member_id, "agentName": agent_name}, raw_token
+
+    def update_api_key(self, org_id: str, user_id: str, key_id: str, *,
+                       actor_kind: str | None = None,
+                       agent_member_id: str | None = None) -> dict | None:
+        if actor_kind is not None and actor_kind not in ("human", "agent"):
+            return None
+        with self.engine.begin() as conn:
+            row = conn.execute(select(api_key).where(and_(
+                api_key.c.id == key_id,
+                api_key.c.organization_id == org_id,
+                api_key.c.user_id == user_id,
+                api_key.c.revoked_at.is_(None),
+            ))).mappings().first()
+            if not row:
+                return None
+            eff_kind = actor_kind if actor_kind is not None else (row.get("actor_kind") or "human")
+            vals: dict = {"actor_kind": eff_kind}
+            if eff_kind == "human":
+                vals["agent_user_id"] = None
+            elif agent_member_id is not None:
+                if agent_member_id == "":
+                    vals["agent_user_id"] = None
+                else:
+                    agent_uid = self._resolve_agent_user_id(conn, org_id, agent_member_id)
+                    if agent_uid is False:
+                        return None
+                    vals["agent_user_id"] = agent_uid
+            conn.execute(api_key.update().where(api_key.c.id == key_id).values(**vals))
+        for item in self.list_api_keys(org_id, user_id):
+            if item["id"] == key_id:
+                return item
+        return None
 
     def revoke_api_key(self, org_id: str, user_id: str, key_id: str) -> bool:
         with self.engine.begin() as conn:
@@ -633,7 +1068,9 @@ class Store:
                 for item in self.workspaces_for_email(email)]
 
     def create_session_for_membership(self, identity_id: str, profile_user_id: str,
-                                      organization_id: str, days: int = 14) -> tuple[str, dict] | tuple[None, None]:
+                                      organization_id: str, days: int = 14, *,
+                                      kind: str | None = None,
+                                      label: str | None = None) -> tuple[str, dict] | tuple[None, None]:
         selected = self.switch_membership(identity_id, organization_id)
         if not selected or selected["user_id"] != profile_user_id:
             return None, None
@@ -644,7 +1081,7 @@ class Store:
             conn.execute(browser_session.insert().values(
                 id=new_id(), token_hash=token_hash(raw), user_id=profile_user_id,
                 organization_id=organization_id, created_at=now.isoformat(),
-                expires_at=expires.isoformat()))
+                expires_at=expires.isoformat(), kind=kind, label=label))
         return raw, {"expires_at": expires.isoformat(), "user_id": profile_user_id,
                      "organization_id": organization_id, "identity_id": identity_id}
 
@@ -749,6 +1186,14 @@ class Store:
                     user.c.active.is_(True), user.c.archived_at.is_(None))))
             if not session:
                 return None
+            # HOJA-490: the workspace's idle timeout, enforced here because this
+            # is the one place a browser session becomes a caller. A session past
+            # its idle window is treated exactly like an expired one.
+            from hoja_server import permissions as permission_rules
+            policy = permission_rules.security_policy(self.engine, session["organization_id"])
+            if not permission_rules.session_idle_ok(
+                    policy, session.get("last_seen_at"), session.get("created_at")):
+                return None
             membership = _one(conn, select(organization_membership).where(and_(
                 organization_membership.c.profile_user_id == session["user_id"],
                 organization_membership.c.organization_id == session["organization_id"],
@@ -756,7 +1201,22 @@ class Store:
             if not membership:
                 return None
             session["identity_id"] = membership["identity_id"]
-            return session
+        # Record the sighting outside the read connection: a sliding window only
+        # slides when the request that used the session is allowed to complete.
+        values = {"last_seen_at": now}
+        if session.get("kind") == "app":
+            # HOJA-733: an app session slides: it lasts APP_SESSION_DAYS from its
+            # last use, so a phone in daily use is never signed out. Written at
+            # most once a day to keep this read path cheap.
+            renewed = datetime.now(timezone.utc) + timedelta(days=APP_SESSION_DAYS)
+            if renewed - datetime.fromisoformat(session["expires_at"]) > timedelta(days=1):
+                values["expires_at"] = renewed.isoformat()
+                session["expires_at"] = values["expires_at"]
+        with self.engine.begin() as conn:
+            conn.execute(browser_session.update()
+                         .where(browser_session.c.id == session["id"])
+                         .values(**values))
+        return session
 
     def revoke_browser_session(self, raw: str) -> None:
         with self.engine.begin() as conn:
@@ -773,7 +1233,8 @@ class Store:
             "id": row["id"], "name": row.get("name"), "displayName": row.get("display_name"),
             "email": row.get("email"), "active": bool(row.get("active", True)),
             "isMe": row["id"] == ctx_user_id, "admin": bool(row.get("admin", False)),
-            "avatarUrl": row.get("avatar_url"), "url": row.get("url"),
+            "avatarUrl": row.get("avatar_url"), "avatarSeed": row.get("avatar_seed"),
+            "url": row.get("url"),
             "timezone": row.get("timezone"), "statusEmoji": row.get("status_emoji"),
             "statusLabel": row.get("status_label"),
             "createdAt": row.get("created_at"), "updatedAt": row.get("updated_at"),
@@ -806,6 +1267,7 @@ class Store:
             "autoAddStarted": True if auto_started is None else bool(auto_started),
             "autoAddCompleted": True if auto_completed is None else bool(auto_completed),
             "autoAddBacklog": True if auto_backlog is None else bool(auto_backlog),
+            "issueSortOrderOnStateChange": row.get("issue_sort_order_on_state_change") or "first",
             "_active_cycle_id": row.get("active_cycle_id"),
         }
 
@@ -816,7 +1278,22 @@ class Store:
             "id": row["id"], "name": row["name"], "color": row.get("color"),
             "description": row.get("description"), "createdAt": row.get("created_at"),
             "updatedAt": row.get("updated_at"),
+            "isGroup": bool(row.get("is_group")), "parentId": row.get("parent_id"),
+            "exclusive": True if row.get("exclusive") is None else bool(row.get("exclusive")),
         }
+
+    def label_children(self, org_id: str, group_id: str) -> list[dict]:
+        with self.engine.connect() as conn:
+            return [self.ser_label(r) for r in _conn_rows(conn, select(issue_label).where(and_(
+                issue_label.c.organization_id == org_id, issue_label.c.parent_id == group_id,
+                issue_label.c.archived_at.is_(None))).order_by(issue_label.c.name))]
+
+    def label_by_id(self, org_id: str, label_id: str | None) -> dict | None:
+        if not label_id:
+            return None
+        with self.engine.connect() as conn:
+            return self.ser_label(_one(conn, select(issue_label).where(and_(
+                issue_label.c.organization_id == org_id, issue_label.c.id == label_id))))
 
     def ser_cycle(self, row: dict | None) -> dict | None:
         if not row:
@@ -854,18 +1331,52 @@ class Store:
             "_archived": row.get("archived_at") is not None,
         }
 
+    def comments_by_ids(self, org_id: str, comment_ids: list[str]) -> dict[str, dict]:
+        """Live (unarchived) comments by id, for the inbox's comment previews."""
+        ids = [c for c in comment_ids if c]
+        if not ids:
+            return {}
+        with self.engine.connect() as conn:
+            rows = _conn_rows(conn, select(comment).where(and_(
+                comment.c.organization_id == org_id, comment.c.id.in_(ids),
+                comment.c.archived_at.is_(None))))
+        return {row["id"]: self.ser_comment(row) for row in rows}
+
     def ser_attachment(self, row: dict | None) -> dict | None:
         if not row:
             return None
         return {
             "id": row["id"], "url": row.get("url"), "title": row.get("title"),
-            "subtitle": row.get("subtitle"), "createdAt": row.get("created_at"),
+            "subtitle": row.get("subtitle"), "contentType": row.get("content_type"),
+            "createdAt": row.get("created_at"),
             "_issue_id": row.get("issue_id"),
         }
 
     def ser_github_link(self, row: dict | None) -> dict | None:
         if not row:
             return None
+        reviewers = row.get("reviewers")
+        if isinstance(reviewers, str):
+            # Stored as JSON text by scripts/enrich-github-link-pulls.sh; a malformed blob
+            # must not break the task query, so it degrades to "no reviewers listed".
+            try:
+                reviewers = json.loads(reviewers)
+            except ValueError:
+                reviewers = None
+        files = row.get("files")
+        if isinstance(files, str):
+            # JSON text written by scripts/enrich-github-link-files.sh (revision 55). The
+            # field is non-null in the schema, so a malformed or absent blob degrades to an
+            # empty list: "no file detail", never a broken task query.
+            try:
+                files = json.loads(files)
+            except ValueError:
+                files = None
+        if not isinstance(files, list):
+            files = []
+        else:
+            files = [self._ser_github_file(entry) for entry in files
+                     if isinstance(entry, dict)]
         return {
             "id": row["id"], "kind": row.get("kind"),
             "externalId": row.get("external_id"), "url": row.get("url"),
@@ -873,6 +1384,49 @@ class Store:
             "author": row.get("author"), "sha": row.get("sha"),
             "environment": row.get("environment"),
             "createdAt": row.get("created_at"), "updatedAt": row.get("updated_at"),
+            # Pull-request detail (revision 54). NULL means "not enriched yet", which the
+            # Reviews pane renders as an em dash — never as a zero-length diffstat.
+            "additions": row.get("additions"), "deletions": row.get("deletions"),
+            "baseRef": row.get("base_ref"), "headRef": row.get("head_ref"),
+            "behind": row.get("behind"), "ahead": row.get("ahead"),
+            "mergeable": row.get("mergeable"), "mergeState": row.get("merge_state"),
+            "reviewDecision": row.get("review_decision"), "reviewers": reviewers,
+            "checksState": row.get("checks_state"),
+            "checksTotal": row.get("checks_total"),
+            "checksPassing": row.get("checks_passing"),
+            "checksFailing": row.get("checks_failing"),
+            "body": row.get("body"), "mergedAt": row.get("merged_at"),
+            "githubUpdatedAt": row.get("github_updated_at"),
+            # Per-file diff (revision 55), always a list: [] when unknown.
+            "files": files,
+        }
+
+    @staticmethod
+    def _ser_github_file(entry: dict) -> dict:
+        """One row of the stored file list, in its GraphQL shape.
+
+        The four identity/count fields are non-null in the schema, so a stored entry that
+        lost one (hand-edited JSON, an older writer) gets a safe default rather than
+        failing the whole query. ``patch`` and ``previousPath`` stay None: a binary or
+        oversized file genuinely has no patch. The HOJA-513 reason markers (binary,
+        oversize + size, empty, unchanged, cached) pass through when present and stay
+        absent for older payloads, so the pane can say why a diff is missing instead of
+        rendering a blank row.
+        """
+        return {
+            "path": str(entry.get("path") or ""),
+            "additions": int(entry.get("additions") or 0),
+            "deletions": int(entry.get("deletions") or 0),
+            "status": str(entry.get("status") or "modified"),
+            "patch": entry.get("patch"),
+            "previousPath": entry.get("previousPath"),
+            "binary": bool(entry["binary"]) if entry.get("binary") is not None else None,
+            "oversize": bool(entry["oversize"]) if entry.get("oversize") is not None else None,
+            "oversizeSize": (int(entry["size"]) if entry.get("oversize") and entry.get("size") is not None
+                             else None),
+            "empty": bool(entry["empty"]) if entry.get("empty") is not None else None,
+            "unchanged": bool(entry["unchanged"]) if entry.get("unchanged") is not None else None,
+            "cached": bool(entry["cached"]) if entry.get("cached") is not None else None,
         }
 
     def ser_issue(self, row: dict | None) -> dict | None:
@@ -888,11 +1442,15 @@ class Store:
             "completedAt": row.get("completed_at"), "canceledAt": row.get("canceled_at"),
             "startedAt": row.get("started_at"), "snoozedUntilAt": row.get("snoozed_until_at"),
             "stateChangedAt": row.get("state_changed_at"),
+            "rank": row.get("sort_order"), "priorityRank": row.get("priority_sort_order"),
             # ids for lazy field resolvers
             "_state_id": row.get("state_id"), "_assignee_id": row.get("assignee_id"),
+            "_delegate_id": row.get("delegate_id"),
             "_creator_id": row.get("creator_id"), "_team_id": row.get("team_id"),
             "_project_id": row.get("project_id"), "_cycle_id": row.get("cycle_id"),
             "_parent_id": row.get("parent_id"), "_org_id": row.get("organization_id"),
+            # Maintained by decision writes, so a board flags a blocked issue in one read.
+            "decisionNeeded": bool(row.get("decision_needed")),
         }
 
     # ------------------------------------------------------------------ reads
@@ -917,7 +1475,7 @@ class Store:
                 organization_membership.c.id,
                 organization_membership.c.organization_id.label("organizationId"),
                 organization.c.name, organization.c.url_key.label("urlKey"),
-                user.c.admin,
+                organization.c.vanity_host, user.c.admin,
             ).join(organization, organization.c.id == organization_membership.c.organization_id)
              .join(user, and_(user.c.id == organization_membership.c.profile_user_id,
                               user.c.organization_id == organization_membership.c.organization_id))
@@ -927,6 +1485,7 @@ class Store:
              .order_by(organization.c.name)).mappings().all()
         return [{"id": r["id"], "organizationId": r["organizationId"],
                  "name": r["name"], "urlKey": r["urlKey"],
+                 "origin": tenant_base_url(r["vanity_host"]),
                  "role": "admin" if r["admin"] else "member"} for r in rows]
 
     def switch_membership(self, identity_id: str | None, organization_ref: str) -> dict | None:
@@ -961,11 +1520,13 @@ class Store:
             ))).first()
             if not valid:
                 return None
-            # Replace any still-pending invitation for this profile so it remains one-time.
-            conn.execute(membership_invitation.delete().where(and_(
+            # One row per profile: the column is UNIQUE, so an accepted
+            # invitation left behind made re-inviting a former member fail with
+            # an IntegrityError. Replace the row either way; the acceptance is
+            # recorded on the membership, not here.
+            conn.execute(membership_invitation.delete().where(
                 membership_invitation.c.profile_user_id == profile_user_id,
-                membership_invitation.c.accepted_at.is_(None),
-            )))
+            ))
             conn.execute(membership_invitation.insert().values(
                 id=new_id(), token_hash=token_hash(raw), organization_id=org_id,
                 profile_user_id=profile_user_id, created_by_profile_id=creator_profile_id,
@@ -1021,13 +1582,7 @@ class Store:
         return self.get_user(org_id, user_id)
 
     def archive_member(self, org_id: str, actor_id: str, user_id: str) -> dict | None:
-        """Remove a member from this workspace without destroying their record.
-
-        Soft-archives the user row, deactivates the org membership and revokes every
-        API key they hold in this org. Refuses to remove yourself or the last active
-        admin. Archiving is reversible through invite_member (same profile, same
-        history) and the row is hidden everywhere archived_at is filtered.
-        """
+        """Remove a member: archived, sessions and keys ended, re-invitable."""
         from hoja_server.db import api_key as api_key_table
 
         now = datetime.now(timezone.utc).isoformat()
@@ -1059,9 +1614,6 @@ class Store:
                 api_key_table.c.organization_id == org_id,
                 api_key_table.c.revoked_at.is_(None),
             )).values(revoked_at=now))
-            # A removal must end access everywhere, not just in this request path:
-            # live browser sessions and the stored credential would otherwise keep
-            # working after the admin believed the person was gone.
             conn.execute(browser_session.delete().where(
                 browser_session.c.user_id == user_id))
             identity_id = conn.execute(select(organization_membership.c.identity_id).where(and_(
@@ -1074,7 +1626,7 @@ class Store:
         return self.get_user(org_id, user_id)
 
     def archived_members(self, org_id: str) -> list[dict]:
-        """Members removed from this workspace, so an admin can see and undo it."""
+        """Removed members, so an admin can audit and undo a removal."""
         with self.engine.connect() as conn:
             rows = conn.execute(select(user).where(and_(
                 user.c.organization_id == org_id,
@@ -1134,7 +1686,7 @@ class Store:
             profile_email = conn.execute(select(user.c.email).where(
                 user.c.id == profile[0])).scalar_one_or_none()
             if (not identity_email or not profile_email or identity_id == target_identity or
-                    identity_email.strip().lower() != profile_email.strip().lower() or
+                    not addresses.same(identity_email, profile_email) or
                     not target_credential):
                 return None
             if not self._verify_password(invitee_password, target_credential["password_hash"]):
@@ -1151,6 +1703,112 @@ class Store:
             return {"id": org_row["id"], "name": org_row["name"],
                     "urlKey": org_row["url_key"]} if org_row else None
 
+    def peek_membership_invitation(self, raw: str) -> dict | None:
+        """The workspace a still-valid code belongs to, without spending it.
+
+        The invite screen needs this before it asks for anything: telling
+        someone their code expired only after they have chosen a password is
+        the same dead end, one screen later.
+        """
+        if not raw:
+            return None
+        now = datetime.now(timezone.utc).isoformat()
+        with self.engine.connect() as conn:
+            invite = conn.execute(
+                select(membership_invitation.c.organization_id).select_from(
+                    membership_invitation.join(
+                        user, user.c.id == membership_invitation.c.profile_user_id)
+                ).where(and_(
+                    membership_invitation.c.token_hash == token_hash(raw),
+                    membership_invitation.c.accepted_at.is_(None),
+                    membership_invitation.c.expires_at > now,
+                    user.c.active.is_(True),
+                    user.c.archived_at.is_(None),
+                ))).first()
+            if invite is None:
+                return None
+            org_row = conn.execute(select(organization.c.name, organization.c.url_key).where(
+                organization.c.id == invite[0])).mappings().first()
+        return dict(org_row) if org_row else None
+
+    def pending_invitation(self, raw: str | None) -> dict | None:
+        """Who a still-valid code was sent to: ``{organization_id, email}``, unspent.
+
+        Sign-in needs this to tell "you used another Google account" apart from
+        "you were never invited". The caller must already hold the code, and
+        must not reveal more than a masked form of the address.
+        """
+        if not raw:
+            return None
+        now = datetime.now(timezone.utc).isoformat()
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                select(membership_invitation.c.organization_id, user.c.email).select_from(
+                    membership_invitation.join(
+                        user, user.c.id == membership_invitation.c.profile_user_id)
+                ).where(and_(
+                    membership_invitation.c.token_hash == token_hash(raw),
+                    membership_invitation.c.accepted_at.is_(None),
+                    membership_invitation.c.expires_at > now,
+                    user.c.organization_id == membership_invitation.c.organization_id,
+                    user.c.active.is_(True),
+                    user.c.archived_at.is_(None),
+                ))).first()
+        if row is None or not row[1]:
+            return None
+        return {"organization_id": row[0], "email": addresses.canonical(row[1])}
+
+    def accept_membership_invitation_by_identity(self, identity_id: str | None,
+                                                 raw: str) -> dict | None:
+        """Accept an invitation for an already verified identity, with no password.
+
+        A workspace that signs people in with Google has no credential to
+        create: the invitation names an address and Google proved it. Every
+        check that made the password path safe stays here — the code exists, is
+        unspent and unexpired, the profile belongs to the inviting organization,
+        the profile is not deactivated, and the verified address is the invited
+        address. Nothing about the *identity* is inferred from the code.
+        """
+        if not identity_id or not raw:
+            return None
+        now = datetime.now(timezone.utc).isoformat()
+        with self.engine.begin() as conn:
+            invite = conn.execute(select(membership_invitation).where(and_(
+                membership_invitation.c.token_hash == token_hash(raw),
+                membership_invitation.c.accepted_at.is_(None),
+                membership_invitation.c.expires_at > now,
+            ))).mappings().first()
+            if not invite:
+                return None
+            identity_email = conn.execute(select(global_identity.c.email).where(
+                global_identity.c.id == identity_id)).scalar_one_or_none()
+            profile = conn.execute(select(user.c.id, user.c.email).where(and_(
+                user.c.id == invite["profile_user_id"],
+                user.c.organization_id == invite["organization_id"],
+                user.c.active.is_(True), user.c.archived_at.is_(None),
+            ))).first()
+            if not profile or not identity_email:
+                return None
+            if not addresses.same(identity_email, profile[1]):
+                return None
+            membership = conn.execute(select(organization_membership.c.id).where(and_(
+                organization_membership.c.profile_user_id == profile[0],
+                organization_membership.c.organization_id == invite["organization_id"],
+            ))).first()
+            if membership is None:
+                return None
+            conn.execute(organization_membership.update().where(
+                organization_membership.c.id == membership[0]).values(
+                identity_id=identity_id, active=True))
+            conn.execute(membership_invitation.update().where(
+                membership_invitation.c.id == invite["id"]).values(
+                accepted_at=now, accepted_identity_id=identity_id))
+            org_row = conn.execute(select(organization.c.id, organization.c.name,
+                                          organization.c.url_key).where(
+                organization.c.id == invite["organization_id"])).mappings().first()
+        return {"id": org_row["id"], "name": org_row["name"],
+                "urlKey": org_row["url_key"]} if org_row else None
+
     def accept_new_member_invitation(self, raw: str, email: str,
                                      password: str) -> tuple[str, dict] | None:
         """Set credentials for a pre-created invited profile and consume its code."""
@@ -1161,7 +1819,7 @@ class Store:
         digest = self._password_digest(password, salt)
         identity_id = new_id()
         session_token = secrets.token_urlsafe(48)
-        normalized_email = email.strip().lower()
+        normalized_email = addresses.canonical(email)
         with self.engine.begin() as conn:
             invite = conn.execute(select(membership_invitation).where(and_(
                 membership_invitation.c.token_hash == token_hash(raw),
@@ -1227,11 +1885,14 @@ class Store:
             if not target:
                 return None
             if target[0] and not is_admin:
-                admins = conn.execute(select(user.c.id).where(and_(
+                # Only an admin who can still sign in counts: a deactivated admin cannot
+                # rescue a workspace whose last active admin was demoted (HOJA-735).
+                other_active_admins = conn.execute(select(user.c.id).where(and_(
                     user.c.organization_id == org_id, user.c.admin.is_(True),
-                    user.c.archived_at.is_(None),
+                    user.c.active.is_(True), user.c.archived_at.is_(None),
+                    user.c.id != user_id,
                 )).with_for_update()).all()
-                if len(admins) <= 1:
+                if not other_active_admins:
                     return None
             result = conn.execute(user.update().where(and_(
                 user.c.organization_id == org_id, user.c.id == user_id,
@@ -1243,54 +1904,109 @@ class Store:
 
     def invite_member(self, org_id: str, name: str, email: str, is_admin: bool = False,
                       team_ids: list[str] | None = None) -> tuple[dict, str] | None:
-        from hoja_server.db import api_key as api_key_table, gen_token, new_id, token_hash
+        """Add a profile for someone who is not in this workspace yet.
 
-        normalized_email = email.strip().lower()
+        A returning member is not an error: if the profile exists but was
+        deactivated, the invitation reactivates *that* profile so its history
+        and its team seats survive. Every other refusal names its cause, because
+        "invite failed" made the admin guess between four different situations.
+        """
+        from hoja_server.db import api_key as api_key_table
+        from hoja_server.db import gen_token, new_id, token_hash
+
+        normalized_email = addresses.canonical(email)
         clean_name = name.strip()
         if not clean_name or "@" not in normalized_email:
-            return None
+            raise InviteRefused("invalid_input", "A name and an email address are required.")
         raw_token = gen_token()
         uid = new_id()
         now = datetime.now(timezone.utc).isoformat()
         with self.engine.begin() as conn:
-            removed = conn.execute(select(user.c.id).where(and_(
+            existing = conn.execute(select(
+                user.c.id, user.c.active, user.c.email, user.c.name,
+            ).where(and_(
                 user.c.organization_id == org_id,
                 func.lower(user.c.email) == normalized_email,
-                user.c.archived_at.is_not(None),
             ))).first()
-            if removed and conn.execute(select(global_identity.c.id).where(
-                    global_identity.c.email == normalized_email)).first():
-                # Re-inviting a removed member restores the same profile: issue history,
-                # attribution and team seats survive, and no duplicate row is created.
-                conn.execute(user.update().where(user.c.id == removed.id).values(
-                    name=clean_name, display_name=clean_name, active=True,
-                    admin=bool(is_admin), archived_at=None, updated_at=now))
-                conn.execute(organization_membership.update().where(and_(
-                    organization_membership.c.organization_id == org_id,
-                    organization_membership.c.profile_user_id == removed.id,
-                )).values(active=True))
+            if existing is not None:
+                if existing[1]:
+                    raise InviteRefused(
+                        "already_member",
+                        f"{existing[3] or existing[2] or normalized_email} is already a member of this workspace.",
+                    )
+                # Removed earlier: restore the profile instead of minting a second
+                # one, and hand back a fresh member invite key.
+                # Reactivation is a *new* relationship, not a resumption: the
+                # inviter decides the role, and the old password and browser
+                # sessions belong to the access that was revoked.
+                conn.execute(user.update().where(user.c.id == existing[0]).values(
+                    active=True, admin=bool(is_admin), archived_at=None, updated_at=now))
+                stale = conn.execute(select(organization_membership.c.identity_id).where(
+                    organization_membership.c.profile_user_id == existing[0])).scalar_one_or_none()
+                if stale:
+                    conn.execute(identity_credential.delete().where(
+                        identity_credential.c.identity_id == stale))
+                conn.execute(browser_session.delete().where(
+                    browser_session.c.user_id == existing[0]))
                 conn.execute(api_key_table.insert().values(
                     id=new_id(), token_hash=token_hash(raw_token), label="member invite",
-                    user_id=removed.id, organization_id=org_id, created_at=now,
+                    user_id=existing[0], organization_id=org_id, created_at=now,
                 ))
-                return self.get_user(org_id, removed.id), raw_token
-            if conn.execute(select(global_identity.c.id).where(
-                global_identity.c.email == normalized_email)).first():
-                return None
-            if conn.execute(select(user.c.id).where(and_(
-                user.c.organization_id == org_id,
-                func.lower(user.c.email) == normalized_email,
-                user.c.archived_at.is_(None),
-            ))).first():
-                return None
+                uid = existing[0]
+                identity = conn.execute(select(global_identity.c.id).where(
+                    global_identity.c.email == normalized_email)).first()
+                if identity is None:
+                    identity_id = new_id()
+                    conn.execute(global_identity.insert().values(
+                        id=identity_id, email=normalized_email, created_at=now))
+                else:
+                    identity_id = identity[0]
+                membership = conn.execute(select(organization_membership.c.id).where(and_(
+                    organization_membership.c.profile_user_id == uid,
+                    organization_membership.c.organization_id == org_id,
+                ))).first()
+                if membership is None:
+                    conn.execute(organization_membership.insert().values(
+                        id=new_id(), identity_id=identity_id, organization_id=org_id,
+                        profile_user_id=uid, active=True, created_at=now))
+                else:
+                    conn.execute(organization_membership.update().where(
+                        organization_membership.c.id == membership[0]).values(
+                        identity_id=identity_id, active=True))
+                for team_id in dict.fromkeys(team_ids or []):
+                    resolved = conn.execute(select(team.c.id).where(and_(
+                        team.c.organization_id == org_id,
+                        or_(team.c.id == team_id, team.c.key == team_id.upper()),
+                    ))).first()
+                    if resolved is None:
+                        continue
+                    for seat in self._team_and_ancestors(conn, org_id, resolved[0]):
+                        already = conn.execute(select(team_member.c.team_id).where(and_(
+                            team_member.c.team_id == seat,
+                            team_member.c.user_id == uid))).first()
+                        if already is None:
+                            conn.execute(team_member.insert().values(
+                                team_id=seat, user_id=uid, role="member"))
+                restored = conn.execute(select(user).where(user.c.id == uid)).mappings().first()
+                return dict(restored), raw_token
             conn.execute(user.insert().values(
                 id=uid, organization_id=org_id, name=clean_name, display_name=clean_name,
                 email=normalized_email, active=True, admin=bool(is_admin),
                 created_at=now, updated_at=now,
             ))
-            identity_id = new_id()
-            conn.execute(global_identity.insert().values(
-                id=identity_id, email=normalized_email, created_at=now))
+            # A global identity is the person (one verified address), not a seat in
+            # any workspace. Someone who already belongs to another workspace keeps
+            # that identity and gains a profile here: refusing them made a member of
+            # one workspace uninvitable to every other one, and the refusal told this
+            # workspace that the address existed elsewhere.
+            existing_identity = conn.execute(select(global_identity.c.id).where(
+                global_identity.c.email == normalized_email)).first()
+            if existing_identity is not None:
+                identity_id = existing_identity[0]
+            else:
+                identity_id = new_id()
+                conn.execute(global_identity.insert().values(
+                    id=identity_id, email=normalized_email, created_at=now))
             conn.execute(organization_membership.insert().values(
                 id=new_id(), identity_id=identity_id, organization_id=org_id,
                 profile_user_id=uid, active=True, created_at=now))
@@ -1300,6 +2016,17 @@ class Store:
             ))
             seats: dict[str, None] = {}
             for team_id in dict.fromkeys(team_ids or []):
+                # Resolve a team key to its row id first: `team_member.team_id`
+                # is a foreign key, and the change-event trigger derives the
+                # organization from that team row, so an unresolved key would
+                # insert a dangling seat and fail the whole invitation.
+                canonical = conn.execute(select(team.c.id).where(and_(
+                    team.c.organization_id == org_id,
+                    or_(team.c.id == team_id, team.c.key == team_id.upper()),
+                ))).first()
+                if canonical is None:
+                    continue
+                team_id = canonical[0]
                 # Same rule as set_team_membership: a sub-team seat implies its ancestors.
                 for ancestor in self._team_and_ancestors(conn, org_id, team_id):
                     seats[ancestor] = None
@@ -1307,6 +2034,16 @@ class Store:
                 conn.execute(team_member.insert().values(
                     team_id=team_id, user_id=uid, role="member"))
         return self.get_user(org_id, uid), raw_token
+
+    def workspace_origin(self, org_id: str) -> str:
+        """The origin this workspace's links and mail must name.
+
+        Its own host when it has one (``organization.vanity_host``), else the
+        canonical application URL: the same rule ``db.entity_url`` applies, read
+        here for the callers that build a link outside an entity row.
+        """
+        with self.engine.connect() as conn:
+            return org_base_url(conn, org_id)
 
     def workspace(self, org_id: str) -> dict | None:
         with self.engine.connect() as conn:
@@ -1520,7 +2257,7 @@ class Store:
         with self.engine.connect() as conn:
             stmt = select(issue).where(and_(
                 issue.c.organization_id == org_id,
-                or_(issue.c.id == ident, issue.c.identifier == ident.upper())))
+                identifiers.issue_ref_clause(org_id, ident)))
             stmt = _scope_teams(conn, stmt, org_id, viewer_id, issue.c.team_id)
             return self.ser_issue(_one(conn, stmt))
 
@@ -1546,42 +2283,75 @@ class Store:
             stmt = _scope_teams(conn, stmt, org_id, viewer_id, issue.c.team_id)
             return [self.ser_issue(row) for row in _conn_rows(conn, stmt)]
 
-    def inbox_notifications(self, org_id: str, user_id: str, after=None, limit=51,
-                            unread_only=False, archived=False) -> list[dict]:
+    def notification_kinds_enabled(self, user_id: str) -> dict[str, bool]:
+        """Whether each notification kind reaches this person.
+
+        Their own choice wins. A kind they never set follows the workspace default
+        (HOJA-742, set by a workspace template), and a kind neither names is on.
+        """
+        from hoja_server.notifications import KINDS
+        from hoja_server.workspace_templates import notification_defaults
+        prefs = self.user_preferences(user_id) or {}
         with self.engine.connect() as conn:
-            disabled_kinds = [key.removeprefix("notification:") for key, value
-                              in self.user_preferences(user_id).items()
-                              if key.startswith("notification:") and value == "false"]
+            org = conn.execute(select(user.c.organization_id).where(user.c.id == user_id)).scalar()
+            defaults = notification_defaults(conn, org) if org else {}
+        out = {}
+        for kind in KINDS:
+            stored = prefs.get(f"notification:{kind}")
+            out[kind] = stored == "true" if stored is not None else bool(defaults.get(kind, True))
+        return out
+
+    def _disabled_notification_kinds(self, user_id: str) -> list[str]:
+        return [kind for kind, on in self.notification_kinds_enabled(user_id).items() if not on]
+
+    def inbox_notifications(self, org_id: str, user_id: str, after=None, limit=51,
+                            unread_only=False, archived=False, snoozed=False) -> list[dict]:
+        """A recipient's notifications, newest first.
+
+        The default list is what is in the inbox now: unarchived, and not snoozed
+        into the future. ``snoozed`` lists only the rows still waiting to come back;
+        ``archived`` lists the archive.
+        """
+        from hoja_server.db import now_iso
+        n = inbox_notification.c
+        now = now_iso()
+        with self.engine.connect() as conn:
+            disabled_kinds = self._disabled_notification_kinds(user_id)
             stmt = select(inbox_notification).where(and_(
-                inbox_notification.c.organization_id == org_id,
-                inbox_notification.c.recipient_id == user_id,
-                inbox_notification.c.archived_at.is_not(None) if archived else inbox_notification.c.archived_at.is_(None),
-            ))
+                n.organization_id == org_id, n.recipient_id == user_id))
+            if archived:
+                stmt = stmt.where(n.archived_at.is_not(None))
+            elif snoozed:
+                stmt = stmt.where(and_(n.archived_at.is_(None), n.snoozed_until > now))
+            else:
+                stmt = stmt.where(and_(n.archived_at.is_(None), or_(
+                    n.snoozed_until.is_(None), n.snoozed_until <= now)))
             if disabled_kinds:
-                stmt = stmt.where(inbox_notification.c.kind.not_in(disabled_kinds))
+                stmt = stmt.where(n.kind.not_in(disabled_kinds))
             if unread_only:
-                stmt = stmt.where(inbox_notification.c.read_at.is_(None))
+                stmt = stmt.where(n.read_at.is_(None))
             if after:
                 ts, notification_id = after
-                stmt = stmt.where(inbox_notification.c.created_at <= ts).where(or_(inbox_notification.c.created_at < ts,
-                    and_(inbox_notification.c.created_at == ts, inbox_notification.c.id < notification_id)))
-            return _conn_rows(conn, stmt.order_by(
-                inbox_notification.c.created_at.desc(), inbox_notification.c.id.desc()).limit(limit))
+                stmt = stmt.where(n.created_at <= ts).where(or_(n.created_at < ts,
+                    and_(n.created_at == ts, n.id < notification_id)))
+            return _conn_rows(conn, stmt.order_by(n.created_at.desc(), n.id.desc()).limit(limit))
 
     def inbox_unread_count(self, org_id: str, user_id: str) -> int:
         from sqlalchemy import func
+
+        from hoja_server.db import now_iso
+        n = inbox_notification.c
         with self.engine.connect() as conn:
             conditions = [
-                inbox_notification.c.organization_id == org_id,
-                inbox_notification.c.recipient_id == user_id,
-                inbox_notification.c.read_at.is_(None),
-                inbox_notification.c.archived_at.is_(None),
+                n.organization_id == org_id,
+                n.recipient_id == user_id,
+                n.read_at.is_(None),
+                n.archived_at.is_(None),
+                or_(n.snoozed_until.is_(None), n.snoozed_until <= now_iso()),
             ]
-            disabled_kinds = [key.removeprefix("notification:") for key, value
-                              in self.user_preferences(user_id).items()
-                              if key.startswith("notification:") and value == "false"]
+            disabled_kinds = self._disabled_notification_kinds(user_id)
             if disabled_kinds:
-                conditions.append(inbox_notification.c.kind.not_in(disabled_kinds))
+                conditions.append(n.kind.not_in(disabled_kinds))
             return conn.execute(select(func.count()).select_from(inbox_notification).where(
                 and_(*conditions))).scalar_one()
 
@@ -1600,37 +2370,206 @@ class Store:
         return self.ser_user(self.get_user(org_id, user_id), user_id)
 
     def set_notification_preference(self, user_id: str, kind: str, enabled: bool) -> bool:
-        if kind not in {"issueCreated", "issueUpdated"}:
+        from hoja_server.notifications import KINDS
+        if kind not in KINDS:
             return False
         return self.set_user_preference(user_id, f"notification:{kind}",
                                         "true" if enabled else "false")
+
+    def _inbox_update(self, org_id: str, user_id: str, where, values: dict) -> int:
+        n = inbox_notification.c
+        with self.engine.begin() as conn:
+            return conn.execute(inbox_notification.update().where(and_(
+                n.organization_id == org_id, n.recipient_id == user_id, where,
+            )).values(**values)).rowcount
+
+    def _inbox_owns(self, org_id: str, user_id: str, notification_id: str) -> bool:
+        n = inbox_notification.c
+        with self.engine.connect() as conn:
+            return conn.execute(select(n.id).where(and_(
+                n.id == notification_id, n.organization_id == org_id,
+                n.recipient_id == user_id))).first() is not None
 
     def inbox_mark(self, org_id: str, user_id: str, notification_id: str, column: str) -> bool:
         if column not in ("read_at", "archived_at"):
             raise ValueError("Unsupported notification state.")
         from hoja_server.db import now_iso
         target = inbox_notification.c[column]
-        with self.engine.begin() as conn:
-            result = conn.execute(inbox_notification.update().where(and_(
-                inbox_notification.c.id == notification_id,
-                inbox_notification.c.organization_id == org_id,
-                inbox_notification.c.recipient_id == user_id,
-                target.is_(None),
-            )).values({column: now_iso()}))
-            return result.rowcount > 0 or conn.execute(select(inbox_notification.c.id).where(and_(
-                inbox_notification.c.id == notification_id,
-                inbox_notification.c.organization_id == org_id,
-                inbox_notification.c.recipient_id == user_id,
-            ))).first() is not None
+        changed = self._inbox_update(org_id, user_id, and_(
+            inbox_notification.c.id == notification_id, target.is_(None)), {column: now_iso()})
+        return changed > 0 or self._inbox_owns(org_id, user_id, notification_id)
+
+    def inbox_clear(self, org_id: str, user_id: str, notification_id: str, column: str) -> bool:
+        """Undo :meth:`inbox_mark`: mark unread, or move back out of the archive."""
+        if column not in ("read_at", "archived_at"):
+            raise ValueError("Unsupported notification state.")
+        self._inbox_update(org_id, user_id, inbox_notification.c.id == notification_id,
+                           {column: None})
+        return self._inbox_owns(org_id, user_id, notification_id)
+
+    @staticmethod
+    def _snooze_values(until: str | None) -> dict:
+        # A snoozed notification comes back unread, as if it had just arrived.
+        return {"snoozed_until": until, "read_at": None} if until else {"snoozed_until": None}
+
+    def inbox_snooze(self, org_id: str, user_id: str, notification_id: str,
+                     until: str | None) -> bool:
+        self._inbox_update(org_id, user_id, inbox_notification.c.id == notification_id,
+                           self._snooze_values(until))
+        return self._inbox_owns(org_id, user_id, notification_id)
+
+    def _issue_id_for(self, org_id: str, issue_ref: str) -> str | None:
+        from hoja_server import identifiers
+        with self.engine.connect() as conn:
+            return conn.execute(select(issue.c.id).where(and_(
+                issue.c.organization_id == org_id,
+                identifiers.issue_ref_clause(org_id, issue_ref)))).scalar()
+
+    def inbox_issue_update(self, org_id: str, user_id: str, issue_ref: str, action: str,
+                           read: bool = True, until: str | None = None) -> bool:
+        """Apply one action to every notification the recipient has for one issue.
+
+        The inbox shows one row per issue, so read, archive and snooze act on the
+        whole group, including older rows the client has not paged in. False when
+        the issue does not exist in this workspace.
+        """
+        iid = self._issue_id_for(org_id, issue_ref)
+        if not iid:
+            return False
+        return self._inbox_group_update(org_id, user_id, inbox_notification.c.issue_id == iid,
+                                        action, read, until)
+
+    def _subject_column_for(self, org_id: str, subject_ref: str):
+        """The inbox column and id of whatever subject ``subject_ref`` names in this
+        workspace: a task (id or identifier), project (id or slug), initiative or cycle."""
+        n = inbox_notification.c
+        with self.engine.connect() as conn:
+            for table, column, slug in ((project, n.project_id, project.c.slug_id),
+                                        (initiative, n.initiative_id, None),
+                                        (cycle, n.cycle_id, None)):
+                match = table.c.id == subject_ref
+                if slug is not None:
+                    match = or_(match, slug == subject_ref)
+                found = conn.execute(select(table.c.id).where(and_(
+                    table.c.organization_id == org_id, match))).scalar()
+                if found:
+                    return column, found
+        iid = self._issue_id_for(org_id, subject_ref)
+        return (n.issue_id, iid) if iid else (None, None)
+
+    def inbox_subject_update(self, org_id: str, user_id: str, subject_ref: str, action: str,
+                             read: bool = True, until: str | None = None) -> bool:
+        """:meth:`inbox_issue_update` for any subject; False when nothing by that id exists."""
+        column, sid = self._subject_column_for(org_id, subject_ref)
+        if column is None:
+            return False
+        return self._inbox_group_update(org_id, user_id, column == sid, action, read, until)
+
+    def _inbox_group_update(self, org_id: str, user_id: str, subject_clause, action: str,
+                            read: bool, until: str | None) -> bool:
+        from hoja_server.db import now_iso
+        n = inbox_notification.c
+        scope = and_(subject_clause, n.archived_at.is_(None))
+        if action == "read":
+            if read:
+                self._inbox_update(org_id, user_id, and_(scope, n.read_at.is_(None)),
+                                   {"read_at": now_iso()})
+            else:
+                # Unread is a property of the latest event, not of history.
+                with self.engine.connect() as conn:
+                    latest = conn.execute(select(n.id).where(and_(
+                        n.organization_id == org_id, n.recipient_id == user_id, scope))
+                        .order_by(n.created_at.desc(), n.id.desc()).limit(1)).scalar()
+                if latest:
+                    self._inbox_update(org_id, user_id, n.id == latest, {"read_at": None})
+        elif action == "archive":
+            self._inbox_update(org_id, user_id, scope, {"archived_at": now_iso()})
+        elif action == "snooze":
+            self._inbox_update(org_id, user_id, scope, self._snooze_values(until))
+        else:
+            raise ValueError("Unsupported notification action.")
+        return True
+
+    def visible_inbox_subjects(self, org_id: str, viewer_id: str, rows: list[dict]) -> set[str]:
+        """Subject ids among ``rows`` the viewer may still see.
+
+        Archived projects, initiatives and cycles stay visible (the notification
+        happened); a project or cycle behind a team the viewer cannot see does not.
+        Task rows are checked by the caller with the task's own visibility rule.
+        """
+        ids = {col: {r[col] for r in rows if r.get(col)} for col in
+               ("project_id", "initiative_id", "cycle_id")}
+        seen: set[str] = set()
+        with self.engine.connect() as conn:
+            if ids["project_id"]:
+                stmt = select(project.c.id).where(and_(
+                    project.c.organization_id == org_id, project.c.id.in_(ids["project_id"])))
+                seen |= set(conn.execute(_scope_projects(conn, stmt, org_id, viewer_id)).scalars())
+            if ids["initiative_id"]:
+                seen |= set(conn.execute(select(initiative.c.id).where(and_(
+                    initiative.c.organization_id == org_id,
+                    initiative.c.id.in_(ids["initiative_id"])))).scalars())
+            if ids["cycle_id"]:
+                stmt = select(cycle.c.id).where(and_(
+                    cycle.c.organization_id == org_id, cycle.c.id.in_(ids["cycle_id"])))
+                seen |= set(conn.execute(_scope_teams(conn, stmt, org_id, viewer_id,
+                                                      cycle.c.team_id)).scalars())
+        return seen
+
+    def subjects_by_ids(self, org_id: str, kind: str, ids: list[str],
+                        viewer_id: str | None = None) -> dict[str, dict]:
+        """Projects, initiatives or cycles by id, archived ones included, for inbox rows."""
+        ids = [i for i in dict.fromkeys(ids) if i]
+        if not ids:
+            return {}
+        with self.engine.connect() as conn:
+            if kind == "project":
+                stmt = _scope_projects(conn, select(project).where(and_(
+                    project.c.organization_id == org_id, project.c.id.in_(ids))), org_id, viewer_id)
+                return {r["id"]: self.ser_project(r) for r in _conn_rows(conn, stmt)}
+            if kind == "initiative":
+                rows = _conn_rows(conn, select(initiative).where(and_(
+                    initiative.c.organization_id == org_id, initiative.c.id.in_(ids))))
+                return {r["id"]: self.ser_initiative(conn, r) for r in rows}
+            if kind == "cycle":
+                stmt = _scope_teams(conn, select(cycle).where(and_(
+                    cycle.c.organization_id == org_id, cycle.c.id.in_(ids))),
+                    org_id, viewer_id, cycle.c.team_id)
+                return {r["id"]: self.ser_cycle(r) for r in _conn_rows(conn, stmt)}
+        raise ValueError(f"Unknown subject kind {kind!r}")
+
+    def subject_subscribers_for_many(self, org_id: str, subject_type: str,
+                                     ids: list[str]) -> dict[str, list[dict]]:
+        """Subscribers of many projects, initiatives or cycles: one query, by subject id."""
+        from hoja_server.notifications import SUBJECTS
+        table, column, _ = SUBJECTS[subject_type]
+        ids = [i for i in dict.fromkeys(ids) if i]
+        out: dict[str, list[dict]] = {i: [] for i in ids}
+        if not ids:
+            return out
+        with self.engine.connect() as conn:
+            rows = conn.execute(select(table.c[column].label("_subject_id"), user).select_from(
+                user.join(table, table.c.user_id == user.c.id)).where(and_(
+                    table.c[column].in_(ids), user.c.organization_id == org_id))
+                .order_by(user.c.name)).mappings().all()
+        for row in rows:
+            row = dict(row)
+            out[row.pop("_subject_id")].append(self.ser_user(row))
+        return out
 
     def inbox_mark_all_read(self, org_id: str, user_id: str) -> bool:
         from hoja_server.db import now_iso
-        with self.engine.begin() as conn:
-            conn.execute(inbox_notification.update().where(and_(
-                inbox_notification.c.organization_id == org_id,
-                inbox_notification.c.recipient_id == user_id,
-                inbox_notification.c.read_at.is_(None),
-            )).values(read_at=now_iso()))
+        n = inbox_notification.c
+        now = now_iso()
+        self._inbox_update(org_id, user_id, and_(n.read_at.is_(None), or_(
+            n.snoozed_until.is_(None), n.snoozed_until <= now)), {"read_at": now})
+        return True
+
+    def inbox_archive_all_read(self, org_id: str, user_id: str) -> bool:
+        from hoja_server.db import now_iso
+        n = inbox_notification.c
+        self._inbox_update(org_id, user_id, and_(n.read_at.is_not(None), n.archived_at.is_(None)),
+                           {"archived_at": now_iso()})
         return True
 
     def my_issue_activity(self, org_id: str, viewer_id: str, after=None, limit=51) -> list[dict]:
@@ -1843,6 +2782,24 @@ class Store:
                 stmt = stmt.limit(limit)
             return [self.ser_comment(r) for r in _conn_rows(conn, stmt)]
 
+    def comments_for_update(self, org_id: str, update_id: str, limit: int | None = None,
+                            newest_first: bool = False) -> list[dict]:
+        """Pulse: the comments on one project update, listed oldest first.
+
+        ``newest_first`` picks the most recent ``limit`` rows and reverses them, so a
+        busy update reports its newest replies in the feed badge instead of its first
+        twenty and nothing after that.
+        """
+        with self.engine.connect() as conn:
+            order = comment.c.created_at.desc() if newest_first else comment.c.created_at
+            stmt = select(comment).where(and_(
+                comment.c.organization_id == org_id, comment.c.project_update_id == update_id,
+                comment.c.archived_at.is_(None))).order_by(order)
+            if limit:
+                stmt = stmt.limit(limit)
+            rows = [self.ser_comment(r) for r in _conn_rows(conn, stmt)]
+            return list(reversed(rows)) if newest_first else rows
+
     def issue_attachments_for(self, org_id: str, issue_id: str, limit: int | None = None) -> list[dict]:
         with self.engine.connect() as conn:
             stmt = select(attachment).where(and_(
@@ -1851,6 +2808,30 @@ class Store:
             if limit:
                 stmt = stmt.limit(limit)
             return [self.ser_attachment(r) for r in _conn_rows(conn, stmt)]
+
+    def create_attachment(
+        self,
+        org_id: str,
+        viewer_id: str,
+        inp: dict | str | None = None,
+        *,
+        issue_id: str | None = None,
+        url: str | None = None,
+        title: str | None = None,
+        subtitle: str | None = None,
+    ) -> dict | None:
+        from hoja_server.writer import Writer
+
+        if isinstance(inp, dict):
+            payload = dict(inp)
+        else:
+            payload = {
+                "issueId": issue_id or inp,
+                "url": url,
+                "title": title,
+                "subtitle": subtitle,
+            }
+        return Writer(self.engine).attachment_create(org_id, viewer_id, payload)
 
     def issue_github_links_for(self, org_id: str, issue_id: str,
                                limit: int | None = None) -> list[dict]:
@@ -1866,6 +2847,163 @@ class Store:
             if limit:
                 stmt = stmt.limit(limit)
             return [self.ser_github_link(r) for r in _conn_rows(conn, stmt)]
+
+    def pull_request_links(self, org_id: str, limit: int = 250) -> list[dict]:
+        """Every pull request linked to a task in this workspace, newest link first.
+
+        The Reviews queue is a property of the links, not of task recency. Reading it as
+        "the newest N tasks, then their links" tied the queue to how busy the workspace was:
+        once more than N tasks had been touched, every linked pull request fell outside the
+        window and the pane showed an empty queue while the links still existed.
+
+        ``_issue_id`` rides along for the ``GithubLink.issue`` resolver; GraphQL ignores keys
+        that are not fields, so the serialized shape stays the one the task panel already uses.
+        """
+        with self.engine.connect() as conn:
+            stmt = select(github_link).where(and_(
+                github_link.c.organization_id == org_id,
+                github_link.c.kind == "pr",
+            )).order_by(
+                github_link.c.updated_at.desc(), github_link.c.id.desc()
+            ).limit(limit)
+            rows = _conn_rows(conn, stmt)
+            links = []
+            for row in rows:
+                link = self.ser_github_link(row)
+                if link is not None:
+                    link["_issue_id"] = row.get("issue_id")
+                    links.append(link)
+            return links
+
+    def github_link_add(self, org_id: str, issue_id: str, *, kind: str,
+                        external_id: str, url: str, title: str) -> dict | None:
+        """Record a GitHub reference a person wrote into a task.
+
+        Shares the (organization_id, kind, external_id) natural key with the webhook
+        path, so typing the same reference twice updates one row instead of
+        duplicating it. Returns None when the issue is not in this organization,
+        which is also what the RLS policy would enforce at the row level.
+        """
+        from hoja_server.db import now_iso
+
+        with self.engine.begin() as conn:
+            owns = conn.execute(
+                select(issue.c.id).where(and_(
+                    issue.c.organization_id == org_id,
+                    issue.c.id == issue_id)).limit(1)
+            ).first()
+            if not owns:
+                return None
+            existing = conn.execute(
+                select(github_link.c.id).where(and_(
+                    github_link.c.organization_id == org_id,
+                    github_link.c.kind == kind,
+                    github_link.c.external_id == external_id)).limit(1)
+            ).first()
+            stamp = now_iso()
+            if existing:
+                link_id = existing[0]
+                conn.execute(update(github_link).where(github_link.c.id == link_id).values(
+                    issue_id=issue_id, url=url, title=title, updated_at=stamp))
+            else:
+                link_id = f"ghl_{secrets.token_hex(12)}"
+                conn.execute(github_link.insert().values(
+                    id=link_id, organization_id=org_id, issue_id=issue_id, kind=kind,
+                    external_id=external_id, url=url, title=title, state=None,
+                    author=None, sha=None, environment=None,
+                    created_at=stamp, updated_at=stamp))
+            rows = _conn_rows(conn, select(github_link).where(github_link.c.id == link_id))
+            return self.ser_github_link(rows[0]) if rows else None
+
+    def github_link_by_id(self, org_id: str, link_id: str) -> dict | None:
+        """One linked GitHub object, scoped to the organization that owns it."""
+        with self.engine.connect() as conn:
+            rows = _conn_rows(conn, select(github_link).where(and_(
+                github_link.c.organization_id == org_id,
+                github_link.c.id == link_id)).limit(1))
+            return self.ser_github_link(rows[0]) if rows else None
+
+    def github_review_recorded(self, org_id: str, link: dict, *, event_type: str,
+                               actor_id: str, changes: dict,
+                               merged_sha: str | None = None) -> dict | None:
+        """Record a review write GitHub actually confirmed.
+
+        Called only after the provider answered, which is what keeps a failed or ambiguous
+        response from flipping the row to "merged". The activity row carries the attribution in
+        `changes`, and the merge updates the link in the same transaction so the feed and the
+        list cannot disagree.
+        """
+        from hoja_server.db import now_iso
+
+        stamp = now_iso()
+        with self.engine.begin() as conn:
+            row = conn.execute(select(github_link).where(and_(
+                github_link.c.organization_id == org_id,
+                github_link.c.id == link["id"])).limit(1)).mappings().first()
+            if row is None:
+                return None
+            if merged_sha:
+                # `sha` stays the head commit that was merged. Writing the merge commit here
+                # would make the pane claim that commit was the PR head, and the next gate
+                # read would compare against a sha the pull request never had.
+                conn.execute(update(github_link).where(github_link.c.id == row["id"]).values(
+                    state="merged", merged_at=stamp, updated_at=stamp))
+            activity.record(conn, org_id=org_id, issue_id=row["issue_id"], actor_id=actor_id,
+                            event_type=event_type, changes=json.dumps(changes, sort_keys=True),
+                            created_at=stamp)
+            refreshed = _conn_rows(conn, select(github_link).where(
+                github_link.c.id == row["id"]))
+            return self.ser_github_link(refreshed[0]) if refreshed else None
+
+    def github_link_cache_file_patch(self, org_id: str, link_id: str, path: str,
+                                     patch: str) -> dict | None:
+        """Cache one on-demand-loaded patch back into the link's files payload (HOJA-513).
+
+        The entry keeps its identity fields and gains ``cached: true`` plus the patch,
+        and loses the ``oversize`` marker the patch replaces. The write happens only
+        when the recomputed payload differs from what is stored, so a second load of an
+        already-cached patch writes nothing — the same idempotency contract the bulk
+        enrichment script keeps. A missing link, a missing entry or a malformed stored
+        payload leaves the row exactly as it was and reports None.
+        """
+        from hoja_server.db import now_iso
+
+        stamp = now_iso()
+        with self.engine.begin() as conn:
+            row = conn.execute(select(github_link).where(and_(
+                github_link.c.organization_id == org_id,
+                github_link.c.id == link_id)).limit(1)).mappings().first()
+            if row is None or not isinstance(row["files"], str):
+                return None
+            try:
+                entries = json.loads(row["files"])
+            except ValueError:
+                return None
+            if not isinstance(entries, list):
+                return None
+            updated = False
+            for entry in entries:
+                if not (isinstance(entry, dict)
+                        and str(entry.get("path") or "") == (path or "").strip()):
+                    continue
+                if entry.get("cached") is True and entry.get("patch") == patch:
+                    return self.ser_github_link(dict(row))  # already cached: no write
+                entry["patch"] = patch
+                entry["cached"] = True
+                entry.pop("oversize", None)
+                entry.pop("size", None)
+                updated = True
+                break
+            if not updated:
+                return None
+            payload = json.dumps(entries, separators=(",", ":"), sort_keys=True,
+                                 ensure_ascii=False)
+            conn.execute(update(github_link).where(
+                github_link.c.id == row["id"]).values(
+                files=payload, updated_at=stamp))
+            refreshed = _conn_rows(conn, select(github_link).where(
+                github_link.c.id == row["id"]))
+            return self.ser_github_link(refreshed[0]) if refreshed else None
 
     def upload_visible(self, org_id: str, viewer_id: str, file_id: str) -> bool:
         """May this viewer fetch an uploaded file?
@@ -1910,6 +3048,14 @@ class Store:
             stmt = _scope_teams(conn, stmt, org_id, viewer_id, cycle.c.team_id)
             return self.ser_cycle(_one(conn, stmt))
 
+    def project_by_slug(self, org_id: str, slug: str, viewer_id: str | None = None) -> dict | None:
+        with self.engine.connect() as conn:
+            stmt = select(project).where(and_(
+                project.c.organization_id == org_id, project.c.slug_id == slug,
+                project.c.archived_at.is_(None)))
+            stmt = _scope_projects(conn, stmt, org_id, viewer_id)
+            return self.ser_project(_one(conn, stmt))
+
     def project_by_id(self, org_id: str, pid: str, viewer_id: str | None = None) -> dict | None:
         with self.engine.connect() as conn:
             stmt = select(project).where(and_(
@@ -1918,24 +3064,39 @@ class Store:
             stmt = _scope_projects(conn, stmt, org_id, viewer_id)
             return self.ser_project(_one(conn, stmt))
 
-    def initiatives(self, org_id: str, after: tuple[str, str] | None = None, status: str | None = None, limit: int = 51) -> list[dict]:
+    def initiatives(self, org_id: str, after: tuple[str, str] | None = None, status: str | None = None,
+                    statuses: list[str] | None = None, limit: int = 51,
+                    viewer_id: str | None = None, lead_team_id: str | None = None) -> list[dict]:
+        """Live initiatives, newest first. With a viewer, initiatives led by a team the viewer
+        cannot see (a private team they are not on) are left out, as on Linear."""
         stmt = select(initiative).where(and_(initiative.c.organization_id == org_id, initiative.c.archived_at.is_(None)))
+        if lead_team_id:
+            stmt = stmt.where(initiative.c.lead_team_id == lead_team_id)
         if status:
             stmt = stmt.where(initiative.c.status == status)
+        if statuses:
+            stmt = stmt.where(initiative.c.status.in_(statuses))
         if after:
             stmt = stmt.where(initiative.c.created_at <= after[0]).where((initiative.c.created_at < after[0]) | ((initiative.c.created_at == after[0]) & (initiative.c.id < after[1])))
         with self.engine.connect() as conn:
+            stmt = _scope_teams(conn, stmt, org_id, viewer_id, initiative.c.lead_team_id, nullable=True)
             rows = _conn_rows(conn, stmt.order_by(initiative.c.created_at.desc(), initiative.c.id.desc()).limit(limit))
             return [self.ser_initiative(conn, row) for row in rows]
 
-    def initiative_by_id(self, org_id: str, ident: str) -> dict | None:
+    def initiative_by_id(self, org_id: str, ident: str, viewer_id: str | None = None) -> dict | None:
+        """By id, or by the readable ``I-<number>``. With a viewer, one led by a private team
+        the viewer is not on reads as missing."""
+        match = re.fullmatch(r"[Ii]-(\d+)", ident or "")
         with self.engine.connect() as conn:
-            row = _one(conn, select(initiative).where(and_(initiative.c.organization_id == org_id, initiative.c.id == ident, initiative.c.archived_at.is_(None))))
+            key = initiative.c.number == int(match.group(1)) if match else initiative.c.id == ident
+            stmt = select(initiative).where(and_(initiative.c.organization_id == org_id, key, initiative.c.archived_at.is_(None)))
+            stmt = _scope_teams(conn, stmt, org_id, viewer_id, initiative.c.lead_team_id, nullable=True)
+            row = _one(conn, stmt)
             return self.ser_initiative(conn, row) if row else None
 
     @staticmethod
     def ser_initiative(conn, row) -> dict:
-        result = {"id": row["id"], "name": row["name"], "summary": row["summary"], "status": row["status"], "priority": row["priority"], "targetDate": row["target_date"], "createdAt": row["created_at"], "updatedAt": row["updated_at"], "_owner_id": row["owner_id"], "_creator_id": row["creator_id"], "_org_id": row["organization_id"], "owner": None, "creator": None}
+        result = {"id": row["id"], "name": row["name"], "summary": row["summary"], "description": row.get("description"), "status": row["status"], "priority": row["priority"], "targetDate": row["target_date"], "createdAt": row["created_at"], "updatedAt": row["updated_at"], "number": row.get("number") or 0, "identifier": f"I-{row.get('number') or 0}", "icon": row.get("icon"), "color": row.get("color"), "sortOrder": row.get("sort_order"), "updateReminder": row.get("update_reminder"), "_parent_id": row.get("parent_id"), "_lead_team_id": row.get("lead_team_id"), "_reminder_sent_at": row.get("reminder_sent_at"), "_owner_id": row["owner_id"], "_creator_id": row["creator_id"], "_org_id": row["organization_id"], "owner": None, "creator": None}
         for field in ("owner", "creator"):
             uid = row[f"{field}_id"]
             if uid:
@@ -1947,19 +3108,28 @@ class Store:
 
     def project_updates(self, org_id: str, after: tuple[str, str] | None = None,
                        project_id: str | None = None, limit: int = 51) -> list[dict]:
-        """Return organization-scoped update posts newest-first, with stable id tie-breaks."""
+        """Return organization-scoped update posts newest-change-first.
+
+        Keyset pagination on ``(updated_at, id)``: an edit moves a post to the top
+        of the feed, and the id tie-break keeps equal timestamps deterministic.
+        Cursors written before revision 57 still decode — backfilled rows carry
+        ``updated_at == created_at``, so the encoded timestamps compare unchanged.
+        """
         stmt = select(project_update).where(project_update.c.organization_id == org_id)
         stmt = stmt.join(project, and_(project.c.id == project_update.c.project_id,
                                        project.c.organization_id == org_id,
                                        project.c.archived_at.is_(None)))
         if project_id:
             stmt = stmt.where(project_update.c.project_id == project_id)
+        # NULL updated_at means never edited and reads as created_at, so rows from
+        # before revision 57 keep their original position without a backfill write.
+        sort_key = func.coalesce(project_update.c.updated_at, project_update.c.created_at)
         if after:
-            created_at, update_id = after
-            stmt = stmt.where(project_update.c.created_at <= created_at).where(or_(project_update.c.created_at < created_at,
-                                  and_(project_update.c.created_at == created_at,
+            updated_at, update_id = after
+            stmt = stmt.where(sort_key <= updated_at).where(or_(sort_key < updated_at,
+                                  and_(sort_key == updated_at,
                                        project_update.c.id < update_id)))
-        stmt = stmt.order_by(project_update.c.created_at.desc(), project_update.c.id.desc()).limit(limit)
+        stmt = stmt.order_by(sort_key.desc(), project_update.c.id.desc()).limit(limit)
         with self.engine.connect() as conn:
             rows = _conn_rows(conn, stmt)
             result = []
@@ -1967,8 +3137,63 @@ class Store:
                 row["_project_id"] = row["project_id"]
                 row["_actor_id"] = row.get("actor_id")
                 row["createdAt"] = row["created_at"]
+                row["updatedAt"] = row["updated_at"] or row["created_at"]
                 result.append(row)
             return result
+
+    def project_update_by_id(self, org_id: str, pid: str) -> dict | None:
+        with self.engine.connect() as conn:
+            row = conn.execute(select(project_update).where(and_(
+                project_update.c.organization_id == org_id, project_update.c.id == pid))).mappings().first()
+            return self._ser_project_update(dict(row)) if row else None
+
+    def _ser_project_update(self, row: dict) -> dict:
+        row["_project_id"] = row["project_id"]
+        row["_actor_id"] = row.get("actor_id")
+        row["createdAt"] = row["created_at"]
+        row["updatedAt"] = row["updated_at"] or row["created_at"]
+        return row
+
+    def initiative_updates(self, org_id: str, after: tuple[str, str] | None = None,
+                           initiative_id: str | None = None, limit: int = 51) -> list[dict]:
+        """Initiative update posts newest-change-first, keyset on (updated_at, id)."""
+        stmt = select(initiative_update).where(initiative_update.c.organization_id == org_id)
+        stmt = stmt.join(initiative, and_(initiative.c.id == initiative_update.c.initiative_id,
+                                          initiative.c.organization_id == org_id,
+                                          initiative.c.archived_at.is_(None)))
+        if initiative_id:
+            stmt = stmt.where(initiative_update.c.initiative_id == initiative_id)
+        if after:
+            updated_at, update_id = after
+            stmt = stmt.where(initiative_update.c.updated_at <= updated_at).where(or_(
+                initiative_update.c.updated_at < updated_at,
+                and_(initiative_update.c.updated_at == updated_at,
+                     initiative_update.c.id < update_id)))
+        stmt = stmt.order_by(initiative_update.c.updated_at.desc(),
+                             initiative_update.c.id.desc()).limit(limit)
+        with self.engine.connect() as conn:
+            rows = _conn_rows(conn, stmt)
+            result = []
+            for row in rows:
+                row["_initiative_id"] = row["initiative_id"]
+                row["_actor_id"] = row.get("actor_id")
+                row["createdAt"] = row["created_at"]
+                row["updatedAt"] = row["updated_at"]
+                result.append(row)
+            return result
+
+    def initiative_update_by_id(self, org_id: str, pid: str) -> dict | None:
+        with self.engine.connect() as conn:
+            row = conn.execute(select(initiative_update).where(and_(
+                initiative_update.c.organization_id == org_id, initiative_update.c.id == pid))).mappings().first()
+            if not row:
+                return None
+            row = dict(row)
+            row["_initiative_id"] = row["initiative_id"]
+            row["_actor_id"] = row.get("actor_id")
+            row["createdAt"] = row["created_at"]
+            row["updatedAt"] = row["updated_at"]
+            return row
 
     def project_update_project(self, org_id: str, pid: str) -> dict | None:
         return self.project_by_id(org_id, pid)
@@ -1997,6 +3222,16 @@ class Store:
             return self.ser_state(_one(conn, select(workflow_state).where(and_(
                 workflow_state.c.organization_id == org_id, workflow_state.c.id == sid))))
 
+    def states_by_ids(self, org_id: str, state_ids: list[str]) -> dict[str, dict]:
+        """Load workflow states for an issue page in one organization-scoped query."""
+        ids = list(dict.fromkeys(sid for sid in state_ids if sid))
+        if not ids:
+            return {}
+        with self.engine.connect() as conn:
+            rows = _conn_rows(conn, select(workflow_state).where(and_(
+                workflow_state.c.organization_id == org_id, workflow_state.c.id.in_(ids))))
+            return {row["id"]: self.ser_state(row) for row in rows}
+
     def raw_team(self, org_id: str, tid: str, viewer_id: str | None = None) -> dict | None:
         with self.engine.connect() as conn:
             stmt = select(team).where(and_(team.c.organization_id == org_id, team.c.id == tid))
@@ -2021,7 +3256,9 @@ class Store:
                 stmt = stmt.limit(limit)
             return [self.ser_issue(r) for r in _conn_rows(conn, stmt)]
 
-    def search_issues(self, org_id: str, term: str, viewer_id: str | None = None) -> list[dict]:
+    def search_issues(self, org_id: str, term: str, viewer_id: str | None = None,
+                      after: tuple[str, str] | None = None,
+                      limit: int | None = None) -> list[dict]:
         needle = _like_contains(_check_search_term(term))
         with self.engine.connect() as conn:
             stmt = select(issue).where(and_(
@@ -2030,8 +3267,248 @@ class Store:
                     issue.c.description.ilike(needle, escape="\\"),
                     issue.c.identifier.ilike(needle, escape="\\"))))
             stmt = _scope_teams(conn, stmt, org_id, viewer_id, issue.c.team_id)
-            stmt = stmt.order_by(issue.c.updated_at.desc())
+            # The id tiebreak makes the order total: a page boundary keys on
+            # (updated_at, id), so rows sharing a timestamp must be ordered by
+            # the same column the cursor filters on or a page can drop them.
+            stmt = stmt.order_by(issue.c.updated_at.desc(), issue.c.id.desc())
+            if after:
+                stmt = stmt.where(issue.c.updated_at <= after[0]).where(or_(
+                    issue.c.updated_at < after[0],
+                    and_(issue.c.updated_at == after[0], issue.c.id < after[1])))
+            if limit is not None:
+                stmt = stmt.limit(limit)
             return [self.ser_issue(r) for r in _conn_rows(conn, stmt)]
+
+
+    # ------------------------------------------------------------ view execution
+    # Views run on the same predicate compiler as ``issues`` but order by any of the
+    # display orderings and page with a keyset cursor over the full sort key, so a page
+    # boundary never drops or repeats a row whatever the ordering (docs/views.md).
+
+    def view_scope_filter(self, org_id: str, kind: str, scope: str | None,
+                          team_id: str | None = None, project_id: str | None = None,
+                          initiative_id: str | None = None) -> dict:
+        """The compiled predicate a view's scope adds to its results.
+
+        A team scope covers the team and its sub-teams; an initiative scope covers the
+        projects of the initiative and of its sub-initiatives.
+        """
+        if kind not in ("issue", "project") or scope in (None, "workspace"):
+            return {}
+        with self.engine.connect() as conn:
+            return self.view_scope_filter_on(conn, org_id, kind, scope, team_id, project_id,
+                                             initiative_id)
+
+    @classmethod
+    def view_scope_filter_on(cls, conn, org_id: str, kind: str, scope: str | None,
+                             team_id: str | None = None, project_id: str | None = None,
+                             initiative_id: str | None = None) -> dict:
+        """``view_scope_filter`` on the caller's connection (a writer's transaction)."""
+        if kind not in ("issue", "project") or scope in (None, "workspace"):
+            return {}
+        if scope == "team" and team_id:
+            teams = team_descendant_ids(conn, org_id, team_id)
+            return {"team": {"id": {"in": teams}}}
+        if scope == "project" and project_id:
+            return ({"project": {"id": {"eq": project_id}}} if kind == "issue"
+                    else {"id": {"eq": project_id}})
+        if scope == "initiative" and initiative_id:
+            initiatives = cls._initiative_descendants(conn, org_id, initiative_id)
+            projects = sorted(set(conn.execute(select(initiative_project.c.project_id).where(and_(
+                initiative_project.c.organization_id == org_id,
+                initiative_project.c.initiative_id.in_(initiatives)))).scalars())) or ["__none__"]
+            return ({"project": {"id": {"in": projects}}} if kind == "issue"
+                    else {"id": {"in": projects}})
+        return {}
+
+    def view_initiative_rows(self, org_id: str, statuses: list[str] | None = None,
+                             within: list[str] | None = None,
+                             viewer_id: str | None = None) -> list[dict]:
+        """The columns an initiative view filters and sorts on, one query, unserialized.
+
+        ``ser_initiative`` costs several queries per row (owner, creator, projects), so a
+        view filters and orders these light rows and serializes only the page it returns.
+        """
+        stmt = select(initiative.c.id, initiative.c.name, initiative.c.status,
+                      initiative.c.priority, initiative.c.target_date, initiative.c.created_at,
+                      initiative.c.sort_order, initiative.c.owner_id,
+                      initiative.c.lead_team_id).where(and_(
+                          initiative.c.organization_id == org_id,
+                          initiative.c.archived_at.is_(None)))
+        if statuses:
+            stmt = stmt.where(initiative.c.status.in_(statuses))
+        if within is not None:
+            stmt = stmt.where(initiative.c.id.in_(within or ["__none__"]))
+        with self.engine.connect() as conn:
+            stmt = _scope_teams(conn, stmt, org_id, viewer_id, initiative.c.lead_team_id, nullable=True)
+            return [{"id": r["id"], "name": r["name"], "status": r["status"],
+                     "priority": r["priority"], "targetDate": r["target_date"],
+                     "createdAt": r["created_at"], "sortOrder": r["sort_order"],
+                     "_owner_id": r["owner_id"], "_lead_team_id": r["lead_team_id"]}
+                    for r in _conn_rows(conn, stmt)]
+
+    def initiatives_by_ids(self, org_id: str, ids: list[str]) -> list[dict]:
+        """Serialized initiatives in the order of ``ids``."""
+        if not ids:
+            return []
+        with self.engine.connect() as conn:
+            rows = {r["id"]: r for r in _conn_rows(conn, select(initiative).where(and_(
+                initiative.c.organization_id == org_id, initiative.c.id.in_(ids))))}
+            return [self.ser_initiative(conn, rows[i]) for i in ids if i in rows]
+
+    def initiative_descendants(self, org_id: str, initiative_id: str) -> list[str]:
+        with self.engine.connect() as conn:
+            return self._initiative_descendants(conn, org_id, initiative_id)
+
+    @staticmethod
+    def _initiative_descendants(conn, org_id: str, initiative_id: str) -> list[str]:
+        seen, queue = [initiative_id], [initiative_id]
+        while queue:
+            children = conn.execute(select(initiative.c.id).where(and_(
+                initiative.c.organization_id == org_id,
+                initiative.c.parent_id == queue.pop(0)))).scalars().all()
+            for child in children:
+                if child not in seen:
+                    seen.append(child)
+                    queue.append(child)
+        return seen
+
+    @staticmethod
+    def _issue_sort_keys(org_id: str, ordering: str, dialect: str = "sqlite") -> list[tuple]:
+        """(expression, descending, follows reverse) for each sort key, id last.
+
+        Empty values (no priority, no due date, no estimate) sort last in both
+        directions, which is what Linear does. ``manual`` is the task's rank
+        (``sort_order``, Linear's sortOrder); within one priority, ``priority`` orders by
+        ``priority_sort_order`` (Linear's prioritySortOrder), then newest activity. Ranks
+        are fractional-index strings compared byte-wise (:func:`ranking.sortable`).
+        """
+        def last_if_empty(col):
+            return (case((col.is_(None), 1), else_=0), False, False)
+
+        def rank(col):
+            return [last_if_empty(col),
+                    (ranking.sortable(func.coalesce(col, ""), dialect), False, True)]
+
+        if ordering == "priority":
+            empty = or_(issue.c.priority.is_(None), issue.c.priority == 0)
+            keys = [(case((empty, 1), else_=0), False, False),
+                    (func.coalesce(issue.c.priority, 0), False, True),
+                    *rank(issue.c.priority_sort_order),
+                    (issue.c.updated_at, True, True)]
+        elif ordering in ("title", "name"):
+            keys = [(func.lower(issue.c.title), False, True)]
+        elif ordering in ("dueDate", "targetDate"):
+            keys = [last_if_empty(issue.c.due_date),
+                    (func.coalesce(issue.c.due_date, ""), False, True)]
+        elif ordering == "estimate":
+            keys = [last_if_empty(issue.c.estimate),
+                    (func.coalesce(issue.c.estimate, 0), True, True)]
+        elif ordering == "status":
+            rank = case(*[(workflow_state.c.type == t, i) for i, t in enumerate(
+                ("triage", "started", "unstarted", "backlog", "completed", "canceled"))],
+                else_=6)
+            state_rank = select(rank * 100000 + func.coalesce(workflow_state.c.position, 0)) \
+                .where(workflow_state.c.id == issue.c.state_id).scalar_subquery()
+            keys = [(func.coalesce(state_rank, 999999), False, True),
+                    (issue.c.updated_at, True, True)]
+        elif ordering == "created":
+            keys = [(issue.c.created_at, True, True)]
+        elif ordering == "manual":
+            keys = [*rank(issue.c.sort_order), (issue.c.created_at, True, True)]
+        else:  # updated
+            keys = [(issue.c.updated_at, True, True)]
+        return [*keys, (issue.c.id, keys[-1][1], True)]
+
+    @staticmethod
+    def _project_sort_keys(ordering: str) -> list[tuple]:
+        if ordering in ("title", "name"):
+            keys = [(func.lower(project.c.name), False, True)]
+        elif ordering == "startDate":
+            keys = [(case((project.c.start_date.is_(None), 1), else_=0), False, False),
+                    (func.coalesce(project.c.start_date, ""), False, True)]
+        elif ordering in ("dueDate", "targetDate"):
+            keys = [(case((project.c.target_date.is_(None), 1), else_=0), False, False),
+                    (func.coalesce(project.c.target_date, ""), False, True)]
+        elif ordering == "status":
+            rank = case(*[(project.c.state == t, i) for i, t in enumerate(
+                ("started", "planned", "paused", "backlog", "completed", "canceled"))], else_=6)
+            keys = [(rank, False, True), (func.coalesce(project.c.updated_at, ""), True, True)]
+        elif ordering == "updated":
+            keys = [(func.coalesce(project.c.updated_at, ""), True, True)]
+        elif ordering == "created":
+            keys = [(func.coalesce(project.c.created_at, ""), True, True)]
+        else:  # manual, and orderings a project has no column for (priority, estimate)
+            keys = [(func.coalesce(project.c.created_at, ""), False, True)]
+        return [*keys, (project.c.id, keys[-1][1], True)]
+
+    @staticmethod
+    def _keyset_page(conn, stmt, keys: list[tuple], reverse: bool, after: list | None,
+                     limit: int) -> tuple[list[dict], list[list], int]:
+        """Order ``stmt`` by ``keys``, resume after the cursor, and count the whole set."""
+        total = conn.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0
+        directions = [desc != reverse if follows else desc for _e, desc, follows in keys]
+        labelled = [expr.label(f"_view_k{i}") for i, (expr, _d, _f) in enumerate(keys)]
+        stmt = stmt.add_columns(*labelled)
+        if after is not None:
+            if len(after) != len(keys):
+                raise viewdocs.ViewError("after belongs to a different ordering.", "after")
+            alternatives = []
+            for i, (expr, _d, _f) in enumerate(keys):
+                prefix = [keys[j][0] == after[j] for j in range(i)]
+                beyond = expr < after[i] if directions[i] else expr > after[i]
+                alternatives.append(and_(*prefix, beyond))
+            stmt = stmt.where(or_(*alternatives))
+        stmt = stmt.order_by(*[(expr.desc() if d else expr.asc())
+                               for (expr, _d, _f), d in zip(keys, directions, strict=True)]).limit(limit)
+        rows, cursors = [], []
+        for row in _conn_rows(conn, stmt):
+            cursors.append([row.pop(f"_view_k{i}") for i in range(len(keys))])
+            rows.append(row)
+        return rows, cursors, total
+
+    def view_issues(self, org_id: str, viewer_id: str, flt: dict | None, *,
+                    ordering: str = "updated", reverse: bool = False,
+                    after: list | None = None, limit: int = 50,
+                    completed_since: str | None = None,
+                    show_sub_issues: bool = True) -> dict:
+        """One page of a view's issues: ``nodes``, per-row sort ``keys``, ``total``.
+
+        ``completed_since`` keeps completed/canceled issues finished at or after that
+        instant; ``""`` hides them all and None keeps them all.
+        """
+        with self.engine.connect() as conn:
+            stmt = select(issue).where(and_(
+                issue.c.organization_id == org_id, issue.c.archived_at.is_(None)))
+            stmt = _scope_teams(conn, stmt, org_id, viewer_id, issue.c.team_id)
+            stmt = _apply_issue_filter(conn, stmt, org_id, viewer_id, flt)
+            if completed_since is not None:
+                closed = select(workflow_state.c.id).where(and_(
+                    workflow_state.c.organization_id == org_id,
+                    workflow_state.c.type.in_(("completed", "canceled"))))
+                recent = false() if completed_since == "" else func.coalesce(
+                    issue.c.completed_at, issue.c.canceled_at, issue.c.state_changed_at,
+                    issue.c.updated_at) >= completed_since
+                stmt = stmt.where(or_(issue.c.state_id.is_(None),
+                                      issue.c.state_id.notin_(closed), recent))
+            if not show_sub_issues:
+                stmt = stmt.where(issue.c.parent_id.is_(None))
+            rows, keys, total = self._keyset_page(
+                conn, stmt, self._issue_sort_keys(org_id, ordering, self.engine.dialect.name), reverse,
+                after, limit)
+            return {"nodes": [self.ser_issue(r) for r in rows], "keys": keys, "total": total}
+
+    def view_projects(self, org_id: str, viewer_id: str | None, flt: dict | None, *,
+                      ordering: str = "manual", reverse: bool = False,
+                      after: list | None = None, limit: int = 50) -> dict:
+        with self.engine.connect() as conn:
+            stmt = select(project).where(and_(
+                project.c.organization_id == org_id, project.c.archived_at.is_(None)))
+            stmt = _apply_project_filter(stmt, flt, conn, org_id)
+            stmt = _scope_projects(conn, stmt, org_id, viewer_id)
+            rows, keys, total = self._keyset_page(
+                conn, stmt, self._project_sort_keys(ordering), reverse, after, limit)
+            return {"nodes": [self.ser_project(r) for r in rows], "keys": keys, "total": total}
 
 
 # ============================================================ filter compilers
@@ -2078,6 +3555,8 @@ def _apply_num_cmp(col, cmp: dict):
 def _apply_date_cmp(col, cmp: dict):
     # ISO strings sort lexicographically → string comparison is correct
     clauses = []
+    if "null" in cmp:
+        clauses.append(col.is_(None) if cmp["null"] else col.is_not(None))
     if "eq" in cmp:
         clauses.append(col == cmp["eq"])
     if "gt" in cmp:
@@ -2094,6 +3573,10 @@ def _apply_date_cmp(col, cmp: dict):
 def _apply_project_filter(stmt, flt: dict | None, conn, org_id: str):
     if not flt:
         return stmt
+    if "id" in flt:
+        c = _apply_str_cmp(project.c.id, flt["id"])
+        if c is not None:
+            stmt = stmt.where(c)
     if "slugId" in flt:
         c = _apply_str_cmp(project.c.slug_id, flt["slugId"])
         if c is not None:
@@ -2106,16 +3589,85 @@ def _apply_project_filter(stmt, flt: dict | None, conn, org_id: str):
         c = _apply_str_cmp(project.c.state, flt["state"])
         if c is not None:
             stmt = stmt.where(c)
+    if "description" in flt:
+        c = _apply_str_cmp(project.c.description, flt["description"])
+        if c is not None:
+            stmt = stmt.where(c)
+    if "status" in flt:
+        # Configured statuses are matched by name, case-insensitively (project_settings).
+        c = _apply_str_cmp(func.lower(func.coalesce(project.c.state, "")), flt["status"])
+        if c is not None:
+            stmt = stmt.where(c)
+    for who, col in (("lead", project.c.lead_id), ("creator", project.c.creator_id)):
+        if who in flt:
+            c = _nullable_ref_clause(col, flt[who], ("id", "email", "displayName"),
+                                     lambda cmp: _resolve_user_ids(conn, org_id, cmp))
+            if c is not None:
+                stmt = stmt.where(c)
+    if flt.get("members"):
+        c = _collection_clause(project.c.id, flt["members"], select(project_member.c.project_id),
+                               lambda f: _member_project_ids(conn, org_id, f))
+        if c is not None:
+            stmt = stmt.where(c)
+    if flt.get("initiatives"):
+        c = _collection_clause(
+            project.c.id, flt["initiatives"],
+            select(initiative_project.c.project_id).where(
+                initiative_project.c.organization_id == org_id),
+            lambda f: _initiative_project_ids(conn, org_id, f))
+        if c is not None:
+            stmt = stmt.where(c)
+    if "health" in flt:
+        c = _project_health_clause(conn, org_id, flt["health"])
+        if c is not None:
+            stmt = stmt.where(c)
+    for datef, col in (("startDate", project.c.start_date), ("targetDate", project.c.target_date)):
+        if datef in flt:
+            c = _apply_date_cmp(col, flt[datef])
+            if c is not None:
+                stmt = stmt.where(c)
     if "team" in flt:
-        team_ids = _resolve_team_ids(conn, org_id, flt["team"])
-        project_ids = select(project_team.c.project_id).where(
-            project_team.c.team_id.in_(team_ids or ["__none__"]))
-        stmt = stmt.where(project.c.id.in_(project_ids))
+        cmp = flt["team"] or {}
+        if _negative_only(cmp, ("id", "key", "name", "memberOf")):
+            # A project links to many teams: "team is not X" drops every project linked to
+            # X (not just keeps those linked to some other team), and keeps teamless ones,
+            # as Linear's exclusive filters do.
+            excluded = _resolve_team_ids(conn, org_id, {
+                c: {_NEGATIVE_CMPS[k]: v for k, v in cmp[c].items()}
+                for c in ("id", "key", "name", "memberOf") if c in cmp})
+            stmt = stmt.where(project.c.id.notin_(select(project_team.c.project_id).where(
+                project_team.c.team_id.in_(excluded or ["__none__"]))))
+        else:
+            team_ids = _resolve_team_ids(conn, org_id, cmp)
+            project_ids = select(project_team.c.project_id).where(
+                project_team.c.team_id.in_(team_ids or ["__none__"]))
+            stmt = stmt.where(project.c.id.in_(project_ids))
+    for sub_filter in flt.get("and") or []:
+        stmt = _apply_project_filter(stmt, sub_filter, conn, org_id)
+    if flt.get("or"):
+        alternatives = []
+        for sub_filter in flt["or"]:
+            subquery = _apply_project_filter(select(project.c.id).where(and_(
+                project.c.organization_id == org_id, project.c.archived_at.is_(None))),
+                sub_filter, conn, org_id)
+            alternatives.append(project.c.id.in_(subquery))
+        stmt = stmt.where(or_(*alternatives))
     return stmt
 
 
 def _resolve_team_ids(conn, org_id: str, cmp: dict) -> list[str]:
     stmt = select(team.c.id).where(team.c.organization_id == org_id)
+    if "memberOf" in cmp:
+        # A view's "my teams": the teams a user belongs to (views.MY_TEAMS), compared by
+        # the member's id, so ``neq`` is "teams they are not in".
+        member_cmp = cmp["memberOf"] or {}
+        users = [v for k in ("eq", "neq") if k in member_cmp for v in [member_cmp[k]]] + \
+            [v for k in ("in", "nin") if k in member_cmp for v in member_cmp[k]]
+        joined = select(team_member.c.team_id).where(team_member.c.user_id.in_(users or ["__none__"]))
+        if set(member_cmp) & {"neq", "nin"}:
+            stmt = stmt.where(team.c.id.notin_(joined))
+        else:
+            stmt = stmt.where(team.c.id.in_(joined))
     if "key" in cmp:
         kc = _apply_str_cmp(team.c.key, cmp["key"])
         if kc is not None:
@@ -2133,6 +3685,14 @@ def _resolve_team_ids(conn, org_id: str, cmp: dict) -> list[str]:
 
 def _resolve_state_ids(conn, org_id: str, cmp: dict) -> list[str]:
     stmt = select(workflow_state.c.id).where(workflow_state.c.organization_id == org_id)
+    if "id" in cmp:
+        c = _apply_str_cmp(workflow_state.c.id, cmp["id"])
+        if c is not None:
+            stmt = stmt.where(c)
+    if "key" in cmp:  # the web client's "Name|type" state key
+        c = _apply_str_cmp(workflow_state.c.name + "|" + workflow_state.c.type, cmp["key"])
+        if c is not None:
+            stmt = stmt.where(c)
     if "name" in cmp:
         c = _apply_str_cmp(workflow_state.c.name, cmp["name"])
         if c is not None:
@@ -2216,6 +3776,196 @@ def _resolve_cycle_ids(conn, org_id: str, cmp: dict) -> list[str] | None:
     return sorted(matches or [])
 
 
+_NEGATIVE_CMPS = {"neq": "eq", "nin": "in"}
+
+
+def _negative_only(cmp: dict, columns: tuple[str, ...]) -> bool:
+    """Whether every comparator on the reference columns is ``neq``/``nin``."""
+    comparators = [cmp[c] for c in columns if c in cmp]
+    return bool(comparators) and all(
+        isinstance(v, dict) and v and set(v) <= set(_NEGATIVE_CMPS) for v in comparators)
+
+
+def _nullable_ref_clause(col, cmp: dict | None, columns: tuple[str, ...], resolve):
+    """One nullable reference predicate (assignee, creator, project, cycle).
+
+    ``null: true`` selects empty rows. A purely negative predicate ("is not Alice")
+    resolves the excluded rows and keeps the empty ones, as Linear does; a positive one
+    resolves the matching rows. ``resolve`` maps a column comparator to ids.
+    """
+    cmp = cmp or {}
+    clauses = []
+    if "null" in cmp:
+        clauses.append(col.is_(None) if cmp["null"] else col.is_not(None))
+    if any(c in cmp for c in columns):
+        if _negative_only(cmp, columns):
+            excluded: set[str] = set()
+            for c in columns:
+                if c in cmp:
+                    excluded.update(resolve({c: {_NEGATIVE_CMPS[k]: v for k, v in cmp[c].items()}}))
+            clauses.append(or_(col.is_(None), col.notin_(sorted(excluded))) if excluded else true())
+        else:
+            clauses.append(col.in_(resolve({c: cmp[c] for c in columns if c in cmp}) or ["__none__"]))
+    return and_(*clauses) if clauses else None
+
+
+def _resolve_project_ids(conn, org_id: str, cmp: dict) -> list[str]:
+    stmt = select(project.c.id).where(project.c.organization_id == org_id)
+    for field, column in (("id", project.c.id), ("name", project.c.name)):
+        if field in cmp:
+            c = _apply_str_cmp(column, cmp[field])
+            if c is not None:
+                stmt = stmt.where(c)
+    return [r[0] for r in conn.execute(stmt)]
+
+
+def _resolve_cycle_name_ids(conn, org_id: str, cmp: dict) -> list[str]:
+    stmt = select(cycle.c.id).where(cycle.c.organization_id == org_id)
+    for field, column in (("id", cycle.c.id), ("name", cycle.c.name)):
+        if field in cmp:
+            c = _apply_str_cmp(column, cmp[field])
+            if c is not None:
+                stmt = stmt.where(c)
+    return [r[0] for r in conn.execute(stmt)]
+
+
+def _label_row_clause(org_id: str, label_filter: dict, tbl=issue_label, depth: int = 0):
+    """A condition on label rows (``tbl``) from Linear's IssueLabelFilter: ``id``, ``name``,
+    ``isGroup``, ``parent`` (a filter on the label's group) and nested ``and``/``or``."""
+    if depth > 8:
+        raise viewdocs.ViewError("Label filters nest too deeply.", "labels")
+    label_filter = label_filter or {}
+    clauses = []
+    for field in ("id", "name"):
+        if field in label_filter:
+            c = _apply_str_cmp(tbl.c[field], label_filter[field])
+            if c is not None:
+                clauses.append(c)
+    if "isGroup" in label_filter:
+        want = (label_filter["isGroup"] or {}).get("eq", True)
+        clauses.append(tbl.c.is_group.is_(bool(want)))
+    if "parent" in label_filter:
+        group = issue_label.alias(f"label_group_{depth}")
+        inner = _label_row_clause(org_id, label_filter["parent"], group, depth + 1)
+        clauses.append(tbl.c.parent_id.in_(select(group.c.id).where(and_(
+            group.c.organization_id == org_id, inner if inner is not None else true()))))
+    for key, joiner in (("and", and_), ("or", or_)):
+        if key in label_filter:
+            subs = [_label_row_clause(org_id, f, tbl, depth + 1) for f in label_filter[key] or []]
+            subs = [c for c in subs if c is not None]
+            if subs:
+                clauses.append(joiner(*subs))
+    return and_(*clauses) if clauses else None
+
+
+def _label_issue_ids(org_id: str, label_filter: dict):
+    """Issue ids carrying at least one label that matches ``label_filter``."""
+    sub = select(issue_label_link.c.issue_id).select_from(
+        issue_label_link.join(issue_label, issue_label.c.id == issue_label_link.c.label_id)
+    ).where(issue_label.c.organization_id == org_id)
+    clause = _label_row_clause(org_id, label_filter or {})
+    return sub.where(clause) if clause is not None else sub
+
+
+def _label_clause(org_id: str, cmp: dict):
+    """``labels`` in Linear's collection grammar: ``some``/``none`` take a label filter,
+    ``null`` selects rows with no label, and a bare ``id``/``name`` means ``some``."""
+    clauses = []
+    if "null" in cmp:
+        labelled = select(issue_label_link.c.issue_id)
+        clauses.append(issue.c.id.notin_(labelled) if cmp["null"] else issue.c.id.in_(labelled))
+    if "some" in cmp:
+        clauses.append(issue.c.id.in_(_label_issue_ids(org_id, cmp["some"])))
+    if "none" in cmp:
+        clauses.append(issue.c.id.notin_(_label_issue_ids(org_id, cmp["none"])))
+    # Linear's IssueLabelCollectionFilter also takes label fields at the top level
+    # (``{or: [{name: ...}, {parent: ...}]}`` is how it stores a group filter); they mean
+    # "some label matches".
+    direct = {k: cmp[k] for k in ("id", "name", "parent", "isGroup", "and", "or") if k in cmp}
+    if direct:
+        clauses.append(issue.c.id.in_(_label_issue_ids(org_id, direct)))
+    return and_(*clauses) if clauses else None
+
+
+def _collection_clause(id_col, cmp: dict, linked, resolve):
+    """A to-many predicate (subscribers, members, initiatives) in the collection grammar:
+    ``some``/``none`` take a filter of the related row, ``null`` means "has none".
+    ``linked`` selects every owner id with at least one related row; ``resolve`` maps a
+    related-row filter to the owner ids that have a matching one."""
+    clauses = []
+    if "null" in cmp:
+        clauses.append(id_col.notin_(linked) if cmp["null"] else id_col.in_(linked))
+    if "some" in cmp:
+        clauses.append(id_col.in_(resolve(cmp["some"])))
+    if "none" in cmp:
+        clauses.append(id_col.notin_(resolve(cmp["none"])))
+    return and_(*clauses) if clauses else None
+
+
+def _user_filter_ids(conn, org_id: str, flt: dict, viewer_id: str | None = None) -> list[str]:
+    """Users matching a related-user filter: ``id``/``email``/``displayName`` comparators and
+    Linear's ``isMe`` (``{"eq": true}`` is the viewer, ``false`` everyone else). An empty
+    filter is "any user"."""
+    flt = flt or {}
+    ids = _resolve_user_ids(conn, org_id, {k: flt[k] for k in ("id", "email", "displayName")
+                                           if k in flt})
+    if isinstance(flt.get("isMe"), dict) and "eq" in flt["isMe"]:
+        me = bool(flt["isMe"]["eq"])
+        ids = [i for i in ids if (i == viewer_id) == me]
+    return ids
+
+
+def _subscriber_issue_ids(conn, org_id: str, flt: dict, viewer_id: str | None = None):
+    return select(issue_subscriber.c.issue_id).where(issue_subscriber.c.user_id.in_(
+        _user_filter_ids(conn, org_id, flt, viewer_id) or ["__none__"]))
+
+
+def _member_project_ids(conn, org_id: str, flt: dict):
+    return select(project_member.c.project_id).where(
+        project_member.c.user_id.in_(_user_filter_ids(conn, org_id, flt) or ["__none__"]))
+
+
+def _initiative_project_ids(conn, org_id: str, flt: dict):
+    stmt = select(initiative.c.id).where(initiative.c.organization_id == org_id)
+    for field, column in (("id", initiative.c.id), ("name", initiative.c.name)):
+        if field in (flt or {}):
+            c = _apply_str_cmp(column, flt[field])
+            if c is not None:
+                stmt = stmt.where(c)
+    return select(initiative_project.c.project_id).where(and_(
+        initiative_project.c.organization_id == org_id,
+        initiative_project.c.initiative_id.in_(stmt)))
+
+
+def _project_health_clause(conn, org_id: str, cmp: dict):
+    """Health is the latest project update's, so it is resolved to project ids here."""
+    from hoja_server.initiative_api import latest_project_health
+
+    ids = list(conn.execute(select(project.c.id).where(and_(
+        project.c.organization_id == org_id, project.c.archived_at.is_(None)))).scalars())
+    health = {pid: (h or "none") for pid, h in latest_project_health(conn, org_id, ids).items()}
+    wanted = set(cmp.get("in") or []) | ({cmp["eq"]} if "eq" in cmp else set())
+    unwanted = set(cmp.get("nin") or []) | ({cmp["neq"]} if "neq" in cmp else set())
+    clauses = []
+    if wanted:
+        clauses.append(project.c.id.in_([p for p, h in health.items() if h in wanted]
+                                        or ["__none__"]))
+    if unwanted:
+        clauses.append(project.c.id.notin_([p for p, h in health.items() if h in unwanted]
+                                           or ["__none__"]))
+    return and_(*clauses) if clauses else None
+
+
+def _apply_nullable_num_cmp(col, cmp: dict):
+    clauses = []
+    if "null" in cmp:
+        clauses.append(col.is_(None) if cmp["null"] else col.is_not(None))
+    rest = _apply_num_cmp(col, {k: v for k, v in cmp.items() if k != "null"})
+    if rest is not None:
+        clauses.append(rest)
+    return and_(*clauses) if clauses else None
+
+
 def _apply_issue_filter(conn, stmt, org_id, viewer_id, flt: dict | None):
     if not flt:
         return stmt
@@ -2225,24 +3975,35 @@ def _apply_issue_filter(conn, stmt, org_id, viewer_id, flt: dict | None):
     if "state" in flt:
         ids = _resolve_state_ids(conn, org_id, flt["state"])
         stmt = stmt.where(issue.c.state_id.in_(ids or ["__none__"]))
-    for who, col in (("assignee", issue.c.assignee_id), ("creator", issue.c.creator_id)):
+    # `delegate` is `assignee`'s twin, one column over (HOJA-712): Linear filters a
+    # view by delegate, and Hoja keeps delegation separate from assignment, so the
+    # same UserFilter resolution must read `issue.delegate_id`. Resolving through
+    # `_resolve_user_ids` also keeps both tenant-scoped: an id from another
+    # organization resolves to nothing, and the `["__none__"]` fallback returns no
+    # rows instead of leaking them.
+    for who, col in (("assignee", issue.c.assignee_id), ("delegate", issue.c.delegate_id),
+                     ("creator", issue.c.creator_id)):
         if who in flt:
-            ids = _resolve_user_ids(conn, org_id, flt[who])
-            stmt = stmt.where(col.in_(ids or ["__none__"]))
-    if "project" in flt:
-        cmp = flt["project"]
-        if "id" in cmp:
-            c = _apply_str_cmp(issue.c.project_id, cmp["id"])
+            c = _nullable_ref_clause(col, flt[who], ("id", "email", "displayName"),
+                                     lambda cmp: _resolve_user_ids(conn, org_id, cmp))
             if c is not None:
                 stmt = stmt.where(c)
-        elif "name" in cmp:
-            sub = select(project.c.id).where(project.c.organization_id == org_id)
-            nc = _apply_str_cmp(project.c.name, cmp["name"])
-            if nc is not None:
-                sub = sub.where(nc)
-            stmt = stmt.where(issue.c.project_id.in_([r[0] for r in conn.execute(sub)] or ["__none__"]))
-    if "cycle" in flt:
-        cycle_filter = flt["cycle"]
+    if "project" in flt:
+        c = _nullable_ref_clause(issue.c.project_id, flt["project"], ("id", "name"),
+                                 lambda cmp: _resolve_project_ids(conn, org_id, cmp))
+        if c is not None:
+            stmt = stmt.where(c)
+    cycle_filter = flt.get("cycle")
+    if cycle_filter is not None and ("null" in cycle_filter or (
+            _negative_only(cycle_filter, ("id", "name"))
+            and not {"isActive", "isNext"}.intersection(cycle_filter))):
+        c = _nullable_ref_clause(issue.c.cycle_id, cycle_filter, ("id", "name"),
+                                 lambda cmp: _resolve_cycle_name_ids(conn, org_id, cmp))
+        if c is not None:
+            stmt = stmt.where(c)
+        cycle_filter = {k: v for k, v in cycle_filter.items()
+                        if k in ("isActive", "isNext")} or None
+    if cycle_filter:
         sub = select(cycle.c.id).where(cycle.c.organization_id == org_id)
         for field, column in (("id", cycle.c.id), ("name", cycle.c.name)):
             if field in cycle_filter:
@@ -2256,8 +4017,17 @@ def _apply_issue_filter(conn, stmt, org_id, viewer_id, flt: dict | None):
         stmt = stmt.where(issue.c.cycle_id.in_(cycle_ids or ["__none__"]))
     if "parent" in flt:
         cmp = flt["parent"] or {}
+        # `isNull` is a Hoja extension: GraphQL cannot express `eq: null`, and
+        # clients strip nulls from variables, so orphans need a boolean.
+        is_null = cmp.get("isNull", cmp.get("null"))
+        if is_null is True:
+            stmt = stmt.where(issue.c.parent_id.is_(None))
+        elif is_null is False:
+            stmt = stmt.where(issue.c.parent_id.is_not(None))
         if "id" in cmp:
             c = _apply_str_cmp(issue.c.parent_id, cmp["id"])
+            if c is not None and _negative_only(cmp, ("id",)):
+                c = or_(issue.c.parent_id.is_(None), c)
             if c is not None:
                 stmt = stmt.where(c)
     if "priority" in flt:
@@ -2268,8 +4038,39 @@ def _apply_issue_filter(conn, stmt, org_id, viewer_id, flt: dict | None):
         c = _apply_num_cmp(issue.c.number, flt["number"])
         if c is not None:
             stmt = stmt.where(c)
+    if "estimate" in flt:
+        c = _apply_nullable_num_cmp(issue.c.estimate, flt["estimate"] or {})
+        if c is not None:
+            stmt = stmt.where(c)
+    if flt.get("subscribers"):
+        c = _collection_clause(issue.c.id, flt["subscribers"], select(issue_subscriber.c.issue_id),
+                               lambda f: _subscriber_issue_ids(conn, org_id, f, viewer_id))
+        if c is not None:
+            stmt = stmt.where(c)
+    if flt.get("hasChildren") is not None:
+        # "Has sub-issues": a live child points at the row.
+        child = issue.alias("child_issue")
+        children = select(child.c.parent_id).where(and_(
+            child.c.organization_id == org_id, child.c.parent_id.is_not(None),
+            child.c.archived_at.is_(None)))
+        stmt = stmt.where(issue.c.id.in_(children) if flt["hasChildren"]
+                          else issue.c.id.notin_(children))
     if "identifier" in flt:
         c = _apply_str_cmp(issue.c.identifier, flt["identifier"])
+        # Issues(filter:{identifier}) is what a client asks when it was handed
+        # one identifier: an MCP call, a link, a commit message. A retired flat
+        # identifier must resolve here exactly as it does in issue_ref_clause
+        # (HOJA-523); issue_by_id_or_identifier alone was not enough because
+        # the MCP lookup tool never calls issue(id:).
+        alias_refs = []
+        if "eq" in flt["identifier"]:
+            alias_refs.append(flt["identifier"]["eq"])
+        if "in" in flt["identifier"]:
+            alias_refs.extend(flt["identifier"]["in"] or [])
+        if alias_refs and "nin" not in flt["identifier"]:
+            alias_clause = issue.c.id.in_(
+                identifiers.retired_issue_ids(org_id, alias_refs))
+            c = alias_clause if c is None else or_(c, alias_clause)
         if c is not None:
             stmt = stmt.where(c)
     if "title" in flt:
@@ -2281,19 +4082,17 @@ def _apply_issue_filter(conn, stmt, org_id, viewer_id, flt: dict | None):
         if c is not None:
             stmt = stmt.where(c)
     for datef, col in (("updatedAt", issue.c.updated_at), ("createdAt", issue.c.created_at),
-                       ("dueDate", issue.c.due_date)):
+                       ("dueDate", issue.c.due_date), ("startedAt", issue.c.started_at),
+                       ("completedAt", issue.c.completed_at),
+                       ("canceledAt", issue.c.canceled_at)):
         if datef in flt:
             c = _apply_date_cmp(col, flt[datef])
             if c is not None:
                 stmt = stmt.where(c)
-    if "labels" in flt and "name" in flt["labels"]:
-        sub = select(issue_label_link.c.issue_id).select_from(
-            issue_label_link.join(issue_label, issue_label.c.id == issue_label_link.c.label_id)
-        ).where(issue_label.c.organization_id == org_id)
-        nc = _apply_str_cmp(issue_label.c.name, flt["labels"]["name"])
-        if nc is not None:
-            sub = sub.where(nc)
-        stmt = stmt.where(issue.c.id.in_([r[0] for r in conn.execute(sub)] or ["__none__"]))
+    if flt.get("labels"):
+        c = _label_clause(org_id, flt["labels"])
+        if c is not None:
+            stmt = stmt.where(c)
     for sub_filter in flt.get("and") or []:
         stmt = _apply_issue_filter(conn, stmt, org_id, viewer_id, sub_filter)
     if flt.get("or"):

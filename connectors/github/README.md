@@ -120,6 +120,25 @@ The connector is installed explicitly at every pip site the deployment uses: `ap
 `.github/workflows/mobile.yml`, `app/scripts/dev-tailscale.sh`, `mobile/README.md` and
 `mobile/scripts/verify-backend.sh`.
 
+## Deploy contract on the shared tier (ADR-003)
+
+One app serves every workspace host, so the redirect URI cannot be one environment value. The
+origin is taken from the callback `connector_hosts` derives for the request's validated host —
+never from `request.base_url`, because behind Traefik uvicorn only rewrites that field's scheme
+when it trusts the forwarding headers, and an untrusted `X-Forwarded-Proto` makes every origin
+look like `http://`. Two provider-side facts have to be registered for a host to work:
+
+| Setting | Must contain | Consequence when missing |
+|---|---|---|
+| `HOJA_CONNECTOR_REDIRECT_HOSTS` | the workspace hosts this deployment serves | `/start` answers `409 not available on this workspace host` |
+| `HOJA_GITHUB_REDIRECT_URIS` | `https://<host>/api/connectors/github/callback` for each of those hosts | the same 409, because GitHub matches the URI by string and this process refuses before sending the browser |
+
+`HOJA_GITHUB_REDIRECT_URI` is still required: it is the URI a single-host install registers, and
+the config object is constructed from it. `connector-mcp` needs `HOJA_GITHUB_CLIENT_ID`,
+`HOJA_GITHUB_CLIENT_SECRET` and `HOJA_GITHUB_REDIRECT_URI` too — without them it starts and
+simply resolves no GitHub accounts, which reaches the agent as "no connected account" rather than
+as an error.
+
 ## Tests
 
 ```bash

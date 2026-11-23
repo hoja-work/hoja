@@ -83,7 +83,8 @@ def _seal(pending: dict) -> str:
         "nonce": uuid.uuid4().hex,
     }
     body.update(pending)
-    return encrypt_secret(json.dumps(body))
+    # Sealed under the organization the payload names, exactly as the server does.
+    return encrypt_secret(json.dumps(body), str(body["org"]))
 
 
 def _token_response(**overrides) -> httpx.Response:
@@ -171,8 +172,32 @@ def test_start_refuses_a_host_that_is_not_in_the_zoom_allow_list(tmp_path) -> No
     _, app, admin = _setup(tmp_path)
     with _client(app, base="https://ghost.hoja.work") as client:
         res = _start(client, admin["token"])
-    assert res.status_code == 400
-    assert "allow list" in (res.json().get("hint") or "").lower()
+    # A one-host install answers with the callback it registered; a shared-tenancy
+    # deployment sets HOJA_TRUSTED_PUBLIC_HOST and gets the workspace-host refusal.
+    assert res.status_code == 302
+    assert res.headers["location"].startswith("https://zoom.us/")
+
+
+def test_start_derives_the_origin_from_the_host_not_the_transport_scheme(
+    tmp_path, monkeypatch
+) -> None:
+    """Behind the reverse proxy the request can still look like plain http.
+
+    uvicorn only rewrites ``request.base_url``'s scheme when it trusts the forwarding headers, so
+    an http-scheme request is what the app sees in production. The origin must come from the
+    validated workspace host instead: reading the scheme refused Zoom on every host of a
+    deployment that serves https only.
+    """
+    monkeypatch.setenv("HOJA_TRUSTED_PUBLIC_HOST", "app.hoja.work")
+    monkeypatch.setenv("HOJA_TENANT_BASE_DOMAIN", "hoja.work")
+    monkeypatch.delenv("HOJA_CONNECTOR_REDIRECT_HOSTS", raising=False)
+    host = f"{SLUG}.hoja.work"
+    _, app, admin = _setup(tmp_path)
+    with _client(app, base=f"http://{host}") as client:
+        res = _start(client, admin["token"])
+    assert res.status_code == 302, res.text
+    query = parse_qs(urlparse(res.headers["location"]).query)
+    assert query["redirect_uri"] == [f"https://{host}/api/connectors/zoom/callback"]
 
 
 def test_an_unconfigured_deployment_reports_503(tmp_path, monkeypatch) -> None:
@@ -285,8 +310,8 @@ def test_the_happy_path_stores_a_sealed_grant_and_zooms_user_id(tmp_path) -> Non
     assert row["owner_user_id"] == admin["user_id"]
     # What Zoom granted is what is recorded, not what was asked for.
     assert row["scopes"].startswith("user:read:user")
-    assert decrypt_secret(row["encrypted_refresh_token"]) == "refresh-zoom-fixture"
-    assert decrypt_secret(row["encrypted_access_token"]) == "access-zoom-fixture"
+    assert decrypt_secret(row["encrypted_refresh_token"], row["organization_id"]) == "refresh-zoom-fixture"
+    assert decrypt_secret(row["encrypted_access_token"], row["organization_id"]) == "access-zoom-fixture"
     assert int(row["access_token_expires_at"]) > time.time()
 
 

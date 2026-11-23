@@ -129,11 +129,12 @@ def test_registration_window_expires(tmp_path, monkeypatch) -> None:
 
     engine = make_engine(tmp_path / "dcr-expire.db")
     migrate(engine)
-    monkeypatch.setattr(mcp_oauth, "MAX_REGISTRATIONS_PER_HOUR", 1)
+    monkeypatch.setattr(mcp_oauth, "MAX_REGISTRATIONS_PER_IP_HOUR", 1)
     with engine.begin() as conn:
         conn.execute(rate_limit_event.insert().values(
-            bucket="oauth_dcr", key_hash=db.rate_limit_key_hash("global"),
+            bucket="oauth_dcr", key_hash=db.rate_limit_key_hash("ip:192.0.2.1"),
             created_at=time.time() - mcp_oauth._REGISTRATION_WINDOW_SECONDS - 10))
-    mcp_oauth._take_registration_slot(engine)  # expired slot must not block
+    mcp_oauth._take_registration_slot(engine, "192.0.2.1")  # expired slot must not block
     with pytest.raises(RegistrationError):
-        mcp_oauth._take_registration_slot(engine)
+        mcp_oauth._take_registration_slot(engine, "192.0.2.1")
+    mcp_oauth._take_registration_slot(engine, "192.0.2.2")  # another address has its own window

@@ -57,13 +57,18 @@ https://api.hoja.work/api/connectors/calendly/callback
 
 The flow, end to end:
 
-1. `GET /api/connectors/calendly/start` runs on the tenant under its session and mints a sealed,
-   single-use state carrying the user, the organization, the tenant origin, the PKCE verifier and
-   an expiry. Calendly is given `redirect_uri=https://api.hoja.work/…/callback`.
-2. Calendly returns the browser to the broker. The broker verifies the seal and expiry, checks
-   that the tenant origin is really one of our workspaces (`*.hoja.work`, not a reserved
-   control-plane name, present in the tenant registry), and redirects to
-   `https://<tenant>/api/connectors/calendly/finish?code=…&state=…`.
+1. `GET /api/connectors/calendly/start` runs on the tenant under its session and mints a state in
+   two parts: a **readable routing hint** (the workspace origin, `hcs1.<b64url(origin)>`) and a
+   **sealed payload** bound to the organization — HKDF key per organization, `organization_id` as
+   AAD — carrying the user, the organization, the PKCE verifier and an expiry. Calendly is given
+   `redirect_uri=https://api.hoja.work/…/callback`. The broker has no session cookie on
+   `api.hoja.work`, which is why the routing hint is outside the seal; it is public information
+   (the address the person is using) and it is not trusted.
+2. Calendly returns the browser to the broker. The broker resolves the hint to a live workspace
+   (`organization.vanity_host`, not a reserved control-plane name), uses **that organization's
+   key** to open the seal — a rewritten hint fails the AEAD check instead of redirecting a grant
+   somewhere else — verifies the expiry and that the payload's organization matches, and redirects
+   to `https://<tenant>/api/connectors/calendly/finish?code=…&state=…`.
    **It never stores a token and never calls Calendly**, so a compromised broker can misdirect a
    grant but cannot mint one.
 3. `/finish` runs on the tenant under the same session. It re-verifies the state (single-use,
@@ -80,10 +85,11 @@ A single-tenant install needs no broker: with `HOJA_CONNECTOR_BROKER_URL` unset,
 callback is the install's own host (`HOJA_CALENDLY_REDIRECT_URI`) and `/callback` completes the
 exchange directly. That is the OSS default and the documented behaviour.
 
-## What infrastructure must do for the broker (not done by this change)
+## What infrastructure must do for the broker
 
-`api.hoja.work` resolves today (Cloudflare) and 302s to `https://hoja.work/`; nothing serves the
-broker route yet. For `/api/connectors/calendly/callback` on that host to reach Hoja:
+The app side is done: `HOJA_CONNECTOR_BROKER_HOST` makes the tenant-host middleware treat
+`api.hoja.work` as a served, non-tenant host instead of redirecting it to the apex. The edge still
+has to route the host. For `/api/connectors/calendly/callback` on that host to reach Hoja:
 
 1. **Proxy target.** Point `api.hoja.work` at the Hoja server that serves the tenants (the same
    app that exposes the connector routes). No new service, database or secret: the broker is a

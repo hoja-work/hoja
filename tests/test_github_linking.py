@@ -188,3 +188,39 @@ def test_scan_is_bounded(monkeypatch):
     assert ids(find_identifiers(huge, KEYS, LinkSource.PR_BODY)) == []
     near = "x" * (MAX_SCAN_CHARS - 20) + " HOJA-999"
     assert ids(find_identifiers(near, KEYS, LinkSource.PR_BODY)) == ["HOJA-999"]
+
+
+# --- recursive identifiers (identifiers.py grammar) ---------------------------------------
+
+
+def test_child_identifier_is_not_flattened_into_its_parent():
+    # The bug this pins: a bare "TEAM-<digits>" pattern stopped at HOJA-416, so every child
+    # PR linked to the parent task and the child never saw its own work.
+    refs = identifiers_in_branch("4c114d5b/hoja-416-a-10-wire-review-actions", KEYS)
+    assert ids(refs) == ["HOJA-416-A-10"]
+
+
+def test_depth_two_slot_keeps_the_case_its_depth_carries():
+    # slot_for lowercases odd depths and uppercases even ones, so the stored identifier is
+    # HOJA-416-A-1-a-1. Upper-casing the whole match produced a casing nothing resolves.
+    assert ids(identifiers_in_branch("b89ca6d/hoja-416-a-1-a-1-x", KEYS)) == ["HOJA-416-A-1-a-1"]
+
+
+def test_depth_three_alternates_again():
+    assert ids(identifiers_in_commit("work on HOJA-416-A-1-a-1-A-1", KEYS)) == ["HOJA-416-A-1-a-1-A-1"]
+
+
+def test_recursive_identifier_is_one_reference_not_two():
+    refs = find_identifiers("HOJA-416-A-10 and nothing else", KEYS, LinkSource.PR_TITLE)
+    assert ids(refs) == ["HOJA-416-A-10"]
+
+
+def test_closing_recognises_a_recursive_identifier():
+    refs = identifiers_in_commit("closes hoja-416-a-10", KEYS)
+    assert ids(refs) == ["HOJA-416-A-10"]
+    assert refs[0].closing is True
+
+
+def test_a_slug_is_not_read_as_a_deeper_segment():
+    # "-fix-the-thing" has letters but no ordinal, so it cannot extend HOJA-42.
+    assert ids(identifiers_in_branch("4c114d5b/hoja-42-fix-the-thing", KEYS)) == ["HOJA-42"]

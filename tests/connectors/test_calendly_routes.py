@@ -90,7 +90,10 @@ def _seal(pending: dict) -> str:
         "nonce": uuid.uuid4().hex,
     }
     body.update(pending)
-    return encrypt_secret(json.dumps(body))
+    # Crafted exactly as the server does: sealed under the organization the payload
+    # names, and wrapped with the workspace hint the broker routes on.
+    from hoja_server.connector_hosts import wrap_state
+    return wrap_state(encrypt_secret(json.dumps(body), str(body["org"])), body.get("tenant"))
 
 
 def _token_response(**overrides) -> httpx.Response:
@@ -178,7 +181,10 @@ def test_start_refuses_a_host_that_is_not_a_workspace(tmp_path, broker) -> None:
     _, app, admin = _setup(tmp_path)
     with _client(app, "https://localhost") as client:
         res = _start(client, admin["token"])
-    assert res.status_code == 400
+    # Refused before the provider: an unknown host is a configuration gap, and the
+    # answer is the one Settings renders (see `connector_hosts.UNAVAILABLE`).
+    assert res.status_code == 409
+    assert res.json()["error"] == "not available on this workspace host"
 
 
 # --- broker ---------------------------------------------------------------------------------
@@ -280,7 +286,7 @@ def test_full_broker_flow_stores_a_sealed_grant(tmp_path, broker) -> None:
                 follow_redirects=False,
             )
     assert res.status_code == 302
-    assert res.headers["location"] == f"{TENANT}/?connector=calendly-connected"
+    assert res.headers["location"] == f"{TENANT}/workspace/settings/connections?connector=calendly-connected"
     # The token exchange repeats the broker callback, or Calendly would refuse the code.
     body = parse_qs(token_route.calls.last.request.content.decode())
     assert body["redirect_uri"] == [BROKER_CALLBACK]
@@ -290,8 +296,32 @@ def test_full_broker_flow_stores_a_sealed_grant(tmp_path, broker) -> None:
     row = rows[0]
     assert row["external_account"] == "luis@hoja.work"
     assert row["owner_user_id"] == admin["user_id"]
-    assert decrypt_secret(row["encrypted_refresh_token"]) == "refresh-calendly-fixture"
-    assert decrypt_secret(row["encrypted_access_token"]) == "access-calendly-fixture"
+    assert decrypt_secret(row["encrypted_refresh_token"], row["organization_id"]) == "refresh-calendly-fixture"
+    assert decrypt_secret(row["encrypted_access_token"], row["organization_id"]) == "access-calendly-fixture"
+
+
+def test_finish_accepts_its_own_workspace_when_the_transport_says_http(
+    tmp_path, broker
+) -> None:
+    """The state pins a workspace origin; the transport's scheme must not make it look foreign.
+
+    uvicorn leaves ``request.base_url`` at http unless it trusts the proxy's forwarding headers, so
+    reading the scheme there turned the workspace's own callback into a cross-workspace refusal.
+    """
+    _, app, admin = _setup(tmp_path)
+    http_tenant = TENANT.replace("https://", "http://")
+    with _client(app, http_tenant) as tenant:
+        state = _state_from(_start(tenant, admin["token"]))
+        with respx.mock:
+            respx.post(TOKEN_URL).mock(return_value=_token_response())
+            respx.get(USERS_ME).mock(return_value=_users_me())
+            res = tenant.get(
+                f"/api/connectors/calendly/finish?code=c1&state={quote(state)}",
+                headers={"Authorization": f"Bearer {admin['token']}"},
+                follow_redirects=False,
+            )
+    assert res.status_code == 302, res.text
+    assert res.headers["location"] == f"{TENANT}/workspace/settings/connections?connector=calendly-connected"
 
 
 def test_a_replayed_state_is_refused(tmp_path, broker) -> None:
@@ -338,7 +368,7 @@ def test_without_a_broker_the_callback_is_the_install_itself(tmp_path, monkeypat
                 follow_redirects=False,
             )
     assert done.status_code == 302
-    assert done.headers["location"] == "/?connector=calendly-connected"
+    assert done.headers["location"] == "/workspace/settings/connections?connector=calendly-connected"
     body = parse_qs(token_route.calls.last.request.content.decode())
     assert body["redirect_uri"] == [install_callback]
     assert len(_rows(engine, admin["org_id"])) == 1

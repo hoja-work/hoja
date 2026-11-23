@@ -62,7 +62,7 @@ def _add_google_account(engine, org: str, *, scopes: str) -> None:
                 provider="google_workspace",
                 external_account="owner@chat.test",
                 scopes=scopes,
-                encrypted_refresh_token=encrypt_secret("1//STORED-REFRESH"),
+                encrypted_refresh_token=encrypt_secret("1//STORED-REFRESH", org),
                 status="active",
                 created_at="2026-01-01T00:00:00+00:00",
                 updated_at="2026-01-01T00:00:00+00:00",

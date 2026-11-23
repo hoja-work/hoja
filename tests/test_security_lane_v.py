@@ -121,7 +121,7 @@ def _provider_app(tmp_path, base_url: str):
     with engine.begin() as conn:
         conn.execute(insert(model_provider).values(
             id=new_id(), organization_id=admin["org_id"], name="p", provider="openai", model_id="m",
-            base_url=base_url, encrypted_api_key=encrypt_secret(SECRET), enabled=True,
+            base_url=base_url, encrypted_api_key=encrypt_secret(SECRET, admin["org_id"]), enabled=True,
             created_at=now, updated_at=now))
     return create_app(str(tmp_path / "lanev.db"), open_mode=False), admin
 
@@ -223,7 +223,7 @@ def test_expired_state_is_rejected(tmp_path, google_env) -> None:
 
     app, admin, _engine = _google_app(tmp_path)
     expired = encrypt_secret(json.dumps({"uid": admin["user_id"], "org": admin["org_id"], "scope": "user",
-                                         "verifier": "v", "exp": int(time.time()) - 1, "nonce": "n"}))
+                                         "verifier": "v", "exp": int(time.time()) - 1, "nonce": "n"}), admin["org_id"])
     with TestClient(app) as client:
         res = client.get(f"/api/connectors/google/callback?code=c&state={quote(expired, safe='')}",
                          headers={"Authorization": f"Bearer {admin['token']}"}, follow_redirects=False)
@@ -236,7 +236,7 @@ def test_state_replay_rejected_across_app_instances(tmp_path, google_env) -> Non
     from starlette.testclient import TestClient
 
     from hoja_server.app import create_app
-    from hoja_server.db import oauth_state_nonce
+    from hoja_server.db import connector_oauth_state
 
     respx.post("https://oauth2.googleapis.com/token").mock(return_value=httpx.Response(
         200, json={"access_token": "ya29", "refresh_token": "1//R", "expires_in": 3599, "scope": "gmail.readonly"}))
@@ -253,5 +253,6 @@ def test_state_replay_rejected_across_app_instances(tmp_path, google_env) -> Non
                                   follow_redirects=False)
     assert replay.status_code == 400
     with engine.connect() as conn:
-        stored = conn.execute(oauth_state_nonce.select()).all()
+        stored = conn.execute(connector_oauth_state.select()).all()
     assert len(stored) == 1 and len(stored[0].nonce_hash) == 64
+    assert stored[0].organization_id == admin["org_id"]

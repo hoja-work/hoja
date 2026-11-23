@@ -33,14 +33,14 @@ v1 covers the 8 highest-value domains. v2+ expands.
 
 | Tier | Domain | Queries | Mutations | v1? |
 |------|--------|---------|-----------|-----|
-| Core | `issue` | 17 | 34 | ✅ |
+| Core | task | 17 | 34 | ✅ |
 | Core | team | 3 | 9 | ✅ |
 | Core | user (viewer/me) | 3 | 12 | ✅ |
 | Core | workflow (states) | 2 | 3 | ✅ |
 | High | project | 13 | 31 | ✅ |
 | High | cycle | 1 | 5 | ✅ |
 | High | comment | 1 | 5 | ✅ |
-| High | label | (under `issue`) | - | ✅ |
+| High | label | (under task) | - | ✅ |
 | Med  | initiative | 7 | 17 | v2 |
 | Med  | document | 3 | 4 | v2 |
 | Med  | customer | 7 | 18 | v2 |
@@ -57,9 +57,11 @@ v1 covers the 8 highest-value domains. v2+ expands.
 ```
 hoja
 ├── auth                    # Token management
-│   ├── login               # Interactive: prompt for token, validate, store
-│   ├── status              # Show authenticated user
-│   ├── logout              # Clear stored token
+│   ├── login               # Browser (loopback + PKCE) or device-code sign-in
+│   ├── status              # Account, credential source, workspace, expiry, viewer
+│   ├── logout              # Revoke at the server, delete stored tokens
+│   ├── token               # Fresh access token (--json for plugins)
+│   ├── add                 # API-key account (automation)
 │   └── whoami              # Alias for `me`
 │
 ├── me                      # Viewer (current user) info
@@ -205,7 +207,7 @@ hoja issue list --not-state "Done"
 # Free-text within structured filter
 hoja issue list --team ENG --contains "auth bug"
 
-# Saved views (named filters in config)
+# Saved views (server-side; name, slug or id — see docs/views.md)
 hoja issue list --view "my-open-bugs"
 ```
 
@@ -221,10 +223,14 @@ Location precedence:
 ```toml
 # ~/.config/hoja/config.toml
 
-[auth]
-token_env = "HOJA_TOKEN"  # Read from env, never store plaintext
-# Or for users who want it stored:
-# token = "hoja_..."
+[accounts.acme]             # written by `hoja auth login acme.example.com`
+base_url = "https://acme.example.com/graphql"
+# The sign-in itself (origin, MCP URL, workspace, where the tokens are kept) is in
+# signins.json next to this file, so older CLIs that reject unknown keys can still
+# read config.toml. Tokens live in the keyring or credentials.json, never here.
+
+[accounts.ci]               # API key for automation
+token_env = "HOJA_TOKEN"    # Read from env, never store plaintext
 
 [defaults]
 team = "ENG"                # Default team key
@@ -343,8 +349,15 @@ Error format (JSON mode):
 ## Security
 
 - **Token never logged.** Redacted in `--verbose` mode (shown as `hoja_…XXXX`).
-- **Token never stored in plaintext by default.** Read from env or via `--token`.
-- **HTTPS only.** No fallback to HTTP.
+- **Token never stored in plaintext by default.** API keys are read from env or
+  `--token`; `hoja auth login` tokens go to the OS keyring when the optional
+  `keyring` package is available, else to `credentials.json` (mode 0600, atomic
+  writes), never to `config.toml`. Refresh is serialised across processes with
+  a lock on `credentials.lock`.
+- **Signed-in tokens stay with their workspace.** An OAuth token is only sent to
+  the origin it was issued for, never to `$HOJA_API_URL` on another host or to
+  a built-in default endpoint.
+- **HTTPS only.** No fallback to HTTP (plain http only for loopback hosts).
 - **TLS verification mandatory.** No `--insecure` flag.
 - **Pinned dependencies.** `requirements.txt` includes hashes.
 - **No telemetry.** Zero outbound calls except to the configured GraphQL
@@ -436,7 +449,7 @@ hoja/
 - [ ] `hoja me` returns viewer info
 - [ ] `hoja team list` works
 - [ ] `hoja issue list` with `--team`, `--state`, `--assignee`, `--label` filters
-- [ ] `hoja task get <id>` shows full task detail
+- [ ] `hoja issue get <id>` shows full task detail
 - [ ] `hoja issue create` with all common flags
 - [ ] `hoja issue update <id>` for state/assignee/priority/labels
 - [ ] `hoja cycle current` returns current cycle for a team

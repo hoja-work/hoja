@@ -64,7 +64,7 @@ def _grant(engine, admin, scopes=WORKSPACE_SCOPES, account_id="acct-google"):
                 provider="google_workspace",
                 external_account="owner@meet.test",
                 scopes=scopes,
-                encrypted_refresh_token=encrypt_secret("1//OLD-REFRESH"),
+                encrypted_refresh_token=encrypt_secret("1//OLD-REFRESH", admin["org_id"]),
                 status="active",
                 created_at="t0",
                 updated_at="t0",
@@ -123,7 +123,7 @@ def test_an_upgrade_asks_google_for_the_meet_scope_only(tmp_path) -> None:
     query = parse_qs(urlparse(res.headers["location"]).query)
     assert query["scope"] == [MEET_SCOPE]
     assert query["include_granted_scopes"] == ["true"]
-    pending = json.loads(decrypt_secret(state))
+    pending = json.loads(decrypt_secret(state, admin["org_id"]))
     assert pending["addon"] == "meet"
 
 
@@ -157,7 +157,7 @@ def test_an_upgrade_extends_the_existing_row_instead_of_adding_a_second(tmp_path
     assert len(rows) == 1
     assert rows[0]["id"] == original
     assert set(rows[0]["scopes"].split()) == set(WORKSPACE_SCOPES.split()) | {MEET_SCOPE}
-    assert decrypt_secret(rows[0]["encrypted_refresh_token"]) == "1//NEW-REFRESH"
+    assert decrypt_secret(rows[0]["encrypted_refresh_token"], rows[0]["organization_id"]) == "1//NEW-REFRESH"
 
 
 @respx.mock
@@ -187,7 +187,7 @@ def test_an_upgrade_the_user_refused_leaves_the_grant_untouched(tmp_path) -> Non
     rows = _rows(engine)
     assert len(rows) == 1
     assert MEET_SCOPE not in rows[0]["scopes"]
-    assert decrypt_secret(rows[0]["encrypted_refresh_token"]) == "1//OLD-REFRESH"
+    assert decrypt_secret(rows[0]["encrypted_refresh_token"], rows[0]["organization_id"]) == "1//OLD-REFRESH"
 
 
 @respx.mock

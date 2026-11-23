@@ -16,8 +16,10 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import os
+import time
 import uuid
 from collections.abc import AsyncIterator, Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any
 
@@ -31,14 +33,24 @@ from pydantic_ai.capabilities import ResolveModelId
 from pydantic_ai.durable_exec.dbos import DBOSDurability
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.mcp import MCPToolset
-from pydantic_ai.messages import ModelResponse, PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta
+from pydantic_ai.messages import (
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    ModelResponse,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPart,
+    TextPartDelta,
+    ThinkingPart,
+    ThinkingPartDelta,
+)
 from pydantic_ai.models import Model
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from sqlalchemy import and_, select
 
 from hoja_server import agent_chat as chat
-from hoja_server import tenant_context
+from hoja_server import agent_members, audit, tenant_context
 from hoja_server.agent_conversations import save_message, start_conversation
 from hoja_server.agent_threads import _owned as _owned_thread
 from hoja_server.agent_threads import _title_from
@@ -50,6 +62,72 @@ from hoja_server.secrets_box import decrypt_secret
 AGENT_NAME = "hoja-agent"
 MODEL_PREFIX = "hoja-provider:"
 FAILED_REPLY = "The assistant could not complete that request. Please try again."
+
+# One queue, one partition per agent (HOJA-602-A-7, subtask T028). The partition
+# key is the agent's user id, so an agent's turns serialize against each other and
+# never against another agent's.
+AGENT_QUEUE = "agent-turns"
+DEFAULT_GLOBAL_CONCURRENCY = 8
+# The name DBOS registers the turn workflow under. Named here once so the enqueue
+# path and the decorator cannot drift apart.
+TURN_WORKFLOW = f"{AGENT_NAME}.turn"
+
+
+def max_configured_capacity(store, default: int = 1) -> int:
+    """The largest ``agent_member.capacity`` in this deployment.
+
+    DBOS's ``partition_concurrency`` is one number applied to every partition, so a
+    deployment whose agents have different capacities can only express the largest
+    one here. That is a backstop, not the decision: the schedule check counts the
+    live sessions of *this* agent against *its own* capacity, and it is what
+    ``agent_sessions.SLOT_STATES`` means. The queue bound exists so a bug in the
+    check cannot turn into unbounded concurrency.
+    """
+    from sqlalchemy import func, select
+
+    from hoja_server.db import agent_member
+
+    with store.engine.connect() as conn:
+        value = conn.execute(select(func.max(agent_member.c.capacity))).scalar()
+    return max(1, int(value or default))
+
+
+async def register_agent_queue(capacity: int,
+                               *, global_concurrency: int = DEFAULT_GLOBAL_CONCURRENCY):
+    """Register the partitioned queue. Must run *after* ``DBOS.launch()``.
+
+    DBOS reads the system database inside ``register_queue`` and raises
+    "System database accessed before DBOS was launched" otherwise — measured in
+    ``agent-security/05-durability.md`` §5 while building experiment g.
+
+    Asynchronous on purpose: the app's lifespan runs inside the event loop, and the
+    synchronous ``register_queue`` refuses there ("called while an event loop is
+    running. Use await register_queue_async(...) instead").
+    """
+    return await DBOS.register_queue_async(
+        AGENT_QUEUE,
+        partition_concurrency=max(1, int(capacity)),
+        global_concurrency=global_concurrency,
+    )
+
+
+def enqueue_agent_turn(workflow_id: str, turn: dict, *, agent_user_id: str):
+    """Enqueue one turn into the agent's partition.
+
+    ``Queue.enqueue``'s ``**kwargs`` are the *workflow's* arguments, not enqueue
+    options (``dbos/_queue.py:628-637``), so the partition key has to travel through
+    ``enqueue_workflow_with_options``. Passing it as a kwarg would silently put it in
+    the turn payload and leave every run in the default partition.
+    """
+    from dbos import EnqueueOptions
+
+    options = EnqueueOptions(
+        workflow_name=TURN_WORKFLOW,
+        queue_name=AGENT_QUEUE,
+        workflow_id=workflow_id,
+        queue_partition_key=agent_user_id,
+    )
+    return DBOS.enqueue_workflow_with_options(options, turn)
 
 
 @dataclass
@@ -108,7 +186,7 @@ async def _resolve_model(ctx, model_id: str) -> Model | None:
     base_url = await asyncio.to_thread(validate_model_base_url, row["base_url"]) or None
     client = openai.AsyncOpenAI(
         base_url=base_url,
-        api_key=decrypt_secret(row["encrypted_api_key"]),
+        api_key=decrypt_secret(row["encrypted_api_key"], row["organization_id"]),
         http_client=openai.DefaultAsyncHttpxClient(follow_redirects=False),
     )
     return OpenAIChatModel(row["model_id"], provider=OpenAIProvider(openai_client=client))
@@ -122,14 +200,62 @@ def _text_of(event) -> str | None:
     return None
 
 
+def _thinking_of(event) -> str | None:
+    if isinstance(event, PartStartEvent) and isinstance(event.part, ThinkingPart):
+        return event.part.content
+    if isinstance(event, PartDeltaEvent) and isinstance(event.delta, ThinkingPartDelta):
+        return event.delta.content_delta
+    return None
+
+
+_tool_started_at: dict[str, tuple[str, float]] = {}
+
+
 async def _forward_text(ctx: RunContext[chat.AgentDeps], events) -> None:
-    """Runs live inside each model-request step; pushes text deltas to the waiting SSE response."""
+    """Runs live inside each model-request/tool step; pushes deltas and tool events to the waiting SSE response."""
     sink = ctx.deps.sink
     async for event in events:
+        if sink is None:
+            continue
+        loop, queue = sink
         text = _text_of(event)
-        if text and sink is not None:
-            loop, queue = sink
-            loop.call_soon_threadsafe(queue.put_nowait, text)
+        if text:
+            loop.call_soon_threadsafe(queue.put_nowait, ("content", text))
+            continue
+        thinking = _thinking_of(event)
+        if thinking:
+            loop.call_soon_threadsafe(queue.put_nowait, ("event", {"type": "thinking", "delta": thinking}))
+            continue
+        if isinstance(event, FunctionToolCallEvent) and event.part.tool_name != "ask_user":
+            part = event.part
+            _tool_started_at[part.tool_call_id] = (part.tool_name, time.monotonic())
+            loop.call_soon_threadsafe(queue.put_nowait, ("event", {
+                "type": "tool_start",
+                "id": part.tool_call_id,
+                "name": part.tool_name,
+                "args": chat.format_tool_args(part.args),
+            }))
+            continue
+        if isinstance(event, FunctionToolResultEvent):
+            part = event.part
+            cid = getattr(part, "tool_call_id", None)
+            if not cid:
+                continue
+            meta = _tool_started_at.pop(cid, None)
+            tool_name = meta[0] if meta else getattr(part, "tool_name", None)
+            if not tool_name or tool_name == "ask_user":
+                continue
+            duration_ms = round((time.monotonic() - meta[1]) * 1000) if meta else None
+            status, output, err = chat.format_tool_result(tool_name, part)
+            loop.call_soon_threadsafe(queue.put_nowait, ("event", {
+                "type": "tool_end",
+                "id": cid,
+                "name": tool_name,
+                "status": status,
+                "output": output,
+                "error": err,
+                "durationMs": duration_ms,
+            }))
 
 
 class _PrincipalAuth(httpx.Auth):
@@ -206,10 +332,10 @@ def _graphql_runner(context: dict):
 
 
 @DBOS.step(name=f"{AGENT_NAME}.save_reply")
-async def _save_reply(conversation_id: str, content: str) -> str:
+async def _save_reply(conversation_id: str, content: str, tool_calls: str | None = None) -> str:
     assert _runtime is not None
     with _runtime.store.engine.begin() as conn:
-        return save_message(conn, conversation_id, "assistant", content)
+        return save_message(conn, conversation_id, "assistant", content, tool_calls=tool_calls)
 
 
 def _reply_text(result) -> str:
@@ -220,7 +346,7 @@ def _reply_text(result) -> str:
     )
 
 
-@DBOS.workflow(name=f"{AGENT_NAME}.turn")
+@DBOS.workflow(name=TURN_WORKFLOW)
 async def agent_turn(turn: dict) -> dict:
     """One chat turn. Inputs are plain ids so a new process can rebuild everything on recovery."""
     assert _runtime is not None
@@ -242,20 +368,45 @@ async def agent_turn(turn: dict) -> dict:
                           sink=_sinks.get(DBOS.workflow_id or ""))
     principal = turn.get("principal")
     agent = CONNECTOR_AGENT if principal and CONNECTOR_AGENT is not None else AGENT
+    # F4: the turn writes as the workspace's agent, not as the person who asked.
+    # A workspace with exactly one agent member has an unambiguous agent; anything
+    # else records the human rather than guessing which agent acted.
+    agent_user_id = agent_members.turn_agent(_runtime.store.engine, turn["org_id"])
+    actor_context = (tenant_context.actor("agent", agent_user_id,
+                                          on_behalf_of=turn["user_id"])
+                     if agent_user_id else nullcontext())
     token = _principal.set(principal)
     ask = None
+    # WP05: the durable turn is a session too, and it outlives the client, so its
+    # start/stop pair is the only record that it ran at all.
+    if agent_user_id:
+        audit.record(_runtime.store.engine, organization_id=turn["org_id"],
+                     action="agent.session.start", actor_kind="agent",
+                     actor_id=agent_user_id, on_behalf_of=turn["user_id"],
+                     target_kind="conversation", target_id=turn["conversation_id"],
+                     runner="durable")
+    tool_calls_json: str | None = None
     try:
-        result = await agent.run(prompt, message_history=history, deps=deps,
-                                 model=MODEL_PREFIX + turn["provider_id"])
+        with actor_context:
+            result = await agent.run(prompt, message_history=history, deps=deps,
+                                     model=MODEL_PREFIX + turn["provider_id"])
         text = _reply_text(result)
+        tool_calls_json = chat.serialize_tool_calls(chat.extract_tool_calls_from_messages(result.new_messages()))
         if isinstance(result.output, chat.AskUser):
             ask = chat.ask_block(result.output)
     except UnexpectedModelBehavior:
         text = FAILED_REPLY
     finally:
         _principal.reset(token)
-    await _save_reply(turn["conversation_id"], text + (ask or ""))
-    return {"text": text, "ask": ask}
+        if agent_user_id:
+            audit.record(_runtime.store.engine, organization_id=turn["org_id"],
+                         action="agent.session.stop", actor_kind="agent",
+                         actor_id=agent_user_id, on_behalf_of=turn["user_id"],
+                         target_kind="conversation", target_id=turn["conversation_id"],
+                         runner="durable")
+    cards = chat.delegation_blocks(deps.delegations) if deps.delegations else ""
+    await _save_reply(turn["conversation_id"], text + (ask or "") + cards, tool_calls_json)
+    return {"text": text, "ask": ask, "delegations": cards or None}
 
 
 async def stream_reply(store, org_id: str, uid: str, messages: list[dict], base_context: dict,
@@ -290,8 +441,9 @@ async def stream_reply(store, org_id: str, uid: str, messages: list[dict], base_
                 save_message(conn, conversation_id, role, msg.parts[-1].content)
         user_message_id = save_message(conn, conversation_id, "user", prompt)
 
+    yield chat._event_chunk(completion_id, {"type": "thread", "threadId": conversation_id})
     workflow_id = f"agent-turn-{user_message_id}"
-    queue: asyncio.Queue[str] = asyncio.Queue()
+    queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
     _sinks[workflow_id] = (asyncio.get_running_loop(), queue)
     turn = {
         "conversation_id": conversation_id,
@@ -304,6 +456,12 @@ async def stream_reply(store, org_id: str, uid: str, messages: list[dict], base_
         "access": base_context.get("access", "read_write"),
         "principal": connector.principal if connector is not None else None,
     }
+    def _emit_item(item: tuple[str, Any]) -> str:
+        kind, payload = item
+        if kind == "event":
+            return chat._event_chunk(completion_id, payload)
+        return chat._chunk(completion_id, {"content": payload})
+
     try:
         with SetWorkflowID(workflow_id):
             handle = await DBOS.start_workflow_async(agent_turn, turn)
@@ -312,12 +470,12 @@ async def stream_reply(store, org_id: str, uid: str, messages: list[dict], base_
             getter = asyncio.ensure_future(queue.get())
             done, _ = await asyncio.wait({getter, result_task}, return_when=asyncio.FIRST_COMPLETED)
             if getter in done:
-                yield chat._chunk(completion_id, {"content": getter.result()})
+                yield _emit_item(getter.result())
                 continue
             getter.cancel()
             break
         while not queue.empty():
-            yield chat._chunk(completion_id, {"content": queue.get_nowait()})
+            yield _emit_item(queue.get_nowait())
         try:
             outcome = result_task.result()
         except Exception:
@@ -326,6 +484,8 @@ async def stream_reply(store, org_id: str, uid: str, messages: list[dict], base_
             yield chat._chunk(completion_id, {"content": FAILED_REPLY})
         if outcome.get("ask"):
             yield chat._chunk(completion_id, {"content": outcome["ask"]})
+        if outcome.get("delegations"):
+            yield chat._chunk(completion_id, {"content": outcome["delegations"]})
     finally:
         _sinks.pop(workflow_id, None)
     yield chat._chunk(completion_id, {}, "stop")

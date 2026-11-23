@@ -1,926 +1,17313 @@
-import '@fontsource-variable/inter/wght.css';
-import React, {useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
-import {createRoot} from 'react-dom/client';
-import {ReactGrabDev} from './dev/ReactGrabDev';
-import {Popover} from './Popover';
-import {Activity, ArrowLeft, Bell, Blocks, Bot, Building2, CalendarDays, Check, ChevronDown, ChevronRight, CircleDot, Command, FolderKanban, Inbox, KeyRound, LayoutDashboard, ListFilter, LogOut, Menu, Moon, MoreHorizontal, Plus, Plug, Search, Settings, Shield, SlidersHorizontal, Sun, Tags, Target, UserRound, Users, X, Zap, BarChart3, MoreVertical, MessageCircle, Layers3, List as ListIcon, PanelLeftClose, PanelLeftOpen, Video } from 'lucide-react';
-import {ApiKeysSettings} from './ApiKeysSettings';
-import {ExtensionsSettings} from './ExtensionsSettings';
-import {connectRealtime} from './realtime';
-import {publishChangeEvents, startSync, type SyncHandle, type SyncMeta} from './sync';
-import './styles.css';
-import {confirmDialog, promptDialog, alertDialog, DialogHost} from './dialogs';
-import './onboarding.css';
-import {AgentChatPage} from './AgentChatPage';
-import {ModelProvidersSettings} from './ModelProvidersSettings';
-import {ConnectorsSettings} from './ConnectorsSettings';
-import {AgentConversationsSettings} from './AgentConversationsSettings';
-import {bodyLayer, errorText, navigateTo, searchTerms, warmSearchIndex, useEntityVersion, useIssueSearch, useIssues, useOptimisticList, type Layer} from './localFirst';
-import {Markdown} from './markdown';
-import './graph/styles.css';
-import './settings.css';
-import {SettingsSelect} from './SettingsSelect';
-import {GraphIssueDetail} from './graph/tasks';
-import {childRollups, nestIssues, type ChildRollup} from './graph/subtree';
-import {ProjectActivity} from './ProjectActivity';
-import {dueIsOverdue} from './graph/shared';
-import {formatDuration, statusAgeLabel} from './graph/statusAge';
-import {useScrollWindow, visibleRange} from './graph/taskStore';
-import {useIssues as useSyncIssues, useSyncStatus} from './sync';
-import {cachedIssueDetail, fetchIssueDetail, guessDefaultState} from './graph/tasks';
-import {addLocalIssue, getSync, guessNextIdentifier, hideIssueLocally, localIssueId, onStoreIssue, peekIssue, useIssueSelect, useSyncMeta} from './sync';
-import {MeetingsPage} from './meetings/MeetingsPage';
-import {SignupPage} from './signup/SignupPage';
-import {SetupWizard} from './setup/SetupWizard';
-import {createOssAdapter} from './setup/ossAdapter';
-import {loadDraft} from './setup/draft';
+import { motion, useReducedMotion } from "framer-motion";
+import "@fontsource-variable/inter/wght.css";
+import "./tailwind.css";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { createRoot } from "react-dom/client";
+import { initPerfTracking } from "./perf";
+import { lazyRoute } from "./lazyRoute";
+import { cn } from "cn";
+import { Dialog as StackDialog } from "radix-ui";
+import { ReactGrabDev } from "./dev/ReactGrabDev";
+import {
+  Popover as UIPopover,
+  PopoverContent,
+  PopoverTrigger,
+  PopoverAnchor,
+} from "./components/ui/popover";
+import {
+  Activity,
+  ArrowLeft,
+  ArrowUp,
+  Bell,
+  Blocks,
+  BookOpen,
+  Bot,
+  Building2,
+  CalendarDays,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  CircleDot,
+  Clock,
+  Command,
+  ExternalLink,
+  FolderKanban,
+  GitBranch,
+  GitMerge,
+  GitPullRequest,
+  Home,
+  Inbox,
+  KeyRound,
+  LayoutDashboard,
+  ListFilter,
+  LogOut,
+  Menu,
+  Moon,
+  MoreHorizontal,
+  Paperclip,
+  Plus,
+  Plug,
+  Search,
+  Settings,
+  Shield,
+  SlidersHorizontal,
+  Sun,
+  Tags,
+  LayoutTemplate,
+  Target,
+  Trophy,
+  UserRound,
+  Users,
+  X,
+  Zap,
+  BarChart3,
+  MoreVertical,
+  MessageCircle,
+  Send,
+  Layers3,
+  List as ListIcon,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRight,
+  Star,
+  EyeOff,
+} from "lucide-react";
+import { MorphIcon } from "morphicons/react";
+import { MobileNavProvider, MobileNavTrigger, useMobileNav } from "./mobileNav";
+import { layoutIcon, listIcon } from "./icons";
+import { connectRealtime, onRealtimeFrame } from "./realtime";
+import {
+  publishChangeEvents,
+  startSync,
+  type SyncHandle,
+  type SyncMeta,
+} from "./sync";
+import "./styles.css";
+import {
+  confirmDialog,
+  promptDialog,
+  alertDialog,
+  DialogHost,
+} from "./dialogs";
+import {
+  createView,
+  deleteView,
+  duplicateView,
+  suggestFilters,
+  exportViewCsv,
+  getView,
+  listViews,
+  migrateLegacyViews,
+  pinView,
+  runView,
+  setViewSubscription,
+  stashViewDraft,
+  takeViewDraft,
+  toggleViewFavorite,
+  updateView,
+  VIEWS_CHANGED,
+  type ServerView,
+  type ViewInput,
+} from "./views";
+const AgentChatPage = lazyRoute(() =>
+  import("./AgentChatPage").then((m) => m.AgentChatPage),
+);
+const AgentsSurface = lazyRoute(() =>
+  import("./agents/AgentsSurface").then((m) => m.AgentsSurface),
+);
+const ProjectRepository = lazyRoute(() =>
+  import("./agents/ProjectRepository").then((m) => m.ProjectRepository), { fallback: null },
+);
+const LeaderboardPage = lazyRoute(() =>
+  import("./profiles/LeaderboardPage").then((m) => m.LeaderboardPage),
+);
+const MemberProfilePage = lazyRoute(() =>
+  import("./profiles/MemberProfilePage").then((m) => m.MemberProfilePage),
+);
+import {
+  setWorkspaceAgentsEnabled,
+  useAgentsSurfaceEnabled,
+  useWorkspaceAgentsEnabled,
+} from "./agents/flag";
+import {
+  bodyLayer,
+  errorText,
+  navigateTo,
+  searchTerms,
+  warmSearchIndex,
+  useEntityVersion,
+  useIssueSearch,
+  useIssues,
+  useOptimisticList,
+  type Layer,
+} from "./localFirst";
+import { Markdown } from "./markdown";
+const ReviewsInbox = lazyRoute(() =>
+  import("./reviews/ReviewsInbox").then((m) => m.ReviewsInbox),
+);
+import type { TaskInReviewInput } from "./reviews/inbox";
+import type { ReviewLink } from "./reviews/types";
+import {
+  SplitPane,
+  ScrollArea,
+  TabStrip,
+  Tab,
+  GroupBar,
+  ListRow,
+  PropertyRow,
+  EmptyState,
+  CircularOptionButton,
+  Composer,
+} from "./design";
+import "./graph/styles.css";
+import "./settings.css";
+import { SettingsSelect } from "./SettingsSelect";
+const SettingsRoute = lazyRoute(() =>
+  import("./settings/SettingsRoute").then((m) => m.SettingsRoute),
+);
+import { SettingsNav } from "./settings/SettingsNav";
+import {
+  SidebarTooltip,
+  SidebarTooltipProvider,
+  sidebarItemClass,
+} from "./components/sidebar";
+import type { Capability } from "./settings/context";
+import { GraphIssueDetail } from "./graph/tasks";
+import { Avatar, AvatarFallback, AvatarGroup } from "./components/ui/avatar";
+const ProjectActivity = lazyRoute(() =>
+  import("./ProjectActivity").then((m) => m.ProjectActivity),
+);
+import {
+  Avatar as GraphAvatar,
+  blobatarSrc,
+  dueIsOverdue,
+  fmtDate,
+  Ring,
+  SubIssuePill,
+  UserBlobatar,
+} from "./graph/shared";
+import {
+  orderTree,
+  railLeft,
+  ROW_INSET,
+  SIBLING_STEP,
+} from "./graph/hierarchy";
+import { StateGlyph } from "./graph/stateGlyph";
+import {
+  formatDuration,
+  statusAgeLabel,
+  timeInStatus,
+} from "./graph/statusAge";
+import { useIssues as useSyncIssues, useSyncStatus } from "./sync";
+import {
+  cachedIssueDetail,
+  fetchIssueDetail,
+  guessDefaultState,
+} from "./graph/tasks";
+import {
+  addLocalIssue,
+  getSync,
+  guessNextIdentifier,
+  hideIssueLocally,
+  localIssueId,
+  onStoreIssue,
+  peekIssue,
+  useIssueSelect,
+  useSyncMeta,
+} from "./sync";
+// Its mobile input-zoom guard is global CSS, so it stays in the entry stylesheet.
+import "./signup/signup.css";
+const SignupPage = lazyRoute(() =>
+  import("./signup/SignupPage").then((m) => m.SignupPage),
+);
+const SetupWizard = lazyRoute(() =>
+  import("./setup/SetupWizard").then((m) => m.SetupWizard),
+);
+import { createCloudAdapter } from "./setup/cloudAdapter";
+import { loadDraft } from "./setup/draft";
 
-const setupAdapter = createOssAdapter();
-import {MeetingNotifier, MeetingBadge} from './meetings/Notifier';
-import {MeetStandalone} from './meetings/MeetRoom';
-import {GraphTeamCycles, GraphCycleDetail, GraphTeamCycle, GraphTeamCycleSettings, GraphWorkspaceCycles} from './graph/cycles';
+const setupAdapter = createCloudAdapter();
+const InboxPage = lazyRoute(() =>
+  import("./inbox/InboxPage").then((m) => m.InboxPage),
+);
+import { FollowButton } from "./inbox/follow";
+import { ProjectMembers } from "./ProjectMembers";
+import { useInboxUnread, useInboxUnreadSync } from "./inbox/model";
+/** Unread task notifications beside the sidebar's Inbox item, styled like the Inbox badge. */
+function InboxBadge() {
+  const n = useInboxUnread();
+  if (!n) return null;
+  return (
+    <em
+      className="ml-auto rounded-full bg-sidebar-active px-1.5 py-px text-[11px] leading-4 font-medium text-foreground not-italic tabular-nums shell-desktop:rail-collapsed:pointer-events-none shell-desktop:rail-collapsed:absolute shell-desktop:rail-collapsed:top-1 shell-desktop:rail-collapsed:right-1 shell-desktop:rail-collapsed:ml-0 shell-desktop:rail-collapsed:size-2 shell-desktop:rail-collapsed:bg-foreground shell-desktop:rail-collapsed:p-0 shell-desktop:rail-collapsed:text-[0px] shell-desktop:rail-collapsed:leading-none shell-desktop:rail-collapsed:ring-2 shell-desktop:rail-collapsed:ring-sidebar"
+      aria-label={`${n} unread`}
+      data-inbox-badge=""
+    >
+      {n > 99 ? "99+" : n}
+    </em>
+  );
+}
+
+function InboxTooltip({
+  enabled,
+  children,
+}: {
+  enabled: boolean;
+  children: React.ReactElement;
+}) {
+  const n = useInboxUnread();
+  return (
+    <SidebarTooltip
+      label="Inbox"
+      detail={n ? `${n} unread` : undefined}
+      enabled={enabled}
+    >
+      {children}
+    </SidebarTooltip>
+  );
+}
+const GraphTeamCycles = lazyRoute(() =>
+  import("./graph/cycles").then((m) => m.GraphTeamCycles),
+);
+const GraphCycleDetail = lazyRoute(() =>
+  import("./graph/cycles").then((m) => m.GraphCycleDetail),
+);
+const GraphTeamCycle = lazyRoute(() =>
+  import("./graph/cycles").then((m) => m.GraphTeamCycle),
+);
+const GraphTeamCycleSettings = lazyRoute(() =>
+  import("./graph/cycles").then((m) => m.GraphTeamCycleSettings),
+);
+const GraphWorkspaceCycles = lazyRoute(() =>
+  import("./graph/cycles").then((m) => m.GraphWorkspaceCycles),
+);
 
 /* Dev-only: says once which backend the Vite proxy targets. `import.meta.env.DEV` is a
  * compile-time false in `npm run build`, so the import and the log leave the production bundle. */
-if(import.meta.env.DEV){
-  void import('./dev/devBackend').then(({devBackendOrigin})=>{
-    const devBackend=devBackendOrigin();
-    if(devBackend)console.info(`[hoja dev] API calls proxy to ${devBackend}`);
+if (import.meta.env.DEV) {
+  void import("./dev/devBackend").then(({ devBackendOrigin }) => {
+    const devBackend = devBackendOrigin();
+    if (devBackend) console.info(`[hoja dev] API calls proxy to ${devBackend}`);
   });
 }
 
-export type Team={id:string;name:string;key:string;description?:string;states:{nodes:{id:string;name:string;color:string;type:string}[]};members?:{nodes:{id:string;name:string;email?:string}[]};activeCycle?:Cycle};
-export type Comment={id:string;body:string;user?:{id?:string;name?:string};createdAt?:string;editedAt?:string|null;canEdit?:boolean;canDelete?:boolean};export type IssueActivityEvent={id:string;eventType:string;createdAt:string;issue:Issue;actor?:{name?:string};changes?:Record<string,unknown>};export type IssueLabel={id:string;name:string;color?:string};
-export type Issue={id:string;identifier:string;title:string;description?:string;createdAt?:string;updatedAt?:string;stateChangedAt?:string;dueDate?:string;priority:number;priorityLabel?:string;state?:{id:string;name:string;color:string;type:string};team?:{id:string;key:string;name:string};project?:{id:string;name:string};assignee?:{id:string;name:string};creator?:{id:string;name?:string};subscribers?:{nodes:{id:string}[]};cycle?:{id:string;name?:string;number?:number};labels?:{nodes:IssueLabel[]};comments?:{nodes:Comment[]}};
-export type BoardTab='Active'|'Backlog'|'All issues';export type OlderField='assignee'|'creator';export type OlderState={status:'loading'|'done'|'error';error?:string};export type OlderMine=Partial<Record<OlderField,OlderState>>;const NO_EVENTS:IssueActivityEvent[]=[];const noop=()=>{};type CompletedRange='none'|'week'|'month'|'all';export type MyIssuesTab='Assigned'|'Created'|'Subscribed'|'Activity';
-export type Viewer={id?:string;name?:string;email?:string;admin?:boolean};
-export type Project={id:string;name:string;description?:string;state?:string;progress?:number;startDate?:string;targetDate?:string;health?:string;teams?:{nodes:{id:string;name:string;key:string}[]};lead?:{name?:string}};
-export type Cycle={id:string;name?:string;description?:string;number?:number;startsAt?:string;endsAt?:string;completedAt?:string;progress?:number;team?:{id:string;name:string;key:string}};
-export type Initiative={id:string;name:string;summary?:string;status:string;priority?:number;targetDate?:string;owner?:{id:string;name?:string};creator?:{id:string};projects?:{nodes:{id:string;name:string}[]};createdAt?:string};
-export type InboxNotification={id:string;kind:string;createdAt:string;readAt?:string;archivedAt?:string;issue?:Issue;actor?:{name?:string};};
-export type PulsePost={id:string;status?:string;body:string;createdAt:string;progress?:number;health?:string;actor?:{id:string;name?:string};project:{id:string;name:string;health?:string;progress?:number;targetDate?:string;lead?:{name?:string}}};
-export const issueFields=`{ id identifier title description createdAt updatedAt stateChangedAt dueDate priority priorityLabel state { id name color type } team { id key name } project{id name} assignee { id name } creator { id name } subscribers { nodes { id } } cycle { id name number } labels { nodes { id name color } } }`;
-const query=`query Dashboard { viewer { id name email admin } teams { nodes { id name key description states { nodes { id name color type } } members { nodes { id name email } } activeCycle { id name number startsAt endsAt progress } } } issues(first:100, orderBy:createdAt) { nodes ${issueFields} pageInfo { hasNextPage endCursor } } }`;
-export function storedApiToken():string|null{const t=localStorage.getItem('hoja_token');return t&&t!=='session'?t:null}
-export async function gql(q:string, variables?:Record<string,unknown>){const apiToken=storedApiToken();const r=await fetch('/graphql',{method:'POST',credentials:'include',headers:{'content-type':'application/json',...(apiToken?{authorization:`Bearer ${apiToken}`}:{})},body:JSON.stringify({query:q,variables})});const b=await r.json();if(!r.ok||b.errors)throw new Error(b.errors?.[0]?.message||'Request failed');return b.data;}
-const sections=[['primary',[['My issues',CircleDot],['Pulse',Zap],['Inbox',Inbox],['Meetings',Video],['Agent',Bot]]],['Workspace',[['Initiatives',Target],['Projects',FolderKanban],['Views',ListFilter]]],['Favorites',[['Favorite views',Layers3]]],['Your teams',[]],['More',[['Board',LayoutDashboard],['Cycles',CalendarDays],['Members',Users],['Settings',Settings]]]] as const;
-import {KNOWN_WORKSPACE_PAGES, routeView, redirectLegacyTaskPath} from './routes';
-import {displayLabel} from './labels';
-type StatusEvent={id:string;at:string;actor?:string;from?:string|null;to?:string|null};
-const statusHistoryCache=new Map<string,StatusEvent[]>();
-function StatusPicker({issue,teams,onChange,disabled,compact}:{issue:Issue;teams:Team[];onChange:(stateId:string)=>Promise<void>;disabled?:boolean;compact?:boolean}){
- const [open,setOpen]=useState(false);const [busy,setBusy]=useState(false);const [error,setError]=useState('');const [hover,setHover]=useState(false);
- const [loaded,setLoaded]=useState<{key:string;events:StatusEvent[]}|null>(null);const [historyError,setHistoryError]=useState('');
- const states=teams.find(t=>t.id===issue.team?.id)?.states.nodes||[];
- const historyKey=`${issue.identifier}|${issue.stateChangedAt||''}`;
- const history=loaded?.key===historyKey?loaded.events:statusHistoryCache.get(historyKey)||null;
- useEffect(()=>{
-  if(!hover||open||history)return;
-  let live=true;
-  const intent=window.setTimeout(()=>gql(`query IssueStatusHistory($id:String!){issue(id:$id){activity(first:30){nodes{id eventType createdAt actor{name} changes}}}}`,{id:issue.identifier}).then(d=>{if(!live)return;const events:StatusEvent[]=(d.issue?.activity?.nodes||[]).filter((e:{eventType:string;changes?:{stateId?:unknown}})=>e.eventType==='issueUpdated'&&Boolean(e.changes?.stateId)).map((e:{id:string;createdAt:string;actor?:{name?:string};changes:{stateId:{from?:string|null;to?:string|null}}})=>({id:e.id,at:e.createdAt,actor:e.actor?.name,from:e.changes.stateId.from,to:e.changes.stateId.to})).sort((a:StatusEvent,b:StatusEvent)=>b.at.localeCompare(a.at));statusHistoryCache.set(historyKey,events);setLoaded({key:historyKey,events})}).catch(e=>{if(live)setHistoryError((e as Error).message)}),200);
-  return()=>{live=false;window.clearTimeout(intent)};
- },[hover,open,history,historyKey,issue.identifier]);
- const pick=async(stateId:string)=>{setOpen(false);if(stateId===issue.state?.id)return;setBusy(true);setError('');try{await onChange(stateId)}catch(err){setError((err as Error).message)}finally{setBusy(false)}};
- const nameOf=(id?:string|null)=>id?(states.find(st=>st.id===id)?.name||'Unknown status'):'No status';
- return <span className="status-picker" role="presentation" onMouseEnter={()=>setHover(true)} onMouseLeave={()=>setHover(false)} onFocus={()=>setHover(true)} onBlur={()=>setHover(false)} onClick={e=>e.stopPropagation()} onKeyDown={e=>{if(e.key==='Escape')setOpen(false)}}>
-  <button type="button" className={compact?'status-picker-trigger icon-only':'status-picker-trigger'} aria-label={`Status of ${issue.identifier}: ${issue.state?.name||'No status'}`} aria-haspopup="listbox" aria-expanded={open} aria-busy={busy||undefined} disabled={disabled} onClick={()=>setOpen(v=>!v)}>
-   {compact?<StatusIcon state={issue.state||{}}/>:<><StatusIcon state={issue.state||{}}/>{issue.state?.name||'No status'}</>}
-  </button>
-  {(hover&&!open)&&<span className="status-history" role="tooltip"><span className="status-history-head">{statusAgeLabel(issue)}</span>{historyError?<span className="status-history-empty">Could not load history</span>:!history?<span className="status-history-empty">Loading history…</span>:history.length===0?<span className="status-history-empty">No status changes recorded</span>:<ol className="status-history-list">{history.slice(0,5).map(ev=><li key={ev.id}><span>{nameOf(ev.from)} → {nameOf(ev.to)}</span><small>{ev.actor||'Someone'} · {formatDuration(Date.now()-new Date(ev.at).getTime())} ago</small></li>)}</ol>}</span>}
-  {open&&<ul className="status-menu" role="listbox" aria-label="Choose status">{states.map(st=><li key={st.id}><button type="button" role="option" aria-selected={st.id===issue.state?.id} onClick={()=>void pick(st.id)}><StatusIcon state={st}/>{st.name}</button></li>)}</ul>}
-  {error&&<span className="error" role="alert">{error}</span>}
- </span>}
+export type Team = {
+  id: string;
+  name: string;
+  key: string;
+  description?: string;
+  /** The team's sidebar lists Initiatives. */
+  showInitiatives?: boolean;
+  /** Where a task lands in manual order when its status changes outside a drag. */
+  issueSortOrderOnStateChange?: "first" | "last" | "noAction";
+  states: {
+    nodes: { id: string; name: string; color: string; type: string }[];
+  };
+  members?: {
+    nodes: {
+      id: string;
+      name: string;
+      email?: string;
+      avatarSeed?: string | null;
+    }[];
+  };
+  activeCycle?: Cycle;
+};
+export type Comment = {
+  id: string;
+  body: string;
+  user?: { id?: string; name?: string; avatarSeed?: string | null };
+  createdAt?: string;
+  editedAt?: string | null;
+  canEdit?: boolean;
+  canDelete?: boolean;
+};
+export type IssueActivityEvent = {
+  id: string;
+  eventType: string;
+  createdAt: string;
+  issue: Issue;
+  actor?: { name?: string; avatarSeed?: string | null };
+  changes?: Record<string, unknown>;
+};
+export type IssueLabel = {
+  id: string;
+  name: string;
+  color?: string;
+  /** The label's group (Linear's label groups); null for a top-level label. */
+  parent?: { id: string; name: string } | null;
+  isGroup?: boolean;
+  exclusive?: boolean;
+  parentId?: string | null;
+};
+export type Issue = {
+  id: string;
+  identifier: string;
+  title: string;
+  description?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  stateChangedAt?: string;
+  dueDate?: string;
+  priority: number;
+  priorityLabel?: string;
+  /** Manual order (Linear's sortOrder); see views/ranking.ts. */
+  rank?: string | null;
+  priorityRank?: string | null;
+  estimate?: number | null;
+  decisionNeeded?: boolean;
+  parent?: { id: string; identifier: string; title: string } | null;
+  state?: { id: string; name: string; color: string; type: string };
+  team?: { id: string; key: string; name: string };
+  project?: { id: string; name: string };
+  assignee?: { id: string; name: string; avatarSeed?: string | null };
+  delegate?: { id: string; name?: string; avatarSeed?: string | null } | null;
+  delegateId?: string | null;
+  creator?: { id: string; name?: string; avatarSeed?: string | null };
+  subscribers?: { nodes: { id: string }[] };
+  cycle?: { id: string; name?: string; number?: number };
+  labels?: { nodes: IssueLabel[] };
+  comments?: { nodes: Comment[] };
+  /** The SLA clock the task runs against (HOJA-491/704); absent when no policy
+   * covers it, so an issue without one draws no chip at all. */
+  sla?: IssueSla | null;
+};
+
+/** The clock a task runs against. ``state`` is derived by the server — the
+ * client never decides whether a deadline passed. */
+export type IssueSla = {
+  state: string;
+  resolutionDueAt?: string | null;
+  firstResponseDueAt?: string | null;
+  firstRespondedAt?: string | null;
+  cycleEndsAt?: string | null;
+  retargetedAt?: string | null;
+  breachedAt?: string | null;
+  overdueMinutes?: number;
+  pausedMinutes?: number;
+  startedAt?: string;
+  policy?: { id: string; name: string } | null;
+};
+export type BoardTab = "Active" | "Backlog" | "All issues";
+export type OlderField = "assignee" | "creator";
+export type OlderState = {
+  status: "loading" | "done" | "error";
+  error?: string;
+};
+export type OlderMine = Partial<Record<OlderField, OlderState>>;
+const NO_EVENTS: IssueActivityEvent[] = [];
+const noop = () => {};
+export type MyIssuesTab = "Assigned" | "Created" | "Subscribed" | "Activity";
+export type Viewer = {
+  id?: string;
+  name?: string;
+  email?: string;
+  admin?: boolean;
+  avatarSeed?: string | null;
+};
+export type Project = {
+  id: string;
+  name: string;
+  description?: string;
+  state?: string;
+  progress?: number;
+  startDate?: string;
+  targetDate?: string;
+  health?: string;
+  viewerSubscribed?: boolean;
+  teams?: { nodes: { id: string; name: string; key: string }[] };
+  lead?: { name?: string };
+};
+export type Cycle = {
+  id: string;
+  name?: string;
+  description?: string;
+  number?: number;
+  startsAt?: string;
+  endsAt?: string;
+  completedAt?: string;
+  progress?: number;
+  team?: { id: string; name: string; key: string };
+};
+export type Initiative = {
+  id: string;
+  name: string;
+  viewerSubscribed?: boolean;
+  summary?: string;
+  status: string;
+  priority?: number;
+  targetDate?: string;
+  owner?: { id: string; name?: string; avatarSeed?: string | null };
+  creator?: { id: string };
+  projects?: {
+    nodes: { id: string; name: string; progress?: number; health?: string }[];
+  };
+  createdAt?: string;
+};
+export type PulseComment = {
+  id: string;
+  body: string;
+  createdAt?: string;
+  user?: { id?: string; name?: string; avatarSeed?: string | null };
+};
+
+export type PulsePost = {
+  id: string;
+  status?: string;
+  body: string;
+  createdAt: string;
+  progress?: number;
+  health?: string;
+  actor?: { id: string; name?: string; avatarSeed?: string | null };
+  project: {
+    id: string;
+    name: string;
+    health?: string;
+    progress?: number;
+    targetDate?: string;
+    viewerSubscribed?: boolean;
+    lead?: { name?: string };
+  };
+  comments?: { nodes: PulseComment[] };
+};
+export const issueFields = `{ id identifier title description createdAt updatedAt stateChangedAt dueDate priority priorityLabel rank priorityRank state { id name color type } team { id key name } githubLinks { id kind externalId url title state author } project{id name} assignee { id name avatarSeed } delegate { id name avatarSeed } delegateId creator { id name avatarSeed } subscribers { nodes { id } } cycle { id name number } parent { id identifier title } labels { nodes { id name color parent { id name } } } }`;
+const query = `query Dashboard { viewer { id name avatarSeed email admin } teams { nodes { id name key description showInitiatives states { nodes { id name color type } } members { nodes { id name avatarSeed email } } activeCycle { id name number startsAt endsAt progress } } } issues(first:100, orderBy:createdAt) { nodes ${issueFields} pageInfo { hasNextPage endCursor } } }`;
+export function storedApiToken(): string | null {
+  const t = localStorage.getItem("hoja_token");
+  return t && t !== "session" ? t : null;
+}
+// MCP OAuth consent (and the /device page) send a signed-out browser to /auth/login?next=/mcp/oauth/consent?pending=…
+// Remember that one path across sign-in (password, Google, or the tenant handoff that returns to /)
+// and resume it once a session exists. Only those approval pages are accepted: anything broader is an open redirect.
+const CONSENT_RETURN_KEY = "hoja_consent_return";
+function consentReturnPath(value: string | null): string | null {
+  return value &&
+    (/^\/mcp\/oauth\/consent\?pending=[A-Za-z0-9_-]{16,200}$/.test(value) ||
+      /^\/device(\?user_code=[A-Z]{4}-[A-Z]{4})?$/.test(value))
+    ? value
+    : null;
+}
+try {
+  const next = consentReturnPath(
+    new URLSearchParams(location.search).get("next"),
+  );
+  if (next) sessionStorage.setItem(CONSENT_RETURN_KEY, next);
+} catch {
+  /* storage unavailable */
+}
+function takeConsentReturn(): string | null {
+  try {
+    const next = consentReturnPath(sessionStorage.getItem(CONSENT_RETURN_KEY));
+    sessionStorage.removeItem(CONSENT_RETURN_KEY);
+    return next;
+  } catch {
+    return null;
+  }
+}
+export async function gql(q: string, variables?: Record<string, unknown>) {
+  const apiToken = storedApiToken();
+  const r = await fetch("/graphql", {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "content-type": "application/json",
+      ...(apiToken ? { authorization: `Bearer ${apiToken}` } : {}),
+    },
+    body: JSON.stringify({ query: q, variables }),
+  });
+  const b = await r.json();
+  if (!r.ok || b.errors)
+    throw new Error(b.errors?.[0]?.message || "Request failed");
+  return b.data;
+}
+
+/* ---- GitHub references ----------------------------------------------------
+ * One path for both the create dialog and the description editor: find GitHub
+ * object URLs in text a person wrote and attach each to the task. Only issue,
+ * pull request, commit and release URLs match — a repository or file link has no
+ * object identity, so it is left alone. A rejected URL must never fail the
+ * create or the save, so failures are swallowed per URL.
+ */
+const GITHUB_OBJECT_URL =
+  /https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/(?:issues|pull)\/\d+|https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/commit\/[0-9a-fA-F]{7,40}|https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/releases\/tag\/[^/?#\s]+/g;
+export function githubReferencesIn(text: string | null | undefined): string[] {
+  if (!text) return [];
+  return [...new Set(text.match(GITHUB_OBJECT_URL) || [])];
+}
+export async function attachGithubReferences(
+  issueId: string | null | undefined,
+  text: string | null | undefined,
+): Promise<string[]> {
+  if (!issueId) return [];
+  const attached: string[] = [];
+  for (const url of githubReferencesIn(text)) {
+    try {
+      await gql(
+        "mutation($issueId:String!,$url:String!){githubLinkAdd(issueId:$issueId,url:$url){id kind}}",
+        { issueId, url },
+      );
+      attached.push(url);
+    } catch {
+      /* not a reference the server can store */
+    }
+  }
+  return attached;
+}
+const sections = [
+  [
+    "primary",
+    [
+      ["Inbox", Inbox],
+      ["My issues", CircleDot],
+      ["Reviews", MessageCircle],
+      ["Pulse", Zap],
+      ["Agent", Bot],
+    ],
+  ],
+  [
+    "Workspace",
+    [
+      ["Initiatives", Target],
+      ["Projects", FolderKanban],
+      ["Views", ListFilter],
+      ["Leaderboard", Trophy],
+    ],
+  ],
+  // Filled per person: each favorited view (and task favorites kept in this browser).
+  ["Favorites", []],
+  ["Your teams", []],
+] as const;
+import {
+  KNOWN_WORKSPACE_PAGES,
+  routeView,
+  redirectLegacyTaskPath,
+} from "./routes";
+import { displayLabel } from "./labels";
+import {
+  chipCount,
+  chipsToFilterTree,
+  decodeFilterParam,
+  emptyGroup,
+  filterTreeToChips,
+  hasFilters,
+  ISSUE_FIELDS,
+  PROJECT_FIELDS as PROJECT_FILTER_FIELDS,
+  toggleValue,
+  withFilterParam,
+  type FilterGroup,
+  type FilterTree,
+} from "./views/filterModel";
+import {
+  countBy,
+  matchesFilter,
+  parentIdsOf,
+  type EvalContext,
+} from "./views/filterEval";
+import {
+  applyCompletedWindow,
+  groupKeysOf,
+  groupTasks,
+  mergeDisplay,
+  PRIORITY_LABELS,
+  PROJECT_DEFAULTS,
+  PROJECT_PAGE_GROUPS,
+  PROJECT_PAGE_ORDERINGS,
+  projectPageOptions,
+  projectPagePatch,
+  sortTasks,
+  withSubIssues,
+  activeLabelGroup,
+  type DisplayDoc,
+  type GroupCtx,
+  type ProjectPageOptions,
+} from "./views/displayModel";
+import {
+  AddFilterButton,
+  FilterChips,
+  ISSUE_MENU,
+  PROJECT_MENU,
+  type FilterCatalog,
+  type ValueOption,
+} from "./views/FilterBar";
+import { suggestViewIdentity } from "./views/filterLabels";
+import { DisplayButton, DisplayPanel } from "./views/DisplayPanel";
+import { InitiativeViewBody } from "./views/InitiativeViewBody";
+import {
+  ManualOrderGroup,
+  ManualOrderList,
+  SortableRow,
+  groupPatch,
+  optimisticRank,
+  planKey,
+  type MovePlan,
+  type OrderGroups,
+} from "./views/manualOrder";
+import {
+  useViewPreferences,
+  type ViewPreferences,
+} from "./views/useViewPreferences";
+import { ViewIcon, ViewIconPicker } from "./views/ViewIcon";
+import {
+  SaveToPicker,
+  UnsavedActions,
+  ViewDetailsPanel,
+  ViewIdentityCard,
+  ViewMenu,
+  ViewsListDisplay,
+  ViewsTable,
+  type BreakdownRow,
+  type ListColumn,
+} from "./views/ViewChrome";
+import {
+  canEditView,
+  displayChanges,
+  loadViewEdits,
+  redirectLegacyViewPath,
+  sameDocument,
+  saveViewEdits,
+  pinnedTabs,
+  reorderPinned,
+  sortViews,
+  targetInput,
+  targetOf,
+  viewIdentOf,
+  viewPath,
+  viewSections,
+  visibilityLabel,
+  type SaveTarget,
+  type ViewOrdering,
+} from "./views/viewModel";
+import { setViewListIdentity, useViewList } from "./views/useViewList";
+// Sidebar destinations share the main content container shell from DESIGN.md.
+const SHELL_VIEWS = new Set([
+  "My issues",
+  "Pulse",
+  "Inbox",
+  "Agent",
+  "Agents",
+  "Agent detail",
+  "Reviews",
+  "Initiatives",
+  "Projects",
+  "Views",
+  "View",
+  "Favorite views",
+  "Team Home",
+  "Team issues",
+  "Team cycles",
+  "Team cycle",
+  "Team projects",
+  "Team initiatives",
+  "Team views",
+  "Board",
+  "Cycles",
+  "Members",
+  "Leaderboard",
+  "Member profile",
+  "Settings",
+  "Issue detail",
+  "Initiative detail",
+]);
+const HEADERLESS_VIEWS = new Set([
+  "Issue detail",
+  "Initiative detail",
+  "Reviews",
+  "Agent",
+  "Agents",
+  "Agent detail",
+  "Team Home",
+  "Team cycles",
+  "Team cycle",
+  "Cycles",
+  "Members",
+  "Not found",
+]);
+type StatusEvent = {
+  id: string;
+  at: string;
+  actor?: string;
+  from?: string | null;
+  to?: string | null;
+};
+const statusHistoryCache = new Map<string, StatusEvent[]>();
+function StatusPicker({
+  issue,
+  teams,
+  onChange,
+  disabled,
+  compact,
+  showLabel,
+  iconClassName,
+  icon,
+}: {
+  issue: Issue;
+  teams: Team[];
+  onChange: (stateId: string) => Promise<void>;
+  disabled?: boolean;
+  compact?: boolean;
+  showLabel?: boolean;
+  iconClassName?: string;
+  /** Replaces the default status dot while keeping the picker and its menu. */
+  icon?: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [hover, setHover] = useState(false);
+  const [loaded, setLoaded] = useState<{
+    key: string;
+    events: StatusEvent[];
+  } | null>(null);
+  const [historyError, setHistoryError] = useState("");
+  const states = teams.find((t) => t.id === issue.team?.id)?.states.nodes || [];
+  const historyKey = `${issue.identifier}|${issue.stateChangedAt || ""}`;
+  const history =
+    loaded?.key === historyKey
+      ? loaded.events
+      : statusHistoryCache.get(historyKey) || null;
+  useEffect(() => {
+    if (!hover || open || history) return;
+    let live = true;
+    const intent = window.setTimeout(
+      () =>
+        gql(
+          `query IssueStatusHistory($id:String!){issue(id:$id){activity(first:30){nodes{id eventType createdAt actor{name avatarSeed} changes}}}}`,
+          { id: issue.identifier },
+        )
+          .then((d) => {
+            if (!live) return;
+            const events: StatusEvent[] = (d.issue?.activity?.nodes || [])
+              .filter(
+                (e: { eventType: string; changes?: { stateId?: unknown } }) =>
+                  e.eventType === "issueUpdated" && Boolean(e.changes?.stateId),
+              )
+              .map(
+                (e: {
+                  id: string;
+                  createdAt: string;
+                  actor?: { name?: string; avatarSeed?: string | null };
+                  changes: {
+                    stateId: { from?: string | null; to?: string | null };
+                  };
+                }) => ({
+                  id: e.id,
+                  at: e.createdAt,
+                  actor: e.actor?.name,
+                  from: e.changes.stateId.from,
+                  to: e.changes.stateId.to,
+                }),
+              )
+              .sort((a: StatusEvent, b: StatusEvent) =>
+                b.at.localeCompare(a.at),
+              );
+            statusHistoryCache.set(historyKey, events);
+            setLoaded({ key: historyKey, events });
+          })
+          .catch((e) => {
+            if (live) setHistoryError((e as Error).message);
+          }),
+      200,
+    );
+    return () => {
+      live = false;
+      window.clearTimeout(intent);
+    };
+  }, [hover, open, history, historyKey, issue.identifier]);
+  const pick = async (stateId: string) => {
+    setOpen(false);
+    if (stateId === issue.state?.id) return;
+    setBusy(true);
+    setError("");
+    try {
+      await onChange(stateId);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const nameOf = (id?: string | null) =>
+    id
+      ? states.find((st) => st.id === id)?.name || "Unknown status"
+      : "No status";
+  return (
+    <UIPopover open={hover && !open} onOpenChange={setHover}>
+      <PopoverAnchor asChild>
+        <span
+          className="relative inline-flex items-center"
+          data-status-picker=""
+          role="presentation"
+          onMouseEnter={() => setHover(true)}
+          onMouseLeave={() => setHover(false)}
+          onFocus={() => setHover(true)}
+          onBlur={() => setHover(false)}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setOpen(false);
+          }}
+        >
+          <UIPopover open={open} onOpenChange={setOpen}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className={
+                  (compact && !showLabel
+                    ? "inline-flex items-center gap-1.5 p-0.5 border-0 bg-transparent text-[12px]"
+                    : "inline-flex items-center gap-1.5 py-0.75 px-2 border border-line rounded-md bg-panel text-foreground text-[12px]") +
+                  " disabled:opacity-[.6] disabled:cursor-wait focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 [font:inherit] text-[12px] group"
+                }
+                data-status-picker-trigger=""
+                data-icon-only={compact && !showLabel ? "" : undefined}
+                aria-label={`Status of ${issue.identifier}: ${issue.state?.name || "No status"}`}
+                aria-haspopup="listbox"
+                aria-expanded={open}
+                aria-busy={busy || undefined}
+                disabled={disabled}
+              >
+                {compact && !showLabel ? (
+                  (icon ?? (
+                    <StatusIcon
+                      state={issue.state || {}}
+                      className={iconClassName}
+                    />
+                  ))
+                ) : (
+                  <>
+                    {icon ?? (
+                      <StatusIcon
+                        state={issue.state || {}}
+                        className={iconClassName}
+                      />
+                    )}
+                    <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+                      {issue.state?.name || "No status"}
+                    </span>
+                  </>
+                )}
+              </button>
+            </PopoverTrigger>
+            {open && (
+              <PopoverContent
+                asChild
+                align="start"
+                sideOffset={6}
+                /* Radix focuses the first child control; a status list has to open on the
+                 * status the task is in, or Enter on the opened list silently moves it. */
+                onOpenAutoFocus={(event) => {
+                  event.preventDefault();
+                  const list = event.currentTarget as HTMLElement;
+                  const current = list.querySelector<HTMLElement>(
+                    '[role="option"][aria-selected="true"]',
+                  );
+                  (
+                    current ||
+                    list.querySelector<HTMLElement>('[role="option"]')
+                  )?.focus();
+                }}
+              >
+                <ul
+                  className="border shadow-[0_8px_24px_#0002] w-auto z-40 min-w-45 mt-0 mr-0 mb-0 ml-0 pt-1 pr-1 pb-1 pl-1 list-none border-line rounded-lg bg-panel"
+                  data-status-menu=""
+                  role="listbox"
+                  aria-label="Choose status"
+                  onKeyDown={menuArrowKeys}
+                >
+                  {states.map((st) => (
+                    <li key={st.id}>
+                      <button
+                        className="flex items-center gap-2 w-full pt-1.5 pr-2 pb-1.5 pl-2 border-0 rounded-[5px] bg-transparent text-foreground text-[12px] text-left cursor-pointer hover:bg-subtle focus-visible:bg-subtle aria-selected:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 [font:inherit]"
+                        type="button"
+                        role="option"
+                        aria-selected={st.id === issue.state?.id}
+                        onClick={() => void pick(st.id)}
+                      >
+                        <StatusIcon state={st} className={iconClassName} />
+                        {st.name}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </PopoverContent>
+            )}
+          </UIPopover>
+          {hover && !open && (
+            <PopoverContent
+              onOpenAutoFocus={(event) => event.preventDefault()}
+              onCloseAutoFocus={(event) => event.preventDefault()}
+              align="start"
+              sideOffset={6}
+              className="border shadow-[0_4px_12px_#0002] z-40 flex flex-col gap-1.5 w-60 pt-2 pr-2.5 pb-2 pl-2.5 border-line rounded-lg bg-panel text-foreground text-[11px] font-normal leading-[1.35] text-left cursor-default overflow-y-auto overscroll-contain whitespace-normal max-h-[calc(100dvh-16px)]"
+              data-status-history=""
+              role="tooltip"
+            >
+              <span className="font-semibold">{statusAgeLabel(issue)}</span>
+              {historyError ? (
+                <span className="text-muted">Could not load history</span>
+              ) : !history ? (
+                <span className="text-muted">Loading history…</span>
+              ) : history.length === 0 ? (
+                <span className="text-muted">No status changes recorded</span>
+              ) : (
+                <ol
+                  className="mt-0 mr-0 mb-0 ml-0 pt-0 pr-0 pb-0 pl-0 list-none flex flex-col gap-1.25"
+                  data-status-history-list=""
+                >
+                  {history.slice(0, 5).map((ev) => (
+                    <li className="flex flex-col gap-px" key={ev.id}>
+                      <span>
+                        {nameOf(ev.from)} → {nameOf(ev.to)}
+                      </span>
+                      <small className="text-muted">
+                        {ev.actor || "Someone"} ·{" "}
+                        {formatDuration(Date.now() - new Date(ev.at).getTime())}{" "}
+                        ago
+                      </small>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </PopoverContent>
+          )}
+          {error && (
+            <span
+              className="block text-danger mt-3 mr-0 mb-3 ml-0 max-w-72 text-xs "
+              role="alert"
+            >
+              {error}
+            </span>
+          )}
+        </span>
+      </PopoverAnchor>
+    </UIPopover>
+  );
+}
 /* Roving arrow-key navigation for a listbox picker, so the assignee control is
  * usable from the keyboard the same way it is from the mouse. */
-function menuArrowKeys(e:React.KeyboardEvent<HTMLElement>){
- const opts=[...(e.currentTarget.querySelectorAll<HTMLElement>('[role="option"]'))];
- const at=opts.indexOf(document.activeElement as HTMLElement);
- if(e.key==='ArrowDown'){e.preventDefault();opts[Math.min(opts.length-1,at+1)]?.focus()}
- else if(e.key==='ArrowUp'){e.preventDefault();opts[Math.max(0,at-1)]?.focus()}
- else if(e.key==='Home'){e.preventDefault();opts[0]?.focus()}
- else if(e.key==='End'){e.preventDefault();opts[opts.length-1]?.focus()}
+function menuArrowKeys(e: React.KeyboardEvent<HTMLElement>) {
+  const opts = [
+    ...e.currentTarget.querySelectorAll<HTMLElement>('[role="option"]'),
+  ];
+  const at = opts.indexOf(document.activeElement as HTMLElement);
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    opts[Math.min(opts.length - 1, at + 1)]?.focus();
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    opts[Math.max(0, at - 1)]?.focus();
+  } else if (e.key === "Home") {
+    e.preventDefault();
+    opts[0]?.focus();
+  } else if (e.key === "End") {
+    e.preventDefault();
+    opts[opts.length - 1]?.focus();
+  }
 }
 
 /* Assignee control for a list row. Same contract as StatusPicker beside it: click
- * opens a listbox, choosing a member reassigns through the existing issue update,
+ * opens a listbox, choosing a member reassigns through the existing task update,
  * Escape closes and refocuses the trigger, and the row's own click never fires. */
-function AssigneePicker({issue,teams,onChange,disabled}:{issue:Issue;teams:Team[];onChange:(assigneeId:string|null)=>Promise<void>;disabled?:boolean}){
- const [open,setOpen]=useState(false);const [busy,setBusy]=useState(false);const [error,setError]=useState('');
- const trigger=useRef<HTMLButtonElement>(null);
- const menu=useRef<HTMLUListElement>(null);
- const wrap=useRef<HTMLSpanElement>(null);
- const members=teams.find(t=>t.id===issue.team?.id)?.members?.nodes||[];
- useEffect(()=>{if(open)menu.current?.querySelector<HTMLElement>('[role="option"]')?.focus()},[open]);
- useEffect(()=>{
-  if(!open)return;
-  const onDown=(e:PointerEvent)=>{if(wrap.current&&!wrap.current.contains(e.target as Node))setOpen(false)};
-  document.addEventListener('pointerdown',onDown);
-  return()=>document.removeEventListener('pointerdown',onDown);
- },[open]);
- const close=()=>{setOpen(false);trigger.current?.focus()};
- const pick=async(assigneeId:string|null)=>{setOpen(false);if((issue.assignee?.id||null)===assigneeId)return;setBusy(true);setError('');try{await onChange(assigneeId)}catch(err){setError((err as Error).message)}finally{setBusy(false)}};
- return <span ref={wrap} className="assignee-picker" role="presentation" onClick={e=>e.stopPropagation()}
-   onKeyDown={e=>{if(e.key==='Escape'&&open){e.preventDefault();close()}}}>
-  <button ref={trigger} type="button" className="assignee-picker-trigger" aria-label={`Assignee of ${issue.identifier}: ${issue.assignee?.name||'Unassigned'}`}
-    aria-haspopup="listbox" aria-expanded={open} aria-busy={busy||undefined} disabled={disabled}
-    onClick={()=>setOpen(v=>!v)}>
-   <span className="my-issue-assignee" aria-hidden="true">{issue.assignee?.name?.slice(0,1)||'·'}</span>
-  </button>
-  {open&&<ul ref={menu} className="assignee-menu" role="listbox" aria-label="Choose assignee" onKeyDown={menuArrowKeys}>
-   <li><button type="button" role="option" aria-selected={!issue.assignee} onClick={()=>void pick(null)}><span className="my-issue-assignee" aria-hidden="true">·</span>Unassigned</button></li>
-   {members.map(m=><li key={m.id}><button type="button" role="option" aria-selected={m.id===issue.assignee?.id} onClick={()=>void pick(m.id)}><span className="my-issue-assignee" aria-hidden="true">{m.name?.slice(0,1)||'·'}</span>{m.name||m.email}</button></li>)}
-  </ul>}
-  {error&&<span className="error" role="alert">{error}</span>}
- </span>}
+function AssigneePicker({
+  issue,
+  teams,
+  onChange,
+  disabled,
+}: {
+  issue: Issue;
+  teams: Team[];
+  onChange: (assigneeId: string | null) => Promise<void>;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const trigger = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLUListElement>(null);
+  const members =
+    teams.find((t) => t.id === issue.team?.id)?.members?.nodes || [];
+  useEffect(() => {
+    if (open)
+      menu.current?.querySelector<HTMLElement>('[role="option"]')?.focus();
+  }, [open]);
+  const pick = async (assigneeId: string | null) => {
+    setOpen(false);
+    if ((issue.assignee?.id || null) === assigneeId) return;
+    setBusy(true);
+    setError("");
+    try {
+      await onChange(assigneeId);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <UIPopover open={open} onOpenChange={setOpen}>
+      <span
+        className="relative inline-flex items-center"
+        role="presentation"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <PopoverTrigger asChild>
+          <button
+            ref={trigger}
+            type="button"
+            className="inline-grid place-items-center w-5.5 h-5.5 pt-0 pr-0 pb-0 pl-0 border-0 rounded-[50%] bg-transparent cursor-pointer disabled:opacity-60 disabled:cursor-wait focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 group disabled:opacity-[.6]"
+            data-assignee-picker-trigger=""
+            aria-label={`Assignee of ${issue.identifier}: ${issue.assignee?.name || "Unassigned"}`}
+            aria-haspopup="listbox"
+            aria-expanded={open}
+            aria-busy={busy || undefined}
+            disabled={disabled}
+          >
+            <span
+              className={
+                issue.assignee
+                  ? "grid place-items-center w-5.5 h-5.5"
+                  : "grid place-items-center w-5.5 h-5.5 rounded-[50%] bg-accent-soft text-accent text-[10px]"
+              }
+              data-my-issue-assignee=""
+              aria-hidden="true"
+            >
+              {issue.assignee ? <UserBlobatar user={issue.assignee} /> : "·"}
+            </span>
+          </button>
+        </PopoverTrigger>
+        {open && (
+          <PopoverContent asChild align="end" sideOffset={6}>
+            <ul
+              ref={menu}
+              className="border shadow-[0_8px_24px_#0002] w-auto z-40 min-w-50 mt-0 mr-0 mb-0 ml-0 pt-1 pr-1 pb-1 pl-1 list-none border-line rounded-lg bg-panel"
+              data-assignee-menu=""
+              role="listbox"
+              aria-label="Choose assignee"
+              onKeyDown={menuArrowKeys}
+            >
+              <li>
+                <button
+                  className="flex items-center gap-2 w-full pt-1.5 pr-2 pb-1.5 pl-2 border-0 rounded-[5px] bg-transparent text-foreground text-[12px] text-left cursor-pointer hover:bg-subtle focus-visible:bg-subtle aria-selected:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 [font:inherit]"
+                  type="button"
+                  role="option"
+                  aria-selected={!issue.assignee}
+                  onClick={() => void pick(null)}
+                >
+                  <span
+                    className="grid place-items-center w-5.5 h-5.5 rounded-[50%] bg-accent-soft text-accent text-[10px]"
+                    data-my-issue-assignee=""
+                    aria-hidden="true"
+                  >
+                    ·
+                  </span>
+                  Unassigned
+                </button>
+              </li>
+              {members.map((m) => (
+                <li key={m.id}>
+                  <button
+                    className="flex items-center gap-2 w-full pt-1.5 pr-2 pb-1.5 pl-2 border-0 rounded-[5px] bg-transparent text-foreground text-[12px] text-left cursor-pointer hover:bg-subtle focus-visible:bg-subtle aria-selected:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 [font:inherit]"
+                    type="button"
+                    role="option"
+                    aria-selected={m.id === issue.assignee?.id}
+                    onClick={() => void pick(m.id)}
+                  >
+                    <span
+                      className="grid place-items-center w-5.5 h-5.5"
+                      data-my-issue-assignee=""
+                      aria-hidden="true"
+                    >
+                      <UserBlobatar user={m} />
+                    </span>
+                    {m.name || m.email}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </PopoverContent>
+        )}
+        {error && (
+          <span
+            className="block text-danger mt-3 mr-0 mb-3 ml-0 max-w-72 text-xs "
+            role="alert"
+          >
+            {error}
+          </span>
+        )}
+      </span>
+    </UIPopover>
+  );
+}
 
-function matchesTerms(name:string, terms:string[]){const n=name.toLowerCase();return terms.every(t=>n.includes(t))}
-const LIST_RENDER_STEP=200;const WINDOW_ROWS=200;
-function IssueList({issues,onOpen,emptyTitle,emptyText,header,emptyAction,error='',teams=[],onStatusChange=async()=>{}}:{issues:Issue[];onOpen:(issue:Issue)=>void;emptyTitle:string;emptyText:string;header?:string;emptyAction?:React.ReactNode;error?:string;teams?:Team[];onStatusChange?:(issueId:string,stateId:string)=>Promise<void>}){const [limit,setLimit]=useState(LIST_RENDER_STEP);const shown=issues.length>limit?issues.slice(0,limit):issues;return <section className="issue-card">{header&&<div className="card-head"><span>{header} <b>{issues.length}</b></span></div>}{error&&<p role="alert">{error}</p>}{issues.length?<>{shown.map(i=><div className="issue-row" key={i.id}><button type="button" className="issue-row-open" onClick={()=>onOpen(i)}><span className="priority" data-p={i.priority}/><span className="issue-copy"><b>{i.title}</b><small>{i.identifier} · {i.team?.name}</small></span></button><StatusPicker issue={i} teams={teams} onChange={stateId=>onStatusChange(i.id,stateId)}/></div>)}{issues.length>limit&&<div className="issue-row"><button type="button" className="issue-row-open" onClick={()=>setLimit(l=>l+LIST_RENDER_STEP)}><span className="issue-copy"><b>Show {Math.min(LIST_RENDER_STEP,issues.length-limit)} more</b><small>{issues.length-limit} not shown</small></span></button></div>}</>:<div className="inbox-empty"><div className="placeholder-icon"><Inbox size={23}/></div><h2>{emptyTitle}</h2><p>{emptyText}</p>{emptyAction}</div>}</section>}
+function matchesTerms(name: string, terms: string[]) {
+  const n = name.toLowerCase();
+  return terms.every((t) => n.includes(t));
+}
+const LIST_RENDER_STEP = 200;
+const WINDOW_ROWS = 200;
+function IssueList({
+  issues,
+  onOpen,
+  emptyTitle,
+  emptyText,
+  header,
+  emptyAction,
+  error = "",
+  teams = [],
+  onStatusChange = async () => {},
+}: {
+  issues: Issue[];
+  onOpen: (issue: Issue) => void;
+  emptyTitle: string;
+  emptyText: string;
+  header?: string;
+  emptyAction?: React.ReactNode;
+  error?: string;
+  teams?: Team[];
+  onStatusChange?: (issueId: string, stateId: string) => Promise<void>;
+}) {
+  const [limit, setLimit] = useState(LIST_RENDER_STEP);
+  const shown = issues.length > limit ? issues.slice(0, limit) : issues;
+  return (
+    <section
+      className="border border-line rounded-xl shadow-[0_1px_2px_#1b1b1b08] overflow-hidden bg-panel **:data-status-history:max-w-[min(240px,calc(100vw-16px))] **:data-status-menu:max-w-[min(240px,calc(100vw-16px))]"
+      data-issue-card=""
+    >
+      {header && (
+        <div
+          className="border-b border-line flex justify-between pt-3 pr-4 pb-3 pl-4 text-[12px]"
+          data-card-head=""
+        >
+          <span>
+            {header}{" "}
+            <b className="ml-1.25 text-muted font-normal">{issues.length}</b>
+          </span>
+        </div>
+      )}
+      {error && <p role="alert">{error}</p>}
+      {issues.length ? (
+        <>
+          {shown.map((i) => (
+            <div
+              className="border-b border-line flex items-center gap-2.5 w-full pt-3.5 pr-4.5 pb-3.5 pl-4.5 bg-panel text-left min-h-14.5 hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 last:border-b-0"
+              data-issue-row=""
+              key={i.id}
+            >
+              <button
+                type="button"
+                className="flex items-center gap-2.5 flex-1 min-w-0 cursor-pointer focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 focus-visible:-outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 border-0 p-0 bg-transparent [font:inherit] text-inherit text-left"
+                data-issue-row-open=""
+                onClick={() => onOpen(i)}
+              >
+                <span
+                  className="inline-block w-2 h-2 shrink-0 rounded-[50%] bg-room-muted data-[p=1]:bg-red-500 data-[p=2]:bg-orange-500 data-[p=3]:bg-yellow-500 data-[p=4]:bg-blue-400"
+                  data-p={i.priority}
+                />
+                <span className="grid gap-1 flex-1 min-w-0" data-issue-copy="">
+                  <b className="font-[550] block min-w-0 wrap-break-word">
+                    {i.title}
+                  </b>
+                  <small className="text-muted text-[12px] block min-w-0 wrap-break-word">
+                    {i.identifier} · {i.team?.name}
+                  </small>
+                </span>
+              </button>
+              <StatusPicker
+                issue={i}
+                teams={teams}
+                onChange={(stateId) => onStatusChange(i.id, stateId)}
+              />
+            </div>
+          ))}
+          {issues.length > limit && (
+            <div
+              className="border-b border-line flex items-center gap-2.5 w-full pt-3.5 pr-4.5 pb-3.5 pl-4.5 bg-panel text-left min-h-14.5 hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 last:border-b-0"
+              data-issue-row=""
+            >
+              <button
+                type="button"
+                className="flex items-center gap-2.5 flex-1 min-w-0 cursor-pointer focus-visible:rounded-md focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 focus-visible:-outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 border-0 p-0 bg-transparent [font:inherit] text-inherit text-left"
+                data-issue-row-open=""
+                onClick={() => setLimit((l) => l + LIST_RENDER_STEP)}
+              >
+                <span className="grid gap-1 flex-1 min-w-0" data-issue-copy="">
+                  <b className="font-[550] block min-w-0 wrap-break-word">
+                    Show {Math.min(LIST_RENDER_STEP, issues.length - limit)}{" "}
+                    more
+                  </b>
+                  <small className="text-muted text-[12px] block min-w-0 wrap-break-word">
+                    {issues.length - limit} not shown
+                  </small>
+                </span>
+              </button>
+            </div>
+          )}
+        </>
+      ) : (
+        <div
+          className="grid justify-items-center gap-2 text-center pt-11.5 pr-5 pb-13 pl-5"
+          data-inbox-empty=""
+        >
+          <div
+            className="grid place-items-center w-16 h-16 rounded-2xl bg-accent-soft text-accent mt-0 mr-0 mb-0 ml-0"
+            data-placeholder-icon=""
+          >
+            <Inbox size={23} />
+          </div>
+          <h2 className="mt-1.25 mr-0 mb-0 ml-0 text-[16px] tracking-[-.02em]">
+            {emptyTitle}
+          </h2>
+          <p className="max-w-90 mt-0 mr-0 mb-1.75 ml-0 text-muted text-[12px] leading-[1.55]">
+            {emptyText}
+          </p>
+          {emptyAction}
+        </div>
+      )}
+    </section>
+  );
+}
 
 // HOJA-288: rewrite a legacy /workspace/issue/... URL to /workspace/task/... in place
 // before routing, preserving query and hash. replaceState keeps the back button sane.
-function applyLegacyTaskRedirect():string{const href=window.location.pathname+window.location.search+window.location.hash;const next=redirectLegacyTaskPath(href);if(next!==href){history.replaceState({},'',next)}return window.location.pathname}
-function App(){const [setupResume,setSetupResume]=useState<{workspaceId:string;workspaceUrlKey:string}|null>(null);const [pendingWorkspace,setPendingWorkspaceState]=useState<PendingWorkspace|null>(()=>null);useEffect(()=>{const onPop=()=>{if(location.pathname!=='/login/workspace')setPendingWorkspaceState(null)};window.addEventListener('popstate',onPop);return()=>window.removeEventListener('popstate',onPop)},[]);const setPendingWorkspace=(p:PendingWorkspace|null)=>{setPendingWorkspaceState(p);history.pushState({},'',p?'/login/workspace':'/login')};if(localStorage.getItem('hoja_token')==='session')localStorage.removeItem('hoja_token');const [token,setToken]=useState(storedApiToken());const [inviteCode,setInviteCode]=useState(()=>new URLSearchParams(location.search).get('invite')||new URLSearchParams(location.hash.slice(1)).get('invite')||'');const [onboarding,setOnboarding]=useState<{checked:boolean;initialized:boolean;singleOrg:boolean}>({checked:false,initialized:true,singleOrg:false});const [hostedSignIn,setHostedSignIn]=useState(false);const [viewer,setViewer]=useState<Viewer>({});const [workspace,setWorkspace]=useState<{id:string;name:string;urlKey:string}>({id:'',name:'',urlKey:''});const [workspaces,setWorkspaces]=useState<{organizationId:string;name:string;urlKey:string;role:string}[]>([]);const [switchError,setSwitchError]=useState('');const [switching,setSwitching]=useState(false);const [teams,setTeams]=useState<Team[]>([]);const [issues,setIssues]=useState<Issue[]>([]);const [dataLoading,setDataLoading]=useState(true);const [olderMine,setOlderMine]=useState<OlderMine>({});const olderMineRef=useRef<OlderMine>({});const [activityEvents,setActivityEvents]=useState<IssueActivityEvent[]>([]);const [activityCursor,setActivityCursor]=useState<string|null>(null);const [activityHasMore,setActivityHasMore]=useState(false);const [activityLoading,setActivityLoading]=useState(false);const [activityError,setActivityError]=useState('');const activityLoadRef=useRef(false);const activityGeneration=useRef(0);const issueLoadGeneration=useRef(0);const [projects,setProjects]=useState<Project[]>([]);const [projectCursor,setProjectCursor]=useState<string|null>(null);const [projectHasMore,setProjectHasMore]=useState(false);const [projectLoading,setProjectLoading]=useState(false);const [projectError,setProjectError]=useState('');const [projectDetailLoading,setProjectDetailLoading]=useState(false);const [projectDetailRefresh,setProjectDetailRefresh]=useState(0);const [projectDetailError,setProjectDetailError]=useState('');const projectLoadRef=useRef(false);const projectGeneration=useRef(0);const [labels,setLabels]=useState<{id:string;name:string;color?:string}[]>([]);const [cycles,setCycles]=useState<Cycle[]>([]);const [activeCycle,setActiveCycle]=useState<Cycle|null>(null);const [cycleDetailError,setCycleDetailError]=useState(''),[cycleDetailLoading,setCycleDetailLoading]=useState(false);const [activeProject,setActiveProject]=useState<Project|null>(null);const [activeIssue,setActiveIssue]=useState<Issue|null>(null);const [issueReturnProject,setIssueReturnProject]=useState<string|null>(null);const [issueReturn,setIssueReturn]=useState<{label:string;view:string;path:string}|null>(null);const [issueLoading,setIssueLoading]=useState(false);const [issueError,setIssueError]=useState('');const [issueRetry,setIssueRetry]=useState(0);const [view,setView]=useState(()=>routeView(applyLegacyTaskRedirect()));const [settingsSection,setSettingsSection]=useState(()=>window.location.pathname.split('/')[3]||'preferences');const settingsReturn=useRef('/workspace/my-issues/assigned');const [myIssuesTab,setMyIssuesTab]=useState<MyIssuesTab>(()=>window.location.pathname.split('/').pop()==='created'?'Created':window.location.pathname.split('/').pop()==='subscribed'?'Subscribed':window.location.pathname.split('/').pop()==='activity'?'Activity':'Assigned');const [boardTab,setBoardTab]=useState<BoardTab>('All issues');const [boardTeam,setBoardTeam]=useState('');const [issueLayout,setIssueLayout]=useState<IssueLayout>(()=>localStorage.getItem('hoja_issue_layout')==='Board'?'Board':'List');const changeIssueLayout=(layout:IssueLayout)=>{localStorage.setItem('hoja_issue_layout',layout);setIssueLayout(layout)};const [teamCycle,setTeamCycle]=useState<Cycle|null>(null),[teamCycleRoute,setTeamCycleRoute]=useState(()=>location.pathname),[teamCycleLoading,setTeamCycleLoading]=useState(false),[teamCycleError,setTeamCycleError]=useState('');const [theme,setTheme]=useState(localStorage.getItem('theme')||'light');const [fontScale,setFontScale]=useState(localStorage.getItem('hoja_font_scale')||'100');const [preferenceMessage,setPreferenceMessage]=useState('');useEffect(()=>{document.documentElement.dataset.theme=theme;localStorage.setItem('theme',theme)},[theme]);useEffect(()=>{document.documentElement.style.setProperty('--font-scale',String(Number(fontScale)/100));localStorage.setItem('hoja_font_scale',fontScale)},[fontScale]);const savePreference=async(key:string,value:string)=>{setPreferenceMessage('Saving…');try{const d=await gql(`mutation($key:String!,$value:String!){userPreferenceSet(key:$key,value:$value){success theme fontSize}}`,{key,value});if(!d.userPreferenceSet.success)throw Error('Preference was not saved');if(key==='theme')setTheme(value);else setFontScale(value);setPreferenceMessage('Saved to your account.')}catch(e){setPreferenceMessage(`Could not save: ${(e as Error).message}`)}};const [search,setSearch]=useState('');const [filter,setFilter]=useState('');const [selected,setSelected]=useState<Issue|null>(null);const [newOpen,setNewOpen]=useState(false);const [newStateId,setNewStateId]=useState('');const [projectOpen,setProjectOpen]=useState(false);const [mobile,setMobile]=useState(false);const [orgMenu,setOrgMenu]=useState(false);const [commandOpen,setCommandOpen]=useState(false);const [commandQuery,setCommandQuery]=useState('');const [filtersOpen,setFiltersOpen]=useState(false);const [collapsedSections,setCollapsedSections]=useState<Record<string,boolean>>({});const [sidebarCollapsed,setSidebarCollapsed]=useState(()=>localStorage.getItem('hoja_sidebar_collapsed')==='true');useEffect(()=>{localStorage.setItem('hoja_sidebar_collapsed',String(sidebarCollapsed))},[sidebarCollapsed]);const [collapsedTeams,setCollapsedTeams]=useState<Record<string,boolean>>({});const [moreOpen,setMoreOpen]=useState(false);const [error,setError]=useState('');
-useEffect(()=>{Promise.all([fetch('/onboarding/status').then(r=>r.json()),fetch('/auth/me',{credentials:'include'}).then(r=>r.ok),fetch('/api/signup/config').then(r=>r.ok?r.json():null)]).then(([v,session,config])=>{setOnboarding({checked:true,initialized:!!v.initialized,singleOrg:!!v.singleOrg});setHostedSignIn(Boolean(config?.hosted&&config?.signInUrl));if(session)setToken(localStorage.getItem('hoja_token')||'session')}).catch(()=>setOnboarding(v=>({...v,checked:true,initialized:true})))},[]);
-useEffect(()=>{if(!token||!workspace.id||setupResume)return;const saved=loadDraft(localStorage,{edition:'oss'});if(saved&&saved.workspaceId===workspace.id&&saved.step!=='ready')setSetupResume({workspaceId:workspace.id,workspaceUrlKey:workspace.urlKey})},[token,workspace.id,workspace.urlKey,setupResume]);
-useEffect(()=>{if(error==='Authentication required'){localStorage.removeItem('hoja_token');setToken(null);setViewer({});setIssues([]);setActivityEvents([])}},[error]);
-const navigate=(next:string, pathOverride?:string)=>{const slug=next.toLowerCase().replace(/ /g,'-'); const path=pathOverride||(next==='Board'?'/workspace/team/eng/active':next==='My issues'?'/workspace/my-issues/assigned':next==='Pulse'?'/workspace/pulse/all':next==='Inbox'?'/workspace/inbox/other':next==='Views'?'/workspace/views/issues':next==='Initiatives'?'/workspace/initiatives/active':`/workspace/${slug}`); if(next==='Settings'&&view!=='Settings')settingsReturn.current=location.pathname;history.pushState({},'',path);if(next==='Settings')setSettingsSection(path.split('/')[3]||'preferences');if(next==='Team cycle')setTeamCycleRoute(path);setView(next);if(next==='My issues'){const part=path.split('/').pop();setMyIssuesTab(({assigned:'Assigned',created:'Created',subscribed:'Subscribed',activity:'Activity'} as Record<string,MyIssuesTab>)[part||'assigned']||'Assigned');}setActiveProject(null);setActiveCycle(null)};const openIssue=(issue:Issue,returnProjectId?:string)=>{if(returnProjectId){setIssueReturn({label:'Project',view:'Project detail',path:`/workspace/project/${returnProjectId}`})}else if(view!=='Issue detail'){setIssueReturn({label:view==='Team issues'&&issue.team?.name?`${issue.team.name} tasks`:displayLabel(view),view,path:window.location.pathname})}setIssueReturnProject(returnProjectId||null);setSelected(null);setActiveIssue(issue);const slug=issue.title.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'');navigate('Issue detail',`/workspace/task/${encodeURIComponent(issue.identifier)}/${slug}`)};
-useEffect(()=>{const onKey=(e:KeyboardEvent)=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();setCommandOpen(v=>!v)}if(e.key==='Escape'){setCommandOpen(false);setFiltersOpen(false);setNewOpen(false)}};window.addEventListener('keydown',onKey);return()=>window.removeEventListener('keydown',onKey)},[]);
+function applyLegacyTaskRedirect(): string {
+  const href =
+    window.location.pathname + window.location.search + window.location.hash;
+  const next = redirectLegacyViewPath(redirectLegacyTaskPath(href));
+  if (next !== href) {
+    history.replaceState({}, "", next);
+  }
+  return window.location.pathname;
+}
+function App() {
+  const [setupResume, setSetupResume] = useState<{
+    workspaceId: string;
+    workspaceUrlKey: string;
+  } | null>(null);
+  const [pendingWorkspace, setPendingWorkspaceState] =
+    useState<PendingWorkspace | null>(() => null);
+  useEffect(() => {
+    const onPop = () => {
+      if (location.pathname !== "/login/workspace")
+        setPendingWorkspaceState(null);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  const setPendingWorkspace = (p: PendingWorkspace | null) => {
+    setPendingWorkspaceState(p);
+    history.pushState({}, "", p ? "/login/workspace" : "/login");
+  };
+  if (localStorage.getItem("hoja_token") === "session")
+    localStorage.removeItem("hoja_token");
+  const [token, setToken] = useState(storedApiToken());
+  useInboxUnreadSync(Boolean(token));
+  useEffect(() => {
+    if (!token) return;
+    const next = takeConsentReturn();
+    if (next) location.assign(next);
+  }, [token]);
+  const [inviteCode, setInviteCode] = useState(
+    () =>
+      new URLSearchParams(location.search).get("invite") ||
+      new URLSearchParams(location.hash.slice(1)).get("invite") ||
+      "",
+  );
+  const [onboarding, setOnboarding] = useState<{
+    checked: boolean;
+    initialized: boolean;
+    singleOrg: boolean;
+  }>({ checked: false, initialized: true, singleOrg: false });
+  const [hostedSignIn, setHostedSignIn] = useState(false);
+  const [viewer, setViewer] = useState<Viewer>({});
+  const [workspace, setWorkspace] = useState<{
+    id: string;
+    name: string;
+    urlKey: string;
+  }>({ id: "", name: "", urlKey: "" });
+  const agentsOn = useAgentsSurfaceEnabled();
+  // The workspace's Agents switch (Settings -> Workspace). Read per workspace; until it answers,
+  // and if it fails, the switch reads as off.
+  useEffect(() => {
+    setWorkspaceAgentsEnabled(null);
+    if (!workspace.id) return;
+    let live = true;
+    gql(`{ workspaceFeatures { agentsEnabled } }`)
+      .then((d) => {
+        if (live)
+          setWorkspaceAgentsEnabled(
+            Boolean(d.workspaceFeatures?.agentsEnabled),
+          );
+      })
+      .catch(() => {
+        if (live) setWorkspaceAgentsEnabled(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [workspace.id]);
+  const [workspaces, setWorkspaces] = useState<
+    { organizationId: string; name: string; urlKey: string; role: string }[]
+  >([]);
+  const [switchError, setSwitchError] = useState("");
+  const [switching, setSwitching] = useState(false);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [issues, setIssues] = useState<Issue[]>([]);
+  const [dataLoading, setDataLoading] = useState(true);
+  const [olderMine, setOlderMine] = useState<OlderMine>({});
+  const olderMineRef = useRef<OlderMine>({});
+  const [activityEvents, setActivityEvents] = useState<IssueActivityEvent[]>(
+    [],
+  );
+  const [activityCursor, setActivityCursor] = useState<string | null>(null);
+  const [activityHasMore, setActivityHasMore] = useState(false);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [activityError, setActivityError] = useState("");
+  const activityLoadRef = useRef(false);
+  const activityGeneration = useRef(0);
+  const issueLoadGeneration = useRef(0);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [projectCursor, setProjectCursor] = useState<string | null>(null);
+  const [projectHasMore, setProjectHasMore] = useState(false);
+  const [projectLoading, setProjectLoading] = useState(false);
+  const [projectError, setProjectError] = useState("");
+  const [projectDetailLoading, setProjectDetailLoading] = useState(false);
+  const [projectDetailRefresh, setProjectDetailRefresh] = useState(0);
+  const [projectDetailError, setProjectDetailError] = useState("");
+  const projectLoadRef = useRef(false);
+  const projectGeneration = useRef(0);
+  const [labels, setLabels] = useState<
+    { id: string; name: string; color?: string }[]
+  >([]);
+  const [cycles, setCycles] = useState<Cycle[]>([]);
+  const [activeCycle, setActiveCycle] = useState<Cycle | null>(null);
+  const [cycleDetailError, setCycleDetailError] = useState(""),
+    [cycleDetailLoading, setCycleDetailLoading] = useState(false);
+  const [activeProject, setActiveProject] = useState<Project | null>(null);
+  const [activeIssue, setActiveIssue] = useState<Issue | null>(null);
+  const [issueReturnProject, setIssueReturnProject] = useState<string | null>(
+    null,
+  );
+  const [issueReturn, setIssueReturn] = useState<{
+    label: string;
+    view: string;
+    path: string;
+  } | null>(null);
+  const [issueLoading, setIssueLoading] = useState(false);
+  const [issueError, setIssueError] = useState("");
+  const [issueRetry, setIssueRetry] = useState(0);
+  const [view, setView] = useState(() => routeView(applyLegacyTaskRedirect()));
+  const [settingsSection, setSettingsSection] = useState(
+    () => window.location.pathname.split("/")[3] || "preferences",
+  );
+  const settingsReturn = useRef("/workspace/my-issues/assigned");
+  const [myIssuesTab, setMyIssuesTab] = useState<MyIssuesTab>(() =>
+    window.location.pathname.split("/").pop() === "created"
+      ? "Created"
+      : window.location.pathname.split("/").pop() === "subscribed"
+        ? "Subscribed"
+        : window.location.pathname.split("/").pop() === "activity"
+          ? "Activity"
+          : "Assigned",
+  );
+  const [boardTab, setBoardTab] = useState<BoardTab>("All issues");
+  const [reviewsLinks, setReviewsLinks] = useState<ReviewLink[]>([]);
+  const [reviewsReload, setReviewsReload] = useState(0);
+  const [reviewsError, setReviewsError] = useState("");
+  const [reviewsTasks, setReviewsTasks] = useState<TaskInReviewInput[]>([]);
+  const [reviewsTasksError, setReviewsTasksError] = useState("");
+  /* The queue is read from the links themselves, not from the newest N tasks. Deriving it from
+     issues(first:100,orderBy:updatedAt) tied the pane to how busy the workspace was: once more
+     than 100 tasks had been touched, every linked pull request fell out of the window and the
+     pane showed an empty queue while the links still existed. A failure is also shown now —
+     `.catch(()=>{})` used to render an outage as the ordinary empty state. */
+  useEffect(() => {
+    if (view !== "Reviews") return;
+    gql(
+      `query ReviewsLinks{ pullRequests(first:250){ id kind externalId url title state author sha environment createdAt updatedAt additions deletions baseRef headRef behind ahead mergeable mergeState reviewDecision reviewers checksState checksTotal checksPassing checksFailing body mergedAt githubUpdatedAt files { path additions deletions status patch previousPath } issue { identifier } } }`,
+    )
+      .then((d: { pullRequests?: ReviewLink[] }) => {
+        setReviewsLinks(
+          (d.pullRequests || []).map((l) => ({
+            ...l,
+            key: l.issue?.identifier || "",
+          })),
+        );
+        setReviewsError("");
+      })
+      .catch((e) => {
+        setReviewsError(`Reviews could not load: ${(e as Error).message}`);
+        setReviewsLinks([]);
+      });
+    // Tasks in review are a separate read: a failure here must not hide the pull requests.
+    gql(
+      `query ReviewsTasks{ issues(first:250, orderBy:updatedAt, filter:{state:{name:{eq:"In Review"}}}){ nodes { identifier title url updatedAt stateChangedAt githubLinks { id kind externalId url title state mergeable mergeState reviewDecision checksState checksTotal checksPassing checksFailing updatedAt issue { identifier } } } } }`,
+    )
+      .then((d: { issues?: { nodes?: TaskInReviewInput[] } }) => {
+        setReviewsTasks(d.issues?.nodes ?? []);
+        setReviewsTasksError("");
+      })
+      .catch((e) => {
+        setReviewsTasks([]);
+        setReviewsTasksError(
+          `Tasks in review could not load: ${(e as Error).message}`,
+        );
+      });
+  }, [view, reviewsReload]);
+  const [boardTeam, setBoardTeam] = useState("");
+  const [issueLayout, setIssueLayout] = useState<IssueLayout>(() =>
+    localStorage.getItem("hoja_issue_layout") === "Board" ? "Board" : "List",
+  );
+  const changeIssueLayout = (layout: IssueLayout) => {
+    localStorage.setItem("hoja_issue_layout", layout);
+    setIssueLayout(layout);
+  };
+  const [teamCycle, setTeamCycle] = useState<Cycle | null>(null),
+    [teamCycleRoute, setTeamCycleRoute] = useState(() => location.pathname),
+    [teamCycleLoading, setTeamCycleLoading] = useState(false),
+    [teamCycleError, setTeamCycleError] = useState("");
+  const [theme, setTheme] = useState(localStorage.getItem("theme") || "light");
+  const [fontScale, setFontScale] = useState(
+    localStorage.getItem("hoja_font_scale") || "100",
+  );
+  const [preferenceMessage, setPreferenceMessage] = useState("");
+  useEffect(() => {
+    localStorage.setItem("theme", theme);
+    /* "system" follows the operating system and keeps following it while the page is open. */
+    const media = window.matchMedia?.("(prefers-color-scheme: dark)");
+    const apply = () => {
+      document.documentElement.dataset.theme =
+        theme === "system" ? (media?.matches ? "dark" : "light") : theme;
+    };
+    apply();
+    if (theme !== "system" || !media) return;
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
+  }, [theme]);
+  useEffect(() => {
+    document.documentElement.style.setProperty(
+      "--font-scale",
+      String(Number(fontScale) / 100),
+    );
+    localStorage.setItem("hoja_font_scale", fontScale);
+  }, [fontScale]);
+  /* The settings save contract wants a promise that rejects on failure (useSetting rolls the
+   * control back and shows the reason); savePreference below keeps the legacy message API. */
+  const persistPreference = async (
+    key: "theme" | "fontSize",
+    value: string,
+  ) => {
+    const d = await gql(
+      `mutation($key:String!,$value:String!){userPreferenceSet(key:$key,value:$value){success theme fontSize}}`,
+      { key, value },
+    );
+    if (!d.userPreferenceSet.success)
+      throw Error("Your preference was not saved. Try again.");
+    if (key === "theme") setTheme(value);
+    else setFontScale(value);
+  };
+  const [capabilities, setCapabilities] = useState<Set<string> | null>(null);
+  const inSettings = view === "Settings";
+  useEffect(() => {
+    // Loaded at start (the workspace menu offers "Manage members" by capability) and again on
+    // entering Settings, so a grant made meanwhile shows up without a reload.
+    let live = true;
+    gql(`query ViewerCapabilities{viewerCapabilities}`)
+      .then((d) => live && setCapabilities(new Set(d.viewerCapabilities)))
+      .catch(() => live && setCapabilities(new Set()));
+    return () => {
+      live = false;
+    };
+  }, [inSettings, workspace.id]);
+  const savePreference = async (key: string, value: string) => {
+    setPreferenceMessage("Saving…");
+    try {
+      const d = await gql(
+        `mutation($key:String!,$value:String!){userPreferenceSet(key:$key,value:$value){success theme fontSize}}`,
+        { key, value },
+      );
+      if (!d.userPreferenceSet.success) throw Error("Preference was not saved");
+      if (key === "theme") setTheme(value);
+      else setFontScale(value);
+      setPreferenceMessage("Saved to your account.");
+    } catch (e) {
+      setPreferenceMessage(`Could not save: ${(e as Error).message}`);
+    }
+  };
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState("");
+  const [selected, setSelected] = useState<Issue | null>(null);
+  const [newOpen, setNewOpen] = useState(false);
+  const [newStateId, setNewStateId] = useState("");
+  const [newTeamId, setNewTeamId] = useState("");
+  const [projectOpen, setProjectOpen] = useState(false);
+  const [mobile, setMobile] = useState(false);
+  const mobileToggleRef = useRef<HTMLButtonElement>(null);
+  const mobileSidebarRef = useRef<HTMLElement>(null);
+  const closeMobileNav = useCallback(() => {
+    setMobile(false);
+    if (
+      mobileToggleRef.current &&
+      mobileToggleRef.current.offsetParent !== null
+    )
+      mobileToggleRef.current.focus();
+  }, []);
+  const [orgMenu, setOrgMenu] = useState(false);
+  const [workspaceMenuWidth, setWorkspaceMenuWidth] = useState<number>();
+  useEffect(() => {
+    if (!orgMenu) return;
+    const sidebar = mobileSidebarRef.current;
+    if (!sidebar) return;
+    const measure = () => {
+      const styles = getComputedStyle(sidebar);
+      setWorkspaceMenuWidth(
+        sidebar.clientWidth -
+          parseFloat(styles.paddingLeft) -
+          parseFloat(styles.paddingRight),
+      );
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(sidebar);
+    return () => observer.disconnect();
+  }, [orgMenu]);
+  const [commandOpen, setCommandOpen] = useState(false);
+  /* O then V opens the palette as a view switcher. */
+  const [commandViews, setCommandViews] = useState(false);
+  useEffect(() => {
+    if (!commandOpen) setCommandViews(false);
+  }, [commandOpen]);
+  const [phoneSignInOpen, setPhoneSignInOpen] = useState(false);
+  /* The app-level "New initiative" dialog: N then I, the command palette and the list. */
+  const [initiativeCreate, setInitiativeCreate] = useState<Record<
+    string,
+    unknown
+  > | null>(null);
+  const [initiativeOptions, setInitiativeOptions] = useState<InitiativeRef[]>(
+    [],
+  );
+  useEffect(() => {
+    if (initiativeCreate)
+      fetchAllInitiatives()
+        .then(setInitiativeOptions)
+        .catch(() => undefined);
+  }, [initiativeCreate]);
+  /* N then I opens it from anywhere outside a text field, as on Linear. */
+  useEffect(() => {
+    let armed = 0,
+      openArmed = 0;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (
+        e.metaKey ||
+        e.ctrlKey ||
+        e.altKey ||
+        t?.closest("input,textarea,select,[contenteditable=true],[role=dialog]")
+      )
+        return;
+      const key = e.key.toLowerCase();
+      if (e.shiftKey) {
+        armed = 0;
+        openArmed = 0;
+        return;
+      }
+      if (key === "n") armed = Date.now();
+      else if (key === "i" && Date.now() - armed < 1200) {
+        e.preventDefault();
+        armed = 0;
+        setInitiativeCreate({});
+      } else armed = 0;
+      if (key === "o") openArmed = Date.now();
+      else if (key === "v" && Date.now() - openArmed < 1200) {
+        e.preventDefault();
+        openArmed = 0;
+        setCommandViews(true);
+        setCommandOpen(true);
+      } else openArmed = 0;
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  const [commandQuery, setCommandQuery] = useState("");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [collapsedSections, setCollapsedSections] = useState<
+    Record<string, boolean>
+  >({});
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => localStorage.getItem("hoja_sidebar_collapsed") === "true",
+  );
+  useEffect(() => {
+    localStorage.setItem("hoja_sidebar_collapsed", String(sidebarCollapsed));
+  }, [sidebarCollapsed]);
+  const [isDesktopShell, setIsDesktopShell] = useState(() =>
+    typeof window !== "undefined"
+      ? window.matchMedia(
+          "(min-width: 881px) and (min-height: 501px), (min-width: 1001px)",
+        ).matches
+      : true,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia(
+      "(min-width: 881px) and (min-height: 501px), (min-width: 1001px)",
+    );
+    const sync = () => setIsDesktopShell(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    const saved = Number(localStorage.getItem("hoja_sidebar_width"));
+    return Number.isFinite(saved) && saved >= 200 && saved <= 340 ? saved : 244;
+  });
+  const [sidebarResizing, setSidebarResizing] = useState(false);
+  useEffect(() => {
+    localStorage.setItem("hoja_sidebar_width", String(sidebarWidth));
+  }, [sidebarWidth]);
+  const startSidebarResize = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (sidebarCollapsed) return;
+      e.preventDefault();
+      const startX = e.clientX;
+      const startWidth = sidebarWidth;
+      setSidebarResizing(true);
+      document.body.style.userSelect = "none";
+      document.body.style.cursor = "col-resize";
+      const onMove = (ev: PointerEvent) => {
+        const next = Math.round(
+          Math.min(340, Math.max(200, startWidth + (ev.clientX - startX))),
+        );
+        setSidebarWidth(next);
+      };
+      const onUp = () => {
+        setSidebarResizing(false);
+        document.body.style.userSelect = "";
+        document.body.style.cursor = "";
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onUp);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onUp);
+    },
+    [sidebarCollapsed, sidebarWidth],
+  );
+  useEffect(() => {
+    const appName = workspace.name || "Hoja";
+    if (!token) {
+      document.title = appName;
+      return;
+    }
+    const pageTitle =
+      view === "Issue" && activeIssue
+        ? `${activeIssue.identifier} · ${activeIssue.title}`
+        : view === "Project" && activeProject
+          ? activeProject.name
+          : view === "Cycle detail" && activeCycle
+            ? activeCycle.name || `Cycle ${activeCycle.number ?? ""}`
+            : view === "Settings"
+              ? `Settings · ${settingsSection}`
+              : displayLabel(view);
+    document.title = pageTitle ? `${pageTitle} — ${appName}` : appName;
+  }, [
+    token,
+    view,
+    activeIssue,
+    activeProject,
+    activeCycle,
+    settingsSection,
+    workspace.name,
+  ]);
+  const [collapsedTeams, setCollapsedTeams] = useState<Record<string, boolean>>(
+    {},
+  );
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    Promise.all([
+      fetch("/onboarding/status").then((r) => r.json()),
+      fetch("/auth/me", { credentials: "include" }).then(async (r) => {
+        // A workspace with its own address is opened there, never on this host.
+        if (r.status === 409) {
+          const body = await r.json().catch(() => null);
+          if (body?.redirectUrl) {
+            window.location.replace(body.redirectUrl);
+            return false;
+          }
+        }
+        return r.ok;
+      }),
+      fetch("/api/signup/config").then((r) => (r.ok ? r.json() : null)),
+    ])
+      .then(([v, session, config]) => {
+        setOnboarding({
+          checked: true,
+          initialized: !!v.initialized,
+          singleOrg: !!v.singleOrg,
+        });
+        setHostedSignIn(Boolean(config?.hosted && config?.signInUrl));
+        if (session) setToken(localStorage.getItem("hoja_token") || "session");
+      })
+      .catch(() =>
+        setOnboarding((v) => ({ ...v, checked: true, initialized: true })),
+      );
+  }, []);
+  useEffect(() => {
+    if (!token || !workspace.id || setupResume) return;
+    const saved = loadDraft(localStorage, { edition: "cloud" });
+    if (!saved || saved.step === "ready") return;
+    const sameWorkspace = saved.workspaceId === workspace.id;
+    const googleReturn = Boolean(saved.googleStarted && !saved.workspaceId);
+    if (sameWorkspace || googleReturn)
+      setSetupResume({
+        workspaceId: workspace.id,
+        workspaceUrlKey: workspace.urlKey,
+      });
+  }, [token, workspace.id, workspace.urlKey, setupResume]);
+  useEffect(() => {
+    if (error === "Authentication required") {
+      localStorage.removeItem("hoja_token");
+      setToken(null);
+      setViewer({});
+      setIssues([]);
+      setActivityEvents([]);
+    }
+  }, [error]);
+  const navigate = (next: string, pathOverride?: string) => {
+    const slug = next.toLowerCase().replace(/ /g, "-");
+    const path =
+      pathOverride ||
+      (next === "Board"
+        ? "/workspace/team/eng/active"
+        : next === "My issues"
+          ? "/workspace/my-issues/assigned"
+          : next === "Pulse"
+            ? "/workspace/pulse/all"
+            : next === "Inbox"
+              ? "/workspace/inbox"
+              : next === "Views"
+                ? "/workspace/views/issues"
+                : next === "Reviews"
+                  ? "/workspace/reviews"
+                  : next === "Initiatives"
+                    ? "/workspace/initiatives/active"
+                    : `/workspace/${slug}`);
+    if (next === "Settings" && view !== "Settings")
+      settingsReturn.current = location.pathname;
+    history.pushState({}, "", path);
+    if (next === "Settings")
+      setSettingsSection(path.split("/")[3] || "preferences");
+    if (next === "Team cycle") setTeamCycleRoute(path);
+    setView(next);
+    if (next === "My issues") {
+      const part = path.split("/").pop();
+      setMyIssuesTab(
+        (
+          {
+            assigned: "Assigned",
+            created: "Created",
+            subscribed: "Subscribed",
+            activity: "Activity",
+          } as Record<string, MyIssuesTab>
+        )[part || "assigned"] || "Assigned",
+      );
+    }
+    setActiveProject(null);
+    setActiveCycle(null);
+  };
+  const openInitiative = (id: string) =>
+    navigate(
+      "Initiative detail",
+      `/workspace/initiative/${encodeURIComponent(id)}`,
+    );
+  const openMember = (userId: string) =>
+    navigate(
+      "Member profile",
+      `/workspace/member/${encodeURIComponent(userId)}`,
+    );
+  const openTaskByRef = (identifier: string, title: string) => {
+    const existing = issues.find(
+      (i) => i.identifier.toLowerCase() === identifier.toLowerCase(),
+    );
+    if (existing) {
+      openIssue(existing);
+      return;
+    }
+    const slug = title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)/g, "");
+    setActiveIssue(null);
+    navigate(
+      "Issue detail",
+      `/workspace/task/${encodeURIComponent(identifier)}${slug ? `/${slug}` : ""}`,
+    );
+  };
+  const openIssue = (issue: Issue, returnProjectId?: string) => {
+    if (returnProjectId) {
+      setIssueReturn({
+        label: "Project",
+        view: "Project detail",
+        path: `/workspace/project/${returnProjectId}`,
+      });
+    } else if (view !== "Issue detail") {
+      setIssueReturn({
+        label: displayLabel(view),
+        view,
+        path: window.location.pathname,
+      });
+    }
+    setIssueReturnProject(returnProjectId || null);
+    setSelected(null);
+    setActiveIssue(issue);
+    const slug = issue.title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)/g, "");
+    navigate(
+      "Issue detail",
+      `/workspace/task/${encodeURIComponent(issue.identifier)}/${slug}`,
+    );
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setCommandOpen((v) => !v);
+        return;
+      }
+      if (e.key === "Escape") {
+        setCommandOpen(false);
+        setFiltersOpen(false);
+        setNewOpen(false);
+        return;
+      }
+      if (
+        e.key === "[" &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !(
+          e.target instanceof HTMLElement &&
+          (e.target.isContentEditable ||
+            ["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName))
+        )
+      ) {
+        e.preventDefault();
+        const isDrawerViewport = window.matchMedia(
+          "(max-width: 880px), (max-width: 1000px) and (max-height: 500px)",
+        ).matches;
+        if (isDrawerViewport) {
+          setMobile((v) => !v);
+        } else if (view !== "Settings") {
+          setSidebarCollapsed((v) => !v);
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [view]);
+  // Touch swipe-to-open (from left edge) and swipe-to-close on mobile/tablet drawer viewports.
+  useEffect(() => {
+    const drawerMq = window.matchMedia(
+      "(max-width: 880px), (max-width: 1000px) and (max-height: 500px)",
+    );
+    let startX = 0;
+    let startY = 0;
+    let tracking = false;
+    let startedOpen = false;
+    const onTouchStart = (e: TouchEvent) => {
+      if (!drawerMq.matches || e.touches.length !== 1) return;
+      const t = e.touches[0];
+      const target = e.target instanceof Element ? e.target : null;
+      if (
+        !mobile &&
+        (t.clientX > 28 ||
+          target?.closest(
+            "[data-kanban-columns],[data-my-issue-tabs],[data-reviews-diff-patch]",
+          ))
+      ) {
+        tracking = false;
+        return;
+      }
+      startX = t.clientX;
+      startY = t.clientY;
+      startedOpen = mobile;
+      tracking = true;
+    };
+    const onTouchEnd = (e: TouchEvent) => {
+      if (!tracking || !e.changedTouches.length) return;
+      tracking = false;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - startX;
+      const dy = t.clientY - startY;
+      if (Math.abs(dx) < 48 || Math.abs(dx) < Math.abs(dy) * 1.4) return;
+      if (!startedOpen && dx > 0) setMobile(true);
+      else if (startedOpen && dx < 0) closeMobileNav();
+    };
+    window.addEventListener("touchstart", onTouchStart, { passive: true });
+    window.addEventListener("touchend", onTouchEnd, { passive: true });
+    return () => {
+      window.removeEventListener("touchstart", onTouchStart);
+      window.removeEventListener("touchend", onTouchEnd);
+    };
+  }, [mobile, closeMobileNav]);
+  // The workspace drawer is the shared shell's phone navigation: Escape and a backdrop tap close it,
+  // focus moves into the open drawer and returns to the toggle, so it matches the settings drawer.
+  useEffect(() => {
+    if (!mobile) return;
+    const sidebar = mobileSidebarRef.current;
+    const focusables = () =>
+      sidebar
+        ? [
+            ...sidebar.querySelectorAll<HTMLElement>(
+              "button:not(:disabled),a[href],input:not(:disabled)",
+            ),
+          ].filter((el) => el.offsetParent !== null)
+        : [];
+    focusables()[0]?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeMobileNav();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const items = focusables();
+      if (!items.length) return;
+      const first = items[0],
+        last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [mobile, closeMobileNav]);
 
-useEffect(()=>{const onPop=()=>{if(routeView(window.location.pathname)==='Team cycle')setTeamCycleRoute(window.location.pathname);if(routeView(window.location.pathname)==='Settings')setSettingsSection(window.location.pathname.split('/')[3]||'preferences');if(['Project detail','Project view'].includes(routeView(window.location.pathname)))setProjectDetailRefresh(n=>n+1);setView(routeView(window.location.pathname));setIssueError('');setActiveIssue(null);setIssueReturn(null);const segment=window.location.pathname.split('/').pop();if(['assigned','created','subscribed','activity'].includes(segment||''))setMyIssuesTab(({assigned:'Assigned',created:'Created',subscribed:'Subscribed',activity:'Activity'} as Record<string,MyIssuesTab>)[segment!]);setActiveProject(null);setActiveCycle(null)}; window.addEventListener('popstate',onPop); return()=>window.removeEventListener('popstate',onPop)},[]);
-useEffect(()=>{document.documentElement.dataset.theme=theme;localStorage.setItem('theme',theme)},[theme]);
-const [revision,setRevision]=useState(0);const syncRef=useRef<SyncHandle|null>(null);const [closedCutoff,setClosedCutoff]=useState('');
-useEffect(()=>{if(!token)return;let t:number|undefined;const off=connectRealtime(token,ev=>{publishChangeEvents([ev]);window.clearTimeout(t);t=window.setTimeout(()=>setRevision(r=>r+1),300)});return()=>{window.clearTimeout(t);off()}},[token]);
-useEffect(()=>{if(!token)return;let live=true;let meta:SyncMeta|null=null;setDataLoading(true);setError('');const handle=startSync({headers:():Record<string,string>=>{const t=storedApiToken();return t?{authorization:`Bearer ${t}`}:{}},onView:v=>{if(!live)return;setDataLoading(false);if(v.reset)setError('');setIssues(v.issues);if(v.meta!==meta){meta=v.meta;setViewer(v.meta.viewer);setWorkspace(v.meta.workspace as typeof workspace);setTeams(v.meta.teams.nodes);setProjects(v.meta.projects.nodes);setProjectCursor(v.meta.projects.pageInfo?.endCursor||null);setProjectHasMore(Boolean(v.meta.projects.pageInfo?.hasNextPage));setCycles(v.meta.cycles.nodes);setLabels(v.meta.issueLabels.nodes)}if(v.reset){setClosedCutoff(v.closedCutoff);issueLoadGeneration.current++;olderMineRef.current={};setOlderMine({})}},onError:e=>{if(live){setError(e.message);setDataLoading(false)}}});syncRef.current=handle;gql(`query MyPreferences{myPreferences{success theme fontSize}}`).then(prefs=>{if(live&&prefs.myPreferences.success){setTheme(prefs.myPreferences.theme);setFontScale(prefs.myPreferences.fontSize)}}).catch(e=>{if(live)setError(`Could not load preferences: ${(e as Error).message}`)});return()=>{live=false;handle.stop();if(syncRef.current===handle)syncRef.current=null}},[token]);
-useEffect(()=>{if(!token)return;gql(`query MyWorkspaces{myWorkspaces{id organizationId name urlKey role}}`).then(d=>setWorkspaces(d.myWorkspaces)).catch(e=>setSwitchError(e.message))},[token,workspace.id]);const switchWorkspace=async(id:string)=>{if(!id||id===workspace.id)return;setSwitching(true);setSwitchError('');const previous={workspace,teams,issues,projects,labels,cycles,viewer};let switched=false;try{const d=await gql(`mutation($id:String!){workspaceSwitch(organizationId:$id){success organization{id name urlKey}}}`,{id});if(!d.workspaceSwitch.success)throw Error('Workspace switch denied');switched=true;localStorage.removeItem('hoja_saved_views_'+workspace.id);setWorkspace(d.workspaceSwitch.organization);setTeams([]);setIssues([]);setActivityEvents([]);setActivityCursor(null);setActivityHasMore(false);setActivityError('');activityGeneration.current++;activityLoadRef.current=false;setActivityLoading(false);issueLoadGeneration.current++;olderMineRef.current={};setOlderMine({});projectGeneration.current++;setProjects([]);setProjectCursor(null);setProjectHasMore(false);setProjectError('');setLabels([]);setCycles([]);setActiveProject(null);setSelected(null);setSearch('');setFilter('');setView('Inbox');history.pushState({},'',`/workspace/inbox`);await syncRef.current?.reset();setWorkspace(d.workspaceSwitch.organization)}catch(e){if(!switched){setWorkspace(previous.workspace);setTeams(previous.teams);setIssues(previous.issues);setProjects(previous.projects);setLabels(previous.labels);setCycles(previous.cycles);setViewer(previous.viewer)}setSwitchError((e as Error).message)}finally{setSwitching(false)}};
-// eslint-disable-next-line react-hooks/exhaustive-deps -- route or session driven; the listed values are written by this effect or are recreated each render
-useEffect(()=>{if(!token||view!=='Issue detail')return;const ident=decodeURIComponent(window.location.pathname.split('/').filter(Boolean)[2]||'');if(!ident){setIssueError('Missing task identifier');setIssueLoading(false);return}setIssueError('');const known=peekIssue(ident)||cachedIssueDetail(ident)?.detail as Issue|undefined;if(known){setActiveIssue(old=>old&&old.id===known.id?old:known);setIssueLoading(false);return}const hintId=activeIssue&&(activeIssue.identifier===ident||activeIssue.id===ident)?activeIssue.id:undefined;let live=true;setIssueLoading(true);setActiveIssue(old=>old&&(old.identifier===ident||old.id===ident)?old:null);const offStore=onStoreIssue(ident,i=>{if(live){setActiveIssue(old=>old&&old.id===i.id?old:i);setIssueLoading(false)}});const issueTimeout=setTimeout(()=>{if(live&&!peekIssue(ident)){setIssueError('Loading the task timed out. Check your connection and retry.');setIssueLoading(false)}},20000);fetchIssueDetail(ident,hintId).then(e=>{if(live)setActiveIssue(old=>old&&old.id===e.detail.id?old:e.detail as Issue)}).catch(e=>{if(live&&!peekIssue(ident)){setIssueError((e as Error).message);setActiveIssue(null)}}).finally(()=>{if(live){clearTimeout(issueTimeout);setIssueLoading(false)}});return()=>{live=false;offStore();clearTimeout(issueTimeout)}},[token,view,window.location.pathname,issueRetry]);
-const projectRouteId=view==='Project detail'||view==='Project view'?window.location.pathname.split('/').filter(Boolean)[2]:undefined;const projectVersion=useEntityVersion(['project'],[projectRouteId]);
-// eslint-disable-next-line react-hooks/exhaustive-deps -- route or session driven; the listed values are written by this effect or are recreated each render
-useEffect(()=>{if(!token||view!=='Project detail'&&view!=='Project view')return;const projectId=window.location.pathname.split('/').filter(Boolean)[2];if(!projectId)return;const known=projects.find(p=>p.id===projectId);if(known){setActiveProject(known);setProjectDetailError('');setProjectDetailLoading(false);return}let live=true;setProjectDetailLoading(true);setProjectDetailError('');if(activeProject?.id!==projectId)setActiveProject(null);gql(`query($id:String!){project(id:$id){id name description state progress startDate targetDate health lead{name} teams{nodes{id name key}}}}`,{id:projectId}).then(d=>{if(!live)return;if(!d.project)throw Error('Project not found');setActiveProject(d.project);setProjects(old=>old.some(p=>p.id===d.project.id)?old.map(p=>p.id===d.project.id?d.project:p):[...old,d.project])}).catch(e=>{if(live){setProjectDetailError((e as Error).message);setActiveProject(null)}}).finally(()=>{if(live)setProjectDetailLoading(false)});return()=>{live=false}},[token,view,projectDetailRefresh,projectVersion,projects]);
-useEffect(()=>{if(!token||view!=='Team cycle')return;const path=location.pathname;const parts=path.split('/').filter(Boolean);const team=teams.find(t=>t.key.toLowerCase()===parts[2]?.toLowerCase());if(!team){setTeamCycle(null);setTeamCycleLoading(false);setTeamCycleError('Team not found in this workspace.');return}const upcoming=parts[4]==='upcoming';if(!upcoming&&team.activeCycle){setTeamCycle({...team.activeCycle,team:{id:team.id,key:team.key,name:team.name}});setTeamCycleError('');setTeamCycleLoading(false);return}let live=true;setTeamCycle(null);setTeamCycleLoading(true);setTeamCycleError('');gql(`query TeamCycle($filter:CycleFilter){cycles(first:10,filter:$filter){nodes{id name number startsAt endsAt completedAt progress team{id key name}}}}`,{filter:{team:{id:{eq:team.id}},[upcoming?'isNext':'isActive']:{eq:true}}}).then(d=>{if(live&&location.pathname===path)setTeamCycle(d.cycles.nodes[0]||null)}).catch(e=>{if(live&&location.pathname===path)setTeamCycleError((e as Error).message)}).finally(()=>{if(live&&location.pathname===path)setTeamCycleLoading(false)});return()=>{live=false}},[token,view,workspace.id,teams,teamCycleRoute]);
-useEffect(()=>{if(!token||view!=='Cycle detail')return;const id=location.pathname.split('/').filter(Boolean)[2];if(!id)return;let live=true;const known=cycles.find(c=>c.id===id);setCycleDetailError('');if(known){setActiveCycle(old=>old?.id===id?{...known,description:old.description}:known);setCycleDetailLoading(false)}else{setCycleDetailLoading(true);setActiveCycle(null)}gql(`query OneCycle($id:String!){cycle(id:$id){id name description number startsAt endsAt completedAt progress team{id key name}}}`,{id}).then(d=>{if(!live)return;if(!d.cycle)throw Error('Cycle not found in this workspace.');setActiveCycle(d.cycle)}).catch(e=>{if(live&&!known)setCycleDetailError((e as Error).message)}).finally(()=>{if(live)setCycleDetailLoading(false)});return()=>{live=false}},[token,view,workspace.id,cycles]);
-const loadMoreProjects=async()=>{if(projectLoadRef.current||!projectHasMore||!projectCursor)return;projectLoadRef.current=true;const generation=projectGeneration.current;setProjectLoading(true);setProjectError('');try{const d=await gql(`query MoreProjects($after:String){projects(first:100,after:$after){nodes{id name description state progress startDate targetDate health lead{name} teams{nodes{id name key}}} pageInfo{hasNextPage endCursor}}}`,{after:projectCursor});if(generation!==projectGeneration.current)return;const page=d.projects;if(page.pageInfo?.hasNextPage&&(!page.pageInfo.endCursor||page.pageInfo.endCursor===projectCursor||!page.nodes.length))throw Error('Projects pagination did not advance.');setProjects(old=>{const ids=new Set(old.map(p=>p.id));return [...old,...page.nodes.filter((p:Project)=>!ids.has(p.id))]});setProjectCursor(page.pageInfo?.endCursor||null);setProjectHasMore(Boolean(page.pageInfo?.hasNextPage))}catch(e){if(generation===projectGeneration.current)setProjectError((e as Error).message)}finally{projectLoadRef.current=false;if(generation===projectGeneration.current)setProjectLoading(false)}};
-const loadActivity=async(after:string|null=null)=>{if(activityLoadRef.current)return;activityLoadRef.current=true;const generation=activityGeneration.current;setActivityLoading(true);setActivityError('');try{const d=await gql(`query MyIssueActivity($after:String){myIssueActivity(first:50,after:$after){nodes{id eventType createdAt actor{name} changes issue ${issueFields}} pageInfo{hasNextPage endCursor}}}`,{after});if(generation!==activityGeneration.current)return;const page=d.myIssueActivity;const events:IssueActivityEvent[]=page.nodes;const next=page.pageInfo;if(next?.hasNextPage&&(!next.endCursor||next.endCursor===after||!events.length))throw Error('Activity pagination did not advance. Retry later.');setActivityEvents(previous=>{const seen=new Set((after?previous:[]).map(e=>e.id));return [...(after?previous:[]),...events.filter(e=>!seen.has(e.id))]});setActivityCursor(next?.endCursor||null);setActivityHasMore(Boolean(next?.hasNextPage))}catch(e){if(generation===activityGeneration.current)setActivityError((e as Error).message)}finally{activityLoadRef.current=false;if(generation===activityGeneration.current)setActivityLoading(false)}};
-useEffect(()=>{if(token&&view==='My issues'&&myIssuesTab==='Activity')void loadActivity()},[token,view,myIssuesTab,workspace.id]);
-// Closed issues older than the sync window, limited to the viewer's own (assigned or created). Fetched once per
-// sync generation when a My issues view needs them, then adopted into the store so they stay live.
-const loadOlderMine=async(field:OlderField,retry=false)=>{const cur=olderMineRef.current[field];if(!closedCutoff||!viewer.id||(cur&&!(retry&&cur.status==='error')))return;const generation=issueLoadGeneration.current;const set=(v:NonNullable<OlderMine[OlderField]>)=>{if(generation!==issueLoadGeneration.current)return;olderMineRef.current={...olderMineRef.current,[field]:v};setOlderMine(olderMineRef.current)};set({status:'loading'});let after:string|null=null;try{do{const d=await gql(`query MyOlderClosedIssues($after:String,$filter:IssueFilter){issues(first:100,after:$after,filter:$filter,orderBy:updatedAt){nodes ${issueFields} pageInfo{hasNextPage endCursor}}}`,{after,filter:{[field]:{id:{eq:viewer.id}},state:{type:{in:['completed','canceled']}},updatedAt:{lt:closedCutoff}}});if(generation!==issueLoadGeneration.current)return;const page=d.issues;const rows:Issue[]=page.nodes;if(page.pageInfo?.hasNextPage&&(!page.pageInfo.endCursor||page.pageInfo.endCursor===after||!rows.length))throw Error('Task pagination did not advance. Retry later.');if(rows.length){if(syncRef.current)syncRef.current.adopt(rows);else setIssues(previous=>{const seen=new Set(previous.map(x=>x.id));return [...previous,...rows.filter(x=>!seen.has(x.id))]})}after=page.pageInfo?.hasNextPage?page.pageInfo.endCursor:null}while(after);set({status:'done'})}catch(e){set({status:'error',error:(e as Error).message})}};
-const loadOlderRef=useRef(loadOlderMine);loadOlderRef.current=loadOlderMine;const olderField:OlderField=myIssuesTab==='Created'?'creator':'assignee';const onLoadOlder=useCallback((retry?:boolean)=>{void loadOlderRef.current(olderField,retry)},[olderField]);
-const filtered=useMemo(()=>{const base=issues.filter(i=>(!search||`${i.identifier} ${i.title}`.toLowerCase().includes(search.toLowerCase()))&&(!filter||i.state?.name===filter)); const mine=view==='My issues'&&myIssuesTab==='Assigned'; return base.filter(i=>!mine||i.assignee?.id===viewer.id)},[issues,search,filter,view,viewer.id,myIssuesTab]);
-// /signup is its own screen, outside the workspace shell: a person signing up has no workspace yet, and it must render for both an anonymous browser (the Google button) and a google_verified one (choosing an address). Checked before the auth gates so a Google callback that returns to /signup lands on the page rather than on /login.
-if(location.pathname==='/signup'||location.pathname.startsWith('/signup/'))return <SignupPage/>;
-if(inviteCode)return <InviteAcceptance code={inviteCode} onDone={()=>{history.replaceState({},'', '/');setInviteCode('');setToken('session')}}/>;if(!token&&!onboarding.checked)return <div className="app"><header className="topbar"><span className="brand"><img className="brand-mark" src="/hoja-clover.8371400e.svg" alt=""/><span>Hoja</span></span></header><div className="app-body"><main className="main" aria-busy="true"><p role="status" className="page-loading">Checking your workspace…</p><div aria-hidden="true"><span className="skeleton skeleton-title"/><span className="skeleton skeleton-line"/><span className="skeleton skeleton-line"/><span className="skeleton skeleton-line short"/><span className="skeleton skeleton-line short"/></div></main></div></div>;if(!token&&!onboarding.initialized&&!hostedSignIn)return <SetupWizard adapter={setupAdapter} mode="first-run"/>;if(!token&&pendingWorkspace)return <WorkspaceChooser pending={pendingWorkspace} onBack={()=>setPendingWorkspace(null)} onLogin={()=>{setPendingWorkspaceState(null);setToken('session');setError('');history.replaceState({},'', '/workspace/my-issues/assigned');setView('My issues')}}/>;if(!token)return <Login onWorkspaceRequired={setPendingWorkspace} onLogin={t=>{if(t!=='session')localStorage.setItem('hoja_token',t);setToken(t);setError('');history.replaceState({},'', '/workspace/my-issues/assigned');setView('My issues')}} error={error}/>;
-const setMyTab=(tab:MyIssuesTab)=>{setMyIssuesTab(tab);const path=`/workspace/my-issues/${tab.toLowerCase()}`;history.pushState({},'',path)};const openNewIssue=(stateId?:string)=>{setNewStateId(stateId||'');setNewOpen(true)};const allStates=teams.flatMap(t=>t.states.nodes);const uniqueStates=[...new Map(allStates.map(s=>[stateKey(s),s])).values()]; const logout=async()=>{try{void fetch('/auth/logout',{method:'POST',credentials:'include',keepalive:true})}finally{void syncRef.current?.forget();try{for(const k of Object.keys(sessionStorage))if(k.startsWith('hoja_page_cache:'))sessionStorage.removeItem(k)}catch{/* storage unavailable */}localStorage.removeItem('hoja_token');setToken(null);setViewer({});setWorkspace({id:'',name:'',urlKey:''});setTeams([]);setIssues([]);setActivityEvents([]);setActivityCursor(null);setActivityHasMore(false);setActivityError('');activityGeneration.current++;activityLoadRef.current=false;setActivityLoading(false);issueLoadGeneration.current++;olderMineRef.current={};setOlderMine({});projectGeneration.current++;setProjects([]);setProjectCursor(null);setProjectHasMore(false);setProjectError('');setLabels([]);setCycles([])}}; const boardIssues=(boardTab==='Active'?filtered.filter(i=>i.state?.type==='started'||i.state?.type==='unstarted'):boardTab==='Backlog'?filtered.filter(i=>i.state?.type==='backlog'):filtered).filter(i=>!boardTeam||i.team?.id===boardTeam); const knownGrouped=uniqueStates.map(state=>({state,items:boardIssues.filter(i=>i.state&&stateKey(i.state)===stateKey(state))})); const unknownState={id:'unknown',name:'Unknown state',color:'#a1a1aa',type:'unknown'}; const unknownItems=boardIssues.filter(i=>!i.state||!uniqueStates.some(s=>stateKey(s)===stateKey(i.state!))); const grouped=[...knownGrouped.filter(group=>group.items.length||boardTab==='All issues'),...(unknownItems.length?[{state:unknownState,items:unknownItems}]:[])];
-const moveIssueState=async(issueId:string,state:IssueState)=>{const issue=issues.find(i=>i.id===issueId);const teamStates=issue?.team?.id?teams.find(t=>t.id===issue.team?.id)?.states.nodes:undefined;const target=teamStates?teamStates.find(s=>stateKey(s)===stateKey(state)):state;if(!target)throw Error('This team has no matching status');const settle=syncRef.current?.patch(issueId,{state:target});try{const d=await gql(`mutation($id:String!,$input:IssueUpdateInput!){issueUpdate(id:$id,input:$input){success}}`,{id:issueId,input:{stateId:target.id}});if(!d.issueUpdate.success)throw Error('Could not move task')}catch(e){settle?.(false);throw e}if(settle)settle(true);else setIssues(old=>old.map(i=>i.id===issueId?{...i,state:target}:i))};
-const updateIssue=async(issueId:string,input:Record<string,unknown>)=>{const sync=syncRef.current;const optimistic=sync?sync.patchFromInput(input):{};const before=activeIssue&&activeIssue.id===issueId?activeIssue:null;const settle=sync?.patch(issueId,optimistic);if(before)setActiveIssue(old=>old&&old.id===issueId?{...old,...optimistic}:old);let updated:Issue;try{const d=await gql(`mutation($id:String!,$input:IssueUpdateInput!){issueUpdate(id:$id,input:$input){success issue ${issueFields}}}`,{id:issueId,input});if(!d.issueUpdate.success||!d.issueUpdate.issue)throw Error('Update was rejected');updated=d.issueUpdate.issue}catch(e){settle?.(false);if(before)setActiveIssue(old=>old&&old.id===issueId?before:old);throw e}settle?.(true);setActiveIssue(old=>old&&old.id===issueId?{...old,...updated}:old);if(!sync)setIssues(old=>old.map(i=>i.id===issueId?{...i,...updated}:i))};
-const dashboardContent = view === 'Board'
-  ? <section className="board-page" aria-labelledby="board-title"><header className="board-page-head"><h1 id="board-title">Board</h1></header><div className="board-page-tabs" role="tablist">{(['Active','Backlog','All issues'] as BoardTab[]).map(tab=><button role="tab" aria-selected={boardTab===tab} className={boardTab===tab?'selected':''} key={tab} onClick={()=>setBoardTab(tab)}>{displayLabel(tab)}</button>)}{teams.length>1&&<div className="board-team-filter" role="group" aria-label="Filter board by team">{[{id:'',label:'All teams'},...teams.map(t=>({id:t.id,label:t.key}))].map(o=><button key={o.id||'all'} type="button" aria-pressed={boardTeam===o.id} className={boardTeam===o.id?'selected':''} onClick={()=>setBoardTeam(o.id)}>{o.label}</button>)}</div>}<button className="board-create" onClick={()=>openNewIssue()} aria-label="Create task"><Plus size={15}/></button></div><Kanban teams={teams} grouped={grouped} onSelect={openIssue} onNew={(stateId?:string)=>openNewIssue(stateId)} onMoved={moveIssueState} onUpdate={updateIssue}/></section>
-  : dataLoading&&!issues.length?<p role="status" className="page-loading">Loading tasks…</p>:<IssueList issues={filtered} onOpen={openIssue} teams={teams} onStatusChange={(id,stateId)=>updateIssue(id,{stateId})} header={view==='My issues'?'Assigned to me':'Recent tasks'} emptyTitle={view==='My issues'?'Nothing assigned to you':'You’re all caught up'} emptyText={view==='My issues'?'Tasks assigned to you will appear here.':'New tasks will appear here as your team adds work.'} emptyAction={view==='Inbox'?<button className="primary" onClick={()=>openNewIssue()}><Plus size={15}/>Create a task</button>:undefined}/>
-const pageContent = view === 'Issue detail' ? <IssueDetailPage workspaceName={workspace?.name} viewer={viewer} issue={activeIssue} issueList={issues} onOpenIssue={openIssue} loading={issueLoading} error={issueError} onArchive={async()=>{if(!activeIssue)return;const target=activeIssue;const settle=hideIssueLocally(target.id);setActiveIssue(null);navigate('Issues','/workspace/issues');try{const d=await gql(`mutation($id:String!){issueArchive(id:$id){success}}`,{id:target.identifier});if(!d.issueArchive?.success)throw Error('Task could not be archived.');settle(true)}catch(e){settle(false);setError(`Could not archive ${target.identifier}: ${(e as Error).message}`);throw e}}} onDelete={async()=>{if(!activeIssue)return;const target=activeIssue;const settle=hideIssueLocally(target.id);setActiveIssue(null);navigate('Issues','/workspace/issues');try{const d=await gql(`mutation($id:String!){issueDelete(id:$id){success}}`,{id:target.identifier});if(!d.issueDelete?.success)throw Error('Task could not be deleted.');settle(true)}catch(e){settle(false);setError(`Could not delete ${target.identifier}: ${(e as Error).message}`);throw e}}} onDeleteComment={async cid=>{const d=await gql(`mutation($id:String!){commentDelete(id:$id){success}}`,{id:cid});if(!d.commentDelete?.success)throw Error('Comment could not be deleted.');setActiveIssue(a=>a?{...a,comments:{nodes:(a.comments?.nodes||[]).filter(c=>c.id!==cid)}}:a)}} teams={teams} projects={projects} labels={labels} cycles={cycles} onUpdate={input=>updateIssue(activeIssue?.id||'',input)} onBack={()=>{const ret=issueReturn;setActiveIssue(null);setIssueReturn(null);setIssueReturnProject(null);if(ret)navigate(ret.view,ret.path);else navigate('My issues')}} backLabel={issueReturn?.label||'My tasks'} onRetry={()=>setIssueRetry(r=>r+1)} onComment={async(body)=>{const d=await gql(`mutation($input:CommentCreateInput!){commentCreate(input:$input){success comment{id body createdAt user{name}}}}`,{input:{issueId:activeIssue?.id,body}});if(!d.commentCreate.success)throw Error('Comment was rejected');setActiveIssue(old=>old?{...old,comments:{nodes:[...(old.comments?.nodes||[]),d.commentCreate.comment]}}:old)}}/>
-  : view === 'Cycle detail' ? activeCycle&&!cycleDetailError?<CycleDetail cycle={activeCycle} team={teams.find(t=>t.id===activeCycle.team?.id)} teams={teams} viewer={viewer} orgId={workspace.id} workspaceName={workspace.name} projects={projects} labels={labels} cycles={cycles} onBack={()=>navigate('Cycles')} onSelect={openIssue} revision={revision} onNavigate={navigate}/>:<section className="team-scoped-page" role={cycleDetailError?'alert':'status'}>{cycleDetailError||'Loading cycle…'}</section>
-  : view === 'Team cycle' ? <TeamCyclePage team={teams.find(t=>t.key.toLowerCase()===location.pathname.split('/')[3]?.toLowerCase())} teams={teams} viewer={viewer} orgId={workspace.id} workspaceName={workspace.name} projects={projects} labels={labels} cycles={cycles} upcoming={location.pathname.endsWith('/upcoming')} onBack={()=>navigate('Team cycles',`/workspace/team/${location.pathname.split('/')[3]}/cycles`)} onIssue={openIssue} revision={revision} onNavigate={navigate}/>
-  : view === 'Team Home' ? (teams.some(t=>t.key.toLowerCase()===location.pathname.split('/')[3]?.toLowerCase())?<TeamHome team={teams.find(t=>t.key.toLowerCase()===location.pathname.split('/')[3]?.toLowerCase())} issues={issues} onNavigate={navigate} onSelectIssue={openIssue}/>:<section className="team-scoped-page" role="alert">Team not found in this workspace.</section>)
-  : view === 'Team issues' ? <TeamIssuesPage teams={teams} projects={projects} team={teams.find(t=>t.key.toLowerCase()===location.pathname.split('/')[3]?.toLowerCase())} onIssue={openIssue} layout={issueLayout} onLayoutChange={changeIssueLayout} onMoved={moveIssueState} onUpdate={updateIssue} onNew={(stateId?:string)=>openNewIssue(stateId)}/>
-  : view === 'Team cycle settings' ? <TeamCycleSettings team={teams.find(t=>t.key.toLowerCase()===location.pathname.split('/')[3]?.toLowerCase())} admin={viewer.admin} onBack={()=>navigate('Team cycles',`/workspace/team/${location.pathname.split('/')[3]}/cycles`)}/>
-  : view === 'Team cycles' ? <TeamCyclesPage team={teams.find(t=>t.key.toLowerCase()===location.pathname.split('/')[3]?.toLowerCase())} teams={teams} viewer={viewer} workspaceName={workspace.name} revision={revision} onCycle={c=>{setActiveCycle(c);navigate('Cycle detail',`/workspace/cycle/${c.id}`)}} onSettings={()=>navigate('Team cycle settings',`/workspace/team/${location.pathname.split('/')[3]}/cycles/settings`)} onNavigate={navigate}/>
-  : view === 'Team projects' ? <TeamProjectsPage team={teams.find(t=>t.key.toLowerCase()===location.pathname.split('/')[3]?.toLowerCase())} revision={revision} onCreate={()=>setProjectOpen(true)} onProject={p=>{setActiveProject(p);navigate('Project detail',`/workspace/project/${p.id}`)}}/>
-  : view === 'Team views' ? <TeamViewsPage team={teams.find(t=>t.key.toLowerCase()===location.pathname.split('/')[3]?.toLowerCase())} onIssue={openIssue} onNavigate={navigate} revision={revision}/>
-  : view === 'Create workspace' ? <CreateWorkspacePage onCreated={async w=>{const switched=await gql(`mutation($id:String!){workspaceSwitch(organizationId:$id){success organization{id name urlKey}}}`,{id:w.id});if(!switched.workspaceSwitch?.success)throw Error('Workspace created, but could not switch into it');history.pushState({},'',`/workspace/inbox`);setWorkspace(switched.workspaceSwitch.organization||w);setView('Inbox');const d=await gql(query);setViewer(d.viewer);setTeams(d.teams.nodes);setIssues(d.issues.nodes);const wd=await gql(`query MyWorkspaces{myWorkspaces{id organizationId name urlKey role}}`);setWorkspaces(wd.myWorkspaces);setSetupResume({workspaceId:w.id,workspaceUrlKey:w.urlKey})}}/>
-  : view === 'Settings' ? (settingsSection==='members'&&viewer.admin?<MembersPage teams={teams} onTeamsChanged={setTeams} revision={revision} viewer={viewer}/>:<WorkspaceSettings workspace={workspace} viewer={viewer} onSaved={setWorkspace} onProfileSaved={name=>setViewer(current=>({...current,name}))} onTeamsChanged={setTeams} teams={teams} section={settingsSection} theme={theme} onTheme={value=>void savePreference('theme',value)} onFontScale={value=>void savePreference('fontSize',value)} preferenceMessage={preferenceMessage} fontScale={fontScale} onBack={()=>{const p=settingsReturn.current;history.pushState({},'',p);setView(routeView(p))}}/> )
-  : view === 'Members' ? <MembersPage teams={teams} onTeamsChanged={setTeams} revision={revision} viewer={viewer}/>
-  : view === 'Projects' ? <ProjectsPage projects={projects} hasMore={projectHasMore} loading={projectLoading} error={projectError} onLoadMore={loadMoreProjects} onOpen={p=>{navigate('Project detail',`/workspace/project/${p.id}`);setActiveProject(p)}} onCreate={()=>setProjectOpen(true)}/>
-  : view === 'Project view' && activeProject && !projectDetailError ? <ProjectViewsPage key={activeProject.id} project={activeProject} onBack={()=>navigate('Project detail',`/workspace/project/${activeProject.id}/issues`)} onOpenIssue={issue=>openIssue(issue,activeProject.id)} revision={revision}/>
-  : view === 'Project view' ? <section className="project-reference-state" role={projectDetailError?'alert':'status'}>{projectDetailError||'Loading project…'} <button type="button" onClick={()=>navigate('Projects')}>Back to projects</button></section>
-  : view === 'Project detail' && activeProject && !projectDetailError ? <ProjectDetails key={activeProject.id} project={activeProject} onNewView={()=>navigate('Project view',`/workspace/project/${activeProject.id}/view/new`)} issues={issues} teams={teams} projects={projects} layout={issueLayout} onLayoutChange={changeIssueLayout} onMoved={moveIssueState} onUpdate={updateIssue} onNew={(stateId?:string)=>openNewIssue(stateId)} onOpenIssue={issue=>openIssue(issue,activeProject.id)} onBack={()=>navigate('Projects')} onSaved={updated=>{setActiveProject(updated);setProjects(old=>old.map(p=>p.id===updated.id?updated:p))}} revision={revision}/>
-  : view === 'Project detail' ? <section className="project-reference-state" role={projectDetailError?'alert':'status'}>{projectDetailError||'Loading project…'} <button type="button" onClick={()=>navigate('Projects')}>Back to projects</button></section>
-  : view === 'Meetings' ? <MeetingsPage key={workspace.id} viewer={viewer} onNavigate={navigate}/>
-  : view === 'Inbox' ? <InboxPage key={workspace.id} path={window.location.pathname} onOpenIssue={openIssue} revision={revision}/>
-  : view === 'Pulse' ? <PulsePage key={workspace.id} path={window.location.pathname} onOpenProject={p=>{navigate('Project detail',`/workspace/project/${p.id}`);setActiveProject(p)}} revision={revision}/>
-  : view === 'Initiatives' ? <InitiativesPage key={workspace.id} viewer={viewer} path={window.location.pathname} projects={projects} onOpenProject={p=>{navigate('Project detail',`/workspace/project/${p.id}`);setActiveProject(p)}} revision={revision}/>
-  : view === 'Favorite views' ? <ViewsPage key={`favorites-${workspace.id}`} orgId={workspace.id} issues={issues} projects={projects} path={window.location.pathname} onNavigate={navigate} onSelect={openIssue} favoriteOnly/>
-  : view === 'Agent' ? <AgentChatPage workspaceName={workspace.name}/>
-  : view === 'Views' ? <ViewsPage key={workspace.id} orgId={workspace.id} issues={issues} projects={projects} path={window.location.pathname} onNavigate={navigate} onSelect={openIssue}/>
-  : view === 'Board' ? dashboardContent
-  : view === 'Cycles' ? <CyclesPage teams={teams} viewer={viewer} workspaceName={workspace.name} onCycle={c=>{setActiveCycle(c);navigate('Cycle detail',`/workspace/cycle/${c.id}`)}} onSettings={t=>navigate('Team cycle settings',`/workspace/team/${t.key.toLowerCase()}/cycles/settings`)} revision={revision} onNavigate={navigate}/>
-  : view === 'Not found' ? <section className="not-found-page" role="alert"><h1>Page not found</h1><p>This page does not exist.</p></section>
-  : <><div className={`page-head ${view==='My issues'?'my-issues-head':''}`}><div><h1>{view==='Inbox'?'Inbox':displayLabel(view)}</h1><p>{view==='My issues'?`${viewer.name} · ${workspace.name}`:view==='Inbox'?'Your workspace, at a glance':`${viewer.name} · ${workspace.name}`}</p></div><div className="page-actions"><button className="outline" onClick={()=>setCommandOpen(true)}><Search size={15}/>Search</button><button className="primary" onClick={()=>openNewIssue()}><Plus size={16}/>New task</button></div></div>{view==='My issues'&&<nav className="my-issue-tabs" aria-label="My task views">{(['Assigned','Created','Subscribed','Activity'] as const).map(t=><button key={t} role="tab" aria-selected={myIssuesTab===t} className={myIssuesTab===t?'selected':''} onClick={()=>setMyTab(t)}>{t}</button>)}</nav>}{view!=='My issues'&&<div className="inbox-summary"><div><span>Open tasks</span><b>{issues.filter(i=>i.state?.type!=='completed'&&i.state?.type!=='canceled').length}</b><small>Across your teams</small></div><div><span>In progress</span><b>{issues.filter(i=>i.state?.type==='started').length}</b><small>Currently being worked</small></div><div><span>Completed</span><b>{issues.filter(i=>i.state?.type==='completed').length}</b><small>In loaded tasks</small></div><div><span>Active projects</span><b>{projects.filter(p=>p.state==='started'||p.state==='in progress'||p.state==='In progress').length}</b><small>{projects.length} total</small></div></div>}{view==='My issues'?<MyIssuesContent onOpenIssue={openIssue} issues={myIssuesTab==='Created'?issues.filter(i=>i.creator?.id===viewer.id):myIssuesTab==='Subscribed'?issues.filter(i=>i.subscribers?.nodes.some(u=>u.id===viewer.id)):myIssuesTab==='Activity'?issues.filter(i=>i.creator?.id===viewer.id||i.assignee?.id===viewer.id):filtered} tab={myIssuesTab} activityEvents={activityEvents} activityHasMore={activityHasMore} activityLoading={activityLoading} activityError={activityError} onLoadActivity={()=>loadActivity(activityCursor)} key={workspace.id} onNew={(stateId?:string)=>openNewIssue(stateId)} layout={issueLayout} onLayoutChange={changeIssueLayout} states={uniqueStates} onMoved={moveIssueState} onUpdate={updateIssue} teams={teams} projects={projects} older={olderMine[olderField]} onLoadOlder={onLoadOlder}/>
-:dashboardContent}</>;
-if(token&&setupResume)return <SetupWizard adapter={setupAdapter} mode="existing" initial={{...setupResume,teamId:teams[0]?.id}} onFinish={()=>setupAdapter.openWorkspace()}/>;
-return <div className={`app ${sidebarCollapsed&&view!=='Settings'?'sidebar-collapsed':''}`}><header className="topbar"><button className="mobile-nav-toggle" aria-label={view==='Settings'?'Open settings navigation':'Open navigation'} aria-expanded={mobile} aria-controls={view==='Settings'?'settings-navigation':'workspace-sidebar'} onClick={()=>setMobile(v=>!v)}><Menu size={19}/></button><button className="brand" onClick={()=>navigate('My issues')}><img className="brand-mark" src="/hoja-clover.8371400e.svg" alt=""/><span>Hoja</span></button><button className="command" onClick={()=>setCommandOpen(true)}><Search size={15}/>Search tasks and pages<kbd>⌘ K</kbd></button></header><div className="app-body">{view==='Settings'?<SettingsSidebar workspace={workspace} viewer={viewer} section={settingsSection} onNavigate={id=>navigate('Settings',`/workspace/settings/${id}`)} onBack={()=>{const p=settingsReturn.current;history.pushState({},'',p);setView(routeView(p))}} onLogout={logout} mobile={mobile} onCloseMobile={()=>setMobile(false)}/>:<aside id="workspace-sidebar" className={`sidebar ${mobile?'open':''}`} aria-label="Workspace sidebar"><div className="sidebar-top"><div className="workspace-picker"><Popover className="workspace-popover" open={orgMenu} onOpenChange={open=>{setOrgMenu(open);if(open)setMoreOpen(false)}} panelClassName="sidebar-popover workspace-menu" panelId="workspace-switcher-menu" panelRole="menu" trigger={(expanded,toggle)=><button type="button" className="workspace-trigger" aria-label={onboarding.singleOrg?'Workspace menu':'Switch workspace'} title={onboarding.singleOrg?'Workspace menu':'Switch workspace'} aria-haspopup="menu" aria-expanded={expanded} aria-controls="workspace-switcher-menu" onClick={toggle} disabled={switching}><span className="workspace-trigger-mark">{(workspace.name||'W').slice(0,1).toUpperCase()}</span><span className="workspace-trigger-copy"><b>{switching?'Switching…':workspace.name||'Workspace'}</b><small>{workspace.urlKey}</small></span><ChevronDown size={15}/></button>}><div className="workspace-menu-head"><span className="workspace-trigger-mark">{(workspace.name||'W').slice(0,1).toUpperCase()}</span><span><b>{workspace.name}</b><small>{workspace.urlKey}</small></span></div><button type="button" role="menuitem" onClick={()=>{setOrgMenu(false);setMobile(false);navigate('Settings')}}>Workspace settings</button><button type="button" role="menuitem" onClick={()=>{setOrgMenu(false);setMobile(false);navigate('Members')}}>Manage members</button>{!onboarding.singleOrg&&<button type="button" role="menuitem" onClick={()=>{setOrgMenu(false);setMobile(false);navigate('Create workspace')}}>Create workspace</button>}{!onboarding.singleOrg&&workspaces.length>1&&<><div className="workspace-menu-label">Switch workspace</div>{workspaces.map(w=><button type="button" role="menuitem" key={w.organizationId} onClick={()=>{setOrgMenu(false);setMobile(false);switchWorkspace(w.organizationId)}} disabled={switching||w.organizationId===workspace.id}>{w.name}<small>{w.urlKey}</small></button>)}</>}<button type="button" role="menuitem" onClick={logout}>Log out</button></Popover>{switchError&&<small role="alert" className="error">{switchError}</small>}</div><button className="sidebar-icon sidebar-create" aria-label="Create new task" title="Create new task" onClick={()=>openNewIssue()}><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" clipRule="evenodd" d="M7.25 1C7.66414 1 8 1.33589 8 1.75S7.66421 2.5 7.25 2.5H4.75A2.25 2.25 0 0 0 2.5 4.75v6.5a2.25 2.25 0 0 0 2.25 2.25h6.5a2.25 2.25 0 0 0 2.25-2.25v-2.5a.75.75 0 0 1 1.5 0v2.5A3.75 3.75 0 0 1 11.25 15h-6.5A3.75 3.75 0 0 1 1 11.25v-6.5A3.75 3.75 0 0 1 4.75 1h2.5Z"/><path d="M13.4326 1.26953a.919.919 0 0 1 1.2988 1.2988L9.2373 8.0615a3.25 3.25 0 0 1-2.082.9385c-.0877.0052-.1606-.0675-.1553-.1553a3.25 3.25 0 0 1 .9385-2.082L13.4326 1.26953Z"/></svg></button><button type="button" className="sidebar-icon sidebar-toggle" aria-label={sidebarCollapsed?'Expand sidebar':'Collapse sidebar'} aria-expanded={!sidebarCollapsed} aria-controls="workspace-sidebar" title={sidebarCollapsed?'Expand sidebar':'Collapse sidebar'} onClick={()=>setSidebarCollapsed(v=>!v)}>{sidebarCollapsed?<PanelLeftOpen size={16}/>:<PanelLeftClose size={16}/>}</button></div><nav aria-label="Workspace navigation">{sections.map(([section,items])=><div className={`nav-group nav-group-${section.toLowerCase().replace(/ /g,'-')}`} key={section}>{section!=='primary'&&<button type="button" className="nav-group-toggle" aria-expanded={!collapsedSections[section]} onClick={()=>setCollapsedSections(c=>({...c,[section]:!c[section]}))}><span>{section}</span><ChevronDown size={12} className={collapsedSections[section]?'collapsed':''}/></button>}{!collapsedSections[section]&&<>{section==='Workspace'&&<Popover className="sidebar-more-wrap" open={moreOpen} onOpenChange={open=>{setMoreOpen(open);if(open)setOrgMenu(false)}} panelClassName="sidebar-popover sidebar-more-menu" panelId="workspace-more-menu" panelRole="menu" trigger={(expanded,toggle)=><button type="button" className="nav-item" aria-label="Workspace More" title="Workspace More" aria-haspopup="menu" aria-expanded={expanded} aria-controls="workspace-more-menu" onClick={toggle}><MoreHorizontal size={15}/><span>More</span></button>}><button type="button" role="menuitem" onClick={()=>{setMoreOpen(false);navigate('Members');setMobile(false)}}>Members</button><p>Customers, team administration and sidebar customization are not available yet.</p></Popover>}{section==='Your teams'&&teams.map(team=><div className="team-block" key={team.id}><div className="team-row"><button type="button" className={`team-name ${view==='Team Home'&&window.location.pathname.includes(team.key.toLowerCase())?'active':''}`} aria-expanded={sidebarCollapsed?undefined:!collapsedTeams[team.id]} title={team.name} aria-label={team.name} onClick={()=>{if(sidebarCollapsed){navigate('Team Home',`/workspace/team/${team.key.toLowerCase()}/home`);setMobile(false);return}setCollapsedTeams(c=>({...c,[team.id]:!c[team.id]}))}}><Users size={15}/><span>{team.name}</span></button></div>{!collapsedTeams[team.id]&&<div className="team-nav-links"><button type="button" onClick={()=>{navigate('Team Home',`/workspace/team/${team.key.toLowerCase()}/home`);setMobile(false)}} aria-current={view==='Team Home'&&location.pathname.endsWith('/home')?'page':undefined}>Home</button><button type="button" onClick={()=>{navigate('Team issues',`/workspace/team/${team.key.toLowerCase()}/active`);setMobile(false)}} aria-current={view==='Team issues'?'page':undefined}>Tasks</button><button type="button" onClick={()=>{navigate('Team cycles',`/workspace/team/${team.key.toLowerCase()}/cycles`);setMobile(false)}} aria-current={view==='Team cycles'?'page':undefined}>Cycles</button><div className="team-cycle-links"><button type="button" aria-current={view==='Team cycle'&&location.pathname.includes(`/team/${team.key.toLowerCase()}/cycle/active`)?'page':undefined} onClick={()=>{navigate('Team cycle',`/workspace/team/${team.key.toLowerCase()}/cycle/active`);setTeamCycleRoute(`/workspace/team/${team.key.toLowerCase()}/cycle/active`);setMobile(false)}}>Current</button><button type="button" aria-current={view==='Team cycle'&&location.pathname.includes(`/team/${team.key.toLowerCase()}/cycle/upcoming`)?'page':undefined} onClick={()=>{navigate('Team cycle',`/workspace/team/${team.key.toLowerCase()}/cycle/upcoming`);setTeamCycleRoute(`/workspace/team/${team.key.toLowerCase()}/cycle/upcoming`);setMobile(false)}}>Upcoming</button></div><button type="button" onClick={()=>{navigate('Team projects',`/workspace/team/${team.key.toLowerCase()}/projects/all`);setMobile(false)}} aria-current={view==='Team projects'?'page':undefined}>Projects</button><button type="button" onClick={()=>{navigate('Team views',`/workspace/team/${team.key.toLowerCase()}/views/issues`);setMobile(false)}} aria-current={view==='Team views'?'page':undefined}>Views</button></div>}</div>)}{items.map(([label,Icon])=><button type="button" className={`nav-item ${view===label&&!(label==='Views'&&window.location.pathname.includes('/team/'))?'active':''}`} key={label} onClick={()=>{navigate(label);setMobile(false)}} aria-current={view===label?'page':undefined} title={displayLabel(label)} aria-label={displayLabel(label)}><Icon size={15}/><span>{displayLabel(label)}</span>{label==='Meetings'&&<MeetingBadge/>}</button>)}</>}</div>)}</nav><div className="sidebar-bottom"><span>{viewer.name||'Account'}<small>{viewer.email}</small></span><button className="logout-button" onClick={logout} aria-label="Log out" title="Log out"><LogOut size={16}/></button></div></aside>}<div className="workspace-content"><main className="main">{error&&<div className="app-error" role="alert"><b>Couldn’t load this workspace</b><span>{error}</span><button className="outline" onClick={()=>setError('')}>Dismiss</button></div>}{pageContent}</main></div><MeetingNotifier/>{projectOpen&&<NewProject teams={teams} onClose={()=>setProjectOpen(false)} onCreated={()=>{setProjectOpen(false);gql(`query Projects{projects(first:100){nodes{id name description state progress startDate targetDate health lead{name} teams{nodes{id name key}}} pageInfo{hasNextPage endCursor}}}`).then(d=>{setProjects(d.projects.nodes);setProjectCursor(d.projects.pageInfo?.endCursor||null);setProjectHasMore(Boolean(d.projects.pageInfo?.hasNextPage))}).catch(e=>setProjectError((e as Error).message))}}/>}{newOpen&&<NewIssue teams={teams} initialStateId={newStateId||undefined} onClose={()=>{setNewOpen(false);setNewStateId('')}} onCreated={()=>{setNewOpen(false);setNewStateId('');void syncRef.current?.pull()}}/>}{commandOpen&&<CommandPalette query={commandQuery} setQuery={setCommandQuery} issues={issues} onClose={()=>{setCommandOpen(false);setCommandQuery('')}} onIssue={i=>{setCommandOpen(false);openIssue(i)}} onNavigate={v=>{navigate(v);setCommandOpen(false)}}/>}</div></div>}
+  useEffect(() => {
+    const onPop = () => {
+      applyLegacyTaskRedirect();
+      if (routeView(window.location.pathname) === "Team cycle")
+        setTeamCycleRoute(window.location.pathname);
+      if (routeView(window.location.pathname) === "Settings")
+        setSettingsSection(
+          window.location.pathname.split("/")[3] || "preferences",
+        );
+      if (
+        ["Project detail", "Project view"].includes(
+          routeView(window.location.pathname),
+        )
+      )
+        setProjectDetailRefresh((n) => n + 1);
+      setView(routeView(window.location.pathname));
+      setIssueError("");
+      setActiveIssue(null);
+      setIssueReturn(null);
+      const segment = window.location.pathname.split("/").pop();
+      if (
+        ["assigned", "created", "subscribed", "activity"].includes(
+          segment || "",
+        )
+      )
+        setMyIssuesTab(
+          (
+            {
+              assigned: "Assigned",
+              created: "Created",
+              subscribed: "Subscribed",
+              activity: "Activity",
+            } as Record<string, MyIssuesTab>
+          )[segment!],
+        );
+      setActiveProject(null);
+      setActiveCycle(null);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  const [revision, setRevision] = useState(0);
+  const syncRef = useRef<SyncHandle | null>(null);
+  const [closedCutoff, setClosedCutoff] = useState("");
+  useEffect(() => {
+    if (!token || !workspace.id) return;
+    let live = true;
+    migrateLegacyViews(workspace.id)
+      .then((count) => {
+        if (live && count > 0) setRevision((r) => r + 1);
+      })
+      .catch(() => {
+        /* a refused legacy row must not block the app */
+      });
+    return () => {
+      live = false;
+    };
+  }, [token, workspace.id]);
+  useEffect(() => {
+    if (!token) return;
+    let t: number | undefined;
+    const off = connectRealtime(token, (ev) => {
+      publishChangeEvents([ev]);
+      window.clearTimeout(t);
+      t = window.setTimeout(() => setRevision((r) => r + 1), 300);
+    });
+    return () => {
+      window.clearTimeout(t);
+      off();
+    };
+  }, [token]);
+  useEffect(() => {
+    if (!token) return;
+    let live = true;
+    let meta: SyncMeta | null = null;
+    setDataLoading(true);
+    setError("");
+    const handle = startSync({
+      headers: (): Record<string, string> => {
+        const t = storedApiToken();
+        return t ? { authorization: `Bearer ${t}` } : {};
+      },
+      onView: (v) => {
+        if (!live) return;
+        setDataLoading(false);
+        if (v.reset) setError("");
+        setIssues(v.issues);
+        if (v.meta !== meta) {
+          meta = v.meta;
+          setViewer(v.meta.viewer);
+          setWorkspace(v.meta.workspace as typeof workspace);
+          setTeams(v.meta.teams.nodes);
+          setProjects(v.meta.projects.nodes);
+          setProjectCursor(v.meta.projects.pageInfo?.endCursor || null);
+          setProjectHasMore(Boolean(v.meta.projects.pageInfo?.hasNextPage));
+          setCycles(v.meta.cycles.nodes);
+          setLabels(v.meta.issueLabels.nodes);
+        }
+        if (v.reset) {
+          setClosedCutoff(v.closedCutoff);
+          issueLoadGeneration.current++;
+          olderMineRef.current = {};
+          setOlderMine({});
+        }
+      },
+      onError: (e) => {
+        if (live) {
+          setError(e.message);
+          setDataLoading(false);
+        }
+      },
+    });
+    syncRef.current = handle;
+    gql(`query MyPreferences{myPreferences{success theme fontSize}}`)
+      .then((prefs) => {
+        if (live && prefs.myPreferences.success) {
+          setTheme(prefs.myPreferences.theme);
+          setFontScale(prefs.myPreferences.fontSize);
+        }
+      })
+      .catch((e) => {
+        if (live)
+          setError(`Could not load preferences: ${(e as Error).message}`);
+      });
+    return () => {
+      live = false;
+      handle.stop();
+      if (syncRef.current === handle) syncRef.current = null;
+    };
+  }, [token]);
+  useEffect(() => {
+    if (!token) return;
+    gql(`query MyWorkspaces{myWorkspaces{id organizationId name urlKey role}}`)
+      .then((d) => setWorkspaces(d.myWorkspaces))
+      .catch((e) => setSwitchError(e.message));
+  }, [token, workspace.id]);
+  const switchWorkspace = async (id: string) => {
+    if (!id || id === workspace.id) return;
+    setSwitching(true);
+    setSwitchError("");
+    const previous = {
+      workspace,
+      teams,
+      issues,
+      projects,
+      labels,
+      cycles,
+      viewer,
+    };
+    let switched = false;
+    try {
+      const d = await gql(
+        `mutation($id:String!){workspaceSwitch(organizationId:$id){success redirectUrl organization{id name urlKey}}}`,
+        { id },
+      );
+      if (!d.workspaceSwitch.success) throw Error("Workspace switch denied");
+      if (d.workspaceSwitch.redirectUrl) {
+        // That workspace lives on its own address: this host's session stays
+        // as it is, and the browser signs in there instead.
+        window.location.assign(d.workspaceSwitch.redirectUrl);
+        return;
+      }
+      switched = true;
+      localStorage.removeItem("hoja_saved_views_" + workspace.id);
+      setWorkspace(d.workspaceSwitch.organization);
+      setTeams([]);
+      setIssues([]);
+      setActivityEvents([]);
+      setActivityCursor(null);
+      setActivityHasMore(false);
+      setActivityError("");
+      activityGeneration.current++;
+      activityLoadRef.current = false;
+      setActivityLoading(false);
+      issueLoadGeneration.current++;
+      olderMineRef.current = {};
+      setOlderMine({});
+      projectGeneration.current++;
+      setProjects([]);
+      setProjectCursor(null);
+      setProjectHasMore(false);
+      setProjectError("");
+      setLabels([]);
+      setCycles([]);
+      setActiveProject(null);
+      setSelected(null);
+      setSearch("");
+      setFilter("");
+      setView("Inbox");
+      history.pushState({}, "", `/workspace/inbox`);
+      await syncRef.current?.reset();
+      setWorkspace(d.workspaceSwitch.organization);
+    } catch (e) {
+      if (!switched) {
+        setWorkspace(previous.workspace);
+        setTeams(previous.teams);
+        setIssues(previous.issues);
+        setProjects(previous.projects);
+        setLabels(previous.labels);
+        setCycles(previous.cycles);
+        setViewer(previous.viewer);
+      }
+      setSwitchError((e as Error).message);
+    } finally {
+      setSwitching(false);
+    }
+  };
+  /* eslint-disable react-hooks/exhaustive-deps -- route or session driven; the listed values are written by this effect or are recreated each render */
+  useEffect(() => {
+    if (!token || view !== "Issue detail") return;
+    const ident = decodeURIComponent(
+      window.location.pathname.split("/").filter(Boolean)[2] || "",
+    );
+    if (!ident) {
+      setIssueError("Missing task identifier");
+      setIssueLoading(false);
+      return;
+    }
+    setIssueError("");
+    const known =
+      peekIssue(ident) ||
+      (cachedIssueDetail(ident)?.detail as Issue | undefined);
+    if (known) {
+      setActiveIssue((old) => (old && old.id === known.id ? old : known));
+      setIssueLoading(false);
+      return;
+    }
+    const hintId =
+      activeIssue &&
+      (activeIssue.identifier === ident || activeIssue.id === ident)
+        ? activeIssue.id
+        : undefined;
+    let live = true;
+    setIssueLoading(true);
+    setActiveIssue((old) =>
+      old && (old.identifier === ident || old.id === ident) ? old : null,
+    );
+    const offStore = onStoreIssue(ident, (i) => {
+      if (live) {
+        setActiveIssue((old) => (old && old.id === i.id ? old : i));
+        setIssueLoading(false);
+      }
+    });
+    const issueTimeout = setTimeout(() => {
+      if (live && !peekIssue(ident)) {
+        setIssueError(
+          "Loading the task timed out. Check your connection and retry.",
+        );
+        setIssueLoading(false);
+      }
+    }, 20000);
+    fetchIssueDetail(ident, hintId)
+      .then((e) => {
+        if (live)
+          setActiveIssue((old) =>
+            old && old.id === e.detail.id ? old : (e.detail as Issue),
+          );
+      })
+      .catch((e) => {
+        if (live && !peekIssue(ident)) {
+          setIssueError((e as Error).message);
+          setActiveIssue(null);
+        }
+      })
+      .finally(() => {
+        if (live) {
+          clearTimeout(issueTimeout);
+          setIssueLoading(false);
+        }
+      });
+    return () => {
+      live = false;
+      offStore();
+      clearTimeout(issueTimeout);
+    };
+  }, [token, view, window.location.pathname, issueRetry]);
+  /* eslint-enable react-hooks/exhaustive-deps */
+  const projectRouteId =
+    view === "Project detail" || view === "Project view"
+      ? window.location.pathname.split("/").filter(Boolean)[2]
+      : undefined;
+  const projectVersion = useEntityVersion(["project"], [projectRouteId]);
+  /* eslint-disable react-hooks/exhaustive-deps -- route or session driven; the listed values are written by this effect or are recreated each render */
+  useEffect(() => {
+    if (!token || (view !== "Project detail" && view !== "Project view"))
+      return;
+    const projectId = window.location.pathname.split("/").filter(Boolean)[2];
+    if (!projectId) return;
+    const known = projects.find((p) => p.id === projectId);
+    if (known) {
+      setActiveProject(known);
+      setProjectDetailError("");
+      setProjectDetailLoading(false);
+      return;
+    }
+    let live = true;
+    setProjectDetailLoading(true);
+    setProjectDetailError("");
+    if (activeProject?.id !== projectId) setActiveProject(null);
+    gql(
+      `query($id:String!){project(id:$id){id name description state progress startDate targetDate health lead{name} teams{nodes{id name key}}}}`,
+      { id: projectId },
+    )
+      .then((d) => {
+        if (!live) return;
+        if (!d.project) throw Error("Project not found");
+        setActiveProject(d.project);
+        setProjects((old) =>
+          old.some((p) => p.id === d.project.id)
+            ? old.map((p) => (p.id === d.project.id ? d.project : p))
+            : [...old, d.project],
+        );
+      })
+      .catch((e) => {
+        if (live) {
+          setProjectDetailError((e as Error).message);
+          setActiveProject(null);
+        }
+      })
+      .finally(() => {
+        if (live) setProjectDetailLoading(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [token, view, projectDetailRefresh, projectVersion, projects]);
+  /* eslint-enable react-hooks/exhaustive-deps */
+  useEffect(() => {
+    if (!token || view !== "Team cycle") return;
+    const path = location.pathname;
+    const parts = path.split("/").filter(Boolean);
+    const team = teams.find(
+      (t) => t.key.toLowerCase() === parts[2]?.toLowerCase(),
+    );
+    if (!team) {
+      setTeamCycle(null);
+      setTeamCycleLoading(false);
+      setTeamCycleError("Team not found in this workspace.");
+      return;
+    }
+    const upcoming = parts[4] === "upcoming";
+    if (!upcoming && team.activeCycle) {
+      setTeamCycle({
+        ...team.activeCycle,
+        team: { id: team.id, key: team.key, name: team.name },
+      });
+      setTeamCycleError("");
+      setTeamCycleLoading(false);
+      return;
+    }
+    let live = true;
+    setTeamCycle(null);
+    setTeamCycleLoading(true);
+    setTeamCycleError("");
+    gql(
+      `query TeamCycle($filter:CycleFilter){cycles(first:10,filter:$filter){nodes{id name number startsAt endsAt completedAt progress team{id key name}}}}`,
+      {
+        filter: {
+          team: { id: { eq: team.id } },
+          [upcoming ? "isNext" : "isActive"]: { eq: true },
+        },
+      },
+    )
+      .then((d) => {
+        if (live && location.pathname === path)
+          setTeamCycle(d.cycles.nodes[0] || null);
+      })
+      .catch((e) => {
+        if (live && location.pathname === path)
+          setTeamCycleError((e as Error).message);
+      })
+      .finally(() => {
+        if (live && location.pathname === path) setTeamCycleLoading(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [token, view, workspace.id, teams, teamCycleRoute]);
+  useEffect(() => {
+    if (!token || view !== "Cycle detail") return;
+    const id = location.pathname.split("/").filter(Boolean)[2];
+    if (!id) return;
+    let live = true;
+    const known = cycles.find((c) => c.id === id);
+    setCycleDetailError("");
+    if (known) {
+      setActiveCycle((old) =>
+        old?.id === id ? { ...known, description: old.description } : known,
+      );
+      setCycleDetailLoading(false);
+    } else {
+      setCycleDetailLoading(true);
+      setActiveCycle(null);
+    }
+    gql(
+      `query OneCycle($id:String!){cycle(id:$id){id name description number startsAt endsAt completedAt progress team{id key name}}}`,
+      { id },
+    )
+      .then((d) => {
+        if (!live) return;
+        if (!d.cycle) throw Error("Cycle not found in this workspace.");
+        setActiveCycle(d.cycle);
+      })
+      .catch((e) => {
+        if (live && !known) setCycleDetailError((e as Error).message);
+      })
+      .finally(() => {
+        if (live) setCycleDetailLoading(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [token, view, workspace.id, cycles]);
+  const loadMoreProjects = async () => {
+    if (projectLoadRef.current || !projectHasMore || !projectCursor) return;
+    projectLoadRef.current = true;
+    const generation = projectGeneration.current;
+    setProjectLoading(true);
+    setProjectError("");
+    try {
+      const d = await gql(
+        `query MoreProjects($after:String){projects(first:100,after:$after){nodes{id name description state progress startDate targetDate health lead{name} teams{nodes{id name key}}} pageInfo{hasNextPage endCursor}}}`,
+        { after: projectCursor },
+      );
+      if (generation !== projectGeneration.current) return;
+      const page = d.projects;
+      if (
+        page.pageInfo?.hasNextPage &&
+        (!page.pageInfo.endCursor ||
+          page.pageInfo.endCursor === projectCursor ||
+          !page.nodes.length)
+      )
+        throw Error("Projects pagination did not advance.");
+      setProjects((old) => {
+        const ids = new Set(old.map((p) => p.id));
+        return [...old, ...page.nodes.filter((p: Project) => !ids.has(p.id))];
+      });
+      setProjectCursor(page.pageInfo?.endCursor || null);
+      setProjectHasMore(Boolean(page.pageInfo?.hasNextPage));
+    } catch (e) {
+      if (generation === projectGeneration.current)
+        setProjectError((e as Error).message);
+    } finally {
+      projectLoadRef.current = false;
+      if (generation === projectGeneration.current) setProjectLoading(false);
+    }
+  };
+  // Live activity state: one in-flight request at a time. A refresh dropped by a load-more (or the
+  // reverse) is queued once and retried when the in-flight request settles, so neither is lost.
+  const activityRows = useRef(activityEvents);
+  activityRows.current = activityEvents;
+  const activityNext = useRef<{
+    after: string | null;
+    refresh: boolean;
+  } | null>(null);
+  const loadActivity = async (after: string | null = null, refresh = false) => {
+    if (activityLoadRef.current) {
+      activityNext.current = { after, refresh };
+      return;
+    }
+    activityLoadRef.current = true;
+    const generation = activityGeneration.current;
+    // A background refresh keeps the rows on screen instead of flipping the panel back to "Loading activity…".
+    if (!refresh) setActivityLoading(true);
+    setActivityError("");
+    try {
+      const d = await gql(
+        `query MyIssueActivity($after:String){myIssueActivity(first:50,after:$after){nodes{id eventType createdAt actor{name avatarSeed} changes issue ${issueFields}} pageInfo{hasNextPage endCursor}}}`,
+        { after },
+      );
+      if (generation !== activityGeneration.current) return;
+      const page = d.myIssueActivity;
+      const events: IssueActivityEvent[] = page.nodes;
+      const next = page.pageInfo;
+      if (
+        next?.hasNextPage &&
+        (!next.endCursor || next.endCursor === after || !events.length)
+      )
+        throw Error("Activity pagination did not advance. Retry later.");
+      if (refresh) {
+        // Newest page first, then the pages already loaded, de-duplicated by event id. The loaded tail keeps
+        // its own cursor, so "Load more activity" still continues from where it stopped. If more than a page
+        // of new events landed since the last refresh the old rows sit past a gap, so restart from this page.
+        const previous = activityRows.current;
+        const known = new Set(previous.map((e) => e.id));
+        const continuous =
+          !previous.length || events.some((e) => known.has(e.id));
+        setActivityEvents((old) => {
+          if (!continuous) return events;
+          const seen = new Set(events.map((e) => e.id));
+          return [...events, ...old.filter((e) => !seen.has(e.id))].sort(
+            (a, b) => b.createdAt.localeCompare(a.createdAt),
+          );
+        });
+        if (!continuous || !previous.length) {
+          setActivityCursor(next?.endCursor || null);
+          setActivityHasMore(Boolean(next?.hasNextPage));
+        }
+      } else {
+        setActivityEvents((previous) => {
+          const seen = new Set((after ? previous : []).map((e) => e.id));
+          return [
+            ...(after ? previous : []),
+            ...events.filter((e) => !seen.has(e.id)),
+          ];
+        });
+        setActivityCursor(next?.endCursor || null);
+        setActivityHasMore(Boolean(next?.hasNextPage));
+      }
+    } catch (e) {
+      if (generation === activityGeneration.current)
+        setActivityError((e as Error).message);
+    } finally {
+      activityLoadRef.current = false;
+      if (generation === activityGeneration.current) setActivityLoading(false);
+      const queued = activityNext.current;
+      activityNext.current = null;
+      if (queued && generation === activityGeneration.current)
+        void loadActivity(queued.after, queued.refresh);
+    }
+  };
+  // Stable handle for the effects below: they call through the ref, so their dependency lists stay honest.
+  const loadActivityRef = useRef(loadActivity);
+  loadActivityRef.current = loadActivity;
+  useEffect(() => {
+    if (token && view === "My issues" && myIssuesTab === "Activity")
+      void loadActivityRef.current();
+  }, [token, view, myIssuesTab, workspace.id]);
+  // The activity panel follows the same realtime feed that keeps the issue list current: issue/comment
+  // change events bump `activityVersion`, which refetches the newest page and merges it (see loadActivity).
+  const activityVersion = useEntityVersion(
+    ["issue", "comment"],
+    undefined,
+    500,
+  );
+  const activitySeenVersion = useRef(activityVersion);
+  useEffect(() => {
+    const fresh = activityVersion !== activitySeenVersion.current;
+    activitySeenVersion.current = activityVersion;
+    if (fresh && token && view === "My issues" && myIssuesTab === "Activity")
+      void loadActivityRef.current(null, true);
+  }, [activityVersion, token, view, myIssuesTab]);
+  // A reconnect the server answers with {reset:true} carries no events, so refresh the panel directly.
+  useEffect(() => {
+    if (!(token && view === "My issues" && myIssuesTab === "Activity")) return;
+    return onRealtimeFrame((frame) => {
+      if (frame.reset) void loadActivityRef.current(null, true);
+    });
+  }, [token, view, myIssuesTab]);
+  // Closed issues older than the sync window, limited to the viewer's own (assigned or created). Fetched once per
+  // sync generation when a My issues view needs them, then adopted into the store so they stay live.
+  const loadOlderMine = async (field: OlderField, retry = false) => {
+    const cur = olderMineRef.current[field];
+    if (
+      !closedCutoff ||
+      !viewer.id ||
+      (cur && !(retry && cur.status === "error"))
+    )
+      return;
+    const generation = issueLoadGeneration.current;
+    const set = (v: NonNullable<OlderMine[OlderField]>) => {
+      if (generation !== issueLoadGeneration.current) return;
+      olderMineRef.current = { ...olderMineRef.current, [field]: v };
+      setOlderMine(olderMineRef.current);
+    };
+    set({ status: "loading" });
+    let after: string | null = null;
+    try {
+      do {
+        const d = await gql(
+          `query MyOlderClosedIssues($after:String,$filter:IssueFilter){issues(first:100,after:$after,filter:$filter,orderBy:updatedAt){nodes ${issueFields} pageInfo{hasNextPage endCursor}}}`,
+          {
+            after,
+            filter: {
+              [field]: { id: { eq: viewer.id } },
+              state: { type: { in: ["completed", "canceled"] } },
+              updatedAt: { lt: closedCutoff },
+            },
+          },
+        );
+        if (generation !== issueLoadGeneration.current) return;
+        const page = d.issues;
+        const rows: Issue[] = page.nodes;
+        if (
+          page.pageInfo?.hasNextPage &&
+          (!page.pageInfo.endCursor ||
+            page.pageInfo.endCursor === after ||
+            !rows.length)
+        )
+          throw Error("Task pagination did not advance. Retry later.");
+        if (rows.length) {
+          if (syncRef.current) syncRef.current.adopt(rows);
+          else
+            setIssues((previous) => {
+              const seen = new Set(previous.map((x) => x.id));
+              return [...previous, ...rows.filter((x) => !seen.has(x.id))];
+            });
+        }
+        after = page.pageInfo?.hasNextPage ? page.pageInfo.endCursor : null;
+      } while (after);
+      set({ status: "done" });
+    } catch (e) {
+      set({ status: "error", error: (e as Error).message });
+    }
+  };
+  const loadOlderRef = useRef(loadOlderMine);
+  loadOlderRef.current = loadOlderMine;
+  const olderField: OlderField =
+    myIssuesTab === "Created" ? "creator" : "assignee";
+  const onLoadOlder = useCallback(
+    (retry?: boolean) => {
+      void loadOlderRef.current(olderField, retry);
+    },
+    [olderField],
+  );
+  const filtered = useMemo(() => {
+    const base = issues.filter(
+      (i) =>
+        (!search ||
+          `${i.identifier} ${i.title}`
+            .toLowerCase()
+            .includes(search.toLowerCase())) &&
+        (!filter || i.state?.name === filter),
+    );
+    const mine = view === "My issues" && myIssuesTab === "Assigned";
+    return base.filter((i) => !mine || i.assignee?.id === viewer.id);
+  }, [issues, search, filter, view, viewer.id, myIssuesTab]);
+  /* Sidebar favorites: each favorited view, then the tasks starred in this browser (Alt F on a
+     task page). Views come from the shared list, refreshed after any view write. The list
+     belongs to this person in this workspace: a switch or a new sign-in drops it. */
+  setViewListIdentity(`${workspace.id}:${viewer.id || ""}`);
+  const { views: allViews } = useViewList(Boolean(workspace.id));
+  const favoriteViews = useMemo(
+    () =>
+      allViews
+        .filter((v) => v.favorite)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [allViews],
+  );
+  const favoriteTasks = useMemo(() => {
+    void view; // re-read when the page changes: a star on a task page writes storage only
+    let ids: string[] = [];
+    try {
+      const parsed = JSON.parse(
+        localStorage.getItem("hoja_favorites_v1") || "null",
+      );
+      ids = Array.isArray(parsed?.issues) ? parsed.issues : [];
+    } catch {
+      ids = [];
+    }
+    if (!ids.length) return [];
+    const byId = new Map(issues.map((i) => [i.id, i]));
+    return ids.map((id) => byId.get(id)).filter((i): i is Issue => !!i);
+  }, [issues, view]);
+  // /signup is its own screen, outside the workspace shell: a person signing up has no workspace yet, and it must render for both an anonymous browser (the Google button) and a google_verified one (choosing an address). Checked before the auth gates so a Google callback that returns to /signup lands on the page rather than on /login.
+  if (
+    location.pathname === "/signup" ||
+    location.pathname.startsWith("/signup/")
+  )
+    return <SignupPage />;
+  if (inviteCode)
+    return (
+      <InviteAcceptance
+        code={inviteCode}
+        onDone={() => {
+          history.replaceState({}, "", "/");
+          setInviteCode("");
+          setToken("session");
+        }}
+      />
+    );
+  if (!token && !onboarding.checked)
+    return (
+      <div className="app min-h-dvh has-data-workspace-page:h-dvh has-data-workspace-page:min-w-0 has-data-workspace-page:overflow-x-clip shell-phone:has-data-workspace-page:flex shell-phone:has-data-workspace-page:flex-col shell-phone:has-data-workspace-page:overflow-hidden shell-desktop:grid shell-desktop:grid-cols-[244px_minmax(0,1fr)] shell-desktop:grid-rows-[48px_minmax(calc(100dvh-48px),auto)]">
+        <header
+          className="border-b border-line shadow-[0_2px_10px_#1b1b1b08] h-17 flex items-center gap-5.5 pt-0 pr-7 pb-0 pl-7 bg-panel sticky top-0 z-30 max-sm:pt-0 max-sm:pr-3.5 max-sm:pb-0 max-sm:pl-3.5 max-sm:gap-2 max-lg:pt-0 max-lg:pr-4 max-lg:pb-0 max-lg:pl-4 max-lg:gap-3 max-md:h-12 max-md:pt-0 max-md:pr-5 max-md:pb-0 max-md:pl-5 max-md:min-w-0 max-md:overflow-visible shell-phone:relative shell-phone:z-40 shell-phone:h-15 shell-phone:px-3 shell-phone:gap-2 shell-desktop:col-start-2 shell-desktop:row-start-1 shell-desktop:h-12 shell-desktop:px-5 route-fullbleed:hidden shell-phone:route-fullbleed:flex shell-phone:route-fullbleed:h-15 shell-phone:route-fullbleed:relative shell-phone:route-fullbleed:z-40 shell-desktop:data-headerless:hidden! route-review:hidden! [@media_(max-width:560px)]:pt-0 [@media_(max-width:560px)]:pr-3.5 [@media_(max-width:560px)]:pb-0 [@media_(max-width:560px)]:pl-3.5 [@media_(max-width:560px)]:gap-3 [@media_(max-width:900px)]:pt-0 [@media_(max-width:900px)]:pr-4.5 [@media_(max-width:900px)]:pb-0 [@media_(max-width:900px)]:pl-4.5 [@media_(max-width:900px)]:gap-3 shell-phone:pt-0 shell-phone:pr-3 shell-phone:pb-0 shell-phone:pl-3 shell-phone:min-w-0 [@media_(max-width:420px)]:gap-2 shell-desktop:pt-0 shell-desktop:pr-5 shell-desktop:pb-0 shell-desktop:pl-5"
+          data-topbar
+        >
+          <span className="inline-flex items-center gap-2.25 bg-transparent pt-0 pr-0 pb-0 pl-0 text-[16px] font-bold tracking-[-.02em] flex flex-none max-md:hidden">
+            <img
+              className="block w-5 h-5 object-contain"
+              data-brand-mark=""
+              src="/hoja-clover.8371400e.svg"
+              alt=""
+            />
+            <span className="max-sm:last:hidden max-md:last:inline">Hoja</span>
+          </span>
+        </header>
+        <div
+          className="flex shell-phone:flex shell-phone:flex-1 shell-phone:min-h-0 shell-phone:overflow-hidden shell-desktop:contents shell-phone:min-h-[calc(100dvh-60px)] min-h-[calc(100dvh-68px)]"
+          data-app-body=""
+        >
+          <main
+            data-main
+            className="main max-w-360 w-full pt-10 pr-[clamp(24px,4vw,64px)] pb-10 pl-[clamp(24px,4vw,64px)] mt-0 mr-auto mb-0 ml-auto max-md:pt-6 max-md:pr-4 max-md:pb-6 max-md:pl-4 max-sm:pt-5 max-sm:pr-3 max-sm:pb-5 max-sm:pl-3 flex-1 min-w-0 max-lg:pt-7 max-lg:pr-6 max-lg:pb-7 max-lg:pl-6 has-data-settings-page:mt-2 has-data-settings-page:mr-2 has-data-settings-page:mb-2 has-data-settings-page:rounded-xl has-data-workspace-page:w-full! has-data-workspace-page:m-0! has-data-workspace-page:p-0! has-data-workspace-page:max-w-none! has-data-workspace-page:min-w-0! has-data-workspace-page:min-h-0! has-data-workspace-page:flex! has-data-workspace-page:flex-col! has-data-workspace-page:overflow-hidden! has-data-workspace-page:bg-sidebar! has-data-workspace-page:rounded-none! overflow-hidden bg-bg text-foreground rounded-none flex flex-col min-h-0 h-full max-h-full shell-phone:h-auto [@media_(max-width:850px)]:pt-7 [@media_(max-width:850px)]:pr-5.5 [@media_(max-width:850px)]:pb-7 [@media_(max-width:850px)]:pl-5.5 [@media_(max-width:560px)]:pt-6 [@media_(max-width:560px)]:pr-3.5 [@media_(max-width:560px)]:pb-6 [@media_(max-width:560px)]:pl-3.5 [@media_(max-width:900px)]:pt-7.5 [@media_(max-width:900px)]:pr-6 [@media_(max-width:900px)]:pb-7.5 [@media_(max-width:900px)]:pl-6 shell-phone:pt-6.25 shell-phone:pr-4 shell-phone:pb-6.25 shell-phone:pl-4 [@media_(max-width:420px)]:pt-5.5 [@media_(max-width:420px)]:pr-3 [@media_(max-width:420px)]:pb-5.5 [@media_(max-width:420px)]:pl-3 has-data-pulse-page:w-[calc(100%-16px)] has-data-pulse-page:min-h-[calc(100dvh-16px)] shell-desktop:has-data-pulse-page:w-[calc(100%-8px)] shell-phone:has-data-pulse-page:min-h-[calc(100dvh-60px)] has-data-inbox-page:w-[calc(100%-16px)] has-data-inbox-page:min-h-[calc(100dvh-16px)] shell-desktop:has-data-inbox-page:w-[calc(100%-8px)] shell-phone:has-data-inbox-page:min-h-[calc(100dvh-60px)] has-data-initiatives-page:w-[calc(100%-16px)] has-data-initiatives-page:min-h-[calc(100dvh-16px)] shell-desktop:has-data-initiatives-page:w-[calc(100%-8px)] shell-phone:has-data-initiatives-page:min-h-[calc(100dvh-60px)] has-data-projects-reference:w-[calc(100%-8px)] has-data-projects-reference:min-h-[calc(100dvh-16px)] shell-phone:has-data-projects-reference:min-h-[calc(100dvh-60px)] has-data-project-reference:w-[calc(100%-8px)] has-data-project-reference:min-h-[calc(100dvh-16px)] shell-phone:has-data-project-reference:min-h-[calc(100dvh-60px)] has-data-workspace-views-page:w-[calc(100%-8px)] has-data-workspace-views-page:min-h-[calc(100dvh-16px)] shell-phone:has-data-workspace-views-page:min-h-[calc(100dvh-60px)] shell-desktop:has-data-my-issues-view:w-[calc(100%-16px)] shell-desktop:has-data-my-issues-view:min-h-[calc(100dvh-16px)] shell-phone:[&:has([data-my-issues-view])_[data-my-issue-tabs]]:scrollbar-none"
+            aria-busy="true"
+          >
+            <p
+              role="status"
+              className="pt-10 pr-0 pb-10 pl-0 text-center text-muted text-[13px]"
+            >
+              Checking your workspace…
+            </p>
+            <div aria-hidden="true">
+              <span
+                className="skeleton block rounded-md bg-subtle h-6.5 mb-5 w-[70%] animate-[skeleton-pulse_1.2s_ease-in-out_infinite] motion-reduce:animate-none"
+                data-skeleton-title=""
+              />
+              <span
+                className="skeleton block rounded-md bg-subtle h-3 w-full mb-3 animate-[skeleton-pulse_1.2s_ease-in-out_infinite] motion-reduce:animate-none"
+                data-skeleton-line=""
+              />
+              <span
+                className="skeleton block rounded-md bg-subtle h-3 w-full mb-3 animate-[skeleton-pulse_1.2s_ease-in-out_infinite] motion-reduce:animate-none"
+                data-skeleton-line=""
+              />
+              <span
+                className="skeleton block rounded-md bg-subtle h-3 w-[55%] mb-3 animate-[skeleton-pulse_1.2s_ease-in-out_infinite] motion-reduce:animate-none"
+                data-skeleton-line=""
+              />
+              <span
+                className="skeleton block rounded-md bg-subtle h-3 w-[55%] mb-3 animate-[skeleton-pulse_1.2s_ease-in-out_infinite] motion-reduce:animate-none"
+                data-skeleton-line=""
+              />
+            </div>
+          </main>
+        </div>
+      </div>
+    );
+  if (!token && !onboarding.initialized && !hostedSignIn)
+    return <SetupWizard adapter={setupAdapter} mode="first-run" />;
+  if (!token && pendingWorkspace)
+    return (
+      <WorkspaceChooser
+        pending={pendingWorkspace}
+        onBack={() => setPendingWorkspace(null)}
+        onLogin={() => {
+          setPendingWorkspaceState(null);
+          setToken("session");
+          setError("");
+          history.replaceState({}, "", "/workspace/my-issues/assigned");
+          setView("My issues");
+        }}
+      />
+    );
+  if (!token)
+    return (
+      <Login
+        onWorkspaceRequired={setPendingWorkspace}
+        onLogin={(t) => {
+          if (t !== "session") localStorage.setItem("hoja_token", t);
+          setToken(t);
+          setError("");
+          history.replaceState({}, "", "/workspace/my-issues/assigned");
+          setView("My issues");
+        }}
+        error={error}
+      />
+    );
+  const setMyTab = (tab: MyIssuesTab) => {
+    setMyIssuesTab(tab);
+    const path = `/workspace/my-issues/${tab.toLowerCase()}`;
+    history.pushState({}, "", path);
+  };
+  /* A composer opened from a team surface has to default to that team; without this it
+   * always fell back to the first team in the workspace, so a task created from Design
+   * landed in Engineering. Workspace-wide surfaces have no team in the path and keep
+   * the old default. */
+  const teamIdFromRoute = () => {
+    const parts = location.pathname.split("/");
+    const at = parts.indexOf("team");
+    const key = at >= 0 ? parts[at + 1] : "";
+    return key
+      ? teams.find((t) => t.key.toLowerCase() === key.toLowerCase())?.id || ""
+      : "";
+  };
+  const openNewIssue = (stateId?: string) => {
+    setNewStateId(stateId || "");
+    setNewTeamId(teamIdFromRoute());
+    setNewOpen(true);
+  };
+  const allStates = teams.flatMap((t) => t.states.nodes);
+  const uniqueStates = [
+    ...new Map(allStates.map((s) => [stateKey(s), s])).values(),
+  ];
+  const logout = async () => {
+    setOrgMenu(false);
+    setMoreOpen(false);
+    setMobile(false);
+    /* Cookies are host-only, so this POST can only end this host's session.
+     * The control plane's `hoja_signup_session` lives on app.hoja.work and would
+     * silently resume the same identity on the next sign-in, so the server
+     * answers with the one URL that can finish the job and we navigate there at
+     * top level. Resetting state here and staying put is what "sign out, then
+     * sign in again, and I'm back in" looked like. */
+    let signOutUrl = "";
+    try {
+      const response = await fetch("/auth/logout", {
+        method: "POST",
+        credentials: "include",
+      });
+      const body = await response.json().catch(() => null);
+      if (response.ok && typeof body?.signOutUrl === "string")
+        signOutUrl = body.signOutUrl;
+    } finally {
+      void syncRef.current?.forget();
+      try {
+        for (const k of Object.keys(sessionStorage))
+          if (k.startsWith("hoja_page_cache:")) sessionStorage.removeItem(k);
+      } catch {
+        /* storage unavailable */
+      }
+      localStorage.removeItem("hoja_token");
+      setToken(null);
+      setViewer({});
+      setWorkspace({ id: "", name: "", urlKey: "" });
+      setTeams([]);
+      setIssues([]);
+      setActivityEvents([]);
+      setActivityCursor(null);
+      setActivityHasMore(false);
+      setActivityError("");
+      activityGeneration.current++;
+      activityLoadRef.current = false;
+      setActivityLoading(false);
+      issueLoadGeneration.current++;
+      olderMineRef.current = {};
+      setOlderMine({});
+      projectGeneration.current++;
+      setProjects([]);
+      setProjectCursor(null);
+      setProjectHasMore(false);
+      setProjectError("");
+      setLabels([]);
+      setCycles([]);
+    }
+    if (signOutUrl) location.assign(signOutUrl);
+  };
+  const moveIssueState = async (issueId: string, state: IssueState) => {
+    const issue = issues.find((i) => i.id === issueId);
+    const teamStates = issue?.team?.id
+      ? teams.find((t) => t.id === issue.team?.id)?.states.nodes
+      : undefined;
+    const target = teamStates
+      ? teamStates.find((s) => stateKey(s) === stateKey(state))
+      : state;
+    if (!target) throw Error("This team has no matching status");
+    const settle = syncRef.current?.patch(issueId, { state: target });
+    try {
+      const d = await gql(
+        `mutation($id:String!,$input:IssueUpdateInput!){issueUpdate(id:$id,input:$input){success}}`,
+        { id: issueId, input: { stateId: target.id } },
+      );
+      if (!d.issueUpdate.success) throw Error("Could not move task");
+    } catch (e) {
+      settle?.(false);
+      throw e;
+    }
+    if (settle) settle(true);
+    else
+      setIssues((old) =>
+        old.map((i) => (i.id === issueId ? { ...i, state: target } : i)),
+      );
+  };
+  const updateIssue = async (
+    issueId: string,
+    input: Record<string, unknown>,
+  ) => {
+    const sync = syncRef.current;
+    /* A drag or Alt+arrow: `_move` places the task between two others (manual order) and may
+       carry the grouped field it was dropped into; one write on the server (issueMove). */
+    const { _move: move, ...fields } = input as Record<string, unknown> & {
+      _move?: {
+        afterId?: string | null;
+        beforeId?: string | null;
+        field?: "sortOrder" | "prioritySortOrder";
+        optimisticRank?: string;
+      };
+    };
+    const optimistic = {
+      ...(sync ? sync.patchFromInput(fields) : {}),
+      ...(move?.optimisticRank
+        ? move.field === "prioritySortOrder"
+          ? { priorityRank: move.optimisticRank }
+          : { rank: move.optimisticRank }
+        : {}),
+    };
+    const before =
+      activeIssue && activeIssue.id === issueId ? activeIssue : null;
+    const settle = sync?.patch(issueId, optimistic);
+    const previous = issues.find((i) => i.id === issueId);
+    if (!sync && move?.optimisticRank)
+      setIssues((old) =>
+        old.map((i) => (i.id === issueId ? { ...i, ...optimistic } : i)),
+      );
+    if (before)
+      setActiveIssue((old) =>
+        old && old.id === issueId ? { ...old, ...optimistic } : old,
+      );
+    let updated: Issue;
+    try {
+      if (move) {
+        const d = await gql(
+          `mutation($id:String!,$input:IssueMoveInput!){issueMove(id:$id,input:$input){success issue ${issueFields}}}`,
+          {
+            id: issueId,
+            input: {
+              ...fields,
+              afterId: move.afterId ?? null,
+              beforeId: move.beforeId ?? null,
+              field: move.field || "sortOrder",
+            },
+          },
+        );
+        if (!d.issueMove.success || !d.issueMove.issue)
+          throw Error("Move was rejected");
+        updated = d.issueMove.issue;
+      } else {
+        const d = await gql(
+          `mutation($id:String!,$input:IssueUpdateInput!){issueUpdate(id:$id,input:$input){success issue ${issueFields}}}`,
+          { id: issueId, input },
+        );
+        if (!d.issueUpdate.success || !d.issueUpdate.issue)
+          throw Error("Update was rejected");
+        updated = d.issueUpdate.issue;
+      }
+    } catch (e) {
+      settle?.(false);
+      if (before)
+        setActiveIssue((old) => (old && old.id === issueId ? before : old));
+      if (!sync && move?.optimisticRank && previous)
+        setIssues((old) => old.map((i) => (i.id === issueId ? previous : i)));
+      throw e;
+    }
+    settle?.(true);
+    setActiveIssue((old) =>
+      old && old.id === issueId ? { ...old, ...updated } : old,
+    );
+    if (!sync)
+      setIssues((old) =>
+        old.map((i) => (i.id === issueId ? { ...i, ...updated } : i)),
+      );
+  };
+  /* What the views pages need to act on the tasks they render. */
+  const issueActions: IssueActions = {
+    onOpen: (issue) => openIssue(issue),
+    onMoved: moveIssueState,
+    onUpdate: updateIssue,
+    onNew: (stateId?: string) => openNewIssue(stateId),
+    layout: issueLayout,
+    onLayoutChange: changeIssueLayout,
+  };
+  /* The generic workspace pages (Inbox, Pulse fallbacks) list the recent issues under their head. */
+  const issueListContent =
+    dataLoading && !issues.length ? (
+      <p
+        role="status"
+        className="pt-10 pr-0 pb-10 pl-0 text-center text-muted text-[13px]"
+      >
+        Loading tasks…
+      </p>
+    ) : (
+      <IssueList
+        issues={filtered}
+        onOpen={openIssue}
+        teams={teams}
+        onStatusChange={(id, stateId) => updateIssue(id, { stateId })}
+        header={view === "My issues" ? "Assigned to me" : "Recent issues"}
+        emptyTitle={
+          view === "My issues"
+            ? "Nothing assigned to you"
+            : "You’re all caught up"
+        }
+        emptyText={
+          view === "My issues"
+            ? "Tasks assigned to you will appear here."
+            : "New tasks will appear here as your team adds work."
+        }
+        emptyAction={
+          view === "Inbox" ? (
+            <button
+              className="inline-flex min-h-11 items-center justify-center gap-1.75 rounded-none bg-accent pl-3.5 pr-3.5 pt-2.25 pb-2.25 text-white font-[650] shadow-[none] transition-colors duration-150 ease-out hover:brightness-110 hover:transition-none active:translate-y-px disabled:cursor-wait disabled:opacity-65 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 disabled:opacity-[.65]"
+              data-control-primary=""
+              onClick={() => openNewIssue()}
+            >
+              <Plus size={15} />
+              Create a task
+            </button>
+          ) : undefined
+        }
+      />
+    );
+  const pageContent =
+    view === "Issue detail" ? (
+      <IssueDetailPage
+        workspaceName={workspace?.name}
+        viewer={viewer}
+        issue={activeIssue}
+        issueList={issues}
+        onOpenIssue={openIssue}
+        loading={issueLoading}
+        error={issueError}
+        onArchive={async () => {
+          if (!activeIssue) return;
+          const target = activeIssue;
+          const settle = hideIssueLocally(target.id);
+          setActiveIssue(null);
+          navigate("Issues", "/workspace/issues");
+          try {
+            const d = await gql(
+              `mutation($id:String!){issueArchive(id:$id){success}}`,
+              { id: target.identifier },
+            );
+            if (!d.issueArchive?.success)
+              throw Error("Issue could not be archived.");
+            settle(true);
+          } catch (e) {
+            settle(false);
+            setError(
+              `Could not archive ${target.identifier}: ${(e as Error).message}`,
+            );
+            throw e;
+          }
+        }}
+        onDelete={async () => {
+          if (!activeIssue) return;
+          const target = activeIssue;
+          const settle = hideIssueLocally(target.id);
+          setActiveIssue(null);
+          navigate("Issues", "/workspace/issues");
+          try {
+            const d = await gql(
+              `mutation($id:String!){issueDelete(id:$id){success}}`,
+              { id: target.identifier },
+            );
+            if (!d.issueDelete?.success)
+              throw Error("Issue could not be deleted.");
+            settle(true);
+          } catch (e) {
+            settle(false);
+            setError(
+              `Could not delete ${target.identifier}: ${(e as Error).message}`,
+            );
+            throw e;
+          }
+        }}
+        onDeleteComment={async (cid) => {
+          const d = await gql(
+            `mutation($id:String!){commentDelete(id:$id){success}}`,
+            { id: cid },
+          );
+          if (!d.commentDelete?.success)
+            throw Error("Comment could not be deleted.");
+          setActiveIssue((a) =>
+            a
+              ? {
+                  ...a,
+                  comments: {
+                    nodes: (a.comments?.nodes || []).filter(
+                      (c) => c.id !== cid,
+                    ),
+                  },
+                }
+              : a,
+          );
+        }}
+        teams={teams}
+        projects={projects}
+        labels={labels}
+        cycles={cycles}
+        onUpdate={(input) => updateIssue(activeIssue?.id || "", input)}
+        onBack={() => {
+          const ret = issueReturn;
+          setActiveIssue(null);
+          setIssueReturn(null);
+          setIssueReturnProject(null);
+          if (ret) navigate(ret.view, ret.path);
+          else navigate("My issues");
+        }}
+        backLabel={issueReturn?.label || "My issues"}
+        onRetry={() => setIssueRetry((r) => r + 1)}
+        onComment={async (body) => {
+          const d = await gql(
+            `mutation($input:CommentCreateInput!){commentCreate(input:$input){success comment{id body createdAt user{name avatarSeed}}}}`,
+            { input: { issueId: activeIssue?.id, body } },
+          );
+          if (!d.commentCreate.success) throw Error("Comment was rejected");
+          setActiveIssue((old) =>
+            old
+              ? {
+                  ...old,
+                  comments: {
+                    nodes: [
+                      ...(old.comments?.nodes || []),
+                      d.commentCreate.comment,
+                    ],
+                  },
+                }
+              : old,
+          );
+        }}
+      />
+    ) : view === "Cycle detail" ? (
+      activeCycle && !cycleDetailError ? (
+        <CycleDetail
+          cycle={activeCycle}
+          team={teams.find((t) => t.id === activeCycle.team?.id)}
+          teams={teams}
+          viewer={viewer}
+          orgId={workspace.id}
+          workspaceName={workspace.name}
+          projects={projects}
+          labels={labels}
+          cycles={cycles}
+          onBack={() => navigate("Cycles")}
+          onSelect={openIssue}
+          revision={revision}
+          onNavigate={navigate}
+        />
+      ) : (
+        <section
+          className="max-w-235 mt-0 mr-auto mb-0 ml-auto pt-6.25 pr-5 pb-6.25 pl-5 min-w-0 max-md:pt-4 max-md:pr-2.5 max-md:pb-4 max-md:pl-2.5 font-(family-name:--hoja-font-ui) shell-phone:pt-4 shell-phone:pr-2.5 shell-phone:pb-4 shell-phone:pl-2.5"
+          data-team-scoped-page=""
+          role={cycleDetailError ? "alert" : "status"}
+        >
+          {cycleDetailError || "Loading cycle…"}
+        </section>
+      )
+    ) : view === "Team cycle" ? (
+      <TeamCyclePage
+        team={teams.find(
+          (t) =>
+            t.key.toLowerCase() ===
+            location.pathname.split("/")[3]?.toLowerCase(),
+        )}
+        teams={teams}
+        viewer={viewer}
+        orgId={workspace.id}
+        workspaceName={workspace.name}
+        projects={projects}
+        labels={labels}
+        cycles={cycles}
+        upcoming={location.pathname.endsWith("/upcoming")}
+        onBack={() =>
+          navigate(
+            "Team cycles",
+            `/workspace/team/${location.pathname.split("/")[3]}/cycles`,
+          )
+        }
+        onIssue={openIssue}
+        revision={revision}
+        onNavigate={navigate}
+      />
+    ) : view === "Team Home" ? (
+      teams.some(
+        (t) =>
+          t.key.toLowerCase() ===
+          location.pathname.split("/")[3]?.toLowerCase(),
+      ) ? (
+        <TeamHome
+          team={teams.find(
+            (t) =>
+              t.key.toLowerCase() ===
+              location.pathname.split("/")[3]?.toLowerCase(),
+          )}
+          issues={issues}
+          onNavigate={navigate}
+          onSelectIssue={openIssue}
+        />
+      ) : (
+        <section
+          className="max-w-235 mt-0 mr-auto mb-0 ml-auto pt-6.25 pr-5 pb-6.25 pl-5 min-w-0 max-md:pt-4 max-md:pr-2.5 max-md:pb-4 max-md:pl-2.5 font-(family-name:--hoja-font-ui) shell-phone:pt-4 shell-phone:pr-2.5 shell-phone:pb-4 shell-phone:pl-2.5"
+          data-team-scoped-page=""
+          role="alert"
+        >
+          Team not found in this workspace.
+        </section>
+      )
+    ) : view === "Team issues" ? (
+      <TeamIssuesPage
+        teams={teams}
+        projects={projects}
+        team={teams.find(
+          (t) =>
+            t.key.toLowerCase() ===
+            location.pathname.split("/")[3]?.toLowerCase(),
+        )}
+        onIssue={openIssue}
+        layout={issueLayout}
+        onLayoutChange={changeIssueLayout}
+        onMoved={moveIssueState}
+        onUpdate={updateIssue}
+        onNew={(stateId?: string) => openNewIssue(stateId)}
+        onNavigate={navigate}
+      />
+    ) : view === "Team cycle settings" ? (
+      <TeamCycleSettings
+        team={teams.find(
+          (t) =>
+            t.key.toLowerCase() ===
+            location.pathname.split("/")[3]?.toLowerCase(),
+        )}
+        admin={viewer.admin}
+        onBack={() =>
+          navigate(
+            "Team cycles",
+            `/workspace/team/${location.pathname.split("/")[3]}/cycles`,
+          )
+        }
+      />
+    ) : view === "Team cycles" ? (
+      <TeamCyclesPage
+        team={teams.find(
+          (t) =>
+            t.key.toLowerCase() ===
+            location.pathname.split("/")[3]?.toLowerCase(),
+        )}
+        teams={teams}
+        viewer={viewer}
+        workspaceName={workspace.name}
+        revision={revision}
+        onCycle={(c) => {
+          setActiveCycle(c);
+          navigate("Cycle detail", `/workspace/cycle/${c.id}`);
+        }}
+        onSettings={() =>
+          navigate(
+            "Team cycle settings",
+            `/workspace/team/${location.pathname.split("/")[3]}/cycles/settings`,
+          )
+        }
+        onNavigate={navigate}
+      />
+    ) : view === "Team initiatives" ? (
+      <InitiativesList
+        key={`team-initiatives-${location.pathname.split("/")[3] || ""}`}
+        viewer={viewer}
+        path={window.location.pathname}
+        team={teams.find(
+          (t) =>
+            t.key.toLowerCase() ===
+            location.pathname.split("/")[3]?.toLowerCase(),
+        )}
+        onNew={() =>
+          setInitiativeCreate({
+            leadTeamId: teams.find(
+              (t) =>
+                t.key.toLowerCase() ===
+                location.pathname.split("/")[3]?.toLowerCase(),
+            )?.id,
+          })
+        }
+        onOpenInitiative={openInitiative}
+      />
+    ) : view === "Team projects" ? (
+      <TeamProjectsPage
+        team={teams.find(
+          (t) =>
+            t.key.toLowerCase() ===
+            location.pathname.split("/")[3]?.toLowerCase(),
+        )}
+        revision={revision}
+        onCreate={() => setProjectOpen(true)}
+        onProject={(p) => {
+          setActiveProject(p);
+          navigate("Project detail", `/workspace/project/${p.id}`);
+        }}
+      />
+    ) : view === "Team views" ? (
+      <TeamViewsPage
+        team={teams.find(
+          (t) =>
+            t.key.toLowerCase() ===
+            location.pathname.split("/")[3]?.toLowerCase(),
+        )}
+        projects={projects}
+        actions={issueActions}
+        revision={revision}
+      />
+    ) : view === "View" ? (
+      <SavedViewPage
+        key={viewIdentOf(location.pathname) || "view"}
+        ident={viewIdentOf(location.pathname) || ""}
+        projects={projects}
+        actions={issueActions}
+        revision={revision}
+        onDeleted={(v) =>
+          navigateTo(
+            v.scope === "team" && v.team?.key
+              ? `/workspace/team/${v.team.key.toLowerCase()}/views/issues`
+              : `/workspace/views/${v.kind === "project" ? "projects" : "issues"}`,
+          )
+        }
+      />
+    ) : view === "Create workspace" ? (
+      <CreateWorkspacePage
+        onCreated={async (w) => {
+          const switched = await gql(
+            `mutation($id:String!){workspaceSwitch(organizationId:$id){success redirectUrl organization{id name urlKey}}}`,
+            { id: w.id },
+          );
+          if (!switched.workspaceSwitch?.success)
+            throw Error("Workspace created, but could not switch into it");
+          if (switched.workspaceSwitch.redirectUrl) {
+            window.location.assign(switched.workspaceSwitch.redirectUrl);
+            return;
+          }
+          history.pushState({}, "", `/workspace/inbox`);
+          setWorkspace(switched.workspaceSwitch.organization || w);
+          setView("Inbox");
+          const d = await gql(query);
+          setViewer(d.viewer);
+          setTeams(d.teams.nodes);
+          setIssues(d.issues.nodes);
+          const wd = await gql(
+            `query MyWorkspaces{myWorkspaces{id organizationId name urlKey role}}`,
+          );
+          setWorkspaces(wd.myWorkspaces);
+          setSetupResume({ workspaceId: w.id, workspaceUrlKey: w.urlKey });
+        }}
+      />
+    ) : view === "Settings" ? (
+      <SettingsRoute
+        section={settingsSection}
+        value={{
+          viewer,
+          workspace,
+          teams,
+          isAdmin: !!viewer.admin,
+          can: (c: Capability) => !!viewer.admin || !!capabilities?.has(c),
+          capabilitiesReady: capabilities !== null,
+          onTeamsChanged: (next) => setTeams(next as Team[]),
+          onWorkspaceSaved: setWorkspace,
+          onProfileSaved: (name) =>
+            setViewer((current) => ({ ...current, name })),
+          theme,
+          fontScale,
+          savePreference: persistPreference,
+          openSection: (id) =>
+            navigate("Settings", `/workspace/settings/${id}`),
+          openMember,
+          openTeamCycleSettings: (team) =>
+            navigate(
+              "Team cycle settings",
+              `/workspace/team/${team.key.toLowerCase()}/cycles/settings`,
+            ),
+        }}
+      />
+    ) : view === "Leaderboard" ? (
+      <LeaderboardPage
+        key={workspace.id}
+        viewerId={viewer.id}
+        onOpenMember={openMember}
+        onOpenTask={openTaskByRef}
+      />
+    ) : view === "Member profile" ? (
+      <MemberProfilePage
+        key={`${workspace.id}:${window.location.pathname}`}
+        userId={
+          window.location.pathname.includes("/member/")
+            ? decodeURIComponent(
+                window.location.pathname.split("/member/")[1]?.split("/")[0] ||
+                  viewer.id ||
+                  "",
+              )
+            : viewer.id || ""
+        }
+        viewerId={viewer.id}
+        onBack={() => navigate("Members", "/workspace/members")}
+        onOpenLeaderboard={() =>
+          navigate("Leaderboard", "/workspace/leaderboard")
+        }
+        onOpenTask={openTaskByRef}
+        onOpenSettingsProfile={() =>
+          navigate("Settings", "/workspace/settings/profile")
+        }
+      />
+    ) : view === "Members" ? (
+      <MembersPage
+        teams={teams}
+        onTeamsChanged={setTeams}
+        revision={revision}
+        viewer={viewer}
+        onOpenMember={openMember}
+      />
+    ) : view === "Projects" ? (
+      <ProjectsPage
+        projects={projects}
+        hasMore={projectHasMore}
+        loading={projectLoading}
+        error={projectError}
+        onLoadMore={loadMoreProjects}
+        onOpen={(p) => {
+          navigate("Project detail", `/workspace/project/${p.id}`);
+          setActiveProject(p);
+        }}
+        onCreate={() => setProjectOpen(true)}
+      />
+    ) : view === "Project view" && activeProject && !projectDetailError ? (
+      <ProjectViewsPage
+        key={activeProject.id}
+        project={activeProject}
+        onBack={() =>
+          navigate(
+            "Project detail",
+            `/workspace/project/${activeProject.id}/issues`,
+          )
+        }
+        actions={{
+          ...issueActions,
+          onOpen: (issue) => openIssue(issue, activeProject.id),
+        }}
+        projects={projects}
+        revision={revision}
+      />
+    ) : view === "Project view" ? (
+      <section
+        className="pt-20 pr-6 pb-20 pl-6 text-center text-muted"
+        data-project-reference-state=""
+        role={projectDetailError ? "alert" : "status"}
+      >
+        {projectDetailError || "Loading project…"}{" "}
+        <button
+          className="mt-2.5 mr-2.5 mb-2.5 ml-2.5 pt-1.75 pr-1.75 pb-1.75 pl-1.75 border border-line rounded-[5px] bg-panel focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+          type="button"
+          onClick={() => navigate("Projects")}
+        >
+          Back to projects
+        </button>
+      </section>
+    ) : view === "Project detail" && activeProject && !projectDetailError ? (
+      <ProjectDetails
+        key={activeProject.id}
+        project={activeProject}
+        onNewView={() =>
+          navigate(
+            "Project view",
+            `/workspace/project/${activeProject.id}/view/new`,
+          )
+        }
+        issues={issues}
+        teams={teams}
+        projects={projects}
+        layout={issueLayout}
+        onLayoutChange={changeIssueLayout}
+        onMoved={moveIssueState}
+        onUpdate={updateIssue}
+        onNew={(stateId?: string) => openNewIssue(stateId)}
+        onOpenIssue={(issue) => openIssue(issue, activeProject.id)}
+        onBack={() => navigate("Projects")}
+        onSaved={(updated) => {
+          setActiveProject(updated);
+          setProjects((old) =>
+            old.map((p) => (p.id === updated.id ? updated : p)),
+          );
+        }}
+        revision={revision}
+      />
+    ) : view === "Project detail" ? (
+      <section
+        className="pt-20 pr-6 pb-20 pl-6 text-center text-muted"
+        data-project-reference-state=""
+        role={projectDetailError ? "alert" : "status"}
+      >
+        {projectDetailError || "Loading project…"}{" "}
+        <button
+          className="mt-2.5 mr-2.5 mb-2.5 ml-2.5 pt-1.75 pr-1.75 pb-1.75 pl-1.75 border border-line rounded-[5px] bg-panel focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+          type="button"
+          onClick={() => navigate("Projects")}
+        >
+          Back to projects
+        </button>
+      </section>
+    ) : view === "Inbox" ? (
+      <InboxPage
+        key={workspace.id}
+        scope={`${workspace.id}:${viewer?.id || ""}`}
+        path={window.location.pathname}
+        onOpenIssue={openIssue}
+        onOpenSubject={(type, id) =>
+          type === "project"
+            ? navigate("Project detail", `/workspace/project/${id}`)
+            : type === "cycle"
+              ? navigate("Cycle detail", `/workspace/cycle/${id}`)
+              : navigate(
+                  "Initiative detail",
+                  `/workspace/initiative/${encodeURIComponent(id)}`,
+                )
+        }
+        onOpenSettings={() =>
+          navigate("Settings", "/workspace/settings/notifications")
+        }
+        renderDetail={({ issue, onClose }) => (
+          <InboxIssueDetail
+            issue={issue}
+            onClose={onClose}
+            onOpenIssue={openIssue}
+            workspaceName={workspace?.name}
+            viewer={viewer}
+            issueList={issues}
+            teams={teams}
+            projects={projects}
+            labels={labels}
+            cycles={cycles}
+            updateIssue={updateIssue}
+            onError={setError}
+          />
+        )}
+      />
+    ) : view === "Pulse" ? (
+      <PulsePage
+        key={workspace.id}
+        path={window.location.pathname}
+        onOpenProject={(p) => {
+          navigate("Project detail", `/workspace/project/${p.id}`);
+          setActiveProject(p);
+        }}
+        revision={revision}
+      />
+    ) : view === "Initiative detail" ? (
+      <InitiativeRoute
+        key={`${workspace.id}:${window.location.pathname.split("/")[3] || ""}`}
+        viewer={viewer}
+        projects={projects}
+        onBack={() => navigate("Initiatives", "/workspace/initiatives")}
+        onArchived={() => navigate("Initiatives", "/workspace/initiatives")}
+        onOpenProject={(id) => {
+          navigate("Project detail", `/workspace/project/${id}`);
+          setActiveProject(projects.find((p) => p.id === id) || null);
+        }}
+      />
+    ) : view === "Initiatives" ? (
+      <InitiativesList
+        key={workspace.id}
+        viewer={viewer}
+        path={window.location.pathname}
+        onNew={() => setInitiativeCreate({})}
+        onOpenInitiative={openInitiative}
+      />
+    ) : view === "Favorite views" ? (
+      <ViewsPage
+        key={`favorites-${workspace.id}`}
+        projects={projects}
+        actions={issueActions}
+        favoriteOnly
+        revision={revision}
+      />
+    ) : view === "Agent" ? (
+      <AgentChatPage workspaceName={workspace.name} />
+    ) : view === "Views" ? (
+      <ViewsPage
+        key={workspace.id}
+        projects={projects}
+        actions={issueActions}
+        revision={revision}
+      />
+    ) : view === "Reviews" ? (
+      <ReviewsInbox
+        links={reviewsLinks}
+        tasks={reviewsTasks}
+        tasksError={reviewsTasksError}
+        error={reviewsError}
+        gql={gql}
+        onOpenNav={() => setMobile(true)}
+        onRefresh={() => setReviewsReload((n) => n + 1)}
+      />
+    ) : view === "Agents" ? (
+      <AgentsSurface
+        workspaceName={workspace.name}
+        viewerName={viewer.name || viewer.email || "You"}
+        canEnable={Boolean(viewer.admin)}
+      />
+    ) : view === "Agent detail" ? (
+      <AgentsSurface
+        workspaceName={workspace.name}
+        viewerName={viewer.name || viewer.email || "You"}
+        canEnable={Boolean(viewer.admin)}
+      />
+    ) : view === "Board" ? (
+      <BoardPage
+        teams={teams}
+        projects={projects}
+        onIssue={openIssue}
+        onMoved={moveIssueState}
+        onUpdate={updateIssue}
+        onNew={(stateId?: string) => openNewIssue(stateId)}
+      />
+    ) : view === "Cycles" ? (
+      <CyclesPage
+        teams={teams}
+        viewer={viewer}
+        workspaceName={workspace.name}
+        onCycle={(c) => {
+          setActiveCycle(c);
+          navigate("Cycle detail", `/workspace/cycle/${c.id}`);
+        }}
+        onSettings={(t) =>
+          navigate(
+            "Team cycle settings",
+            `/workspace/team/${t.key.toLowerCase()}/cycles/settings`,
+          )
+        }
+        revision={revision}
+        onNavigate={navigate}
+      />
+    ) : view === "Not found" ? (
+      <section
+        className="pt-16 pr-12 pb-16 pl-12 max-w-160 shell-phone:px-1 shell-phone:pt-8 shell-phone:pb-8"
+        data-not-found-page=""
+        role="alert"
+      >
+        <h1 className="mt-0 mr-0 mb-2 ml-0 text-[24px] font-semibold leading-normal tracking-normal ">
+          Page not found
+        </h1>
+        <p className="mt-0 mr-0 mb-0 ml-0 text-muted">
+          This page does not exist.
+        </p>
+        <button
+          type="button"
+          className="mt-6 inline-flex min-h-11 items-center justify-center border border-line bg-panel px-4 font-medium text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:w-full"
+          onClick={() => navigate("My issues")}
+        >
+          Go to My issues
+        </button>
+      </section>
+    ) : view === "My issues" ? (
+      <>
+        <MyIssuesContent
+          head={
+            <>
+              <div>
+                <h1 className="text-sm font-medium leading-normal tracking-[-.045em] text-foreground">
+                  {displayLabel("My issues")}
+                </h1>
+                <p className="mt-1.5 mr-0 mb-0 ml-0 text-muted max-sm:text-xs hidden [@media_(max-width:560px)]:text-[12px]">
+                  {viewer.name} · {workspace.name}
+                </p>
+              </div>
+              <div
+                className="flex items-center gap-2 max-md:gap-1.5 hidden shell-phone:gap-1.5"
+                data-page-actions=""
+              >
+                <button
+                  className="inline-flex items-center justify-center gap-1.75 rounded-md border border-line bg-panel pl-2.75 pr-2.75 pt-2 pb-2 text-inherit transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 max-md:pt-2 max-md:pr-2 max-md:pb-2 max-md:pl-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:pt-2 shell-phone:pr-2 shell-phone:pb-2 shell-phone:pl-2"
+                  data-control-outline=""
+                  onClick={() => setCommandOpen(true)}
+                >
+                  <Search size={15} />
+                  Search
+                </button>
+                <button
+                  className="inline-flex min-h-11 items-center justify-center gap-1.75 rounded-lg bg-accent pl-3.5 pr-3.5 pt-2.25 pb-2.25 text-white font-[650] shadow-[none] transition-colors duration-150 ease-out hover:brightness-110 hover:transition-none active:translate-y-px disabled:cursor-wait disabled:opacity-65 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 max-sm:pt-2 max-sm:pr-2 max-sm:pb-2 max-sm:pl-2 max-md:w-auto max-md:text-xs max-md:pt-2 max-md:pr-2.5 max-md:pb-2 max-md:pl-2.5 max-md:text-sm shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 [@media_(max-width:560px)]:text-[0] [@media_(max-width:560px)]:pt-2.25 [@media_(max-width:560px)]:pr-2.25 [@media_(max-width:560px)]:pb-2.25 [@media_(max-width:560px)]:pl-2.25 disabled:opacity-[.65] shell-phone:w-auto shell-phone:text-[12px] shell-phone:pt-2 shell-phone:pr-2.5 shell-phone:pb-2 shell-phone:pl-2.5"
+                  data-control-primary=""
+                  onClick={() => openNewIssue()}
+                >
+                  <Plus size={16} />
+                  New task
+                </button>
+              </div>
+            </>
+          }
+          tabs={
+            <TaskViewTabs
+              label="My task views"
+              views={["Assigned", "Created", "Subscribed", "Activity"] as const}
+              active={myIssuesTab}
+              onChange={setMyTab}
+            />
+          }
+          onOpenIssue={openIssue}
+          issues={
+            myIssuesTab === "Created"
+              ? issues.filter((i) => i.creator?.id === viewer.id)
+              : myIssuesTab === "Subscribed"
+                ? issues.filter((i) =>
+                    i.subscribers?.nodes.some((u) => u.id === viewer.id),
+                  )
+                : myIssuesTab === "Activity"
+                  ? issues.filter(
+                      (i) =>
+                        i.creator?.id === viewer.id ||
+                        i.assignee?.id === viewer.id,
+                    )
+                  : filtered
+          }
+          tab={myIssuesTab}
+          viewKey={["my-issues", myIssuesTab.toLowerCase()].join(":")}
+          pageDefaults={
+            myIssuesTab === "Created" || myIssuesTab === "Subscribed"
+              ? EVERY_COMPLETED
+              : NO_DISPLAY
+          }
+          onSaveAsView={(draft) => {
+            stashViewDraft({ kind: "issue", ...draft });
+            navigate("Views", "/workspace/views/issues/new");
+          }}
+          activityEvents={activityEvents}
+          activityHasMore={activityHasMore}
+          activityLoading={activityLoading}
+          activityError={activityError}
+          onLoadActivity={() => loadActivity(activityCursor)}
+          key={workspace.id}
+          onNew={(stateId?: string) => openNewIssue(stateId)}
+          layout={issueLayout}
+          onLayoutChange={changeIssueLayout}
+          states={uniqueStates}
+          onMoved={moveIssueState}
+          onUpdate={updateIssue}
+          teams={teams}
+          projects={projects}
+          older={olderMine[olderField]}
+          onLoadOlder={onLoadOlder}
+        />
+      </>
+    ) : (
+      <>
+        <div
+          className="flex items-center justify-between mb-7 max-sm:items-start max-sm:gap-3.5 max-md:items-start max-md:gap-3.5 [@media_(max-width:560px)]:gap-3.75 shell-phone:gap-3.5"
+          data-page-head=""
+        >
+          <div>
+            <h1 className="mt-2.25 mr-0 mb-1 ml-0 text-[30px] tracking-[-.045em] max-sm:text-2xl max-md:text-3xl font-semibold leading-normal [@media_(max-width:560px)]:text-[24px] shell-phone:text-[25px] [@media_(max-width:420px)]:text-[23px]">
+              {view === "Inbox" ? "Inbox" : displayLabel(view)}
+            </h1>
+            <p className="mt-1.5 mr-0 mb-0 ml-0 text-muted max-sm:text-xs [@media_(max-width:560px)]:text-[12px]">
+              {viewer.name} · {workspace.name}
+            </p>
+          </div>
+          <div
+            className="flex items-center gap-2 max-md:gap-1.5 shell-phone:gap-1.5"
+            data-page-actions=""
+          >
+            <button
+              className="inline-flex items-center justify-center gap-1.75 rounded-md border border-line bg-panel pl-2.75 pr-2.75 pt-2 pb-2 text-inherit transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 max-md:pt-2 max-md:pr-2 max-md:pb-2 max-md:pl-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:pt-2 shell-phone:pr-2 shell-phone:pb-2 shell-phone:pl-2"
+              data-control-outline=""
+              onClick={() => setCommandOpen(true)}
+            >
+              <Search size={15} />
+              Search
+            </button>
+            <button
+              className="inline-flex min-h-11 items-center justify-center gap-1.75 rounded-lg bg-accent pl-3.5 pr-3.5 pt-2.25 pb-2.25 text-white font-[650] shadow-[none] transition-colors duration-150 ease-out hover:brightness-110 hover:transition-none active:translate-y-px disabled:cursor-wait disabled:opacity-65 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 max-sm:pt-2 max-sm:pr-2 max-sm:pb-2 max-sm:pl-2 max-md:w-auto max-md:text-xs max-md:pt-2 max-md:pr-2.5 max-md:pb-2 max-md:pl-2.5 max-md:text-sm shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 [@media_(max-width:560px)]:text-[0] [@media_(max-width:560px)]:pt-2.25 [@media_(max-width:560px)]:pr-2.25 [@media_(max-width:560px)]:pb-2.25 [@media_(max-width:560px)]:pl-2.25 disabled:opacity-[.65] shell-phone:w-auto shell-phone:text-[12px] shell-phone:pt-2 shell-phone:pr-2.5 shell-phone:pb-2 shell-phone:pl-2.5"
+              data-control-primary=""
+              onClick={() => openNewIssue()}
+            >
+              <Plus size={16} />
+              New task
+            </button>
+          </div>
+        </div>
+        <div
+          className="grid grid-cols-4 gap-3 mt-0 mr-0 mb-6 ml-0 shell-phone:gap-2 shell-phone:mb-4 shell-phone:grid-cols-2"
+          data-inbox-summary=""
+        >
+          <div className="grid gap-1.5 min-h-27 pt-4 pr-4 pb-4 pl-4 bg-panel border border-line shadow-(--ui-shadow-card) rounded-(--ui-radius-card) shell-phone:min-h-21.5 shell-phone:pt-3 shell-phone:pr-3 shell-phone:pb-3 shell-phone:pl-3">
+            <span className="text-muted font-medium">Open tasks</span>
+            <b className="self-end text-foreground text-[28px] leading-none font-[620] tracking-[-.045em] shell-phone:text-[24px]">
+              {
+                issues.filter(
+                  (i) =>
+                    i.state?.type !== "completed" &&
+                    i.state?.type !== "canceled",
+                ).length
+              }
+            </b>
+            <small className="text-muted text-[11px]">Across your teams</small>
+          </div>
+          <div className="grid gap-1.5 min-h-27 pt-4 pr-4 pb-4 pl-4 bg-panel border border-line shadow-(--ui-shadow-card) rounded-(--ui-radius-card) shell-phone:min-h-21.5 shell-phone:pt-3 shell-phone:pr-3 shell-phone:pb-3 shell-phone:pl-3">
+            <span className="text-muted font-medium">In progress</span>
+            <b className="self-end text-foreground text-[28px] leading-none font-[620] tracking-[-.045em] shell-phone:text-[24px]">
+              {issues.filter((i) => i.state?.type === "started").length}
+            </b>
+            <small className="text-muted text-[11px]">
+              Currently being worked
+            </small>
+          </div>
+          <div className="grid gap-1.5 min-h-27 pt-4 pr-4 pb-4 pl-4 bg-panel border border-line shadow-(--ui-shadow-card) rounded-(--ui-radius-card) shell-phone:min-h-21.5 shell-phone:pt-3 shell-phone:pr-3 shell-phone:pb-3 shell-phone:pl-3">
+            <span className="text-muted font-medium">Completed</span>
+            <b className="self-end text-foreground text-[28px] leading-none font-[620] tracking-[-.045em] shell-phone:text-[24px]">
+              {issues.filter((i) => i.state?.type === "completed").length}
+            </b>
+            <small className="text-muted text-[11px]">In loaded tasks</small>
+          </div>
+          <div className="grid gap-1.5 min-h-27 pt-4 pr-4 pb-4 pl-4 bg-panel border border-line shadow-(--ui-shadow-card) rounded-(--ui-radius-card) shell-phone:min-h-21.5 shell-phone:pt-3 shell-phone:pr-3 shell-phone:pb-3 shell-phone:pl-3">
+            <span className="text-muted font-medium">Active projects</span>
+            <b className="self-end text-foreground text-[28px] leading-none font-[620] tracking-[-.045em] shell-phone:text-[24px]">
+              {
+                projects.filter(
+                  (p) =>
+                    p.state === "started" ||
+                    p.state === "in progress" ||
+                    p.state === "In progress",
+                ).length
+              }
+            </b>
+            <small className="text-muted text-[11px]">
+              {projects.length} total
+            </small>
+          </div>
+        </div>
+        {issueListContent}
+      </>
+    );
+  if (token && setupResume)
+    return (
+      <SetupWizard
+        adapter={setupAdapter}
+        mode="existing"
+        initial={{ ...setupResume, teamId: teams[0]?.id }}
+        onFinish={() => setupAdapter.openWorkspace()}
+      />
+    );
+  const railCollapsed =
+    sidebarCollapsed && view !== "Settings" && isDesktopShell;
+  return (
+    <div
+      className="app min-h-dvh has-data-workspace-page:h-dvh has-data-workspace-page:min-w-0 has-data-workspace-page:overflow-x-clip shell-phone:has-data-workspace-page:flex shell-phone:has-data-workspace-page:flex-col shell-phone:has-data-workspace-page:overflow-hidden shell-desktop:grid shell-desktop:grid-cols-[244px_minmax(0,1fr)] shell-desktop:grid-rows-[48px_minmax(calc(100dvh-48px),auto)]"
+      data-sidebar-collapsed={railCollapsed ? "" : undefined}
+    >
+      {view !== "Reviews" && (
+        <header
+          data-topbar
+          className="hidden h-15 flex-none items-center gap-2 border-b border-line bg-panel px-3 text-foreground shell-phone:relative shell-phone:z-40 shell-phone:flex"
+        >
+          <button
+            type="button"
+            className="inline-flex min-h-11 min-w-11 flex-none items-center justify-center rounded-lg bg-transparent text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent"
+            aria-label={mobile ? "Close navigation" : "Open navigation"}
+            aria-expanded={mobile}
+            aria-controls="workspace-sidebar"
+            onClick={() => setMobile((open) => !open)}
+          >
+            {mobile ? (
+              <X size={18} aria-hidden="true" />
+            ) : (
+              <Menu size={18} aria-hidden="true" />
+            )}
+          </button>
+          <span className="min-w-0 flex-1 truncate text-base font-semibold text-foreground">
+            {workspace.name || "Hoja"}
+          </span>
+          <button
+            type="button"
+            className="inline-flex min-h-11 min-w-11 flex-none items-center justify-center rounded-lg bg-transparent text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent"
+            aria-label="Search workspace"
+            hidden={mobile}
+            onClick={() => setCommandOpen(true)}
+          >
+            <Search size={18} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="inline-flex min-h-11 min-w-11 flex-none items-center justify-center rounded-lg bg-transparent text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent"
+            aria-label="Create new task"
+            hidden={mobile}
+            onClick={() => openNewIssue()}
+          >
+            <Plus size={18} aria-hidden="true" />
+          </button>
+        </header>
+      )}
+      <div
+        className="flex shell-phone:flex shell-phone:flex-1 shell-phone:min-h-0 shell-phone:overflow-hidden shell-desktop:contents shell-phone:min-h-[calc(100dvh-60px)] min-h-[calc(100dvh-68px)]"
+        data-app-body=""
+      >
+        <>
+          <button
+            type="button"
+            className={
+              "hidden border-0 p-0 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2" +
+              " shell-phone:block shell-phone:fixed shell-phone:inset-x-0 shell-phone:top-15 shell-phone:bottom-0 shell-phone:z-34 shell-phone:bg-black/40 invisible opacity-0 data-visible:visible data-visible:opacity-100 transition-opacity duration-150 motion-reduce:transition-none"
+            }
+            data-workspace-drawer-scrim=""
+            aria-label="Close navigation"
+            tabIndex={mobile ? 0 : -1}
+            onClick={closeMobileNav}
+            data-visible={mobile || undefined}
+          />
+          <aside
+            ref={mobileSidebarRef}
+            id="workspace-sidebar"
+            data-workspace-sidebar
+            data-open={mobile || undefined}
+            className="flex min-h-0 min-w-0 flex-none flex-col overflow-x-hidden overflow-y-auto overscroll-contain bg-sidebar px-3 pt-3 pb-0 text-foreground shell-desktop:sticky shell-desktop:top-0 shell-desktop:col-start-1 shell-desktop:row-span-2 shell-desktop:h-dvh shell-desktop:max-h-dvh shell-desktop:w-61 shell-desktop:rail-collapsed:w-11 shell-desktop:rail-collapsed:px-2 shell-desktop:rail-collapsed:py-3 shell-desktop:rail-collapsed:overflow-hidden shell-phone:fixed shell-phone:z-35 shell-phone:inset-y-0 shell-phone:top-15 shell-phone:left-0 shell-phone:w-[min(290px,85vw)] shell-phone:max-w-full shell-phone:-translate-x-full shell-phone:data-open:transform-[translateX(0)]! shell-phone:data-open:translate-x-0 shell-phone:transition-transform shell-phone:duration-150 shell-phone:shadow-xl route-review:relative route-review:top-auto route-review:self-stretch route-review:col-auto route-review:row-auto review-drawer:route-review:fixed! review-drawer:route-review:z-35! review-drawer:route-review:inset-y-0! review-drawer:route-review:left-0! review-drawer:route-review:w-[min(290px,85vw)]! review-drawer:route-review:-translate-x-full! review-drawer:route-review:data-open:translate-x-0! review-drawer:route-review:shadow-xl!"
+            aria-label={
+              view === "Settings" ? "Settings sidebar" : "Workspace sidebar"
+            }
+            role={mobile ? "dialog" : undefined}
+            aria-modal={mobile || undefined}
+          >
+            {view === "Settings" ? (
+              <SettingsNav
+                section={settingsSection}
+                isAdmin={!!viewer.admin}
+                can={(c) => !!capabilities?.has(c)}
+                account={{
+                  name: viewer.name,
+                  email: viewer.email || workspace.name,
+                  avatar: <UserBlobatar user={viewer} />,
+                }}
+                onNavigate={(id) => {
+                  navigate("Settings", `/workspace/settings/${id}`);
+                  setMobile(false);
+                }}
+                onBack={() => {
+                  const p = settingsReturn.current;
+                  history.pushState({}, "", p);
+                  setView(routeView(p));
+                  setMobile(false);
+                }}
+                onLogout={logout}
+              />
+            ) : (
+              <SidebarTooltipProvider>
+                <div
+                  className="relative z-10 flex flex-none items-center gap-1 min-h-9 mb-3 overscroll-none shell-desktop:rail-collapsed:flex-col shell-desktop:rail-collapsed:items-center shell-desktop:rail-collapsed:justify-start shell-desktop:rail-collapsed:gap-1 shell-desktop:rail-collapsed:pb-2 shell-desktop:rail-collapsed:mb-2 shell-desktop:rail-collapsed:border-b shell-desktop:rail-collapsed:border-line min-w-0"
+                  data-sidebar-top=""
+                >
+                  <div
+                    className="relative static min-w-0 flex-1 shell-desktop:rail-collapsed:flex-none shell-desktop:rail-collapsed:w-full shell-phone:min-w-0"
+                    data-workspace-picker=""
+                  >
+                    <UIPopover
+                      open={orgMenu}
+                      onOpenChange={(open) => {
+                        setOrgMenu(open);
+                        if (open) setMoreOpen(false);
+                      }}
+                    >
+                      <SidebarTooltip
+                        label={workspace.name || "Workspace"}
+                        enabled={railCollapsed && !orgMenu}
+                      >
+                        <PopoverTrigger asChild>
+                          <button
+                            type="button"
+                            className="flex items-center gap-1.5 px-1 py-0 bg-transparent text-left rounded-lg h-7 w-full min-w-0 max-w-full border-0 text-foreground hover:bg-sidebar-hover focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-desktop:rail-collapsed:mx-auto shell-desktop:rail-collapsed:size-7 shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:p-0 shell-desktop:rail-collapsed:gap-0 shell-phone:p-1 shell-phone:h-11 shell-phone:gap-2.5"
+                            data-workspace-trigger=""
+                            aria-label={
+                              onboarding.singleOrg
+                                ? "Workspace menu"
+                                : "Switch workspace"
+                            }
+                            aria-haspopup="menu"
+                            aria-controls="workspace-switcher-menu"
+                            disabled={switching}
+                          >
+                            <span
+                              className="grid place-items-center w-5 h-5 flex-none rounded-md bg-[#6d6d73] text-[white] font-[750] text-[10px] shell-desktop:rail-collapsed:size-6 shell-phone:w-8 shell-phone:h-8"
+                              data-workspace-trigger-mark=""
+                            >
+                              {(workspace.name || "W").slice(0, 1).toUpperCase()}
+                            </span>
+                            <span
+                              className="grid gap-px max-w-none min-w-0 flex-1 shell-desktop:rail-collapsed:hidden"
+                              data-workspace-trigger-copy=""
+                            >
+                              <b className="text-[13px] font-medium overflow-hidden text-ellipsis whitespace-nowrap text-foreground">
+                                {switching
+                                  ? "Switching…"
+                                  : workspace.name || "Workspace"}
+                              </b>
+                              <small className="hidden text-muted text-[10px] font-normal">
+                                {workspace.urlKey}
+                              </small>
+                            </span>
+                            <ChevronDown
+                              size={15}
+                              aria-hidden="true"
+                              className="flex-none text-sidebar-icon shell-desktop:rail-collapsed:hidden"
+                            />
+                          </button>
+                        </PopoverTrigger>
+                      </SidebarTooltip>
+                      <PopoverContent
+                        align="start"
+                        side={railCollapsed ? "right" : "bottom"}
+                        sideOffset={railCollapsed ? 10 : 4}
+                        portal={railCollapsed}
+                        id="workspace-switcher-menu"
+                        role="menu"
+                        className="sidebar-popover workspace-menu z-50 min-w-0 max-w-none rounded-[10px] border-line bg-panel p-1.5 text-foreground shadow-(--shadow)"
+                        style={
+                          railCollapsed
+                            ? { width: 240, maxWidth: "calc(100vw - 64px)" }
+                            : workspaceMenuWidth === undefined
+                              ? undefined
+                              : {
+                                  width: workspaceMenuWidth,
+                                  maxWidth: workspaceMenuWidth,
+                                }
+                        }
+                      >
+                        <div
+                          className="border-b border-line flex items-center gap-2.25 pt-2.25 pr-2.25 pb-2.25 pl-2.25 mb-1.25"
+                          data-workspace-menu-head=""
+                        >
+                          <span
+                            className="grid place-items-center w-5 h-5 flex-none rounded-md bg-[#6d6d73] text-[white] font-[750] text-[10px] last:grid last:gap-0.5 last:min-w-0 shell-phone:w-8 shell-phone:h-8"
+                            data-workspace-trigger-mark=""
+                          >
+                            {(workspace.name || "W").slice(0, 1).toUpperCase()}
+                          </span>
+                          <span className="last:grid last:gap-0.5 last:min-w-0">
+                            <b className="text-[12px] overflow-hidden text-ellipsis whitespace-nowrap">
+                              {workspace.name}
+                            </b>
+                            <small className="text-muted text-[10px]">
+                              {workspace.urlKey}
+                            </small>
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setOrgMenu(false);
+                            setMobile(false);
+                            /* Admins land on the workspace's own settings; everyone else on theirs. */
+                            navigate(
+                              "Settings",
+                              viewer.admin
+                                ? "/workspace/settings/workspace"
+                                : "/workspace/settings/preferences",
+                            );
+                          }}
+                          className="flex w-full min-h-9 items-center justify-between gap-2 rounded-lg bg-transparent p-2 text-left text-sm text-inherit hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
+                        >
+                          {viewer.admin ? "Workspace settings" : "Settings"}
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setOrgMenu(false);
+                            setMobile(false);
+                            /* Managing people happens in Settings → Members (gated on member.invite,
+                             * like the API); the Members page stays the read-only directory. */
+                            if (
+                              viewer.admin ||
+                              capabilities?.has("member.invite")
+                            )
+                              navigate(
+                                "Settings",
+                                "/workspace/settings/members",
+                              );
+                            else navigate("Members");
+                          }}
+                          className="flex w-full min-h-9 items-center justify-between gap-2 rounded-lg bg-transparent p-2 text-left text-sm text-inherit hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
+                        >
+                          {viewer.admin || capabilities?.has("member.invite")
+                            ? "Manage members"
+                            : "Members"}
+                        </button>
+                        {!onboarding.singleOrg && (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setOrgMenu(false);
+                              setMobile(false);
+                              navigate("Create workspace");
+                            }}
+                            className="flex w-full min-h-9 items-center justify-between gap-2 rounded-lg bg-transparent p-2 text-left text-sm text-inherit hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
+                          >
+                            Create workspace
+                          </button>
+                        )}
+                        {!onboarding.singleOrg && workspaces.length > 1 && (
+                          <>
+                            <div
+                              className="pt-2.25 pr-2.25 pb-1 pl-2.25 text-muted text-[10px] normal-case tracking-[.08em]"
+                              data-workspace-menu-label=""
+                            >
+                              Switch workspace
+                            </div>
+                            {workspaces.map((w) => (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                key={w.organizationId}
+                                onClick={() => {
+                                  setOrgMenu(false);
+                                  setMobile(false);
+                                  switchWorkspace(w.organizationId);
+                                }}
+                                disabled={
+                                  switching || w.organizationId === workspace.id
+                                }
+                                className="flex w-full min-h-9 items-center justify-between gap-2 rounded-lg bg-transparent p-2 text-left text-sm text-inherit hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
+                              >
+                                {w.name}
+                                <small>{w.urlKey}</small>
+                              </button>
+                            ))}
+                          </>
+                        )}
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setOrgMenu(false);
+                            setMobile(false);
+                            setPhoneSignInOpen(true);
+                          }}
+                          className="flex w-full min-h-9 items-center justify-between gap-2 rounded-lg bg-transparent p-2 text-left text-sm text-inherit hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
+                        >
+                          Sign in on your phone
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={logout}
+                          className="flex w-full min-h-9 items-center justify-between gap-2 rounded-lg bg-transparent p-2 text-left text-sm text-inherit hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
+                        >
+                          Log out
+                        </button>
+                      </PopoverContent>
+                    </UIPopover>
+                    {switchError && (
+                      <small
+                        role="alert"
+                        className="block text-danger mt-3 mr-0 mb-3 ml-0 max-w-72 text-xs "
+                      >
+                        {switchError}
+                      </small>
+                    )}
+                  </div>
+                  <SidebarTooltip
+                    label="Search"
+                    shortcut="Ctrl+K"
+                    enabled={railCollapsed}
+                  >
+                    <button
+                      type="button"
+                      className="grid size-7 flex-none place-items-center rounded-[7px] border-0 bg-transparent text-sidebar-icon hover:bg-sidebar-hover hover:text-foreground focus-visible:bg-sidebar-hover focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:size-11"
+                      data-sidebar-icon=""
+                      data-sidebar-search=""
+                      aria-label="Search workspace"
+                      title={railCollapsed ? undefined : "Search (Ctrl+K)"}
+                      onClick={() => setCommandOpen(true)}
+                    >
+                      <Search size={15} aria-hidden="true" />
+                    </button>
+                  </SidebarTooltip>
+                  <SidebarTooltip
+                    label="Create new task"
+                    enabled={railCollapsed}
+                  >
+                    <button
+                      type="button"
+                      className="grid size-7 flex-none place-items-center rounded-[7px] border border-black/8 bg-[#f9f9fa] p-1.5 text-[#2e2e30] shadow-2xs hover:bg-sidebar-hover focus-visible:bg-sidebar-hover focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 dark:border-white/10 dark:bg-[#2f2f34] dark:text-foreground dark:hover:bg-[#3a3a40] dark:focus-visible:bg-[#3a3a40] shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:size-11"
+                      data-sidebar-icon=""
+                      data-sidebar-create=""
+                      aria-label="Create new task"
+                      title={railCollapsed ? undefined : "Create new task"}
+                      onClick={() => openNewIssue()}
+                    >
+                      <svg
+                        className="w-4 h-4 flex-none"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 16 16"
+                        fill="currentColor"
+                        aria-hidden="true"
+                      >
+                        <path
+                          fillRule="evenodd"
+                          clipRule="evenodd"
+                          d="M7.25 1C7.66414 1 8 1.33589 8 1.75S7.66421 2.5 7.25 2.5H4.75A2.25 2.25 0 0 0 2.5 4.75v6.5a2.25 2.25 0 0 0 2.25 2.25h6.5a2.25 2.25 0 0 0 2.25-2.25v-2.5a.75.75 0 0 1 1.5 0v2.5A3.75 3.75 0 0 1 11.25 15h-6.5A3.75 3.75 0 0 1 1 11.25v-6.5A3.75 3.75 0 0 1 4.75 1h2.5Z"
+                        />
+                        <path d="M13.4326 1.26953a.919.919 0 0 1 1.2988 1.2988L9.2373 8.0615a3.25 3.25 0 0 1-2.082.9385c-.0877.0052-.1606-.0675-.1553-.1553a3.25 3.25 0 0 1 .9385-2.082L13.4326 1.26953Z" />
+                      </svg>
+                    </button>
+                  </SidebarTooltip>
+                  <SidebarTooltip
+                    label={
+                      railCollapsed ? "Expand sidebar" : "Collapse sidebar"
+                    }
+                    shortcut="["
+                    enabled={railCollapsed}
+                  >
+                    <button
+                      type="button"
+                      className="grid size-7 flex-none place-items-center rounded-[7px] border-0 bg-transparent text-sidebar-icon hover:bg-sidebar-hover hover:text-foreground focus-visible:bg-sidebar-hover focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:hidden"
+                      data-sidebar-icon=""
+                      data-sidebar-toggle=""
+                      aria-label={
+                        sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
+                      }
+                      aria-expanded={!sidebarCollapsed}
+                      aria-controls="workspace-sidebar"
+                      title={
+                        railCollapsed ? undefined : "Collapse sidebar ([)"
+                      }
+                      onClick={() => setSidebarCollapsed((v) => !v)}
+                    >
+                      {sidebarCollapsed ? (
+                        <PanelLeftOpen size={16} aria-hidden="true" />
+                      ) : (
+                        <PanelLeftClose size={16} aria-hidden="true" />
+                      )}
+                    </button>
+                  </SidebarTooltip>
+                </div>
+                <nav
+                  className="relative z-0 min-h-0 flex-1 overflow-x-hidden overflow-y-auto"
+                  aria-label="Workspace navigation"
+                >
+                  {sections.map(([section, items]) =>
+                    section === "Favorites" &&
+                    !favoriteViews.length &&
+                    !favoriteTasks.length ? null : (
+                      <div
+                        className="flex flex-col mb-4.25 shell-desktop:rail-collapsed:mb-0 shell-desktop:rail-collapsed:not-first:mt-2 shell-desktop:rail-collapsed:not-first:pt-2 shell-desktop:rail-collapsed:not-first:border-t shell-desktop:rail-collapsed:not-first:border-line"
+                        data-nav-group=""
+                        key={section}
+                      >
+                        {section !== "primary" && (
+                          <button
+                            type="button"
+                            className="flex items-center justify-between h-7 mt-0 mr-1 mb-0.5 ml-1 pt-0 pr-1.25 pb-0 pl-1.25 rounded-md bg-transparent text-muted text-[13px] font-normal text-left hover:bg-sidebar-hover focus-visible:bg-sidebar-hover hover:text-foreground focus-visible:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:h-auto group shell-desktop:rail-collapsed:hidden"
+                            data-nav-group-toggle=""
+                            aria-expanded={!collapsedSections[section]}
+                            onClick={() =>
+                              setCollapsedSections((c) => ({
+                                ...c,
+                                [section]: !c[section],
+                              }))
+                            }
+                          >
+                            <span>{section}</span>
+                            <ChevronDown
+                              size={12}
+                              aria-hidden="true"
+                              className="transition-transform duration-150 motion-reduce:transition-none group-aria-[expanded=false]:-rotate-90"
+                            />
+                          </button>
+                        )}
+                        <div
+                          className={cn(
+                            "grid gap-px shell-desktop:rail-collapsed:gap-0.5",
+                            collapsedSections[section] &&
+                              "hidden shell-desktop:rail-collapsed:grid",
+                          )}
+                        >
+                          {section === "Favorites" && (
+                            <div
+                              className="grid gap-px shell-desktop:rail-collapsed:gap-0.5"
+                              data-nav-favorites=""
+                            >
+                              {favoriteViews.map((v) => (
+                                <SidebarTooltip
+                                  key={v.id}
+                                  label={v.name}
+                                  enabled={railCollapsed}
+                                >
+                                  <button
+                                    type="button"
+                                    className={sidebarItemClass}
+                                    data-nav-item=""
+                                    data-nav-favorite-view={v.id}
+                                    aria-label={v.name}
+                                    aria-current={
+                                      view === "View" &&
+                                      [v.id, v.slugId].includes(
+                                        viewIdentOf(location.pathname) || "",
+                                      )
+                                        ? "page"
+                                        : undefined
+                                    }
+                                    onClick={() => {
+                                      navigateTo(viewPath(v));
+                                      setMobile(false);
+                                    }}
+                                  >
+                                    <ViewIcon icon={v.icon} color={v.color} />
+                                    <span className="min-w-0 flex-1 truncate shell-desktop:rail-collapsed:hidden">
+                                      {v.name}
+                                    </span>
+                                  </button>
+                                </SidebarTooltip>
+                              ))}
+                              {favoriteTasks.map((i) => (
+                                <SidebarTooltip
+                                  key={i.id}
+                                  label={i.identifier}
+                                  detail={i.title}
+                                  enabled={railCollapsed}
+                                >
+                                  <button
+                                    type="button"
+                                    className={sidebarItemClass}
+                                    data-nav-item=""
+                                    aria-label={`${i.identifier} ${i.title}`}
+                                    onClick={() => {
+                                      openIssue(i);
+                                      setMobile(false);
+                                    }}
+                                  >
+                                    <CircleDot
+                                      size={15}
+                                      aria-hidden="true"
+                                      className="flex-none text-sidebar-icon group-hover:text-foreground"
+                                    />
+                                    <span className="min-w-0 flex-1 truncate shell-desktop:rail-collapsed:hidden">
+                                      {i.identifier} {i.title}
+                                    </span>
+                                  </button>
+                                </SidebarTooltip>
+                              ))}
+                            </div>
+                          )}
+                          {section === "Your teams" &&
+                            teams.map((team) => {
+                              const teamPrefix = `/workspace/team/${team.key.toLowerCase()}/`;
+                              const isTeamRoute =
+                                location.pathname.startsWith(teamPrefix);
+                              return (
+                                <div
+                                  data-team-block=""
+                                  key={team.id}
+                                  className="mb-1 first-of-type:mt-2 shell-desktop:rail-collapsed:mb-0 shell-desktop:rail-collapsed:first-of-type:mt-0"
+                                >
+                                  <div
+                                    className="max-md:justify-center flex items-center gap-0"
+                                    data-team-row=""
+                                  >
+                                    <SidebarTooltip
+                                      label={team.name}
+                                      detail="Team home"
+                                      enabled={railCollapsed}
+                                    >
+                                      <button
+                                        type="button"
+                                        className={cn(
+                                          sidebarItemClass,
+                                          "font-medium text-foreground",
+                                        )}
+                                        data-team-name=""
+                                        aria-label={team.name}
+                                        aria-current={
+                                          railCollapsed && isTeamRoute
+                                            ? "page"
+                                            : undefined
+                                        }
+                                        aria-expanded={
+                                          railCollapsed
+                                            ? undefined
+                                            : !collapsedTeams[team.id]
+                                        }
+                                        onClick={() => {
+                                          if (railCollapsed) {
+                                            navigate(
+                                              "Team Home",
+                                              `/workspace/team/${team.key.toLowerCase()}/home`,
+                                            );
+                                            setMobile(false);
+                                            return;
+                                          }
+                                          setCollapsedTeams((c) => ({
+                                            ...c,
+                                            [team.id]: !c[team.id],
+                                          }));
+                                        }}
+                                      >
+                                        <Users
+                                          size={15}
+                                          aria-hidden="true"
+                                          className="size-4 flex-none text-sidebar-icon group-hover:text-foreground shell-desktop:rail-collapsed:hidden"
+                                        />
+                                        <b
+                                          className="hidden size-5 flex-none place-items-center rounded-[5px] border border-line bg-panel text-[9.5px] font-semibold tracking-tight text-foreground shell-desktop:rail-collapsed:grid"
+                                          aria-hidden="true"
+                                        >
+                                          {team.key.slice(0, 2).toUpperCase()}
+                                        </b>
+                                        <span className="min-w-0 flex-1 truncate shell-desktop:rail-collapsed:hidden">
+                                          {team.name}
+                                        </span>
+                                      </button>
+                                    </SidebarTooltip>
+                                  </div>
+                                  {!collapsedTeams[team.id] && (
+                                    <div
+                                      className="border-l border-line grid gap-px mt-px mr-0 mb-2 ml-3.5 pl-2.5 shell-desktop:rail-collapsed:hidden"
+                                      data-team-nav-links=""
+                                    >
+                                      <button
+                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                        type="button"
+                                        onClick={() => {
+                                          navigate(
+                                            "Team Home",
+                                            `/workspace/team/${team.key.toLowerCase()}/home`,
+                                          );
+                                          setMobile(false);
+                                        }}
+                                        aria-current={
+                                          view === "Team Home" &&
+                                          location.pathname.endsWith("/home")
+                                            ? "page"
+                                            : undefined
+                                        }
+                                      >
+                                        Home
+                                      </button>
+                                      <button
+                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                        type="button"
+                                        onClick={() => {
+                                          navigate(
+                                            "Team issues",
+                                            `/workspace/team/${team.key.toLowerCase()}/active`,
+                                          );
+                                          setMobile(false);
+                                        }}
+                                        aria-current={
+                                          view === "Team issues"
+                                            ? "page"
+                                            : undefined
+                                        }
+                                      >
+                                        Tasks
+                                      </button>
+                                      <button
+                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                        type="button"
+                                        onClick={() => {
+                                          navigate(
+                                            "Team cycles",
+                                            `/workspace/team/${team.key.toLowerCase()}/cycles`,
+                                          );
+                                          setMobile(false);
+                                        }}
+                                        aria-current={
+                                          view === "Team cycles"
+                                            ? "page"
+                                            : undefined
+                                        }
+                                      >
+                                        Cycles
+                                      </button>
+                                      <div
+                                        className="border-l border-line grid gap-px mt-px mr-0 mb-1 ml-3 pl-2.25 shell-desktop:rail-collapsed:hidden"
+                                        data-team-cycle-links=""
+                                      >
+                                        <button
+                                          className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-1.75 pr-1.75 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                          type="button"
+                                          aria-current={
+                                            view === "Team cycle" &&
+                                            location.pathname.includes(
+                                              `/team/${team.key.toLowerCase()}/cycle/active`,
+                                            )
+                                              ? "page"
+                                              : undefined
+                                          }
+                                          onClick={() => {
+                                            navigate(
+                                              "Team cycle",
+                                              `/workspace/team/${team.key.toLowerCase()}/cycle/active`,
+                                            );
+                                            setTeamCycleRoute(
+                                              `/workspace/team/${team.key.toLowerCase()}/cycle/active`,
+                                            );
+                                            setMobile(false);
+                                          }}
+                                        >
+                                          Current
+                                        </button>
+                                        <button
+                                          className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-1.75 pr-1.75 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                          type="button"
+                                          aria-current={
+                                            view === "Team cycle" &&
+                                            location.pathname.includes(
+                                              `/team/${team.key.toLowerCase()}/cycle/upcoming`,
+                                            )
+                                              ? "page"
+                                              : undefined
+                                          }
+                                          onClick={() => {
+                                            navigate(
+                                              "Team cycle",
+                                              `/workspace/team/${team.key.toLowerCase()}/cycle/upcoming`,
+                                            );
+                                            setTeamCycleRoute(
+                                              `/workspace/team/${team.key.toLowerCase()}/cycle/upcoming`,
+                                            );
+                                            setMobile(false);
+                                          }}
+                                        >
+                                          Upcoming
+                                        </button>
+                                      </div>
+                                      <button
+                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                        type="button"
+                                        onClick={() => {
+                                          navigate(
+                                            "Team projects",
+                                            `/workspace/team/${team.key.toLowerCase()}/projects/all`,
+                                          );
+                                          setMobile(false);
+                                        }}
+                                        aria-current={
+                                          view === "Team projects"
+                                            ? "page"
+                                            : undefined
+                                        }
+                                      >
+                                        Projects
+                                      </button>
+                                      {team.showInitiatives && (
+                                        <button
+                                          className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                          type="button"
+                                          data-team-initiatives=""
+                                          onClick={() => {
+                                            navigate(
+                                              "Team initiatives",
+                                              `/workspace/team/${team.key.toLowerCase()}/initiatives`,
+                                            );
+                                            setMobile(false);
+                                          }}
+                                          aria-current={
+                                            view === "Team initiatives" &&
+                                            location.pathname
+                                              .split("/")[3]
+                                              ?.toLowerCase() ===
+                                              team.key.toLowerCase()
+                                              ? "page"
+                                              : undefined
+                                          }
+                                        >
+                                          Initiatives
+                                        </button>
+                                      )}
+                                      <button
+                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                        type="button"
+                                        onClick={() => {
+                                          navigate(
+                                            "Team views",
+                                            `/workspace/team/${team.key.toLowerCase()}/views/issues`,
+                                          );
+                                          setMobile(false);
+                                        }}
+                                        aria-current={
+                                          view === "Team views"
+                                            ? "page"
+                                            : undefined
+                                        }
+                                      >
+                                        Views
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          {[
+                            ...items,
+                            /* Admins always see the entry, so the screens can be found and turned on
+                             * from where they live; the page offers the switch while it is off. */
+                            ...(section === "primary" &&
+                            (agentsOn || viewer.admin)
+                              ? ([["Agents", GitBranch]] as [
+                                  string,
+                                  typeof GitBranch,
+                                ][])
+                              : []),
+                          ].map(([label, Icon]) => {
+                            const navLabel =
+                              label === "Favorite views"
+                                ? "Saved views"
+                                : label;
+                            const button = (
+                              <button
+                                type="button"
+                                className={sidebarItemClass}
+                                data-nav-item=""
+                                aria-label={navLabel}
+                                onClick={() => {
+                                  navigate(label);
+                                  setMobile(false);
+                                }}
+                                aria-current={
+                                  view === label ? "page" : undefined
+                                }
+                              >
+                                <Icon
+                                  size={15}
+                                  aria-hidden="true"
+                                  className="flex-none text-sidebar-icon group-hover:text-foreground group-aria-[current=page]:text-foreground"
+                                />
+                                <span className="min-w-0 flex-1 truncate shell-desktop:rail-collapsed:hidden">
+                                  {navLabel}
+                                </span>
+                                {label === "Inbox" && <InboxBadge />}
+                              </button>
+                            );
+                            return label === "Inbox" ? (
+                              <InboxTooltip
+                                key={label}
+                                enabled={railCollapsed}
+                              >
+                                {button}
+                              </InboxTooltip>
+                            ) : (
+                              <SidebarTooltip
+                                key={label}
+                                label={navLabel}
+                                enabled={railCollapsed}
+                              >
+                                {button}
+                              </SidebarTooltip>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ),
+                  )}
+                  <div
+                    className="mb-4.25 mt-0 mr-0 ml-0 shell-desktop:rail-collapsed:mb-0 shell-desktop:rail-collapsed:mt-2 shell-desktop:rail-collapsed:pt-2 shell-desktop:rail-collapsed:border-t shell-desktop:rail-collapsed:border-line"
+                    data-nav-group=""
+                    data-nav-group-more-control=""
+                  >
+                    <UIPopover
+                      open={moreOpen}
+                      onOpenChange={(open) => {
+                        setMoreOpen(open);
+                        if (open) setOrgMenu(false);
+                      }}
+                    >
+                      <SidebarTooltip
+                        label="More"
+                        enabled={railCollapsed && !moreOpen}
+                      >
+                        <PopoverTrigger asChild>
+                          <button
+                            type="button"
+                            className={sidebarItemClass}
+                            data-nav-item=""
+                            aria-label="Workspace More"
+                            aria-haspopup="menu"
+                            aria-controls="workspace-more-menu"
+                          >
+                            <MoreHorizontal
+                              size={15}
+                              aria-hidden="true"
+                              className="flex-none text-sidebar-icon group-hover:text-foreground"
+                            />
+                            <span className="min-w-0 flex-1 truncate shell-desktop:rail-collapsed:hidden">
+                              More
+                            </span>
+                          </button>
+                        </PopoverTrigger>
+                      </SidebarTooltip>
+                      <PopoverContent
+                        align={railCollapsed ? "end" : "start"}
+                        side={railCollapsed ? "right" : "bottom"}
+                        sideOffset={railCollapsed ? 10 : 6}
+                        id="workspace-more-menu"
+                        role="menu"
+                        data-popover-panel
+                        className="z-50 w-64 max-w-full rounded-[10px] border-line bg-panel p-1.5 text-foreground shadow-(--shadow)"
+                      >
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setMoreOpen(false);
+                            navigate("Members");
+                            setMobile(false);
+                          }}
+                          className="flex w-full min-h-9 items-center justify-between gap-2 rounded-lg bg-transparent p-2 text-left text-sm text-inherit hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
+                        >
+                          Members
+                        </button>
+                        <p className="m-0 px-2 py-1.5 text-xs leading-relaxed text-muted">
+                          Customers, team administration and sidebar
+                          customization are not available yet.
+                        </p>
+                      </PopoverContent>
+                    </UIPopover>
+                  </div>
+                </nav>
+              </SidebarTooltipProvider>
+            )}
+          </aside>
+        </>
+        <div
+          className="min-w-0 flex-1 bg-bg min-h-0 overflow-hidden shell-phone:flex shell-phone:flex-col shell-desktop:col-start-2 shell-desktop:row-start-1 shell-desktop:row-span-2"
+          data-workspace-content=""
+          data-headerless={HEADERLESS_VIEWS.has(view) ? "" : undefined}
+        >
+          <main
+            data-main
+            className="main max-w-360 w-full pt-10 pr-[clamp(24px,4vw,64px)] pb-10 pl-[clamp(24px,4vw,64px)] mt-0 mr-auto mb-0 ml-auto max-sm:pt-5 max-sm:pr-3 max-sm:pb-5 max-sm:pl-3 flex-1 min-w-0 max-lg:pt-7 max-lg:pr-6 max-lg:pb-7 max-lg:pl-6 has-data-settings-page:mt-2 has-data-settings-page:mr-2 has-data-settings-page:mb-2 has-data-settings-page:rounded-xl has-data-workspace-page:w-full! has-data-workspace-page:m-0! has-data-workspace-page:p-0! has-data-workspace-page:max-w-none! has-data-workspace-page:min-w-0! has-data-workspace-page:min-h-0! has-data-workspace-page:flex! has-data-workspace-page:flex-col! has-data-workspace-page:overflow-hidden! has-data-workspace-page:bg-sidebar! has-data-workspace-page:rounded-none! overflow-hidden bg-bg text-foreground rounded-none flex flex-col min-h-0 h-full max-h-full shell-phone:h-auto [@media_(max-width:850px)]:pt-7 [@media_(max-width:850px)]:pr-5.5 [@media_(max-width:850px)]:pb-7 [@media_(max-width:850px)]:pl-5.5 [@media_(max-width:560px)]:pt-6 [@media_(max-width:560px)]:pr-3.5 [@media_(max-width:560px)]:pb-6 [@media_(max-width:560px)]:pl-3.5 [@media_(max-width:900px)]:pt-7.5 [@media_(max-width:900px)]:pr-6 [@media_(max-width:900px)]:pb-7.5 [@media_(max-width:900px)]:pl-6 shell-phone:pt-6.25 shell-phone:pr-4 shell-phone:pb-6.25 shell-phone:pl-4 [@media_(max-width:420px)]:pt-5.5 [@media_(max-width:420px)]:pr-3 [@media_(max-width:420px)]:pb-5.5 [@media_(max-width:420px)]:pl-3 has-data-pulse-page:w-[calc(100%-16px)] has-data-pulse-page:min-h-[calc(100dvh-16px)] shell-desktop:has-data-pulse-page:w-[calc(100%-8px)] shell-phone:has-data-pulse-page:min-h-[calc(100dvh-60px)] has-data-inbox-page:w-[calc(100%-16px)] has-data-inbox-page:min-h-[calc(100dvh-16px)] shell-desktop:has-data-inbox-page:w-[calc(100%-8px)] shell-phone:has-data-inbox-page:min-h-[calc(100dvh-60px)] has-data-initiatives-page:w-[calc(100%-16px)] has-data-initiatives-page:min-h-[calc(100dvh-16px)] shell-desktop:has-data-initiatives-page:w-[calc(100%-8px)] shell-phone:has-data-initiatives-page:min-h-[calc(100dvh-60px)] has-data-projects-reference:w-[calc(100%-8px)] has-data-projects-reference:min-h-[calc(100dvh-16px)] shell-phone:has-data-projects-reference:min-h-[calc(100dvh-60px)] has-data-project-reference:w-[calc(100%-8px)] has-data-project-reference:min-h-[calc(100dvh-16px)] shell-phone:has-data-project-reference:min-h-[calc(100dvh-60px)] has-data-workspace-views-page:w-[calc(100%-8px)] has-data-workspace-views-page:min-h-[calc(100dvh-16px)] shell-phone:has-data-workspace-views-page:min-h-[calc(100dvh-60px)] shell-desktop:has-data-my-issues-view:w-[calc(100%-16px)] shell-desktop:has-data-my-issues-view:min-h-[calc(100dvh-16px)] shell-phone:[&:has([data-my-issues-view])_[data-my-issue-tabs]]:scrollbar-none"
+          >
+            {error && (
+              <div
+                className="flex items-center gap-3 mt-0 mr-0 mb-5 ml-0 pt-3.5 pr-4 pb-3.5 pl-4 rounded-[10px] text-danger border border-danger/40 bg-[color-mix(in_srgb,var(--danger)_6%,var(--panel))]"
+                data-app-error=""
+                role="alert"
+              >
+                <b>Couldn’t load this workspace</b>
+                <span className="flex-1 text-foreground min-w-0 wrap-break-word">
+                  {error}
+                </span>
+                <button
+                  className="inline-flex items-center justify-center gap-1.75 rounded-md border border-line bg-panel pl-2.75 pr-2.75 pt-2 pb-2 text-inherit transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                  data-control-outline=""
+                  onClick={() => setError("")}
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+            {SHELL_VIEWS.has(view) ? (
+              <div
+                className="bg-bg shadow-sm overflow-y-auto overscroll-contain m-1 flex min-h-0 flex-1 flex-col rounded-2xl border-[0.5px] border-neutral-300/70 has-data-settings-page:py-6 has-data-settings-page:px-4 md:has-data-settings-page:py-8 has-data-my-issues-view:p-0 has-data-pulse-page:p-0 has-data-inbox-page:p-0 has-data-initiatives-page:p-0 has-data-workspace-views-page:p-0 has-data-projects-reference:p-0 has-data-surface:p-0 has-data-my-issues-view:overflow-hidden has-data-surface:overflow-hidden [font-optical-sizing:auto]"
+                data-workspace-page=""
+              >
+                {pageContent}
+              </div>
+            ) : (
+              pageContent
+            )}
+          </main>
+        </div>
+        {projectOpen && (
+          <NewProject
+            teams={teams}
+            onClose={() => setProjectOpen(false)}
+            onCreated={() => {
+              setProjectOpen(false);
+              gql(
+                `query Projects{projects(first:100){nodes{id name description state progress startDate targetDate health lead{name} teams{nodes{id name key}}} pageInfo{hasNextPage endCursor}}}`,
+              )
+                .then((d) => {
+                  setProjects(d.projects.nodes);
+                  setProjectCursor(d.projects.pageInfo?.endCursor || null);
+                  setProjectHasMore(Boolean(d.projects.pageInfo?.hasNextPage));
+                })
+                .catch((e) => setProjectError((e as Error).message));
+            }}
+          />
+        )}
+        {newOpen && (
+          <NewIssue
+            teams={teams}
+            initialStateId={newStateId || undefined}
+            initialTeamId={newTeamId || undefined}
+            onClose={() => {
+              setNewOpen(false);
+              setNewStateId("");
+              setNewTeamId("");
+            }}
+            onCreated={() => {
+              setNewOpen(false);
+              setNewStateId("");
+              setNewTeamId("");
+              void syncRef.current?.pull();
+            }}
+          />
+        )}
+        {initiativeCreate && (
+          <CreateInitiativeDialog
+            defaults={initiativeCreate}
+            initiatives={initiativeOptions}
+            projects={projects}
+            onClose={() => setInitiativeCreate(null)}
+            onCreated={(row, more) => {
+              if (more) return;
+              setInitiativeCreate(null);
+              openInitiative(row.identifier || row.id);
+            }}
+          />
+        )}
+        <PhoneSignInDialog
+          open={phoneSignInOpen}
+          onClose={() => setPhoneSignInOpen(false)}
+        />
+        {commandOpen && (
+          <CommandPalette
+            viewsOnly={commandViews}
+            query={commandQuery}
+            setQuery={setCommandQuery}
+            issues={issues}
+            onClose={() => {
+              setCommandOpen(false);
+              setCommandViews(false);
+              setCommandQuery("");
+            }}
+            onIssue={(i) => {
+              setCommandOpen(false);
+              openIssue(i);
+            }}
+            onNavigate={(v) => {
+              navigate(v);
+              setCommandOpen(false);
+            }}
+            onCreateInitiative={() => {
+              setCommandOpen(false);
+              setInitiativeCreate({});
+            }}
+            onOpenInitiative={(id) => {
+              setCommandOpen(false);
+              openInitiative(id);
+            }}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
 
-export function relTime(iso?:string){if(!iso)return '';const d=Date.parse(iso);if(Number.isNaN(d))return iso;const m=Math.round((Date.now()-d)/60000);if(m<1)return 'just now';if(m<60)return `${m}m ago`;const h=Math.round(m/60);if(h<24)return `${h}h ago`;const days=Math.round(h/24);if(days<30)return `${days}d ago`;const mo=Math.round(days/30);if(mo<12)return `${mo}mo ago`;return `${Math.round(mo/12)}y ago`}
-function IssueDetailPage({workspaceName,issue,issueList,onOpenIssue,loading,error,onBack,backLabel,onRetry,onComment,teams,projects,labels,cycles,onUpdate,viewer,onArchive,onDelete,onDeleteComment}:{workspaceName?:string;issueList:Issue[];onOpenIssue:(issue:Issue)=>void;viewer:Viewer;onArchive:()=>Promise<void>;onDelete:()=>Promise<void>;onDeleteComment:(id:string)=>Promise<void>;issue:Issue|null;loading:boolean;error:string;onBack:()=>void;backLabel:string;onRetry?:()=>void;onComment:(body:string)=>Promise<void>;teams:Team[];projects:Project[];labels:{id:string;name:string;color?:string}[];cycles:Cycle[];onUpdate:(input:Record<string,unknown>)=>Promise<void>}){
-return <GraphIssueDetail key={issue?.id||'none'} workspaceName={workspaceName} viewer={viewer} issue={issue} issueList={issueList} onOpenIssue={onOpenIssue} loading={loading} error={error} onArchive={onArchive} onDelete={onDelete} onDeleteComment={onDeleteComment} teams={teams} projects={projects} labels={labels} cycles={cycles} onUpdate={onUpdate} onBack={onBack} backLabel={backLabel} onRetry={onRetry} onComment={onComment}/>}
+export function relTime(iso?: string) {
+  if (!iso) return "";
+  const d = Date.parse(iso);
+  if (Number.isNaN(d)) return iso;
+  const m = Math.round((Date.now() - d) / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const days = Math.round(h / 24);
+  if (days < 30) return `${days}d ago`;
+  const mo = Math.round(days / 30);
+  if (mo < 12) return `${mo}mo ago`;
+  return `${Math.round(mo / 12)}y ago`;
+}
+function IssueDetailPage({
+  workspaceName,
+  issue,
+  issueList,
+  onOpenIssue,
+  loading,
+  error,
+  onBack,
+  backLabel,
+  onRetry,
+  onComment,
+  teams,
+  projects,
+  labels,
+  cycles,
+  onUpdate,
+  viewer,
+  onArchive,
+  onDelete,
+  onDeleteComment,
+}: {
+  workspaceName?: string;
+  issueList: Issue[];
+  onOpenIssue: (issue: Issue) => void;
+  viewer: Viewer;
+  onArchive: () => Promise<void>;
+  onDelete: () => Promise<void>;
+  onDeleteComment: (id: string) => Promise<void>;
+  issue: Issue | null;
+  loading: boolean;
+  error: string;
+  onBack: () => void;
+  backLabel: string;
+  onRetry?: () => void;
+  onComment: (body: string) => Promise<void>;
+  teams: Team[];
+  projects: Project[];
+  labels: { id: string; name: string; color?: string }[];
+  cycles: Cycle[];
+  onUpdate: (input: Record<string, unknown>) => Promise<void>;
+}) {
+  return (
+    <GraphIssueDetail
+      key={issue?.id || "none"}
+      workspaceName={workspaceName}
+      viewer={viewer}
+      issue={issue}
+      issueList={issueList}
+      onOpenIssue={onOpenIssue}
+      loading={loading}
+      error={error}
+      onArchive={onArchive}
+      onDelete={onDelete}
+      onDeleteComment={onDeleteComment}
+      teams={teams}
+      projects={projects}
+      labels={labels}
+      cycles={cycles}
+      onUpdate={onUpdate}
+      onBack={onBack}
+      backLabel={backLabel}
+      onRetry={onRetry}
+      onComment={onComment}
+    />
+  );
+}
+const InitiativeRoute = lazyRoute(() =>
+  import("./initiatives/InitiativeDetail").then((m) => m.InitiativeRoute),
+);
+import { PhoneSignInDialog } from "./PhoneSignIn";
+const InitiativesList = lazyRoute(() =>
+  import("./initiatives/InitiativesList").then((m) => m.InitiativesList),
+);
+const CreateInitiativeDialog = lazyRoute(() =>
+  import("./initiatives/CreateInitiativeDialog").then((m) => m.CreateInitiativeDialog), { fallback: null },
+);
+import { fetchAllInitiatives, type InitiativeRef } from "./initiatives/api";
 // Local-first helpers for the projects / initiatives / pulse pages (see projectStore.ts).
-import {addPendingProject, hasPage, hideProject, isPendingProject, optimisticPage, patchProject, rememberProjects, setProjectNotice, useProject, useProjectIssueIndex, useProjectIssues, useProjectNotice, useProjects, usePagedCache, type PageOf, useProjectEntityVersion, useProjectSyncMeta} from './projectStore';
-import './mobile-touch.css';
-const PROJECT_FIELDS=`id name description state progress startDate targetDate health lead{name} teams{nodes{id name key}}`;
-const INITIATIVE_FIELDS=`id name summary status priority targetDate createdAt owner{id name} creator{id} projects{nodes{id name}}`;
-const PULSE_FIELDS=`id status body createdAt progress health actor{id name} project{id name health progress targetDate lead{name}}`;
-const pulseKey=(meta:SyncMeta|null)=>meta?`pulse:${meta.workspace.id}:${meta.viewer.id||''}`:null;
-const upsertFirst=<T extends {id:string}>(rows:T[],row:T)=>rows.some(r=>r.id===row.id)?rows.map(r=>r.id===row.id?row:r):[row,...rows];
-function useMemberOptions(){const meta=useProjectSyncMeta();return useMemo(()=>(meta?.users||[]).filter((u):u is [string,string]=>!!u[1]).map(([id,name])=>({id,name})).sort((a,b)=>a.name.localeCompare(b.name)),[meta])}
-function InitiativesPage({path,projects,onOpenProject,viewer}:{path:string;projects:Project[];onOpenProject:(p:Project)=>void;revision:number;viewer:Viewer}){
- const [tab,setTab]=useState<'active'|'planned'|'all'>(()=>path.endsWith('/active')?'active':path.endsWith('/planned')?'planned':'all');
- const meta=useProjectSyncMeta();const members=useMemberOptions();const allProjects=useProjects(projects);const projectById=useMemo(()=>new Map(allProjects.map(p=>[p.id,p])),[allProjects]);
- // Initiative rows embed project names only; those are read live from the store, so only initiative changes refetch.
- const version=useProjectEntityVersion(['initiative']);const key=meta?`initiatives:${meta.workspace.id}:${meta.viewer.id||''}`:null;
- const fetchPage=React.useCallback((first:number,after:string|null)=>gql(`query InitiativeList($first:Int,$after:String){initiatives(first:$first,after:$after){nodes{${INITIATIVE_FIELDS}} pageInfo{hasNextPage endCursor}}}`,{first,after}).then(d=>d.initiatives as PageOf<Initiative>),[]);
- const list=usePagedCache<Initiative>(key,fetchPage,version,50,'Initiative');const rows=list.rows,hasMore=list.more;
- const [actionError,setActionError]=useState('');const error=actionError||list.error;
- const [createOpen,setCreateOpen]=useState(false),[name,setName]=useState(''),[summary,setSummary]=useState(''),[status,setStatus]=useState<'active'|'planned'>('active'),[priority,setPriority]=useState(0),[ownerId,setOwnerId]=useState(''),[targetDate,setTargetDate]=useState(''),[projectIds,setProjectIds]=useState<string[]>([]),[formError,setFormError]=useState('');const creating=false;
- const [filterOpen,setFilterOpen]=useState(false),[displayOpen,setDisplayOpen]=useState(false),[statusFilter,setStatusFilter]=useState(''),[showDescription,setShowDescription]=useState(true);
- useEffect(()=>{const onPop=()=>setTab(location.pathname.endsWith('/active')?'active':location.pathname.endsWith('/planned')?'planned':'all');window.addEventListener('popstate',onPop);return()=>window.removeEventListener('popstate',onPop)},[]);
- const openCreate=()=>{setFormError('');setCreateOpen(true);void 0};
- const create=async(e:React.FormEvent)=>{e.preventDefault();if(!key||!name.trim())return;
-  const draft={name,summary,status,priority,ownerId,targetDate,projectIds};
-  const temp:Initiative={id:`optimistic:${crypto.randomUUID()}`,name:name.trim(),summary:summary.trim()||undefined,status,priority,targetDate:targetDate||undefined,createdAt:new Date().toISOString(),owner:ownerId?{id:ownerId,name:members.find(m=>m.id===ownerId)?.name}:undefined,creator:viewer.id?{id:viewer.id}:undefined,projects:{nodes:projectIds.map(id=>({id,name:projectById.get(id)?.name||''}))}};
-  const settle=optimisticPage<Initiative>(key,r=>[temp,...r]);setCreateOpen(false);setName('');setSummary('');setProjectIds([]);setFormError('');
-  try{const d=await gql(`mutation($input:InitiativeCreateInput!){initiativeCreate(input:$input){success initiative{${INITIATIVE_FIELDS}}}}`,{input:{name:temp.name,summary:summary.trim()||null,status,priority,ownerId:ownerId||null,targetDate:targetDate||null,projectIds}});if(!d.initiativeCreate?.success||!d.initiativeCreate.initiative)throw Error('Could not create initiative');const created:Initiative=d.initiativeCreate.initiative;settle(r=>upsertFirst(r,created))}
-  catch(err){settle();setName(draft.name);setSummary(draft.summary);setStatus(draft.status);setPriority(draft.priority);setOwnerId(draft.ownerId);setTargetDate(draft.targetDate);setProjectIds(draft.projectIds);setFormError((err as Error).message);setCreateOpen(true)}};
- const archive=async(i:Initiative)=>{if(!key||!await confirmDialog(`Archive initiative ${i.name}?`,{danger:true}))return;const without=(r:Initiative[])=>r.filter(x=>x.id!==i.id);const settle=optimisticPage<Initiative>(key,without);setActionError('');
-  gql(`mutation($id:String!){initiativeArchive(id:$id){success}}`,{id:i.id}).then(d=>{if(!d.initiativeArchive?.success)throw Error('Initiative could not be archived.');settle(without)}).catch(e=>{settle();setActionError((e as Error).message)})};
- const changeStatus=(i:Initiative,next:string)=>{if(!key||next===i.status)return;const settle=optimisticPage<Initiative>(key,r=>r.map(x=>x.id===i.id?{...x,status:next}:x));setActionError('');
-  gql(`mutation($id:String!,$input:InitiativeUpdateInput!){initiativeUpdate(id:$id,input:$input){success initiative{${INITIATIVE_FIELDS}}}}`,{id:i.id,input:{status:next}}).then(d=>{if(!d.initiativeUpdate?.success)throw Error('Initiative could not be updated.');const saved:Initiative=d.initiativeUpdate.initiative||{...i,status:next};settle(r=>r.map(x=>x.id===saved.id?saved:x))}).catch(e=>{settle();setActionError((e as Error).message)})};
- const canEdit=(i:Initiative)=>!i.id.startsWith('optimistic:')&&Boolean(viewer.admin||(viewer.id&&i.creator?.id===viewer.id));
- const visible=useMemo(()=>rows.filter(i=>(tab==='all'||i.status===tab)&&(!statusFilter||i.status===statusFilter)),[rows,tab,statusFilter]);
- const retry=()=>{setActionError('');list.retry()};
- return <section className="initiatives-page"><header className="initiatives-head"><h1>Initiatives</h1><button type="button" onClick={openCreate}><Plus size={14}/> New initiative</button></header><div className="initiatives-toolbar"><nav aria-label="Initiative views">{([['Active','active'],['Planned','planned'],['All initiatives','all']] as const).map(([label,slug])=><a key={slug} href={slug==='all'?'/workspace/initiatives':`/workspace/initiatives/${slug}`} aria-current={tab===slug?'page':undefined} onClick={e=>{e.preventDefault();history.pushState({},'',e.currentTarget.href);setTab(slug)}}>{label}</a>)}</nav><div><button aria-label="Add filter" aria-expanded={filterOpen} onClick={()=>{setFilterOpen(v=>!v);setDisplayOpen(false)}}><ListFilter size={15}/></button><button aria-label="Display options" aria-expanded={displayOpen} onClick={()=>{setDisplayOpen(v=>!v);setFilterOpen(false)}}><Settings size={15}/></button></div></div>
-  {filterOpen&&<div className="initiatives-popover"><label>Status<select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option value="">All statuses</option><option value="active">Active</option><option value="planned">Planned</option><option value="completed">Completed</option><option value="canceled">Canceled</option></select></label><button type="button" onClick={()=>setStatusFilter('')}>Clear filter</button><p>Other the upstream API filters require additional local data.</p></div>}
-  {displayOpen&&<div className="initiatives-popover"><label><input type="checkbox" checked={showDescription} onChange={e=>setShowDescription(e.target.checked)}/> Description</label><p>Manual ordering and grouping are not available in Hoja.</p></div>}
-  <div className="initiatives-content">{visible.length>0&&<div className="initiatives-list"><div className="initiatives-list-head"><span>Initiative</span><span>Status</span><span>Projects</span><span>Target</span></div>{visible.map(i=><article className="initiative-row" key={i.id} aria-busy={i.id.startsWith('optimistic:')||undefined}><div><strong>{i.name}</strong>{showDescription&&i.summary&&<p>{i.summary}</p>}{canEdit(i)&&<button type="button" className="outline" onClick={()=>archive(i)}>Archive</button>}</div><span>{canEdit(i)?<select className="initiative-status-select" aria-label={`Status of ${i.name}`} value={i.status} onChange={e=>changeStatus(i,e.target.value)}>{['planned','active','completed','canceled'].map(s=><option key={s} value={s}>{s}</option>)}</select>:i.status}</span><div>{i.projects?.nodes.length?i.projects.nodes.map(p=>{const known=projectById.get(p.id);return <button type="button" key={p.id} onClick={()=>{if(known)onOpenProject(known)}} disabled={!known}>{known?.name||p.name}</button>}):'—'}</div><time>{i.targetDate||'—'}</time></article>)}</div>}
-  {!list.hasData&&!error&&<p className="initiatives-state" role="status">Loading initiatives…</p>}{list.hasData&&!visible.length&&!error&&<div className="initiatives-empty"><Layers3 size={49} strokeWidth={1.3}/><h2>{tab==='planned'?'Upcoming initiatives':'Initiatives'}</h2><p>{statusFilter?'No initiatives match this filter.':'Initiatives are larger, strategic product efforts that set the direction of your company. They are comprised of projects that align with the goals of the initiative and allow you to monitor progress at scale.'}</p><button className="primary" type="button" onClick={openCreate}>Create new initiative</button><a href="https://linear.app/docs/initiatives" target="_blank" rel="noopener noreferrer">Documentation</a></div>}{error&&<div className="initiatives-state" role="alert">{error} <button type="button" onClick={retry}>Retry</button></div>}{hasMore&&<button className="initiatives-load" type="button" disabled={list.loadingMore} onClick={list.loadMore}>{list.loadingMore?'Loading…':'Load more initiatives'}</button>}</div>
-  {createOpen&&<div className="modal-backdrop" role="presentation" onClick={e=>{if(e.target===e.currentTarget&&!creating)setCreateOpen(false)}}><form className="initiative-create" onSubmit={create}><header><h2>New initiative</h2><button type="button" aria-label="Close" onClick={()=>setCreateOpen(false)} disabled={creating}><X size={16}/></button></header><label>Name<input aria-label="Initiative name" required value={name} onChange={e=>setName(e.target.value)}/></label><label>Summary<textarea aria-label="Initiative summary" value={summary} onChange={e=>setSummary(e.target.value)} rows={3}/></label><div className="initiative-create-fields"><label>Status<select value={status} onChange={e=>setStatus(e.target.value as 'active'|'planned')}><option value="active">Active</option><option value="planned">Planned</option></select></label><label>Priority<select value={priority} onChange={e=>setPriority(Number(e.target.value))}><option value={0}>No priority</option><option value={1}>Urgent</option><option value={2}>High</option><option value={3}>Medium</option><option value={4}>Low</option></select></label><label>Owner<select value={ownerId} onChange={e=>setOwnerId(e.target.value)}><option value="">No owner</option>{members.map(m=><option key={m.id} value={m.id}>{m.name||m.id}</option>)}</select></label><label>Target date<input type="date" value={targetDate} onChange={e=>setTargetDate(e.target.value)}/></label></div><fieldset><legend>Projects</legend>{allProjects.length?allProjects.filter(p=>!isPendingProject(p)).map(p=><label key={p.id}><input type="checkbox" checked={projectIds.includes(p.id)} onChange={e=>setProjectIds(v=>e.target.checked?[...v,p.id]:v.filter(id=>id!==p.id))}/>{p.name}</label>):<span>No projects available</span>}</fieldset>{formError&&<p role="alert">{formError}</p>}<footer><button type="button" className="outline" onClick={()=>setCreateOpen(false)} disabled={creating}>Cancel</button><button className="primary" disabled={creating||!name.trim()}>{creating?'Creating…':'Create'}</button></footer></form></div>}
- </section>
+import {
+  addPendingProject,
+  hasPage,
+  hideProject,
+  isPendingProject,
+  optimisticPage,
+  patchProject,
+  rememberProjects,
+  setProjectNotice,
+  useProject,
+  useProjectIssueIndex,
+  useProjectIssues,
+  useProjectNotice,
+  useProjects,
+  usePagedCache,
+  type PageOf,
+  useProjectEntityVersion,
+  useProjectSyncMeta,
+} from "./projectStore";
+import "./mobile-touch.css";
+const PROJECT_FIELDS = `id name description state progress startDate targetDate health lead{name} teams{nodes{id name key}}`;
+const PULSE_FIELDS = `id status body createdAt progress health actor{id name avatarSeed} project{id name health progress targetDate viewerSubscribed lead{name}} comments(first:20){nodes{id body createdAt user{id name avatarSeed}}}`;
+const pulseKey = (meta: SyncMeta | null) =>
+  meta ? `pulse:${meta.workspace.id}:${meta.viewer.id || ""}` : null;
+const upsertFirst = <T extends { id: string }>(rows: T[], row: T) =>
+  rows.some((r) => r.id === row.id)
+    ? rows.map((r) => (r.id === row.id ? row : r))
+    : [row, ...rows];
+function useMemberOptions() {
+  const meta = useProjectSyncMeta();
+  return useMemo(
+    () =>
+      (meta?.users || [])
+        .filter((u): u is [string, string] => !!u[1])
+        .map(([id, name]) => ({ id, name }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [meta],
+  );
+}
+/* The task pane inside the inbox: the same task view as the full page, loaded by identifier and kept
+   live from the sync store, with archive and delete closing the pane instead of navigating. */
+function InboxIssueDetail({
+  issue: seed,
+  onClose,
+  onOpenIssue,
+  workspaceName,
+  viewer,
+  issueList,
+  teams,
+  projects,
+  labels,
+  cycles,
+  updateIssue,
+  onError,
+}: {
+  issue: Issue;
+  onClose: () => void;
+  onOpenIssue: (issue: Issue) => void;
+  workspaceName?: string;
+  viewer: Viewer;
+  issueList: Issue[];
+  teams: Team[];
+  projects: Project[];
+  labels: IssueLabel[];
+  cycles: Cycle[];
+  updateIssue: (id: string, input: Record<string, unknown>) => Promise<void>;
+  onError: (message: string) => void;
+}) {
+  const [issue, setIssue] = useState<Issue>(
+    () =>
+      peekIssue(seed.id) ||
+      (cachedIssueDetail(seed.id)?.detail as Issue | undefined) ||
+      seed,
+  );
+  const [error, setError] = useState("");
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    setIssue(
+      (old) =>
+        peekIssue(seed.id) || (old.id === seed.id ? { ...old, ...seed } : seed),
+    );
+  }, [seed]);
+  useEffect(() => {
+    let live = true;
+    setError("");
+    const off = onStoreIssue(seed.id, (i) => {
+      if (live) setIssue((old) => ({ ...old, ...i }));
+    });
+    fetchIssueDetail(seed.identifier || seed.id, seed.id)
+      .then((e) => {
+        if (live) setIssue((old) => ({ ...old, ...(e.detail as Issue) }));
+      })
+      .catch((e) => {
+        if (live) setError(errorText(e));
+      });
+    return () => {
+      live = false;
+      off();
+    };
+  }, [seed.id, seed.identifier, retry]);
+  const lifecycle = (verb: "archive" | "delete") => async () => {
+    const settle = hideIssueLocally(issue.id);
+    onClose();
+    try {
+      const field = verb === "archive" ? "issueArchive" : "issueDelete";
+      const d = await gql(`mutation($id:String!){${field}(id:$id){success}}`, {
+        id: issue.identifier,
+      });
+      if (!d[field]?.success) throw Error(`Task could not be ${verb}d.`);
+      settle(true);
+    } catch (e) {
+      settle(false);
+      onError(`Could not ${verb} ${issue.identifier}: ${errorText(e)}`);
+      throw e;
+    }
+  };
+  return (
+    <GraphIssueDetail
+      key={issue.id}
+      workspaceName={workspaceName}
+      viewer={viewer}
+      issue={issue}
+      issueList={issueList}
+      onOpenIssue={onOpenIssue}
+      loading={false}
+      error={error}
+      onArchive={lifecycle("archive")}
+      onDelete={lifecycle("delete")}
+      onDeleteComment={async (cid) => {
+        const d = await gql(
+          `mutation($id:String!){commentDelete(id:$id){success}}`,
+          { id: cid },
+        );
+        if (!d.commentDelete?.success)
+          throw Error("Comment could not be deleted.");
+      }}
+      teams={teams}
+      projects={projects}
+      labels={labels}
+      cycles={cycles}
+      onUpdate={(input) => updateIssue(issue.id, input)}
+      onBack={onClose}
+      backLabel="Inbox"
+      onRetry={() => setRetry((r) => r + 1)}
+    />
+  );
 }
 
-/* Inbox: shows the last list immediately (cached per viewer), revalidates only when a notification
-   changes, and applies read/archive/mark-all optimistically with rollback. */
-type InboxCache={key:string;items:InboxNotification[];cursor:string|null;hasMore:boolean;unread:number};
-let inboxCache:InboxCache|null=null;
-const INBOX_QUERY=`query InboxNotifications($after:String,$unreadOnly:Boolean){inboxNotifications(first:50,after:$after,unreadOnly:$unreadOnly){nodes{id kind createdAt readAt archivedAt issue{id identifier title state{name type} team{name} project{id name}} actor{name}} pageInfo{hasNextPage endCursor}} inboxUnreadCount}`;
-function InboxPage({path,onOpenIssue}:{path:string;onOpenIssue:(issue:Issue)=>void;revision?:number}){
- const meta=useSyncMeta();const cacheKey=meta?`${meta.workspace.id}:${meta.viewer.id||''}`:'';
- const cached=inboxCache&&inboxCache.key===cacheKey?inboxCache:null;
- const [tab,setTab]=useState<'other'|'priority'>(()=>path.endsWith('/priority')?'priority':'other');
- const [base,setBase]=useState<InboxNotification[]>(()=>cached?.items||[]),[cursor,setCursor]=useState<string|null>(()=>cached?.cursor??null),[hasMore,setHasMore]=useState(()=>cached?.hasMore||false),[serverUnread,setServerUnread]=useState(()=>cached?.unread||0);
- const [unreadOnly,setUnreadOnly]=useState(false),[loading,setLoading]=useState(()=>!cached),[error,setError]=useState(''),[actionError,setActionError]=useState(''),[allPending,setAllPending]=useState(false),[actionsOpen,setActionsOpen]=useState(false);
- const [items,push]=useOptimisticList(base);const baseRef=useRef(base);baseRef.current=base;
- // Unread badge = server count adjusted by pending local edits on loaded notifications.
- const unreadCount=allPending?0:Math.max(0,serverUnread-(base.filter(n=>!n.readAt).length-items.filter(n=>!n.readAt).length));
- const generation=useRef(0),requesting=useRef(false),revalidating=useRef<Promise<void>|null>(null),again=useRef(false);
- const notificationVersion=useEntityVersion(['notification']);
- const allIssues=useIssues();
- const storeIssues=useMemo(()=>{const want=new Set(base.map(n=>n.issue?.id).filter(Boolean));const map=new Map<string,Issue>();if(want.size)for(const i of allIssues)if(want.has(i.id))map.set(i.id,i);return map},[allIssues,base]);
- useEffect(()=>{if(!unreadOnly&&cacheKey&&!error)inboxCache={key:cacheKey,items:base,cursor,hasMore,unread:serverUnread}},[base,cursor,hasMore,serverUnread,unreadOnly,cacheKey,error]);
- const fetchPage=(after:string|null,onlyUnread:boolean)=>gql(INBOX_QUERY,{after,unreadOnly:onlyUnread}).then(d=>{const page=d.inboxNotifications;const nodes:InboxNotification[]=page.nodes;if(page.pageInfo?.hasNextPage&&(!page.pageInfo.endCursor||page.pageInfo.endCursor===after||!nodes.length))throw Error('Inbox pagination did not advance. Retry later.');return {nodes,cursor:page.pageInfo?.endCursor||null,hasMore:Boolean(page.pageInfo?.hasNextPage),unread:d.inboxUnreadCount as number}});
- // Load more (or the first page after a filter change): appends.
- const load=async(after:string|null=null,onlyUnread=unreadOnly)=>{
-  if(requesting.current)return;requesting.current=true;const seq=generation.current;setLoading(true);setError('');
-  try{const page=await fetchPage(after,onlyUnread);if(seq!==generation.current)return;
-   setBase(previous=>{const kept=after?previous:[];const seen=new Set(kept.map(n=>n.id));return [...kept,...page.nodes.filter(n=>!seen.has(n.id))]});setCursor(page.cursor);setHasMore(page.hasMore);setServerUnread(page.unread);
-  }catch(e){if(seq===generation.current)setError(errorText(e))}finally{if(seq===generation.current){requesting.current=false;setLoading(false)}}
- };
- // Revalidate the first page in place: the list stays on screen; older loaded pages are kept.
- const revalidate=():Promise<void>=>{if(revalidating.current){again.current=true;return revalidating.current}
-  const run=(async()=>{try{do{again.current=false;const seq=generation.current;const page=await fetchPage(null,unreadOnly);if(seq!==generation.current)return;
-   const oldest=page.nodes.length?page.nodes[page.nodes.length-1].createdAt:'';const fresh=new Set(page.nodes.map(n=>n.id));const tail=page.hasMore?baseRef.current.filter(n=>!fresh.has(n.id)&&n.createdAt<oldest):[];
-   setBase([...page.nodes,...tail]);setCursor(c=>tail.length?c:page.cursor);setHasMore(h=>tail.length?h:page.hasMore);setServerUnread(page.unread);setError('')}while(again.current)}catch(e){setError(errorText(e))}finally{revalidating.current=null;setLoading(false)}})();
-  revalidating.current=run;return run};
-// eslint-disable-next-line react-hooks/exhaustive-deps -- route or session driven; the listed values are written by this effect or are recreated each render
- useEffect(()=>{if(!cached){void load()}else void revalidate();return()=>{generation.current++;requesting.current=false}},[]);
- const firstVersion=useRef(notificationVersion);
-// eslint-disable-next-line react-hooks/exhaustive-deps -- route or session driven; the listed values are written by this effect or are recreated each render
- useEffect(()=>{if(notificationVersion!==firstVersion.current)void revalidate()},[notificationVersion]);
- useEffect(()=>{const onPop=()=>setTab(location.pathname.endsWith('/priority')?'priority':'other');window.addEventListener('popstate',onPop);return()=>window.removeEventListener('popstate',onPop)},[]);
- const changeUnread=()=>{const next=!unreadOnly;generation.current++;requesting.current=false;setBase([]);setCursor(null);setHasMore(false);setUnreadOnly(next);void load(null,next)};
- const send=async(query:string,id?:string)=>{const d=await gql(query,id?{id}:undefined);if(!Object.values(d).some(v=>v===true))throw Error('Notification action was rejected')};
- const markRead=async(n:InboxNotification)=>{if(n.readAt)return;setActionError('');const readAt=new Date().toISOString();const layer=push({id:n.id,patch:{readAt}});
-  try{await send(`mutation($id:String!){notificationMarkRead(id:$id)}`,n.id);setBase(b=>b.map(x=>x.id===n.id?{...x,readAt}:x));setServerUnread(c=>Math.max(0,c-1));layer.drop()}catch(e){layer.drop();setActionError(`Couldn’t mark read: ${errorText(e)}`)}};
- const archive=async(n:InboxNotification)=>{setActionError('');const layer=push({id:n.id,remove:true});
-  try{await send(`mutation($id:String!){notificationArchive(id:$id)}`,n.id);setBase(b=>b.filter(x=>x.id!==n.id));if(!n.readAt)setServerUnread(c=>Math.max(0,c-1));layer.drop()}catch(e){layer.drop();setActionError(`Couldn’t archive: ${errorText(e)}`)}};
- const markAllRead=async()=>{if(allPending)return;setActionError('');const readAt=new Date().toISOString();const layers=items.filter(n=>!n.readAt).map(n=>push({id:n.id,patch:{readAt}}));setAllPending(true);
-  try{await send(`mutation{notificationMarkAllRead}`);setBase(b=>b.map(x=>x.readAt?x:{...x,readAt}));setServerUnread(0)}catch(e){setActionError(`Couldn’t mark all as read: ${errorText(e)}`)}finally{layers.forEach(l=>l.drop());setAllPending(false)}};
- const open=(n:InboxNotification)=>{if(!n.issue)return;onOpenIssue(storeIssues.get(n.issue.id)||n.issue)};
- const format=(date:string)=>{const t=Date.parse(date);if(!Number.isFinite(t))return 'Date unavailable';const days=Math.max(0,Math.floor((Date.now()-t)/86400000));return days===0?'Today':days<7?`${days}d ago`:new Date(t).toLocaleDateString(undefined,{month:'short',day:'numeric'})};
- return <section className="inbox-page"><header className="inbox-head"><h1>Inbox</h1><div className="inbox-head-actions"><button type="button" aria-label="Notification actions" aria-expanded={actionsOpen} onClick={()=>setActionsOpen(v=>!v)}><MoreHorizontal size={16}/></button><button type="button" aria-label={unreadOnly?'Show read':'Show unreads only'} aria-pressed={unreadOnly} onClick={changeUnread}><ListFilter size={16}/></button></div></header>
-  {actionsOpen&&<div className="inbox-action-menu"><button type="button" disabled={allPending||unreadCount===0} onClick={()=>{setActionsOpen(false);void markAllRead()}}>Mark all as read</button><p>Deletion and notification preferences are not available in Hoja.</p></div>}
-  <nav className="inbox-tabs" aria-label="Inbox views"><a href="/workspace/inbox/priority" aria-current={tab==='priority'?'page':undefined} onClick={e=>{e.preventDefault();history.pushState({},'',e.currentTarget.href);setTab('priority')}} title="Priority ranking is not available yet">Priority</a><a href="/workspace/inbox/other" aria-current={tab==='other'?'page':undefined} onClick={e=>{e.preventDefault();history.pushState({},'',e.currentTarget.href);setTab('other')}}>Other <span>{unreadCount}</span></a></nav>
-  <div className="inbox-feed">{tab==='priority'&&<p className="inbox-honesty" role="status">Priority ranking is not available yet. Showing recent notifications.</p>}{items.map(n=>{const issue=(n.issue&&storeIssues.get(n.issue.id))||n.issue;return <article className={`inbox-notification ${n.readAt?'read':'unread'}`} key={n.id}><button type="button" className="inbox-notification-open" onClick={()=>open(n)} disabled={!issue} aria-label={`Open ${issue?.identifier||'unavailable task'}: ${issue?.title||'Task unavailable'}`}><span className="inbox-notification-dot" aria-hidden="true"/><span className="inbox-notification-text"><strong>{issue?.title||'Task unavailable'}</strong><small>{issue?.identifier||'—'} · {n.actor?.name||'Someone'} {n.kind==='issueCreated'?'created a task':'updated the task'} · {format(n.createdAt)}</small></span></button><div className="inbox-notification-actions">{!n.readAt&&<button type="button" onClick={()=>void markRead(n)} aria-label={`Mark ${issue?.identifier||'notification'} read`}>Mark read</button>}<button type="button" onClick={()=>void archive(n)} aria-label={`Archive ${issue?.identifier||'notification'}`}>Archive</button></div></article>})}
-  {loading&&!items.length&&<p role="status" className="inbox-message">Loading notifications…</p>}{!loading&&!items.length&&!error&&<div className="inbox-message"><Inbox size={25}/><h2>{unreadOnly?'No unread notifications':'No notifications yet'}</h2><p>New task activity involving you will appear here. Earlier changes were not reconstructed.</p></div>}{(actionError||error)&&<div className="inbox-message" role="alert"><h2>{items.length?'Couldn’t update Inbox':'Couldn’t load Inbox'}</h2><p>{actionError||error}</p><button type="button" onClick={()=>{setError('');setActionError('');void (items.length?revalidate():load(cursor))}}>Retry</button></div>}{hasMore&&<button className="inbox-load-more" type="button" disabled={loading} onClick={()=>void load(cursor)}>{loading?'Loading…':'Load more notifications'}</button>}</div>
- </section>
+function PulsePage({
+  path,
+  onOpenProject,
+}: {
+  path: string;
+  onOpenProject: (project: Project) => void;
+  revision: number;
+}) {
+  const meta = useProjectSyncMeta();
+  const projects = useProjects();
+  const projectById = useMemo(
+    () => new Map(projects.map((p) => [p.id, p])),
+    [projects],
+  );
+  // Project fields on a post are read live from the store, so only new/changed project updates refetch the feed.
+  const version = useProjectEntityVersion(["projectUpdate"]);
+  const fetchPage = React.useCallback(
+    (first: number, after: string | null) =>
+      gql(
+        `query PulsePosts($first:Int,$after:String){projectUpdates(first:$first,after:$after){nodes{${PULSE_FIELDS}} pageInfo{hasNextPage endCursor}}}`,
+        { first, after },
+      ).then((d) => d.projectUpdates as PageOf<PulsePost>),
+    [],
+  );
+  const feed = usePagedCache<PulsePost>(
+    pulseKey(meta),
+    fetchPage,
+    version,
+    20,
+    "Pulse",
+  );
+  const hasMore = feed.more,
+    error = feed.error;
+  const posts = useMemo(
+    () =>
+      feed.rows.map((post) => {
+        const live = projectById.get(post.project.id);
+        return live
+          ? {
+              ...post,
+              project: {
+                ...post.project,
+                name: live.name,
+                targetDate: live.targetDate,
+                lead: live.lead,
+                health: live.health ?? post.project.health,
+                progress: live.progress ?? post.project.progress,
+              },
+            }
+          : post;
+      }),
+    [feed.rows, projectById],
+  );
+  const [openComments, setOpenComments] = useState<string | null>(null),
+    [selectedTab, setSelectedTab] = useState<"For me" | "Popular" | "Recent">(
+      () =>
+        path.endsWith("/following")
+          ? "For me"
+          : path.endsWith("/popular")
+            ? "Popular"
+            : "Recent",
+    );
+  // Pulse comments. The list is seeded from the query and extended locally on send, so a
+  // reply appears without refetching the feed; count reads from the same list.
+  const [commentBodies, setCommentBodies] = useState<Record<string, string>>(
+    {},
+  );
+  const [commentExtra, setCommentExtra] = useState<
+    Record<string, PulseComment[]>
+  >({});
+  const [commentStatus, setCommentStatus] = useState<
+    Record<string, { pending?: boolean; error?: string; posted?: boolean }>
+  >({});
+  const inFlight = useRef(new Set<string>());
+  const sendComment = async (post: PulsePost) => {
+    const body = (commentBodies[post.id] || "").trim();
+    if (!body || inFlight.current.has(post.id)) return;
+    inFlight.current.add(post.id);
+    setCommentStatus((s) => ({ ...s, [post.id]: { pending: true } }));
+    try {
+      const d = await gql(
+        `mutation($input:CommentCreateInput!){commentCreate(input:$input){success comment{id body createdAt user{id name avatarSeed}}}}`,
+        { input: { projectUpdateId: post.id, body } },
+      );
+      if (!d.commentCreate?.success || !d.commentCreate.comment)
+        throw Error("The reply was rejected");
+      setCommentExtra((s) => ({
+        ...s,
+        [post.id]: [...(s[post.id] || []), d.commentCreate.comment],
+      }));
+      setCommentBodies((s) => ({ ...s, [post.id]: "" }));
+      setCommentStatus((s) => ({ ...s, [post.id]: { posted: true } }));
+    } catch (e) {
+      setCommentStatus((s) => ({
+        ...s,
+        [post.id]: {
+          error: e instanceof Error ? e.message : "Could not post the reply",
+        },
+      }));
+    } finally {
+      inFlight.current.delete(post.id);
+    }
+  };
+  const tab = selectedTab;
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [composeProjectId, setComposeProjectId] = useState(
+    () => projects[0]?.id || "",
+  );
+  const [composeHealth, setComposeHealth] = useState<
+    "onTrack" | "atRisk" | "offTrack"
+  >("onTrack");
+  const [composeBody, setComposeBody] = useState("");
+  const [composeBusy, setComposeBusy] = useState(false);
+  const [composeError, setComposeError] = useState("");
+  useEffect(() => {
+    if (!composeProjectId && projects[0]?.id) {
+      setComposeProjectId(projects[0].id);
+    }
+  }, [composeProjectId, projects]);
+  const publishUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const project =
+      projectById.get(composeProjectId) ||
+      projects.find((p) => p.id === composeProjectId);
+    const body = composeBody.trim();
+    if (!project || !body || composeBusy) return;
+    const statusMap: Record<"onTrack" | "atRisk" | "offTrack", string> = {
+      onTrack: "on track",
+      atRisk: "at risk",
+      offTrack: "off track",
+    };
+    const healthStatus = statusMap[composeHealth];
+    const key = pulseKey(meta);
+    const temp: PulsePost = {
+      id: `optimistic:${crypto.randomUUID()}`,
+      body,
+      status: healthStatus,
+      health: healthStatus,
+      createdAt: new Date().toISOString(),
+      progress: project.progress,
+      actor: { id: meta?.viewer.id || "", name: meta?.viewer.name },
+      project: {
+        id: project.id,
+        name: project.name,
+        health: healthStatus,
+        progress: project.progress,
+        targetDate: project.targetDate,
+        viewerSubscribed: project.viewerSubscribed,
+        lead: project.lead,
+      },
+    };
+    const settle = key
+      ? optimisticPage<PulsePost>(key, (r) => [temp, ...r])
+      : null;
+    setComposeBusy(true);
+    setComposeError("");
+    try {
+      const d = await gql(
+        `mutation($input:ProjectUpdateCreateInput!){projectUpdateCreate(input:$input){success projectUpdate{${PULSE_FIELDS}}}}`,
+        {
+          input: {
+            projectId: project.id,
+            body,
+            status: healthStatus,
+            health: healthStatus,
+          },
+        },
+      );
+      if (
+        !d.projectUpdateCreate?.success ||
+        !d.projectUpdateCreate.projectUpdate
+      )
+        throw Error("Could not publish update.");
+      const created: PulsePost = d.projectUpdateCreate.projectUpdate;
+      settle?.((r) => upsertFirst(r, created));
+      setComposeBody("");
+      setComposeOpen(false);
+    } catch (err) {
+      settle?.();
+      setComposeError(
+        err instanceof Error ? err.message : "Could not publish update.",
+      );
+    } finally {
+      setComposeBusy(false);
+    }
+  };
+  const replyCountOf = useCallback(
+    (post: PulsePost) =>
+      (post.comments?.nodes?.length || 0) +
+      (commentExtra[post.id]?.length || 0),
+    [commentExtra],
+  );
+  const forMeMatches = useMemo(
+    () =>
+      posts.filter((post) => {
+        const live = projectById.get(post.project.id);
+        const followed = Boolean(
+          post.project.viewerSubscribed || live?.viewerSubscribed,
+        );
+        const leads = Boolean(
+          meta?.viewer.name &&
+          (post.project.lead?.name || live?.lead?.name) === meta.viewer.name,
+        );
+        const authored = Boolean(
+          meta?.viewer.id && post.actor?.id === meta.viewer.id,
+        );
+        return followed || leads || authored;
+      }),
+    [posts, projectById, meta?.viewer.id, meta?.viewer.name],
+  );
+  const forMeFallback =
+    tab === "For me" && posts.length > 0 && forMeMatches.length === 0;
+  const visiblePosts = useMemo(() => {
+    if (tab === "For me") {
+      return forMeMatches.length > 0 ? forMeMatches : posts;
+    }
+    if (tab === "Popular") {
+      return [...posts].sort((a, b) => {
+        const diff = replyCountOf(b) - replyCountOf(a);
+        if (diff !== 0) return diff;
+        return b.createdAt.localeCompare(a.createdAt);
+      });
+    }
+    return posts;
+  }, [tab, posts, forMeMatches, replyCountOf]);
+  useEffect(() => {
+    const onPop = () =>
+      setSelectedTab(
+        location.pathname.endsWith("/following")
+          ? "For me"
+          : location.pathname.endsWith("/popular")
+            ? "Popular"
+            : "Recent",
+      );
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  const time = (date: string) => {
+    const t = Date.parse(date);
+    if (!Number.isFinite(t)) return "Date unavailable";
+    const days = Math.max(0, Math.floor((Date.now() - t) / 86400000));
+    const ago = (n: number, unit: string) =>
+      `${n} ${unit}${n === 1 ? "" : "s"} ago`;
+    return days < 1
+      ? "Today"
+      : days < 7
+        ? ago(days, "day")
+        : days < 35
+          ? ago(Math.floor(days / 7), "week")
+          : ago(Math.floor(days / 30), "month");
+  };
+  const health = (post: PulsePost) => post.health || post.status;
+  const views = [
+    ["For me", "following"],
+    ["Popular", "popular"],
+    ["Recent", "all"],
+  ] as const;
+  const eraOf = (iso: string) =>
+    Date.now() - Date.parse(iso) >= 30 * 86400000 ? "Older" : "Recent";
+  const setView = (label: "For me" | "Popular" | "Recent", slug: string) => {
+    history.pushState({}, "", `/workspace/pulse/${slug}`);
+    setSelectedTab(label);
+  };
+  return (
+    <section
+      className="flex p-4 flex-col text-foreground overflow-hidden flex-1 min-h-0 min-w-0"
+      data-pulse-page=""
+      aria-label="Pulse"
+    >
+      {/* One column for the whole page: the title, the tabs and the posts share this
+          box. Centring the chrome and the posts separately put them 5px apart,
+          because the posts' scroller is narrower by its own scrollbar. */}
+      <div
+        className="flex flex-1 min-h-0 flex-col w-[min(100%,var(--ds-feed-width))] shell-wide:w-[min(100%,calc(var(--ds-feed-width)+var(--ds-feed-rail)+var(--ds-feed-rail-gap)))] mt-0 mr-auto mb-0 ml-auto pt-0 pr-(--ds-feed-gutter) pb-0 pl-(--ds-feed-gutter)"
+        data-pulse-column=""
+      >
+        <header
+          className="border-b border-line flex flex-none items-center justify-between gap-2 h-(--ds-tabstrip-height)"
+          data-pulse-heading=""
+        >
+          <div className="flex min-w-0 items-center gap-1">
+            <MobileNavTrigger />
+            <h1 className="mt-0 mr-0 mb-0 ml-0 text-(length:--hoja-title-size) font-(--hoja-title-weight) tracking-normal leading-[normal]">
+              Pulse
+            </h1>
+          </div>
+          <div className="flex items-center gap-2">
+            {projects.length > 0 && (
+              <button
+                className="flex items-center gap-1.25 pt-1 pr-2.5 pb-1 pl-2.5 border border-line bg-panel text-foreground hover:bg-subtle rounded-(--ds-feed-tab-radius) focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 text-(length:--ds-feed-meta-size)"
+                data-pulse-write-update=""
+                type="button"
+                aria-expanded={composeOpen}
+                onClick={() => {
+                  setComposeOpen((v) => !v);
+                  setComposeError("");
+                }}
+              >
+                <Plus size={14} aria-hidden="true" />
+                Write update
+              </button>
+            )}
+            <button
+              className="flex items-center pt-1.25 pr-1.75 pb-1.25 pl-1.75 bg-transparent text-muted hover:bg-subtle cursor-not-allowed opacity-50 gap-(--ds-group-bar-gap) rounded-(--ds-tab-radius) focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 text-(length:--ds-feed-meta-size)"
+              data-pulse-subscription=""
+              type="button"
+              aria-disabled="true"
+              aria-describedby="pulse-subscription-unavailable"
+              title="Pulse email subscriptions are not available on this server"
+              aria-label="Subscription unavailable"
+            >
+              <Bell size={15} aria-hidden="true" />
+            </button>
+          </div>
+          <span id="pulse-subscription-unavailable" className="sr-only">
+            Email subscriptions to Pulse are not available on this server, so
+            there is nothing to turn on here.
+          </span>
+        </header>
+        <TabStrip
+          className="flex-none h-(--ds-tabstrip-height) gap-(--ds-tabstrip-gap)"
+          data-pulse-tabs=""
+          role="tablist"
+          label="Pulse views"
+        >
+          {views.map(([label, slug]) => (
+            <Tab
+              key={slug}
+              role="tab"
+              aria-selected={tab === label}
+              onClick={() => setView(label, slug)}
+              className="h-(--ds-feed-tab-height) rounded-(--ds-feed-tab-radius) p-(--ds-feed-tab-padding) shell-phone:h-11 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+            >
+              {label}
+            </Tab>
+          ))}
+          <button
+            className="grid place-items-center ml-0.5 bg-transparent text-muted hover:bg-subtle cursor-not-allowed opacity-50 rounded-(--ds-tab-radius) w-(--ds-tab-height) h-(--ds-tab-height) focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+            data-pulse-add-view=""
+            type="button"
+            aria-disabled="true"
+            aria-describedby="pulse-views-unavailable"
+            title="Custom Pulse views are not available"
+            aria-label="Add new view unavailable"
+          >
+            <Plus size={15} aria-hidden="true" />
+          </button>
+        </TabStrip>
+        <span id="pulse-views-unavailable" className="sr-only">
+          Custom Pulse views are not available yet; For me, Popular and Recent
+          are the views this server supports.
+        </span>
+        <ScrollArea className="min-h-0" variant="list">
+          <div
+            className="mt-5.5 mr-0 mb-0 ml-0 pt-0 pr-0 pb-15 pl-0 shell-phone:mt-5.5 shell-phone:pt-0 shell-phone:pb-10"
+            data-pulse-content=""
+          >
+            {composeOpen && (
+              <form
+                className="border grid grid-cols-[minmax(0,1fr)] gap-3 mt-0 mr-0 mb-6 ml-0 pt-4 pr-4 pb-4 pl-4 border-line rounded-lg bg-panel text-(length:--ds-feed-meta-size) min-w-0"
+                data-pulse-composer=""
+                aria-label="Write project update"
+                onSubmit={(e) => void publishUpdate(e)}
+              >
+                <div className="flex flex-wrap items-center gap-3 min-w-0">
+                  <label className="flex items-center gap-2 font-medium min-w-0 max-w-full max-sm:basis-full">
+                    Project
+                    <select
+                      className="pt-1.5 pr-2.5 pb-1.5 pl-2.5 border border-line rounded-md bg-bg text-foreground font-normal font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 min-w-0 max-w-full truncate max-sm:flex-1 pointer-coarse:text-base"
+                      value={composeProjectId}
+                      onChange={(e) => setComposeProjectId(e.target.value)}
+                    >
+                      {projects.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex items-center gap-2 font-medium min-w-0 max-sm:basis-full">
+                    Health
+                    <select
+                      className="pt-1.5 pr-2.5 pb-1.5 pl-2.5 border border-line rounded-md bg-bg text-foreground font-normal font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 min-w-0 max-sm:flex-1 pointer-coarse:text-base"
+                      value={composeHealth}
+                      onChange={(e) =>
+                        setComposeHealth(
+                          e.target.value as "onTrack" | "atRisk" | "offTrack",
+                        )
+                      }
+                    >
+                      <option value="onTrack">On track</option>
+                      <option value="atRisk">At risk</option>
+                      <option value="offTrack">Off track</option>
+                    </select>
+                  </label>
+                </div>
+                <textarea
+                  className="w-full min-w-0 min-h-24 pt-2.25 pr-2.75 pb-2.25 pl-2.75 border border-line rounded-md bg-bg text-foreground resize-y font-sans placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 pointer-coarse:text-base"
+                  rows={3}
+                  value={composeBody}
+                  onChange={(e) => setComposeBody(e.target.value)}
+                  placeholder="Share progress, blockers, or next steps in Markdown…"
+                  aria-label="Update body"
+                />
+                {composeError && (
+                  <p
+                    className="mt-0 mr-0 mb-0 ml-0 text-[var(--health-risk)]"
+                    role="alert"
+                  >
+                    {composeError}
+                  </p>
+                )}
+                <div className="flex justify-end gap-2">
+                  <button
+                    className="pt-1.5 pr-3 pb-1.5 pl-3 border border-line rounded-(--ds-feed-tab-radius) bg-subtle text-foreground font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11"
+                    type="button"
+                    onClick={() => {
+                      setComposeOpen(false);
+                      setComposeError("");
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="pt-1.5 pr-3 pb-1.5 pl-3 rounded-(--ds-feed-tab-radius) bg-accent text-panel font-medium font-sans disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11"
+                    type="submit"
+                    disabled={
+                      composeBusy || !composeProjectId || !composeBody.trim()
+                    }
+                  >
+                    {composeBusy ? "Publishing…" : "Post update"}
+                  </button>
+                </div>
+              </form>
+            )}
+            {forMeFallback && (
+              <p
+                className="border mt-0 mr-0 mb-5 ml-0 pt-2.25 pr-3 pb-2.25 pl-3 border-line rounded-md bg-panel text-muted text-[12px]"
+                role="status"
+              >
+                No updates yet on projects you follow, lead, or posted to.
+                Showing all project updates.
+              </p>
+            )}
+            {visiblePosts.map((post, index) => {
+              // A refetch moves a locally-appended reply into post.comments.nodes while it
+              // is still in commentExtra; keyed by id, the later copy wins and nothing is
+              // rendered twice.
+              const replies = [
+                ...new Map(
+                  [
+                    ...(post.comments?.nodes || []),
+                    ...(commentExtra[post.id] || []),
+                  ].map((c) => [c.id, c] as const),
+                ).values(),
+              ];
+              const status = commentStatus[post.id] || {};
+              return (
+                <React.Fragment key={post.id}>
+                  {(index === 0 ||
+                    eraOf(post.createdAt) !==
+                      eraOf(visiblePosts[index - 1].createdAt)) && (
+                    <GroupBar
+                      as="h2"
+                      className="flex items-center h-auto mt-0 mr-0 mb-4.5 ml-0 pt-0 pr-0 pb-0 pl-0 rounded-none text-muted font-normal [&:after]:h-px [&:after]:flex-1 [&:after]:bg-line gap-(--ds-group-bar-gap) min-h-(--ds-group-bar-height) after:content-[''] text-(length:--ds-feed-page-title-size)"
+                      data-pulse-era=""
+                      label={eraOf(post.createdAt)}
+                    />
+                  )}
+                  <article
+                    className="pt-6 pr-0 pb-6 pl-0 mt-0 mr-0 mb-0 ml-0 border-t border-line shell-wide:grid shell-wide:grid-cols-[minmax(0,1fr)_var(--ds-feed-rail)] shell-wide:gap-x-(--ds-feed-rail-gap)"
+                    aria-labelledby={`pulse-post-${post.id}`}
+                  >
+                    <header
+                      className="flex items-start gap-3 shell-wide:col-start-1"
+                      data-pulse-post-heading=""
+                    >
+                      <div className="min-w-0 flex-1">
+                        <h3
+                          className="mt-0 mr-0 mb-1.25 ml-0 text-(length:--ds-feed-title-size) font-semibold tracking-tight wrap-break-word max-md:text-lg shell-phone:text-[17px]"
+                          id={`pulse-post-${post.id}`}
+                        >
+                          <a
+                            className="text-inherit no-underline hover:underline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+                            href={`/workspace/project/${encodeURIComponent(post.project.id)}`}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              onOpenProject(post.project);
+                            }}
+                          >
+                            {post.project.name}
+                          </a>
+                        </h3>
+                        <div
+                          className="flex flex-wrap items-center gap-2 text-muted leading-(--ds-feed-meta-line) text-(length:--ds-feed-meta-size)"
+                          data-pulse-meta=""
+                        >
+                          {post.actor?.name && (
+                            <>
+                              <span
+                                className="inline-grid place-items-center leading-none w-(--ds-feed-avatar-size) h-(--ds-feed-avatar-size)"
+                                data-pulse-avatar=""
+                                aria-hidden="true"
+                              >
+                                <UserBlobatar user={post.actor} />
+                              </span>
+                              <span>{post.actor.name}</span>
+                            </>
+                          )}
+                          <time
+                            dateTime={post.createdAt}
+                            title={new Date(post.createdAt).toLocaleString()}
+                          >
+                            {time(post.createdAt)}
+                          </time>
+                          {health(post) && (
+                            <span
+                              className={`inline-flex items-center gap-(--ds-group-bar-gap) ${/risk/i.test(health(post) ?? "") ? "text-[var(--health-risk)]" : "text-[var(--health-ok)]"}`}
+                              data-pulse-health=""
+                            >
+                              <Activity size={14} aria-hidden="true" />
+                              Project {health(post)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </header>
+                    <div
+                      className="mt-4.5 mr-0 mb-6 ml-0 wrap-break-word leading-[1.6] shell-wide:col-start-1"
+                      data-pulse-post-body=""
+                    >
+                      <Markdown text={post.body} density="block" />
+                    </div>
+                    {(post.progress != null ||
+                      post.project.targetDate ||
+                      post.project.lead?.name) && (
+                      <dl
+                        className="grid gap-1.75 mt-0 mr-0 mb-6 ml-0 pl-3 text-(length:--ds-feed-meta-size) border-l-2 border-line shell-wide:col-start-2 shell-wide:row-start-2 shell-wide:self-start shell-wide:mt-4.5 shell-wide:mb-0 shell-wide:border-l-0 shell-wide:pl-0 shell-wide:[&_dt]:w-auto shell-wide:[&_dt]:flex-[0_0_auto]"
+                        data-pulse-changes=""
+                      >
+                        {post.project.lead?.name && (
+                          <PropertyRow label="Lead">
+                            {post.project.lead.name}
+                          </PropertyRow>
+                        )}
+                        {post.project.targetDate && (
+                          <PropertyRow label="Target date">
+                            {post.project.targetDate}
+                          </PropertyRow>
+                        )}
+                        {post.progress != null && (
+                          <PropertyRow label="Progress">
+                            {Math.round(post.progress)}%
+                          </PropertyRow>
+                        )}
+                      </dl>
+                    )}
+                    <div
+                      className="flex items-center gap-2 shell-wide:col-start-1"
+                      data-pulse-actions=""
+                    >
+                      <button
+                        className="flex items-center gap-1.5 pt-1.25 pr-2.25 pb-1.25 pl-2.25 border border-line bg-panel text-muted hover:bg-subtle aria-expanded:bg-subtle aria-expanded:text-foreground rounded-(--ds-feed-tab-radius) focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                        type="button"
+                        aria-expanded={openComments === post.id}
+                        aria-controls={
+                          openComments === post.id
+                            ? `pulse-comments-${post.id}`
+                            : undefined
+                        }
+                        aria-label={`${openComments === post.id ? "Hide" : "Show"} ${replies.length} ${
+                          replies.length === 1 ? "reply" : "replies"
+                        } to ${post.project.name}`}
+                        onClick={() =>
+                          setOpenComments((v) =>
+                            v === post.id ? null : post.id,
+                          )
+                        }
+                      >
+                        <MessageCircle size={15} aria-hidden="true" />
+                        {replies.length > 0 && (
+                          <span data-pulse-comment-count="">
+                            {replies.length}
+                          </span>
+                        )}
+                      </button>
+                    </div>
+                    {openComments === post.id && (
+                      <div
+                        className="mt-3 mr-0 mb-0 ml-0 flex flex-col gap-3 shell-wide:col-start-1"
+                        id={`pulse-comments-${post.id}`}
+                        data-pulse-comments=""
+                      >
+                        {replies.length ? (
+                          <ul className="flex flex-col gap-3 mt-0 mr-0 mb-0 ml-0 pt-1 pr-0 pb-0 pl-0 list-none">
+                            {replies.map((reply) => (
+                              <li
+                                key={reply.id}
+                                className="flex items-start gap-2"
+                              >
+                                <span
+                                  className="inline-grid place-items-center leading-none flex-none w-(--ds-feed-avatar-size) h-(--ds-feed-avatar-size)"
+                                  aria-hidden="true"
+                                >
+                                  <UserBlobatar user={reply.user} />
+                                </span>
+                                <div className="min-w-0">
+                                  <p className="flex items-center gap-(--ds-group-bar-gap) mt-0 mr-0 mb-1 ml-0 text-(length:--ds-feed-meta-size) text-muted">
+                                    <span>{reply.user?.name || "Someone"}</span>
+                                    {reply.createdAt && (
+                                      <time dateTime={reply.createdAt}>
+                                        {time(reply.createdAt)}
+                                      </time>
+                                    )}
+                                  </p>
+                                  <div className="mt-0 mr-0 mb-0 ml-0 wrap-break-word">
+                                    <Markdown text={reply.body} />
+                                  </div>
+                                </div>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="mt-0 mr-0 mb-0 ml-0 text-muted text-[12px]">
+                            No replies yet. Reply to ask a question or leave
+                            context for whoever reads this next.
+                          </p>
+                        )}
+                        <Composer
+                          className="mt-0 max-w-none bg-subtle rounded-(--ds-composer-radius) focus-within:outline-2 focus-within:outline-accent focus-within:outline-offset-2 [&_input]:text-[14px] [&_input::placeholder]:text-muted [&_button]:rounded-(--ds-composer-radius)"
+                          value={commentBodies[post.id] || ""}
+                          placeholder={`Reply to ${post.project.name}…`}
+                          sendDisabled={!(commentBodies[post.id] || "").trim()}
+                          sendIcon={<Send size={15} aria-hidden="true" />}
+                          sendLabel="Post reply"
+                          onChange={(v) =>
+                            setCommentBodies((s) => ({ ...s, [post.id]: v }))
+                          }
+                          onSend={() => void sendComment(post)}
+                          data-pulse-comment-composer=""
+                        />
+                        <span className="sr-only" role="status">
+                          {status.posted ? "Reply posted" : ""}
+                        </span>
+                        {status.pending && (
+                          <p className="mt-0 mr-0 mb-0 ml-0 text-[12px] text-muted">
+                            Posting…
+                          </p>
+                        )}
+                        {status.error && (
+                          <p
+                            className="mt-0 mr-0 mb-0 ml-0 text-[12px] text-[var(--health-risk)]"
+                            role="alert"
+                          >
+                            {status.error}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </article>
+                </React.Fragment>
+              );
+            })}
+            {!feed.hasData && !error && (
+              <p
+                className="max-w-180 mt-15 mr-auto mb-15 ml-auto pt-7 pr-7 pb-7 pl-7 text-center text-muted text-[13px] gap-(--ds-empty-gap)"
+                data-pulse-status=""
+                role="status"
+              >
+                Loading project updates…
+              </p>
+            )}
+            {feed.hasData && !posts.length && !error && (
+              <EmptyState
+                className="max-w-180 mt-15 mr-auto mb-15 ml-auto pt-7 pr-7 pb-7 pl-7 text-center text-muted text-[13px] gap-(--ds-empty-gap)"
+                data-pulse-status=""
+              >
+                <Activity size={24} aria-hidden="true" />
+                <h2 className="mt-2 mr-0 mb-2 ml-0 text-foreground text-[17px]">
+                  No project updates yet
+                </h2>
+                <p>
+                  Project updates will appear here when they are published. Task
+                  activity is separate from Pulse.
+                </p>
+              </EmptyState>
+            )}
+            {error && (
+              <div
+                className="max-w-180 mt-15 mr-auto mb-15 ml-auto pt-7 pr-7 pb-7 pl-7 text-center text-muted text-[13px] gap-(--ds-empty-gap)"
+                data-pulse-status=""
+                role="alert"
+              >
+                <h2 className="mt-2 mr-0 mb-2 ml-0 text-foreground text-[17px]">
+                  Couldn’t load Pulse
+                </h2>
+                <p>{error}</p>
+                <button
+                  className="mt-3 pt-2 pr-3 pb-2 pl-3 border border-line bg-panel rounded-(--ds-tab-radius) focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                  type="button"
+                  onClick={feed.retry}
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+            {hasMore && (
+              <button
+                className="block mt-4.5 mr-auto mb-4.5 ml-auto pt-2 pr-3 pb-2 pl-3 border border-line bg-panel rounded-(--ds-tab-radius) focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                data-pulse-load-more=""
+                type="button"
+                disabled={feed.loadingMore}
+                onClick={feed.loadMore}
+              >
+                {feed.loadingMore ? "Loading updates…" : "Load more updates"}
+              </button>
+            )}
+          </div>
+        </ScrollArea>
+      </div>
+    </section>
+  );
 }
 
-function PulsePage({path,onOpenProject}:{path:string;onOpenProject:(project:Project)=>void;revision:number}){
- const meta=useProjectSyncMeta();const projects=useProjects();const projectById=useMemo(()=>new Map(projects.map(p=>[p.id,p])),[projects]);
- // Project fields on a post are read live from the store, so only new/changed project updates refetch the feed.
- const version=useProjectEntityVersion(['projectUpdate']);
- const fetchPage=React.useCallback((first:number,after:string|null)=>gql(`query PulsePosts($first:Int,$after:String){projectUpdates(first:$first,after:$after){nodes{${PULSE_FIELDS}} pageInfo{hasNextPage endCursor}}}`,{first,after}).then(d=>d.projectUpdates as PageOf<PulsePost>),[]);
- const feed=usePagedCache<PulsePost>(pulseKey(meta),fetchPage,version,20,'Pulse');const hasMore=feed.more,error=feed.error;
- const posts=useMemo(()=>feed.rows.map(post=>{const live=projectById.get(post.project.id);return live?{...post,project:{...post.project,name:live.name,targetDate:live.targetDate,lead:live.lead,health:live.health??post.project.health,progress:live.progress??post.project.progress}}:post}),[feed.rows,projectById]);
- const [openComments,setOpenComments]=useState<string|null>(null),[selectedTab,setSelectedTab]=useState<'For me'|'Popular'|'Recent'>(()=>path.endsWith('/following')?'For me':path.endsWith('/popular')?'Popular':'Recent');
- const tab=selectedTab;
- useEffect(()=>{const onPop=()=>setSelectedTab(location.pathname.endsWith('/following')?'For me':location.pathname.endsWith('/popular')?'Popular':'Recent');window.addEventListener('popstate',onPop);return()=>window.removeEventListener('popstate',onPop)},[]);
- const time=(date:string)=>{const t=Date.parse(date);if(!Number.isFinite(t))return 'Date unavailable';const days=Math.max(0,Math.floor((Date.now()-t)/86400000));return days<1?'Today':days<7?`${days} day${days===1?'':'s'} ago`:days<35?`${Math.floor(days/7)} weeks ago`:`${Math.floor(days/30)} months ago`};
- const health=(post:PulsePost)=>post.health||post.status;
- return <section className="pulse-page"><header className="pulse-heading"><h1>Pulse</h1><button className="pulse-subscription" type="button" disabled title="Pulse email subscriptions are not available on this server" aria-label="Subscription unavailable"><Bell size={15}/></button></header>
-  <nav className="pulse-tabs" aria-label="Pulse views">{([['For me','following'],['Popular','popular'],['Recent','all']] as const).map(([label,slug])=><a key={slug} href={`/workspace/pulse/${slug}`} onClick={e=>{e.preventDefault();history.pushState({},'',`/workspace/pulse/${slug}`);setSelectedTab(label)}} aria-current={tab===label?'page':undefined} title={label==='Recent'?undefined:`${label} ranking is not available; showing recent project updates`}>{label}</a>)}<button className="pulse-add-view" type="button" disabled title="Custom Pulse views are not available" aria-label="Add new view unavailable"><Plus size={15}/></button></nav>
-  <div className="pulse-content">{tab!=='Recent'&&<p className="pulse-approx-note" role="status">{tab} ranking is not available in Hoja yet. Showing recent project updates.</p>}{posts.map((post,index)=><React.Fragment key={post.id}>{(index===0||((Date.now()-Date.parse(post.createdAt)>=30*86400000)!==(Date.now()-Date.parse(posts[index-1].createdAt)>=30*86400000)))&&<p className="pulse-era">{Date.now()-Date.parse(post.createdAt)>=30*86400000?'Older':'Recent'}</p>}<article className="pulse-post" key={post.id}><header className="pulse-post-heading"><div><h2><a href={`/workspace/project/${encodeURIComponent(post.project.id)}`} onClick={e=>{e.preventDefault();onOpenProject(post.project)}}>{post.project.name}</a></h2><div className="pulse-meta">{health(post)&&<span className="pulse-health"><Activity size={14}/>Project {health(post)}</span>}{post.actor?.name&&<><span className="pulse-avatar" aria-hidden="true">{post.actor.name.slice(0,1).toUpperCase()}</span><span>{post.actor.name}</span></>}<time dateTime={post.createdAt} title={post.createdAt}>{time(post.createdAt)}</time></div></div></header><div className="pulse-post-body"><Markdown text={post.body} density="block"/></div>{(post.progress!=null||post.project.targetDate||post.project.lead?.name)&&<dl className="pulse-changes">{post.project.lead?.name&&<div><dt>Lead</dt><dd>{post.project.lead.name}</dd></div>}{post.project.targetDate&&<div><dt>Target date</dt><dd>{post.project.targetDate}</dd></div>}{post.progress!=null&&<div><dt>Progress</dt><dd>{Math.round(post.progress)}%</dd></div>}</dl>}<div className="pulse-actions"><button type="button" aria-expanded={openComments===post.id} aria-label={`${openComments===post.id?'Close':'Open'} comments for ${post.project.name}`} onClick={()=>setOpenComments(v=>v===post.id?null:post.id)}><MessageCircle size={15}/></button></div>{openComments===post.id&&<p className="pulse-comment-notice" role="status">Comments on project updates are not available in this workspace.</p>}</article></React.Fragment>)}
-  {!feed.hasData&&!error&&<div className="pulse-status" role="status">Loading project updates…</div>}{feed.hasData&&!posts.length&&!error&&<div className="pulse-status"><Activity size={24}/><h2>No project updates yet</h2><p>Project updates will appear here when they are published. Task activity is separate from Pulse.</p></div>}{error&&<div className="pulse-status" role="alert"><h2>Couldn’t load Pulse</h2><p>{error}</p><button type="button" onClick={feed.retry}>Retry</button></div>}{hasMore&&<button className="pulse-load-more" type="button" disabled={feed.loadingMore} onClick={feed.loadMore}>{feed.loadingMore?'Loading updates…':'Load more updates'}</button>}</div>
- </section>;
+export function StatusIcon({
+  state,
+  className = "size-3.5",
+}: {
+  state: { name?: string; type?: string; color?: string };
+  className?: string;
+}) {
+  const c = state.color || "#a1a1aa",
+    n = (state.name || "").toLowerCase(),
+    t = state.type || "";
+  const svg = (body: React.ReactNode) => (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke={c}
+      strokeWidth="1.5"
+      aria-hidden="true"
+      className={`status-icon ${className}`}
+    >
+      {body}
+    </svg>
+  );
+  if (n === "duplicate")
+    return svg(
+      <>
+        <circle cx="8" cy="8" r="6" />
+        <path d="M4.5 11.5l7-7" />
+      </>,
+    );
+  if (t === "completed")
+    return svg(
+      <>
+        <circle cx="8" cy="8" r="6" fill={c} />
+        <path d="M5 8.2l2 2 4-4.4" stroke="#fff" />
+      </>,
+    );
+  if (t === "canceled")
+    return svg(
+      <>
+        <circle cx="8" cy="8" r="6" fill={c} opacity=".6" />
+        <path d="M5.8 5.8l4.4 4.4M10.2 5.8l-4.4 4.4" stroke="#fff" />
+      </>,
+    );
+  if (t === "backlog")
+    return svg(<circle cx="8" cy="8" r="6" strokeDasharray="2 2" />);
+  if (n === "in review")
+    return svg(
+      <>
+        <circle cx="8" cy="8" r="6" />
+        <path d="M8 8V2A6 6 0 1 1 2 8Z" fill={c} />
+      </>,
+    );
+  if (t === "started")
+    return svg(
+      <>
+        <circle cx="8" cy="8" r="6" />
+        <path d="M8 2A6 6 0 0 1 8 14Z" fill={c} />
+      </>,
+    );
+  return svg(<circle cx="8" cy="8" r="6" />);
 }
-
-export function StatusIcon({state}:{state:{name?:string;type?:string;color?:string}}){
- const c=state.color||'#a1a1aa',n=(state.name||'').toLowerCase(),t=state.type||'';
- const svg=(body:React.ReactNode)=><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke={c} strokeWidth="1.5" aria-hidden="true" className="status-icon">{body}</svg>;
- if(n==='duplicate')return svg(<><circle cx="8" cy="8" r="6"/><path d="M4.5 11.5l7-7"/></>);
- if(t==='completed')return svg(<><circle cx="8" cy="8" r="6" fill={c}/><path d="M5 8.2l2 2 4-4.4" stroke="#fff"/></>);
- if(t==='canceled')return svg(<><circle cx="8" cy="8" r="6" fill={c} opacity=".6"/><path d="M5.8 5.8l4.4 4.4M10.2 5.8l-4.4 4.4" stroke="#fff"/></>);
- if(t==='backlog')return svg(<circle cx="8" cy="8" r="6" strokeDasharray="2 2"/>);
- if(n==='in review')return svg(<><circle cx="8" cy="8" r="6"/><path d="M8 8V2A6 6 0 1 1 2 8Z" fill={c}/></>);
- if(t==='started')return svg(<><circle cx="8" cy="8" r="6"/><path d="M8 2A6 6 0 0 1 8 14Z" fill={c}/></>);
- return svg(<circle cx="8" cy="8" r="6"/>);
-}
+/* Tree rails follow the row's --row-inset, which narrows on phones. */
+const railAt = (column: number) =>
+  `calc(var(--row-inset) + ${railLeft(column) - ROW_INSET}px)`;
+/* Activity shows people words, not wire names: "issueUpdated" reads "Updated". */
+const activityKindLabel = (type?: string | null) => {
+  const words = (type || "event")
+    .replace(/^(issue|task)(?=[A-Z])/, "")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+};
+/* Activity groups are keyed by ISO day; the header reads "Today", "Yesterday" or a date. */
+const activityDayLabel = (day: string) => {
+  const date = new Date(`${day}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return day;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diff = Math.round((today.getTime() - date.getTime()) / 86400000);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Yesterday";
+  return date.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    ...(date.getFullYear() === today.getFullYear() ? {} : { year: "numeric" }),
+  });
+};
 /* The one issue list + board surface: My issues, team issues and project issues all render this,
- * so rows, groups, toolbar, filters, display options and the Kanban stay identical everywhere. */
-function MyIssuesContent({issues,onNew,onOpenIssue,tab,activityEvents=NO_EVENTS,activityHasMore=false,activityLoading=false,activityError='',onLoadActivity=noop,teams,projects,older,onLoadOlder,emptyCopy:emptyOverride,layout,onLayoutChange,states,onMoved,onUpdate}:{layout:IssueLayout;onLayoutChange:(layout:IssueLayout)=>void;states:IssueState[];onMoved:(issueId:string,state:IssueState)=>Promise<void>;onUpdate:(issueId:string,input:Record<string,unknown>)=>Promise<void>;issues:Issue[];onNew:(stateId?:string)=>void;onOpenIssue:(issue:Issue)=>void;tab:MyIssuesTab;activityEvents?:IssueActivityEvent[];activityHasMore?:boolean;activityLoading?:boolean;activityError?:string;onLoadActivity?:()=>void;teams:Team[];projects:Project[];older?:OlderState;onLoadOlder?:(retry?:boolean)=>void;emptyCopy?:[string,string]}){
- const [status,setStatus]=useState(''),[priority,setPriority]=useState(''),[teamId,setTeamId]=useState(''),[projectId,setProjectId]=useState(''),[textQuery,setTextQuery]=useState(''),[cycleOnly,setCycleOnly]=useState(false),[labelId,setLabelId]=useState(''),[assigneeId,setAssigneeId]=useState(''),[creatorId,setCreatorId]=useState(''),[subscriberId,setSubscriberId]=useState(''),[dateField,setDateField]=useState(''),[dateFrom,setDateFrom]=useState(''),[dateTo,setDateTo]=useState(''),[showProject,setShowProject]=useState(()=>localStorage.getItem('hoja_my_issues_project')!=='false'),[showDate,setShowDate]=useState(()=>localStorage.getItem('hoja_my_issues_date')!=='false'),[grouping,setGrouping]=useState(()=>localStorage.getItem('hoja_my_issues_grouping')||'Focus'),[showAssignee,setShowAssignee]=useState(()=>localStorage.getItem('hoja_my_issues_assignee')!=='false'),[showPriority,setShowPriority]=useState(()=>localStorage.getItem('hoja_my_issues_priority')!=='false'),[showStatus,setShowStatus]=useState(()=>localStorage.getItem('hoja_my_issues_status')!=='false'),[showLabels,setShowLabels]=useState(()=>localStorage.getItem('hoja_my_issues_labels')!=='false'),[showDue,setShowDue]=useState(()=>localStorage.getItem('hoja_my_issues_due')==='true'),[filterOpen,setFilterOpen]=useState(false),[displayOpen,setDisplayOpen]=useState(false),[collapsed,setCollapsed]=useState<string[]>([]),[completedRange,setCompletedRange]=useState<CompletedRange>(()=>{const v=localStorage.getItem('hoja_my_issues_completed');return v==='none'||v==='month'||v==='all'?v:'week'});
- useEffect(()=>{localStorage.setItem('hoja_my_issues_project',String(showProject));localStorage.setItem('hoja_my_issues_date',String(showDate));localStorage.setItem('hoja_my_issues_grouping',grouping);localStorage.setItem('hoja_my_issues_assignee',String(showAssignee));localStorage.setItem('hoja_my_issues_priority',String(showPriority));localStorage.setItem('hoja_my_issues_status',String(showStatus));localStorage.setItem('hoja_my_issues_labels',String(showLabels));localStorage.setItem('hoja_my_issues_due',String(showDue))},[showProject,showDate,grouping,showAssignee,showPriority,showStatus,showLabels,showDue]);
- useEffect(()=>{localStorage.setItem('hoja_my_issues_completed',completedRange)},[completedRange]);
- // Closed issues outside the synced window are fetched only when this view can show them.
- const need=Boolean(onLoadOlder)&&(tab==='Created'||(tab==='Assigned'&&completedRange==='all'));const needStatus=need?older?.status:undefined;
- useEffect(()=>{if(need)onLoadOlder?.()},[need,needStatus,onLoadOlder]);
- // Filter options only depend on the issue set, not on each keystroke.
- const availableUsers=useMemo(()=>[...new Map(issues.flatMap(i=>[i.assignee,i.creator].filter((u):u is {id:string;name?:string}=>Boolean(u?.id))).map(u=>[u.id,u])).values()],[issues]);
- const availableLabels=useMemo(()=>[...new Map(issues.flatMap(i=>i.labels?.nodes||[]).map(l=>[l.id,l])).values()],[issues]);
- const clearMyFilters=()=>{setStatus('');setPriority('');setTeamId('');setProjectId('');setCycleOnly(false);setTextQuery('');setLabelId('');setAssigneeId('');setCreatorId('');setSubscriberId('');setDateField('');setDateFrom('');setDateTo('')};
- const scoped=useMemo(()=>tab==='Activity'?activityEvents.map(e=>e.issue):tab==='Assigned'?issues.filter(i=>{if(!['completed','canceled'].includes(i.state?.type||''))return true;if(completedRange==='all')return true;if(completedRange==='none')return false;const at=Date.parse(i.stateChangedAt||i.updatedAt||'');return Number.isFinite(at)&&at>=Date.now()-(completedRange==='week'?7:30)*864e5}):issues,[tab,activityEvents,issues,completedRange]);
- const deferredQuery=React.useDeferredValue(textQuery);
- const visible=useMemo(()=>{const q=deferredQuery.trim().toLowerCase();const df=dateField as 'createdAt'|'updatedAt'|'dueDate'|'';return scoped.filter(i=>(!status||(i.state&&stateKey(i.state)===status))&&(!priority||String(i.priority)===priority)&&(!teamId||i.team?.id===teamId)&&(!projectId||i.project?.id===projectId)&&(!cycleOnly||Boolean(i.cycle))&&(!q||`${i.identifier} ${i.title}`.toLowerCase().includes(q))&&(!labelId||i.labels?.nodes.some(l=>l.id===labelId))&&(!assigneeId||i.assignee?.id===assigneeId)&&(!creatorId||i.creator?.id===creatorId)&&(!subscriberId||i.subscribers?.nodes.some(u=>u.id===subscriberId))&&(!df||((!dateFrom||Boolean(i[df])&&(i[df]||'').slice(0,10)>=dateFrom)&&(!dateTo||Boolean(i[df])&&(i[df]||'').slice(0,10)<=dateTo))))},[scoped,status,priority,teamId,projectId,cycleOnly,deferredQuery,labelId,assigneeId,creatorId,subscriberId,dateField,dateFrom,dateTo]);
- // Activity rows: events grouped by day once, instead of re-filtering every event for every row.
- const eventsByDate=useMemo(()=>{const visibleIds=new Set(visible.map(i=>i.id));const m=new Map<string,IssueActivityEvent[]>();if(tab!=='Activity')return m;for(const e of activityEvents){if(!visibleIds.has(e.issue.id))continue;const d=e.createdAt.slice(0,10);const list=m.get(d);if(list)list.push(e);else m.set(d,[e])}return m},[tab,activityEvents,visible]);
- const buckets=useMemo(()=>{
-  const ordered=[...visible].sort((a,b)=>{const ak=a.createdAt||'',bk=b.createdAt||'';return ak===bk?0:ak<bk?1:-1});
-  const out:{name:string;items:Issue[];state?:IssueState}[]=[];
-  const add=(name:string,items:Issue[])=>{if(items.length)out.push({name,items})};
-  if(tab==='Assigned'&&grouping==='Focus'){
-   const byPriority=[...ordered].sort((a,b)=>(a.priority||5)-(b.priority||5));
-   const byState=new Map<string,Issue[]>(states.map(s=>[stateKey(s),[]]));const none:Issue[]=[];
-   for(const i of byPriority){const list=i.state?byState.get(stateKey(i.state)):undefined;if(list)list.push(i);else none.push(i)}
-   const closedLast=(s:IssueState)=>s.type==='completed'||s.type==='canceled'?1:0;
-   for(const state of [...states].sort((a,b)=>closedLast(a)-closedLast(b))){const items=byState.get(stateKey(state))||[];if(items.length)out.push({name:state.name,items,state})}
-   add('No status',none);
-  }else if(tab==='Assigned'&&grouping!=='Focus'){
-   const groupName=(i:Issue)=>grouping==='Status'?i.state?.name||'Unknown status':grouping==='Project'?i.project?.name||'No project':grouping==='Priority'?i.priorityLabel||'No priority':grouping==='Cycle'?i.cycle?.name||'No cycle':grouping==='Label'?i.labels?.nodes[0]?.name||'No labels':i.team?.name||'No team';
-   const groups=new Map<string,Issue[]>();for(const i of ordered){const n=groupName(i);const list=groups.get(n);if(list)list.push(i);else groups.set(n,[i])}
-   for(const [name,items] of groups)add(name,items);
-  }else if(tab==='Activity'){
-   for(const [date,events] of eventsByDate)add(date,events.map(e=>e.issue));
-  }else add('',ordered);
-  return out;
- },[visible,tab,grouping,states,eventsByDate]);
- // Sub-task tree: parent-first rows with a depth, plus the completed/total pill the
- // parent row carries. Both come from the shared helper the board also uses.
- const treeRollups=useMemo(()=>childRollups(visible),[visible]);
- const treeBuckets=useMemo(()=>buckets.map(g=>({...g,rows:nestIssues(g.items)})),[buckets]);
- const emptyCopy=emptyOverride||(tab==='Assigned'?['You’re all caught up','Tasks assigned to you will show up here.']:tab==='Created'?['No tasks created yet','Tasks you create will be collected here.']:tab==='Subscribed'?['No subscribed tasks','Tasks you subscribe to will appear here.']:['No recorded activity','New task events will appear here as work happens.']);
- // Long lists are windowed: past WINDOW_ROWS rows only the rows near the viewport are mounted (spacers keep the scroll height).
- const shownTotal=buckets.reduce((n,g)=>n+(collapsed.includes(g.name)?0:g.items.length),0);const windowed=layout!=='Board'&&shownTotal>WINDOW_ROWS;
- const listRef=useRef<HTMLDivElement>(null);const win=useScrollWindow(listRef,listRef,windowed);const [rowH,setRowH]=useState(36),[headH,setHeadH]=useState(36);
- useLayoutEffect(()=>{if(!windowed)return;const root=listRef.current;const r=root?.querySelector<HTMLElement>('.my-issue-row');if(r&&r.offsetHeight&&Math.abs(r.offsetHeight-rowH)>0.5)setRowH(r.offsetHeight);const h=root?.querySelector<HTMLElement>('.my-issue-group>header');if(h){const cs=getComputedStyle(h);const full=h.offsetHeight+parseFloat(cs.marginTop)+parseFloat(cs.marginBottom);if(Math.abs(full-headH)>0.5)setHeadH(full)}},[windowed,rowH,headH,shownTotal]);
- let y=0;
- const teamStates=(i:Issue)=>teams.find(t=>t.id===i.team?.id)?.states.nodes;
- return <div className="my-issues-view"><div className="my-issue-toolbar"><LayoutSwitch layout={layout} onChange={onLayoutChange}/><button aria-label="Add filter" aria-expanded={filterOpen} onClick={()=>{setFilterOpen(v=>!v);setDisplayOpen(false)}}><ListFilter size={16}/></button><button aria-label="Display options" aria-expanded={displayOpen} onClick={()=>{setDisplayOpen(v=>!v);setFilterOpen(false)}}><Settings size={16}/></button></div>{filterOpen&&<div className="my-issue-popover" aria-label="Task filters"><div className="my-status-filter" role="group" aria-label="Status"><span>Status</span><button type="button" aria-pressed={!status} className={!status?'selected':''} onClick={()=>setStatus('')}>All statuses</button>{states.map(s=><button key={s.id} type="button" aria-pressed={status===stateKey(s)} className={status===stateKey(s)?'selected':''} onClick={()=>setStatus(status===stateKey(s)?'':stateKey(s))}><StatusIcon state={s}/>{s.name}</button>)}</div><label>Priority<select value={priority} onChange={e=>setPriority(e.target.value)}><option value="">All priorities</option><option value="1">Urgent</option><option value="2">High</option><option value="3">Medium</option><option value="4">Low</option></select></label><label>Team<select value={teamId} onChange={e=>setTeamId(e.target.value)}><option value="">All teams</option>{teams.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label><label>Project<select value={projectId} onChange={e=>setProjectId(e.target.value)}><option value="">All projects</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label><label>Cycle<select value={cycleOnly?'current':''} onChange={e=>setCycleOnly(Boolean(e.target.value))}><option value="">Any cycle</option><option value="current">Has cycle</option></select></label><label>Label<select value={labelId} onChange={e=>setLabelId(e.target.value)}><option value="">All labels</option>{availableLabels.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}</select></label><label>Assignee<select value={assigneeId} onChange={e=>setAssigneeId(e.target.value)}><option value="">Any assignee</option>{availableUsers.map(u=><option key={u.id} value={u.id}>{u.name||u.id}</option>)}</select></label><label>Creator<select value={creatorId} onChange={e=>setCreatorId(e.target.value)}><option value="">Any creator</option>{availableUsers.map(u=><option key={u.id} value={u.id}>{u.name||u.id}</option>)}</select></label><label>Subscriber<select value={subscriberId} onChange={e=>setSubscriberId(e.target.value)}><option value="">Any subscriber</option>{availableUsers.map(u=><option key={u.id} value={u.id}>{u.name||u.id}</option>)}</select></label><label>Date field<select value={dateField} onChange={e=>setDateField(e.target.value)}><option value="">Any date</option><option value="createdAt">Created date</option><option value="updatedAt">Updated date</option><option value="dueDate">Due date</option></select></label>{dateField&&<><label>From<input type="text" inputMode="numeric" placeholder="YYYY-MM-DD" pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}" value={dateFrom} onChange={e=>setDateFrom(e.target.value.replace(/[^0-9-]/g,'').slice(0,10))}/></label><label>Through<input type="text" inputMode="numeric" placeholder="YYYY-MM-DD" pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}" value={dateTo} onChange={e=>setDateTo(e.target.value.replace(/[^0-9-]/g,'').slice(0,10))}/></label></>}<label>Content<input type="search" value={textQuery} onChange={e=>setTextQuery(e.target.value)} placeholder="Title or ID"/></label><button onClick={clearMyFilters}>Clear filters</button></div>}{displayOpen&&<div className="my-issue-popover" aria-label="Display options"><label>Grouping<select value={grouping} onChange={e=>setGrouping(e.target.value)} disabled={tab!=='Assigned'}><option>Focus</option><option>Status</option><option>Project</option><option>Priority</option><option>Cycle</option><option>Label</option><option>Team</option></select></label>{tab==='Assigned'&&<label>Completed tasks<select value={completedRange} onChange={e=>setCompletedRange(e.target.value as CompletedRange)}><option value="none">None</option><option value="week">Past week</option><option value="month">Past month</option><option value="all">All</option></select></label>}<label><input type="checkbox" checked={showProject} onChange={e=>setShowProject(e.target.checked)}/> Project</label><label><input type="checkbox" checked={showDate} onChange={e=>setShowDate(e.target.checked)}/> Created date</label><label><input type="checkbox" checked={showAssignee} onChange={e=>setShowAssignee(e.target.checked)}/> Assignee</label><label><input type="checkbox" checked={showPriority} onChange={e=>setShowPriority(e.target.checked)}/> Priority</label><label><input type="checkbox" checked={showStatus} onChange={e=>setShowStatus(e.target.checked)}/> Status</label><label><input type="checkbox" checked={showLabels} onChange={e=>setShowLabels(e.target.checked)}/> Labels</label><label><input type="checkbox" checked={showDue} onChange={e=>setShowDue(e.target.checked)}/> Due date</label><small>{tab==='Assigned'?'Group assigned tasks by focus or status.':'This view uses the flat or date-grouped layout.'}</small></div>}{(status||priority||teamId||projectId||cycleOnly||textQuery||labelId||assigneeId||creatorId||subscriberId||dateField)&&<p className="my-filter-summary">Showing {visible.length} of {scoped.length} tasks <button onClick={clearMyFilters}>Clear filters</button></p>}<div className="my-issues-list">{layout==='Board'?<IssueBoard issues={visible} states={states} teams={teams} onSelect={onOpenIssue} onNew={onNew} onMoved={onMoved} onUpdate={onUpdate}/>:<div className="my-issue-groups" ref={listRef}>{treeBuckets.map(g=>{const open=!collapsed.includes(g.name);const n=open?g.items.length:0;const rowsTop=y+(g.name?headH:0);const [start,end]=windowed?visibleRange(win,rowsTop,rowH,n):[0,n];y=rowsTop+n*rowH;const items=start>0||end<n?g.rows.slice(start,end):open?g.rows:[];const dayEvents=tab==='Activity'?(eventsByDate.get(g.name)||[]).slice(start,end):[];return <section className="my-issue-group" key={g.name||'flat'}>{g.name&&<header><button aria-label={`${collapsed.includes(g.name)?'Expand':'Collapse'} ${g.name}`} aria-expanded={!collapsed.includes(g.name)} onClick={()=>setCollapsed(old=>old.includes(g.name)?old.filter(x=>x!==g.name):[...old,g.name])}><ChevronDown size={14}/></button>{g.state&&<StatusIcon state={g.state}/>}<b>{g.name}</b><span className="my-issue-count">{g.items.length}</span>{tab==='Assigned'&&<button aria-label={`Create task in ${g.name}`} onClick={()=>onNew(g.state?.id)}><Plus size={14}/></button>}</header>}{start>0&&<div aria-hidden="true" style={{height:start*rowH}}/>}{items.map(({issue:i,depth,parentIdent},index)=><div className={`my-issue-row ${depth?'my-issue-row-child':''}`} data-depth={depth} data-parent={parentIdent} data-rollup={(()=>{const r=treeRollups.get(i.id);return r?`${r.done}/${r.total}`:undefined})()} role="presentation" key={tab==='Activity'?`${g.name}-${dayEvents[index]?.id||index}`:i.id} onClick={()=>onOpenIssue(i)}>{showPriority&&<span className="my-issue-priority" data-p={i.priority}>≡</span>}<code title={parentIdent?`Sub-task of ${parentIdent}`:undefined}>{i.identifier}</code>{showStatus&&<span className="my-issue-status" data-status={i.state?.type}><StatusPicker compact issue={i} teams={teams} onChange={stateId=>{const st=teamStates(i)?.find(x=>x.id===stateId);if(!st)throw Error('Status not found');return onMoved(i.id,st)}}/></span>}<button type="button" className="my-issue-title my-issue-title-open" aria-label={`Open ${i.identifier}: ${i.title}`} onClick={e=>{e.stopPropagation();onOpenIssue(i)}}>{i.title}{tab==='Activity'&&<small className="my-activity-kind"> · {dayEvents[index]?.eventType||'event'}</small>}</button>{showLabels&&i.labels?.nodes.length?<span className="my-issue-labels" title={i.labels.nodes.map(l=>l.name).join(', ')}>{i.labels.nodes.map(l=>l.name).join(', ')}</span>:null}{showAssignee&&<AssigneePicker issue={i} teams={teams} onChange={assigneeId=>onUpdate(i.id,{assigneeId})}/>}{showDue&&i.dueDate&&<span className="my-issue-due">{new Date(i.dueDate).toLocaleDateString(undefined,{month:'short',day:'numeric'})}</span>}{showProject&&<span className="my-issue-project">{i.project?.name||i.team?.name||''}</span>}{showDate&&<span className="my-issue-date">{tab==='Activity'?new Date(dayEvents[index]?.createdAt||'').toLocaleDateString(undefined,{month:'short',day:'numeric'}):i.createdAt?new Date(i.createdAt).toLocaleDateString(undefined,{month:'short',day:'numeric'}):''}</span>}</div>)}{end<n&&<div aria-hidden="true" style={{height:(n-end)*rowH}}/>}</section>})}</div>}{!visible.length&&!activityLoading&&<section className="my-issues-empty" aria-labelledby="my-issues-empty-title"><Inbox size={30}/><h2 id="my-issues-empty-title">{scoped.length?'No matching tasks':emptyCopy[0]}</h2><p>{scoped.length?'Clear filters to see these tasks.':emptyCopy[1]}</p>{!scoped.length&&tab!=='Activity'&&<button className="primary" onClick={()=>onNew()}><Plus size={15}/>Create task</button>}</section>}{activityLoading&&tab==='Activity'&&<p role="status" className="my-activity-note">Loading activity…</p>}{activityError&&tab==='Activity'&&<p role="alert" className="my-issue-page-error">{activityError} <button onClick={onLoadActivity}>Retry</button></p>}{activityHasMore&&tab==='Activity'&&<button className="my-issue-load-more" onClick={onLoadActivity} disabled={activityLoading}>Load more activity</button>}{needStatus==='loading'&&<p role="status" className="my-activity-note">Loading older closed tasks…</p>}{need&&needStatus==='error'&&<p role="alert" className="my-issue-page-error">Couldn’t load older closed tasks: {older?.error} <button onClick={()=>onLoadOlder?.(true)}>Retry</button></p>}{tab==='Activity'&&<p className="my-activity-note">Activity is recorded from this server’s event-log migration onward; earlier changes are unavailable.</p>}</div></div>
+ * so rows, groups, toolbar, filters, display options and the Kanban stay identical everywhere.
+ *
+ * Filters are a chip tree in the view grammar (views/filterModel), mirrored in `?filter=` so a
+ * filtered list can be shared. Display options are layered preferences stored on the server
+ * under `viewKey` ("team:<id>:active", "my-issues:assigned"), so each page keeps its own. */
+type ListBucket = {
+  key: string;
+  label: string;
+  items: Issue[];
+  total: number;
+  state?: IssueState;
+};
+const ISSUE_FILTER_FIELDS = ISSUE_FIELDS;
+const STATUS_TYPE_OPTIONS = [
+  ["triage", "Triage"],
+  ["backlog", "Backlog"],
+  ["unstarted", "Unstarted"],
+  ["started", "Started"],
+  ["completed", "Completed"],
+  ["canceled", "Canceled"],
+] as const;
+function isTypingTarget(target: EventTarget | null) {
+  const t = target as HTMLElement | null;
+  return Boolean(
+    t?.closest(
+      "input,textarea,select,[contenteditable=true],[role=dialog],[role=menu]",
+    ),
+  );
+}
+const NO_DISPLAY: DisplayDoc = {};
+/* Created and Subscribed list closed work whenever it closed, as they did before views parity;
+   Assigned (and team pages) start at Linear's "Past week". */
+const EVERY_COMPLETED: DisplayDoc = { completedWindow: "all" };
+/* A board column a task can be moved into: one that writes its property, or a real workflow
+   state (not a status no loaded team has, nor a label / team / creator column). */
+const canMoveInto = (g: { drop?: unknown; state: { id: string } }): boolean =>
+  Boolean(g.drop) ||
+  (g.state.id !== "unknown" && !g.state.id.startsWith("group:"));
+const NO_SELECTION: ReadonlySet<string> = new Set();
+/* A board column's "…" menu: Select all in column, Hide column. */
+function ColumnMenu({
+  label,
+  onSelectAll,
+  onHide,
+}: {
+  label: string;
+  onSelectAll: () => void;
+  onHide: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const item =
+    "flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm text-foreground hover:bg-subtle shell-phone:min-h-11";
+  return (
+    <UIPopover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="grid size-6 place-items-center rounded-full text-muted hover:bg-subtle hover:text-foreground shell-phone:min-h-11 shell-phone:min-w-11"
+          aria-label={`${label} column options`}
+          data-kanban-column-menu=""
+        >
+          <MoreHorizontal size={15} />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        className="z-50 w-48 rounded-lg border border-line bg-panel p-1 shadow-lg"
+      >
+        <div role="menu" aria-label={`${label} column`}>
+          <button
+            type="button"
+            role="menuitem"
+            className={item}
+            onClick={() => {
+              onSelectAll();
+              setOpen(false);
+            }}
+          >
+            Select all in column
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className={item}
+            onClick={() => {
+              onHide();
+              setOpen(false);
+            }}
+          >
+            Hide column
+          </button>
+        </div>
+      </PopoverContent>
+    </UIPopover>
+  );
+}
+/* Links and pull requests a task carries (GitHub links), as small counts on the row. */
+function RowLinks({
+  issue,
+  links,
+  pullRequests,
+}: {
+  issue: Issue;
+  links: boolean;
+  pullRequests: boolean;
+}) {
+  const all =
+    (issue as { githubLinks?: { kind?: string }[] | null }).githubLinks || [];
+  const prs = all.filter((l) => /pull/i.test(l.kind || "")).length;
+  const other = all.length - prs;
+  return (
+    <>
+      {pullRequests && prs > 0 && (
+        <span
+          className="inline-flex items-center gap-0.5 whitespace-nowrap text-muted text-[11px] max-md:hidden"
+          title={`${prs} pull request${prs === 1 ? "" : "s"}`}
+          data-my-issue-prs=""
+        >
+          <GitPullRequest size={12} />
+          {prs}
+        </span>
+      )}
+      {links && other > 0 && (
+        <span
+          className="inline-flex items-center gap-0.5 whitespace-nowrap text-muted text-[11px] max-md:hidden"
+          title={`${other} link${other === 1 ? "" : "s"}`}
+          data-my-issue-links=""
+        >
+          <ExternalLink size={12} />
+          {other}
+        </span>
+      )}
+    </>
+  );
+}
+/* The filter menu's categories, values and per-value counts over `base` (the rows the list
+ * shows before filters). Shared by every task list and the view editor. */
+function useIssueFilterCatalog({
+  base,
+  issues,
+  states,
+  projects,
+  teams,
+  users,
+  labels,
+  cycles,
+  viewerId,
+  evalCtx,
+}: {
+  base: Issue[];
+  issues: Issue[];
+  states: IssueState[];
+  projects: Project[];
+  teams: Team[];
+  users: { id: string; name: string }[];
+  labels: IssueLabel[];
+  cycles: { id: string; name?: string; number?: number }[];
+  viewerId?: string;
+  evalCtx: EvalContext;
+}): FilterCatalog {
+  return useMemo((): FilterCatalog => {
+    const counted = new Map<string, Map<string, number>>();
+    const server = (field: string) =>
+      ISSUE_FILTER_FIELDS.find((f) => f.key === field)?.server || field;
+    const userOptions = (none?: string): ValueOption[] => [
+      { value: "me", label: "Current user" },
+      ...(none ? [{ value: null, label: none }] : []),
+      ...users
+        .filter((u) => u.id !== viewerId)
+        .map((u) => ({ value: u.id, label: u.name })),
+    ];
+    const uniqueStates = [...new Map(states.map((s) => [s.name, s])).values()];
+    const estimates = [
+      ...new Set(
+        issues
+          .map((i) => i.estimate)
+          .filter((e): e is number => typeof e === "number"),
+      ),
+    ].sort((a, b) => a - b);
+    return {
+      fields: ISSUE_FILTER_FIELDS,
+      menu: ISSUE_MENU,
+      options: (field) => {
+        switch (field) {
+          case "status":
+            return uniqueStates.map((s) => ({
+              value: s.name,
+              label: s.name,
+              icon: <StatusIcon state={s} />,
+            }));
+          case "statusType":
+            return STATUS_TYPE_OPTIONS.map(([value, label]) => ({
+              value,
+              label,
+            }));
+          case "assignee":
+            return userOptions("No assignee");
+          case "creator":
+          case "subscriber":
+            return userOptions();
+          case "priority":
+            return [1, 2, 3, 4, 0].map((p) => ({
+              value: p,
+              label: PRIORITY_LABELS[p],
+            }));
+          case "labels":
+            return [
+              { value: null, label: "No labels" },
+              ...labels.map((l) => ({
+                value: l.id,
+                // "area › api", as Linear lists a group's labels; the group itself is its
+                // own option and matches every label in it.
+                label: l.parentId
+                  ? `${labels.find((g) => g.id === l.parentId)?.name || "Group"} › ${l.name}`
+                  : l.name,
+                icon: (
+                  <span
+                    className="block size-2 rounded-full"
+                    style={{ background: l.color || "#a1a1aa" }}
+                  />
+                ),
+              })),
+            ];
+          case "project":
+            return [
+              { value: null, label: "No project" },
+              ...projects.map((p) => ({ value: p.id, label: p.name })),
+            ];
+          case "cycle":
+            return [
+              { value: null, label: "No cycle" },
+              ...cycles.map((c) => ({
+                value: c.id,
+                label: c.name || `Cycle ${c.number ?? ""}`.trim(),
+              })),
+            ];
+          case "estimate":
+            return [
+              { value: null, label: "No estimate" },
+              ...estimates.map((e) => ({
+                value: e,
+                label: `${e} point${e === 1 ? "" : "s"}`,
+              })),
+            ];
+          case "team":
+            return [
+              { value: "myTeams", label: "My teams" },
+              ...teams.map((t) => ({ value: t.id, label: t.name })),
+            ];
+          default:
+            return [];
+        }
+      },
+      suggest: (prompt) => suggestFilters(prompt),
+      count: (field, value) => {
+        if (field === "team" && value === "myTeams") return undefined;
+        const key = server(field);
+        let m = counted.get(key);
+        if (!m) {
+          m = countBy(base, key, evalCtx);
+          counted.set(key, m);
+        }
+        return m.get(value === null ? "null" : String(value)) || 0;
+      },
+    };
+  }, [
+    users,
+    labels,
+    cycles,
+    viewerId,
+    states,
+    issues,
+    projects,
+    teams,
+    base,
+    evalCtx,
+  ]);
+}
+function MyIssuesContent({
+  issues,
+  onNew,
+  onOpenIssue,
+  tab,
+  tabs,
+  head,
+  activityEvents = NO_EVENTS,
+  activityHasMore = false,
+  activityLoading = false,
+  activityError = "",
+  onLoadActivity = noop,
+  teams,
+  projects,
+  older,
+  onLoadOlder,
+  emptyCopy: emptyOverride,
+  layout,
+  onLayoutChange,
+  states,
+  onMoved,
+  onUpdate,
+  viewKey,
+  pageDefaults = NO_DISPLAY,
+  onSaveAsView,
+  filterState,
+  displayState,
+  canSetDefault = true,
+  serverRows,
+  filterRowEnd,
+  toolbarEnd,
+  onSaveView,
+}: {
+  /** Controlled filters: a view page owns its chips (saved vs. edited) instead of the URL. */
+  filterState?: { root: FilterGroup; onChange: (root: FilterGroup) => void };
+  /** Controlled display options (a saved view's layered preferences, or an editor draft). */
+  displayState?: ViewPreferences;
+  /** Offer "Set default for everyone" in the display panel. */
+  canSetDefault?: boolean;
+  /** The rows were selected by the server (a view run): no client-side filtering, and the
+   * list pages in more rows as it scrolls. */
+  serverRows?: {
+    hasMore: boolean;
+    loading: boolean;
+    error?: string;
+    onLoadMore: () => void;
+  };
+  /** Rendered at the end of the chip row (a view's "Clear" and "Save"). */
+  filterRowEnd?: React.ReactNode;
+  /** Rendered after the display button. */
+  toolbarEnd?: React.ReactNode;
+  /** Alt S: save the edited filters to the view on screen. */
+  onSaveView?: () => void;
+  layout: IssueLayout;
+  onLayoutChange: (layout: IssueLayout) => void;
+  states: IssueState[];
+  onMoved: (issueId: string, state: IssueState) => Promise<void>;
+  onUpdate: (issueId: string, input: Record<string, unknown>) => Promise<void>;
+  issues: Issue[];
+  onNew: (stateId?: string) => void;
+  onOpenIssue: (issue: Issue) => void;
+  tab: MyIssuesTab;
+  tabs?: React.ReactNode;
+  /* The page title. When given, the content draws the page's title bar itself and puts the
+   * save-as-view, layout, filter and display buttons on its right, so they sit on the title row
+   * instead of taking a row of their own under the tabs. */
+  head?: React.ReactNode;
+  activityEvents?: IssueActivityEvent[];
+  activityHasMore?: boolean;
+  activityLoading?: boolean;
+  activityError?: string;
+  onLoadActivity?: () => void;
+  teams: Team[];
+  projects: Project[];
+  older?: OlderState;
+  onLoadOlder?: (retry?: boolean) => void;
+  emptyCopy?: [string, string];
+  /** The `viewPreferences` key of this page; without one the display lives in memory. */
+  viewKey?: string;
+  /** This page's own display defaults, under the shared and the viewer's layers. */
+  pageDefaults?: DisplayDoc;
+  /** "Save as view" (Alt V): hands the current filters and display to the view editor. */
+  onSaveAsView?: (draft: { filters: FilterTree; display: DisplayDoc }) => void;
+}) {
+  const meta = useSyncMeta();
+  const viewerId = meta?.viewer?.id;
+  /* ---------------- filters: a chip tree, mirrored in ?filter= ---------------- */
+  const [ownRoot, setOwnRoot] = useState<FilterGroup>(() =>
+    filterState
+      ? emptyGroup()
+      : filterTreeToChips(
+          decodeFilterParam(new URLSearchParams(location.search).get("filter")),
+        ),
+  );
+  const controlledFilters = Boolean(filterState);
+  const filterRoot = filterState ? filterState.root : ownRoot;
+  const setFilterRoot = filterState ? filterState.onChange : setOwnRoot;
+  const [advanced, setAdvanced] = useState(false);
+  const filterTree = useMemo(() => chipsToFilterTree(filterRoot), [filterRoot]);
+  const filtering = hasFilters(filterTree);
+  /* A server-run view already holds only matching rows: no client filtering, no "6 / 81". */
+  const clientFiltering = filtering && !serverRows;
+  // Re-run on `viewKey` too: switching tabs pushes a new path without the query, and the chips
+  // that stay on screen must stay in the URL a person copies.
+  useEffect(() => {
+    if (controlledFilters) return;
+    const next = withFilterParam(location.search, filterTree);
+    if (next !== location.search)
+      history.replaceState(
+        history.state,
+        "",
+        `${location.pathname}${next}${location.hash}`,
+      );
+  }, [filterTree, viewKey, controlledFilters]);
+  // Back and forward restore the filter the URL of that entry carries.
+  useEffect(() => {
+    if (controlledFilters) return;
+    const onPop = () => {
+      const tree = decodeFilterParam(
+        new URLSearchParams(location.search).get("filter"),
+      );
+      setOwnRoot((old) =>
+        JSON.stringify(chipsToFilterTree(old)) === JSON.stringify(tree || {})
+          ? old
+          : filterTreeToChips(tree),
+      );
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [controlledFilters]);
+  const clearFilters = useCallback(() => {
+    setFilterRoot(emptyGroup());
+    setAdvanced(false);
+  }, [setFilterRoot]);
+  /* ---------------- display: layered preferences ---------------- */
+  // Follows `pageDefaults`, which differ per tab (My issues keeps one component across tabs).
+  const initialLayout = useRef(layout === "Board" ? "board" : "list").current;
+  const defaults = useMemo<DisplayDoc>(
+    () => ({
+      ...pageDefaults,
+      layout: pageDefaults.layout || (initialLayout as DisplayDoc["layout"]),
+    }),
+    [pageDefaults, initialLayout],
+  );
+  const prefTarget = useMemo(
+    () => (viewKey ? { viewType: viewKey } : null),
+    [viewKey],
+  );
+  const ownPrefs = useViewPreferences(
+    displayState ? null : prefTarget,
+    defaults,
+  );
+  const prefs = displayState || ownPrefs;
+  const display = prefs.display;
+  const board = display.layout === "board";
+  const setLayout = (next: IssueLayout) => {
+    prefs.update({ layout: next === "Board" ? "board" : "list" });
+    onLayoutChange(next);
+  };
+  const [filterOpen, setFilterOpen] = useState(false),
+    [displayOpen, setDisplayOpen] = useState(false),
+    [collapsedLocal, setCollapsedLocal] = useState<string[]>([]),
+    /* Collapsed parents, keyed by issue id. Per-surface and deliberately not persisted:
+       a collapsed epic in one view must not hide work in another. */
+    [treeCollapsed, setTreeCollapsed] = useState<Record<string, boolean>>({}),
+    [selected, setSelected] = useState<ReadonlySet<string>>(NO_SELECTION);
+  const collapsedKeys =
+    tab === "Activity" ? collapsedLocal : display.collapsedGroups;
+  const toggleCollapsed = (key: string) => {
+    const next = collapsedKeys.includes(key)
+      ? collapsedKeys.filter((k) => k !== key)
+      : [...collapsedKeys, key].slice(-50);
+    if (tab === "Activity") setCollapsedLocal(next);
+    else prefs.update({ collapsedGroups: next });
+  };
+  const has = (property: string) =>
+    display.visibleProperties.includes(property);
+  const saveAsView = useCallback(() => {
+    if (!onSaveAsView) return;
+    const { collapsedGroups: _collapsed, ...rest } = display;
+    void _collapsed;
+    onSaveAsView({ filters: filterTree, display: rest });
+  }, [onSaveAsView, display, filterTree]);
+  /* F opens the filter menu, Shift V the display panel, Alt V saves the list as a view. */
+  const layoutRef = useRef(setLayout);
+  layoutRef.current = setLayout;
+  const collapseAllRef = useRef<() => void>(noop);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (isTypingTarget(e.target)) return;
+      // A task dialog or command palette open over the list owns the keyboard, even when
+      // focus fell back to the page body.
+      if (document.querySelector('[aria-modal="true"]')) return;
+      // Cmd/Ctrl B flips list and board, as in Linear.
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.code === "KeyB") {
+        e.preventDefault();
+        layoutRef.current(board ? "List" : "Board");
+        return;
+      }
+      if (e.metaKey || e.ctrlKey) return;
+      if (e.altKey && e.code === "KeyV") {
+        if (!onSaveAsView) return;
+        e.preventDefault();
+        saveAsView();
+      } else if (e.altKey && e.code === "KeyS") {
+        if (!onSaveView) return;
+        e.preventDefault();
+        onSaveView();
+      } else if (
+        !e.altKey &&
+        !e.shiftKey &&
+        e.key.toLowerCase() === "t" &&
+        !board
+      ) {
+        e.preventDefault();
+        collapseAllRef.current();
+      } else if (!e.altKey && !e.shiftKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        setDisplayOpen(false);
+        setFilterOpen(true);
+      } else if (!e.altKey && e.shiftKey && e.key.toLowerCase() === "v") {
+        e.preventDefault();
+        setFilterOpen(false);
+        setDisplayOpen(true);
+      } else if (e.key === "Escape" && selected.size) setSelected(NO_SELECTION);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onSaveAsView, saveAsView, onSaveView, selected, board]);
+  /* ---------------- the rows ---------------- */
+  // Closed issues outside the synced window are fetched only when this view can show them.
+  const need =
+    Boolean(onLoadOlder) &&
+    (tab === "Created" || tab === "Assigned") &&
+    display.completedWindow === "all";
+  const needStatus = need ? older?.status : undefined;
+  useEffect(() => {
+    if (need) onLoadOlder?.();
+  }, [need, needStatus, onLoadOlder]);
+  const myTeamIds = useMemo(
+    () =>
+      new Set(
+        teams
+          .filter((t) => t.members?.nodes.some((m) => m.id === viewerId))
+          .map((t) => t.id),
+      ),
+    [teams, viewerId],
+  );
+  const evalCtx = useMemo<EvalContext>(
+    () => ({ viewerId, myTeamIds, parentIds: parentIdsOf(issues) }),
+    [viewerId, myTeamIds, issues],
+  );
+  const groupCtx = useMemo<GroupCtx>(
+    () => ({
+      states,
+      viewerId,
+      users: (meta?.users || [])
+        .map(([id, name]) => ({ id, name: name || "Unknown" }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      projects: projects.map((p) => ({ id: p.id, name: p.name })),
+      cycles: meta?.cycles.nodes || [],
+      labels: meta?.issueLabels.nodes || [],
+      teams: teams.map((t) => ({ id: t.id, name: t.name })),
+      labelGroupId: display.groupingLabelGroupId,
+    }),
+    [states, viewerId, meta, projects, teams, display.groupingLabelGroupId],
+  );
+  const scoped = useMemo(
+    () =>
+      tab === "Activity"
+        ? activityEvents.map((e) => e.issue)
+        : applyCompletedWindow(issues, display.completedWindow),
+    [tab, activityEvents, issues, display.completedWindow],
+  );
+  const deferredTree = React.useDeferredValue(filterTree);
+  const visible = useMemo(
+    () =>
+      hasFilters(deferredTree) && !serverRows
+        ? scoped.filter((i) =>
+            matchesFilter(deferredTree, i, { ...evalCtx, now: Date.now() }),
+          )
+        : scoped,
+    [scoped, deferredTree, evalCtx, serverRows],
+  );
+  // Totals for "6 / 81": the same rows before filters, under the same sub-issue rule.
+  const totalsBase = useMemo(
+    () =>
+      display.showSubIssues === false
+        ? scoped.filter((i) => !i.parent?.id)
+        : scoped,
+    [scoped, display.showSubIssues],
+  );
+  const shown = useMemo(
+    () =>
+      tab === "Activity"
+        ? visible
+        : sortTasks(withSubIssues(visible, scoped, display), display, groupCtx),
+    [tab, visible, scoped, display, groupCtx],
+  );
+  const hiddenCount = clientFiltering
+    ? Math.max(0, totalsBase.length - shown.length)
+    : 0;
+  // Activity rows: events grouped by day once, instead of re-filtering every event for every row.
+  const eventsByDate = useMemo(() => {
+    const visibleIds = new Set(visible.map((i) => i.id));
+    const m = new Map<string, IssueActivityEvent[]>();
+    if (tab !== "Activity") return m;
+    for (const e of activityEvents) {
+      if (!visibleIds.has(e.issue.id)) continue;
+      const d = e.createdAt.slice(0, 10);
+      const list = m.get(d);
+      if (list) list.push(e);
+      else m.set(d, [e]);
+    }
+    return m;
+  }, [tab, activityEvents, visible]);
+  const stateByName = useMemo(
+    () => new Map(states.map((s) => [s.name, s])),
+    [states],
+  );
+  const buckets = useMemo((): ListBucket[] => {
+    if (tab === "Activity")
+      return [...eventsByDate].map(([date, events]) => ({
+        key: date,
+        label: date,
+        items: events.map((e) => e.issue),
+        total: events.length,
+      }));
+    if (display.grouping === "none")
+      return [
+        { key: "all", label: "", items: shown, total: totalsBase.length },
+      ];
+    return groupTasks(shown, display.grouping, groupCtx, {
+      showEmpty: display.showEmptyGroups,
+      totals: totalsBase,
+    }).map((g) => ({
+      ...g,
+      state: display.grouping === "status" ? stateByName.get(g.key) : undefined,
+    }));
+  }, [tab, eventsByDate, display, shown, totalsBase, groupCtx, stateByName]);
+  // T collapses every group, or opens them all again when all are collapsed.
+  collapseAllRef.current = () => {
+    const keys = buckets.filter((b) => b.label).map((b) => b.key);
+    if (!keys.length) return;
+    const next = keys.every((k) => collapsedKeys.includes(k))
+      ? []
+      : keys.slice(-50);
+    if (tab === "Activity") setCollapsedLocal(next);
+    else prefs.update({ collapsedGroups: next });
+  };
+  /* A server-run view pages in more rows as its end scrolls into view. */
+  const serverMoreRef = useRef<HTMLDivElement | null>(null);
+  const serverMore = useRef(serverRows?.onLoadMore);
+  serverMore.current = serverRows?.onLoadMore;
+  const canLoadServer = Boolean(
+    serverRows?.hasMore && !serverRows.loading && !serverRows.error,
+  );
+  useEffect(() => {
+    if (!canLoadServer) return;
+    const el = serverMoreRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    let requested = false;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (requested || !entries.some((e) => e.isIntersecting)) return;
+        requested = true;
+        serverMore.current?.();
+      },
+      { rootMargin: "0px 0px 600px 0px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [canLoadServer]);
+  /* ---------------- board columns ---------------- */
+  const columnDrop = useCallback(
+    (grouping: string, key: string) => {
+      const value = key === "none" ? null : key;
+      if (grouping === "priority")
+        return (id: string) => onUpdate(id, { priority: Number(key) });
+      if (grouping === "assignee")
+        return (id: string) => onUpdate(id, { assigneeId: value });
+      if (grouping === "project")
+        return (id: string) => onUpdate(id, { projectId: value });
+      if (grouping === "cycle")
+        return (id: string) => onUpdate(id, { cycleId: value });
+      return undefined;
+    },
+    [onUpdate],
+  );
+  const columnsFor = useCallback(
+    (items: Issue[], totals: Issue[]): KanbanGroup[] => {
+      const grouping =
+        display.grouping === "none" ? "status" : display.grouping;
+      const status = grouping === "status";
+      const groups = groupTasks(items, grouping, groupCtx, {
+        showEmpty: true,
+        totals,
+      }).filter(
+        (g) =>
+          g.items.length > 0 ||
+          display.showEmptyGroups ||
+          // Workflow columns stay as drop targets (canceled only when it has tasks); other
+          // groupings follow "Show empty columns". A hidden column is kept even when empty,
+          // so the "Hidden columns" lane can always bring it back.
+          (status && stateByName.get(g.key)?.type !== "canceled") ||
+          display.hiddenColumns.includes(g.key),
+      );
+      return groups.map((g) => {
+        const state = status ? stateByName.get(g.key) : undefined;
+        return {
+          state: state || {
+            id: status ? "unknown" : `group:${g.key}`,
+            name: g.label,
+            color: "#a1a1aa",
+            type: status ? "unknown" : "group",
+          },
+          items: g.items,
+          total: clientFiltering ? g.total : undefined,
+          drop: status ? undefined : columnDrop(grouping, g.key),
+        };
+      });
+    },
+    [display, groupCtx, stateByName, clientFiltering, columnDrop],
+  );
+  const columnKey = (g: KanbanGroup) =>
+    g.state.id.startsWith("group:") ? g.state.id.slice(6) : g.state.name;
+  const hiddenColumns = display.hiddenColumns;
+  const boardColumns = useMemo(
+    () => (board && tab !== "Activity" ? columnsFor(shown, totalsBase) : []),
+    [board, tab, columnsFor, shown, totalsBase],
+  );
+  const shownColumns = boardColumns.filter(
+    (g) => !hiddenColumns.includes(columnKey(g)),
+  );
+  const hiddenLane = boardColumns.filter((g) =>
+    hiddenColumns.includes(columnKey(g)),
+  );
+  const columnMenu = (g: KanbanGroup) => (
+    <ColumnMenu
+      label={g.state.name}
+      onSelectAll={() => setSelected(new Set(g.items.map((i) => i.id)))}
+      onHide={() =>
+        prefs.update({
+          hiddenColumns: [...hiddenColumns, columnKey(g)].slice(-50),
+        })
+      }
+    />
+  );
+  const showColumn = (g: KanbanGroup) =>
+    prefs.update({
+      hiddenColumns: hiddenColumns.filter((k) => k !== columnKey(g)),
+    });
+  /* Linear's "Hidden columns": every hidden column with its count, one click from showing. */
+  const hiddenColumnsLane = (horizontal: boolean) =>
+    hiddenLane.length ? (
+      <section
+        className={
+          "flex min-w-0 flex-none gap-1 rounded-xl border border-dashed border-line p-2 text-sm text-muted " +
+          (horizontal
+            ? "flex-wrap items-center justify-self-start"
+            : "w-48 flex-col self-start max-sm:w-auto max-sm:flex-row max-sm:flex-wrap max-sm:items-center max-sm:self-stretch")
+        }
+        data-kanban-hidden-lane=""
+        aria-label="Hidden columns"
+      >
+        <h3 className="flex items-center gap-2 px-2 py-1 text-sm font-medium text-foreground">
+          <EyeOff size={14} className="text-muted" aria-hidden="true" />
+          Hidden columns
+        </h3>
+        {hiddenLane.map((g) => (
+          <button
+            key={g.state.id}
+            type="button"
+            className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-subtle hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
+            aria-label={`Show column ${g.state.name}`}
+            title={`Show ${g.state.name}`}
+            data-kanban-hidden-column={columnKey(g)}
+            onClick={() => showColumn(g)}
+          >
+            <span
+              data-status-mark=""
+              style={{ borderColor: g.state.color }}
+              className="flex-none border-2"
+            ></span>
+            <span className="min-w-0 flex-1 truncate">{g.state.name}</span>
+            <span className="tabular-nums">{g.items.length}</span>
+          </button>
+        ))}
+      </section>
+    ) : undefined;
+  const moveSelected = async (target: KanbanGroup) => {
+    const ids = [...selected];
+    setSelected(NO_SELECTION);
+    for (const id of ids)
+      if (target.drop) await target.drop(id).catch(() => undefined);
+      else if (canMoveInto(target))
+        await onMoved(id, target.state).catch(() => undefined);
+  };
+  /* ---------------- filter menu catalog ---------------- */
+  const catalog = useIssueFilterCatalog({
+    base: scoped,
+    issues,
+    states,
+    projects,
+    teams,
+    users: groupCtx.users || [],
+    labels: groupCtx.labels || [],
+    cycles: groupCtx.cycles || [],
+    viewerId,
+    evalCtx,
+  });
+  const emptyCopy =
+    emptyOverride ||
+    (tab === "Assigned"
+      ? ["You’re all caught up", "Tasks assigned to you will show up here."]
+      : tab === "Created"
+        ? ["No tasks created yet", "Tasks you create will be collected here."]
+        : tab === "Subscribed"
+          ? ["No subscribed tasks", "Tasks you subscribe to will appear here."]
+          : [
+              "No recorded activity",
+              "New task events will appear here as work happens.",
+            ]);
+  const teamStates = (i: Issue) =>
+    teams.find((t) => t.id === i.team?.id)?.states.nodes;
+  // Activity paging is lazy: a sentinel after the list requests the next page when it scrolls into
+  // view. The button stays as the explicit keyboard path and the fallback when IntersectionObserver
+  // is unavailable. Loads stay serialised by the caller, which also rejects a non-advancing cursor and
+  // an empty page, so a repeated intersection can never duplicate rows or loop forever.
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  const loadMoreCb = useRef(onLoadActivity);
+  loadMoreCb.current = onLoadActivity;
+  // A filter that hides every loaded row keeps the sentinel in view; paging from there would drain
+  // the feed for nothing, so auto-load only runs while rows are actually rendered.
+  const canAutoLoad =
+    tab === "Activity" &&
+    activityHasMore &&
+    !activityLoading &&
+    !activityError &&
+    visible.length > 0;
+  useEffect(() => {
+    if (!canAutoLoad) return;
+    const el = loadMoreRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    let requested = false;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (requested || !entries.some((e) => e.isIntersecting)) return;
+        requested = true;
+        loadMoreCb.current();
+      },
+      { rootMargin: "0px 0px 600px 0px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [canAutoLoad]);
+  /* Manual order (views/manualOrder.tsx): drag a row, or Alt+arrows on the focused row. Only
+     in the list, when the order is one a person sets (manual, or within a priority). */
+  const orderField: "sortOrder" | "prioritySortOrder" =
+    display.ordering === "priority" ? "prioritySortOrder" : "sortOrder";
+  const canReorder =
+    layout !== "Board" &&
+    tab !== "Activity" &&
+    (!display.subGrouping || display.subGrouping === "none") &&
+    !display.reverse &&
+    (display.ordering === "manual" || display.ordering === "priority");
+  const [focusedRow, setFocusedRow] = useState<string | null>(null);
+  const [moveNote, setMoveNote] = useState<string>("");
+  const orderGroups = useMemo<OrderGroups>(
+    () =>
+      buckets.map((g) => ({
+        key: g.key,
+        ids: collapsedKeys.includes(g.key)
+          ? []
+          : (display.nestedSubIssues === "hide"
+              ? g.items
+              : orderTree(g.items, treeCollapsed).map((r) => r.node)
+            ).map((i) => i.id),
+      })),
+    [buckets, collapsedKeys, display.nestedSubIssues, treeCollapsed],
+  );
+  const applyMove = async (plan: MovePlan) => {
+    const task = issues.find((i) => i.id === plan.id);
+    if (!task) return;
+    const patch =
+      plan.groupKey === plan.fromGroupKey
+        ? {}
+        : groupPatch(display.grouping || "none", plan.groupKey, task, {
+            stateIdForName: (name) =>
+              (teamStates(task) || states).find((st) => st.name === name)?.id,
+            labelGroupId: activeLabelGroup(groupCtx)?.id,
+          });
+    if (patch === null) {
+      setMoveNote("Tasks can't be moved between these groups.");
+      return;
+    }
+    const rankOf = (id: string) => {
+      const t = issues.find((x) => x.id === id);
+      return orderField === "prioritySortOrder" ? t?.priorityRank : t?.rank;
+    };
+    const label = buckets.find((b) => b.key === plan.groupKey)?.label;
+    setMoveNote(
+      `Moved ${task.identifier}${plan.groupKey !== plan.fromGroupKey && label ? ` to ${label}` : ""}.`,
+    );
+    try {
+      await onUpdate(task.id, {
+        ...patch,
+        _move: {
+          afterId: plan.afterId,
+          beforeId: plan.beforeId,
+          field: orderField,
+          optimisticRank: optimisticRank(plan, rankOf),
+        },
+      });
+    } catch {
+      setMoveNote(`Couldn't move ${task.identifier}.`);
+    }
+  };
+  /* Keyboard: j/k or ↓/↑ walk the rows, Enter opens, ⌥↑/⌥↓ move the focused task (crossing
+     group edges), ⌥⇧↑/⌥⇧↓ send it to the top or bottom of its group. Focus stays on the task. */
+  const keyRef = useRef<(e: KeyboardEvent) => void>(() => {});
+  keyRef.current = (e: KeyboardEvent) => {
+    if (tab === "Activity" || layout === "Board") return;
+    if (e.metaKey || e.ctrlKey || isTypingTarget(e.target)) return;
+    if (document.querySelector('[aria-modal="true"],[role="menu"],[role="dialog"]')) return;
+    const flat = orderGroups.flatMap((g) => g.ids);
+    if (!flat.length) return;
+    const up = e.key === "ArrowUp" || (!e.altKey && e.key === "k");
+    const down = e.key === "ArrowDown" || (!e.altKey && e.key === "j");
+    if (!up && !down && e.key !== "Enter") return;
+    const current = focusedRow && flat.includes(focusedRow) ? focusedRow : null;
+    if (e.key === "Enter") {
+      const t = current && issues.find((i) => i.id === current);
+      if (!t || document.activeElement?.getAttribute("data-row-id") !== current) return;
+      e.preventDefault();
+      onOpenIssue(t);
+      return;
+    }
+    e.preventDefault();
+    if (e.altKey) {
+      if (!current || !canReorder) {
+        if (!canReorder) setMoveNote("Switch ordering to Manual to move tasks.");
+        return;
+      }
+      const plan = planKey(orderGroups, current, up ? -1 : 1, e.shiftKey);
+      if (plan) void applyMove(plan);
+      return;
+    }
+    const at = current ? flat.indexOf(current) : -1;
+    const next =
+      at < 0 ? flat[up ? flat.length - 1 : 0] : flat[Math.max(0, Math.min(flat.length - 1, at + (up ? -1 : 1)))];
+    setFocusedRow(next);
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => keyRef.current(e);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  useEffect(() => {
+    if (!focusedRow) return;
+    const el = document.querySelector<HTMLElement>(
+      `[data-row-id="${CSS.escape(focusedRow)}"]`,
+    );
+    if (el && document.activeElement !== el) {
+      el.focus({ preventScroll: true });
+      el.scrollIntoView({ block: "nearest" });
+    }
+  }, [focusedRow, orderGroups]);
+  /* One group's rows: parent then children, so a sub-task is never rendered above the task
+     that created it, unless nested sub-issues are hidden. Activity rows are events, not a
+     hierarchy, and stay flat. */
+  const rowsFor = (items: Issue[], groupKey: string) => {
+    const dayEvents =
+      tab === "Activity" ? eventsByDate.get(groupKey) || [] : [];
+    const flat = tab === "Activity" || display.nestedSubIssues === "hide";
+    const rows = flat
+      ? items.map((node) => ({
+          node,
+          depth: 0,
+          isLast: true,
+          openRails: [] as number[],
+          childCount: 0,
+          doneCount: 0,
+          parentOutside: tab !== "Activity" && Boolean(node.parent?.id),
+        }))
+      : orderTree(items, treeCollapsed);
+    return rows.map(
+      (
+        {
+          node: i,
+          depth,
+          isLast,
+          openRails,
+          childCount,
+          doneCount,
+          parentOutside,
+        },
+        index,
+      ) => (
+        <SortableRow
+          key={
+            tab === "Activity"
+              ? `${groupKey}-${dayEvents[index]?.id || index}`
+              : i.id
+          }
+          id={i.id}
+          enabled={canReorder}
+        >
+          {({ style: dragStyle, ...dnd }) => (
+        <div
+          {...dnd}
+          className="relative flex w-full min-w-0 min-h-9 items-center gap-2 bg-transparent py-0 pr-6 text-left text-foreground hover:bg-subtle cursor-pointer max-md:gap-1.5 shell-phone:pr-3 [@media_(max-width:650px)]:gap-1.5 max-sm:flex-wrap max-sm:gap-y-0 max-sm:pb-2 [--row-inset:42px] max-sm:[--row-inset:14px] outline-none focus-visible:bg-subtle focus-visible:shadow-[inset_2px_0_0_var(--color-accent)] data-[dragging]:bg-panel data-[dragging]:shadow-md data-[dragging]:cursor-grabbing"
+          style={{
+            ...dragStyle,
+            paddingLeft: `calc(var(--row-inset) + ${depth * SIBLING_STEP}px)`,
+          }}
+          data-my-issue-row=""
+          data-row-id={tab === "Activity" ? undefined : i.id}
+          data-depth={depth}
+          role="presentation"
+          tabIndex={tab === "Activity" ? undefined : focusedRow === i.id ? 0 : -1}
+          onFocus={() => tab !== "Activity" && setFocusedRow(i.id)}
+          onClick={() => onOpenIssue(i)}
+        >
+          {/* Ancestry rails: one 2px line per open ancestor, then this row's own
+            connector — a T for a middle child, a rounded corner for the last. */}
+          {openRails.map((column) => (
+            <span
+              key={`rail-${column}`}
+              aria-hidden="true"
+              className="absolute top-0 bottom-0 w-0.5 bg-line"
+              style={{ left: railAt(column) }}
+              data-tree-rail=""
+            />
+          ))}
+          {depth > 0 && isLast && (
+            <span
+              aria-hidden="true"
+              className="absolute w-2.5 border-l-2 border-b-2 border-line rounded-bl-[6px]"
+              style={{
+                left: railAt(depth - 1),
+                top: 0,
+                height: 18,
+              }}
+              data-tree-rail="last"
+            />
+          )}
+          {depth > 0 && !isLast && (
+            <>
+              <span
+                aria-hidden="true"
+                className="absolute top-0 bottom-0 w-0.5 bg-line"
+                style={{ left: railAt(depth - 1) }}
+                data-tree-rail="through"
+              />
+              <span
+                aria-hidden="true"
+                className="absolute h-0.5 w-2.5 bg-line"
+                style={{ left: railAt(depth - 1), top: 18 }}
+              />
+            </>
+          )}
+          {/* Reserved 16px so every column lines up whether or not a row has children. */}
+          <span className="relative grid place-items-center w-4 h-4 flex-none">
+            {childCount > 0 && (
+              <button
+                type="button"
+                aria-expanded={!treeCollapsed[i.id]}
+                aria-label={`${treeCollapsed[i.id] ? "Expand" : "Collapse"} ${childCount} sub-tasks of ${i.identifier}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setTreeCollapsed((old) => ({
+                    ...old,
+                    [i.id]: !old[i.id],
+                  }));
+                }}
+                className="relative grid place-items-center w-4 h-4 rounded bg-transparent text-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent before:absolute before:inset-0 pointer-coarse:before:-inset-3.5 shell-phone:before:-inset-3.5"
+                data-tree-toggle=""
+              >
+                <ChevronDown
+                  size={12}
+                  className={treeCollapsed[i.id] ? "-rotate-90" : ""}
+                />
+              </button>
+            )}
+          </span>
+          {has("priority") && (
+            <span
+              className="text-muted text-[13px] data-[p=1]:text-danger"
+              data-my-issue-priority=""
+              data-p={i.priority}
+              title={PRIORITY_LABELS[i.priority] || "No priority"}
+            >
+              ≡
+            </span>
+          )}
+          {has("identifier") && (
+            <code className="shrink-0 whitespace-nowrap text-muted text-[12px] font-[inherit]">
+              {i.identifier}
+            </code>
+          )}
+          {i.decisionNeeded ? (
+            <span
+              className="inline-grid place-items-center w-3.75 h-3.75 ml-1.5 rounded-[50%] text-[10px] font-bold leading-none cursor-default bg-[#fdf3cf] text-[#5b4a0f] align-middle border border-amber-400"
+              data-my-issue-decision=""
+              role="img"
+              aria-label="Needs a decision"
+              title="Needs a decision"
+            >
+              ?
+            </span>
+          ) : null}
+          {has("status") && (
+            <span
+              className="text-[12px] text-[#89948d] data-[status=started]:text-foreground max-sm:-my-2"
+              data-my-issue-status=""
+              data-status={i.state?.type}
+            >
+              <StatusPicker
+                compact
+                issue={i}
+                teams={teams}
+                icon={<StateGlyph state={i.state} />}
+                onChange={(stateId) => {
+                  const st = teamStates(i)?.find((x) => x.id === stateId);
+                  if (!st) throw Error("Status not found");
+                  return onMoved(i.id, st);
+                }}
+              />
+            </span>
+          )}
+          {/* A sub-task whose parent sits in another status section cannot nest
+            there, so it carries the parent identifier instead of reading as an
+            orphan. The board does the same. */}
+          {parentOutside && i.parent?.identifier ? (
+            <span
+              className="shrink-0 rounded border border-line py-0 px-1 text-[10px] text-muted shell-phone:hidden"
+              data-my-issue-parent=""
+              title={i.parent.title}
+            >
+              ↳{i.parent.identifier}
+            </span>
+          ) : null}
+          <button
+            type="button"
+            className="overflow-hidden text-ellipsis whitespace-nowrap text-[12px] flex-1 min-w-0 [background:none] border-0 pt-0 pr-0 pb-0 pl-0 mt-0 mr-0 mb-0 ml-0 text-inherit text-left cursor-pointer block font-[inherit] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 max-sm:order-last max-sm:basis-full max-sm:min-h-0! max-sm:pl-6 max-sm:text-sm max-sm:leading-snug max-sm:whitespace-normal max-sm:line-clamp-2 max-sm:wrap-break-word"
+            data-my-issue-title=""
+            data-my-issue-title-open=""
+            aria-label={`Open ${i.identifier}: ${i.title}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenIssue(i);
+            }}
+          >
+            {i.title}
+            {tab === "Activity" && (
+              <small
+                className="text-[11px] font-normal text-muted"
+                data-my-activity-kind=""
+              >
+                {" "}
+                · {activityKindLabel(dayEvents[index]?.eventType)}
+              </small>
+            )}
+          </button>
+          {childCount > 0 && (
+            <SubIssuePill done={doneCount} total={childCount} />
+          )}
+          {has("labels") && i.labels?.nodes.length ? (
+            <span
+              className="max-w-25 overflow-hidden text-ellipsis whitespace-nowrap text-muted text-[11px] max-md:hidden"
+              data-my-issue-labels=""
+              title={i.labels.nodes.map((l) => l.name).join(", ")}
+            >
+              {i.labels.nodes.map((l) => l.name).join(", ")}
+            </span>
+          ) : null}
+          {(has("links") || has("pullRequests")) && (
+            <RowLinks
+              issue={i}
+              links={has("links")}
+              pullRequests={has("pullRequests")}
+            />
+          )}
+          {has("estimate") && i.estimate != null && (
+            <span
+              className="whitespace-nowrap text-muted text-[11px] max-md:hidden"
+              data-my-issue-estimate=""
+              title="Estimate"
+            >
+              {i.estimate} pt
+            </span>
+          )}
+          {has("timeInStatus") && i.stateChangedAt && (
+            <span
+              className="whitespace-nowrap text-muted text-[11px] max-md:hidden"
+              data-my-issue-time-in-status=""
+              title="Time in status"
+            >
+              {timeInStatus(i)}
+            </span>
+          )}
+          {has("creator") && i.creator && (
+            <span
+              className="grid place-items-center w-5.5 h-5.5 flex-none max-md:hidden"
+              data-my-issue-creator=""
+              title={`Created by ${i.creator.name || "someone"}`}
+            >
+              <UserBlobatar user={i.creator} />
+            </span>
+          )}
+          {has("assignee") && (
+            <span
+              className={
+                i.assignee
+                  ? "grid place-items-center w-5.5 h-5.5 flex-none max-sm:ml-auto"
+                  : "grid place-items-center w-5.5 h-5.5 rounded-[50%] bg-[#e5e5e7] text-[#46464b] text-[10px] flex-none max-sm:ml-auto"
+              }
+              data-my-issue-assignee=""
+              title={i.assignee?.name || "Unassigned"}
+            >
+              {i.assignee ? <UserBlobatar user={i.assignee} /> : "·"}
+            </span>
+          )}
+          {has("dueDate") && i.dueDate && (
+            <span
+              className="whitespace-nowrap text-[#ad5757] text-[11px] max-md:hidden"
+              data-my-issue-due=""
+            >
+              {new Date(i.dueDate).toLocaleDateString(undefined, {
+                month: "short",
+                day: "numeric",
+              })}
+            </span>
+          )}
+          {has("project") && (
+            <span
+              className="overflow-hidden text-ellipsis whitespace-nowrap text-muted text-[11px] max-md:hidden max-w-37.5"
+              data-my-issue-project=""
+            >
+              {i.project?.name || i.team?.name || ""}
+            </span>
+          )}
+          {has("updatedAt") && i.updatedAt && (
+            <span
+              className="text-right whitespace-nowrap text-[11px] text-muted max-md:hidden"
+              data-my-issue-updated=""
+              title="Updated"
+            >
+              {new Date(i.updatedAt).toLocaleDateString(undefined, {
+                month: "short",
+                day: "numeric",
+              })}
+            </span>
+          )}
+          {has("createdAt") && (
+            <span
+              className="text-right whitespace-nowrap text-[11px] text-muted min-w-11.5 shell-phone:hidden"
+              data-my-issue-date=""
+            >
+              {tab === "Activity"
+                ? new Date(
+                    dayEvents[index]?.createdAt || "",
+                  ).toLocaleDateString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                  })
+                : i.createdAt
+                  ? new Date(i.createdAt).toLocaleDateString(undefined, {
+                      month: "short",
+                      day: "numeric",
+                    })
+                  : ""}
+            </span>
+          )}
+        </div>
+          )}
+        </SortableRow>
+      ),
+    );
+  };
+  const groupHeader = (
+    g: { key: string; label: string; items: Issue[]; total: number },
+    open: boolean,
+    state?: IssueState,
+    sub = false,
+  ) => (
+    <header
+      className={
+        sub
+          ? "flex items-center gap-1.75 h-7.5 pt-0 pr-2 pb-0 pl-6 text-muted text-[12px] mt-0 mr-2.5 mb-0.5 ml-2.5"
+          : "flex items-center gap-1.75 h-8.5 shell-phone:h-11 pointer-coarse:h-11 pt-0 pr-2 pb-0 pl-2 text-muted text-[12px] mt-0 mr-2.5 mb-0.5 ml-2.5 rounded-[7px] bg-subtle"
+      }
+    >
+      {!sub && (
+        <button
+          className="grid place-items-center w-5.5 h-5.5 ml-0 rounded-md bg-transparent text-[#626269] hover:bg-subtle mt-0 mr-0 mb-0 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 group pointer-coarse:focus-visible:-outline-offset-2 shell-phone:focus-visible:-outline-offset-2"
+          aria-label={`${open ? "Collapse" : "Expand"} ${tab === "Activity" ? activityDayLabel(g.label) : g.label}`}
+          aria-expanded={open}
+          onClick={() => toggleCollapsed(g.key)}
+        >
+          <ChevronDown
+            size={14}
+            className="group-aria-[expanded=false]:-rotate-90"
+          />
+        </button>
+      )}
+      {state && <StatusIcon state={state} />}
+      <b className="text-foreground font-medium">
+        {tab === "Activity" ? activityDayLabel(g.label) : g.label}
+      </b>
+      <span className="text-muted text-[11px]" data-my-issue-group-count="">
+        {clientFiltering && tab !== "Activity" && g.total !== g.items.length
+          ? `${g.items.length} / ${g.total}`
+          : g.items.length}
+      </span>
+      {!sub && tab !== "Activity" && (
+        <button
+          className="grid place-items-center w-5.5 h-5.5 ml-0 rounded-md bg-transparent text-[#626269] hover:bg-subtle mt-0 mr-0 mb-0 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 pointer-coarse:focus-visible:-outline-offset-2 shell-phone:focus-visible:-outline-offset-2"
+          aria-label={`Create task in ${g.label || "this list"}`}
+          onClick={() => onNew(state?.id)}
+        >
+          <Plus size={14} />
+        </button>
+      )}
+    </header>
+  );
+  const subGrouping =
+    tab !== "Activity" &&
+    display.subGrouping !== "none" &&
+    display.subGrouping !== display.grouping
+      ? display.subGrouping
+      : "";
+  const boardFor = (columns: KanbanGroup[]) => (
+    <IssueBoard
+      issues={columns.flatMap((c) => c.items)}
+      columns={columns.filter((g) => !hiddenColumns.includes(columnKey(g)))}
+      columnMenu={columnMenu}
+      selected={selected}
+      states={states}
+      teams={teams}
+      onSelect={onOpenIssue}
+      onNew={onNew}
+      onMoved={onMoved}
+      onUpdate={onUpdate}
+    />
+  );
+  const toolbar = (
+    <>
+      {onSaveAsView && (
+        <button
+          type="button"
+          className="grid size-7 flex-none place-items-center rounded-full text-muted hover:bg-subtle hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11 shell-phone:min-w-11"
+          aria-label="Save as view"
+          title="Save as view (Alt V)"
+          data-save-as-view=""
+          onClick={saveAsView}
+        >
+          <Layers3 size={15} />
+        </button>
+      )}
+      <div
+        className="ml-auto flex flex-none items-center gap-1.5 bg-bg  text-foreground"
+        data-my-issue-toolbar=""
+      >
+        <LayoutSwitch layout={board ? "Board" : "List"} onChange={setLayout} />
+        <AddFilterButton
+          root={filterRoot}
+          onChange={setFilterRoot}
+          catalog={catalog}
+          open={filterOpen}
+          onOpenChange={(open) => {
+            setFilterOpen(open);
+            if (open) setDisplayOpen(false);
+          }}
+          onAdvanced={() => setAdvanced(true)}
+        />
+        <DisplayButton
+          open={displayOpen}
+          onOpenChange={(open) => {
+            setDisplayOpen(open);
+            if (open) setFilterOpen(false);
+          }}
+          hasOverrides={prefs.hasOverrides}
+        >
+          <DisplayPanel
+            labelGroups={(meta?.issueLabels.nodes || []).filter((l) => l.isGroup)}
+            display={display}
+            onChange={(patch) => {
+              prefs.update(patch);
+              if (patch.layout)
+                onLayoutChange(patch.layout === "board" ? "Board" : "List");
+            }}
+            showCompleted={tab !== "Activity"}
+            hasOverrides={prefs.hasOverrides}
+            onReset={prefs.reset}
+            onSetDefault={
+              (viewKey || displayState) && canSetDefault
+                ? () => void prefs.setDefault()
+                : undefined
+            }
+          />
+          {prefs.error && (
+            <p role="alert" className="mt-2 text-sm text-danger">
+              {prefs.error}
+            </p>
+          )}
+        </DisplayButton>
+        {toolbarEnd}
+      </div>
+    </>
+  );
+  return (
+    <>
+      {head && (
+        <div
+          className="m-0 flex h-11 min-h-11 flex-none items-center gap-1 border-b border-line bg-bg px-4 py-0 text-foreground shell-phone:h-14 shell-phone:pl-2 shell-phone:pr-2 [&_[data-my-issue-toolbar]]:gap-0.5 shell-phone:[&_[data-my-issue-toolbar]_button]:border-transparent shell-phone:[&_[data-my-issue-toolbar]_button]:bg-transparent"
+          data-page-head=""
+          data-my-issues-head=""
+        >
+          <MobileNavTrigger />
+          <div className="min-w-0">{head}</div>
+          <div className="ml-auto flex min-w-0 flex-none items-center gap-1">
+            {toolbar}
+          </div>
+        </div>
+      )}
+      <div
+        className="relative flex p-4 gap-4 min-h-0 min-w-0 flex-1 flex-col bg-bg text-foreground max-md:flex-1 max-md:flex max-md:flex-col max-md:min-h-0 max-md:h-auto [&_[data-my-issue-group]>header_button:last-child:not(:first-child)]:ml-auto shell-phone:flex-1 shell-desktop:min-h-0 shell-phone:min-h-0 shell-phone:h-auto [@media(max-height:500px)]:has-[[data-issues-board]]:overflow-y-auto [@media(max-height:500px)]:has-[[data-issues-board]]:overscroll-contain"
+        data-my-issues-view=""
+      >
+        <div
+          className="flex min-w-0 shrink-0 flex-wrap items-center gap-2"
+          data-my-issue-header=""
+        >
+          {tabs}
+          {!head && toolbar}
+        </div>
+        {filterRowEnd ? (
+          <div
+            className="flex min-w-0 items-start gap-2 rounded-lg bg-subtle px-2 py-1.5"
+            data-view-filter-row=""
+          >
+            <div className="min-w-0 flex-1">
+              {chipCount(filterRoot) || advanced ? (
+                <FilterChips
+                  root={filterRoot}
+                  onChange={setFilterRoot}
+                  catalog={catalog}
+                  advanced={advanced}
+                  onAdvancedChange={setAdvanced}
+                  hideClear
+                />
+              ) : (
+                <span className="inline-flex h-7 items-center text-sm text-muted">
+                  No filters
+                </span>
+              )}
+            </div>
+            {filterRowEnd}
+          </div>
+        ) : (
+          <FilterChips
+            root={filterRoot}
+            onChange={setFilterRoot}
+            catalog={catalog}
+            advanced={advanced}
+            onAdvancedChange={setAdvanced}
+          />
+        )}
+        {selected.size > 0 && board && (
+          <div
+            className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-panel px-3 py-2 text-sm"
+            data-board-selection=""
+            role="status"
+          >
+            <b className="font-medium">{selected.size} selected</b>
+            <label className="flex items-center gap-1.5 text-muted">
+              Move to
+              <select
+                className="rounded-md border border-line bg-panel px-2 py-1 text-sm text-foreground max-md:text-base"
+                value=""
+                onChange={(e) => {
+                  const target = boardColumns.find(
+                    (g) => g.state.id === e.target.value,
+                  );
+                  if (target) void moveSelected(target);
+                }}
+              >
+                <option value="">Column…</option>
+                {boardColumns.filter(canMoveInto).map((g) => (
+                  <option key={g.state.id} value={g.state.id}>
+                    {g.state.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              className="ml-auto rounded-md px-2 py-1 text-muted hover:bg-subtle hover:text-foreground shell-phone:min-h-11"
+              onClick={() => setSelected(NO_SELECTION)}
+            >
+              Clear selection
+            </button>
+          </div>
+        )}
+        <div
+          className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overscroll-contain [@media(max-height:500px)]:has-[[data-issues-board]]:flex-none [@media(max-height:500px)]:has-[[data-issues-board]]:overflow-visible"
+          data-my-issues-list=""
+        >
+          {board && tab !== "Activity" ? (
+            subGrouping ? (
+              <div className="grid gap-4" data-board-rows="">
+                {hiddenColumnsLane(true)}
+                {groupTasks(shown, subGrouping, groupCtx).map((lane) => (
+                  <section
+                    key={lane.key}
+                    className="flex h-96 min-h-0 flex-col gap-2"
+                    data-board-row=""
+                    aria-label={lane.label}
+                  >
+                    <h3 className="flex items-center gap-2 text-sm font-medium text-foreground">
+                      {lane.label}
+                      <span className="text-xs text-muted">
+                        {lane.items.length}
+                      </span>
+                    </h3>
+                    {boardFor(
+                      columnsFor(
+                        lane.items,
+                        totalsBase.filter((i) =>
+                          groupKeysOf(i, subGrouping, groupCtx).some(
+                            (k) => k.key === lane.key,
+                          ),
+                        ),
+                      ),
+                    )}
+                  </section>
+                ))}
+              </div>
+            ) : (
+              <IssueBoard
+                issues={shown}
+                columns={shownColumns}
+                columnMenu={columnMenu}
+                trailing={hiddenColumnsLane(false)}
+                selected={selected}
+                states={states}
+                teams={teams}
+                onSelect={onOpenIssue}
+                onNew={onNew}
+                onMoved={onMoved}
+                onUpdate={onUpdate}
+              />
+            )
+          ) : (
+            <ManualOrderList
+              enabled={canReorder}
+              groups={orderGroups}
+              onDrop={(plan) => void applyMove(plan)}
+            >
+            <div
+              className="my-issue-groups shrink-0"
+              data-manual-order={canReorder ? orderField : undefined}
+            >
+              <p className="sr-only" aria-live="polite" data-move-note="">
+                {moveNote}
+              </p>
+              {buckets.map((g) => {
+                const open = !collapsedKeys.includes(g.key);
+                return (
+                  <section
+                    className="mt-0 mr-0 mb-0 ml-0"
+                    data-my-issue-group=""
+                    data-group-key={g.key}
+                    key={g.key}
+                  >
+                    {g.label && groupHeader(g, open, g.state)}
+                    {open &&
+                      (subGrouping
+                        ? groupTasks(g.items, subGrouping, groupCtx).map(
+                            (sub) => (
+                              <div key={sub.key} data-my-issue-subgroup="">
+                                {groupHeader(
+                                  { ...sub, total: sub.items.length },
+                                  true,
+                                  undefined,
+                                  true,
+                                )}
+                                {rowsFor(sub.items, g.key)}
+                              </div>
+                            ),
+                          )
+                        : (
+                          <ManualOrderGroup
+                            ids={
+                              orderGroups.find((o) => o.key === g.key)?.ids ||
+                              []
+                            }
+                          >
+                            {rowsFor(g.items, g.key)}
+                          </ManualOrderGroup>
+                        ))}
+                  </section>
+                );
+              })}
+            </div>
+            </ManualOrderList>
+          )}
+          {serverRows && (serverRows.hasMore || serverRows.error) && (
+            <div
+              ref={serverMoreRef}
+              className="flex items-center justify-center gap-2 py-3 text-sm text-muted"
+              data-view-load-more=""
+            >
+              {serverRows.error ? (
+                <span role="alert">{serverRows.error}</span>
+              ) : null}
+              <button
+                type="button"
+                className="rounded px-2 py-1 text-accent hover:bg-subtle disabled:text-muted shell-phone:min-h-11"
+                disabled={serverRows.loading}
+                onClick={serverRows.onLoadMore}
+              >
+                {serverRows.loading
+                  ? "Loading…"
+                  : serverRows.error
+                    ? "Retry"
+                    : "Load more"}
+              </button>
+            </div>
+          )}
+          {hiddenCount > 0 && shown.length > 0 && (
+            <p
+              className="flex items-center justify-center gap-1.5 py-3 text-sm text-muted"
+              data-hidden-by-filters=""
+            >
+              {hiddenCount} {hiddenCount === 1 ? "task" : "tasks"} hidden by
+              filters ·
+              <button
+                type="button"
+                className="rounded px-1 text-accent hover:bg-subtle shell-phone:min-h-11"
+                onClick={clearFilters}
+              >
+                Clear filters
+              </button>
+            </p>
+          )}
+          {!shown.length && !activityLoading && (
+            <section
+              className="flex flex-col items-center gap-3.5 min-h-75 justify-center text-[#65656a] text-[13px] [@media_(max-width:650px)]:min-h-[calc(100dvh-280px)]"
+              data-my-issues-empty=""
+              aria-labelledby="my-issues-empty-title"
+            >
+              <Inbox size={30} />
+              <h2
+                className="mt-0 mr-0 mb-0 ml-0 text-[16px] text-foreground"
+                id="my-issues-empty-title"
+              >
+                {scoped.length ? "No matching tasks" : emptyCopy[0]}
+              </h2>
+              <p className="mt-0 mr-0 mb-0 ml-0">
+                {scoped.length ? (
+                  <button
+                    type="button"
+                    className="rounded px-1 text-accent hover:bg-subtle shell-phone:min-h-11"
+                    onClick={clearFilters}
+                  >
+                    Clear filters
+                  </button>
+                ) : (
+                  emptyCopy[1]
+                )}
+              </p>
+              {!scoped.length && tab !== "Activity" && !serverRows?.loading && (
+                <button
+                  className="inline-flex min-h-11 items-center justify-center gap-1.75 rounded-[999px] bg-[#6567d8] pl-3.5 pr-3.5 pt-2 pb-2 text-white font-[650] shadow-[none] transition-colors duration-150 ease-out hover:brightness-110 hover:transition-none active:translate-y-px disabled:cursor-wait disabled:opacity-65 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.65]"
+                  data-control-primary=""
+                  onClick={() => onNew()}
+                >
+                  <Plus size={15} />
+                  Create task
+                </button>
+              )}
+            </section>
+          )}
+          {activityLoading && tab === "Activity" && (
+            <p
+              role="status"
+              className="pt-3 pr-6 pb-3 pl-6 text-[11px] text-muted"
+              data-my-activity-note=""
+            >
+              Loading activity…
+            </p>
+          )}
+          {activityError && tab === "Activity" && (
+            <p
+              role="alert"
+              className="pt-2.5 pr-5 pb-2.5 pl-5 text-[12px] text-[#b42318]"
+              data-my-issue-page-error=""
+            >
+              {activityError}{" "}
+              <button
+                onClick={onLoadActivity}
+                className="focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+              >
+                Retry
+              </button>
+            </p>
+          )}
+          {tab === "Activity" && (
+            <div
+              ref={loadMoreRef}
+              className="my-issue-load-sentinel"
+              aria-hidden="true"
+            />
+          )}
+          {activityHasMore && tab === "Activity" && (
+            <button
+              className="block mt-4 mr-auto mb-4 ml-auto pt-2 pr-3.5 pb-2 pl-3.5 rounded-md bg-white text-[12px] text-[#333] disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 border border-line shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.6]"
+              data-my-issue-load-more=""
+              onClick={onLoadActivity}
+              disabled={activityLoading}
+            >
+              {activityLoading ? "Loading…" : "Load more activity"}
+            </button>
+          )}
+          {needStatus === "loading" && (
+            <p
+              role="status"
+              className="pt-3 pr-6 pb-3 pl-6 text-[11px] text-muted"
+              data-my-activity-note=""
+            >
+              Loading older closed tasks…
+            </p>
+          )}
+          {need && needStatus === "error" && (
+            <p
+              role="alert"
+              className="pt-2.5 pr-5 pb-2.5 pl-5 text-[12px] text-[#b42318]"
+              data-my-issue-page-error=""
+            >
+              Couldn’t load older closed tasks: {older?.error}{" "}
+              <button
+                onClick={() => onLoadOlder?.(true)}
+                className="focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+              >
+                Retry
+              </button>
+            </p>
+          )}
+          {tab === "Activity" && (
+            <p
+              className="pt-3 pr-6 pb-3 pl-6 text-[11px] text-muted"
+              data-my-activity-note=""
+            >
+              Activity is recorded from this server’s event-log migration
+              onward; earlier changes are unavailable.
+            </p>
+          )}
+        </div>
+      </div>
+    </>
+  );
 }
 
-const KANBAN_PAGE=60,KANBAN_STEP=200;
-/* A card property control edits straight from the board: the change patches the shared
- * store now and rolls back if the server rejects it, so no issue-page round-trip is needed. */
-function KanbanCard({issue, teams, dragged, onDragStart, onDragEnd, onSelect, onUpdate, onMoveNext, canMoveNext, depth, parentIdent, rollup}:{
- issue:Issue; teams:Team[]; dragged:boolean; onDragStart:(e:React.DragEvent)=>void; onDragEnd:()=>void;
- onSelect:(issue:Issue)=>void; onUpdate:(issueId:string,input:Record<string,unknown>)=>Promise<void>;
- onMoveNext:()=>void; canMoveNext:boolean;
- depth?:number; parentIdent?:string; rollup?:ChildRollup}) {
- const members=teams.find(t=>t.id===issue.team?.id)?.members?.nodes||[];
- const due=(issue.dueDate||'').slice(0,10);const overdue=dueIsOverdue(issue.dueDate);
- const [busy,setBusy]=useState(false);
- /* The board shows the failure banner; swallow the rejection here so an inline edit
-  * never surfaces as an unhandled promise rejection. */
- const edit=async(input:Record<string,unknown>)=>{if(busy)return;setBusy(true);try{await onUpdate(issue.id,input)}catch{/* banner shown by Kanban */}finally{setBusy(false)}};
- const level=depth||0;
- return <div className={`kanban-card-wrap ${dragged?'dragging':''} ${level>0?'kanban-card-child':''}`} data-depth={level}
-  style={level?{marginLeft:10+(level-1)*12}:undefined}>
- {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- drag surface only; the keyboard path (alt+arrow) lives on the inner button */}
-  <div className="kanban-card" draggable onDragStart={e=>{if((e.target as HTMLElement).closest('input,select,label,button')){e.preventDefault();return}onDragStart(e)}} onDragEnd={onDragEnd}>
-   <button type="button" className="kanban-card-open" onClick={()=>onSelect(issue)} onKeyDown={e=>{if(e.altKey&&e.key==='ArrowRight'){e.preventDefault();onMoveNext()}}} aria-label={`Open ${issue.identifier}: ${issue.title}`}>
-    <small>{issue.identifier} · {issue.team?.name}
-     {parentIdent&&<span className="kanban-parentchip" title={`Sub-task of ${parentIdent}`}>{parentIdent}</span>}
-     {rollup&&rollup.total>0&&<span className="kanban-subrollup" title={`${rollup.done} of ${rollup.total} sub-tasks complete`}>{rollup.done}/{rollup.total}</span>}
-    </small>
-    <strong>{issue.title}</strong>
-   </button>
-   <div className="kanban-card-props" aria-busy={busy||undefined}>
-    <StatusPicker compact issue={issue} teams={teams} disabled={busy}
-     onChange={stateId=>{const st=teams.find(t=>t.id===issue.team?.id)?.states.nodes.find(x=>x.id===stateId);if(!st)throw Error('Status not found');return onUpdate(issue.id,{stateId:st.id})}}/>
-    <label className={overdue?'kanban-prop kanban-prop-date overdue':'kanban-prop kanban-prop-date'} title={due?`Due ${due}`:'Set a due date'}>
-     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="2"/><path d="M2 6.5h12M5.5 1.5V4M10.5 1.5V4" strokeLinecap="round"/></svg>
-     <input type="date" value={due} disabled={busy} aria-label={`Due date of ${issue.identifier}`}
-      onChange={e=>void edit({dueDate:e.target.value||null})}/>
-    </label>
-    <label className="kanban-prop" title={`Priority: ${['No priority','Urgent','High','Medium','Low'][issue.priority||0]}`}>
-     <span className="priority" data-p={issue.priority} aria-hidden="true"/>
-     <select value={issue.priority||0} disabled={busy} aria-label={`Priority of ${issue.identifier}`}
-      onChange={e=>void edit({priority:Number(e.target.value)})}>
-      {['No priority','Urgent','High','Medium','Low'].map((label,i)=><option key={label} value={i}>{label}</option>)}
-     </select>
-    </label>
-    <label className="kanban-prop kanban-prop-assignee" title={issue.assignee?.name?`Assignee: ${issue.assignee.name}`:'Unassigned'}>
-     <span className="kanban-prop-avatar" aria-hidden="true">{(issue.assignee?.name||'·').slice(0,1).toUpperCase()}</span>
-     <select value={issue.assignee?.id||''} disabled={busy} aria-label={`Assignee of ${issue.identifier}`}
-      onChange={e=>void edit({assigneeId:e.target.value||null})}>
-      <option value="">Unassigned</option>
-      {members.map(m=><option key={m.id} value={m.id}>{m.name||m.email||'Member'}</option>)}
-     </select>
-    </label>
-   </div>
-  </div>
-  <button className="kanban-move" aria-label={`Move ${issue.identifier} to next status`} title="Move to next status (Alt + Right Arrow)" onClick={onMoveNext} disabled={!canMoveNext}><span>Move</span><kbd aria-hidden="true">Alt + →</kbd></button>
- </div>
+const KANBAN_PAGE = 60,
+  KANBAN_STEP = 200;
+/* Material Symbols outlined `person`, used for an issue with no assignee. */
+function MaterialPersonIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12 12q-1.65 0-2.825-1.175T8 8q0-1.65 1.175-2.825T12 4q1.65 0 2.825 1.175T16 8q0 1.65-1.175 2.825T12 12Zm-8 8v-2.8q0-.85.438-1.562T5.6 14.55q1.55-.775 3.15-1.162T12 13q1.65 0 3.25.388t3.15 1.162q.725.375 1.163 1.088T20 17.2V20H4Zm2-2h12v-.8q0-.275-.137-.5t-.363-.35q-1.35-.675-2.725-1.012T12 15q-1.4 0-2.775.338T6.5 16.35q-.225.125-.363.35T6 17.2V18Zm6-8q.825 0 1.413-.587T14 8q0-.825-.587-1.412T12 6q-.825 0-1.413.588T10 8q0 .825.588 1.413T12 10Zm0 8Z" />
+    </svg>
+  );
 }
-function Kanban({grouped,onSelect,onNew,onMoved,onUpdate,teams=[]}:{grouped:{state:{id:string;name:string;color:string;type:string};items:Issue[]}[];onSelect:(issue:Issue)=>void;onNew:(stateId?:string)=>void;onMoved:(issueId:string,state:{id:string;name:string;color:string;type:string})=>Promise<void>;onUpdate:(issueId:string,input:Record<string,unknown>)=>Promise<void>;teams?:Team[]}) {
- const [dragged,setDragged]=useState(''); const [error,setError]=useState('');
- // Columns mount their first cards and grow on scroll, so a 30k-issue board stays cheap.
- const [limits,setLimits]=useState<Record<string,number>>({});const grow=(id:string)=>setLimits(l=>({...l,[id]:(l[id]||KANBAN_PAGE)+KANBAN_STEP}));
- const moveNext=async(issue:Issue,stateId:string)=>{const idx=grouped.findIndex(g=>g.state.id===stateId),next=grouped[idx+1];if(!next)return;try{await onMoved(issue.id,next.state)}catch(err){setError((err as Error).message)}};
- const update=async(issueId:string,input:Record<string,unknown>)=>{try{await onUpdate(issueId,input)}catch(err){setError((err as Error).message);throw err}};
- // Sub-tasks render inside their parent's column, in tree order, with the real completed/total.
- const rollups=useMemo(()=>childRollups(grouped.flatMap(g=>g.items)),[grouped]);
- const nested=useMemo(()=>new Map(grouped.map(g=>[g.state.id,nestIssues(g.items)])),[grouped]);
- return <div className="kanban"><div className="kanban-columns">{grouped.map(group=><section role="presentation" className={`kanban-column ${dragged?'drop-ready':''}`} key={group.state.id} onDragOver={e=>{e.preventDefault();e.dataTransfer.dropEffect='move'}} onDrop={async e=>{e.preventDefault();const id=e.dataTransfer.getData('text/hoja-issue')||dragged;setDragged('');if(id&&group.state.id!=='unknown'){try{await onMoved(id,group.state)}catch(err){setError((err as Error).message)}}}}><header><span className="status-mark" style={{borderColor:group.state.color}}></span><b>{group.state.name}</b><span className="count">{group.items.length}</span><button aria-label={`Create task in ${group.state.name}`} onClick={()=>onNew(group.state.id==='unknown'?undefined:group.state.id)}><Plus size={15}/></button></header><div className="kanban-cards" onScroll={group.items.length>(limits[group.state.id]||KANBAN_PAGE)?e=>{const el=e.currentTarget;if(el.scrollTop+el.clientHeight>el.scrollHeight-800)grow(group.state.id)}:undefined}>{group.items.length===0&&<p className="kanban-empty">No tasks in {group.state.name}.</p>}{(nested.get(group.state.id)||[]).slice(0,limits[group.state.id]||KANBAN_PAGE).map(({issue,depth,parentIdent})=><KanbanCard key={issue.id} issue={issue} teams={teams} dragged={dragged===issue.id} depth={depth} parentIdent={parentIdent} rollup={rollups.get(issue.id)}
-   onDragStart={e=>{setDragged(issue.id);e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/hoja-issue',issue.id)}}
-   onDragEnd={()=>setDragged('')}
-   onSelect={onSelect}
-   onUpdate={update}
-   onMoveNext={()=>void moveNext(issue,group.state.id)}
-   canMoveNext={Boolean(grouped[grouped.findIndex(g=>g.state.id===group.state.id)+1])}/>)}{group.items.length>(limits[group.state.id]||KANBAN_PAGE)&&<button type="button" className="lin-btn" onClick={()=>grow(group.state.id)}>Show {Math.min(group.items.length-(limits[group.state.id]||KANBAN_PAGE),KANBAN_STEP)} more of {group.items.length-(limits[group.state.id]||KANBAN_PAGE)}</button>}</div></section>)}</div>{error&&<div className="kanban-error" role="alert">{error}<button onClick={()=>setError('')}>Dismiss</button></div>}</div>
+/* The board card keeps assignee editing on the card: the assigned avatar opens a
+ * menu of team members, and the chosen change patches the shared store. */
+function KanbanAssignee({
+  issue,
+  members,
+  busy,
+  onChange,
+}: {
+  issue: Issue;
+  members: {
+    id: string;
+    name?: string;
+    email?: string;
+    avatarSeed?: string | null;
+  }[];
+  busy: boolean;
+  onChange: (assigneeId: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const assign = (id: string | null) => {
+    setOpen(false);
+    onChange(id);
+  };
+  return (
+    <UIPopover modal open={open} onOpenChange={setOpen}>
+      <div className="relative shrink-0">
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className="flex items-center rounded-full focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 group"
+            aria-label={`Assignee of ${issue.identifier}: ${issue.assignee?.name || "Unassigned"}. Choose assignee`}
+            aria-haspopup="menu"
+            aria-expanded={open}
+            aria-controls={`kanban-assignee-${issue.id}`}
+            disabled={busy}
+          >
+            {issue.assignee ? (
+              <AvatarGroup>
+                <Avatar size="sm" title={issue.assignee.name || "Assigned"}>
+                  <img
+                    src={blobatarSrc(
+                      issue.assignee.avatarSeed ||
+                        issue.assignee.name ||
+                        issue.assignee.id,
+                    )}
+                    alt=""
+                    draggable={false}
+                    className="aspect-square size-full scale-[1.2]"
+                  />
+                </Avatar>
+              </AvatarGroup>
+            ) : (
+              <span className="border grid size-6 flex-none place-items-center rounded-full border-dashed border-line text-muted [&>svg]:size-4">
+                <MaterialPersonIcon />
+              </span>
+            )}
+          </button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="end"
+          sideOffset={6}
+          collisionPadding={8}
+          id={`kanban-assignee-${issue.id}`}
+          role="menu"
+          aria-label={`Assignee of ${issue.identifier}`}
+          data-popover-panel
+          className="border origin-top-left shadow-(--shadow) z-55 pt-1.5 pr-1.5 pb-1.5 pl-1.5 border-line rounded-[10px] bg-panel w-60 overflow-y-auto max-h-[var(--radix-popover-content-available-height)]"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            className="flex min-h-9 w-full items-center gap-2 rounded-lg px-2 text-left transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+            onClick={() => assign(null)}
+          >
+            <span className="border grid size-6 flex-none place-items-center rounded-full border-dashed border-line text-muted [&>svg]:size-4">
+              <MaterialPersonIcon />
+            </span>
+            <span className="min-w-0 flex-1 truncate">Unassigned</span>
+            {!issue.assignee && (
+              <Check size={14} className="text-accent" aria-hidden="true" />
+            )}
+          </button>
+          {members.map((m) => (
+            <button
+              type="button"
+              role="menuitem"
+              key={m.id}
+              className="flex min-h-9 w-full items-center gap-2 rounded-lg px-2 text-left transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+              onClick={() => assign(m.id)}
+            >
+              <Avatar size="sm">
+                <img
+                  src={blobatarSrc(m.avatarSeed || m.name || m.email || m.id)}
+                  alt=""
+                  draggable={false}
+                  className="aspect-square size-full scale-[1.2]"
+                />
+              </Avatar>
+              <span className="min-w-0 flex-1 truncate">
+                {m.name || m.email || "Member"}
+              </span>
+              {issue.assignee?.id === m.id && (
+                <Check size={14} className="text-accent" aria-hidden="true" />
+              )}
+            </button>
+          ))}
+        </PopoverContent>
+      </div>
+    </UIPopover>
+  );
 }
-function Stat({label,value,trend}:{label:string;value:string;trend:string}){return <div className="stat"><span>{label}</span><strong>{value}</strong><small><Zap size={12}/>{trend}</small></div>}
-function Placeholder({view}:{view:string}){return <div className="placeholder"><div className="placeholder-icon"><LayoutDashboard size={28}/></div><h2>{view} is ready for your team</h2><p>This dashboard surface is connected to your self-hosted workspace. More {view.toLowerCase()} workflows are coming next.</p></div>}
-function InviteAcceptance({code,onDone}:{code:string;onDone:()=>void}){const [email,setEmail]=useState('');const [password,setPassword]=useState('');const [error,setError]=useState('');const [busy,setBusy]=useState(false);const [accepted,setAccepted]=useState(false);const accept=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError('');try{const r=await fetch('/auth/invite/accept',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code,email,password})});const b=await r.json();if(!r.ok)throw Error(b.error||'Invite code is invalid or expired');setAccepted(true)}catch(e){setError((e as Error).message)}finally{setBusy(false)}};if(accepted)return <main className="onboarding-page"><section className="onboarding-card"><div className="onboarding-brand"><img className="brand-mark" src="/hoja-clover.8371400e.svg" alt=""/><span>Hoja</span></div><h1>Your invite is ready.</h1><p>Password created for {email}. You’re signed in and ready to join your team.</p><button className="primary full" onClick={onDone}>Open my workspace →</button></section></main>;return <main className="onboarding-page"><section className="onboarding-card"><div className="onboarding-brand"><img className="brand-mark" src="/hoja-clover.8371400e.svg" alt=""/><span>Hoja</span></div><p className="onboarding-eyebrow">YOU’RE INVITED</p><h1>Join your team.</h1><p>Enter the email address this invitation was sent to and choose a password.</p><form onSubmit={accept}><label>Invite code<input aria-label="Invite code" value={code} readOnly/></label><label>Your email<input type="email" required autoComplete="email" value={email} onChange={e=>setEmail(e.target.value)}/></label><label>Create a password<input type="password" required minLength={12} autoComplete="new-password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="At least 12 characters"/></label><button className="primary full" disabled={busy}>{busy?'Joining…':'Accept invitation →'}</button></form>{error&&<p role="alert" className="error">{error}</p>}<p className="login-help">Invite codes expire and can only be used once.</p></section></main>}
+const PRIORITIES = ["No priority", "Urgent", "High", "Medium", "Low"];
+function KanbanPriority({
+  issue,
+  busy,
+  onChange,
+}: {
+  issue: Issue;
+  busy: boolean;
+  onChange: (priority: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const pick = (priority: number) => {
+    setOpen(false);
+    if (priority !== (issue.priority || 0)) onChange(priority);
+  };
+  const current = issue.priority || 0;
+  return (
+    <UIPopover modal open={open} onOpenChange={setOpen}>
+      <div className="relative min-w-0 flex-1">
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 text-left focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 group"
+            aria-label={`Priority of ${issue.identifier}: ${PRIORITIES[current]}`}
+            aria-haspopup="menu"
+            aria-expanded={open}
+            aria-controls={`kanban-priority-${issue.id}`}
+            disabled={busy}
+          >
+            <span className="grid size-4 shrink-0 place-items-center">
+              <span
+                className="inline-block w-2 h-2 shrink-0 rounded-[50%] bg-room-muted data-[p=1]:bg-red-500 data-[p=2]:bg-orange-500 data-[p=3]:bg-yellow-500 data-[p=4]:bg-blue-400"
+                data-p={current}
+                aria-hidden="true"
+              />
+            </span>
+            <span className="min-w-0 flex-1 truncate">
+              {PRIORITIES[current]}
+            </span>
+          </button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="end"
+          sideOffset={6}
+          collisionPadding={8}
+          id={`kanban-priority-${issue.id}`}
+          role="menu"
+          aria-label={`Priority of ${issue.identifier}`}
+          data-popover-panel
+          className="border origin-top-left shadow-(--shadow) z-55 pt-1.5 pr-1.5 pb-1.5 pl-1.5 border-line rounded-[10px] bg-panel w-60 overflow-y-auto max-h-[var(--radix-popover-content-available-height)]"
+        >
+          {PRIORITIES.map((label, priority) => (
+            <button
+              type="button"
+              role="menuitem"
+              key={label}
+              className="flex min-h-9 w-full items-center gap-2 rounded-lg px-2 text-left transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+              onClick={() => pick(priority)}
+            >
+              <span className="grid size-4 shrink-0 place-items-center">
+                <span
+                  className="inline-block w-2 h-2 shrink-0 rounded-[50%] bg-room-muted data-[p=1]:bg-red-500 data-[p=2]:bg-orange-500 data-[p=3]:bg-yellow-500 data-[p=4]:bg-blue-400"
+                  data-p={priority}
+                  aria-hidden="true"
+                />
+              </span>
+              <span className="min-w-0 flex-1 truncate">{label}</span>
+              {current === priority && (
+                <Check size={14} className="text-accent" aria-hidden="true" />
+              )}
+            </button>
+          ))}
+        </PopoverContent>
+      </div>
+    </UIPopover>
+  );
+}
+function KanbanCard({
+  issue,
+  teams,
+  dragged,
+  onDragStart,
+  onDragEnd,
+  onSelect,
+  onUpdate,
+  onMoveNext,
+  canMoveNext,
+  depth = 0,
+  parentIdent,
+  rollup,
+  subtasks = [],
+  compact = false,
+}: {
+  issue: Issue;
+  teams: Team[];
+  dragged: boolean;
+  onDragStart: (e: React.DragEvent, task?: Issue) => void;
+  onDragEnd: () => void;
+  onSelect: (issue: Issue) => void;
+  onUpdate: (issueId: string, input: Record<string, unknown>) => Promise<void>;
+  onMoveNext: (task?: Issue) => void;
+  canMoveNext: boolean;
+  /* Board hierarchy (HOJA-33): depth 0 for a root, 1+ for a sub-task whose parent is in this
+   * column; parentIdent is set only when the parent is elsewhere, so the card is not mistaken
+   * for an orphan; rollup counts the direct children rendered in this column. */
+  depth?: number;
+  parentIdent?: string;
+  rollup?: { done: number; total: number };
+  subtasks?: Issue[];
+  compact?: boolean;
+}) {
+  const [subtasksOpen, setSubtasksOpen] = useState(false);
+  const [stackMounted, setStackMounted] = useState(false);
+  const reduceMotion = useReducedMotion();
+  const stackRef = useRef<HTMLDivElement>(null);
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const [stackPosition, setStackPosition] = useState({
+    top: 16,
+    left: 16,
+    width: 280,
+  });
+  // An expanded parent opens its own task page; collapsed, it expands the stack.
+  const openOrSelect = () => {
+    if (subtasks.length && !stackMounted) toggleStack();
+    else onSelect(issue);
+  };
+  const closeStack = () => {
+    // Return to the current anchor, even if the underlying board moved.
+    const rect = anchorRef.current?.getBoundingClientRect();
+    if (rect)
+      setStackPosition({
+        top: rect.top,
+        left: rect.left,
+        width: Math.min(rect.width, window.innerWidth - 32),
+      });
+    setSubtasksOpen(false);
+  };
+  const toggleStack = () => {
+    if (stackMounted) {
+      closeStack();
+      return;
+    }
+    const rect = anchorRef.current?.getBoundingClientRect();
+    if (rect)
+      setStackPosition({
+        top: rect.top,
+        left: rect.left,
+        width: Math.min(rect.width, window.innerWidth - 32),
+      });
+    setStackMounted(true);
+    setSubtasksOpen(true);
+  };
+  const [cardHeights, setCardHeights] = useState<number[]>([]);
+  useLayoutEffect(() => {
+    const root = stackRef.current;
+    if (!root || !subtasks.length) return;
+    const cards = Array.from(root.children).filter((el) =>
+      el.hasAttribute("data-stack-layer"),
+    );
+    const measure = () =>
+      setCardHeights((previous) => {
+        const next = cards.map(
+          (el) =>
+            (
+              (el.hasAttribute("data-kanban-card")
+                ? el
+                : el.firstElementChild) as HTMLElement
+            ).offsetHeight,
+        );
+        return next.length === previous.length &&
+          next.every((h, i) => h === previous[i])
+          ? previous
+          : next;
+      });
+    const observer = new ResizeObserver(measure);
+    cards.forEach((card) =>
+      observer.observe(
+        card.hasAttribute("data-kanban-card") ? card : card.firstElementChild!,
+      ),
+    );
+    measure();
+    return () => observer.disconnect();
+  }, [subtasks, stackMounted]);
+  const spring = reduceMotion
+    ? { duration: 0 }
+    : { type: "spring" as const, stiffness: 200, damping: 30 };
+  const parentHeight = cardHeights[0] || 210;
+  const collapsedStackOffset = 8;
+  const startsStatusGroup = (index: number) =>
+    index === 0 ||
+    (subtasks[index].state?.id || subtasks[index].state?.name) !==
+      (subtasks[index - 1].state?.id || subtasks[index - 1].state?.name);
+  const dividerHeight = 40;
+  const stackHeight = subtasksOpen
+    ? parentHeight +
+      subtasks.reduce(
+        (sum, _, index) =>
+          sum +
+          (cardHeights[index + 1] || parentHeight) +
+          8 +
+          (startsStatusGroup(index) ? dividerHeight : 0),
+        0,
+      )
+    : parentHeight + Math.min(3, subtasks.length) * collapsedStackOffset;
 
-type Workspace={organizationId:string;name:string;urlKey:string};
-type PendingWorkspace={email:string;password:string;workspaces:Workspace[]};
-function WorkspaceChooser({pending,onLogin,onBack}:{pending:PendingWorkspace;onLogin:()=>void;onBack:()=>void}){const [organizationId,setOrganizationId]=useState(pending.workspaces[0]?.organizationId||'');const [busy,setBusy]=useState(false);const [error,setError]=useState('');const open=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError('');try{const r=await fetch('/auth/login',{method:'POST',headers:{'content-type':'application/json'},credentials:'include',body:JSON.stringify({email:pending.email,password:pending.password,organizationId})});const b=await r.json();if(!r.ok)throw Error(b.error||'Could not open this workspace');onLogin()}catch(err){setError((err as Error).message)}finally{setBusy(false)}};return <div className="login-page"><div className="login-card"><div className="login-brand"><img className="brand-mark" src="/hoja-clover.8371400e.svg" alt=""/><b>Hoja</b></div><div className="login-card-head"><p className="login-step">Step 2 of 2</p><h2>Choose workspace</h2><p>Select the workspace to open for {pending.email}.</p></div><form onSubmit={open}><label htmlFor="organization">Workspace</label><select id="organization" value={organizationId} onChange={e=>setOrganizationId(e.target.value)} required>{pending.workspaces.map(w=><option key={w.organizationId} value={w.organizationId}>{w.name} ({w.urlKey})</option>)}</select><button className="primary full" disabled={busy||!organizationId}>{busy?'Opening…':'Open workspace'} <span>→</span></button><button type="button" className="auth-switch" onClick={onBack}>Back to sign in</button></form>{error&&<small className="error" role="alert">{error}</small>}</div></div>}
-function Login({onLogin,error,onWorkspaceRequired}:{onLogin:(t:string)=>void;error:string;onWorkspaceRequired:(p:PendingWorkspace)=>void}){const [t,setT]=useState('');const [show,setShow]=useState(false);const [email,setEmail]=useState('');const [password,setPassword]=useState('');const [credentialMode,setCredentialMode]=useState<'email'|'apiKey'>('email');const [mode,setMode]=useState<'login'|'setup'>('login');const [authError,setAuthError]=useState('');const [busy,setBusy]=useState(false);const [googleUrl,setGoogleUrl]=useState('');useEffect(()=>{let live=true;fetch('/api/signup/config').then(r=>r.ok?r.json():null).then(c=>{if(live&&c?.hosted&&c?.signInUrl)setGoogleUrl(c.signInUrl)}).catch(()=>{});return()=>{live=false}},[]);const login=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setAuthError('');try{const apiKey=credentialMode==='apiKey'?email.trim():undefined;const r=await fetch('/auth/login',{method:'POST',headers:{'content-type':'application/json'},credentials:'include',body:JSON.stringify(apiKey?{apiKey}:{email,password})});const b=await r.json();if(r.status===409){const wr=await fetch('/auth/workspaces',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email,password})});const wb=await wr.json();onWorkspaceRequired({email,password,workspaces:wb.workspaces||[]});return}if(!r.ok)throw Error(b.error||'Sign in failed');onLogin('session')}catch(err){setAuthError((err as Error).message)}finally{setBusy(false)}};const setup=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setAuthError('');try{const r=await fetch('/auth/setup',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({token:t,password,email})});const b=await r.json();if(!r.ok)throw Error(b.error||'Password setup failed');setMode('login');setAuthError('Password set. Sign in with your email and password.')}catch(err){setAuthError((err as Error).message)}finally{setBusy(false)}};return <div className="login-page"><div className="login-card"><div className="login-brand"><img className="brand-mark" src="/hoja-clover.8371400e.svg" alt=""/><b>Hoja</b></div><div className="login-card-head"><h2>Welcome back</h2><p>Sign in with your email or API key.</p></div>{mode==='login'&&googleUrl&&<a className="login-google" href={googleUrl}>Continue with Google</a>}{mode==='login'?<form onSubmit={login}><div className="credential-modes" role="group" aria-label="Sign-in method"><button type="button" aria-pressed={credentialMode==='email'} className={credentialMode==='email'?'selected':''} onClick={()=>{setCredentialMode('email');setAuthError('');}}>Email</button><button type="button" aria-pressed={credentialMode==='apiKey'} className={credentialMode==='apiKey'?'selected':''} onClick={()=>{setCredentialMode('apiKey');setAuthError('');;setPassword('')}}>API key</button></div><label htmlFor="email">{credentialMode==='email'?'Email':'API key'}</label><input id="email" type={credentialMode==='email'?'email':'password'} value={email} onChange={e=>setEmail(e.target.value)} autoComplete={credentialMode==='email'?'username':'off'} placeholder={credentialMode==='email'?'you@example.com':'hoja_…'} required/>{credentialMode==='email'&&<><label htmlFor="password">Password</label><div className="password-field"><input id="password" type={show?'text':'password'} value={password} onChange={e=>setPassword(e.target.value)} autoComplete="current-password" required/><button type="button" onClick={()=>setShow(!show)}>{show?'Hide':'Show'}</button></div></>}<button className="primary full" disabled={busy}>{busy?'Signing in…':'Continue'} <span>→</span></button><button type="button" className="auth-switch" onClick={()=>{setMode('setup');setAuthError('')}}>Set up password using an API key</button></form>:<form onSubmit={setup}><label htmlFor="setup-token">Existing workspace API key</label><input id="setup-token" type="password" value={t} onChange={e=>setT(e.target.value)} placeholder="hoja_..." required/><label htmlFor="setup-email">Email</label><input id="setup-email" type="email" value={email} onChange={e=>setEmail(e.target.value)} required/><label htmlFor="setup-password">Create password (12+ characters)</label><input id="setup-password" type="password" minLength={12} value={password} onChange={e=>setPassword(e.target.value)} required/><button className="primary full" disabled={busy}>Set password</button><button type="button" className="auth-switch" onClick={()=>setMode('login')}>Back to sign in</button></form>}{(authError||error)&&<small className="error" role="alert">{authError||error}</small>}<p className="login-help">Sessions are securely stored in an HttpOnly cookie.</p></div></div>}
-// eslint-disable-next-line react-hooks/exhaustive-deps -- route or session driven; the listed values are written by this effect or are recreated each render
-function IssueDrawer({issue,teams,projects,labels,onClose,onUpdated}:{issue:Issue;teams:Team[];projects:Project[];labels:{id:string;name:string;color?:string}[];onClose:()=>void;onUpdated:(issue:Issue)=>void}){const live=useIssueSelect(issue.id);const [loaded,setLoaded]=useState<Issue>(()=>({...issue,...(cachedIssueDetail(issue.id)?.detail as Issue|undefined)}));const [local,setLocal]=useState<Partial<Issue>>({});const detail:Issue={...loaded,...(live?{title:live.title,priority:live.priority,priorityLabel:live.priorityLabel,state:live.state,team:live.team,project:live.project,assignee:live.assignee}:{}),...local};const [body,setBody]=useState('');const [pending,setPending]=useState<Comment[]>([]);const [error,setError]=useState('');useEffect(()=>{fetchIssueDetail(issue.identifier||issue.id,issue.id).then(e=>{setLoaded(old=>({...old,...(e.detail as Issue)}));onUpdated(e.detail as Issue)}).catch(e=>setError(e.message))},[issue.id]);const update=async(input:Record<string,unknown>)=>{setError('');const sync=getSync();const optimistic:Partial<Issue>=sync?sync.patchFromInput(input):{};if(Object.prototype.hasOwnProperty.call(input,'description'))optimistic.description=(input.description as string)||undefined;const settle=sync?.patch(detail.id,optimistic);setLocal(l=>({...l,...optimistic}));try{const d=await gql(`mutation($id:String!,$input:IssueUpdateInput!){issueUpdate(id:$id,input:$input){success issue{id identifier title description priority priorityLabel state{id name color type} team{id key name} project{id name} assignee{id name} comments{nodes{id body createdAt user{name}}}}}}`,{id:detail.id,input});if(!d.issueUpdate.success)throw Error('Update was rejected');settle?.(true);setLoaded(d.issueUpdate.issue);onUpdated(d.issueUpdate.issue)}catch(e){settle?.(false);setError((e as Error).message)}finally{setLocal(l=>{const n={...l};for(const k of Object.keys(optimistic))delete (n as Record<string,unknown>)[k];return n})}};const comment=async(e:React.FormEvent)=>{e.preventDefault();const text=body.trim();if(!text)return;const temp:Comment={id:`local-comment-${Date.now()}`,body:text,createdAt:'Sending…',user:{name:'You'}};setPending(p=>[...p,temp]);setBody('');setError('');try{const d=await gql(`mutation($input:CommentCreateInput!){commentCreate(input:$input){success comment{id body createdAt user{name}}}}`,{input:{issueId:detail.id,body:text}});if(!d.commentCreate.success)throw Error('Comment was rejected');setLoaded(old=>({...old,comments:{nodes:[...(old.comments?.nodes||[]),d.commentCreate.comment]}}))}catch(e){setBody(b=>b||text);setError((e as Error).message)}finally{setPending(p=>p.filter(x=>x!==temp))}};const toggleLabel=async(labelId:string)=>{const current=labels.filter(l=>(detail as any).labelIds?.includes(l.id)).map(l=>l.id);const next=current.includes(labelId)?current.filter(id=>id!==labelId):[...current,labelId];await update({labelIds:next})};const [draft,setDraft]=useState<string|null>(null);return <div className="drawer-backdrop" role="presentation" onClick={e=>{if(e.target===e.currentTarget)onClose()}}><aside className="drawer"><div className="drawer-head"><span>{detail.identifier}</span><button className="icon" onClick={onClose}><X size={18}/></button></div><h2>{detail.title}</h2><textarea className="drawer-description" value={draft??detail.description??''} onChange={e=>setDraft(e.target.value)} placeholder="Add description..."/><button className="save-description" onClick={()=>{const text=draft??detail.description??'';setDraft(null);void update({description:text})}} disabled={draft===null}>Save description</button><div className="detail-grid"><span>Status</span><select value={detail.state?.id||''} onChange={e=>update({stateId:e.target.value})}><option value="">No state</option>{teams.find(t=>t.id===detail.team?.id)?.states.nodes.map(st=><option key={st.id} value={st.id}>{st.name}</option>)}</select><span>Priority</span><select value={detail.priority||0} onChange={e=>update({priority:Number(e.target.value)})}><option value="0">No priority</option><option value="1">Urgent</option><option value="2">High</option><option value="3">Medium</option><option value="4">Low</option></select><span>Team</span><select value={detail.team?.id||''} onChange={e=>update({teamId:e.target.value})}><option value="">No team</option>{teams.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select><span>Assignee</span><select value={detail.assignee?.id||''} onChange={e=>update({assigneeId:e.target.value||null})}><option value="">Unassigned</option>{(teams.find(t=>t.id===detail.team?.id)?.members?.nodes||[]).map(m=><option key={m.id} value={m.id}>{m.name||m.email}</option>)}</select><span>Project</span><select value={detail.project?.id||''} onChange={e=>update({projectId:e.target.value||null})}><option value="">No project</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></div><div className="drawer-labels"><b>Labels</b>{labels.map(l=><label key={l.id}><input type="checkbox" checked={Boolean((detail as any).labelIds?.includes(l.id))} onChange={()=>toggleLabel(l.id)}/>{l.name}</label>)}</div>{error&&<p className="error" role="alert">{error}</p>}<div className="drawer-comments"><h3>Comments</h3>{!detail.comments&&<p className="muted">Loading comments…</p>}{detail.comments?.nodes.length===0&&!pending.length&&<p className="muted">No comments yet.</p>}{[...(detail.comments?.nodes||[]),...pending].map(c=><article key={c.id} aria-busy={c.id.startsWith('local-')||undefined}><b>{c.user?.name||'User'}</b><time>{c.createdAt||''}</time><Markdown text={c.body}/></article>)}<form onSubmit={comment}><textarea value={body} onChange={e=>setBody(e.target.value)} placeholder="Leave a comment..."/><button className="primary" disabled={!body.trim()}>Comment</button></form></div></aside></div>}
-function NewIssue({teams,onClose,onCreated,initialStateId}:{teams:Team[];onClose:()=>void;onCreated:()=>void;initialStateId?:string}){
-const meta=useSyncMeta();const mounted=useRef(true);useEffect(()=>()=>{mounted.current=false},[]);
- /* Dialog polish: a short exit animation before unmount (collapsed by reduced motion),
-  * focus kept inside the dialog while it is open, and focus returned to the trigger. */
- const [closing,setClosing]=useState(false);const closingRef=useRef(false);const dialogRef=useRef<HTMLFormElement>(null);
- /* Captured during render: by the time effects run, autoFocus has already moved focus into the title. */
- const returnFocus=useRef<HTMLElement|null>(typeof document!=='undefined'&&document.activeElement instanceof HTMLElement?document.activeElement:null);
- const requestClose=()=>{if(closingRef.current)return;closingRef.current=true;setClosing(true);const reduced=typeof window.matchMedia==='function'&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;window.setTimeout(onClose,reduced?0:150)};
- useEffect(()=>()=>{const el=returnFocus.current;if(el&&document.contains(el))el.focus()},[]);
- /* Lock the page behind the dialog without moving it: the gutter stays reserved. */
- useEffect(()=>{const root=document.documentElement;root.classList.add('hoja-modal-open');return()=>root.classList.remove('hoja-modal-open')},[]);
- useEffect(()=>{const onKey=(e:KeyboardEvent)=>{if(e.key!=='Tab')return;const root=dialogRef.current;if(!root)return;const items=Array.from(root.querySelectorAll<HTMLElement>('button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[href],[tabindex]:not([tabindex="-1"])')).filter(el=>el.offsetParent!==null);if(!items.length)return;const first=items[0],last=items[items.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}};document.addEventListener('keydown',onKey,true);return()=>document.removeEventListener('keydown',onKey,true)},[]);
-const [createMore,setCreateMore]=useState(false);const [title,setTitle]=useState(''),[description,setDescription]=useState(''),[team,setTeam]=useState(teams.find(t=>Boolean(initialStateId)&&t.states.nodes.some(s=>s.id===initialStateId))?.id||teams[0]?.id||''),[priority,setPriority]=useState('0'),[stateId,setStateId]=useState(initialStateId||''),[assigneeId,setAssigneeId]=useState(''),[projectId,setProjectId]=useState(''),[cycleId,setCycleId]=useState(''),[dueDate,setDueDate]=useState(''),[labelIds,setLabelIds]=useState<string[]>([]),[projects,setProjects]=useState<Project[]>(()=>meta?.projects.nodes||[]),[cycles,setCycles]=useState<Cycle[]>(()=>meta?.cycles.nodes||[]),[labels,setLabels]=useState<{id:string;name:string;color?:string}[]>(()=>meta?.issueLabels.nodes||[]),[loadingOptions,setLoadingOptions]=useState(!meta),[busy,setBusy]=useState(false),[err,setErr]=useState('');
-const selectedTeam=teams.find(t=>t.id===team);const states=selectedTeam?.states.nodes||[];const members=selectedTeam?.members?.nodes||[];
-// The synced workspace metadata already carries projects, cycles and labels; only fetch them when sync is unavailable.
-// eslint-disable-next-line react-hooks/exhaustive-deps -- route or session driven; the listed values are written by this effect or are recreated each render
-useEffect(()=>{if(meta)return;let live=true;Promise.all([gql(`query Projects{projects(first:100){nodes{id name state teams{nodes{id name key}}}}}`),gql(`query Cycles{cycles(first:100){nodes{id name number startsAt endsAt completedAt team{id name key}}}}`),gql(`query Labels{issueLabels(first:100){nodes{id name color}}}`)]).then(([p,c,l])=>{if(live){setProjects(p.projects.nodes);setCycles(c.cycles.nodes);setLabels(l.issueLabels.nodes)}}).catch(e=>{if(live)setErr(`Could not load task options: ${(e as Error).message}`)}).finally(()=>{if(live)setLoadingOptions(false)});return()=>{live=false}},[]);
-const resetForMore=()=>{setTitle('');setDescription('');setDueDate('');setLabelIds([]);setErr('');requestAnimationFrame(()=>document.querySelector<HTMLInputElement>('.issue-create-title')?.focus())};
-/* Optimistic create: a placeholder issue appears in every list/board at once and the dialog closes;
- * the server's row replaces it. A rejected create removes the placeholder and reports the error. */
-const create=async(e:React.FormEvent)=>{e.preventDefault();if(busy||!title.trim()||!team)return;setErr('');const input={title:title.trim(),description:description.trim()||null,teamId:team,priority:Number(priority),...(stateId?{stateId}:{}),...(assigneeId?{assigneeId}:{}),...(projectId?{projectId}:{}),...(cycleId?{cycleId}:{}),...(dueDate?{dueDate}:{}),labelIds};
- if(!getSync()){setBusy(true);try{const d=await gql(`mutation($input:IssueCreateInput!){issueCreate(input:$input){success issue{id identifier title}}}`,{input});if(!d.issueCreate.success)throw Error('Could not create task');if(createMore)resetForMore();else onCreated()}catch(e){setErr((e as Error).message)}finally{setBusy(false)}return}
- const now=new Date().toISOString();const viewer=meta?.viewer;const member=members.find(m=>m.id===assigneeId);const project=projects.find(p=>p.id===projectId);const cycle=cycles.find(c=>c.id===cycleId);
- const placeholder:Issue={id:localIssueId(),identifier:guessNextIdentifier(selectedTeam?.key||'ISS'),title:input.title,description:input.description||undefined,dueDate:dueDate||undefined,createdAt:now,updatedAt:now,stateChangedAt:now,priority:input.priority,priorityLabel:['No priority','Urgent','High','Medium','Low'][input.priority],state:states.find(s=>s.id===stateId)||guessDefaultState(selectedTeam),team:selectedTeam?{id:selectedTeam.id,key:selectedTeam.key,name:selectedTeam.name}:undefined,assignee:member?{id:member.id,name:member.name||member.email||''}:undefined,project:project?{id:project.id,name:project.name}:undefined,cycle:cycle?{id:cycle.id,name:cycle.name,number:cycle.number}:undefined,creator:viewer?.id?{id:viewer.id,name:viewer.name}:undefined,labels:{nodes:labels.filter(l=>labelIds.includes(l.id))},subscribers:{nodes:viewer?.id?[{id:viewer.id}]:[]}};
- const resolve=addLocalIssue(placeholder);
- if(createMore)resetForMore();else requestClose();
- try{const d=await gql(`mutation($input:IssueCreateInput!){issueCreate(input:$input){success issue ${issueFields}}}`,{input});if(!d.issueCreate?.success||!d.issueCreate.issue)throw Error('Could not create task');resolve(d.issueCreate.issue)}
- catch(e){resolve(null);const msg=`Could not create “${input.title}”: ${(e as Error).message}`;if(mounted.current){setErr(msg);setTitle(t=>t||input.title);setDescription(d=>d||input.description||'')}else void alertDialog(msg)}};
-/* eslint-disable-next-line jsx-a11y/no-autofocus -- the title input mount-focus is captured at render (line 399); an effect would move focus after that snapshot */
-return <div className="modal-backdrop"><form ref={dialogRef} role="dialog" aria-modal="true" aria-label="New task" aria-busy={busy||undefined} className={closing?'modal issue-create-modal is-closing':'modal issue-create-modal'} onSubmit={create}><div className="issue-create-header"><div className="issue-create-team-mark">{selectedTeam?.key.slice(0,2)||'IS'}</div><div className="issue-create-header-copy"><div className="issue-create-breadcrumb"><span>{selectedTeam?.key||'Team'}</span><span>›</span><span>New task</span></div></div><button type="button" className="icon" aria-label="Close" onClick={requestClose}><X size={18}/></button></div><div className="issue-create-body"><input className="issue-create-title" value={title} onChange={e=>setTitle(e.target.value)} autoFocus placeholder="Task title" aria-label="Task title" required/><textarea className="issue-create-description" value={description} onChange={e=>setDescription(e.target.value)} rows={3} placeholder="Add description…" aria-label="Task description"/><div className="issue-property-pills"><label className="issue-property"><span>Team</span><select value={team} onChange={e=>{setTeam(e.target.value);setStateId('');setAssigneeId('');setCycleId('')}} required>{teams.map(t=><option key={t.id} value={t.id}>{t.key}</option>)}</select></label><label className="issue-property"><span>Status</span><select value={stateId} onChange={e=>setStateId(e.target.value)}><option value="">Team default</option>{states.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select></label><label className="issue-property"><span>Priority</span><select value={priority} onChange={e=>setPriority(e.target.value)}><option value="0">No priority</option><option value="1">Urgent</option><option value="2">High</option><option value="3">Medium</option><option value="4">Low</option></select></label><label className="issue-property"><span>Assignee</span><select value={assigneeId} onChange={e=>setAssigneeId(e.target.value)}><option value="">Unassigned</option>{members.map(m=><option key={m.id} value={m.id}>{m.name||m.email}</option>)}</select></label><label className="issue-property"><span>Project</span><select value={projectId} onChange={e=>setProjectId(e.target.value)}><option value="">No project</option>{projects.filter(p=>!p.teams?.nodes.length||p.teams.nodes.some(t=>t.id===team)).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label><label className="issue-property"><span>Cycle</span><select value={cycleId} onChange={e=>setCycleId(e.target.value)}><option value="">No cycle</option>{cycles.filter(c=>c.team?.id===team&&!c.completedAt).map(c=><option key={c.id} value={c.id}>{c.name||`Cycle ${c.number??''}`}</option>)}</select></label><label className="issue-property issue-property-date"><span>Due date</span><input type="date" value={dueDate} onChange={e=>setDueDate(e.target.value)} aria-label="Due date"/></label></div><fieldset className="issue-label-field" hidden={!labelIds.length&&labels.length===0}><legend>Labels</legend>{loadingOptions?<span className="muted">Loading labels…</span>:labels.filter(l=>!((l as any).teamId)||((l as any).teamId===team)).length?labels.map(l=><label key={l.id} className="issue-label-option"><input type="checkbox" checked={labelIds.includes(l.id)} onChange={e=>setLabelIds(v=>e.target.checked?[...v,l.id]:v.filter(id=>id!==l.id))}/><span>{l.name}</span></label>):<span className="muted">No labels available</span>}</fieldset></div>{err&&<small className="error" role="alert">{err}</small>}<footer className="issue-create-footer"><label className="issue-create-more"><input type="checkbox" checked={createMore} onChange={e=>setCreateMore(e.target.checked)}/> Create more</label><div className="issue-create-footer-actions"><button type="button" className="outline" onClick={requestClose} disabled={busy}>Cancel</button><button className="primary" disabled={busy||(loadingOptions&&!meta)||!title.trim()||!team}>{busy?<><span className="issue-create-spinner" aria-hidden="true"/>{'Creating…'}</>:'Create task'}</button></div></footer></form></div>}
-createRoot(document.getElementById('root')!).render(<>{/^\/meet(\/|$)/.test(location.pathname)?<MeetStandalone/>:<App/>}<DialogHost/><ReactGrabDev/></>);
-const PROJECT_STATES=['backlog','planned','started','paused','completed','canceled'];
-function ProjectsPage({projects:given,onOpen,onCreate,hasMore=false,onLoadMore,loading=false,error='',teamId}:{projects:Project[];onOpen:(p:Project)=>void;onCreate:()=>void;hasMore?:boolean;onLoadMore?:()=>void;loading?:boolean;error?:string;teamId?:string}){
-  const [search,setSearch]=useState(''),[state,setState]=useState(''),[team,setTeam]=useState(''),[layout,setLayout]=useState<'List'|'Board'|'Timeline'>('List');
-  const [filterOpen,setFilterOpen]=useState(false),[displayOpen,setDisplayOpen]=useState(false),[group,setGroup]=useState('No grouping'),[ordering,setOrdering]=useState('Name'),[showClosed,setShowClosed]=useState(true),[summary,setSummary]=useState(false);
+  const members =
+    teams.find((t) => t.id === issue.team?.id)?.members?.nodes || [];
+  const due = (issue.dueDate || "").slice(0, 10);
+  const overdue = dueIsOverdue(issue.dueDate);
+  const [busy, setBusy] = useState(false);
+  /* The board shows the failure banner; swallow the rejection here so an inline edit
+   * never surfaces as an unhandled promise rejection. */
+  const edit = async (input: Record<string, unknown>) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await onUpdate(issue.id, input);
+    } catch {
+      /* banner shown by Kanban */
+    } finally {
+      setBusy(false);
+    }
+  };
+  const stack = (
+    <motion.div
+      ref={stackRef}
+      className="relative isolate min-w-0 rounded-2xl"
+      style={{
+        perspective: "1000px",
+        overflow: stackMounted || !subtasks.length ? "visible" : "clip",
+      }}
+      animate={subtasks.length ? { height: stackHeight } : undefined}
+      transition={spring}
+      data-kanban-stack={
+        subtasks.length ? (subtasksOpen ? "open" : "closed") : undefined
+      }
+    >
+      {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- drag surface only; the keyboard path (alt+arrow) lives on the inner button */}
+      <div
+        className="relative z-10 border flex flex-col gap-2.25 text-left cursor-grab touch-manipulation rounded-2xl shadow-sm border-line bg-panel p-4 hover:border-line active:cursor-grabbing focus-visible:relative focus-visible:z-1 data-dragging:opacity-45 [&[data-depth]:not([data-depth=0])]:relative [&[data-depth]:not([data-depth=0])::before]:absolute [&[data-depth]:not([data-depth=0])::before]:-left-2 [&[data-depth]:not([data-depth=0])::before]:top-1.5 [&[data-depth]:not([data-depth=0])::before]:bottom-1.5 [&[data-depth]:not([data-depth=0])::before]:w-0.5 [&[data-depth]:not([data-depth=0])::before]:rounded-sm [&[data-depth]:not([data-depth=0])::before]:bg-line focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 pointer-coarse:cursor-auto [&[data-depth]:not([data-depth=0])]:before:content-['']"
+        data-stack-layer=""
+        data-kanban-card=""
+        data-issue-id={issue.id}
+        data-depth={depth}
+        data-parent={parentIdent || undefined}
+        data-dragging={dragged ? true : undefined}
+        style={depth ? { marginLeft: depth * 18 } : undefined}
+        draggable
+        onDragStart={(e) => {
+          if ((e.target as HTMLElement).closest("input,select,label,button")) {
+            e.preventDefault();
+            return;
+          }
+          onDragStart(e);
+        }}
+        onDragEnd={onDragEnd}
+        onClick={(event) => {
+          /* The whole card opens the task (or its sub-task stack), so a tap on the
+           * padding or beside a short title is not lost on a phone. */
+          if (
+            !(event.target as HTMLElement).closest(
+              "button,input,label,select,a,[data-kanban-card-props]",
+            )
+          ) {
+            openOrSelect();
+          }
+        }}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <button
+            type="button"
+            className="flex min-w-0 text-left focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11"
+            onClick={openOrSelect}
+            aria-label={`Open ${issue.identifier}`}
+          >
+            <small className="flex min-w-0 items-center gap-1 text-muted text-xs">
+              {parentIdent ? (
+                <span
+                  className="border text-xs text-muted border-line rounded-full  px-1.25  bg-neutral-50 inset-shadow-sm inset-shadow-bg-white"
+                  title={`Parent ${parentIdent}`}
+                >{`↳${parentIdent}`}</span>
+              ) : null}
+              {issue.identifier}
+              {issue.decisionNeeded ? (
+                <span
+                  className="inline-grid place-items-center w-3.75 h-3.75 ml-1.5 rounded-[50%] text-[10px] font-bold leading-none cursor-default bg-[#fdf3cf] text-[#5b4a0f] align-middle border border-amber-400"
+                  data-my-issue-decision=""
+                  role="img"
+                  aria-label="Needs a decision"
+                  title="Needs a decision"
+                >
+                  ?
+                </span>
+              ) : null}
+            </small>
+          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            {rollup && rollup.total > 0 && (
+              <span
+                className="flex shrink-0 items-center gap-1.5"
+                title={`${rollup.done} of ${rollup.total} subtasks completed`}
+              >
+                <span
+                  role="progressbar"
+                  aria-label="Subtask completion"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round((rollup.done / rollup.total) * 100)}
+                  className="h-1.5 w-16 overflow-hidden rounded-full bg-neutral-100"
+                >
+                  <span
+                    className="block h-full rounded-full bg-[#10B981] transition-[width] motion-reduce:transition-none"
+                    style={{ width: `${(rollup.done / rollup.total) * 100}%` }}
+                  />
+                </span>
+                <span
+                  className="border text-xs bg-neutral-100 text-neutral-500 border border-neutral-200 tabular-nums border-line rounded-full px-1.25"
+                  aria-label={`${rollup.done} of ${rollup.total} sub-tasks complete`}
+                >{`${rollup.done}/${rollup.total}`}</span>
+              </span>
+            )}
+            <KanbanAssignee
+              issue={issue}
+              members={members}
+              busy={busy}
+              onChange={(assigneeId) => void edit({ assigneeId })}
+            />
+          </div>
+        </div>
+        <button
+          type="button"
+          className="flex w-full flex-col gap-1.5 pt-0 pr-0 pb-0 pl-0 bg-transparent text-inherit text-left min-w-0 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+          data-kanban-card-open=""
+          onClick={openOrSelect}
+          onKeyDown={(e) => {
+            if (e.altKey && e.key === "ArrowRight") {
+              e.preventDefault();
+              onMoveNext();
+            }
+          }}
+          aria-expanded={subtasks.length ? subtasksOpen : undefined}
+          aria-label={
+            subtasks.length
+              ? `${subtasksOpen ? "Collapse" : "Expand"} ${issue.identifier}: ${subtasks.length} subtasks`
+              : `Open ${issue.identifier}: ${issue.title}`
+          }
+        >
+          <strong
+            className={
+              compact
+                ? "truncate text-xs font-medium text-muted"
+                : "text-sm font-medium"
+            }
+          >
+            {issue.title}
+          </strong>
+        </button>
+        {!compact && (
+          <div
+            className="flex flex-col min-w-0 mt-1 text-[12px] text-muted pointer-coarse:grid pointer-coarse:grid-cols-2 pointer-coarse:gap-x-1 shell-phone:grid shell-phone:grid-cols-2 shell-phone:gap-x-1 pointer-coarse:[&>label]:h-11 pointer-coarse:[&>div]:h-11 shell-phone:[&>label]:h-11 shell-phone:[&>div]:h-11 pointer-coarse:[&>label]:order-last shell-phone:[&>label]:order-last pointer-coarse:[&>label]:col-span-2 shell-phone:[&>label]:col-span-2 [&>label]:gap-2 [&>div]:gap-2 [&>label]:h-7 [&>div]:h-7 [&>label]:px-2.25 [&>div]:px-2.25 [&>label]:rounded-lg [&>div]:rounded-lg **:data-status-picker:min-w-0 **:data-status-picker:self-center **:data-status-picker-trigger:w-auto **:data-status-picker-trigger:max-w-full **:data-status-picker-trigger:h-auto **:data-status-picker-trigger:p-0 **:data-status-picker-trigger:border-0 **:data-status-picker-trigger:bg-transparent **:data-status-picker-trigger:text-inherit **:data-status-picker-trigger:gap-2 [&>label:hover]:[transition:none] [&>div:hover]:[transition:none] [&>label:focus-within]:[transition:none]"
+            data-kanban-card-props=""
+            aria-busy={busy || undefined}
+          >
+            {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- pointer shortcut; the nested status button is the keyboard and screen-reader target. */}
+            <div
+              className="cursor-pointer flex items-center gap-2 h-7 min-w-0 pt-0 pr-2 pb-0 pl-2 rounded-lg hover:bg-subtle [transition:background-color_120ms_ease-out]"
+              onClick={(e) => {
+                if (!(e.target as HTMLElement).closest("button"))
+                  e.currentTarget
+                    .querySelector<HTMLButtonElement>(
+                      "[data-status-picker-trigger]",
+                    )
+                    ?.click();
+              }}
+            >
+              <StatusPicker
+                compact
+                showLabel
+                iconClassName="size-4 shrink-0"
+                issue={issue}
+                teams={teams}
+                disabled={busy}
+                onChange={(stateId) => {
+                  const st = teams
+                    .find((t) => t.id === issue.team?.id)
+                    ?.states.nodes.find((x) => x.id === stateId);
+                  if (!st) throw Error("Status not found");
+                  return onUpdate(issue.id, { stateId: st.id });
+                }}
+              />
+            </div>
+            <label
+              className={
+                (overdue ? "relative text-danger" : "relative") +
+                " flex items-center gap-2 h-7 min-w-0 pt-0 pr-2.25 pb-0 pl-2.25 rounded-lg hover:bg-subtle focus-within:bg-subtle" +
+                " hover:bg-subtle focus-within:bg-subtle" +
+                " [transition:background-color_120ms_ease-out]"
+              }
+              title={due ? `Due ${due}` : "Set due date"}
+            >
+              <CalendarDays
+                aria-hidden="true"
+                size={16}
+                className="size-4 shrink-0"
+              />
+              <span className="truncate">
+                {due
+                  ? new Date(due).toLocaleDateString(undefined, {
+                      month: "short",
+                      day: "numeric",
+                    })
+                  : "Set due date"}
+              </span>
+              <input
+                type="date"
+                value={due}
+                disabled={busy}
+                aria-label={`Due date of ${issue.identifier}`}
+                className="absolute inset-0 h-full w-full cursor-pointer opacity-0 max-md:text-base placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                onClick={(e) => {
+                  try {
+                    e.currentTarget.showPicker?.();
+                  } catch {
+                    /* the native picker is unavailable in this browser */
+                  }
+                }}
+                onChange={(e) => void edit({ dueDate: e.target.value || null })}
+              />
+            </label>
+            {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- pointer shortcut; the nested priority button is the keyboard and screen-reader target. */}
+            <div
+              className="cursor-pointer flex items-center gap-2 h-7 min-w-0 pt-0 pr-2.25 pb-0 pl-2.25 rounded-lg hover:bg-subtle [transition:background-color_120ms_ease-out]"
+              onClick={(e) => {
+                if (!(e.target as HTMLElement).closest("button"))
+                  e.currentTarget
+                    .querySelector<HTMLButtonElement>("button")
+                    ?.click();
+              }}
+            >
+              <KanbanPriority
+                issue={issue}
+                busy={busy}
+                onChange={(priority) => void edit({ priority })}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+      {subtasks.map((child, index) => {
+        const beforeDivider =
+          parentHeight +
+          8 +
+          subtasks
+            .slice(0, index)
+            .reduce(
+              (sum, _, i) =>
+                sum +
+                (cardHeights[i + 1] || parentHeight) +
+                8 +
+                (startsStatusGroup(i) ? dividerHeight : 0),
+              0,
+            );
+        const offset =
+          beforeDivider + (startsStatusGroup(index) ? dividerHeight : 0);
+        return (
+          <React.Fragment key={child.id}>
+            {startsStatusGroup(index) && (
+              <motion.div
+                className="absolute top-0 flex h-8 items-center"
+                data-subtask-status-divider=""
+                style={{
+                  left: "50%",
+                  width: "max(100%, 33.333vw)",
+                  x: "-50%",
+                  pointerEvents: "none",
+                }}
+                initial={{ opacity: 0 }}
+                animate={{
+                  y: subtasksOpen ? beforeDivider : 0,
+                  opacity: subtasksOpen ? 1 : 0,
+                }}
+                transition={spring}
+                aria-hidden={!subtasksOpen}
+              >
+                <span
+                  className={`relative isolate inline-flex h-7 w-36 shrink-0 items-center pl-3 pr-8 text-[11px] font-medium ${child.state?.type === "completed" ? "text-[#5151C1]" : child.state?.type === "started" ? "text-yellow-950" : "text-muted"}`}
+                >
+                  <svg
+                    aria-hidden="true"
+                    className={`absolute inset-0 -z-1 h-full w-full ${child.state?.type === "completed" ? "text-[#ECEEFF]" : child.state?.type === "started" ? "text-yellow-300" : "text-neutral-100"}`}
+                    viewBox="0 0 144 28"
+                  >
+                    <path
+                      d="M5 1 H138 Q143 1 140 5 L120 25 Q118 27 115 27 H5 Q1 27 1 23 V5 Q1 1 5 1 Z"
+                      fill="currentColor"
+                      stroke={
+                        child.state?.type === "completed"
+                          ? "#5151C1"
+                          : "var(--line)"
+                      }
+                      strokeWidth="1"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                  {child.state?.name || "No status"}
+                </span>
+                <span
+                  aria-hidden="true"
+                  className={`flex-1 border-t-2 border-dashed ${child.state?.type === "completed" ? "border-[#ECEEFF]" : "border-line"}`}
+                />
+              </motion.div>
+            )}
+            <motion.div
+              data-stack-layer=""
+              className="absolute inset-x-0 top-0 rounded-2xl"
+              style={{
+                zIndex: subtasksOpen ? 1 : -index - 1,
+                pointerEvents: subtasksOpen ? "auto" : "none",
+                height: subtasksOpen ? undefined : parentHeight,
+                overflow: subtasksOpen ? "visible" : "hidden",
+                background: subtasksOpen ? "transparent" : "var(--panel)",
+                boxShadow: subtasksOpen
+                  ? undefined
+                  : "inset 0 0 0 1px var(--line)",
+              }}
+              inert={!subtasksOpen}
+              aria-hidden={!subtasksOpen}
+              initial={
+                subtasksOpen && !reduceMotion
+                  ? {
+                      y: Math.min(index + 1, 3) * collapsedStackOffset,
+                      scaleX: 1 - Math.min(index + 1, 3) * 0.04,
+                      opacity: index < 3 ? 1 : 0,
+                    }
+                  : false
+              }
+              animate={{
+                y: subtasksOpen
+                  ? offset
+                  : Math.min(index + 1, 3) * collapsedStackOffset,
+                z: 0,
+                scaleX: subtasksOpen ? 1 : 1 - Math.min(index + 1, 3) * 0.04,
+                opacity: subtasksOpen || index < 3 ? 1 : 0,
+              }}
+              transition={spring}
+            >
+              <div style={{ visibility: subtasksOpen ? "visible" : "hidden" }}>
+                <KanbanCard
+                  issue={child}
+                  teams={teams}
+                  dragged={false}
+                  onDragStart={(e) => onDragStart(e, child)}
+                  onDragEnd={onDragEnd}
+                  onSelect={onSelect}
+                  onUpdate={onUpdate}
+                  onMoveNext={() => onMoveNext(child)}
+                  canMoveNext={canMoveNext}
+                />
+              </div>
+            </motion.div>
+          </React.Fragment>
+        );
+      })}
+    </motion.div>
+  );
+  return (
+    <div
+      ref={anchorRef}
+      className="relative min-w-0 shrink-0"
+      style={
+        stackMounted
+          ? {
+              paddingBottom:
+                Math.min(3, subtasks.length) * collapsedStackOffset,
+            }
+          : undefined
+      }
+    >
+      {stackMounted && (
+        <div
+          aria-hidden="true"
+          data-kanban-stack-placeholder=""
+          className="rounded-2xl border-2 border-dashed border-line bg-neutral-100"
+          style={{ height: parentHeight }}
+        />
+      )}
+      {!stackMounted && stack}
+      <StackDialog.Root
+        open={stackMounted}
+        onOpenChange={(open) => {
+          if (!open) closeStack();
+        }}
+      >
+        <StackDialog.Portal>
+          <StackDialog.Overlay asChild>
+            <motion.div
+              className="fixed inset-0 z-100 bg-black/30"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: subtasksOpen ? 1 : 0 }}
+              transition={{ duration: reduceMotion ? 0 : 0.25 }}
+            />
+          </StackDialog.Overlay>
+          <StackDialog.Content
+            aria-describedby={undefined}
+            className="fixed inset-0 z-101 overflow-y-auto overscroll-contain outline-none pointer-events-none"
+            onPointerDown={(event) => {
+              if (event.target === event.currentTarget) closeStack();
+            }}
+          >
+            <StackDialog.Title className="sr-only">
+              {issue.identifier} subtasks
+            </StackDialog.Title>
+            <motion.div
+              className="absolute pointer-events-auto pb-6"
+              style={{ width: stackPosition.width }}
+              initial={{
+                top: stackPosition.top,
+                left: stackPosition.left,
+                width: stackPosition.width,
+              }}
+              animate={
+                subtasksOpen
+                  ? (() => {
+                      const expandedWidth = Math.min(
+                        Math.max(stackPosition.width, 460),
+                        window.innerWidth - 32,
+                      );
+                      return {
+                        top: Math.max(48, window.innerHeight / 5),
+                        left: (window.innerWidth - expandedWidth) / 2,
+                        width: expandedWidth,
+                      };
+                    })()
+                  : {
+                      top: stackPosition.top,
+                      left: stackPosition.left,
+                      width: stackPosition.width,
+                    }
+              }
+              transition={spring}
+              onAnimationComplete={() => {
+                if (!subtasksOpen) setStackMounted(false);
+              }}
+            >
+              <StackDialog.Close asChild>
+                <motion.button
+                  type="button"
+                  aria-label="Collapse subtask stack"
+                  className="absolute -top-9 right-0 rounded-lg border border-line bg-panel px-3 py-1 text-[12px] text-muted focus-visible:outline-2 focus-visible:outline-accent"
+                  initial={{ opacity: 0, y: 4 }}
+                  animate={{
+                    opacity: subtasksOpen ? 1 : 0,
+                    y: subtasksOpen ? 0 : 4,
+                  }}
+                  transition={{ duration: reduceMotion ? 0 : 0.2 }}
+                  style={{ pointerEvents: subtasksOpen ? "auto" : "none" }}
+                >
+                  Collapse subtasks ×
+                </motion.button>
+              </StackDialog.Close>
+              {stack}
+            </motion.div>
+          </StackDialog.Content>
+        </StackDialog.Portal>
+      </StackDialog.Root>
+    </div>
+  );
+}
+function KanbanScrollFade({ children }: { children: React.ReactNode }) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ top: 0, bottom: 0 });
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    const viewport = root?.querySelector<HTMLElement>("[data-kanban-cards]");
+    if (!viewport) return;
+    const strength = (distance: number) => {
+      const t = Math.max(0, Math.min(distance / 32, 1));
+      return t * t * (3 - 2 * t);
+    };
+    const update = () => {
+      const max = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+      const offset = Math.max(0, Math.min(viewport.scrollTop, max));
+      const top = strength(offset),
+        bottom = strength(max - offset);
+      setEdges((previous) =>
+        previous.top === top && previous.bottom === bottom
+          ? previous
+          : { top, bottom },
+      );
+    };
+    const resize = new ResizeObserver(update);
+    const observe = () => {
+      resize.disconnect();
+      resize.observe(viewport);
+      Array.from(viewport.children).forEach((child) => resize.observe(child));
+      update();
+    };
+    const mutations = new MutationObserver(observe);
+    mutations.observe(viewport, { childList: true, subtree: true });
+    viewport.addEventListener("scroll", update, { passive: true });
+    observe();
+    return () => {
+      viewport.removeEventListener("scroll", update);
+      resize.disconnect();
+      mutations.disconnect();
+    };
+  }, []);
+  return (
+    <div
+      ref={rootRef}
+      className="relative isolate flex min-h-0 flex-1 flex-col overflow-hidden [@media(max-height:500px)]:flex-none"
+    >
+      {children}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 top-0 z-20 h-8"
+        style={{
+          opacity: edges.top,
+          background:
+            "radial-gradient(ellipse at 50% 0%, var(--panel) 0%, transparent 100%)",
+        }}
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-8"
+        style={{
+          opacity: edges.bottom,
+          background:
+            "radial-gradient(ellipse at 50% 100%, var(--panel) 0%, transparent 100%)",
+        }}
+      />
+    </div>
+  );
+}
+
+/* A board column. Status columns carry the workflow state a drop moves a card to; columns of
+ * another grouping (priority, assignee, project…) carry `drop`, which writes that property, and
+ * a synthetic state whose id starts with "group:". `total` is the column's count before
+ * filters, shown as "6 / 81" when filters hide some of it. */
+type KanbanGroup = {
+  state: { id: string; name: string; color: string; type: string };
+  items: Issue[];
+  total?: number;
+  drop?: (issueId: string) => Promise<void>;
+};
+function Kanban({
+  grouped,
+  allIssues,
+  onSelect,
+  onNew,
+  onMoved,
+  onUpdate,
+  teams = [],
+  columnMenu,
+  selected,
+}: {
+  allIssues: Issue[];
+  grouped: KanbanGroup[];
+  columnMenu?: (group: KanbanGroup) => React.ReactNode;
+  selected?: ReadonlySet<string>;
+  onSelect: (issue: Issue) => void;
+  onNew: (stateId?: string) => void;
+  onMoved: (
+    issueId: string,
+    state: { id: string; name: string; color: string; type: string },
+  ) => Promise<void>;
+  onUpdate: (issueId: string, input: Record<string, unknown>) => Promise<void>;
+  teams?: Team[];
+}) {
+  const columnsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const columns = columnsRef.current;
+    if (!columns) return;
+    const onWheel = (event: WheelEvent) => {
+      if (
+        !event.shiftKey ||
+        event.ctrlKey ||
+        columns.scrollWidth <= columns.clientWidth
+      ) {
+        return;
+      }
+      // Browsers may already translate Shift+wheel into deltaX.
+      const delta = event.deltaX || event.deltaY;
+      if (!delta) return;
+      const scale =
+        event.deltaMode === WheelEvent.DOM_DELTA_LINE
+          ? 16
+          : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+            ? columns.clientWidth
+            : 1;
+      event.preventDefault();
+      columns.scrollLeft += delta * scale;
+    };
+    // A non-passive listener lets us prevent vertical scrolling as we scroll sideways.
+    columns.addEventListener("wheel", onWheel, { passive: false });
+    return () => columns.removeEventListener("wheel", onWheel);
+  }, []);
+  const [dragged, setDragged] = useState("");
+  const [error, setError] = useState("");
+  const [dropLine, setDropLine] = useState<{
+    top: number;
+    left: number;
+    width: number;
+  } | null>(null);
+  const showDropLine = (e: React.DragEvent<HTMLElement>) => {
+    const cardsEl = (e.currentTarget as HTMLElement).querySelector<HTMLElement>(
+      "[data-kanban-cards]",
+    );
+    if (!cardsEl) return;
+    const cards = [
+      ...cardsEl.querySelectorAll<HTMLElement>("[data-kanban-card]"),
+    ].filter((card) => card.dataset.issueId !== dragged);
+    const container = cardsEl.getBoundingClientRect(),
+      first = cards[0],
+      last = cards[cards.length - 1];
+    let top: number | null = null;
+    for (const card of cards) {
+      const r = card.getBoundingClientRect();
+      if (e.clientY < r.top + r.height / 2) {
+        top = r.top - 5;
+        break;
+      }
+    }
+    if (top === null)
+      top = last ? last.getBoundingClientRect().bottom + 5 : container.top + 10;
+    const cardRect = first?.getBoundingClientRect();
+    setDropLine({
+      top,
+      left: cardRect ? cardRect.left : container.left + 10,
+      width: cardRect ? cardRect.width : Math.max(0, container.width - 20),
+    });
+  };
+  // Columns mount their first cards and grow on scroll, so a 30k-issue board stays cheap.
+  const [limits, setLimits] = useState<Record<string, number>>({});
+  const grow = (id: string) =>
+    setLimits((l) => ({ ...l, [id]: (l[id] || KANBAN_PAGE) + KANBAN_STEP }));
+  const moveNext = async (issue: Issue, stateId: string) => {
+    const idx = grouped.findIndex((g) => g.state.id === stateId),
+      next = grouped[idx + 1];
+    if (!next || next.state.id.startsWith("group:")) return;
+    try {
+      await onMoved(issue.id, next.state);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+  const update = async (issueId: string, input: Record<string, unknown>) => {
+    try {
+      await onUpdate(issueId, input);
+    } catch (err) {
+      setError((err as Error).message);
+      throw err;
+    }
+  };
+  // Progress and stack contents must include completed children hidden by board filters.
+  const subtasksByParent = useMemo(() => {
+    const m = new Map<string, Issue[]>();
+    for (const child of allIssues) {
+      const parentId = child.parent?.id;
+      if (!parentId || parentId === child.id) continue;
+      const children = m.get(parentId) || [];
+      children.push(child);
+      m.set(parentId, children);
+    }
+    const statusRank = (child: Issue) => {
+      if (child.state?.name.toLowerCase() === "todo") return 0;
+      switch (child.state?.type) {
+        case "unstarted":
+          return 0;
+        case "backlog":
+          return 1;
+        case "started":
+          return 2;
+        case "canceled":
+          return 4;
+        case "completed":
+          return 5;
+        default:
+          return 3;
+      }
+    };
+    // Creation uses <parent>-<letter slot>-<sibling ordinal> at each depth.
+    // Compare the final ordinal numerically (2 before 10), not the slot letters.
+    const siblingOrdinal = (child: Issue) =>
+      Number(
+        child.identifier.match(/(?:-|\/)(\d+)$/)?.[1] ??
+          Number.MAX_SAFE_INTEGER,
+      );
+    for (const children of m.values())
+      children.sort(
+        (a, b) =>
+          statusRank(a) - statusRank(b) ||
+          (a.state?.name || "").localeCompare(b.state?.name || "") ||
+          siblingOrdinal(a) - siblingOrdinal(b) ||
+          a.identifier.localeCompare(b.identifier, undefined, {
+            numeric: true,
+          }),
+      );
+    return m;
+  }, [allIssues]);
+  const rollups = useMemo(
+    () =>
+      new Map(
+        Array.from(subtasksByParent, ([id, children]) => [
+          id,
+          {
+            total: children.length,
+            done: children.filter((child) => child.state?.type === "completed")
+              .length,
+          },
+        ]),
+      ),
+    [subtasksByParent],
+  );
+  return (
+    <div className="kanban flex min-h-0 min-w-0 flex-1 flex-col w-full [@media(max-height:500px)]:flex-none">
+      <div
+        className="grid grid-flow-col auto-cols-[minmax(260px,1fr)] max-sm:auto-cols-[85%] gap-x-3 bg-bg flex-1 [@media(max-height:500px)]:flex-none overflow-x-auto overflow-y-hidden min-w-0 w-full items-stretch min-h-0 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-subtle [&::-webkit-scrollbar-thumb]:rounded-lg [&::-webkit-scrollbar-thumb]:bg-muted overscroll-x-contain focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 scrollbar-thin [scrollbar-color:var(--muted)_var(--subtle)] [&::-webkit-scrollbar-thumb]:border-[2px_solid_var(--subtle)]"
+        data-kanban-columns=""
+        ref={columnsRef}
+      >
+        {grouped.map((group) => (
+          <section
+            role="presentation"
+            className={
+              ` flex flex-col min-w-0 inset-shadow-neutral-50 shadow-md  inset-shadow-sm rounded-xl border border-neutral-200 bg-neutral-100 overflow-hidden ${dragged ? "" : ""}` +
+              " flex flex-col min-h-0 max-h-full [@media(max-height:500px)]:max-h-none" +
+              " data-drop-ready:bg-[color-mix(in_srgb,var(--accent-soft)_18%,transparent)]"
+            }
+            data-kanban-column=""
+            data-drop-ready={dragged ? "" : undefined}
+            key={group.state.id}
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
+              showDropLine(e);
+            }}
+            onDragLeave={(e) => {
+              if (
+                !(e.currentTarget as HTMLElement).contains(
+                  e.relatedTarget as Node,
+                )
+              )
+                setDropLine(null);
+            }}
+            onDrop={async (e) => {
+              e.preventDefault();
+              const id = e.dataTransfer.getData("text/hoja-issue") || dragged;
+              setDragged("");
+              setDropLine(null);
+              if (
+                id &&
+                (group.drop ||
+                  (group.state.id !== "unknown" &&
+                    !group.state.id.startsWith("group:")))
+              ) {
+                try {
+                  if (group.drop) await group.drop(id);
+                  else await onMoved(id, group.state);
+                } catch (err) {
+                  setError((err as Error).message);
+                }
+              }
+            }}
+          >
+            <header className="flex items-center gap-2 h-12 pt-0 pr-3.5 pb-0 pl-3.5 text-sm text-muted flex-none basis-12">
+              <span
+                data-status-mark=""
+                style={{ borderColor: group.state.color }}
+                className="flex-none border-2"
+              ></span>
+              <span
+                className="min-w-0 truncate font-medium text-foreground"
+                data-kanban-column-name=""
+              >
+                {group.state.name}
+              </span>
+              <span className="mr-auto tabular-nums" data-kanban-count="">
+                {group.total !== undefined && group.total !== group.items.length
+                  ? `${group.items.length} / ${group.total}`
+                  : group.items.length}
+              </span>
+              {columnMenu?.(group)}
+              <button
+                className="grid place-items-center w-6.25 h-6.25 rounded-full hover:inset-shadow-sm hover:inset-shadow-neutral-50 border-neutral-200 hover:border-[0.5px] hover:shadow-sm hover:shadow active:scale-[0.95]    bg-transparent text-muted  hover:text-foreground shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                aria-label={`Create task in ${group.state.name}`}
+                onClick={() =>
+                  onNew(
+                    group.state.id === "unknown" ||
+                      group.state.id.startsWith("group:")
+                      ? undefined
+                      : group.state.id,
+                  )
+                }
+              >
+                <Plus size={15} />
+              </button>
+            </header>
+            <KanbanScrollFade>
+              <div
+                className="flex flex-col gap-1 p-1 overflow-y-auto flex-auto min-h-0 overscroll-y-contain [@media(max-height:500px)]:flex-none [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-subtle [&::-webkit-scrollbar-thumb]:rounded-lg [&::-webkit-scrollbar-thumb]:bg-muted max-h-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 scrollbar-thin [&::-webkit-scrollbar-thumb]:border-[2px_solid_var(--subtle)]"
+                data-kanban-cards=""
+                onScroll={
+                  group.items.length > (limits[group.state.id] || KANBAN_PAGE)
+                    ? (e) => {
+                        const el = e.currentTarget;
+                        if (
+                          el.scrollTop + el.clientHeight >
+                          el.scrollHeight - 800
+                        )
+                          grow(group.state.id);
+                      }
+                    : undefined
+                }
+              >
+                {group.items.length === 0 && (
+                  <p
+                    className="mt-1 mr-0 mb-1 ml-0 pt-3 pr-3 pb-3 pl-3 rounded-lg text-muted text-[12px] text-center border  border-dashed border-neutral-300"
+                    data-kanban-empty=""
+                  >
+                    No tasks in {group.state.name}.
+                  </p>
+                )}
+                {orderTree(group.items, {})
+                  .filter(
+                    ({ node: i }) =>
+                      !i.parent?.id ||
+                      !grouped.some((g) =>
+                        g.items.some(
+                          (parent) =>
+                            parent.id === i.parent?.id && parent.id !== i.id,
+                        ),
+                      ),
+                  )
+                  .slice(0, limits[group.state.id] || KANBAN_PAGE)
+                  .map(({ node: issue, depth, parentOutside }) => (
+                    <div
+                      key={issue.id}
+                      className={
+                        selected?.has(issue.id)
+                          ? "rounded-xl ring-2 ring-accent"
+                          : "contents"
+                      }
+                      data-kanban-selected={
+                        selected?.has(issue.id) ? "" : undefined
+                      }
+                    >
+                      <KanbanCard
+                        issue={issue}
+                        teams={teams}
+                        dragged={dragged === issue.id}
+                        depth={depth}
+                        parentIdent={
+                          parentOutside ? issue.parent?.identifier : undefined
+                        }
+                        rollup={rollups.get(issue.id)}
+                        subtasks={subtasksByParent.get(issue.id)}
+                        compact={group.state.type === "completed"}
+                        onDragStart={(e, task = issue) => {
+                          setDragged(task.id);
+                          setDropLine(null);
+                          e.dataTransfer.effectAllowed = "move";
+                          e.dataTransfer.setData("text/hoja-issue", task.id);
+                        }}
+                        onDragEnd={() => {
+                          setDragged("");
+                          setDropLine(null);
+                        }}
+                        onSelect={onSelect}
+                        onUpdate={update}
+                        onMoveNext={(task = issue) =>
+                          void moveNext(task, task.state?.id || group.state.id)
+                        }
+                        canMoveNext={Boolean(
+                          !group.state.id.startsWith("group:") &&
+                          grouped[
+                            grouped.findIndex(
+                              (g) => g.state.id === group.state.id,
+                            ) + 1
+                          ],
+                        )}
+                      />
+                    </div>
+                  ))}
+                {group.items.length >
+                  (limits[group.state.id] || KANBAN_PAGE) && (
+                  <button
+                    type="button"
+                    className="inline-flex items-center justify-center gap-2 rounded-md border border-line bg-panel px-3 py-2 text-sm text-inherit hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                    onClick={() => grow(group.state.id)}
+                  >
+                    Show{" "}
+                    {Math.min(
+                      group.items.length -
+                        (limits[group.state.id] || KANBAN_PAGE),
+                      KANBAN_STEP,
+                    )}{" "}
+                    more of{" "}
+                    {group.items.length -
+                      (limits[group.state.id] || KANBAN_PAGE)}
+                  </button>
+                )}
+              </div>
+            </KanbanScrollFade>
+          </section>
+        ))}
+      </div>
+      {dropLine && (
+        <div
+          className="shadow-[0_0_0_2px_color-mix(in_srgb,var(--accent)_18%,transparent)] fixed z-60 h-0.5 rounded-[999px] bg-accent pointer-events-none"
+          data-kanban-drop-indicator=""
+          style={{
+            top: dropLine.top,
+            left: dropLine.left,
+            width: dropLine.width,
+          }}
+          aria-hidden="true"
+        />
+      )}
+      {error && (
+        <div
+          className="border shadow-(--shadow) sticky bottom-2 self-center flex gap-3 items-center pt-2.25 pr-3 pb-2.25 pl-3 bg-panel text-danger border-line rounded-[7px] text-[12px]"
+          data-kanban-error=""
+          role="alert"
+        >
+          {error}
+          <button
+            className="bg-transparent text-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+            onClick={() => setError("")}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+function Stat({
+  label,
+  value,
+  trend,
+}: {
+  label: string;
+  value: string;
+  trend: string;
+}) {
+  return (
+    <div className="grid gap-1.75 pt-4 pr-4 pb-4 pl-4 border border-line rounded-xl bg-panel shadow-[0_1px_2px_#1b1b1b08] [@media_(max-width:560px)]:pt-3 [@media_(max-width:560px)]:pr-3 [@media_(max-width:560px)]:pb-3 [@media_(max-width:560px)]:pl-3">
+      <span className="text-muted text-[12px]">{label}</span>
+      <strong className="text-[25px] tracking-tighter [@media_(max-width:560px)]:text-[21px]">
+        {value}
+      </strong>
+      <small className="flex items-center gap-1 text-[#626269] text-[11px]">
+        <Zap size={12} />
+        {trend}
+      </small>
+    </div>
+  );
+}
+function Placeholder({ view }: { view: string }) {
+  return (
+    <div className="grid place-items-center text-center mt-20 mr-auto mb-20 ml-auto max-w-105">
+      <div
+        className="grid place-items-center w-16 h-16 rounded-2xl bg-accent-soft text-accent"
+        data-placeholder-icon=""
+      >
+        <LayoutDashboard size={28} />
+      </div>
+      <h2 className="mt-5 mr-0 mb-1.25 ml-0">{view} is ready for your team</h2>
+      <p className="text-muted">
+        This dashboard surface is connected to your self-hosted workspace. More{" "}
+        {view.toLowerCase()} workflows are coming next.
+      </p>
+    </div>
+  );
+}
+
+function InviteAcceptance({
+  code,
+  onDone,
+}: {
+  code: string;
+  onDone: () => void;
+}) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [accepted, setAccepted] = useState<{ name?: string } | null>(null);
+  const [googleUrl, setGoogleUrl] = useState("");
+  const [mode, setMode] = useState<
+    "checking" | "google" | "password" | "failed"
+  >("checking");
+  /* One code, two ways to prove the address. A workspace that signs people in
+   * with Google has no password to create, so the Google path comes first there;
+   * an instance that still supports credentials keeps the form. */
+  const accept = async (payload: Record<string, string>): Promise<boolean> => {
+    setBusy(true);
+    setError("");
+    try {
+      const r = await fetch("/auth/invite/accept", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const b = await r.json();
+      if (!r.ok) throw Error(b.error || "Invite code is invalid or expired");
+      setAccepted({ name: b.organization?.name });
+      return true;
+    } catch (e) {
+      setError((e as Error).message);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      let hosted = false,
+        creds = true;
+      try {
+        const c = await fetch("/api/signup/config").then((r) =>
+          r.ok ? r.json() : null,
+        );
+        hosted = Boolean(c?.hosted);
+        creds = c?.credentialSignIn !== false;
+      } catch {}
+      if (!live) return;
+      if (hosted)
+        setGoogleUrl(
+          `/auth/google/start?invite=${encodeURIComponent(code)}&return_to=%2F`,
+        );
+      /* Coming back from Google means a session already exists: accept with the
+       * code alone instead of asking for a password the person never had. */
+      /* Validate the code before asking for anything: an expired invitation should
+       * say so on arrival, not after someone has chosen a password. */
+      let valid = true;
+      try {
+        const probe = await fetch("/auth/invite/probe", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ code }),
+        });
+        /* Only an explicit "this code is dead" blocks the form. An outage, a 429 or
+         * an older server without the route must not tell someone their invitation
+         * expired. */
+        if (probe.status === 404) {
+          const b = await probe.json().catch(() => ({}));
+          if (b?.valid === false) {
+            valid = false;
+            setError(
+              "This invitation has expired or been replaced. Ask a workspace admin to resend it.",
+            );
+          }
+        }
+      } catch {}
+      if (!live) return;
+      if (!valid) {
+        setMode("failed");
+        return;
+      }
+      let signedIn = false;
+      try {
+        signedIn = (await fetch("/auth/me")).ok;
+      } catch {}
+      if (!live) return;
+      if (signedIn) {
+        const ok = await accept({ code });
+        if (!live) return;
+        if (!ok) setMode("failed");
+        return;
+      }
+      setMode(!creds && hosted ? "google" : "password");
+    })();
+    return () => {
+      live = false;
+    };
+  }, [code]);
+  if (accepted)
+    return (
+      <main className="min-h-dvh grid place-items-center pt-6 pr-6 pb-6 pl-6 sm:p-6 bg-bg text-foreground [@media_(max-width:_600px)]:pt-4 [@media_(max-width:_600px)]:pr-4 [@media_(max-width:_600px)]:pb-4 [@media_(max-width:_600px)]:pl-4">
+        <section className="w-[min(100%,420px)] max-w-105 border border-line bg-panel pt-8 pr-8 pb-8 pl-8 sm:p-8 shadow-(--shadow) [@media_(max-width:_600px)]:pt-6.5 [@media_(max-width:_600px)]:pr-5.5 [@media_(max-width:_600px)]:pb-6.5 [@media_(max-width:_600px)]:pl-5.5">
+          <div
+            className="mb-6 flex items-center gap-2.5 text-[18px]"
+            data-onboarding-brand=""
+          >
+            <img
+              className="block w-5 h-5 object-contain"
+              data-brand-mark=""
+              src="/hoja-clover.8371400e.svg"
+              alt=""
+            />
+            <span>Hoja</span>
+          </div>
+          <h1 className="mb-1.5 text-[22px] font-semibold leading-[1.3] tracking-[-0.02em] ">
+            You're in{accepted.name ? `, ${accepted.name}` : ""}.
+          </h1>
+          <p className="mb-6 text-muted leading-normal">
+            Your invitation is accepted and this account is now a member.
+          </p>
+          <button
+            className="inline-flex min-h-11 items-center justify-center gap-1.75 rounded-none bg-accent pl-3.5 pr-3.5 pt-2.25 pb-2.25 text-white font-[650] shadow-[none] transition-colors duration-150 ease-out hover:brightness-110 hover:transition-none active:translate-y-px disabled:cursor-wait disabled:opacity-65 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 w-full mt-4.5 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[0.65]"
+            data-control-primary=""
+            onClick={onDone}
+          >
+            Open my workspace →
+          </button>
+        </section>
+      </main>
+    );
+  if (mode === "checking")
+    return (
+      <main className="min-h-dvh grid place-items-center pt-6 pr-6 pb-6 pl-6 sm:p-6 bg-bg text-foreground [@media_(max-width:_600px)]:pt-4 [@media_(max-width:_600px)]:pr-4 [@media_(max-width:_600px)]:pb-4 [@media_(max-width:_600px)]:pl-4">
+        <section className="w-[min(100%,420px)] max-w-105 border border-line bg-panel pt-8 pr-8 pb-8 pl-8 sm:p-8 shadow-(--shadow) [@media_(max-width:_600px)]:pt-6.5 [@media_(max-width:_600px)]:pr-5.5 [@media_(max-width:_600px)]:pb-6.5 [@media_(max-width:_600px)]:pl-5.5">
+          <p className="mb-6 text-muted leading-normal" role="status">
+            Checking your invitation…
+          </p>
+        </section>
+      </main>
+    );
+  if (mode === "failed")
+    return (
+      <main className="min-h-dvh grid place-items-center pt-6 pr-6 pb-6 pl-6 sm:p-6 bg-bg text-foreground [@media_(max-width:_600px)]:pt-4 [@media_(max-width:_600px)]:pr-4 [@media_(max-width:_600px)]:pb-4 [@media_(max-width:_600px)]:pl-4">
+        <section className="w-[min(100%,420px)] max-w-105 border border-line bg-panel pt-8 pr-8 pb-8 pl-8 sm:p-8 shadow-(--shadow) [@media_(max-width:_600px)]:pt-6.5 [@media_(max-width:_600px)]:pr-5.5 [@media_(max-width:_600px)]:pb-6.5 [@media_(max-width:_600px)]:pl-5.5">
+          <div
+            className="mb-6 flex items-center gap-2.5 text-[18px]"
+            data-onboarding-brand=""
+          >
+            <img
+              className="block w-5 h-5 object-contain"
+              data-brand-mark=""
+              src="/hoja-clover.8371400e.svg"
+              alt=""
+            />
+            <span>Hoja</span>
+          </div>
+          <h1 className="mb-1.5 text-[22px] font-semibold leading-[1.3] tracking-[-0.02em] ">
+            We couldn't accept this invitation.
+          </h1>
+          {error && (
+            <p
+              role="alert"
+              className="mb-3 text-danger leading-normal block mt-3 mr-0 ml-0 max-w-72 text-xs "
+            >
+              {error}
+            </p>
+          )}
+          <p
+            className="text-muted text-[11px] text-center mt-5 mr-0 mb-0 ml-0 leading-normal"
+            data-login-help=""
+          >
+            The code may have expired or been replaced by a newer invitation.
+            Ask a workspace admin to resend it.
+          </p>
+          <a
+            className="w-full focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+            href="/signin/signout"
+          >
+            Use a different account
+          </a>
+        </section>
+      </main>
+    );
+  if (mode === "google")
+    return (
+      <main className="min-h-dvh grid place-items-center pt-6 pr-6 pb-6 pl-6 sm:p-6 bg-bg text-foreground [@media_(max-width:_600px)]:pt-4 [@media_(max-width:_600px)]:pr-4 [@media_(max-width:_600px)]:pb-4 [@media_(max-width:_600px)]:pl-4">
+        <section className="w-[min(100%,420px)] max-w-105 border border-line bg-panel pt-8 pr-8 pb-8 pl-8 sm:p-8 shadow-(--shadow) [@media_(max-width:_600px)]:pt-6.5 [@media_(max-width:_600px)]:pr-5.5 [@media_(max-width:_600px)]:pb-6.5 [@media_(max-width:_600px)]:pl-5.5">
+          <div
+            className="mb-6 flex items-center gap-2.5 text-[18px]"
+            data-onboarding-brand=""
+          >
+            <img
+              className="block w-5 h-5 object-contain"
+              data-brand-mark=""
+              src="/hoja-clover.8371400e.svg"
+              alt=""
+            />
+            <span>Hoja</span>
+          </div>
+          <h1 className="mb-1.5 text-[22px] font-semibold leading-[1.3] tracking-[-0.02em] ">
+            Join your team.
+          </h1>
+          <p className="mb-6 text-muted leading-normal">
+            Sign in with the Google account this invitation was sent to, and
+            we'll add you to the workspace.
+          </p>
+          <button
+            className="inline-flex min-h-11 items-center justify-center gap-1.75 rounded-none bg-accent pl-3.5 pr-3.5 pt-2.25 pb-2.25 text-white font-[650] shadow-[none] transition-colors duration-150 ease-out hover:brightness-110 hover:transition-none active:translate-y-px disabled:cursor-wait disabled:opacity-65 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 w-full mt-4.5 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[0.65]"
+            data-control-primary=""
+            disabled={busy}
+            onClick={() => location.assign(googleUrl)}
+          >
+            {busy ? "Joining…" : "Continue with Google →"}
+          </button>
+          {error && (
+            <p
+              role="alert"
+              className="mb-3 text-danger leading-normal block mt-3 mr-0 ml-0 max-w-72 text-xs "
+            >
+              {error}
+            </p>
+          )}
+          <p
+            className="text-muted text-[11px] text-center mt-5 mr-0 mb-0 ml-0 leading-normal"
+            data-login-help=""
+          >
+            The link works once and expires in 72 hours.
+          </p>
+        </section>
+      </main>
+    );
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await accept({ code, email, password });
+  };
+  return (
+    <main className="min-h-dvh grid place-items-center pt-6 pr-6 pb-6 pl-6 sm:p-6 bg-bg text-foreground [@media_(max-width:_600px)]:pt-4 [@media_(max-width:_600px)]:pr-4 [@media_(max-width:_600px)]:pb-4 [@media_(max-width:_600px)]:pl-4">
+      <section className="w-[min(100%,420px)] max-w-105 border border-line bg-panel pt-8 pr-8 pb-8 pl-8 sm:p-8 shadow-(--shadow) [@media_(max-width:_600px)]:pt-6.5 [@media_(max-width:_600px)]:pr-5.5 [@media_(max-width:_600px)]:pb-6.5 [@media_(max-width:_600px)]:pl-5.5">
+        <div
+          className="mb-6 flex items-center gap-2.5 text-[18px]"
+          data-onboarding-brand=""
+        >
+          <img
+            className="block w-5 h-5 object-contain"
+            data-brand-mark=""
+            src="/hoja-clover.8371400e.svg"
+            alt=""
+          />
+          <span>Hoja</span>
+        </div>
+        <h1 className="mb-1.5 text-[22px] font-semibold leading-[1.3] tracking-[-0.02em] ">
+          Join your team.
+        </h1>
+        <p className="mb-6 text-muted leading-normal">
+          Enter the email address this invitation was sent to and choose a
+          password.
+        </p>
+        <form onSubmit={submit}>
+          <label className="mt-3.5 block text-[12px] font-semibold">
+            Invite code
+            <input
+              className="border mt-1.75 mb-3.5 block w-full border-line bg-bg pt-2.5 pr-2.5 pb-2.5 pl-2.5 text-foreground focus:outline-2 focus:outline-accent focus:outline-offset-2 max-md:text-base placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              aria-label="Invite code"
+              value={code}
+              readOnly
+            />
+          </label>
+          <label className="mt-3.5 block text-[12px] font-semibold">
+            Your email
+            <input
+              className="border mt-1.75 mb-3.5 block w-full border-line bg-bg pt-2.5 pr-2.5 pb-2.5 pl-2.5 text-foreground focus:outline-2 focus:outline-accent focus:outline-offset-2 max-md:text-base placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              type="email"
+              required
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </label>
+          <label className="mt-3.5 block text-[12px] font-semibold">
+            Create a password
+            <input
+              className="border mt-1.75 mb-3.5 block w-full border-line bg-bg pt-2.5 pr-2.5 pb-2.5 pl-2.5 text-foreground focus:outline-2 focus:outline-accent focus:outline-offset-2 max-md:text-base placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              type="password"
+              required
+              minLength={12}
+              autoComplete="new-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="At least 12 characters"
+            />
+          </label>
+          <button
+            className="inline-flex min-h-11 items-center justify-center gap-1.75 rounded-none bg-accent pl-3.5 pr-3.5 pt-2.25 pb-2.25 text-white font-[650] shadow-[none] transition-colors duration-150 ease-out hover:brightness-110 hover:transition-none active:translate-y-px disabled:cursor-wait disabled:opacity-65 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 w-full mt-4.5 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[0.65]"
+            data-control-primary=""
+            disabled={busy}
+          >
+            {busy ? "Joining…" : "Accept invitation →"}
+          </button>
+        </form>
+        {error && (
+          <p
+            role="alert"
+            className="mb-3 text-danger leading-normal block mt-3 mr-0 ml-0 max-w-72 text-xs "
+          >
+            {error}
+          </p>
+        )}
+        <p
+          className="text-muted text-[11px] text-center mt-5 mr-0 mb-0 ml-0 leading-normal"
+          data-login-help=""
+        >
+          Invite codes expire and can only be used once.
+        </p>
+      </section>
+    </main>
+  );
+}
+type Workspace = { organizationId: string; name: string; urlKey: string };
+type PendingWorkspace = {
+  email: string;
+  password: string;
+  workspaces: Workspace[];
+};
+function WorkspaceChooser({
+  pending,
+  onLogin,
+  onBack,
+}: {
+  pending: PendingWorkspace;
+  onLogin: () => void;
+  onBack: () => void;
+}) {
+  const [organizationId, setOrganizationId] = useState(
+    pending.workspaces[0]?.organizationId || "",
+  );
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const open = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const r = await fetch("/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          email: pending.email,
+          password: pending.password,
+          organizationId,
+        }),
+      });
+      const b = await r.json();
+      if (!r.ok) throw Error(b.error || "Could not open this workspace");
+      if (b.redirectUrl) {
+        window.location.assign(b.redirectUrl);
+        return;
+      }
+      onLogin();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div
+      className="min-h-dvh grid place-items-center pt-6 pr-6 pb-6 pl-6 bg-bg max-md:pt-6 max-md:pr-6 max-md:pb-6 max-md:pl-6 [@media_(max-width:750px)]:pt-6 [@media_(max-width:750px)]:pr-6 [@media_(max-width:750px)]:pb-6 [@media_(max-width:750px)]:pl-6 max-sm:p-4!"
+      data-login-page=""
+    >
+      <div
+        className="min-w-0 border shadow-(--shadow) pt-8 pr-8 pb-8 pl-8 max-sm:pt-6.5 max-sm:pr-5.5 max-sm:pb-6.5 max-sm:pl-5.5 border-line rounded-none bg-panel max-md:mt-auto max-md:mr-auto max-md:mb-auto max-md:ml-auto max-md:w-full w-[min(100%,420px)] max-w-105 [@media_(max-width:750px)]:mt-auto [@media_(max-width:750px)]:mr-auto [@media_(max-width:750px)]:mb-auto [@media_(max-width:750px)]:ml-auto [@media_(max-width:750px)]:w-full"
+        data-login-card=""
+      >
+        <div
+          className="flex items-center justify-start gap-2.5 mb-6 text-[18px]"
+          data-login-brand=""
+        >
+          <img
+            className="block w-5 h-5 object-contain rounded-none"
+            data-brand-mark=""
+            src="/hoja-clover.8371400e.svg"
+            alt=""
+          />
+          <b>Hoja</b>
+        </div>
+        <div data-login-card-head="">
+          <p className="text-muted mt-0 mr-0 mb-6 ml-0">Step 2 of 2</p>
+          <h2 className="text-[22px] mt-0 mr-0 mb-1.5 ml-0">
+            Choose workspace
+          </h2>
+          <p className="text-muted mt-0 mr-0 mb-6 ml-0 wrap-anywhere">
+            Select the workspace to open for {pending.email}.
+          </p>
+        </div>
+        <form onSubmit={open}>
+          <label
+            className="block mt-3.5 text-[12px] font-semibold"
+            htmlFor="organization"
+          >
+            Workspace
+          </label>
+          <select
+            className="w-full mt-1.75 mr-0 mb-3.5 ml-0 pt-2.5 pr-2.5 pb-2.5 pl-2.5 border border-line rounded-none bg-bg text-foreground max-md:text-base focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+            id="organization"
+            value={organizationId}
+            onChange={(e) => setOrganizationId(e.target.value)}
+            required
+          >
+            {pending.workspaces.map((w) => (
+              <option key={w.organizationId} value={w.organizationId}>
+                {w.name} ({w.urlKey})
+              </option>
+            ))}
+          </select>
+          <button
+            className="inline-flex min-h-11 items-center justify-center gap-1.75 rounded-none bg-accent pl-3.5 pr-3.5 pt-2.25 pb-2.25 text-white font-[650] shadow-[none] transition-colors duration-150 ease-out hover:brightness-110 hover:transition-none active:translate-y-px disabled:cursor-wait disabled:opacity-65 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 w-full relative mt-4.5 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.65]"
+            data-control-primary=""
+            disabled={busy || !organizationId}
+          >
+            {busy ? "Opening…" : "Open workspace"}{" "}
+            <span className="absolute right-3.5 ml-0">→</span>
+          </button>
+          <button
+            type="button"
+            className="mt-2.5 block bg-panel text-[12px] text-muted hover:bg-accent-soft hover:text-accent disabled:opacity-50 rounded-none min-h-11 w-full mr-0 mb-0 ml-0 border border-line font-[550] hover:border-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+            onClick={onBack}
+          >
+            Back to sign in
+          </button>
+        </form>
+        {error && (
+          <small
+            className="block text-danger mt-3 mr-0 mb-3 ml-0 max-w-72 text-xs "
+            role="alert"
+          >
+            {error}
+          </small>
+        )}
+      </div>
+    </div>
+  );
+}
+function Login({
+  onLogin,
+  error,
+  onWorkspaceRequired,
+}: {
+  onLogin: (t: string) => void;
+  error: string;
+  onWorkspaceRequired: (p: PendingWorkspace) => void;
+}) {
+  const [t, setT] = useState("");
+  const [show, setShow] = useState(false);
+  const [email, setEmail] = useState("");
+  const [apiKeyInput, setApiKeyInput] = useState("");
+  const [password, setPassword] = useState("");
+  const [credentialMode, setCredentialMode] = useState<"email" | "apiKey">(
+    "email",
+  );
+  const [mode, setMode] = useState<"login" | "setup">("login");
+  const [authError, setAuthError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [googleUrl, setGoogleUrl] = useState("");
+  const [credentialSignIn, setCredentialSignIn] = useState(true);
+  useEffect(() => {
+    let live = true;
+    fetch("/api/signup/config")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((c) => {
+        if (live && c?.hosted) {
+          const entry =
+            typeof c?.loginUrl === "string" && c.loginUrl
+              ? c.loginUrl
+              : c?.signInUrl || "";
+          setGoogleUrl(entry);
+          setCredentialSignIn(c?.credentialSignIn !== false);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
+  const login = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setAuthError("");
+    try {
+      const apiKey =
+        credentialMode === "apiKey" ? apiKeyInput.trim() : undefined;
+      const r = await fetch("/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(apiKey ? { apiKey } : { email, password }),
+      });
+      const b = await r.json();
+      if (r.status === 409) {
+        const wr = await fetch("/auth/workspaces", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ email, password }),
+        });
+        const wb = await wr.json();
+        onWorkspaceRequired({
+          email,
+          password,
+          workspaces: wb.workspaces || [],
+        });
+        return;
+      }
+      if (!r.ok) throw Error(b.error || "Sign in failed");
+      if (b.redirectUrl) {
+        // An enterprise workspace is opened on its own address.
+        window.location.assign(b.redirectUrl);
+        return;
+      }
+      onLogin("session");
+    } catch (err) {
+      setAuthError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const setup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setAuthError("");
+    try {
+      const r = await fetch("/auth/setup", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: t, password, email }),
+      });
+      const b = await r.json();
+      if (!r.ok) throw Error(b.error || "Password setup failed");
+      setMode("login");
+      setAuthError("Password set. Sign in with your email and password.");
+    } catch (err) {
+      setAuthError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div
+      className="min-w-0 min-h-dvh grid place-items-center pt-6 pr-6 pb-6 pl-6 bg-bg max-md:pt-6 max-md:pr-6 max-md:pb-6 max-md:pl-6 [@media_(max-width:750px)]:pt-6 [@media_(max-width:750px)]:pr-6 [@media_(max-width:750px)]:pb-6 [@media_(max-width:750px)]:pl-6 max-sm:p-4!"
+      data-login-page=""
+    >
+      <div
+        className="min-w-0 [&_form>input]:min-w-0 [&_form>select]:min-w-0 border shadow-(--shadow) pt-8 pr-8 pb-8 pl-8 max-sm:pt-6.5 max-sm:pr-5.5 max-sm:pb-6.5 max-sm:pl-5.5 border-line rounded-none bg-panel max-md:mt-auto max-md:mr-auto max-md:mb-auto max-md:ml-auto max-md:w-full w-[min(100%,420px)] max-w-105 [@media_(max-width:750px)]:mt-auto [@media_(max-width:750px)]:mr-auto [@media_(max-width:750px)]:mb-auto [@media_(max-width:750px)]:ml-auto [@media_(max-width:750px)]:w-full"
+        data-login-card=""
+      >
+        <div
+          className="flex items-center justify-start gap-2.5 mb-6 text-[18px]"
+          data-login-brand=""
+        >
+          <img
+            className="block w-5 h-5 object-contain rounded-none"
+            data-brand-mark=""
+            src="/hoja-clover.8371400e.svg"
+            alt=""
+          />
+          <b>Hoja</b>
+        </div>
+        <div data-login-card-head="">
+          <h2 className="text-[22px] mt-0 mr-0 mb-1.5 ml-0">
+            {mode === "setup" ? "Set up a password" : "Welcome back"}
+          </h2>
+          <p className="text-muted mt-0 mr-0 mb-6 ml-0">
+            {mode === "setup"
+              ? "Use an existing workspace API key to set a password for your email."
+              : "Sign in with your email or API key."}
+          </p>
+        </div>
+        {mode === "login" && googleUrl && (
+          <a
+            data-login-google=""
+            href={googleUrl}
+            className="flex items-center justify-center min-h-11 mb-4.5 border border-line bg-panel text-[13px] font-semibold no-underline text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 hover:bg-accent-soft hover:text-accent"
+          >
+            Continue with Google
+          </a>
+        )}
+        {mode === "login" && !credentialSignIn ? (
+          <p
+            className="text-muted text-[11px] text-center mt-5 mr-0 mb-0 ml-0"
+            data-login-help=""
+          >
+            This workspace uses Google sign-in. Continue with the Google account
+            your workspace knows.
+          </p>
+        ) : mode === "login" ? (
+          <form onSubmit={login}>
+            <div
+              className="border grid gap-0 mt-0 mr-0 mb-5.5 ml-0 border-line [&_button+button]:border-l [&_button+button]:border-line grid-cols-2 [&>button+button]:border-l [&>button+button]:border-line"
+              data-credential-modes=""
+              role="group"
+              aria-label="Sign-in method"
+            >
+              <button
+                type="button"
+                aria-pressed={credentialMode === "email"}
+                className=" rounded-none min-h-10.5 bg-panel text-muted font-semibold focus-visible:relative aria-pressed:bg-accent-soft aria-pressed:text-foreground aria-pressed:shadow-[inset_0_-2px_0_var(--accent)] border-line not-first:border-l focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                onClick={() => {
+                  setCredentialMode("email");
+                  setAuthError("");
+                }}
+              >
+                Email
+              </button>
+              <button
+                type="button"
+                aria-pressed={credentialMode === "apiKey"}
+                className=" rounded-none min-h-10.5 bg-panel text-muted font-semibold focus-visible:relative aria-pressed:bg-accent-soft aria-pressed:text-foreground aria-pressed:shadow-[inset_0_-2px_0_var(--accent)] border-line not-first:border-l focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                onClick={() => {
+                  setCredentialMode("apiKey");
+                  setAuthError("");
+                  setPassword("");
+                }}
+              >
+                API key
+              </button>
+            </div>
+            <label
+              className="block mt-3.5 text-[12px] font-semibold"
+              htmlFor="email"
+            >
+              {credentialMode === "email" ? "Email" : "API key"}
+            </label>
+            <input
+              className="w-full mt-1.75 mr-0 mb-3.5 ml-0 pt-2.5 pr-2.5 pb-2.5 pl-2.5 border border-line rounded-none bg-bg text-foreground max-md:text-base placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              id="email"
+              type={credentialMode === "email" ? "email" : "password"}
+              value={credentialMode === "email" ? email : apiKeyInput}
+              onChange={(e) =>
+                credentialMode === "email"
+                  ? setEmail(e.target.value)
+                  : setApiKeyInput(e.target.value)
+              }
+              autoComplete={credentialMode === "email" ? "username" : "off"}
+              placeholder={
+                credentialMode === "email" ? "you@example.com" : "hoja_…"
+              }
+              required
+            />
+            {credentialMode === "email" && (
+              <>
+                <label
+                  className="block mt-3.5 text-[12px] font-semibold"
+                  htmlFor="password"
+                >
+                  Password
+                </label>
+                <div
+                  className="flex items-center border border-line rounded-none bg-bg mt-1.75"
+                  data-password-field=""
+                >
+                  <input
+                    className="flex-1 min-w-0 border-0 bg-transparent text-foreground pt-2.5 pr-2.5 pb-2.5 pl-2.5 max-md:text-base outline-none placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                    id="password"
+                    type={show ? "text" : "password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    autoComplete="current-password"
+                    required
+                  />
+                  <button
+                    className="bg-transparent text-muted pt-2 pr-2 pb-2 pl-2 text-[12px] rounded-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                    type="button"
+                    onClick={() => setShow(!show)}
+                  >
+                    {show ? "Hide" : "Show"}
+                  </button>
+                </div>
+              </>
+            )}
+            <button
+              className="inline-flex min-h-11 items-center justify-center gap-1.75 rounded-none bg-accent pl-3.5 pr-3.5 pt-2.25 pb-2.25 text-white font-[650] shadow-[none] transition-colors duration-150 ease-out hover:brightness-110 hover:transition-none active:translate-y-px disabled:cursor-wait disabled:opacity-65 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 w-full relative mt-4.5 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.65]"
+              data-control-primary=""
+              disabled={busy}
+            >
+              {busy ? "Signing in…" : "Continue"}{" "}
+              <span className="absolute right-3.5 ml-0">→</span>
+            </button>
+            <button
+              type="button"
+              className="mt-3 block w-full bg-transparent py-2 text-center text-xs text-muted underline underline-offset-2 hover:text-foreground disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11"
+              onClick={() => {
+                setMode("setup");
+                setAuthError("");
+              }}
+            >
+              Set up password using an API key
+            </button>
+          </form>
+        ) : (
+          <form onSubmit={setup}>
+            <label
+              className="block mt-3.5 text-[12px] font-semibold"
+              htmlFor="setup-token"
+            >
+              Existing workspace API key
+            </label>
+            <input
+              className="w-full mt-1.75 mr-0 mb-3.5 ml-0 pt-2.5 pr-2.5 pb-2.5 pl-2.5 border border-line rounded-none bg-bg text-foreground max-md:text-base placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              id="setup-token"
+              type="password"
+              value={t}
+              onChange={(e) => setT(e.target.value)}
+              placeholder="hoja_..."
+              required
+            />
+            <label
+              className="block mt-3.5 text-[12px] font-semibold"
+              htmlFor="setup-email"
+            >
+              Email
+            </label>
+            <input
+              className="w-full mt-1.75 mr-0 mb-3.5 ml-0 pt-2.5 pr-2.5 pb-2.5 pl-2.5 border border-line rounded-none bg-bg text-foreground max-md:text-base placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              id="setup-email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+            <label
+              className="block mt-3.5 text-[12px] font-semibold"
+              htmlFor="setup-password"
+            >
+              Create password (12+ characters)
+            </label>
+            <input
+              className="w-full mt-1.75 mr-0 mb-3.5 ml-0 pt-2.5 pr-2.5 pb-2.5 pl-2.5 border border-line rounded-none bg-bg text-foreground max-md:text-base placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              id="setup-password"
+              type="password"
+              minLength={12}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+            <button
+              className="inline-flex min-h-11 items-center justify-center gap-1.75 rounded-none bg-accent pl-3.5 pr-3.5 pt-2.25 pb-2.25 text-white font-[650] shadow-[none] transition-colors duration-150 ease-out hover:brightness-110 hover:transition-none active:translate-y-px disabled:cursor-wait disabled:opacity-65 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 w-full relative mt-4.5 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.65]"
+              data-control-primary=""
+              disabled={busy}
+            >
+              Set password
+            </button>
+            <button
+              type="button"
+              className="mt-2.5 block bg-panel text-[12px] text-muted hover:bg-accent-soft hover:text-accent disabled:opacity-50 rounded-none min-h-11 w-full mr-0 mb-0 ml-0 border border-line font-[550] hover:border-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+              onClick={() => setMode("login")}
+            >
+              Back to sign in
+            </button>
+          </form>
+        )}
+        {(authError || error) && (
+          <small
+            className="block text-danger mt-3 mr-0 mb-3 ml-0 max-w-72 text-xs "
+            role="alert"
+          >
+            {authError || error}
+          </small>
+        )}
+        <p
+          className="mt-5 mb-0 text-center text-xs text-muted"
+          data-login-help=""
+        >
+          New to Hoja?{" "}
+          <a
+            href="/signup"
+            className="font-medium text-foreground underline underline-offset-2 shell-phone:inline-flex shell-phone:min-h-11 shell-phone:items-center pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
+          >
+            Request a workspace
+          </a>
+        </p>
+      </div>
+    </div>
+  );
+}
+function IssueDrawer({
+  issue,
+  teams,
+  projects,
+  labels,
+  onClose,
+  onUpdated,
+}: {
+  issue: Issue;
+  teams: Team[];
+  projects: Project[];
+  labels: { id: string; name: string; color?: string }[];
+  onClose: () => void;
+  onUpdated: (issue: Issue) => void;
+}) {
+  const live = useIssueSelect(issue.id);
+  const [loaded, setLoaded] = useState<Issue>(() => ({
+    ...issue,
+    ...(cachedIssueDetail(issue.id)?.detail as Issue | undefined),
+  }));
+  const [local, setLocal] = useState<Partial<Issue>>({});
+  const detail: Issue = {
+    ...loaded,
+    ...(live
+      ? {
+          title: live.title,
+          priority: live.priority,
+          priorityLabel: live.priorityLabel,
+          state: live.state,
+          team: live.team,
+          project: live.project,
+          assignee: live.assignee,
+        }
+      : {}),
+    ...local,
+  };
+  const [body, setBody] = useState("");
+  const [pending, setPending] = useState<Comment[]>([]);
+  const [error, setError] = useState("");
+  /* eslint-disable react-hooks/exhaustive-deps -- route or session driven; the listed values are written by this effect or are recreated each render */
+  useEffect(() => {
+    fetchIssueDetail(issue.identifier || issue.id, issue.id)
+      .then((e) => {
+        setLoaded((old) => ({ ...old, ...(e.detail as Issue) }));
+        onUpdated(e.detail as Issue);
+      })
+      .catch((e) => setError(e.message));
+  }, [issue.id]);
+  /* eslint-enable react-hooks/exhaustive-deps */
+  const update = async (input: Record<string, unknown>) => {
+    setError("");
+    const sync = getSync();
+    const optimistic: Partial<Issue> = sync ? sync.patchFromInput(input) : {};
+    if (Object.prototype.hasOwnProperty.call(input, "description"))
+      optimistic.description = (input.description as string) || undefined;
+    const settle = sync?.patch(detail.id, optimistic);
+    setLocal((l) => ({ ...l, ...optimistic }));
+    try {
+      const d = await gql(
+        `mutation($id:String!,$input:IssueUpdateInput!){issueUpdate(id:$id,input:$input){success issue{id identifier title description priority priorityLabel state{id name color type} team{id key name} project{id name} assignee{id name avatarSeed} comments{nodes{id body createdAt user{name avatarSeed}}}}}}`,
+        { id: detail.id, input },
+      );
+      if (!d.issueUpdate.success) throw Error("Update was rejected");
+      settle?.(true);
+      setLoaded(d.issueUpdate.issue);
+      onUpdated(d.issueUpdate.issue);
+    } catch (e) {
+      settle?.(false);
+      setError((e as Error).message);
+    } finally {
+      setLocal((l) => {
+        const n = { ...l };
+        for (const k of Object.keys(optimistic))
+          delete (n as Record<string, unknown>)[k];
+        return n;
+      });
+    }
+  };
+  const comment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const text = body.trim();
+    if (!text) return;
+    const temp: Comment = {
+      id: `local-comment-${Date.now()}`,
+      body: text,
+      createdAt: "Sending…",
+      user: { name: "You" },
+    };
+    setPending((p) => [...p, temp]);
+    setBody("");
+    setError("");
+    try {
+      const d = await gql(
+        `mutation($input:CommentCreateInput!){commentCreate(input:$input){success comment{id body createdAt user{name avatarSeed}}}}`,
+        { input: { issueId: detail.id, body: text } },
+      );
+      if (!d.commentCreate.success) throw Error("Comment was rejected");
+      setLoaded((old) => ({
+        ...old,
+        comments: {
+          nodes: [...(old.comments?.nodes || []), d.commentCreate.comment],
+        },
+      }));
+    } catch (e) {
+      setBody((b) => b || text);
+      setError((e as Error).message);
+    } finally {
+      setPending((p) => p.filter((x) => x !== temp));
+    }
+  };
+  const toggleLabel = async (labelId: string) => {
+    const current = labels
+      .filter((l) => (detail as any).labelIds?.includes(l.id))
+      .map((l) => l.id);
+    const next = current.includes(labelId)
+      ? current.filter((id) => id !== labelId)
+      : [...current, labelId];
+    await update({ labelIds: next });
+  };
+  const [draft, setDraft] = useState<string | null>(null);
+  return (
+    <div
+      className="fixed inset-0 z-10 bg-[#0008]"
+      data-drawer-backdrop=""
+      role="presentation"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <aside className="drawer shadow-(--shadow) absolute right-0 top-0 h-full pt-6 pr-6 pb-6 pl-6 bg-panel w-[min(500px,100%)] animate-[slide_.2s_ease]">
+        <div className="flex items-start justify-between" data-drawer-head="">
+          <span className="text-muted text-[13px]">{detail.identifier}</span>
+          <button
+            className="grid w-8 h-8 place-items-center rounded-md bg-transparent hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+            onClick={onClose}
+          >
+            <X size={18} />
+          </button>
+        </div>
+        <h2 className="text-[24px] leading-[1.2] mt-8 mr-0 mb-4 ml-0">
+          {detail.title}
+        </h2>
+        <textarea
+          className="border w-full min-h-27.5 mt-1 mr-0 mb-5 ml-0 pt-2.5 pr-2.5 pb-2.5 pl-2.5 border-line rounded-md bg-bg text-foreground resize-y max-md:text-base placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+          value={draft ?? detail.description ?? ""}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="Add description..."
+        />
+        <button
+          onClick={() => {
+            const text = draft ?? detail.description ?? "";
+            setDraft(null);
+            void update({ description: text });
+          }}
+          disabled={draft === null}
+          className="focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+        >
+          Save description
+        </button>
+        <div
+          className="border-t border-line grid pt-5 grid-cols-[1fr_2fr] gap-x-3 gap-y-3.5"
+          data-detail-grid=""
+        >
+          <span className="text-muted">Status</span>
+          <select
+            className="pt-1.25 pr-1.25 pb-1.25 pl-1.25 text-[12px] max-md:text-base border border-line rounded-md bg-panel text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+            value={detail.state?.id || ""}
+            onChange={(e) => update({ stateId: e.target.value })}
+          >
+            <option value="">No state</option>
+            {teams
+              .find((t) => t.id === detail.team?.id)
+              ?.states.nodes.map((st) => (
+                <option key={st.id} value={st.id}>
+                  {st.name}
+                </option>
+              ))}
+          </select>
+          <span className="text-muted">Priority</span>
+          <select
+            className="pt-1.25 pr-1.25 pb-1.25 pl-1.25 text-[12px] max-md:text-base border border-line rounded-md bg-panel text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+            value={detail.priority || 0}
+            onChange={(e) => update({ priority: Number(e.target.value) })}
+          >
+            <option value="0">No priority</option>
+            <option value="1">Urgent</option>
+            <option value="2">High</option>
+            <option value="3">Medium</option>
+            <option value="4">Low</option>
+          </select>
+          <span className="text-muted">Team</span>
+          <select
+            className="pt-1.25 pr-1.25 pb-1.25 pl-1.25 text-[12px] max-md:text-base border border-line rounded-md bg-panel text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+            value={detail.team?.id || ""}
+            onChange={(e) => update({ teamId: e.target.value })}
+          >
+            <option value="">No team</option>
+            {teams.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+          <span className="text-muted">Assignee</span>
+          <select
+            className="pt-1.25 pr-1.25 pb-1.25 pl-1.25 text-[12px] max-md:text-base border border-line rounded-md bg-panel text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+            value={detail.assignee?.id || ""}
+            onChange={(e) => update({ assigneeId: e.target.value || null })}
+          >
+            <option value="">Unassigned</option>
+            {(
+              teams.find((t) => t.id === detail.team?.id)?.members?.nodes || []
+            ).map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name || m.email}
+              </option>
+            ))}
+          </select>
+          <span className="text-muted">Project</span>
+          <select
+            className="pt-1.25 pr-1.25 pb-1.25 pl-1.25 text-[12px] max-md:text-base border border-line rounded-md bg-panel text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+            value={detail.project?.id || ""}
+            onChange={(e) => update({ projectId: e.target.value || null })}
+          >
+            <option value="">No project</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <b>Labels</b>
+          {labels.map((l) => (
+            <label key={l.id}>
+              <input
+                className="max-md:text-base placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:text-[16px]"
+                type="checkbox"
+                checked={Boolean((detail as any).labelIds?.includes(l.id))}
+                onChange={() => toggleLabel(l.id)}
+              />
+              {l.name}
+            </label>
+          ))}
+        </div>
+        {error && (
+          <p
+            className="block text-danger mt-3 mr-0 mb-3 ml-0 max-w-72 text-xs "
+            role="alert"
+          >
+            {error}
+          </p>
+        )}
+        <div
+          className="border-t border-line mt-5.5 pt-4.5"
+          data-drawer-comments=""
+        >
+          <h3 className="text-[13px]">Comments</h3>
+          {!detail.comments && (
+            <p className="text-muted" data-control-muted="">
+              Loading comments…
+            </p>
+          )}
+          {detail.comments?.nodes.length === 0 && !pending.length && (
+            <p className="text-muted" data-control-muted="">
+              No comments yet.
+            </p>
+          )}
+          {[...(detail.comments?.nodes || []), ...pending].map((c) => (
+            <article
+              className="pt-2.5 pr-0 pb-2.5 pl-0 border-b border-line text-[12px]"
+              key={c.id}
+              aria-busy={c.id.startsWith("local-") || undefined}
+            >
+              <b>{c.user?.name || "User"}</b>
+              <time>{c.createdAt || ""}</time>
+              <Markdown text={c.body} />
+            </article>
+          ))}
+          <form className="grid gap-2 mt-3.5" onSubmit={comment}>
+            <textarea
+              className="w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 border border-line rounded-md bg-bg text-foreground resize-y max-md:text-base placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              placeholder="Leave a comment..."
+            />
+            <button
+              className="inline-flex min-h-11 items-center justify-center gap-1.75 rounded-none bg-accent pl-3.5 pr-3.5 pt-2.25 pb-2.25 text-white font-[650] shadow-[none] transition-colors duration-150 ease-out hover:brightness-110 hover:transition-none active:translate-y-px disabled:cursor-wait disabled:opacity-65 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.65]"
+              data-control-primary=""
+              disabled={!body.trim()}
+            >
+              Comment
+            </button>
+          </form>
+        </div>
+      </aside>
+    </div>
+  );
+}
+function NewIssue({
+  teams,
+  onClose,
+  onCreated,
+  initialStateId,
+  initialTeamId,
+}: {
+  teams: Team[];
+  onClose: () => void;
+  onCreated: () => void;
+  initialStateId?: string;
+  initialTeamId?: string;
+}) {
+  const meta = useSyncMeta();
+  const mounted = useRef(true);
+  useEffect(
+    () => () => {
+      mounted.current = false;
+    },
+    [],
+  );
+  /* Dialog polish: a short exit animation before unmount (collapsed by reduced motion),
+   * focus kept inside the dialog while it is open, and focus returned to the trigger. */
+  const [closing, setClosing] = useState(false);
+  const closingRef = useRef(false);
+  const dialogRef = useRef<HTMLFormElement>(null);
+  /* Captured during render: by the time effects run, autoFocus has already moved focus into the title. */
+  const returnFocus = useRef<HTMLElement | null>(
+    typeof document !== "undefined" &&
+      document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null,
+  );
+  const requestClose = () => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+    setClosing(true);
+    const reduced =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    window.setTimeout(onClose, reduced ? 0 : 150);
+  };
+  useEffect(
+    () => () => {
+      const el = returnFocus.current;
+      if (el && document.contains(el)) el.focus();
+    },
+    [],
+  );
+  /* Lock the page behind the dialog without moving it: the gutter stays reserved. */
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.add("hoja-modal-open");
+    return () => root.classList.remove("hoja-modal-open");
+  }, []);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Tab") return;
+      const root = dialogRef.current;
+      if (!root) return;
+      const items = Array.from(
+        root.querySelectorAll<HTMLElement>(
+          'button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[href],[tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((el) => el.offsetParent !== null);
+      if (!items.length) return;
+      const first = items[0],
+        last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, []);
+  const [createMore, setCreateMore] = useState(false);
+  const [title, setTitle] = useState(""),
+    [description, setDescription] = useState(""),
+    [team, setTeam] = useState(
+      /* A column prefill names the status, so its team wins; otherwise the team the
+       * composer was opened from; otherwise the workspace default. */
+      teams.find(
+        (t) =>
+          Boolean(initialStateId) &&
+          t.states.nodes.some((s) => s.id === initialStateId),
+      )?.id ||
+        teams.find((t) => Boolean(initialTeamId) && t.id === initialTeamId)
+          ?.id ||
+        teams[0]?.id ||
+        "",
+    ),
+    [priority, setPriority] = useState("0"),
+    [stateId, setStateId] = useState(initialStateId || ""),
+    [assigneeId, setAssigneeId] = useState(""),
+    [projectId, setProjectId] = useState(""),
+    [cycleId, setCycleId] = useState(""),
+    [dueDate, setDueDate] = useState(""),
+    [labelIds, setLabelIds] = useState<string[]>([]),
+    [projects, setProjects] = useState<Project[]>(
+      () => meta?.projects.nodes || [],
+    ),
+    [cycles, setCycles] = useState<Cycle[]>(() => meta?.cycles.nodes || []),
+    [labels, setLabels] = useState<
+      { id: string; name: string; color?: string }[]
+    >(() => meta?.issueLabels.nodes || []),
+    [loadingOptions, setLoadingOptions] = useState(!meta),
+    [busy, setBusy] = useState(false),
+    [err, setErr] = useState("");
+  const selectedTeam = teams.find((t) => t.id === team);
+  const states = selectedTeam?.states.nodes || [];
+  const members = selectedTeam?.members?.nodes || [];
+  // The synced workspace metadata already carries projects, cycles and labels; only fetch them when sync is unavailable.
+  /* eslint-disable react-hooks/exhaustive-deps -- route or session driven; the listed values are written by this effect or are recreated each render */
+  useEffect(() => {
+    if (meta) return;
+    let live = true;
+    Promise.all([
+      gql(
+        `query Projects{projects(first:100){nodes{id name state teams{nodes{id name key}}}}}`,
+      ),
+      gql(
+        `query Cycles{cycles(first:100){nodes{id name number startsAt endsAt completedAt team{id name key}}}}`,
+      ),
+      gql(`query Labels{issueLabels(first:100){nodes{id name color}}}`),
+    ])
+      .then(([p, c, l]) => {
+        if (live) {
+          setProjects(p.projects.nodes);
+          setCycles(c.cycles.nodes);
+          setLabels(l.issueLabels.nodes);
+        }
+      })
+      .catch((e) => {
+        if (live)
+          setErr(`Could not load task options: ${(e as Error).message}`);
+      })
+      .finally(() => {
+        if (live) setLoadingOptions(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+  /* eslint-enable react-hooks/exhaustive-deps */
+  const resetForMore = () => {
+    setTitle("");
+    setDescription("");
+    setDueDate("");
+    setLabelIds([]);
+    setErr("");
+    requestAnimationFrame(() =>
+      document
+        .querySelector<HTMLInputElement>("[data-issue-create-title]")
+        ?.focus(),
+    );
+  };
+  /* Optimistic create: a placeholder issue appears in every list/board at once and the dialog closes;
+   * the server's row replaces it. A rejected create removes the placeholder and reports the error. */
+  const create = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (busy || !title.trim() || !team) return;
+    setErr("");
+    const input = {
+      title: title.trim(),
+      description: description.trim() || null,
+      teamId: team,
+      priority: Number(priority),
+      ...(stateId ? { stateId } : {}),
+      ...(assigneeId ? { assigneeId } : {}),
+      ...(projectId ? { projectId } : {}),
+      ...(cycleId ? { cycleId } : {}),
+      ...(dueDate ? { dueDate } : {}),
+      labelIds,
+    };
+    if (!getSync()) {
+      setBusy(true);
+      try {
+        const d = await gql(
+          `mutation($input:IssueCreateInput!){issueCreate(input:$input){success issue{id identifier title}}}`,
+          { input },
+        );
+        if (!d.issueCreate.success) throw Error("Could not create task");
+        void attachGithubReferences(d.issueCreate.issue.id, input.description);
+        if (createMore) resetForMore();
+        else onCreated();
+      } catch (e) {
+        setErr((e as Error).message);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+    const now = new Date().toISOString();
+    const viewer = meta?.viewer;
+    const member = members.find((m) => m.id === assigneeId);
+    const project = projects.find((p) => p.id === projectId);
+    const cycle = cycles.find((c) => c.id === cycleId);
+    const placeholder: Issue = {
+      id: localIssueId(),
+      identifier: guessNextIdentifier(selectedTeam?.key || "ISS"),
+      title: input.title,
+      description: input.description || undefined,
+      dueDate: dueDate || undefined,
+      createdAt: now,
+      updatedAt: now,
+      stateChangedAt: now,
+      priority: input.priority,
+      priorityLabel: ["No priority", "Urgent", "High", "Medium", "Low"][
+        input.priority
+      ],
+      state:
+        states.find((s) => s.id === stateId) || guessDefaultState(selectedTeam),
+      team: selectedTeam
+        ? {
+            id: selectedTeam.id,
+            key: selectedTeam.key,
+            name: selectedTeam.name,
+          }
+        : undefined,
+      assignee: member
+        ? { id: member.id, name: member.name || member.email || "" }
+        : undefined,
+      project: project ? { id: project.id, name: project.name } : undefined,
+      cycle: cycle
+        ? { id: cycle.id, name: cycle.name, number: cycle.number }
+        : undefined,
+      creator: viewer?.id ? { id: viewer.id, name: viewer.name } : undefined,
+      labels: { nodes: labels.filter((l) => labelIds.includes(l.id)) },
+      subscribers: { nodes: viewer?.id ? [{ id: viewer.id }] : [] },
+    };
+    const resolve = addLocalIssue(placeholder);
+    if (createMore) resetForMore();
+    else requestClose();
+    try {
+      const d = await gql(
+        `mutation($input:IssueCreateInput!){issueCreate(input:$input){success issue ${issueFields}}}`,
+        { input },
+      );
+      if (!d.issueCreate?.success || !d.issueCreate.issue)
+        throw Error("Could not create task");
+      void attachGithubReferences(d.issueCreate.issue.id, input.description);
+      resolve(d.issueCreate.issue);
+    } catch (e) {
+      resolve(null);
+      const msg = `Could not create “${input.title}”: ${(e as Error).message}`;
+      if (mounted.current) {
+        setErr(msg);
+        setTitle((t) => t || input.title);
+        setDescription((d) => d || input.description || "");
+      } else void alertDialog(msg);
+    }
+  };
+  return (
+    <div
+      className="fixed inset-0 z-10 shell-phone:z-50 flex items-start justify-center bg-[#0008] has-data-issue-create-modal:p-[clamp(60px,13vh,118px)_12px_12px] shell-phone:has-data-issue-create-modal:p-2! [&:has(>[data-issue-create-modal])]:animate-[issue-backdrop-in_var(--motion-overlay)_var(--ease-standard)_both] [&:has(>[data-issue-create-modal][data-is-closing])]:animate-[issue-backdrop-out_var(--motion-fast)_var(--ease-standard)_both] [@supports_(backdrop-filter:blur(2px))_or_(-webkit-backdrop-filter:blur(2px))]:[&:has(>[data-issue-create-modal])]:[background:rgba(9,9,11,.42)] [@supports_(backdrop-filter:blur(2px))_or_(-webkit-backdrop-filter:blur(2px))]:[&:has(>[data-issue-create-modal])]:[backdrop-filter:blur(2px)] [@supports_(backdrop-filter:blur(2px))_or_(-webkit-backdrop-filter:blur(2px))]:[&:has(>[data-issue-create-modal])]:[-webkit-backdrop-filter:blur(2px)]"
+      data-modal-backdrop=""
+    >
+      <form
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="New task"
+        aria-busy={busy || undefined}
+        className={
+          "relative flex w-[min(746px,calc(100vw-24px))] max-h-[calc(100dvh-140px)] flex-col overflow-auto overscroll-contain rounded-2xl border border-line bg-panel p-0 shadow-[0_14px_40px_#0003] font-['Inter_Variable',Inter,ui-sans-serif,system-ui,sans-serif] [&_[data-issue-property]_input[type=date]::-webkit-calendar-picker-indicator]:opacity-50 [&_[data-issue-property]_input[type=date]::-webkit-calendar-picker-indicator]:cursor-pointer max-md:[&_[data-issue-property]:hover_input[type=date]::-webkit-calendar-picker-indicator]:opacity-100" +
+          " animate-[issue-modal-in_var(--motion-overlay)_var(--ease-standard)_both] data-is-closing:animate-[issue-modal-out_var(--motion-fast)_var(--ease-standard)_both] motion-reduce:animate-none" +
+          " shell-phone:w-full shell-phone:max-h-[calc(100dvh-16px)]"
+        }
+        data-issue-create-modal=""
+        data-is-closing={closing ? "" : undefined}
+        onSubmit={create}
+      >
+        <div
+          className="sticky top-0 z-3 flex items-center gap-1.75 pt-2.25 pr-3.5 pb-2.25 pl-3.5 bg-panel h-11 border-line max-sm:pt-3 max-sm:pr-3.5 max-sm:pb-3 max-sm:pl-3.5 border-b-0 [@media_(max-width:560px)]:pt-3 [@media_(max-width:560px)]:pr-3.5 [@media_(max-width:560px)]:pb-3 [@media_(max-width:560px)]:pl-3.5"
+          data-issue-create-header=""
+        >
+          <div
+            className="grid place-items-center w-5.5 h-5.5 flex-none rounded-[50%] bg-accent-soft text-accent text-[9px] font-bold"
+            data-issue-create-team-mark=""
+          >
+            {selectedTeam?.key.slice(0, 2) || "IS"}
+          </div>
+          <div className="flex-1 min-w-0" data-issue-create-header-copy="">
+            <div
+              className="flex gap-1.5 text-foreground text-[12px]"
+              data-issue-create-breadcrumb=""
+            >
+              <span>{selectedTeam?.key || "Team"}</span>
+              <span>›</span>
+              <span>New task</span>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="grid w-8 h-8 place-items-center rounded-md bg-transparent hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+            aria-label="Close"
+            onClick={requestClose}
+          >
+            <X size={18} />
+          </button>
+        </div>
+        <div
+          className="pt-2.5 pr-4.5 pb-2 pl-4.5 max-sm:pt-2.5 max-sm:pr-3.5 max-sm:pb-2.5 max-sm:pl-3.5 overscroll-contain [@media_(max-width:560px)]:pt-3.25 [@media_(max-width:560px)]:pr-3.5 [@media_(max-width:560px)]:pb-4 [@media_(max-width:560px)]:pl-3.5 [@media_(max-width:600px)]:pt-2.5 [@media_(max-width:600px)]:pr-3.5 [@media_(max-width:600px)]:pb-2.5 [@media_(max-width:600px)]:pl-3.5"
+          data-issue-create-body=""
+        >
+          <input
+            className="w-full text-foreground bg-transparent border-0 text-[18px] font-[450] tracking-tight h-9 rounded-none resize-y max-sm:text-lg shadow-[none] focus-visible:rounded-none max-md:text-base placeholder:text-muted outline-none focus-visible:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 caret-accent selection:bg-accent/20 shell-phone:min-h-11 pointer-coarse:min-h-11 [@media_(max-width:560px)]:text-[18px] shell-phone:text-[16px] pointer-coarse:text-[16px] p-0"
+            data-issue-create-title=""
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            // eslint-disable-next-line jsx-a11y/no-autofocus -- the title input mount-focus is captured at render (line 399); an effect would move focus after that snapshot
+            autoFocus
+            placeholder="Task title"
+            aria-label="Task title"
+            required
+          />
+          <textarea
+            className="w-full min-h-16.25 mt-1.25 mr-0 mb-2 ml-0 text-foreground bg-transparent border-0 resize-y text-[14px] leading-normal rounded-none max-sm:min-h-16 shadow-[none] focus-visible:rounded-none max-md:text-base placeholder:text-muted outline-none focus-visible:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 caret-accent selection:bg-accent/20 shell-phone:min-h-11 pointer-coarse:min-h-11 [@media_(max-width:560px)]:min-h-16 shell-phone:text-[16px] pointer-coarse:text-[16px] p-0"
+            data-issue-create-description=""
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={3}
+            placeholder="Add description…"
+            aria-label="Task description"
+          />
+          <div
+            className="border-b border-line flex flex-wrap gap-1.5 pt-0 pr-0 pb-1.25 pl-0 border-0 max-sm:gap-1 [@media_(max-width:560px)]:gap-1.25 shell-phone:grid! shell-phone:grid-cols-2 shell-phone:sm:grid-cols-3 shell-phone:gap-2! shell-phone:[&>label:last-child]:col-span-2 shell-phone:sm:[&>label:last-child]:col-span-1"
+            data-issue-property-pills=""
+          >
+            <label
+              className="shell-phone:h-auto! shell-phone:min-w-0 shell-phone:rounded-lg! shell-phone:border-line! shell-phone:pl-2.5! shell-phone:flex-col shell-phone:items-stretch shell-phone:gap-0! shell-phone:pt-1.5! inline-flex items-center gap-1 max-w-full h-6.5 pt-0 pr-2 pb-0 pl-2 bg-panel border-transparent rounded-[20px] text-muted text-[12px] mt-0 font-normal focus-within:border-accent max-sm:h-7 max-sm:pt-0 max-sm:pr-1.5 max-sm:pb-0 max-sm:pl-1.5 mr-0 mb-0 ml-0 border border-line focus-within:shadow-sm max-md:hover:text-foreground transition-colors duration-150 ease-out hover:transition-none hover:bg-subtle hover:border-accent/40 motion-reduce:transition-none [@media_(max-width:560px)]:h-6.75 [@media_(max-width:560px)]:pt-0 [@media_(max-width:560px)]:pr-1.5 [@media_(max-width:560px)]:pb-0 [@media_(max-width:560px)]:pl-1.5 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent)_16%,transparent)] [@media_(hover:hover)_and_(pointer:fine)]:hover:bg-[color-mix(in_srgb,var(--subtle)_58%,var(--panel))] [@media_(hover:hover)_and_(pointer:fine)]:hover:text-foreground"
+              data-issue-property=""
+            >
+              <span className="whitespace-nowrap inline text-muted text-[11px] shell-phone:text-xs shell-phone:leading-none">
+                Team
+              </span>
+              <select
+                className="shell-phone:flex-1 shell-phone:max-w-none! shell-phone:min-h-11! shell-phone:h-11 shell-phone:w-full shell-phone:pl-0! shell-phone:border-0 w-auto min-w-0 max-w-37.5 h-6 pt-0 pr-4.25 pb-0 pl-0.5 border-0 bg-transparent text-foreground text-[12px] max-sm:max-w-28 inline-block min-h-6 mt-0 mr-0 mb-0 ml-0 font-[450] max-md:text-base border border-line rounded-[7px] focus:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 [@media_(max-width:560px)]:max-w-30 [@media_(max-width:600px)]:max-w-27.5 shell-phone:text-[16px] pointer-coarse:text-[16px]"
+                value={team}
+                onChange={(e) => {
+                  setTeam(e.target.value);
+                  setStateId("");
+                  setAssigneeId("");
+                  setCycleId("");
+                }}
+                required
+              >
+                {teams.map((t) => (
+                  <option
+                    className="bg-panel text-foreground"
+                    key={t.id}
+                    value={t.id}
+                  >
+                    {t.key}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label
+              className="shell-phone:h-auto! shell-phone:min-w-0 shell-phone:rounded-lg! shell-phone:border-line! shell-phone:pl-2.5! shell-phone:flex-col shell-phone:items-stretch shell-phone:gap-0! shell-phone:pt-1.5! inline-flex items-center gap-1 max-w-full h-6.5 pt-0 pr-2 pb-0 pl-2 bg-panel border-transparent rounded-[20px] text-muted text-[12px] mt-0 font-normal focus-within:border-accent max-sm:h-7 max-sm:pt-0 max-sm:pr-1.5 max-sm:pb-0 max-sm:pl-1.5 mr-0 mb-0 ml-0 border border-line focus-within:shadow-sm max-md:hover:text-foreground transition-colors duration-150 ease-out hover:transition-none hover:bg-subtle hover:border-accent/40 motion-reduce:transition-none [@media_(max-width:560px)]:h-6.75 [@media_(max-width:560px)]:pt-0 [@media_(max-width:560px)]:pr-1.5 [@media_(max-width:560px)]:pb-0 [@media_(max-width:560px)]:pl-1.5 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent)_16%,transparent)] [@media_(hover:hover)_and_(pointer:fine)]:hover:bg-[color-mix(in_srgb,var(--subtle)_58%,var(--panel))] [@media_(hover:hover)_and_(pointer:fine)]:hover:text-foreground"
+              data-issue-property=""
+            >
+              <span className="whitespace-nowrap inline text-muted text-[11px] shell-phone:text-xs shell-phone:leading-none">
+                Status
+              </span>
+              <select
+                className="shell-phone:flex-1 shell-phone:max-w-none! shell-phone:min-h-11! shell-phone:h-11 shell-phone:w-full shell-phone:pl-0! shell-phone:border-0 w-auto min-w-0 max-w-37.5 h-6 pt-0 pr-4.25 pb-0 pl-0.5 border-0 bg-transparent text-foreground text-[12px] max-sm:max-w-28 inline-block min-h-6 mt-0 mr-0 mb-0 ml-0 font-[450] max-md:text-base border border-line rounded-[7px] focus:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 [@media_(max-width:560px)]:max-w-30 [@media_(max-width:600px)]:max-w-27.5 shell-phone:text-[16px] pointer-coarse:text-[16px]"
+                value={stateId}
+                onChange={(e) => setStateId(e.target.value)}
+              >
+                <option className="bg-panel text-foreground" value="">
+                  Team default
+                </option>
+                {states.map((s) => (
+                  <option
+                    className="bg-panel text-foreground"
+                    key={s.id}
+                    value={s.id}
+                  >
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label
+              className="shell-phone:h-auto! shell-phone:min-w-0 shell-phone:rounded-lg! shell-phone:border-line! shell-phone:pl-2.5! shell-phone:flex-col shell-phone:items-stretch shell-phone:gap-0! shell-phone:pt-1.5! inline-flex items-center gap-1 max-w-full h-6.5 pt-0 pr-2 pb-0 pl-2 bg-panel border-transparent rounded-[20px] text-muted text-[12px] mt-0 font-normal focus-within:border-accent max-sm:h-7 max-sm:pt-0 max-sm:pr-1.5 max-sm:pb-0 max-sm:pl-1.5 mr-0 mb-0 ml-0 border border-line focus-within:shadow-sm max-md:hover:text-foreground transition-colors duration-150 ease-out hover:transition-none hover:bg-subtle hover:border-accent/40 motion-reduce:transition-none [@media_(max-width:560px)]:h-6.75 [@media_(max-width:560px)]:pt-0 [@media_(max-width:560px)]:pr-1.5 [@media_(max-width:560px)]:pb-0 [@media_(max-width:560px)]:pl-1.5 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent)_16%,transparent)] [@media_(hover:hover)_and_(pointer:fine)]:hover:bg-[color-mix(in_srgb,var(--subtle)_58%,var(--panel))] [@media_(hover:hover)_and_(pointer:fine)]:hover:text-foreground"
+              data-issue-property=""
+            >
+              <span className="whitespace-nowrap inline text-muted text-[11px] shell-phone:text-xs shell-phone:leading-none">
+                Priority
+              </span>
+              <select
+                className="shell-phone:flex-1 shell-phone:max-w-none! shell-phone:min-h-11! shell-phone:h-11 shell-phone:w-full shell-phone:pl-0! shell-phone:border-0 w-auto min-w-0 max-w-37.5 h-6 pt-0 pr-4.25 pb-0 pl-0.5 border-0 bg-transparent text-foreground text-[12px] max-sm:max-w-28 inline-block min-h-6 mt-0 mr-0 mb-0 ml-0 font-[450] max-md:text-base border border-line rounded-[7px] focus:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 [@media_(max-width:560px)]:max-w-30 [@media_(max-width:600px)]:max-w-27.5 shell-phone:text-[16px] pointer-coarse:text-[16px]"
+                value={priority}
+                onChange={(e) => setPriority(e.target.value)}
+              >
+                <option className="bg-panel text-foreground" value="0">
+                  No priority
+                </option>
+                <option className="bg-panel text-foreground" value="1">
+                  Urgent
+                </option>
+                <option className="bg-panel text-foreground" value="2">
+                  High
+                </option>
+                <option className="bg-panel text-foreground" value="3">
+                  Medium
+                </option>
+                <option className="bg-panel text-foreground" value="4">
+                  Low
+                </option>
+              </select>
+            </label>
+            <label
+              className="shell-phone:h-auto! shell-phone:min-w-0 shell-phone:rounded-lg! shell-phone:border-line! shell-phone:pl-2.5! shell-phone:flex-col shell-phone:items-stretch shell-phone:gap-0! shell-phone:pt-1.5! inline-flex items-center gap-1 max-w-full h-6.5 pt-0 pr-2 pb-0 pl-2 bg-panel border-transparent rounded-[20px] text-muted text-[12px] mt-0 font-normal focus-within:border-accent max-sm:h-7 max-sm:pt-0 max-sm:pr-1.5 max-sm:pb-0 max-sm:pl-1.5 mr-0 mb-0 ml-0 border border-line focus-within:shadow-sm max-md:hover:text-foreground transition-colors duration-150 ease-out hover:transition-none hover:bg-subtle hover:border-accent/40 motion-reduce:transition-none [@media_(max-width:560px)]:h-6.75 [@media_(max-width:560px)]:pt-0 [@media_(max-width:560px)]:pr-1.5 [@media_(max-width:560px)]:pb-0 [@media_(max-width:560px)]:pl-1.5 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent)_16%,transparent)] [@media_(hover:hover)_and_(pointer:fine)]:hover:bg-[color-mix(in_srgb,var(--subtle)_58%,var(--panel))] [@media_(hover:hover)_and_(pointer:fine)]:hover:text-foreground"
+              data-issue-property=""
+            >
+              <span className="whitespace-nowrap inline text-muted text-[11px] shell-phone:text-xs shell-phone:leading-none">
+                Assignee
+              </span>
+              <select
+                className="shell-phone:flex-1 shell-phone:max-w-none! shell-phone:min-h-11! shell-phone:h-11 shell-phone:w-full shell-phone:pl-0! shell-phone:border-0 w-auto min-w-0 max-w-37.5 h-6 pt-0 pr-4.25 pb-0 pl-0.5 border-0 bg-transparent text-foreground text-[12px] max-sm:max-w-28 inline-block min-h-6 mt-0 mr-0 mb-0 ml-0 font-[450] max-md:text-base border border-line rounded-[7px] focus:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 [@media_(max-width:560px)]:max-w-30 [@media_(max-width:600px)]:max-w-27.5 shell-phone:text-[16px] pointer-coarse:text-[16px]"
+                value={assigneeId}
+                onChange={(e) => setAssigneeId(e.target.value)}
+              >
+                <option className="bg-panel text-foreground" value="">
+                  Unassigned
+                </option>
+                {members.map((m) => (
+                  <option
+                    className="bg-panel text-foreground"
+                    key={m.id}
+                    value={m.id}
+                  >
+                    {m.name || m.email}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label
+              className="shell-phone:h-auto! shell-phone:min-w-0 shell-phone:rounded-lg! shell-phone:border-line! shell-phone:pl-2.5! shell-phone:flex-col shell-phone:items-stretch shell-phone:gap-0! shell-phone:pt-1.5! inline-flex items-center gap-1 max-w-full h-6.5 pt-0 pr-2 pb-0 pl-2 bg-panel border-transparent rounded-[20px] text-muted text-[12px] mt-0 font-normal focus-within:border-accent max-sm:h-7 max-sm:pt-0 max-sm:pr-1.5 max-sm:pb-0 max-sm:pl-1.5 mr-0 mb-0 ml-0 border border-line focus-within:shadow-sm max-md:hover:text-foreground transition-colors duration-150 ease-out hover:transition-none hover:bg-subtle hover:border-accent/40 motion-reduce:transition-none [@media_(max-width:560px)]:h-6.75 [@media_(max-width:560px)]:pt-0 [@media_(max-width:560px)]:pr-1.5 [@media_(max-width:560px)]:pb-0 [@media_(max-width:560px)]:pl-1.5 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent)_16%,transparent)] [@media_(hover:hover)_and_(pointer:fine)]:hover:bg-[color-mix(in_srgb,var(--subtle)_58%,var(--panel))] [@media_(hover:hover)_and_(pointer:fine)]:hover:text-foreground"
+              data-issue-property=""
+            >
+              <span className="whitespace-nowrap inline text-muted text-[11px] shell-phone:text-xs shell-phone:leading-none">
+                Project
+              </span>
+              <select
+                className="shell-phone:flex-1 shell-phone:max-w-none! shell-phone:min-h-11! shell-phone:h-11 shell-phone:w-full shell-phone:pl-0! shell-phone:border-0 w-auto min-w-0 max-w-37.5 h-6 pt-0 pr-4.25 pb-0 pl-0.5 border-0 bg-transparent text-foreground text-[12px] max-sm:max-w-28 inline-block min-h-6 mt-0 mr-0 mb-0 ml-0 font-[450] max-md:text-base border border-line rounded-[7px] focus:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 [@media_(max-width:560px)]:max-w-30 [@media_(max-width:600px)]:max-w-27.5 shell-phone:text-[16px] pointer-coarse:text-[16px]"
+                value={projectId}
+                onChange={(e) => setProjectId(e.target.value)}
+              >
+                <option className="bg-panel text-foreground" value="">
+                  No project
+                </option>
+                {projects
+                  .filter(
+                    (p) =>
+                      !p.teams?.nodes.length ||
+                      p.teams.nodes.some((t) => t.id === team),
+                  )
+                  .map((p) => (
+                    <option
+                      className="bg-panel text-foreground"
+                      key={p.id}
+                      value={p.id}
+                    >
+                      {p.name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <label
+              className="shell-phone:h-auto! shell-phone:min-w-0 shell-phone:rounded-lg! shell-phone:border-line! shell-phone:pl-2.5! shell-phone:flex-col shell-phone:items-stretch shell-phone:gap-0! shell-phone:pt-1.5! inline-flex items-center gap-1 max-w-full h-6.5 pt-0 pr-2 pb-0 pl-2 bg-panel border-transparent rounded-[20px] text-muted text-[12px] mt-0 font-normal focus-within:border-accent max-sm:h-7 max-sm:pt-0 max-sm:pr-1.5 max-sm:pb-0 max-sm:pl-1.5 mr-0 mb-0 ml-0 border border-line focus-within:shadow-sm max-md:hover:text-foreground transition-colors duration-150 ease-out hover:transition-none hover:bg-subtle hover:border-accent/40 motion-reduce:transition-none [@media_(max-width:560px)]:h-6.75 [@media_(max-width:560px)]:pt-0 [@media_(max-width:560px)]:pr-1.5 [@media_(max-width:560px)]:pb-0 [@media_(max-width:560px)]:pl-1.5 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent)_16%,transparent)] [@media_(hover:hover)_and_(pointer:fine)]:hover:bg-[color-mix(in_srgb,var(--subtle)_58%,var(--panel))] [@media_(hover:hover)_and_(pointer:fine)]:hover:text-foreground"
+              data-issue-property=""
+            >
+              <span className="whitespace-nowrap inline text-muted text-[11px] shell-phone:text-xs shell-phone:leading-none">
+                Cycle
+              </span>
+              <select
+                className="shell-phone:flex-1 shell-phone:max-w-none! shell-phone:min-h-11! shell-phone:h-11 shell-phone:w-full shell-phone:pl-0! shell-phone:border-0 w-auto min-w-0 max-w-37.5 h-6 pt-0 pr-4.25 pb-0 pl-0.5 border-0 bg-transparent text-foreground text-[12px] max-sm:max-w-28 inline-block min-h-6 mt-0 mr-0 mb-0 ml-0 font-[450] max-md:text-base border border-line rounded-[7px] focus:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 [@media_(max-width:560px)]:max-w-30 [@media_(max-width:600px)]:max-w-27.5 shell-phone:text-[16px] pointer-coarse:text-[16px]"
+                value={cycleId}
+                onChange={(e) => setCycleId(e.target.value)}
+              >
+                <option className="bg-panel text-foreground" value="">
+                  No cycle
+                </option>
+                {cycles
+                  .filter((c) => c.team?.id === team && !c.completedAt)
+                  .map((c) => (
+                    <option
+                      className="bg-panel text-foreground"
+                      key={c.id}
+                      value={c.id}
+                    >
+                      {c.name || `Cycle ${c.number ?? ""}`}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <label
+              className="shell-phone:h-auto! shell-phone:min-w-0 shell-phone:rounded-lg! shell-phone:border-line! shell-phone:pl-2.5! shell-phone:flex-col shell-phone:items-stretch shell-phone:gap-0! shell-phone:pt-1.5! inline-flex items-center gap-1 max-w-full h-6.5 pt-0 pr-2 pb-0 pl-2 bg-panel border-transparent rounded-[20px] text-muted text-[12px] mt-0 font-normal focus-within:border-accent max-sm:h-7 max-sm:pt-0 max-sm:pr-1.5 max-sm:pb-0 max-sm:pl-1.5 mr-0 mb-0 ml-0 border border-line focus-within:shadow-sm max-md:hover:text-foreground transition-colors duration-150 ease-out hover:transition-none hover:bg-subtle hover:border-accent/40 motion-reduce:transition-none [@media_(max-width:560px)]:h-6.75 [@media_(max-width:560px)]:pt-0 [@media_(max-width:560px)]:pr-1.5 [@media_(max-width:560px)]:pb-0 [@media_(max-width:560px)]:pl-1.5 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent)_16%,transparent)] [@media_(hover:hover)_and_(pointer:fine)]:hover:bg-[color-mix(in_srgb,var(--subtle)_58%,var(--panel))] [@media_(hover:hover)_and_(pointer:fine)]:hover:text-foreground"
+              data-issue-property=""
+            >
+              <span className="whitespace-nowrap inline text-muted text-[11px] shell-phone:text-xs shell-phone:leading-none">
+                Due date
+              </span>
+              <input
+                className="shell-phone:flex-1 shell-phone:max-w-none shell-phone:min-h-11! shell-phone:h-11 shell-phone:w-full shell-phone:pl-0! shell-phone:bg-transparent shell-phone:py-0 w-full border border-line rounded-md bg-bg text-foreground pt-2.25 pr-2.5 pb-2.25 pl-2.5 resize-y max-md:text-base max-w-32 h-5 border-0 text-xs font-medium placeholder:text-muted focus-visible:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] pointer-coarse:text-[16px]"
+                type="date"
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+                aria-label="Due date"
+              />
+            </label>
+          </div>
+          <fieldset
+            className="border-t border-line flex flex-wrap gap-1.5 mt-3.25 mr-0 mb-0 ml-0 pt-1.75 pr-2.25 pb-1.75 pl-2.25 border-0 rounded-none max-sm:ml-4 max-sm:mr-4 min-w-0 [[hidden]]:hidden [@media_(max-width:560px)]:ml-4.25 [@media_(max-width:560px)]:mr-4.25"
+            data-issue-label-field=""
+            hidden={!labelIds.length && labels.length === 0}
+          >
+            <legend className="pt-0 pr-1.25 pb-0 pl-1.25 text-[11px] font-semibold text-muted">
+              Labels
+            </legend>
+            {loadingOptions ? (
+              <span className="text-muted" data-control-muted="">
+                Loading labels…
+              </span>
+            ) : labels.filter(
+                (l) => !(l as any).teamId || (l as any).teamId === team,
+              ).length ? (
+              labels.map((l) => (
+                <label
+                  key={l.id}
+                  className="border inline-flex items-center gap-1.5 pt-0.75 pr-1.75 pb-0.75 pl-1.75 border-line rounded-[5px] bg-panel text-[11px] h-6.25 mt-0 font-normal"
+                  data-issue-label-option=""
+                >
+                  <input
+                    className="w-full border border-line rounded-md bg-bg text-foreground pt-2.25 pr-2.5 pb-2.25 pl-2.5 resize-y max-md:text-base accent-accent placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:text-[16px] pointer-coarse:text-[16px]"
+                    type="checkbox"
+                    checked={labelIds.includes(l.id)}
+                    onChange={(e) =>
+                      setLabelIds((v) =>
+                        e.target.checked
+                          ? [...v, l.id]
+                          : v.filter((id) => id !== l.id),
+                      )
+                    }
+                  />
+                  <span>{l.name}</span>
+                </label>
+              ))
+            ) : (
+              <span className="text-muted" data-control-muted="">
+                No labels available
+              </span>
+            )}
+          </fieldset>
+        </div>
+        {err && (
+          <small
+            className="pt-0 pr-4 pb-0 pl-4 block text-danger mt-3 mr-0 mb-3 ml-0 max-w-72 text-xs "
+            role="alert"
+          >
+            {err}
+          </small>
+        )}
+        <footer
+          className="border-t border-line sticky bottom-0 flex items-center justify-between gap-3 pt-1.75 pr-3.5 pb-1.75 pl-3.5 bg-panel z-3 min-h-12 max-sm:pt-2 max-sm:pr-3 max-sm:pb-2 max-sm:pl-3 max-sm:flex-wrap max-md:[&_[data-control-primary]:not(:disabled):hover]:shadow-sm [&_[data-control-primary]:not(:disabled):active]:shadow-none [@media_(max-width:560px)]:pt-2.25 [@media_(max-width:560px)]:pr-3 [@media_(max-width:560px)]:pb-2.25 [@media_(max-width:560px)]:pl-3"
+          data-issue-create-footer=""
+        >
+          <label
+            className="shell-phone:min-h-11 shell-phone:text-sm! inline-flex items-center gap-1.5 mt-0 mr-0 mb-0 ml-0 text-muted text-[12px] font-normal max-sm:text-xs flex-row w-auto min-h-7.5 whitespace-nowrap max-md:hover:text-foreground transition-colors duration-150 [@media_(max-width:600px)]:text-[11px] [@media_(hover:hover)_and_(pointer:fine)]:hover:text-foreground"
+            data-issue-create-more=""
+          >
+            <input
+              className="w-3.75 border border-line rounded-md bg-bg text-foreground pt-2.25 pr-2.5 pb-2.25 pl-2.5 resize-y h-3.75 mt-0 mr-0 mb-0 ml-0 flex-none shell-phone:size-5 pointer-coarse:size-5 max-md:text-base accent-accent placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:text-[16px] pointer-coarse:text-[16px]"
+              type="checkbox"
+              checked={createMore}
+              onChange={(e) => setCreateMore(e.target.checked)}
+            />{" "}
+            Create more
+          </label>
+          <div
+            className="flex items-center gap-2 ml-auto max-sm:justify-end"
+            data-issue-create-footer-actions=""
+          >
+            <button
+              type="button"
+              className="inline-flex items-center justify-center gap-1.75 rounded-md border border-line bg-panel pl-2.5 pr-2.5 pt-1.25 pb-1.25 text-inherit transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 min-h-7.5 text-[12px] max-md:hover:bg-subtle hover:border-accent/25 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 [@media_(hover:hover)_and_(pointer:fine)]:hover:bg-subtle"
+              data-control-outline=""
+              onClick={requestClose}
+              disabled={busy}
+            >
+              Cancel
+            </button>
+            <button
+              className="inline-flex min-h-7.5 items-center justify-center gap-1.75 rounded-[20px] bg-accent pl-2.5 pr-2.5 pt-1.25 pb-1.25 text-white font-[650] shadow-[none] transition-colors duration-150 ease-out hover:brightness-110 hover:transition-none active:translate-y-px disabled:cursor-wait disabled:opacity-65 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 text-[12px] disabled:opacity-55 disabled:cursor-not-allowed disabled:shadow-none disabled:transform-none disabled:filter-none enabled:hover:-translate-y-px enabled:hover:filter-none enabled:active:translate-y-0 enabled:active:scale-100 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.55] disabled:shadow-[none]"
+              data-control-primary=""
+              disabled={
+                busy || (loadingOptions && !meta) || !title.trim() || !team
+              }
+            >
+              {busy ? (
+                <>
+                  <span
+                    className="inline-block w-3 h-3 mr-0.5 rounded-[50%] border-2 border-white/50 border-t-white animate-[issue-spin_.7s_linear_infinite]"
+                    data-issue-create-spinner=""
+                    aria-hidden="true"
+                  />
+                  {"Creating…"}
+                </>
+              ) : (
+                "Create task"
+              )}
+            </button>
+          </div>
+        </footer>
+      </form>
+    </div>
+  );
+}
+initPerfTracking();
+createRoot(document.getElementById("root")!).render(
+  <>
+    <App />
+    <DialogHost />
+    <ReactGrabDev />
+  </>,
+);
+const PROJECT_STATES = [
+  "backlog",
+  "planned",
+  "started",
+  "paused",
+  "completed",
+  "canceled",
+];
+/* Health columns of the Projects page; a project without an update has no health. */
+const PROJECT_HEALTH_COLUMNS = [
+  { key: "onTrack", label: "On track" },
+  { key: "atRisk", label: "At risk" },
+  { key: "offTrack", label: "Off track" },
+  { key: "none", label: "No updates" },
+];
+function healthKey(health?: string) {
+  const h = (health || "").replace(/[\s_-]+/g, "").toLowerCase();
+  return h === "ontrack"
+    ? "onTrack"
+    : h === "atrisk"
+      ? "atRisk"
+      : h === "offtrack"
+        ? "offTrack"
+        : "none";
+}
+function ProjectsPage({
+  projects: given,
+  onOpen,
+  onCreate,
+  hasMore = false,
+  onLoadMore,
+  loading = false,
+  error = "",
+  teamId,
+}: {
+  projects: Project[];
+  onOpen: (p: Project) => void;
+  onCreate: () => void;
+  hasMore?: boolean;
+  onLoadMore?: () => void;
+  loading?: boolean;
+  error?: string;
+  teamId?: string;
+}) {
+  const [search, setSearch] = useState(""),
+    [state, setState] = useState(""),
+    [team, setTeam] = useState("");
+  const [filterOpen, setFilterOpen] = useState(false),
+    [displayOpen, setDisplayOpen] = useState(false);
+  /* Layout, grouping, ordering, closed projects and summary persist through viewPreferences
+     ("projects" or "team:<id>:projects"), one layer per viewer over a shared default. */
+  const projectPrefTarget = useMemo(
+    () => ({ viewType: teamId ? `team:${teamId}:projects` : "projects" }),
+    [teamId],
+  );
+  const projectPrefs = useViewPreferences(projectPrefTarget, PROJECT_DEFAULTS);
+  const { layout, group, ordering, showClosed, summary } = projectPageOptions(
+    projectPrefs.display,
+  );
+  const changeProjectDisplay = (change: Partial<ProjectPageOptions>) =>
+    projectPrefs.update(projectPagePatch(change, projectPrefs.display));
+  const setLayout = (v: ProjectPageOptions["layout"]) =>
+    changeProjectDisplay({ layout: v });
+  const setGroup = (v: string) => changeProjectDisplay({ group: v });
+  const setOrdering = (v: string) => changeProjectDisplay({ ordering: v });
+  const setShowClosed = (v: boolean) => {
+    if (v !== showClosed) changeProjectDisplay({ showClosed: v });
+  };
+  const setSummary = (v: boolean) => changeProjectDisplay({ summary: v });
   // Rendered from the local store: sync metadata, extra pages, pending creates and optimistic edits.
-  const all=useProjects(given);const projects=useMemo(()=>teamId?all.filter(p=>p.teams?.nodes.some(t=>t.id===teamId)):all,[all,teamId]);
-  const openIssues=useProjectIssueIndex().open;const notice=useProjectNotice();
-  const states=useMemo(()=>[...new Set(projects.map(p=>p.state).filter((v):v is string=>!!v))].sort(),[projects]);const teams=useMemo(()=>[...new Map(projects.flatMap(p=>p.teams?.nodes||[]).map(t=>[t.key,t])).values()].sort((a,b)=>a.name.localeCompare(b.name)),[projects]);
-  const normalized=search.trim().toLowerCase();const visible=useMemo(()=>projects.filter(p=>(!normalized||[p.name,p.description,p.state,...(p.teams?.nodes||[]).flatMap(t=>[t.name,t.key])].filter(Boolean).join(' ').toLowerCase().includes(normalized))&&(!state||p.state===state)&&(!team||p.teams?.nodes.some(t=>t.key===team))&&(showClosed||!['completed','canceled'].includes(p.state||''))).sort((a,b)=>ordering==='Target date'?(a.targetDate||'9999').localeCompare(b.targetDate||'9999')||a.name.localeCompare(b.name):ordering==='Status'?(a.state||'').localeCompare(b.state||'')||a.name.localeCompare(b.name):a.name.localeCompare(b.name)),[projects,normalized,state,team,showClosed,ordering]);
-  const clear=()=>{setSearch('');setState('');setTeam('');setShowClosed(true)};
-  const title=(v:string)=>({started:'In Progress',backlog:'Backlog',planned:'Planned',completed:'Completed',canceled:'Canceled',paused:'Paused'} as Record<string,string>)[v]||v;
-  const columns=group==='Status'?PROJECT_STATES.map(key=>({key,label:title(key)})):group==='Team'?[...teams.map(t=>({key:t.key,label:t.name})),{key:'none',label:'No team'}]:[{key:'all',label:'All projects'}];
+  const all = useProjects(given);
+  const projects = useMemo(
+    () =>
+      teamId
+        ? all.filter((p) => p.teams?.nodes.some((t) => t.id === teamId))
+        : all,
+    [all, teamId],
+  );
+  const openIssues = useProjectIssueIndex().open;
+  const notice = useProjectNotice();
+  const states = useMemo(
+    () =>
+      [
+        ...new Set(
+          projects.map((p) => p.state).filter((v): v is string => !!v),
+        ),
+      ].sort(),
+    [projects],
+  );
+  const teams = useMemo(
+    () =>
+      [
+        ...new Map(
+          projects.flatMap((p) => p.teams?.nodes || []).map((t) => [t.key, t]),
+        ).values(),
+      ].sort((a, b) => a.name.localeCompare(b.name)),
+    [projects],
+  );
+  const normalized = search.trim().toLowerCase();
+  const visible = useMemo(
+    () =>
+      projects
+        .filter(
+          (p) =>
+            (!normalized ||
+              [
+                p.name,
+                p.description,
+                p.state,
+                ...(p.teams?.nodes || []).flatMap((t) => [t.name, t.key]),
+              ]
+                .filter(Boolean)
+                .join(" ")
+                .toLowerCase()
+                .includes(normalized)) &&
+            (!state || p.state === state) &&
+            (!team || p.teams?.nodes.some((t) => t.key === team)) &&
+            (showClosed || !["completed", "canceled"].includes(p.state || "")),
+        )
+        .sort((a, b) =>
+          ordering === "Target date"
+            ? (a.targetDate || "9999").localeCompare(b.targetDate || "9999") ||
+              a.name.localeCompare(b.name)
+            : ordering === "Start date"
+              ? (a.startDate || "9999").localeCompare(b.startDate || "9999") ||
+                a.name.localeCompare(b.name)
+              : ordering === "Status"
+                ? (a.state || "").localeCompare(b.state || "") ||
+                  a.name.localeCompare(b.name)
+                : a.name.localeCompare(b.name),
+        ),
+    [projects, normalized, state, team, showClosed, ordering],
+  );
+  const clear = () => {
+    setSearch("");
+    setState("");
+    setTeam("");
+    setShowClosed(true);
+  };
+  const title = (v: string) =>
+    (
+      ({
+        started: "In Progress",
+        backlog: "Backlog",
+        planned: "Planned",
+        completed: "Completed",
+        canceled: "Canceled",
+        paused: "Paused",
+      }) as Record<string, string>
+    )[v] || v;
+  const leads = [
+    ...new Set(
+      projects.map((p) => p.lead?.name).filter((v): v is string => !!v),
+    ),
+  ].sort((a, b) => a.localeCompare(b));
+  const columns =
+    group === "Status"
+      ? PROJECT_STATES.map((key) => ({ key, label: title(key) }))
+      : group === "Team"
+        ? [
+            ...teams.map((t) => ({ key: t.key, label: t.name })),
+            { key: "none", label: "No team" },
+          ]
+        : group === "Lead"
+          ? [
+              ...leads.map((name) => ({ key: name, label: name })),
+              { key: "none", label: "No lead" },
+            ]
+          : group === "Health"
+            ? PROJECT_HEALTH_COLUMNS
+            : [{ key: "all", label: "All projects" }];
   // One pass buckets every visible project into its columns (no per-column rescans).
-  const buckets=useMemo(()=>{const byState=new Map<string,Project[]>(),byGroup=new Map<string,Project[]>();const add=(m:Map<string,Project[]>,k:string,p:Project)=>{const l=m.get(k);if(l)l.push(p);else m.set(k,[p])};for(const p of visible){add(byState,p.state||'',p);if(group==='Status')add(byGroup,p.state||'',p);else if(group==='Team'){if(!p.teams?.nodes.length)add(byGroup,'none',p);else for(const t of new Set(p.teams.nodes.map(t=>t.key)))add(byGroup,t,p)}else add(byGroup,'all',p)}return {byState,byGroup}},[visible,group]);
-  const inColumn=(key:string)=>buckets.byGroup.get(key)||[];
-  const row=(p:Project)=>{const count=openIssues.get(p.id)||0;return <button type="button" className="projects-table-row" key={p.id} onClick={()=>onOpen(p)} disabled={isPendingProject(p)} aria-busy={isPendingProject(p)||undefined} aria-label={`Open project ${p.name}`}><span className="projects-table-name"><span className="project-mark project-list-icon" aria-hidden="true"><FolderKanban size={15}/></span><span><strong>{p.name}</strong>{summary&&p.description&&<small>{p.description}</small>}</span></span><span className="projects-health" aria-label={p.health||'No health updates'} title={p.health||'No health updates'}>{p.health?'◉':'◌'}</span><span className="projects-lead">{p.lead?.name||'—'}</span><span>{p.targetDate||'—'}</span><span className="projects-issue-count" aria-label={`${count} open task${count===1?'':'s'}`} title={`${count} open task${count===1?'':'s'}`}>{count}</span><span className="projects-status"><span className="projects-status-dot" data-state={p.state||'backlog'}/>{Math.round(p.progress||0)}%</span></button>};
-  return <section className="projects-page projects-reference" aria-labelledby="projects-title"><header className="projects-reference-head"><h1 id="projects-title">Projects</h1><button type="button" onClick={onCreate}><Plus size={15}/> New project</button></header>
-   <div className="projects-reference-tabs"><span aria-current="page">All projects</span><div className="projects-reference-actions"><button type="button" aria-label="Add filter" aria-expanded={filterOpen} onClick={()=>{setFilterOpen(!filterOpen);setDisplayOpen(false)}}><ListFilter size={15}/></button><button type="button" aria-label="Display options" aria-expanded={displayOpen} onClick={()=>{setDisplayOpen(!displayOpen);setFilterOpen(false)}}><MoreHorizontal size={16}/></button></div></div>
-   {filterOpen&&<div className="projects-reference-menu" aria-label="Project filters"><label>Search<input type="search" aria-label="Search projects" value={search} placeholder="Search projects" onChange={e=>setSearch(e.target.value)}/></label><label>Status<select aria-label="Filter projects by status" value={state} onChange={e=>setState(e.target.value)}><option value="">All statuses</option>{states.map(x=><option key={x} value={x}>{title(x)}</option>)}</select></label><label>Team<select aria-label="Filter projects by team" value={team} onChange={e=>setTeam(e.target.value)}><option value="">All teams</option>{teams.map(t=><option key={t.key} value={t.key}>{t.name}</option>)}</select></label><button type="button" onClick={clear}>Clear filters</button></div>}
-   {displayOpen&&<div className="projects-reference-menu" aria-label="Project display options"><div role="tablist" aria-label="Project layout">{(['List','Board','Timeline'] as const).map(x=><button key={x} type="button" role="tab" aria-selected={layout===x} onClick={()=>setLayout(x)}>{x}</button>)}</div><label>Grouping<select aria-label="Change grouping" value={group} onChange={e=>setGroup(e.target.value)}><option>No grouping</option><option>Status</option><option>Team</option></select></label><label>Ordering<select aria-label="View ordering" value={ordering} onChange={e=>setOrdering(e.target.value)}><option>Name</option><option>Status</option><option>Target date</option></select></label><label><input type="checkbox" checked={showClosed} onChange={e=>setShowClosed(e.target.checked)}/> Show closed projects</label><label><input type="checkbox" checked={summary} onChange={e=>setSummary(e.target.checked)}/> Summary</label><p>Only available project fields can be displayed; manual ordering and external data are not available.</p></div>}
-   {notice&&<p role="alert" className="projects-reference-state">{notice.message} {notice.retry&&<button type="button" onClick={notice.retry}>Retry</button>}<button type="button" onClick={()=>setProjectNotice(null)}>Dismiss</button></p>}
-   {error&&<p role="alert" className="projects-reference-state">{error} <button type="button" onClick={onLoadMore}>Retry</button></p>}
-   {layout==='Timeline'?<div className="projects-reference-state"><h2>Timeline</h2><p>Project date ranges and timeline controls are not available in Hoja yet. Switch to List or Board to see the same projects.</p></div>:visible.length?layout==='Board'?<div className="projects-board">{(group==='No grouping'?PROJECT_STATES.map(key=>({key,label:title(key)})):columns).map(col=>{const cards=group==='No grouping'?buckets.byState.get(col.key)||[]:inColumn(col.key);return <section className="projects-board-column" key={col.key}><h2>{col.label} <span>{cards.length}</span></h2>{cards.map(p=><button type="button" className="projects-board-card" key={p.id} onClick={()=>onOpen(p)} disabled={isPendingProject(p)} aria-busy={isPendingProject(p)||undefined}><strong>{p.name}</strong>{summary&&p.description&&<small>{p.description}</small>}<span>{p.lead?.name||'No lead'} · {Math.round(p.progress||0)}%</span></button>)}</section>})}</div>:columns.map(col=>{const rows=inColumn(col.key);return <section className="projects-table" key={col.key}>{group!=='No grouping'&&<h2>{col.label} <span>{rows.length}</span></h2>}<div className="projects-table-head"><span>Name</span><span>Health</span><span>Lead</span><span>Target date</span><span>Tasks</span><span>Status</span></div>{rows.map(row)}</section>}):<div className="empty-projects" role="status"><FolderKanban size={28}/><h2>{projects.length?'No matching projects':'No projects yet'}</h2><p>{projects.length?'Try broader filters or show closed projects.':'Create a project to organize work across teams.'}</p>{projects.length?<button type="button" onClick={clear}>Clear filters</button>:<button type="button" onClick={onCreate}>New project</button>}</div>}
-   {hasMore&&<button type="button" className="projects-reference-more" onClick={onLoadMore} disabled={loading}>{loading?'Loading…':'Load more projects'}</button>}</section>;
-}
-function ProjectDetails({project:given,onBack,onSaved,onOpenIssue,onNewView,teams,projects,layout,onLayoutChange,onMoved,onUpdate,onNew}:{project:Project;issues:Issue[];onNewView:()=>void;onBack:()=>void;onSaved:(p:Project)=>void;onOpenIssue:(issue:Issue)=>void;revision:number;teams:Team[];projects:Project[];layout:IssueLayout;onLayoutChange:(layout:IssueLayout)=>void;onMoved:(issueId:string,state:IssueState)=>Promise<void>;onUpdate:(issueId:string,input:Record<string,unknown>)=>Promise<void>;onNew:(stateId?:string)=>void}){
- // The project and its issues come from the local store; only project updates and older closed issues are fetched.
- const project=useProject(given);const meta=useProjectSyncMeta();const members=useMemberOptions();
- const [tab,setTab]=useState<'Overview'|'Activity'|'Issues'>(()=>location.pathname.endsWith('/activity')?'Activity':location.pathname.endsWith('/issues')?'Issues':'Overview');useEffect(()=>{const onPop=()=>setTab(location.pathname.endsWith('/activity')?'Activity':location.pathname.endsWith('/issues')?'Issues':'Overview');window.addEventListener('popstate',onPop);return()=>window.removeEventListener('popstate',onPop)},[]);
- // Store rows only; closed issues older than the synced window are loaded by the list when it shows them all.
- const related=useProjectIssues(project.id,gql,issueFields,false).issues;const olderClosed=useOlderClosed('project',project.id);
- const projectStates=useMemo(()=>{const ids=new Set((project.teams?.nodes||[]).map(t=>t.id));const scoped=teams.filter(t=>ids.has(t.id));return [...new Map((scoped.length?scoped:teams).flatMap(t=>t.states.nodes).map(st=>[stateKey(st),st])).values()]},[project.teams,teams]);
- const updatesKey=`projectUpdates:${project.id}:${meta?.viewer.id||''}`;const updatesVersion=useProjectEntityVersion(['projectUpdate']);
- const fetchUpdates=React.useCallback((first:number,after:string|null)=>gql(`query ProjectActivity($first:Int,$after:String,$filter:ProjectUpdateFilter){projectUpdates(first:$first,after:$after,filter:$filter){nodes{id body status createdAt actor{id name} progress project{id name}} pageInfo{hasNextPage endCursor}}}`,{first,after,filter:{project:{id:{eq:project.id}}}}).then(d=>d.projectUpdates as PageOf<PulsePost>),[project.id]);
- const activity=usePagedCache<PulsePost>(tab==='Activity'||tab==='Overview'?updatesKey:null,fetchUpdates,updatesVersion,20,'Project update');const updates=activity.rows;
- const summary=useMemo(()=>{const counts=new Map<string,number>();let done=0,canceled=0;for(const i of related){const t=i.state?.type;if(t==='completed')done++;else if(t==='canceled')canceled++;const k=i.state?stateKey(i.state):'';counts.set(k,(counts.get(k)||0)+1)}const scope=related.length-canceled;const byStatus=projectStates.filter(st=>counts.get(stateKey(st))).map(st=>({state:st,count:counts.get(stateKey(st))||0}));const none=counts.get('')||0;return {total:related.length,done,canceled,open:scope-done,pct:Math.round(project.progress??(scope?done/scope*100:0)),byStatus,none}},[related,projectStates,project.progress]);
- const userNames=useMemo(()=>new Map((meta?.users||[]).map(([id,name])=>[id,name||'']) as [string,string][]),[meta]);
- const goTab=(v:'Overview'|'Activity'|'Issues')=>{history.pushState({},'',`/workspace/project/${project.id}/${v.toLowerCase()}`);setTab(v)};
- const [detailMenu,setDetailMenu]=useState(false);const [editOpen,setEditOpen]=useState(false);
- const leadIdOf=(p:Project)=>{const matches=members.filter(m=>m.name===p.lead?.name);return matches.length===1?matches[0].id:''};const currentLead=useMemo(()=>leadIdOf(project),[project.lead?.name,members]);// eslint-disable-line react-hooks/exhaustive-deps
- const [name,setName]=useState(project.name);const [description,setDescription]=useState(project.description||'');const [state,setState]=useState(project.state||'backlog');const [leadId,setLeadId]=useState(currentLead);const [startDate,setStartDate]=useState(project.startDate||'');const [targetDate,setTargetDate]=useState(project.targetDate||'');const [status,setStatus]=useState('');const [busy,setBusy]=useState(false);const [confirmArchive,setConfirmArchive]=useState(false);
- type Draft={name:string;description:string;state:string;leadId:string;startDate:string;targetDate:string};const restoreDraft=useRef<Draft|null>(null);
- const applyDraft=useCallback((d:Draft)=>{setName(d.name);setDescription(d.description);setState(d.state);setLeadId(d.leadId);setStartDate(d.startDate);setTargetDate(d.targetDate)},[]);
- useEffect(()=>{const draft=restoreDraft.current;restoreDraft.current=null;applyDraft(draft||{name:project.name,description:project.description||'',state:project.state||'backlog',leadId:currentLead,startDate:project.startDate||'',targetDate:project.targetDate||''})},[project.id,project.name,project.description,project.state,project.startDate,project.targetDate,currentLead,applyDraft]);
- const cancelEdit=()=>{applyDraft({name:project.name,description:project.description||'',state:project.state||'backlog',leadId:currentLead,startDate:project.startDate||'',targetDate:project.targetDate||''});setStatus('')};
- const changed=name!==project.name||description!==(project.description||'')||state!==(project.state||'backlog')||leadId!==currentLead||startDate!==(project.startDate||'')||targetDate!==(project.targetDate||'');
- const datesInvalid=Boolean(startDate&&targetDate&&targetDate<startDate);
- const update=async(e:React.FormEvent)=>{e.preventDefault();if(!changed||!name.trim()||datesInvalid)return;
-  const input:Record<string,unknown>={},patch:Partial<Project>={};
-  if(name!==project.name){input.name=name;patch.name=name}
-  if(description!==(project.description||'')){input.description=description;patch.description=description}
-  if(state!==(project.state||'backlog')){input.state=state;patch.state=state}
-  if(leadId!==currentLead){input.leadId=leadId||null;patch.lead=leadId?{name:members.find(m=>m.id===leadId)?.name}:undefined}
-  if(startDate!==(project.startDate||'')){input.startDate=startDate||null;patch.startDate=startDate||undefined}
-  if(targetDate!==(project.targetDate||'')){input.targetDate=targetDate||null;patch.targetDate=targetDate||undefined}
-  const draft:Draft={name,description,state,leadId,startDate,targetDate};
-  // Optimistic: the page shows the edit at once; a failure restores the server values and keeps the draft in the form.
-  const settle=patchProject(project.id,patch);setStatus('Saving…');
-  try{const d=await gql(`mutation($id:String!,$input:ProjectUpdateInput!){projectUpdate(id:$id,input:$input){success project{${PROJECT_FIELDS}}}}`,{id:project.id,input});if(!d.projectUpdate?.success||!d.projectUpdate.project)throw Error('Project update failed');settle(true,d.projectUpdate.project);onSaved(d.projectUpdate.project);setStatus('Project saved.')}
-  catch(err){restoreDraft.current=draft;settle(false);applyDraft(draft);setStatus((err as Error).message)}};
- const publish=async(body:string,health:string)=>{
-  const temp:PulsePost={id:`optimistic:${crypto.randomUUID()}`,body,status:health,createdAt:new Date().toISOString(),progress:project.progress,actor:{id:meta?.viewer.id||'',name:meta?.viewer.name},project:{id:project.id,name:project.name,health:project.health,progress:project.progress,targetDate:project.targetDate,lead:project.lead}};
-  const feeds=[updatesKey,pulseKey(meta)].filter((k):k is string=>!!k&&(k===updatesKey||hasPage(k))).map(k=>optimisticPage<PulsePost>(k,r=>[temp,...r]));
-  try{const d=await gql(`mutation($input:ProjectUpdateCreateInput!){projectUpdateCreate(input:$input){success projectUpdate{${PULSE_FIELDS}}}}`,{input:{projectId:project.id,body,status:health}});if(!d.projectUpdateCreate.success||!d.projectUpdateCreate.projectUpdate)throw Error('Could not publish update.');const created:PulsePost=d.projectUpdateCreate.projectUpdate;for(const settle of feeds)settle(r=>upsertFirst(r,created))}
-  catch(err){for(const settle of feeds)settle();throw err}};
- const archive=async()=>{if(busy)return;setBusy(true);const settle=hideProject(project.id);const label=project.name;setConfirmArchive(false);setProjectNotice(null);onBack();
-  try{const d=await gql(`mutation($id:String!){projectArchive(id:$id){success}}`,{id:project.id});if(!d.projectArchive?.success)throw Error('Archive failed');settle(true)}catch(err){settle(false);setProjectNotice({message:`Could not archive ${label}: ${(err as Error).message}`})}};
- return <section className="project-detail project-reference"><div className="project-reference-head"><button className="back-link" onClick={onBack}>← Projects</button><span>{project.name}</span><button type="button" aria-label="Copy page URL" onClick={()=>{void navigator.clipboard.writeText(location.href).then(()=>setStatus('Project URL copied.')).catch(()=>setStatus('Could not copy project URL.'))}}>Copy URL</button><button type="button" aria-label="Project actions" aria-expanded={detailMenu} onClick={()=>setDetailMenu(!detailMenu)}><MoreHorizontal size={17}/></button></div>{detailMenu&&<div className="project-reference-menu"><button type="button" onClick={()=>{setConfirmArchive(true);setDetailMenu(false)}}>Archive project</button></div>}<nav className="project-reference-tabs" aria-label="Project views">{(['Overview','Activity','Issues'] as const).map(v=><button key={v} type="button" aria-current={tab===v?'page':undefined} onClick={()=>{history.pushState({},'',`/workspace/project/${project.id}/${v.toLowerCase()}`);setTab(v)}}>{displayLabel(v)}</button>)}</nav><button type="button" className="project-add-view" aria-label="Add new view" onClick={onNewView}><Plus size={15}/></button>{tab==='Overview'?<><header><span className="project-mark large" aria-hidden="true"><FolderKanban size={23}/></span><div><h1>{project.name}</h1></div></header><div className="project-reference-properties"><h2>Properties</h2><div><span>Status</span><b>{({started:'In Progress',backlog:'Backlog',planned:'Planned',paused:'Paused',completed:'Completed',canceled:'Canceled'} as Record<string,string>)[project.state||'backlog']||project.state}</b></div><div><span>Lead</span><b>{project.lead?.name||'No lead'}</b></div><div><span>Start date</span><b>{project.startDate||'Not set'}</b></div><div><span>Target date</span><b>{project.targetDate||'Not set'}</b></div><div><span>Teams</span><b>{project.teams?.nodes.map(t=>t.name).join(', ')||'No teams'}</b></div><button type="button" className="outline" aria-expanded={editOpen} onClick={()=>setEditOpen(v=>!v)}>{editOpen?'Close editor':'Edit project'}</button></div>{editOpen&&<form className="project-editor ui-card" onSubmit={update}><div className="project-editor-head"><div><span className="eyebrow">Project properties</span><h2>Edit project</h2></div><span className="muted">Changes are saved explicitly</span></div><div className="project-editor-fields"><label>Name<input value={name} onChange={e=>setName(e.target.value)} required/></label><label>Description<textarea value={description} onChange={e=>setDescription(e.target.value)}/></label><label>State<select value={state} onChange={e=>setState(e.target.value)}>{PROJECT_STATES.map(x=><option key={x}>{x}</option>)}</select></label><label>Lead<select value={leadId} onChange={e=>setLeadId(e.target.value)}><option value="">No lead</option>{members.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select></label><label>Start date<input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)}/></label><label>Target date<input type="date" value={targetDate} min={startDate||undefined} onChange={e=>setTargetDate(e.target.value)}/></label><div className="project-editor-actions"><button className="primary" disabled={busy||!changed||!name.trim()||datesInvalid}>{busy?'Saving…':'Save changes'}</button><button type="button" className="outline" onClick={cancelEdit} disabled={busy||!changed}>Discard changes</button></div></div>{status&&<p className="project-editor-status" role="status">{status}</p>}<div className="project-editor-danger"><div><b>Archive project</b><p>Hide this project from active lists. This can affect how related work is found.</p></div><button type="button" className="outline" onClick={()=>setConfirmArchive(true)} disabled={busy}>Archive project</button></div></form>}<section className="project-overview-progress" aria-labelledby="project-progress-title"><header><h2 id="project-progress-title">Progress</h2><b data-overview="progress">{summary.pct}%</b></header><div className="project-progress-bar" role="progressbar" aria-label="Project progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={summary.pct}><i style={{width:`${summary.pct}%`}}/></div><p>{summary.total?`${summary.done} done · ${summary.open} open${summary.canceled?` · ${summary.canceled} canceled`:''}`:'No tasks in this project yet'}</p>{summary.total>0&&<ul className="project-status-counts" aria-label="Tasks by status">{summary.byStatus.map(({state:st,count})=><li key={st.id}><button type="button" onClick={()=>goTab('Issues')} aria-label={`${count} ${st.name} tasks`}><StatusIcon state={st}/><span>{st.name}</span><b>{count}</b></button></li>)}{summary.none>0&&<li><button type="button" onClick={()=>goTab('Issues')}><span>No status</span><b>{summary.none}</b></button></li>}</ul>}<button type="button" className="text-action" onClick={()=>goTab('Issues')}>{summary.total?`View all ${summary.total} tasks →`:'Open tasks →'}</button></section><section className="project-overview-update" aria-labelledby="project-update-title"><header><h2 id="project-update-title">Latest update</h2><button type="button" className="text-action" onClick={()=>goTab('Activity')}>Write update</button></header>{updates[0]?<article><strong>{updates[0].status||'Update'}</strong><span className="muted"> · {updates[0].actor?.name||'Member'} · {updates[0].createdAt?.slice(0,10)}</span><Markdown text={updates[0].body} density="block"/></article>:activity.error?<p role="alert">{activity.error} <button type="button" onClick={activity.retry}>Retry</button></p>:<p className="muted">{activity.hasData?'No updates yet. Post one to tell the team how the project is going.':'Loading updates…'}</p>}</section><section className="project-overview-description"><h2>Description</h2>{project.description?<Markdown text={project.description} density="block"/>:<p className="muted">No description yet.</p>}</section>{confirmArchive&&<div className="modal-backdrop"><section className="modal" role="alertdialog" aria-modal="true" aria-labelledby="archive-title"><h2 id="archive-title">Archive project?</h2><p>This project will be archived and removed from active project lists.</p><button type="button" onClick={()=>setConfirmArchive(false)} disabled={busy}>Cancel</button><button type="button" className="primary" onClick={archive} disabled={busy}>{busy?'Archiving…':'Archive project'}</button></section></div>}</>:tab==='Activity'?<ProjectActivity project={project} teams={teams} users={userNames} updates={activity} onPublish={publish} onOpenIssue={i=>onOpenIssue(i as Issue)}/>:<MyIssuesContent key={project.id} tab="Assigned" issues={related} states={projectStates} teams={teams} projects={projects} onOpenIssue={onOpenIssue} onNew={onNew} layout={layout} onLayoutChange={onLayoutChange} onMoved={onMoved} onUpdate={onUpdate} older={olderClosed.older} onLoadOlder={olderClosed.onLoadOlder} emptyCopy={['No project tasks yet','Tasks in this project will show up here.']}/>}</section>}
+  const buckets = useMemo(() => {
+    const byState = new Map<string, Project[]>(),
+      byGroup = new Map<string, Project[]>();
+    const add = (m: Map<string, Project[]>, k: string, p: Project) => {
+      const l = m.get(k);
+      if (l) l.push(p);
+      else m.set(k, [p]);
+    };
+    for (const p of visible) {
+      add(byState, p.state || "", p);
+      if (group === "Status") add(byGroup, p.state || "", p);
+      else if (group === "Team") {
+        if (!p.teams?.nodes.length) add(byGroup, "none", p);
+        else
+          for (const t of new Set(p.teams.nodes.map((t) => t.key)))
+            add(byGroup, t, p);
+      } else if (group === "Lead") add(byGroup, p.lead?.name || "none", p);
+      else if (group === "Health") add(byGroup, healthKey(p.health), p);
+      else add(byGroup, "all", p);
+    }
+    return { byState, byGroup };
+  }, [visible, group]);
+  const inColumn = (key: string) => buckets.byGroup.get(key) || [];
+  const row = (p: Project) => {
+    const count = openIssues.get(p.id) || 0;
+    return (
+      <button
+        type="button"
+        className="border-b border-line grid items-center gap-1.5 pt-0 pr-4.25 pb-0 pl-4.25 min-h-12 bg-transparent w-full text-left text-[13px] h-12 border-0 font-normal hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 focus-visible:-outline-offset-2 shell-phone:flex shell-phone:flex-wrap shell-phone:items-center shell-phone:h-auto shell-phone:min-h-15 shell-phone:gap-x-3 shell-phone:gap-y-1 shell-phone:px-4 shell-phone:py-3 grid-cols-[minmax(0,4.3fr)_minmax(52px,.48fr)_minmax(90px,1fr)_minmax(84px,.9fr)_minmax(42px,.45fr)_minmax(104px,1fr)]"
+        data-projects-table-row=""
+        key={p.id}
+        onClick={() => onOpen(p)}
+        disabled={isPendingProject(p)}
+        aria-busy={isPendingProject(p) || undefined}
+        aria-label={`Open project ${p.name}`}
+      >
+        <span
+          className="flex items-center gap-2.5 overflow-hidden min-w-0 text-ellipsis whitespace-nowrap shell-phone:order-first shell-phone:basis-full shell-phone:whitespace-normal"
+          data-projects-table-name=""
+        >
+          <span
+            className="grid place-items-center w-4.5 h-4.5 rounded-lg [background:none] text-muted font-bold last:grid last:gap-0.5 last:min-w-0 flex-none border-0 last:gap-0.75"
+            data-project-mark=""
+            data-project-list-icon=""
+            aria-hidden="true"
+          >
+            <FolderKanban size={15} />
+          </span>
+          <span className="last:grid last:gap-0.5 last:min-w-0 last:gap-0.75">
+            <strong className="overflow-hidden text-ellipsis font-medium shell-phone:line-clamp-2 shell-phone:text-sm shell-phone:wrap-break-word">
+              {p.name}
+            </strong>
+            {summary && p.description && (
+              <small className="overflow-hidden text-ellipsis text-muted shell-phone:line-clamp-2">
+                {p.description}
+              </small>
+            )}
+          </span>
+        </span>
+        <span
+          className="text-[19px] text-muted leading-none min-w-0 overflow-hidden text-ellipsis whitespace-nowrap shell-phone:order-last shell-phone:ml-auto"
+          aria-label={p.health || "No health updates"}
+          title={p.health || "No health updates"}
+        >
+          {p.health ? "◉" : "◌"}
+        </span>
+        <span className="text-muted min-w-0 overflow-hidden text-ellipsis whitespace-nowrap shell-phone:max-w-32">
+          {p.lead?.name || (
+            <>
+              —<span className="sr-only shell-phone:not-sr-only"> No lead</span>
+            </>
+          )}
+        </span>
+        <span
+          className={`min-w-0 overflow-hidden text-ellipsis whitespace-nowrap shell-phone:text-muted ${p.targetDate ? "" : "shell-phone:hidden"}`}
+        >
+          {p.targetDate ? (
+            <>
+              <span className="hidden shell-phone:inline">Target </span>
+              {p.targetDate}
+            </>
+          ) : (
+            "—"
+          )}
+        </span>
+        <span
+          className="text-center text-muted min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
+          aria-label={`${count} open task${count === 1 ? "" : "s"}`}
+          title={`${count} open task${count === 1 ? "" : "s"}`}
+        >
+          {count}
+          <span className="hidden shell-phone:inline">
+            {count === 1 ? " task" : " tasks"}
+          </span>
+        </span>
+        <span className="flex items-center gap-1.75 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap shell-phone:-order-1 shell-phone:font-medium">
+          <span
+            className="flex-none w-3 h-3 rounded-[50%] data-[state=started]:border-line data-[state=completed]:border-line border-2 border-dotted border-orange-400"
+            data-projects-status-dot=""
+            data-state={p.state || "backlog"}
+          />
+          {Math.round(p.progress || 0)}%
+        </span>
+      </button>
+    );
+  };
+  return (
+    <section
+      className="max-w-none mt-0 mr-auto mb-0 ml-auto min-w-0 w-full overflow-x-hidden relative text-[12px] leading-normal font-['Inter_Variable',Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe_UI',sans-serif] min-h-[calc(100dvh-16px)] [font-optical-sizing:auto]"
+      data-projects-page=""
+      data-projects-reference=""
+      aria-labelledby="projects-title"
+    >
+      <header
+        className="border-b border-line h-11.25 min-h-11.25 flex items-center justify-between gap-2.5 pt-0 pr-4.5 pb-0 pl-4.5 leading-normal shell-phone:h-auto shell-phone:min-h-15 shell-phone:py-2 shell-phone:pr-3 shell-phone:pl-2"
+        data-projects-reference-head=""
+      >
+        <div className="flex min-w-0 items-center gap-1">
+          <MobileNavTrigger />
+          <h1
+            className="mt-0 mr-0 mb-0 ml-0 text-(length:--hoja-title-size) font-(--hoja-title-weight) tracking-normal leading-[normal]"
+            id="projects-title"
+          >
+            Projects
+          </h1>
+        </div>
+        <button
+          className="inline-flex items-center gap-1.5 pt-0 pr-3 pb-0 pl-3 rounded-[7px] bg-panel text-[12px] hover:bg-subtle h-7.5 border border-line text-foreground font-[550] cursor-pointer max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 [font:inherit]"
+          type="button"
+          onClick={onCreate}
+        >
+          <Plus size={15} /> New project
+        </button>
+      </header>
+      <div
+        className="h-11 min-w-0 flex items-center gap-1.25 pt-0 pr-2.25 pb-0 pl-2.25 overflow-x-auto justify-between border-line [&::-webkit-scrollbar]:hidden border-b-0 scrollbar-none shell-phone:h-auto shell-phone:py-2 shell-phone:px-3 shell-phone:border-b"
+        data-projects-reference-tabs=""
+      >
+        <span
+          className="inline-flex items-center h-7 pt-0 pr-2.75 pb-0 pl-2.75 border border-line rounded-[99px] bg-subtle text-[12px] font-medium text-foreground"
+          aria-current="page"
+        >
+          All projects
+        </span>
+        <div
+          className="flex gap-1.25 items-center"
+          data-projects-reference-actions=""
+        >
+          <UIPopover
+            open={filterOpen}
+            onOpenChange={(open) => {
+              setFilterOpen(open);
+              if (open) setDisplayOpen(false);
+            }}
+          >
+            <PopoverTrigger asChild>
+              <button
+                className="inline-flex min-h-7 min-w-7 flex-none items-center justify-center gap-1.5 rounded-[99px] border border-line bg-transparent pl-2.75 pr-2.75 pt-0 pb-0 text-[12px] text-muted hover:bg-subtle aria-expanded:bg-accent-soft aria-expanded:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 pointer-coarse:min-h-11 hover:text-foreground"
+                type="button"
+                aria-label="Add filter"
+                aria-expanded={filterOpen}
+              >
+                <ListFilter size={15} />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="end"
+              sideOffset={6}
+              className="z-50 w-auto border shadow-(--shadow) pt-2 pr-2 pb-2 pl-2 border-line rounded-[9px] bg-panel grid gap-2.25 text-[12px] w-[min(260px,calc(100vw-24px))]"
+              data-projects-reference-menu=""
+              aria-label="Project filters"
+            >
+              <label className="grid gap-1.25">
+                Search
+                <input
+                  className="shell-phone:text-base max-w-full font-sans placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                  type="search"
+                  aria-label="Search projects"
+                  value={search}
+                  placeholder="Search projects"
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </label>
+              <label className="grid gap-1.25">
+                Status
+                <select
+                  className="shell-phone:text-base border border-line rounded-[5px] bg-panel text-foreground pt-1.5 pr-1.5 pb-1.5 pl-1.5 w-full max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                  aria-label="Filter projects by status"
+                  value={state}
+                  onChange={(e) => setState(e.target.value)}
+                >
+                  <option value="">All statuses</option>
+                  {states.map((x) => (
+                    <option key={x} value={x}>
+                      {title(x)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="grid gap-1.25">
+                Team
+                <select
+                  className="shell-phone:text-base border border-line rounded-[5px] bg-panel text-foreground pt-1.5 pr-1.5 pb-1.5 pl-1.5 w-full max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                  aria-label="Filter projects by team"
+                  value={team}
+                  onChange={(e) => setTeam(e.target.value)}
+                >
+                  <option value="">All teams</option>
+                  {teams.map((t) => (
+                    <option key={t.key} value={t.key}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                onClick={clear}
+                className="max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+              >
+                Clear filters
+              </button>
+            </PopoverContent>
+          </UIPopover>
+          <UIPopover
+            open={displayOpen}
+            onOpenChange={(open) => {
+              setDisplayOpen(open);
+              if (open) setFilterOpen(false);
+            }}
+          >
+            <PopoverTrigger asChild>
+              <button
+                className="inline-flex min-h-7 min-w-7 flex-none items-center justify-center gap-1.5 rounded-[99px] border border-line bg-transparent pl-2.75 pr-2.75 pt-0 pb-0 text-[12px] text-muted hover:bg-subtle aria-expanded:bg-accent-soft aria-expanded:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 pointer-coarse:min-h-11 hover:text-foreground"
+                type="button"
+                aria-label="Display options"
+                aria-expanded={displayOpen}
+              >
+                <MoreHorizontal size={16} />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="end"
+              sideOffset={6}
+              className="z-50 w-auto border shadow-(--shadow) pt-2 pr-2 pb-2 pl-2 border-line rounded-[9px] bg-panel grid gap-2.25 text-[12px] w-[min(260px,calc(100vw-24px))]"
+              data-projects-reference-menu=""
+              aria-label="Project display options"
+            >
+              <div
+                className="flex gap-1"
+                role="tablist"
+                aria-label="Project layout"
+              >
+                {(["List", "Board", "Timeline"] as const).map((x) => (
+                  <button
+                    className="inline-flex h-8 min-h-7 flex-none items-center rounded-full border border-line bg-panel px-3 text-sm text-inherit transition-none aria-selected:bg-subtle aria-selected:text-foreground aria-selected:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                    key={x}
+                    type="button"
+                    role="tab"
+                    aria-selected={layout === x}
+                    onClick={() => setLayout(x)}
+                  >
+                    {x}
+                  </button>
+                ))}
+              </div>
+              <label className="grid gap-1.25">
+                Grouping
+                <select
+                  className="shell-phone:text-base border border-line rounded-[5px] bg-panel text-foreground pt-1.5 pr-1.5 pb-1.5 pl-1.5 w-full max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                  aria-label="Change grouping"
+                  value={group}
+                  onChange={(e) => setGroup(e.target.value)}
+                >
+                  {PROJECT_PAGE_GROUPS.map(([, label]) => (
+                    <option key={label}>{label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="grid gap-1.25">
+                Ordering
+                <select
+                  className="shell-phone:text-base border border-line rounded-[5px] bg-panel text-foreground pt-1.5 pr-1.5 pb-1.5 pl-1.5 w-full max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                  aria-label="View ordering"
+                  value={ordering}
+                  onChange={(e) => setOrdering(e.target.value)}
+                >
+                  {PROJECT_PAGE_ORDERINGS.map(([, label]) => (
+                    <option key={label}>{label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex items-center gap-2 pointer-coarse:min-h-11 shell-phone:min-h-11">
+                <input
+                  className="shell-phone:text-base max-w-full font-sans placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:text-[16px]"
+                  type="checkbox"
+                  checked={showClosed}
+                  onChange={(e) => setShowClosed(e.target.checked)}
+                />{" "}
+                Show closed projects
+              </label>
+              <label className="flex items-center gap-2 pointer-coarse:min-h-11 shell-phone:min-h-11">
+                <input
+                  className="shell-phone:text-base max-w-full font-sans placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:text-[16px]"
+                  type="checkbox"
+                  checked={summary}
+                  onChange={(e) => setSummary(e.target.checked)}
+                />{" "}
+                Summary
+              </label>
+              <p className="mt-0 mr-0 mb-0 ml-0 text-muted">
+                Only available project fields can be displayed; manual ordering
+                and external data are not available.
+              </p>
+            </PopoverContent>
+          </UIPopover>
+        </div>
+      </div>
 
-function submitProjectCreate(input:Record<string,unknown>,draft:Omit<Project,'id'>){const settle=addPendingProject(draft);setProjectNotice(null);
- gql(`mutation($input:ProjectCreateInput!){projectCreate(input:$input){success project{${PROJECT_FIELDS}}}}`,{input}).then(d=>{if(!d.projectCreate?.success||!d.projectCreate.project)throw Error('Could not create project');settle(d.projectCreate.project)}).catch(e=>{settle(null);setProjectNotice({message:`Could not create project “${draft.name}”: ${(e as Error).message}`,retry:()=>submitProjectCreate(input,draft)})})}
-function NewProject({teams,onClose}:{teams:Team[];onClose:()=>void;onCreated:()=>void}){
- const [name,setName]=useState(''),[summary,setSummary]=useState(''),[description,setDescription]=useState('');const [teamIds,setTeamIds]=useState<string[]>(teams[0]?[teams[0].id]:[]),[leadId,setLeadId]=useState(''),[state,setState]=useState('backlog'),[startDate,setStartDate]=useState(''),[targetDate,setTargetDate]=useState('');const members=useMemberOptions();const error='',busy=false;
- // Optimistic: the project appears in every project list at once; a failure surfaces on the projects page with Retry.
- const create=(e:React.FormEvent)=>{e.preventDefault();if(!name.trim()||(startDate&&targetDate&&targetDate<startDate))return;const text=[summary.trim(),description.trim()].filter(Boolean).join('\n\n')||null;const lead=members.find(m=>m.id===leadId);
-  submitProjectCreate({name:name.trim(),description:text,teamIds,leadId:leadId||null,state,startDate:startDate||null,targetDate:targetDate||null},{name:name.trim(),description:text||undefined,state,progress:0,startDate:startDate||undefined,targetDate:targetDate||undefined,lead:lead?{name:lead.name}:undefined,teams:{nodes:teams.filter(t=>teamIds.includes(t.id)).map(t=>({id:t.id,name:t.name,key:t.key}))}});onClose()};
- return <div className="modal-backdrop project-create-backdrop"><form className="modal project-create-reference" onSubmit={create} role="dialog" aria-modal="true" aria-labelledby="new-project-title"><div className="modal-head"><div><span className="eyebrow">Workspace</span><h2 id="new-project-title">New project</h2></div><button type="button" className="icon" aria-label="Discard project" onClick={onClose} disabled={busy}><X size={18}/></button></div><label>Project name<input required value={name} onChange={e=>setName(e.target.value)}/></label><label>Project summary<input value={summary} onChange={e=>setSummary(e.target.value)} placeholder="Add a short summary"/></label><label>Project description<textarea value={description} onChange={e=>setDescription(e.target.value)} rows={4}/></label><div className="project-create-fields"><label>Status<select value={state} onChange={e=>setState(e.target.value)}>{['backlog','planned','started','paused','completed','canceled'].map(x=><option key={x} value={x}>{x==='started'?'In Progress':x[0].toUpperCase()+x.slice(1)}</option>)}</select></label><label>Lead<select value={leadId} onChange={e=>setLeadId(e.target.value)}><option value="">No lead</option>{members.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select></label><label>Start date<input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)}/></label><label>Target date<input type="date" value={targetDate} min={startDate||undefined} onChange={e=>setTargetDate(e.target.value)}/></label></div><fieldset><legend>Teams</legend>{teams.map(t=><label key={t.id}><input type="checkbox" checked={teamIds.includes(t.id)} onChange={e=>setTeamIds(old=>e.target.checked?[...old,t.id]:old.filter(id=>id!==t.id))}/>{t.name} ({t.key})</label>)}</fieldset><p className="muted">Priority, labels, dependencies and milestones are unavailable in this project form.</p>{error&&<small className="error" role="alert">{error}</small>}<footer><button type="button" className="outline" disabled={busy} onClick={onClose}>Discard</button><button className="primary" disabled={busy||!name.trim()||!!(startDate&&targetDate&&targetDate<startDate)}>{busy?'Creating…':'Create project'}</button></footer></form></div>;
+      {notice && (
+        <p
+          role="alert"
+          className="pt-12.5 pr-5 pb-12.5 pl-5 text-center text-muted text-[13px]"
+        >
+          {notice.message}{" "}
+          {notice.retry && (
+            <button
+              type="button"
+              onClick={notice.retry}
+              className="max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+            >
+              Retry
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setProjectNotice(null)}
+            className="max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+          >
+            Dismiss
+          </button>
+        </p>
+      )}
+      {error && (
+        <p
+          role="alert"
+          className="pt-12.5 pr-5 pb-12.5 pl-5 text-center text-muted text-[13px]"
+        >
+          {error}{" "}
+          <button
+            type="button"
+            onClick={onLoadMore}
+            className="max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+          >
+            Retry
+          </button>
+        </p>
+      )}
+      {layout === "Timeline" ? (
+        <div className="pt-12.5 pr-5 pb-12.5 pl-5 text-center text-muted text-[13px]">
+          <h2>Timeline</h2>
+          <p>
+            Project date ranges and timeline controls are not available in Hoja
+            yet. Switch to List or Board to see the same projects.
+          </p>
+        </div>
+      ) : visible.length ? (
+        layout === "Board" ? (
+          <div
+            className="min-w-0 w-full flex gap-3 overflow-x-auto overflow-y-hidden pt-3 pr-3 pb-3 pl-3 shell-phone:pt-2.5 shell-phone:pr-2.5 shell-phone:pb-2.5 shell-phone:pl-2.5 overscroll-x-contain"
+            data-projects-board=""
+          >
+            {(group === "No grouping"
+              ? PROJECT_STATES.map((key) => ({ key, label: title(key) }))
+              : columns
+            ).map((col) => {
+              const cards =
+                group === "No grouping"
+                  ? buckets.byState.get(col.key) || []
+                  : inColumn(col.key);
+              return (
+                <section
+                  className="border flex min-w-0 flex-col gap-2 pt-2.5 pr-2.5 pb-2.5 pl-2.5 border-line rounded-[9px] bg-[color-mix(in_srgb,var(--subtle)_55%,var(--bg))] flex-[0_0_min(280px,80vw)] shell-phone:basis-[min(280px,calc(100vw-48px))]"
+                  data-projects-board-column=""
+                  key={col.key}
+                >
+                  <h2 className="mt-0 mr-0 mb-1 ml-0 text-[12px]">
+                    {col.label}{" "}
+                    <span className="text-muted font-normal">
+                      {cards.length}
+                    </span>
+                  </h2>
+                  {cards.map((p) => (
+                    <button
+                      type="button"
+                      className="border shadow-[0_1px_2px_#1b1b1b08] min-w-0 pt-3 pr-3 pb-3 pl-3 border-line rounded-lg bg-panel grid gap-2 w-full text-left text-[12px] hover:border-accent max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                      data-projects-board-card=""
+                      key={p.id}
+                      onClick={() => onOpen(p)}
+                      disabled={isPendingProject(p)}
+                      aria-busy={isPendingProject(p) || undefined}
+                    >
+                      <strong className="min-w-0 wrap-break-word">
+                        {p.name}
+                      </strong>
+                      {summary && p.description && (
+                        <small className="min-w-0 wrap-break-word text-muted">
+                          {p.description}
+                        </small>
+                      )}
+                      <span className="min-w-0 wrap-break-word text-muted">
+                        {p.lead?.name || "No lead"} ·{" "}
+                        {Math.round(p.progress || 0)}%
+                      </span>
+                    </button>
+                  ))}
+                </section>
+              );
+            })}
+          </div>
+        ) : (
+          columns.map((col) => {
+            const rows = inColumn(col.key);
+            return (
+              <section
+                className="w-full min-w-0 border-collapse table-fixed text-[12px]"
+                data-projects-table=""
+                key={col.key}
+              >
+                {group !== "No grouping" && (
+                  <h2 className="mt-0 mr-0 mb-0 ml-0 pt-3 pr-4 pb-3 pl-4 border-b border-line text-[12px]">
+                    {col.label}{" "}
+                    <span className="text-muted font-normal">
+                      {rows.length}
+                    </span>
+                  </h2>
+                )}
+                <div
+                  className="border-b border-line grid items-center gap-1.5 pt-0 pr-4.25 pb-0 pl-4.25 min-h-8.75 text-muted text-[12px] w-full text-left border-0 font-medium shell-phone:hidden grid-cols-[minmax(0,4.3fr)_minmax(52px,.48fr)_minmax(90px,1fr)_minmax(84px,.9fr)_minmax(42px,.45fr)_minmax(104px,1fr)]"
+                  data-projects-table-head=""
+                >
+                  <span>Name</span>
+                  <span>Health</span>
+                  <span>Lead</span>
+                  <span>Target date</span>
+                  <span>Tasks</span>
+                  <span>Status</span>
+                </div>
+                {rows.map(row)}
+              </section>
+            );
+          })
+        )
+      ) : (
+        <div
+          className="grid justify-items-center text-center pt-18 pr-5 pb-18 pl-5 rounded-[9px] text-muted border border-dashed border-line"
+          data-empty-projects=""
+          role="status"
+        >
+          <FolderKanban size={28} />
+          <h2 className="text-foreground text-[17px] mt-3.5 mr-0 mb-1 ml-0">
+            {projects.length ? "No matching projects" : "No projects yet"}
+          </h2>
+          <p className="mt-0 mr-0 mb-4 ml-0">
+            {projects.length
+              ? "Try broader filters or show closed projects."
+              : "Create a project to organize work across teams."}
+          </p>
+          {projects.length ? (
+            <button
+              className="h-7.5 pt-0 pr-3 pb-0 pl-3 border border-line rounded-[7px] bg-panel text-foreground text-[12px] font-[550] cursor-pointer inline-flex items-center gap-1.5 hover:bg-subtle max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 [font:inherit]"
+              type="button"
+              onClick={clear}
+            >
+              Clear filters
+            </button>
+          ) : (
+            <button
+              className="h-7.5 pt-0 pr-3 pb-0 pl-3 border border-line rounded-[7px] bg-panel text-foreground text-[12px] font-[550] cursor-pointer inline-flex items-center gap-1.5 hover:bg-subtle max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 [font:inherit]"
+              type="button"
+              onClick={onCreate}
+            >
+              New project
+            </button>
+          )}
+        </div>
+      )}
+      {hasMore && (
+        <button
+          type="button"
+          className="border block mt-5 mr-auto mb-5 ml-auto pt-2 pr-3 pb-2 pl-3 border-line rounded-[5px] bg-panel max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+          onClick={onLoadMore}
+          disabled={loading}
+        >
+          {loading ? "Loading…" : "Load more projects"}
+        </button>
+      )}
+    </section>
+  );
 }
-export const stateKey=(s:{name:string;type:string})=>`${s.name}|${s.type}`;export type IssueLayout='List'|'Board';export type IssueState={id:string;name:string;color:string;type:string};
-function LayoutSwitch({layout,onChange}:{layout:IssueLayout;onChange:(layout:IssueLayout)=>void}){const next=layout==='List'?'Board':'List';return <button type="button" className="layout-switch" aria-label={`Switch to ${next.toLowerCase()} view`} title={`Switch to ${next.toLowerCase()} view`} onClick={()=>onChange(next)}>{layout==='List'?<LayoutDashboard size={15}/>:<ListIcon size={15}/>}</button>}
-function IssueBoard({issues,states,teams,onSelect,onMoved,onUpdate,onNew}:{issues:Issue[];states:IssueState[];teams:Team[];onSelect:(issue:Issue)=>void;onMoved:(issueId:string,state:IssueState)=>Promise<void>;onUpdate:(issueId:string,input:Record<string,unknown>)=>Promise<void>;onNew:(stateId?:string)=>void}){const grouped=useMemo(()=>{const unique=[...new Map(issues.map(i=>[i.id,i])).values()];const by=new Map<string,Issue[]>(states.map(s=>[stateKey(s),[]]));const unknown:Issue[]=[];for(const i of unique){const list=i.state?by.get(stateKey(i.state)):undefined;if(list)list.push(i);else unknown.push(i)}const known=states.map(state=>({state,items:by.get(stateKey(state))||[]}));return [...known,...(unknown.length?[{state:{id:'unknown',name:'Unknown state',color:'#a1a1aa',type:'unknown'},items:unknown}]:[])]},[issues,states]);return <div className="issues-board"><Kanban teams={teams} grouped={grouped} onSelect={onSelect} onNew={onNew} onMoved={onMoved} onUpdate={onUpdate}/></div>}
+function ProjectDetails({
+  project: given,
+  onBack,
+  onSaved,
+  onOpenIssue,
+  onNewView,
+  teams,
+  projects,
+  layout,
+  onLayoutChange,
+  onMoved,
+  onUpdate,
+  onNew,
+}: {
+  project: Project;
+  issues: Issue[];
+  onNewView: () => void;
+  onBack: () => void;
+  onSaved: (p: Project) => void;
+  onOpenIssue: (issue: Issue) => void;
+  revision: number;
+  teams: Team[];
+  projects: Project[];
+  layout: IssueLayout;
+  onLayoutChange: (layout: IssueLayout) => void;
+  onMoved: (issueId: string, state: IssueState) => Promise<void>;
+  onUpdate: (issueId: string, input: Record<string, unknown>) => Promise<void>;
+  onNew: (stateId?: string) => void;
+}) {
+  // The project and its issues come from the local store; only project updates and older closed issues are fetched.
+  const project = useProject(given);
+  const meta = useProjectSyncMeta();
+  const members = useMemberOptions();
+  const [tab, setTab] = useState<"Overview" | "Activity" | "Issues">(() =>
+    location.pathname.endsWith("/activity")
+      ? "Activity"
+      : location.pathname.endsWith("/issues")
+        ? "Issues"
+        : "Overview",
+  );
+  useEffect(() => {
+    const onPop = () =>
+      setTab(
+        location.pathname.endsWith("/activity")
+          ? "Activity"
+          : location.pathname.endsWith("/issues")
+            ? "Issues"
+            : "Overview",
+      );
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  // Store rows only; closed issues older than the synced window are loaded by the list when it shows them all.
+  const related = useProjectIssues(project.id, gql, issueFields, false).issues;
+  const olderClosed = useOlderClosed("project", project.id);
+  const projectStates = useMemo(() => {
+    const ids = new Set((project.teams?.nodes || []).map((t) => t.id));
+    const scoped = teams.filter((t) => ids.has(t.id));
+    return [
+      ...new Map(
+        (scoped.length ? scoped : teams)
+          .flatMap((t) => t.states.nodes)
+          .map((st) => [stateKey(st), st]),
+      ).values(),
+    ];
+  }, [project.teams, teams]);
+  const updatesKey = `projectUpdates:${project.id}:${meta?.viewer.id || ""}`;
+  const updatesVersion = useProjectEntityVersion(["projectUpdate"]);
+  const fetchUpdates = React.useCallback(
+    (first: number, after: string | null) =>
+      gql(
+        `query ProjectActivity($first:Int,$after:String,$filter:ProjectUpdateFilter){projectUpdates(first:$first,after:$after,filter:$filter){nodes{id body status createdAt actor{id name avatarSeed} progress project{id name}} pageInfo{hasNextPage endCursor}}}`,
+        { first, after, filter: { project: { id: { eq: project.id } } } },
+      ).then((d) => d.projectUpdates as PageOf<PulsePost>),
+    [project.id],
+  );
+  const activity = usePagedCache<PulsePost>(
+    tab === "Activity" || tab === "Overview" ? updatesKey : null,
+    fetchUpdates,
+    updatesVersion,
+    20,
+    "Project update",
+  );
+  const updates = activity.rows;
+  const summary = useMemo(() => {
+    const counts = new Map<string, number>();
+    let done = 0,
+      canceled = 0;
+    for (const i of related) {
+      const t = i.state?.type;
+      if (t === "completed") done++;
+      else if (t === "canceled") canceled++;
+      const k = i.state ? stateKey(i.state) : "";
+      counts.set(k, (counts.get(k) || 0) + 1);
+    }
+    const scope = related.length - canceled;
+    const byStatus = projectStates
+      .filter((st) => counts.get(stateKey(st)))
+      .map((st) => ({ state: st, count: counts.get(stateKey(st)) || 0 }));
+    const none = counts.get("") || 0;
+    return {
+      total: related.length,
+      done,
+      canceled,
+      open: scope - done,
+      pct: Math.round(project.progress ?? (scope ? (done / scope) * 100 : 0)),
+      byStatus,
+      none,
+    };
+  }, [related, projectStates, project.progress]);
+  const userNames = useMemo(
+    () =>
+      new Map(
+        (meta?.users || []).map(([id, name]) => [id, name || ""]) as [
+          string,
+          string,
+        ][],
+      ),
+    [meta],
+  );
+  const goTab = (v: "Overview" | "Activity" | "Issues") => {
+    history.pushState(
+      {},
+      "",
+      `/workspace/project/${project.id}/${v.toLowerCase()}`,
+    );
+    setTab(v);
+  };
+  const [detailMenu, setDetailMenu] = useState(false);
+  const [propsOpen, setPropsOpen] = useState(() => {
+    try {
+      return localStorage.getItem("hoja_project_properties_open") === "true";
+    } catch {
+      return false;
+    }
+  });
+  const togglePropsOpen = () =>
+    setPropsOpen((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("hoja_project_properties_open", String(next));
+      } catch {
+        /* ignore storage failures */
+      }
+      return next;
+    });
+  const [editOpen, setEditOpen] = useState(false);
+  const leadIdOf = (p: Project) => {
+    const matches = members.filter((m) => m.name === p.lead?.name);
+    return matches.length === 1 ? matches[0].id : "";
+  };
+  const currentLead = useMemo(
+    () => leadIdOf(project),
+    [project.lead?.name, members], // eslint-disable-line react-hooks/exhaustive-deps -- leadIdOf is rebuilt each render
+  );
+  const [name, setName] = useState(project.name);
+  const [description, setDescription] = useState(project.description || "");
+  const [state, setState] = useState(project.state || "backlog");
+  const [leadId, setLeadId] = useState(currentLead);
+  const [startDate, setStartDate] = useState(project.startDate || "");
+  const [targetDate, setTargetDate] = useState(project.targetDate || "");
+  const [status, setStatus] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [confirmArchive, setConfirmArchive] = useState(false);
+  type Draft = {
+    name: string;
+    description: string;
+    state: string;
+    leadId: string;
+    startDate: string;
+    targetDate: string;
+  };
+  const restoreDraft = useRef<Draft | null>(null);
+  const applyDraft = useCallback((d: Draft) => {
+    setName(d.name);
+    setDescription(d.description);
+    setState(d.state);
+    setLeadId(d.leadId);
+    setStartDate(d.startDate);
+    setTargetDate(d.targetDate);
+  }, []);
+  useEffect(() => {
+    const draft = restoreDraft.current;
+    restoreDraft.current = null;
+    applyDraft(
+      draft || {
+        name: project.name,
+        description: project.description || "",
+        state: project.state || "backlog",
+        leadId: currentLead,
+        startDate: project.startDate || "",
+        targetDate: project.targetDate || "",
+      },
+    );
+  }, [
+    project.id,
+    project.name,
+    project.description,
+    project.state,
+    project.startDate,
+    project.targetDate,
+    currentLead,
+    applyDraft,
+  ]);
+  const cancelEdit = () => {
+    applyDraft({
+      name: project.name,
+      description: project.description || "",
+      state: project.state || "backlog",
+      leadId: currentLead,
+      startDate: project.startDate || "",
+      targetDate: project.targetDate || "",
+    });
+    setStatus("");
+  };
+  const changed =
+    name !== project.name ||
+    description !== (project.description || "") ||
+    state !== (project.state || "backlog") ||
+    leadId !== currentLead ||
+    startDate !== (project.startDate || "") ||
+    targetDate !== (project.targetDate || "");
+  const datesInvalid = Boolean(
+    startDate && targetDate && targetDate < startDate,
+  );
+  const update = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!changed || !name.trim() || datesInvalid) return;
+    const input: Record<string, unknown> = {},
+      patch: Partial<Project> = {};
+    if (name !== project.name) {
+      input.name = name;
+      patch.name = name;
+    }
+    if (description !== (project.description || "")) {
+      input.description = description;
+      patch.description = description;
+    }
+    if (state !== (project.state || "backlog")) {
+      input.state = state;
+      patch.state = state;
+    }
+    if (leadId !== currentLead) {
+      input.leadId = leadId || null;
+      patch.lead = leadId
+        ? { name: members.find((m) => m.id === leadId)?.name }
+        : undefined;
+    }
+    if (startDate !== (project.startDate || "")) {
+      input.startDate = startDate || null;
+      patch.startDate = startDate || undefined;
+    }
+    if (targetDate !== (project.targetDate || "")) {
+      input.targetDate = targetDate || null;
+      patch.targetDate = targetDate || undefined;
+    }
+    const draft: Draft = {
+      name,
+      description,
+      state,
+      leadId,
+      startDate,
+      targetDate,
+    };
+    // Optimistic: the page shows the edit at once; a failure restores the server values and keeps the draft in the form.
+    const settle = patchProject(project.id, patch);
+    setStatus("Saving…");
+    try {
+      const d = await gql(
+        `mutation($id:String!,$input:ProjectUpdateInput!){projectUpdate(id:$id,input:$input){success project{${PROJECT_FIELDS}}}}`,
+        { id: project.id, input },
+      );
+      if (!d.projectUpdate?.success || !d.projectUpdate.project)
+        throw Error("Project update failed");
+      settle(true, d.projectUpdate.project);
+      onSaved(d.projectUpdate.project);
+      setStatus("Project saved.");
+    } catch (err) {
+      restoreDraft.current = draft;
+      settle(false);
+      applyDraft(draft);
+      setStatus((err as Error).message);
+    }
+  };
+  const publish = async (body: string, health: string) => {
+    const temp: PulsePost = {
+      id: `optimistic:${crypto.randomUUID()}`,
+      body,
+      status: health,
+      createdAt: new Date().toISOString(),
+      progress: project.progress,
+      actor: { id: meta?.viewer.id || "", name: meta?.viewer.name },
+      project: {
+        id: project.id,
+        name: project.name,
+        health: project.health,
+        progress: project.progress,
+        targetDate: project.targetDate,
+        lead: project.lead,
+      },
+    };
+    const feeds = [updatesKey, pulseKey(meta)]
+      .filter((k): k is string => !!k && (k === updatesKey || hasPage(k)))
+      .map((k) => optimisticPage<PulsePost>(k, (r) => [temp, ...r]));
+    try {
+      const d = await gql(
+        `mutation($input:ProjectUpdateCreateInput!){projectUpdateCreate(input:$input){success projectUpdate{${PULSE_FIELDS}}}}`,
+        { input: { projectId: project.id, body, status: health } },
+      );
+      if (
+        !d.projectUpdateCreate.success ||
+        !d.projectUpdateCreate.projectUpdate
+      )
+        throw Error("Could not publish update.");
+      const created: PulsePost = d.projectUpdateCreate.projectUpdate;
+      for (const settle of feeds) settle((r) => upsertFirst(r, created));
+    } catch (err) {
+      for (const settle of feeds) settle();
+      throw err;
+    }
+  };
+  const archive = async () => {
+    if (busy) return;
+    setBusy(true);
+    const settle = hideProject(project.id);
+    const label = project.name;
+    setConfirmArchive(false);
+    setProjectNotice(null);
+    onBack();
+    try {
+      const d = await gql(
+        `mutation($id:String!){projectArchive(id:$id){success}}`,
+        { id: project.id },
+      );
+      if (!d.projectArchive?.success) throw Error("Archive failed");
+      settle(true);
+    } catch (err) {
+      settle(false);
+      setProjectNotice({
+        message: `Could not archive ${label}: ${(err as Error).message}`,
+      });
+    }
+  };
+  return (
+    <section
+      className="max-w-none mt-0 mr-auto mb-0 ml-auto min-w-0 w-full overflow-x-hidden text-[12px] leading-normal shell-phone:flex shell-phone:flex-col font-['Inter_Variable',Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe_UI',sans-serif] [font-optical-sizing:auto] shell-desktop:[&:has(>[data-project-reference-properties])]:grid-cols-[minmax(0,1fr)_minmax(260px,38%)] shell-phone:[[data-main]>&]:mx-[calc(50%-50vw)] shell-phone:[[data-main]>&]:w-auto shell-phone:[[data-main]>&]:-mt-6 shell-phone:[&_[data-my-issues-view]]:px-2 shell-phone:[&_[data-my-issues-view]]:pt-2 shell-phone:[&_[data-my-issue-row]]:pl-2! shell-phone:[&_[data-my-issue-row][data-depth='1']]:pl-8! shell-phone:[&_[data-my-issue-row][data-depth='2']]:pl-14! shell-phone:[&_[data-my-issue-row][data-depth='3']]:pl-20! shell-phone:[&_[data-my-issue-row][data-depth='4']]:pl-26! shell-phone:[&_[data-my-issue-row]>span[aria-hidden=true]]:-translate-x-8.5"
+      data-project-detail=""
+      data-project-reference=""
+    >
+      <div
+        className="border-b border-line h-11.25 min-h-11.25 flex items-center justify-between gap-2.5 pt-0 pr-4.5 pb-0 pl-4.5 relative shell-phone:order-0 md:col-span-full leading-normal shell-phone:flex-wrap shell-phone:h-auto shell-phone:gap-x-1 shell-phone:gap-y-0 shell-phone:pt-1 shell-phone:pr-1 shell-phone:pb-2 shell-phone:pl-1"
+        data-project-reference-head=""
+      >
+        <MobileNavTrigger />
+        <button
+          className="flex-none pt-1.25 pr-1.25 pb-1.25 pl-1.25 rounded-[5px] bg-transparent text-[12px] text-muted max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:mr-auto shell-phone:text-base"
+          data-back-link=""
+          onClick={onBack}
+        >
+          ← <span className="shell-phone:sr-only">Projects</span>
+        </button>
+        <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[12px] shell-phone:order-last shell-phone:basis-full shell-phone:px-2 shell-phone:text-sm shell-phone:font-medium">
+          {project.name}
+        </span>
+        <FollowButton
+          type="project"
+          id={project.id}
+          onError={(m) => setStatus(m)}
+          className="shell-phone:min-h-11 pointer-coarse:min-h-11"
+        />
+        {tab === "Overview" && (
+          <button
+            className={`flex-none inline-flex items-center gap-1.5 pt-1.25 pr-2 pb-1.25 pl-2 rounded-[5px] border border-line text-[12px] max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 shell-phone:justify-center ${
+              propsOpen
+                ? "bg-subtle text-foreground font-medium"
+                : "bg-panel text-muted hover:bg-subtle hover:text-foreground"
+            }`}
+            type="button"
+            aria-expanded={propsOpen}
+            aria-label={
+              propsOpen ? "Hide project properties" : "Show project properties"
+            }
+            onClick={togglePropsOpen}
+          >
+            <SlidersHorizontal size={13} aria-hidden="true" />
+            <span className="shell-phone:sr-only">Properties</span>
+          </button>
+        )}
+        <button
+          className="flex-none pt-1.25 pr-1.25 pb-1.25 pl-1.25 rounded-[5px] bg-transparent text-[12px] max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:hidden pointer-coarse:min-h-11 pointer-coarse:min-w-11"
+          type="button"
+          aria-label="Copy page URL"
+          onClick={() => {
+            void navigator.clipboard
+              .writeText(location.href)
+              .then(() => setStatus("Project URL copied."))
+              .catch(() => setStatus("Could not copy project URL."));
+          }}
+        >
+          Copy URL
+        </button>
+        <UIPopover open={detailMenu} onOpenChange={setDetailMenu}>
+          <PopoverTrigger asChild>
+            <button
+              className="flex-none pt-1.25 pr-1.25 pb-1.25 pl-1.25 rounded-[5px] bg-transparent text-[12px] max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 group"
+              type="button"
+              aria-label="Project actions"
+              aria-expanded={detailMenu}
+            >
+              <MoreHorizontal size={17} />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent
+            align="end"
+            sideOffset={6}
+            className="z-50 w-auto pt-2.25 pr-2.25 pb-2.25 pl-2.25 border border-line rounded-[7px] bg-panel shadow-(--shadow) shell-phone:grid shell-phone:min-w-48"
+            data-project-reference-menu=""
+          >
+            <button
+              className="hidden bg-transparent pt-1.75 pr-2.5 pb-1.75 pl-2.5 text-left max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:block shell-phone:min-h-11"
+              type="button"
+              onClick={() => {
+                setDetailMenu(false);
+                void navigator.clipboard
+                  .writeText(location.href)
+                  .then(() => setStatus("Project URL copied."))
+                  .catch(() => setStatus("Could not copy project URL."));
+              }}
+            >
+              Copy URL
+            </button>
+            <button
+              className="bg-transparent pt-1.75 pr-2.5 pb-1.75 pl-2.5 max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:text-left"
+              type="button"
+              onClick={() => {
+                setConfirmArchive(true);
+                setDetailMenu(false);
+              }}
+            >
+              Archive project
+            </button>
+          </PopoverContent>
+        </UIPopover>
+      </div>
+
+      <nav
+        className="h-11 min-w-0 flex items-center gap-1.25 pt-0 pr-3 pb-0 pl-3 overflow-x-auto border-line [&::-webkit-scrollbar]:hidden border-b-0 md:col-span-full scrollbar-none shell-phone:h-14 shell-phone:pr-14 shell-phone:pl-2"
+        data-project-reference-tabs=""
+        aria-label="Project views"
+      >
+        {(["Overview", "Activity", "Issues"] as const).map((v) => (
+          <button
+            className="h-7 flex-none inline-flex items-center gap-1.5 pt-0 pr-2.75 pb-0 pl-2.75 border border-line rounded-[99px] bg-panel text-muted no-underline text-[12px] aria-[current=page]:bg-subtle aria-[current=page]:text-foreground aria-[current=page]:font-semibold max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+            key={v}
+            type="button"
+            aria-current={tab === v ? "page" : undefined}
+            onClick={() => {
+              history.pushState(
+                {},
+                "",
+                `/workspace/project/${project.id}/${v.toLowerCase()}`,
+              );
+              setTab(v);
+            }}
+          >
+            {displayLabel(v)}
+          </button>
+        ))}
+      </nav>
+      <button
+        type="button"
+        className="absolute right-4.75 top-13.25 z-2 grid place-items-center w-7 h-7 rounded-md bg-transparent text-muted hover:bg-subtle hover:text-foreground max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 md:col-start-2 md:row-start-2 md:justify-self-end shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:static shell-phone:right-auto shell-phone:top-auto shell-phone:mr-1 shell-phone:-mt-12.5 shell-phone:mb-1.5 shell-phone:self-end"
+        data-project-add-view=""
+        aria-label="Add new view"
+        onClick={onNewView}
+      >
+        <Plus size={15} />
+      </button>
+      {tab === "Overview" ? (
+        <>
+          <header className="flex items-center gap-3.5 mb-0 mt-15 block relative max-w-none mr-0 ml-14.5 pt-0 pr-0 pb-0 pl-0 border-0 max-lg:w-auto max-lg:mt-7 max-lg:mr-3.5 max-lg:mb-0 max-lg:ml-3.5 shell-phone:order-3 shell-phone:ml-3.5 shell-phone:mr-3.5 [@media_(max-width:900px)]:w-auto [@media_(max-width:900px)]:mt-7 [@media_(max-width:900px)]:mr-3.5 [@media_(max-width:900px)]:mb-0 [@media_(max-width:900px)]:ml-3.5 shell-phone:mt-4.5 shell-phone:mb-0 w-[calc(62%-87px)]">
+            <span
+              className="grid place-items-center w-9 h-9 rounded-lg bg-accent-soft text-accent font-bold text-[0] mb-3"
+              data-project-mark=""
+              aria-hidden="true"
+            >
+              <FolderKanban size={23} />
+            </span>
+            <div className="flex-1 max-w-full">
+              <h1 className="text-[24px] tracking-tight mt-0 mr-0 mb-2 ml-0 shell-phone:text-2xl font-semibold leading-[1.33] shell-phone:mt-1.5 shell-phone:text-[23px] shell-phone:mt-1.75">
+                {project.name}
+              </h1>
+            </div>
+          </header>
+          {propsOpen && (
+            <div
+              className="border absolute right-2.75 top-22.5 min-w-65 max-w-96.25 grid content-start gap-4 pt-4 pr-3.25 pb-4 pl-3.25 border-line rounded-[10px] bg-panel max-lg:static max-lg:w-auto max-lg:max-w-none max-lg:min-w-0 max-lg:mt-5 max-lg:mr-3.5 max-lg:mb-5 max-lg:ml-3.5 shell-phone:mt-0 shell-phone:mb-4 shell-phone:pt-3 shell-phone:pb-3 shell-phone:order-2 md:col-start-2 md:row-start-3 md:row-span-6 [@media_(max-width:900px)]:w-auto [@media_(max-width:900px)]:max-w-none [@media_(max-width:900px)]:min-w-0 [@media_(max-width:900px)]:mt-5 [@media_(max-width:900px)]:mr-3.5 [@media_(max-width:900px)]:mb-5 [@media_(max-width:900px)]:ml-3.5 shell-phone:mr-2.5 shell-phone:mb-4.5 shell-phone:ml-2.5 shell-phone:pt-3.25 shell-phone:pr-3.25 shell-phone:pb-3.25 shell-phone:pl-3.25 w-[calc(38%-11px)] shell-phone:[&_[data-project-repository]]:grid-cols-1 shell-phone:[&_[data-project-repository]]:gap-1 shell-phone:[&_[data-project-repository]_button[aria-haspopup=dialog]]:min-h-11 pointer-coarse:[&_[data-project-repository]_button[aria-haspopup=dialog]]:min-h-11 shell-phone:[&_[data-project-repository]_button[aria-haspopup=dialog]]:border-line"
+              data-project-reference-properties=""
+            >
+              <h2 className="mt-0 mr-0 mb-0.5 ml-0 text-[12px] font-semibold">
+                Properties
+              </h2>
+              <div className="grid items-start gap-2 grid-cols-2">
+                <span className="text-muted">Status</span>
+                <b className="text-[12px] font-medium wrap-break-word">
+                  {(
+                    {
+                      started: "In Progress",
+                      backlog: "Backlog",
+                      planned: "Planned",
+                      paused: "Paused",
+                      completed: "Completed",
+                      canceled: "Canceled",
+                    } as Record<string, string>
+                  )[project.state || "backlog"] || project.state}
+                </b>
+              </div>
+              <div className="grid items-start gap-2 grid-cols-2">
+                <span className="text-muted">Lead</span>
+                <b className="text-[12px] font-medium wrap-break-word">
+                  {project.lead?.name || "No lead"}
+                </b>
+              </div>
+              <div className="grid items-start gap-2 grid-cols-2">
+                <span className="text-muted">Members</span>
+                <ProjectMembers projectId={project.id} people={members} />
+              </div>
+              <div className="grid items-start gap-2 grid-cols-2">
+                <span className="text-muted">Start date</span>
+                <b className="text-[12px] font-medium wrap-break-word">
+                  {project.startDate || "Not set"}
+                </b>
+              </div>
+              <div className="grid items-start gap-2 grid-cols-2">
+                <span className="text-muted">Target date</span>
+                <b className="text-[12px] font-medium wrap-break-word">
+                  {project.targetDate || "Not set"}
+                </b>
+              </div>
+              <div className="grid items-start gap-2 grid-cols-2">
+                <span className="text-muted">Teams</span>
+                <b className="text-[12px] font-medium wrap-break-word">
+                  {project.teams?.nodes.map((t) => t.name).join(", ") ||
+                    "No teams"}
+                </b>
+              </div>
+              <ProjectRepository projectId={project.id} />
+              <button
+                type="button"
+                className="inline-flex items-center justify-center gap-1.75 rounded-md border border-line bg-panel pl-2.75 pr-2.75 pt-2 pb-2 text-inherit transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 w-full text-[12px] max-w-full font-sans shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 group"
+                data-control-outline=""
+                aria-expanded={editOpen}
+                onClick={() => setEditOpen((v) => !v)}
+              >
+                {editOpen ? "Close editor" : "Edit project"}
+              </button>
+            </div>
+          )}
+          {editOpen && (
+            <form
+              className="border shadow-(--ui-shadow-card) bg-panel border-line static top-auto left-auto w-[calc(62%-87px)] max-w-none mt-7 mr-auto mb-5 ml-10.75 pt-5.5 pr-6 pb-5.5 pl-6 overflow-visible shell-phone:pt-4 shell-phone:pr-4 shell-phone:pb-4 shell-phone:pl-4 relative max-lg:w-auto max-lg:mt-5 max-lg:mr-3.5 max-lg:mb-5 max-lg:ml-3.5 transform-none max-h-none rounded-(--ui-radius-card) shell-phone:order-6 shell-phone:order-7 md:col-start-1 md:row-start-7 shell-phone:pt-4.5 shell-phone:pb-4.5 shell-phone:ml-2.5 shell-phone:mr-2.5 [@media_(max-width:900px)]:w-auto [@media_(max-width:900px)]:mt-5 [@media_(max-width:900px)]:mr-3.5 [@media_(max-width:900px)]:mb-5 [@media_(max-width:900px)]:ml-3.5"
+              data-project-editor=""
+              data-ui-card=""
+              onSubmit={update}
+            >
+              <div
+                className="border-b border-line flex justify-between items-end gap-4 pb-4.25 shell-phone:items-start"
+                data-project-editor-head=""
+              >
+                <div>
+                  <span className="text-[10px] font-bold normal-case text-muted mt-0 mr-0 mb-0 ml-0 tracking-[.12em]">
+                    Project properties
+                  </span>
+                  <h2 className="mt-1.25 mr-0 mb-0 ml-0 text-[16px] tracking-tight">
+                    Edit project
+                  </h2>
+                </div>
+                <span
+                  className="text-muted text-[11px] text-right shell-phone:max-w-28 shell-phone:max-w-26.25"
+                  data-control-muted=""
+                >
+                  Changes are saved explicitly
+                </span>
+              </div>
+              <div
+                className="grid pt-4.75 pr-0 pb-5.25 pl-0 shell-phone:gap-3.5 grid-cols-1 gap-x-6 gap-y-4 md:grid-cols-2 shell-phone:gap-3.75"
+                data-project-editor-fields=""
+              >
+                <label className="grid content-start gap-1.75 min-w-0 mt-0 mr-0 mb-0 ml-0 text-[12px] font-semibold">
+                  Name
+                  <input
+                    className="w-full min-w-0 min-h-10 mt-0 mr-0 mb-0 ml-0 pt-2.25 pr-2.75 pb-2.25 pl-2.75 border border-line rounded-[7px] bg-bg text-foreground font-normal shell-phone:text-base max-w-full font-sans placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    required
+                  />
+                </label>
+                <label className="grid content-start gap-1.75 min-w-0 mt-0 mr-0 mb-0 ml-0 text-[12px] font-semibold col-span-full">
+                  Description
+                  <textarea
+                    className="w-full min-w-0 min-h-32.5 mt-0 mr-0 mb-0 ml-0 pt-2.25 pr-2.75 pb-2.25 pl-2.75 border border-line rounded-[7px] bg-bg text-foreground font-normal leading-normal resize-y wrap-break-word shell-phone:text-base font-sans placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                  />
+                </label>
+                <label className="grid content-start gap-1.75 min-w-0 mt-0 mr-0 mb-0 ml-0 text-[12px] font-semibold col-span-full">
+                  State
+                  <select
+                    className="w-full min-w-0 min-h-10 mt-0 mr-0 mb-0 ml-0 pt-2.25 pr-2.75 pb-2.25 pl-2.75 border border-line rounded-[7px] bg-bg text-foreground font-normal shell-phone:text-base max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                    value={state}
+                    onChange={(e) => setState(e.target.value)}
+                  >
+                    {PROJECT_STATES.map((x) => (
+                      <option key={x}>{x}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid content-start gap-1.75 min-w-0 mt-0 mr-0 mb-0 ml-0 text-[12px] font-semibold col-span-full">
+                  Lead
+                  <select
+                    className="w-full min-w-0 min-h-10 mt-0 mr-0 mb-0 ml-0 pt-2.25 pr-2.75 pb-2.25 pl-2.75 border border-line rounded-[7px] bg-bg text-foreground font-normal shell-phone:text-base max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                    value={leadId}
+                    onChange={(e) => setLeadId(e.target.value)}
+                  >
+                    <option value="">No lead</option>
+                    {members.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid content-start gap-1.75 min-w-0 mt-0 mr-0 mb-0 ml-0 text-[12px] font-semibold">
+                  Start date
+                  <input
+                    className="w-full min-w-0 min-h-10 mt-0 mr-0 mb-0 ml-0 pt-2.25 pr-2.75 pb-2.25 pl-2.75 border border-line rounded-[7px] bg-bg text-foreground font-normal shell-phone:text-base max-w-full font-sans placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                  />
+                </label>
+                <label className="grid content-start gap-1.75 min-w-0 mt-0 mr-0 mb-0 ml-0 text-[12px] font-semibold">
+                  Target date
+                  <input
+                    className="w-full min-w-0 min-h-10 mt-0 mr-0 mb-0 ml-0 pt-2.25 pr-2.75 pb-2.25 pl-2.75 border border-line rounded-[7px] bg-bg text-foreground font-normal shell-phone:text-base max-w-full font-sans placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                    type="date"
+                    value={targetDate}
+                    min={startDate || undefined}
+                    onChange={(e) => setTargetDate(e.target.value)}
+                  />
+                </label>
+                <div
+                  className="flex items-center gap-2.5 pt-0 shell-phone:flex-wrap shell-phone:max-w-none col-span-full"
+                  data-project-editor-actions=""
+                >
+                  <button
+                    className="inline-flex min-h-9.5 items-center justify-center gap-1.75 rounded-none bg-accent pl-3.5 pr-3.5 pt-2.25 pb-2.25 text-white font-[650] shadow-[none] transition-colors duration-150 ease-out hover:brightness-110 hover:transition-none active:translate-y-px disabled:cursor-wait disabled:opacity-65 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 disabled:opacity-55 disabled:cursor-not-allowed whitespace-nowrap max-w-full font-sans shell-phone:flex-1 shell-phone:basis-32 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.55]"
+                    data-control-primary=""
+                    disabled={busy || !changed || !name.trim() || datesInvalid}
+                  >
+                    {busy ? "Saving…" : "Save changes"}
+                  </button>
+                  <button
+                    type="button"
+                    className="inline-flex items-center justify-center gap-1.75 rounded-md border border-line bg-panel pl-2.75 pr-2.75 pt-2 pb-2 text-inherit transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 disabled:opacity-55 whitespace-nowrap min-h-9.5 max-w-full font-sans shell-phone:flex-1 shell-phone:basis-32 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.55]"
+                    data-control-outline=""
+                    onClick={cancelEdit}
+                    disabled={busy || !changed}
+                  >
+                    Discard changes
+                  </button>
+                </div>
+              </div>
+              {status && (
+                <p
+                  className="mt-3 mr-0 mb-0 ml-0 text-muted text-[12px]"
+                  role="status"
+                >
+                  {status}
+                </p>
+              )}
+              <div
+                className="border-t border-line flex items-center justify-between gap-4 mt-5.5 pt-4.75 shell-phone:items-start shell-phone:flex-col"
+                data-project-editor-danger=""
+              >
+                <div>
+                  <b className="text-[12px]">Archive project</b>
+                  <p className="mt-1.25 mr-0 mb-0 ml-0 text-muted text-[11px]">
+                    Hide this project from active lists. This can affect how
+                    related work is found.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center gap-1.75 rounded-md border border-line bg-panel pl-2.75 pr-2.75 pt-2 pb-2 text-danger transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 flex-none shell-phone:w-full shell-phone:justify-center max-w-full font-sans shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                  data-control-outline=""
+                  onClick={() => setConfirmArchive(true)}
+                  disabled={busy}
+                >
+                  Archive project
+                </button>
+              </div>
+            </form>
+          )}
+          <section
+            className="border min-w-0 mt-6 mr-3.5 mb-0 ml-3.5 pt-4 pr-4 pb-4 pl-4 border-line rounded-[10px] bg-panel shell-phone:order-4 md:col-start-1 md:row-start-4 shell-phone:mt-4.5 shell-phone:mr-2.5 shell-phone:mb-0 shell-phone:ml-2.5"
+            data-project-overview-progress=""
+            aria-labelledby="project-progress-title"
+          >
+            <header className="flex items-baseline justify-between gap-2.5">
+              <h2
+                className="mt-0 mr-0 mb-0 ml-0 text-[12px] font-semibold"
+                id="project-progress-title"
+              >
+                Progress
+              </h2>
+              <b
+                className="text-xl font-semibold tabular-nums"
+                data-overview="progress"
+              >
+                {summary.pct}%
+              </b>
+            </header>
+            <div
+              className="h-1.5 mt-2.5 mr-0 mb-2 ml-0 rounded-[99px] bg-subtle overflow-hidden"
+              data-project-progress-bar=""
+              role="progressbar"
+              aria-label="Project progress"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={summary.pct}
+            >
+              <i
+                className="block h-full bg-accent rounded-[inherit] "
+                style={{ width: `${summary.pct}%` }}
+              />
+            </div>
+            <p className="mt-0 mr-0 mb-0 ml-0 text-muted text-[12px]">
+              {summary.total
+                ? `${summary.done} done · ${summary.open} open${summary.canceled ? ` · ${summary.canceled} canceled` : ""}`
+                : "No tasks in this project yet"}
+            </p>
+            {summary.total > 0 && (
+              <ul
+                className="flex flex-wrap gap-1.5 mt-3 mr-0 mb-3 ml-0 pt-0 pr-0 pb-0 pl-0 list-none"
+                data-project-status-counts=""
+                aria-label="Tasks by status"
+              >
+                {summary.byStatus.map(({ state: st, count }) => (
+                  <li key={st.id}>
+                    <button
+                      className="inline-flex items-center gap-1.5 min-h-7 pt-0 pr-2.5 pb-0 pl-2.5 border border-line rounded-[99px] bg-transparent text-foreground text-[12px] hover:bg-subtle max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                      type="button"
+                      onClick={() => goTab("Issues")}
+                      aria-label={`${count} ${st.name} tasks`}
+                    >
+                      <StatusIcon state={st} />
+                      <span>{st.name}</span>
+                      <b className="text-muted font-semibold tabular-nums">
+                        {count}
+                      </b>
+                    </button>
+                  </li>
+                ))}
+                {summary.none > 0 && (
+                  <li>
+                    <button
+                      className="inline-flex items-center gap-1.5 min-h-7 pt-0 pr-2.5 pb-0 pl-2.5 border border-line rounded-[99px] bg-transparent text-foreground text-[12px] hover:bg-subtle max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                      type="button"
+                      onClick={() => goTab("Issues")}
+                    >
+                      <span>No status</span>
+                      <b className="text-muted font-semibold tabular-nums">
+                        {summary.none}
+                      </b>
+                    </button>
+                  </li>
+                )}
+              </ul>
+            )}
+            <button
+              className="text-accent bg-transparent border-0 text-[11px] pt-0 pr-0 pb-0 pl-0 max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+              type="button"
+              data-text-action=""
+              onClick={() => goTab("Issues")}
+            >
+              {summary.total
+                ? `View all ${summary.total} tasks →`
+                : "Open tasks →"}
+            </button>
+          </section>
+          <section
+            className="border min-w-0 mt-6 mr-3.5 mb-0 ml-3.5 pt-4 pr-4 pb-4 pl-4 border-line rounded-[10px] bg-panel shell-phone:mt-3 shell-phone:order-5 md:col-start-1 md:row-start-5 shell-phone:mr-2.5 shell-phone:mb-0 shell-phone:ml-2.5"
+            data-project-overview-update=""
+            aria-labelledby="project-update-title"
+          >
+            <header className="flex items-baseline justify-between gap-2.5">
+              <h2
+                className="mt-0 mr-0 mb-0 ml-0 text-[12px] font-semibold"
+                id="project-update-title"
+              >
+                Latest update
+              </h2>
+              <button
+                className="text-accent bg-transparent border-0 text-[11px] pt-0 pr-0 pb-0 pl-0 max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                type="button"
+                data-text-action=""
+                onClick={() => goTab("Activity")}
+              >
+                Write update
+              </button>
+            </header>
+            {updates[0] ? (
+              <article className="mt-2.5 text-[12px]">
+                <strong>{updates[0].status || "Update"}</strong>
+                <span
+                  className="text-muted mt-0 mr-0 mb-0 ml-0 text-[12px]"
+                  data-control-muted=""
+                >
+                  {" "}
+                  · {updates[0].actor?.name || "Member"} ·{" "}
+                  {updates[0].createdAt?.slice(0, 10)}
+                </span>
+                <Markdown text={updates[0].body} density="block" />
+              </article>
+            ) : activity.error ? (
+              <p role="alert">
+                {activity.error}{" "}
+                <button
+                  type="button"
+                  onClick={activity.retry}
+                  className="max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                >
+                  Retry
+                </button>
+              </p>
+            ) : (
+              <p
+                className="text-muted mt-0 mr-0 mb-0 ml-0 text-[12px]"
+                data-control-muted=""
+              >
+                {activity.hasData
+                  ? "No updates yet. Post one to tell the team how the project is going."
+                  : "Loading updates…"}
+              </p>
+            )}
+          </section>
+          <section
+            className="border-t border-line mt-9 mr-auto mb-0 ml-10.75 pt-3.5 pr-3.75 pb-3.5 pl-3.75 max-lg:w-auto max-lg:ml-3.5 max-lg:mr-3.5 shell-phone:mb-6 shell-phone:order-5 shell-phone:order-6 md:col-start-1 md:row-start-6 [@media_(max-width:900px)]:w-auto [@media_(max-width:900px)]:ml-3.5 [@media_(max-width:900px)]:mr-3.5 shell-phone:mt-4.5 shell-phone:mr-2.5 shell-phone:ml-2.5 w-[calc(62%-87px)]"
+            data-project-overview-description=""
+          >
+            <h2 className="text-[12px] font-medium text-muted">Description</h2>
+            {project.description ? (
+              <Markdown text={project.description} density="block" />
+            ) : (
+              <p
+                className="text-muted text-[13px] leading-[1.55] whitespace-pre-wrap wrap-break-word"
+                data-control-muted=""
+              >
+                No description yet.
+              </p>
+            )}
+          </section>
+          {confirmArchive && (
+            <div
+              className="fixed inset-0 z-10 bg-[#0008] shell-phone:order-9 has-data-issue-create-modal:p-[clamp(60px,13vh,118px)_12px_12px] [&:has(>[data-issue-create-modal])]:animate-[issue-backdrop-in_var(--motion-overlay)_var(--ease-standard)_both] [&:has(>[data-issue-create-modal][data-is-closing])]:animate-[issue-backdrop-out_var(--motion-fast)_var(--ease-standard)_both] [@supports_(backdrop-filter:blur(2px))_or_(-webkit-backdrop-filter:blur(2px))]:[&:has(>[data-issue-create-modal])]:[background:rgba(9,9,11,.42)] [@supports_(backdrop-filter:blur(2px))_or_(-webkit-backdrop-filter:blur(2px))]:[&:has(>[data-issue-create-modal])]:[backdrop-filter:blur(2px)] [@supports_(backdrop-filter:blur(2px))_or_(-webkit-backdrop-filter:blur(2px))]:[&:has(>[data-issue-create-modal])]:[-webkit-backdrop-filter:blur(2px)]"
+              data-modal-backdrop=""
+            >
+              <section
+                className="modal absolute pt-6.25 pr-6.25 pb-6.25 pl-6.25 border border-line rounded-[10px] bg-panel shadow-(--shadow) top-[12%] left-[50%] transform-[translateX(-50%)] w-[min(570px,calc(100%-32px))]"
+                role="alertdialog"
+                aria-modal="true"
+                aria-labelledby="archive-title"
+              >
+                <h2 className="mt-1.25 mr-0 mb-5.5 ml-0" id="archive-title">
+                  Archive project?
+                </h2>
+                <p>
+                  This project will be archived and removed from active project
+                  lists.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setConfirmArchive(false)}
+                  disabled={busy}
+                  className="max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex min-h-11 items-center justify-center gap-1.75 rounded-none bg-accent pl-3.5 pr-3.5 pt-2.25 pb-2.25 text-white font-[650] shadow-[none] transition-colors duration-150 ease-out hover:brightness-110 hover:transition-none active:translate-y-px disabled:cursor-wait disabled:opacity-65 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 max-w-full font-sans shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.65]"
+                  data-control-primary=""
+                  onClick={archive}
+                  disabled={busy}
+                >
+                  {busy ? "Archiving…" : "Archive project"}
+                </button>
+              </section>
+            </div>
+          )}
+        </>
+      ) : tab === "Activity" ? (
+        <ProjectActivity
+          project={project}
+          teams={teams}
+          users={userNames}
+          updates={activity}
+          onPublish={publish}
+          onOpenIssue={(i) => onOpenIssue(i as Issue)}
+        />
+      ) : (
+        <MyIssuesContent
+          key={project.id}
+          tab="Assigned"
+          viewKey={`project:${project.id}`}
+          issues={related}
+          states={projectStates}
+          teams={teams}
+          projects={projects}
+          onOpenIssue={onOpenIssue}
+          onNew={onNew}
+          layout={layout}
+          onLayoutChange={onLayoutChange}
+          onMoved={onMoved}
+          onUpdate={onUpdate}
+          older={olderClosed.older}
+          onLoadOlder={olderClosed.onLoadOlder}
+          emptyCopy={[
+            "No project tasks yet",
+            "Tasks in this project will show up here.",
+          ]}
+        />
+      )}
+    </section>
+  );
+}
+
+function submitProjectCreate(
+  input: Record<string, unknown>,
+  draft: Omit<Project, "id">,
+) {
+  const settle = addPendingProject(draft);
+  setProjectNotice(null);
+  gql(
+    `mutation($input:ProjectCreateInput!){projectCreate(input:$input){success project{${PROJECT_FIELDS}}}}`,
+    { input },
+  )
+    .then((d) => {
+      if (!d.projectCreate?.success || !d.projectCreate.project)
+        throw Error("Could not create project");
+      settle(d.projectCreate.project);
+    })
+    .catch((e) => {
+      settle(null);
+      setProjectNotice({
+        message: `Could not create project “${draft.name}”: ${(e as Error).message}`,
+        retry: () => submitProjectCreate(input, draft),
+      });
+    });
+}
+function NewProject({
+  teams,
+  onClose,
+}: {
+  teams: Team[];
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const [name, setName] = useState(""),
+    [summary, setSummary] = useState(""),
+    [description, setDescription] = useState("");
+  const [teamIds, setTeamIds] = useState<string[]>(
+      teams[0] ? [teams[0].id] : [],
+    ),
+    [leadId, setLeadId] = useState(""),
+    [state, setState] = useState("backlog"),
+    [startDate, setStartDate] = useState(""),
+    [targetDate, setTargetDate] = useState("");
+  const members = useMemberOptions();
+  const error = "",
+    busy = false;
+  // Optimistic: the project appears in every project list at once; a failure surfaces on the projects page with Retry.
+  const create = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim() || (startDate && targetDate && targetDate < startDate))
+      return;
+    const text =
+      [summary.trim(), description.trim()].filter(Boolean).join("\n\n") || null;
+    const lead = members.find((m) => m.id === leadId);
+    submitProjectCreate(
+      {
+        name: name.trim(),
+        description: text,
+        teamIds,
+        leadId: leadId || null,
+        state,
+        startDate: startDate || null,
+        targetDate: targetDate || null,
+      },
+      {
+        name: name.trim(),
+        description: text || undefined,
+        state,
+        progress: 0,
+        startDate: startDate || undefined,
+        targetDate: targetDate || undefined,
+        lead: lead ? { name: lead.name } : undefined,
+        teams: {
+          nodes: teams
+            .filter((t) => teamIds.includes(t.id))
+            .map((t) => ({ id: t.id, name: t.name, key: t.key })),
+        },
+      },
+    );
+    onClose();
+  };
+  return (
+    <div
+      className="grid pt-3 pr-3 pb-3 pl-3 fixed inset-0 z-10 bg-[#0008] has-data-issue-create-modal:p-[clamp(60px,13vh,118px)_12px_12px] [&:has(>[data-issue-create-modal])]:animate-[issue-backdrop-in_var(--motion-overlay)_var(--ease-standard)_both] [&:has(>[data-issue-create-modal][data-is-closing])]:animate-[issue-backdrop-out_var(--motion-fast)_var(--ease-standard)_both] [@supports_(backdrop-filter:blur(2px))_or_(-webkit-backdrop-filter:blur(2px))]:[&:has(>[data-issue-create-modal])]:[background:rgba(9,9,11,.42)] [@supports_(backdrop-filter:blur(2px))_or_(-webkit-backdrop-filter:blur(2px))]:[&:has(>[data-issue-create-modal])]:[backdrop-filter:blur(2px)] [@supports_(backdrop-filter:blur(2px))_or_(-webkit-backdrop-filter:blur(2px))]:[&:has(>[data-issue-create-modal])]:[-webkit-backdrop-filter:blur(2px)]"
+      data-modal-backdrop=""
+    >
+      <form
+        className="modal relative top-auto left-auto overflow-y-auto absolute pt-6.25 pr-6.25 pb-6.25 pl-6.25 border border-line rounded-[10px] bg-panel shadow-(--shadow) max-sm:pt-4 max-sm:pr-4 max-sm:pb-4 max-sm:pl-4 transform-none w-[min(640px,100%)] max-w-2xl [@media_(max-width:600px)]:pt-4.5 [@media_(max-width:600px)]:pr-4.5 [@media_(max-width:600px)]:pb-4.5 [@media_(max-width:600px)]:pl-4.5 top-[12%] left-[50%] transform-[translateX(-50%)] w-[min(570px,calc(100%-32px))] max-h-[calc(100dvh-24px)]"
+        data-project-create-reference=""
+        onSubmit={create}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="new-project-title"
+      >
+        <div className="flex items-start justify-between" data-modal-head="">
+          <div>
+            <span className="text-[10px] font-bold normal-case text-muted mt-0 mr-2.5 mb-1.75 ml-2.5 tracking-[.12em]">
+              Workspace
+            </span>
+            <h2 className="mt-1.25 mr-0 mb-5.5 ml-0" id="new-project-title">
+              New project
+            </h2>
+          </div>
+          <button
+            type="button"
+            className="grid w-8 h-8 place-items-center rounded-md bg-transparent hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+            aria-label="Discard project"
+            onClick={onClose}
+            disabled={busy}
+          >
+            <X size={18} />
+          </button>
+        </div>
+        <label className="grid gap-1.75 mt-3.75 text-[12px] font-semibold">
+          Project name
+          <input
+            className="w-full border border-line rounded-md bg-bg text-foreground pt-2.25 pr-2.5 pb-2.25 pl-2.5 resize-y max-md:text-base placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+            required
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </label>
+        <label className="grid gap-1.75 mt-3.75 text-[12px] font-semibold">
+          Project summary
+          <input
+            className="w-full border border-line rounded-md bg-bg text-foreground pt-2.25 pr-2.5 pb-2.25 pl-2.5 resize-y max-md:text-base placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+            value={summary}
+            onChange={(e) => setSummary(e.target.value)}
+            placeholder="Add a short summary"
+          />
+        </label>
+        <label className="grid gap-1.75 mt-3.75 text-[12px] font-semibold">
+          Project description
+          <textarea
+            className="w-full border border-line rounded-md bg-bg text-foreground pt-2.25 pr-2.5 pb-2.25 pl-2.5 resize-y max-md:text-base placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={4}
+          />
+        </label>
+        <div
+          className="grid grid-cols-1 gap-x-3 sm:grid-cols-2"
+          data-project-create-fields=""
+        >
+          <label className="grid gap-1.75 mt-3.75 text-[12px] font-semibold">
+            Status
+            <select
+              className="w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 border border-line rounded-md bg-panel text-foreground max-md:text-base focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              value={state}
+              onChange={(e) => setState(e.target.value)}
+            >
+              {[
+                "backlog",
+                "planned",
+                "started",
+                "paused",
+                "completed",
+                "canceled",
+              ].map((x) => (
+                <option key={x} value={x}>
+                  {x === "started"
+                    ? "In Progress"
+                    : x[0].toUpperCase() + x.slice(1)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-1.75 mt-3.75 text-[12px] font-semibold">
+            Lead
+            <select
+              className="w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 border border-line rounded-md bg-panel text-foreground max-md:text-base focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              value={leadId}
+              onChange={(e) => setLeadId(e.target.value)}
+            >
+              <option value="">No lead</option>
+              {members.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-1.75 mt-3.75 text-[12px] font-semibold">
+            Start date
+            <input
+              className="w-full border border-line rounded-md bg-bg text-foreground pt-2.25 pr-2.5 pb-2.25 pl-2.5 resize-y max-md:text-base placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+            />
+          </label>
+          <label className="grid gap-1.75 mt-3.75 text-[12px] font-semibold">
+            Target date
+            <input
+              className="w-full border border-line rounded-md bg-bg text-foreground pt-2.25 pr-2.5 pb-2.25 pl-2.5 resize-y max-md:text-base placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+              type="date"
+              value={targetDate}
+              min={startDate || undefined}
+              onChange={(e) => setTargetDate(e.target.value)}
+            />
+          </label>
+        </div>
+        <fieldset className="mt-3.75 mr-0 mb-3.75 ml-0 border border-line rounded-md">
+          <legend>Teams</legend>
+          {teams.map((t) => (
+            <label
+              className="flex gap-1.75 mt-3.75 text-[12px] font-semibold items-center"
+              key={t.id}
+            >
+              <input
+                className="w-auto border border-line rounded-md bg-bg text-foreground pt-2.25 pr-2.5 pb-2.25 pl-2.5 resize-y max-md:text-base placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:text-[16px]"
+                type="checkbox"
+                checked={teamIds.includes(t.id)}
+                onChange={(e) =>
+                  setTeamIds((old) =>
+                    e.target.checked
+                      ? [...old, t.id]
+                      : old.filter((id) => id !== t.id),
+                  )
+                }
+              />
+              {t.name} ({t.key})
+            </label>
+          ))}
+        </fieldset>
+        <p className="text-muted" data-control-muted="">
+          Priority, labels, dependencies and milestones are unavailable in this
+          project form.
+        </p>
+        {error && (
+          <small
+            className="block text-danger mt-3 mr-0 mb-3 ml-0 max-w-72 text-xs "
+            role="alert"
+          >
+            {error}
+          </small>
+        )}
+        <footer className="flex justify-end gap-2 mt-4.5">
+          <button
+            type="button"
+            className="inline-flex items-center justify-center gap-1.75 rounded-md border border-line bg-panel pl-2.75 pr-2.75 pt-2 pb-2 text-inherit transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+            data-control-outline=""
+            disabled={busy}
+            onClick={onClose}
+          >
+            Discard
+          </button>
+          <button
+            className="inline-flex min-h-11 items-center justify-center gap-1.75 rounded-none bg-accent pl-3.5 pr-3.5 pt-2.25 pb-2.25 text-white font-[650] shadow-[none] transition-colors duration-150 ease-out hover:brightness-110 hover:transition-none active:translate-y-px disabled:cursor-wait disabled:opacity-65 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.65]"
+            data-control-primary=""
+            disabled={
+              busy ||
+              !name.trim() ||
+              !!(startDate && targetDate && targetDate < startDate)
+            }
+          >
+            {busy ? "Creating…" : "Create project"}
+          </button>
+        </footer>
+      </form>
+    </div>
+  );
+}
+export const stateKey = (s: { name: string; type: string }) =>
+  `${s.name}|${s.type}`;
+export type IssueLayout = "List" | "Board";
+export type IssueState = {
+  id: string;
+  name: string;
+  color: string;
+  type: string;
+};
+/* The switch shows the view it leads to: the layout (board) icon from the list, the list icon
+ * from the board. MorphIcon animates between the two Tabler shapes; it stays aria-hidden
+ * because the button already carries the label. */
+function LayoutSwitch({
+  layout,
+  onChange,
+}: {
+  layout: IssueLayout;
+  onChange: (layout: IssueLayout) => void;
+}) {
+  const next = layout === "List" ? "Board" : "List";
+  return (
+    <button
+      type="button"
+      className="border grid place-items-center size-7 rounded-full border-line bg-panel text-muted hover:bg-subtle hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 "
+      data-layout-switch=""
+      aria-label={`Switch to ${next.toLowerCase()} view`}
+      title={`Switch to ${next.toLowerCase()} view`}
+      onClick={() => onChange(next)}
+    >
+      <MorphIcon
+        icon={layout === "List" ? layoutIcon : listIcon}
+        size={16}
+        reducedMotion="user"
+      />
+    </button>
+  );
+}
+function IssueBoard({
+  issues,
+  states,
+  teams,
+  onSelect,
+  onMoved,
+  onUpdate,
+  onNew,
+  columns,
+  columnMenu,
+  trailing,
+  selected,
+}: {
+  /** Precomputed columns (any grouping); without them the board groups by status. */
+  columns?: KanbanGroup[];
+  columnMenu?: (group: KanbanGroup) => React.ReactNode;
+  trailing?: React.ReactNode;
+  selected?: ReadonlySet<string>;
+  issues: Issue[];
+  states: IssueState[];
+  teams: Team[];
+  onSelect: (issue: Issue) => void;
+  onMoved: (issueId: string, state: IssueState) => Promise<void>;
+  onUpdate: (issueId: string, input: Record<string, unknown>) => Promise<void>;
+  onNew: (stateId?: string) => void;
+}) {
+  const syncedIssues = useSyncIssues() as Issue[];
+  const allIssues = useMemo(
+    () => [
+      ...new Map(
+        [...syncedIssues, ...issues].map((issue) => [issue.id, issue]),
+      ).values(),
+    ],
+    [syncedIssues, issues],
+  );
+  const grouped = useMemo(() => {
+    // Canceled work stays in the list; the board hides its column until it has a design.
+    const boardStates = states.filter((s) => s.type !== "canceled");
+    const unique = [...new Map(issues.map((i) => [i.id, i])).values()];
+    const by = new Map<string, Issue[]>(
+      boardStates.map((s) => [stateKey(s), []]),
+    );
+    const unknown: Issue[] = [];
+    for (const i of unique) {
+      if (i.state?.type === "canceled") continue;
+      const list = i.state ? by.get(stateKey(i.state)) : undefined;
+      if (list) list.push(i);
+      else unknown.push(i);
+    }
+    const known = boardStates.map((state) => ({
+      state,
+      items: by.get(stateKey(state)) || [],
+    }));
+    return [
+      ...known,
+      ...(unknown.length
+        ? [
+            {
+              state: {
+                id: "unknown",
+                name: "Unknown state",
+                color: "#a1a1aa",
+                type: "unknown",
+              },
+              items: unknown,
+            },
+          ]
+        : []),
+    ];
+  }, [issues, states]);
+  return (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col [@media(max-height:500px)]:flex-none">
+      {/* The "Hidden columns" lane sits beside the board, not in its scroller, so it stays in
+          view however many columns there are. */}
+      <div
+        className="flex min-h-0 min-w-0 flex-1 gap-3 overflow-hidden bg-panel max-sm:flex-col [@media(max-height:500px)]:flex-none"
+        data-issues-board=""
+      >
+        <Kanban
+          teams={teams}
+          grouped={columns || grouped}
+          columnMenu={columnMenu}
+          selected={selected}
+          allIssues={allIssues}
+          onSelect={onSelect}
+          onNew={onNew}
+          onMoved={onMoved}
+          onUpdate={onUpdate}
+        />
+        {trailing}
+      </div>
+    </div>
+  );
+}
 /* Closed issues older than the synced window, for one team or project: fetched page by page only when
  * the list shows "All" completed issues, then adopted into the store so they render and stay live. */
-function useOlderClosed(scope:'team'|'project',id:string|undefined):{older?:OlderState;onLoadOlder:(retry?:boolean)=>void}{
- const {closedCutoff}=useSyncStatus();const [older,setOlder]=useState<OlderState|undefined>();const gen=useRef(0);const cur=useRef<OlderState|undefined>(undefined);
- useEffect(()=>{gen.current++;cur.current=undefined;setOlder(undefined)},[scope,id,closedCutoff]);
- const onLoadOlder=useCallback((retry?:boolean)=>{if(!id||!closedCutoff||(cur.current&&!(retry&&cur.current.status==='error')))return;const g=gen.current;const set=(v:OlderState)=>{if(g!==gen.current)return;cur.current=v;setOlder(v)};set({status:'loading'});
-  void (async()=>{let after:string|null=null;try{do{const d=await gql(`query OlderClosedIssues($after:String,$filter:IssueFilter){issues(first:100,after:$after,filter:$filter,orderBy:updatedAt){nodes ${issueFields} pageInfo{hasNextPage endCursor}}}`,{after,filter:{[scope]:{id:{eq:id}},state:{type:{in:['completed','canceled']}},updatedAt:{lt:closedCutoff}}});if(g!==gen.current)return;const page=d.issues;if(page.pageInfo?.hasNextPage&&(!page.pageInfo.endCursor||page.pageInfo.endCursor===after||!page.nodes.length))throw Error('Task pagination did not advance. Retry later.');if(page.nodes.length)getSync()?.adopt(page.nodes);after=page.pageInfo?.hasNextPage?page.pageInfo.endCursor:null}while(after);set({status:'done'})}catch(e){set({status:'error',error:(e as Error).message})}})()},[scope,id,closedCutoff]);
- return {older,onLoadOlder};
+function useOlderClosed(
+  scope: "team" | "project",
+  id: string | undefined,
+): { older?: OlderState; onLoadOlder: (retry?: boolean) => void } {
+  const { closedCutoff } = useSyncStatus();
+  const [older, setOlder] = useState<OlderState | undefined>();
+  const gen = useRef(0);
+  const cur = useRef<OlderState | undefined>(undefined);
+  useEffect(() => {
+    gen.current++;
+    cur.current = undefined;
+    setOlder(undefined);
+  }, [scope, id, closedCutoff]);
+  const onLoadOlder = useCallback(
+    (retry?: boolean) => {
+      if (
+        !id ||
+        !closedCutoff ||
+        (cur.current && !(retry && cur.current.status === "error"))
+      )
+        return;
+      const g = gen.current;
+      const set = (v: OlderState) => {
+        if (g !== gen.current) return;
+        cur.current = v;
+        setOlder(v);
+      };
+      set({ status: "loading" });
+      void (async () => {
+        let after: string | null = null;
+        try {
+          do {
+            const d = await gql(
+              `query OlderClosedIssues($after:String,$filter:IssueFilter){issues(first:100,after:$after,filter:$filter,orderBy:updatedAt){nodes ${issueFields} pageInfo{hasNextPage endCursor}}}`,
+              {
+                after,
+                filter: {
+                  [scope]: { id: { eq: id } },
+                  state: { type: { in: ["completed", "canceled"] } },
+                  updatedAt: { lt: closedCutoff },
+                },
+              },
+            );
+            if (g !== gen.current) return;
+            const page = d.issues;
+            if (
+              page.pageInfo?.hasNextPage &&
+              (!page.pageInfo.endCursor ||
+                page.pageInfo.endCursor === after ||
+                !page.nodes.length)
+            )
+              throw Error("Task pagination did not advance. Retry later.");
+            if (page.nodes.length) getSync()?.adopt(page.nodes);
+            after = page.pageInfo?.hasNextPage ? page.pageInfo.endCursor : null;
+          } while (after);
+          set({ status: "done" });
+        } catch (e) {
+          set({ status: "error", error: (e as Error).message });
+        }
+      })();
+    },
+    [scope, id, closedCutoff],
+  );
+  return { older, onLoadOlder };
 }
-type TeamIssuesTab='All issues'|'Active'|'Backlog';
-function TeamIssuesPage({team,teams,projects,onIssue,layout,onLayoutChange,onMoved,onUpdate,onNew}:{team?:Team;teams:Team[];projects:Project[];onIssue:(issue:Issue)=>void;layout:IssueLayout;onLayoutChange:(layout:IssueLayout)=>void;onMoved:(issueId:string,state:IssueState)=>Promise<void>;onUpdate:(issueId:string,input:Record<string,unknown>)=>Promise<void>;onNew:(stateId?:string)=>void}){
- const all=useSyncIssues() as Issue[];const [tab,setTab]=useState<TeamIssuesTab>('All issues');const teamId=team?.id;
- const rows=useMemo(()=>all.filter(i=>i.team?.id===teamId&&(tab==='All issues'||(tab==='Active'?i.state?.type==='started'||i.state?.type==='unstarted':i.state?.type==='backlog'))),[all,teamId,tab]);
- const {older,onLoadOlder}=useOlderClosed('team',tab==='All issues'?teamId:undefined);
- if(!team)return <section className="projects-page"><p role="alert">Team not found in this workspace.</p></section>;
- return <><div className="page-head my-issues-head"><div><h1>{team.name}</h1><p>Team tasks</p></div></div><nav className="my-issue-tabs" aria-label="Team task views">{(['All issues','Active','Backlog'] as const).map(t=><button key={t} role="tab" aria-selected={tab===t} className={tab===t?'selected':''} onClick={()=>setTab(t)}>{displayLabel(t)}</button>)}</nav><MyIssuesContent key={team.id} tab="Assigned" issues={rows} states={team.states.nodes} teams={teams} projects={projects} onOpenIssue={onIssue} onNew={onNew} layout={layout} onLayoutChange={onLayoutChange} onMoved={onMoved} onUpdate={onUpdate} older={older} onLoadOlder={onLoadOlder} emptyCopy={tab==='All issues'?['No tasks yet',`Tasks in ${team.name} will show up here.`]:[`No ${tab.toLowerCase()} tasks`,`${tab} tasks in ${team.name} will show up here.`]}/></>}
-function TeamCycleSettings({team,onBack,admin}:{team?:Team;onBack:()=>void;admin?:boolean}){
-return <GraphTeamCycleSettings team={team} onBack={onBack} admin={admin}/>}
-function TeamCyclesPage({team,teams,viewer,workspaceName,onCycle,onSettings,revision,onNavigate}:{team?:Team;teams:Team[];viewer:Viewer;workspaceName:string;onCycle:(c:Cycle)=>void;onSettings:()=>void;revision:number;onNavigate:(view:string,path?:string)=>void}){
-return <GraphTeamCycles team={team} teams={teams} viewer={viewer} workspaceName={workspaceName} onCycle={onCycle} onSettings={onSettings} onNavigate={onNavigate}/>}
-function TeamProjectsPage({team,onProject,onCreate}:{team?:Team;onProject:(project:Project)=>void;onCreate:()=>void;revision:number}){
- // The store's metadata holds the first 250 projects; team pages are fetched only when the workspace has more than that.
- const meta=useProjectSyncMeta();const partial=Boolean(meta?.projects.pageInfo?.hasNextPage);const version=useProjectEntityVersion(['project']);
- const [rows,setRows]=useState<Project[]>([]),[error,setError]=useState(''),[loading,setLoading]=useState(false),[more,setMore]=useState(false),[cursor,setCursor]=useState<string|null>(null);
- const load=async(after:string|null=null)=>{if(!team)return;setLoading(true);setError('');try{const d=await gql(`query TeamProjects($after:String,$filter:ProjectFilter){projects(first:50,after:$after,filter:$filter){nodes{${PROJECT_FIELDS}} pageInfo{hasNextPage endCursor}}}`,{after,filter:{team:{id:{eq:team.id}}}});const page=d.projects;if(page.pageInfo?.hasNextPage&&(!page.pageInfo.endCursor||page.pageInfo.endCursor===after||!page.nodes.length))throw Error('Team project pagination did not advance.');rememberProjects(page.nodes);setRows(old=>{const prior=after?old:[];const ids=new Set(prior.map(x=>x.id));return [...prior,...page.nodes.filter((p:Project)=>!ids.has(p.id))]});setCursor(page.pageInfo?.endCursor||null);setMore(Boolean(page.pageInfo?.hasNextPage))}catch(e){setError((e as Error).message)}finally{setLoading(false)}};
- useEffect(()=>{if(partial&&team)void load()},[team?.id,partial,version]);// eslint-disable-line react-hooks/exhaustive-deps
- if(!team)return <section className="team-scoped-page"><p role="alert">Team not found in this workspace.</p></section>;return <ProjectsPage projects={rows} teamId={team.id} onOpen={onProject} onCreate={onCreate} hasMore={partial&&more} onLoadMore={()=>void load(cursor)} loading={loading} error={error}/>;}
-function TeamViewsPage({team,onIssue,onNavigate}:{team?:Team;onIssue:(issue:Issue)=>void;onNavigate:(view:string,path?:string)=>void;revision:number}){
- // Issues and projects come from the local-first store: no fetch, live through deltas.
- const all=useSyncIssues(),meta=useSyncMeta(),{ready}=useSyncStatus();const teamId=team?.id;
- const issues=useMemo(()=>teamId?all.filter(i=>i.team?.id===teamId):[],[all,teamId]);
- const projects=useMemo(()=>teamId&&meta?meta.projects.nodes.filter(p=>p.teams?.nodes.some(t=>t.id===teamId)):[],[meta,teamId]);
- const notice=meta?.projects.pageInfo?.hasNextPage?`Only the first ${meta.projects.nodes.length} workspace projects are available.`:'';
- if(!team)return <section className="team-scoped-page"><p role="alert">Team not found in this workspace.</p></section>;
- if(!ready&&!meta)return <section className="team-scoped-page"><p role="status">Loading team views…</p></section>;
- return <>{notice&&<p role="alert" className="team-scoped-page">{notice}</p>}<ViewsPage key={team.id} orgId={team.id} issues={issues} projects={projects} path={location.pathname} onNavigate={onNavigate} onSelect={onIssue} basePath={`/workspace/team/${team.key.toLowerCase()}/views`} viewName="Team views" title={`${team.name} views`}/></>}
-function TeamCyclePage({team,teams,viewer,orgId,workspaceName,projects,labels,cycles,upcoming,onBack,onIssue,revision,onNavigate}:{team?:Team;teams:Team[];viewer:Viewer;orgId:string;workspaceName:string;projects:Project[];labels:{id:string;name:string;color?:string}[];cycles:Cycle[];upcoming:boolean;onBack:()=>void;onIssue:(issue:Issue)=>void;revision:number;onNavigate:(view:string,path?:string)=>void}){
-return <GraphTeamCycle team={team} teams={teams} viewer={viewer} orgId={orgId} workspaceName={workspaceName} projects={projects} labels={labels} cycles={cycles} upcoming={upcoming} onBack={onBack} onSelect={onIssue} onNavigate={onNavigate}/>}
-function CyclesPage({teams,viewer,workspaceName,onCycle,onSettings,revision,onNavigate}:{teams:Team[];viewer:Viewer;workspaceName:string;onCycle:(c:Cycle)=>void;onSettings:(team:Team)=>void;revision:number;onNavigate:(view:string,path?:string)=>void}){
-return <GraphWorkspaceCycles teams={teams} viewer={viewer} workspaceName={workspaceName} onCycle={onCycle} onSettings={onSettings} onNavigate={onNavigate}/>}
-function CycleDetail({cycle,team,teams,viewer,orgId,workspaceName,projects,labels,cycles,revision,onBack,onSelect,onNavigate}:{cycle:Cycle;team?:Team;teams:Team[];viewer:Viewer;orgId:string;workspaceName:string;projects:Project[];labels:{id:string;name:string;color?:string}[];cycles:Cycle[];revision:number;onBack:()=>void;onSelect:(i:Issue)=>void;onNavigate:(view:string,path?:string)=>void}){
-return <GraphCycleDetail cycle={cycle} team={team} teams={teams} viewer={viewer} orgId={orgId} workspaceName={workspaceName} projects={projects} labels={labels} cycles={cycles} onBack={onBack} onSelect={onSelect} onNavigate={onNavigate}/>}
-function TeamHome({team,issues,onNavigate,onSelectIssue}:{team?:Team;issues:Issue[];onNavigate:(view:string,path?:string)=>void;onSelectIssue:(issue:Issue)=>void}){const teamKey=team?.key;const {open,started}=useMemo(()=>{const open:Issue[]=[];let started=0;for(const i of issues){if(i.team?.key!==teamKey)continue;if(i.state?.type!=='completed')open.push(i);if(i.state?.type==='started')started++}return {open,started}},[issues,teamKey]);return <section className="team-home"><header className="team-home-head"><div className="team-home-avatar">{team?.key.slice(0,2)||'TM'}</div><div><div className="breadcrumbs"><span>Your teams</span><span>/</span><b>{team?.name||'Team'}</b></div><h1>{team?.name||'Team overview'}</h1>{team?.description?<Markdown text={team.description}/>:<p>Your team workspace and current work.</p>}</div><div className="team-member-stack">{(team?.members?.nodes||[]).slice(0,5).map((m,i)=><span key={m.id} title={m.name||m.email} style={{zIndex:6-i}}>{(m.name||m.email||'?').slice(0,1).toUpperCase()}</span>)}</div></header><div className="team-home-stats"><div><span>Open tasks</span><b>{open.length}</b></div><div><span>In progress</span><b>{started}</b></div><div><span>Members</span><b>{team?.members?.nodes.length||0}</b></div><div><span>Workflow states</span><b>{team?.states.nodes.length||0}</b></div></div><div className="team-home-grid"><section className="issue-card"><div className="card-head"><span>Active tasks <b>{open.length}</b></span><button className="text-action" onClick={()=>onNavigate('Team issues',`/workspace/team/${team?.key.toLowerCase()}/active`)}>View team tasks →</button></div><IssueList issues={open.slice(0,6)} onOpen={onSelectIssue} emptyTitle="No open tasks" emptyText="Open team tasks will appear here."/></section><aside className="team-home-side"><section className="side-card"><span className="eyebrow">Current cycle</span><h3>{team?.activeCycle?.name||'No active cycle'}</h3>{team?.activeCycle&&<><p>{team.activeCycle.startsAt?.slice(0,10)||'Start unset'} — {team.activeCycle.endsAt?.slice(0,10)||'End unset'}</p><div className="progress-track"><i style={{width:`${Math.min(100,Math.max(0,team.activeCycle.progress||0))}%`}}/></div></>}<button className="text-action" onClick={()=>onNavigate('Team cycles',`/workspace/team/${team?.key.toLowerCase()}/cycles`)}>View team cycles →</button></section><section className="side-card"><span className="eyebrow">Team links</span><button onClick={()=>onNavigate('Board')}>Tasks board <span>→</span></button><button onClick={()=>onNavigate('Projects')}>Projects <span>→</span></button><button onClick={()=>onNavigate('Cycles')}>Cycles <span>→</span></button></section></aside></div></section>}
+type TeamIssuesTab = "All issues" | "Active" | "Backlog";
+function TaskViewTabs<T extends string>({
+  label,
+  views,
+  active,
+  onChange,
+}: {
+  label: string;
+  views: readonly T[];
+  active: T;
+  onChange: (view: T) => void;
+}) {
+  return (
+    <nav
+      className="-m-1 flex min-w-0 flex-1 items-center gap-1.5 border-0 bg-bg p-1 text-foreground overflow-x-auto max-sm:basis-full [@media_(max-width:650px)]:gap-1 "
+      data-my-issue-tabs=""
+      aria-label={label}
+    >
+      {views.map((view) => (
+        <button
+          key={view}
+          role="tab"
+          aria-selected={active === view}
+          className="inline-flex  min-h-7 flex-none items-center rounded-full border-0 outline outline-1 outline-line -outline-offset-1 bg-panel pl-2.75 pr-2.75 text-[12px] text-foreground transition-none aria-selected:bg-subtle aria-selected:inset-shadow-sm aria-selected:inset-shadow-neutral-50 aria-selected:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 [@media_(max-width:650px)]:h-7.75 [@media_(max-width:650px)]:pt-0 [@media_(max-width:650px)]:pr-2.75 [@media_(max-width:650px)]:pb-0 [@media_(max-width:650px)]:pl-2.75 [@media_(max-width:650px)]:text-[12px]"
+          onClick={() => onChange(view)}
+        >
+          {displayLabel(view)}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+/** The tab strip of a team's task page: the built-in tabs, the views pinned to the team, and
+ * "Add new view" (Linear's inline team view). Keys 1–9 pick a tab. */
+function TeamTabs({
+  builtIns,
+  pinned,
+  active,
+  creating,
+  onChange,
+  onAdd,
+  onReorder,
+}: {
+  builtIns: readonly TeamIssuesTab[];
+  pinned: ServerView[];
+  active: string;
+  creating: boolean;
+  onChange: (tab: string) => void;
+  onAdd: () => void;
+  /** Move pinned tab `id` to `index` among the pinned tabs (drag, or Alt ←/→ on the tab). */
+  onReorder?: (id: string, index: number) => void;
+}) {
+  const [dragging, setDragging] = useState<string | null>(null);
+  const tab =
+    "inline-flex min-h-7 flex-none items-center gap-1.5 rounded-full border-0 outline outline-1 outline-line -outline-offset-1 bg-panel pl-2.75 pr-2.75 text-[12px] text-foreground transition-none aria-selected:bg-subtle aria-selected:inset-shadow-sm aria-selected:inset-shadow-neutral-50 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11";
+  return (
+    <nav
+      className="-m-1 flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto border-0 bg-bg p-1 text-foreground [@media_(max-width:650px)]:gap-1"
+      data-my-issue-tabs=""
+      data-team-tabs=""
+      aria-label="Team task views"
+      role="tablist"
+    >
+      {builtIns.map((t, n) => (
+        <button
+          key={t}
+          role="tab"
+          type="button"
+          aria-selected={!creating && active === t}
+          className={tab}
+          title={n < 9 ? `${displayLabel(t)} (${n + 1})` : undefined}
+          onClick={() => onChange(t)}
+        >
+          {displayLabel(t)}
+        </button>
+      ))}
+      {pinned.map((v, n) => (
+        <button
+          key={v.id}
+          role="tab"
+          type="button"
+          aria-selected={!creating && active === `view:${v.id}`}
+          className={tab}
+          title={
+            builtIns.length + n < 9
+              ? `${v.name} (${builtIns.length + n + 1})`
+              : v.name
+          }
+          onClick={() => onChange(`view:${v.id}`)}
+          data-team-view-tab={v.id}
+          draggable={Boolean(onReorder)}
+          aria-keyshortcuts={
+            onReorder ? "Alt+ArrowLeft Alt+ArrowRight" : undefined
+          }
+          onDragStart={(e) => {
+            setDragging(v.id);
+            e.dataTransfer.effectAllowed = "move";
+            e.dataTransfer.setData("text/plain", v.id);
+          }}
+          onDragEnd={() => setDragging(null)}
+          onDragOver={(e) => {
+            if (dragging && dragging !== v.id) e.preventDefault();
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            if (dragging && dragging !== v.id) onReorder?.(dragging, n);
+            setDragging(null);
+          }}
+          onKeyDown={(e) => {
+            if (!onReorder || !e.altKey || e.metaKey || e.ctrlKey) return;
+            const step =
+              e.key === "ArrowLeft" ? -1 : e.key === "ArrowRight" ? 1 : 0;
+            if (!step) return;
+            e.preventDefault();
+            const to = n + step;
+            if (to >= 0 && to < pinned.length) onReorder(v.id, to);
+          }}
+        >
+          <ViewIcon icon={v.icon} color={v.color} size={13} />
+          <span className="max-w-40 truncate">{v.name}</span>
+        </button>
+      ))}
+      {creating && (
+        <span
+          role="tab"
+          aria-selected="true"
+          className={`${tab} border border-dashed text-muted`}
+        >
+          <Layers3 size={13} /> New view
+        </span>
+      )}
+      <button
+        type="button"
+        className="grid size-7 flex-none place-items-center rounded-full text-muted hover:bg-subtle hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11 shell-phone:min-w-11"
+        aria-label="Add new view"
+        title="Add new view"
+        onClick={onAdd}
+        data-team-add-view=""
+      >
+        <Plus size={15} />
+      </button>
+    </nav>
+  );
+}
+
+const TEAM_BUILT_INS = ["All issues", "Active", "Backlog"] as const;
+
+function TeamIssuesPage({
+  team,
+  teams,
+  projects,
+  onIssue,
+  layout,
+  onLayoutChange,
+  onMoved,
+  onUpdate,
+  onNew,
+  onNavigate,
+}: {
+  team?: Team;
+  teams: Team[];
+  projects: Project[];
+  onIssue: (issue: Issue) => void;
+  layout: IssueLayout;
+  onLayoutChange: (layout: IssueLayout) => void;
+  onMoved: (issueId: string, state: IssueState) => Promise<void>;
+  onUpdate: (issueId: string, input: Record<string, unknown>) => Promise<void>;
+  onNew: (stateId?: string) => void;
+  onNavigate?: (view: string, path?: string) => void;
+}) {
+  const all = useSyncIssues() as Issue[];
+  const [active, setActive] = useState<string>("All issues"),
+    [creating, setCreating] = useState(false);
+  const tab: TeamIssuesTab = (TEAM_BUILT_INS as readonly string[]).includes(
+    active,
+  )
+    ? (active as TeamIssuesTab)
+    : "All issues";
+  const teamId = team?.id;
+  const { views } = useViewList(Boolean(teamId));
+  /* A view just made from "Add new view" is a tab at once, before the shared list re-reads. */
+  const [fresh, setFresh] = useState<ServerView | null>(null);
+  /* A drag shows the new order at once; the writes land after. */
+  const [moved, setMoved] = useState<Record<string, number>>({}),
+    [reorderError, setReorderError] = useState("");
+  const pinned = useMemo(
+    () =>
+      pinnedTabs(
+        [
+          ...views.map((v) =>
+            fresh && v.id === fresh.id && !v.pinned ? fresh : v,
+          ),
+          ...(fresh && !views.some((v) => v.id === fresh.id) ? [fresh] : []),
+        ]
+          .filter(
+            (v) =>
+              v.scope === "team" && v.team?.id === teamId && v.kind === "issue",
+          )
+          .map((v) => (v.id in moved ? { ...v, sortOrder: moved[v.id] } : v)),
+      ),
+    [views, teamId, fresh, moved],
+  );
+  const reorder = (id: string, index: number) => {
+    const writes = reorderPinned(pinned, id, index);
+    if (!writes.length) return;
+    setReorderError("");
+    setMoved((old) => ({
+      ...old,
+      ...Object.fromEntries(writes.map((w) => [w.id, w.sortOrder])),
+    }));
+    void (async () => {
+      try {
+        for (const w of writes) await pinView(w.id, true, w.sortOrder);
+      } catch (e) {
+        setReorderError((e as Error).message);
+        setMoved({});
+      }
+    })();
+  };
+  const pinnedView = active.startsWith("view:")
+    ? pinned.find((v) => `view:${v.id}` === active)
+    : undefined;
+  // A pinned tab that was unpinned or deleted elsewhere falls back to the first tab.
+  useEffect(() => {
+    if (active.startsWith("view:") && views.length && !pinnedView)
+      setActive("All issues");
+  }, [active, views.length, pinnedView]);
+  const order = useMemo(
+    () => [...TEAM_BUILT_INS, ...pinned.map((v) => `view:${v.id}`)],
+    [pinned],
+  );
+  /* 1–9 switch tabs, as on Linear. */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || isTypingTarget(e.target))
+        return;
+      if (document.querySelector('[aria-modal="true"]')) return;
+      if (!/^[1-9]$/.test(e.key)) return;
+      const next = order[Number(e.key) - 1];
+      if (!next) return;
+      e.preventDefault();
+      setCreating(false);
+      setActive(next);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [order]);
+  const rows = useMemo(
+    () =>
+      all.filter(
+        (i) =>
+          i.team?.id === teamId &&
+          (tab === "All issues" ||
+            (tab === "Active"
+              ? i.state?.type === "started" || i.state?.type === "unstarted"
+              : i.state?.type === "backlog")),
+      ),
+    [all, teamId, tab],
+  );
+  const { older, onLoadOlder } = useOlderClosed(
+    "team",
+    tab === "All issues" && !pinnedView ? teamId : undefined,
+  );
+  if (!team)
+    return (
+      <section
+        className="max-w-275 mt-0 mr-auto mb-0 ml-auto"
+        data-projects-page=""
+      >
+        <p role="alert">Team not found in this workspace.</p>
+      </section>
+    );
+  const actions: IssueActions = {
+    onOpen: onIssue,
+    onMoved,
+    onUpdate,
+    onNew,
+    layout,
+    onLayoutChange,
+  };
+  const tabs = (
+    <TeamTabs
+      builtIns={TEAM_BUILT_INS}
+      pinned={pinned}
+      active={active}
+      creating={creating}
+      onChange={(t) => {
+        setCreating(false);
+        setActive(t);
+      }}
+      onAdd={() => setCreating(true)}
+      onReorder={reorder}
+    />
+  );
+  const pageTitle = (
+    <>
+      <div>
+        <h1 className="text-sm font-medium leading-normal tracking-[-.045em] text-foreground">
+          {team.name}
+        </h1>
+        <p className="mt-1.5 mr-0 mb-0 ml-0 text-muted max-sm:text-xs hidden [@media_(max-width:560px)]:text-[12px]">
+          Team tasks
+        </p>
+      </div>
+      {reorderError && (
+        <p className="text-xs text-danger" role="alert">
+          {reorderError}
+        </p>
+      )}
+    </>
+  );
+  return (
+    <>
+      {(creating || pinnedView) && (
+        <div
+          className="m-0 flex h-11 min-h-11 flex-none items-center gap-1 border-b border-line bg-bg px-4 py-0 text-foreground"
+          data-page-head=""
+          data-my-issues-head=""
+        >
+          <MobileNavTrigger />
+          {pageTitle}
+        </div>
+      )}
+      {creating ? (
+        <>
+          <div className="flex min-w-0 items-center gap-2 px-4 pt-4">
+            {tabs}
+          </div>
+          <ViewEditorPage
+            key={`new-${team.id}`}
+            initialKind="issue"
+            allowKinds={false}
+            scope={{ team }}
+            projects={projects}
+            actions={actions}
+            pinOnCreate
+            onCancel={() => setCreating(false)}
+            onCreated={(v) => {
+              setCreating(false);
+              // Saved to the workspace instead: it is no tab of this team, so open its page.
+              if (v.scope !== "team" || v.team?.id !== team.id || !v.pinned)
+                return navigateTo(viewPath(v));
+              setFresh(v);
+              setActive(`view:${v.id}`);
+            }}
+          />
+        </>
+      ) : pinnedView ? (
+        <SavedViewBody
+          key={pinnedView.id}
+          view={pinnedView}
+          onView={() => undefined}
+          projects={projects}
+          actions={actions}
+          revision={0}
+          onDeleted={() => setActive("All issues")}
+          tabs={tabs}
+        />
+      ) : (
+        <MyIssuesContent
+          head={pageTitle}
+          tabs={tabs}
+          key={team.id}
+          tab="Assigned"
+          viewKey={`team:${team.id}:${tab === "All issues" ? "all" : tab.toLowerCase()}`}
+          onSaveAsView={
+            onNavigate
+              ? (draft) => {
+                  stashViewDraft({ kind: "issue", teamId: team.id, ...draft });
+                  onNavigate(
+                    "Team views",
+                    `/workspace/team/${team.key.toLowerCase()}/views/issues/new`,
+                  );
+                }
+              : undefined
+          }
+          issues={rows}
+          states={team.states.nodes}
+          teams={teams}
+          projects={projects}
+          onOpenIssue={onIssue}
+          onNew={onNew}
+          layout={layout}
+          onLayoutChange={onLayoutChange}
+          onMoved={onMoved}
+          onUpdate={onUpdate}
+          older={older}
+          onLoadOlder={onLoadOlder}
+          emptyCopy={
+            tab === "All issues"
+              ? ["No tasks yet", `Tasks in ${team.name} will show up here.`]
+              : [
+                  `No ${tab.toLowerCase()} tasks`,
+                  `${tab} tasks in ${team.name} will show up here.`,
+                ]
+          }
+        />
+      )}
+    </>
+  );
+}
+/* The workspace board is the team-issue surface without a team: the same head, tabs, toolbar and
+ * board, over every team's states. It opens as a board whatever the saved list/board preference
+ * says, because that is what the page is, while the toolbar switch still offers the list view. */
+const BOARD_DEFAULTS: DisplayDoc = { layout: "board" };
+function BoardPage({
+  teams,
+  projects,
+  onIssue,
+  onMoved,
+  onUpdate,
+  onNew,
+}: {
+  teams: Team[];
+  projects: Project[];
+  onIssue: (issue: Issue) => void;
+  onMoved: (issueId: string, state: IssueState) => Promise<void>;
+  onUpdate: (issueId: string, input: Record<string, unknown>) => Promise<void>;
+  onNew: (stateId?: string) => void;
+}) {
+  const all = useSyncIssues() as Issue[];
+  const [tab, setTab] = useState<BoardTab>("All issues"),
+    [layout, setLayout] = useState<IssueLayout>("Board");
+  const rows = useMemo(
+    () =>
+      all.filter(
+        (i) =>
+          tab === "All issues" ||
+          (tab === "Active"
+            ? i.state?.type === "started" || i.state?.type === "unstarted"
+            : i.state?.type === "backlog"),
+      ),
+    [all, tab],
+  );
+  const states = useMemo(
+    () => [
+      ...new Map(
+        teams.flatMap((t) => t.states.nodes).map((s) => [stateKey(s), s]),
+      ).values(),
+    ],
+    [teams],
+  );
+  return (
+    <>
+      <MyIssuesContent
+        head={
+          <>
+            <div>
+              <h1 className="text-sm font-medium leading-normal tracking-[-.045em] text-foreground">
+                Board
+              </h1>
+              <p className="mt-1.5 mr-0 mb-0 ml-0 text-muted max-sm:text-xs hidden [@media_(max-width:560px)]:text-[12px]">
+                All teams
+              </p>
+            </div>
+          </>
+        }
+        tabs={
+          <nav
+            className="mt-0 -mr-1 -ml-1 flex h-13 min-w-0 flex-1 items-center gap-1.5 border-0 bg-bg pl-1 pr-1 pt-0 pb-0 text-foreground overflow-x-auto [@media_(max-width:650px)]:gap-1 [@media_(max-width:650px)]:h-12"
+            data-my-issue-tabs=""
+            aria-label="Board views"
+          >
+            {(["All issues", "Active", "Backlog"] as const).map((t) => (
+              <button
+                key={t}
+                role="tab"
+                aria-selected={tab === t}
+                className="inline-flex h-8.5 min-h-7 flex-none items-center rounded-[999px] border-0 outline outline-1 outline-line -outline-offset-1 bg-panel pl-2.75 pr-2.75 text-[12px] text-foreground transition-none aria-selected:bg-subtle aria-selected:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 [@media_(max-width:650px)]:h-7.75 [@media_(max-width:650px)]:pt-0 [@media_(max-width:650px)]:pr-2.75 [@media_(max-width:650px)]:pb-0 [@media_(max-width:650px)]:pl-2.75 [@media_(max-width:650px)]:text-[12px]"
+                onClick={() => setTab(t)}
+              >
+                {t}
+              </button>
+            ))}
+          </nav>
+        }
+        tab="Assigned"
+        viewKey={`board:${tab === "All issues" ? "all" : tab.toLowerCase()}`}
+        pageDefaults={BOARD_DEFAULTS}
+        issues={rows}
+        states={states}
+        teams={teams}
+        projects={projects}
+        onOpenIssue={onIssue}
+        onNew={onNew}
+        layout={layout}
+        onLayoutChange={setLayout}
+        onMoved={onMoved}
+        onUpdate={onUpdate}
+        emptyCopy={
+          tab === "All issues"
+            ? ["No tasks yet", "Tasks across your teams will show up here."]
+            : [
+                `No ${tab.toLowerCase()} issues`,
+                `${tab} tasks across your teams will show up here.`,
+              ]
+        }
+      />
+    </>
+  );
+}
+function TeamCycleSettings({
+  team,
+  onBack,
+  admin,
+}: {
+  team?: Team;
+  onBack: () => void;
+  admin?: boolean;
+}) {
+  return <GraphTeamCycleSettings team={team} onBack={onBack} admin={admin} />;
+}
+function TeamCyclesPage({
+  team,
+  teams,
+  viewer,
+  workspaceName,
+  onCycle,
+  onSettings,
+  revision,
+  onNavigate,
+}: {
+  team?: Team;
+  teams: Team[];
+  viewer: Viewer;
+  workspaceName: string;
+  onCycle: (c: Cycle) => void;
+  onSettings: () => void;
+  revision: number;
+  onNavigate: (view: string, path?: string) => void;
+}) {
+  return (
+    <GraphTeamCycles
+      team={team}
+      teams={teams}
+      viewer={viewer}
+      workspaceName={workspaceName}
+      onCycle={onCycle}
+      onSettings={onSettings}
+      onNavigate={onNavigate}
+    />
+  );
+}
+function TeamProjectsPage({
+  team,
+  onProject,
+  onCreate,
+}: {
+  team?: Team;
+  onProject: (project: Project) => void;
+  onCreate: () => void;
+  revision: number;
+}) {
+  // The store's metadata holds the first 250 projects; team pages are fetched only when the workspace has more than that.
+  const meta = useProjectSyncMeta();
+  const partial = Boolean(meta?.projects.pageInfo?.hasNextPage);
+  const version = useProjectEntityVersion(["project"]);
+  const [rows, setRows] = useState<Project[]>([]),
+    [error, setError] = useState(""),
+    [loading, setLoading] = useState(false),
+    [more, setMore] = useState(false),
+    [cursor, setCursor] = useState<string | null>(null);
+  const load = async (after: string | null = null) => {
+    if (!team) return;
+    setLoading(true);
+    setError("");
+    try {
+      const d = await gql(
+        `query TeamProjects($after:String,$filter:ProjectFilter){projects(first:50,after:$after,filter:$filter){nodes{${PROJECT_FIELDS}} pageInfo{hasNextPage endCursor}}}`,
+        { after, filter: { team: { id: { eq: team.id } } } },
+      );
+      const page = d.projects;
+      if (
+        page.pageInfo?.hasNextPage &&
+        (!page.pageInfo.endCursor ||
+          page.pageInfo.endCursor === after ||
+          !page.nodes.length)
+      )
+        throw Error("Team project pagination did not advance.");
+      rememberProjects(page.nodes);
+      setRows((old) => {
+        const prior = after ? old : [];
+        const ids = new Set(prior.map((x) => x.id));
+        return [...prior, ...page.nodes.filter((p: Project) => !ids.has(p.id))];
+      });
+      setCursor(page.pageInfo?.endCursor || null);
+      setMore(Boolean(page.pageInfo?.hasNextPage));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => {
+    if (partial && team) void load();
+  }, [team?.id, partial, version]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!team)
+    return (
+      <section
+        className="max-w-235 mt-0 mr-auto mb-0 ml-auto pt-6.25 pr-5 pb-6.25 pl-5 min-w-0 max-md:pt-4 max-md:pr-2.5 max-md:pb-4 max-md:pl-2.5 font-(family-name:--hoja-font-ui) shell-phone:pt-4 shell-phone:pr-2.5 shell-phone:pb-4 shell-phone:pl-2.5"
+        data-team-scoped-page=""
+      >
+        <p className="text-muted leading-normal" role="alert">
+          Team not found in this workspace.
+        </p>
+      </section>
+    );
+  return (
+    <ProjectsPage
+      projects={rows}
+      teamId={team.id}
+      onOpen={onProject}
+      onCreate={onCreate}
+      hasMore={partial && more}
+      onLoadMore={() => void load(cursor)}
+      loading={loading}
+      error={error}
+    />
+  );
+}
+function TeamViewsPage({
+  team,
+  projects,
+  actions,
+  revision,
+}: {
+  team?: Team;
+  projects: Project[];
+  actions: IssueActions;
+  revision: number;
+}) {
+  if (!team)
+    return (
+      <section
+        className="max-w-235 mt-0 mr-auto mb-0 ml-auto pt-6.25 pr-5 pb-6.25 pl-5 min-w-0 max-md:pt-4 max-md:pr-2.5 max-md:pb-4 max-md:pl-2.5 font-(family-name:--hoja-font-ui) shell-phone:pt-4 shell-phone:pr-2.5 shell-phone:pb-4 shell-phone:pl-2.5"
+        data-team-scoped-page=""
+      >
+        <p className="text-muted leading-normal" role="alert">
+          Team not found in this workspace.
+        </p>
+      </section>
+    );
+  return (
+    <ViewsPage
+      key={team.id}
+      team={team}
+      projects={projects}
+      actions={actions}
+      revision={revision}
+    />
+  );
+}
+function TeamCyclePage({
+  team,
+  teams,
+  viewer,
+  orgId,
+  workspaceName,
+  projects,
+  labels,
+  cycles,
+  upcoming,
+  onBack,
+  onIssue,
+  revision,
+  onNavigate,
+}: {
+  team?: Team;
+  teams: Team[];
+  viewer: Viewer;
+  orgId: string;
+  workspaceName: string;
+  projects: Project[];
+  labels: { id: string; name: string; color?: string }[];
+  cycles: Cycle[];
+  upcoming: boolean;
+  onBack: () => void;
+  onIssue: (issue: Issue) => void;
+  revision: number;
+  onNavigate: (view: string, path?: string) => void;
+}) {
+  return (
+    <GraphTeamCycle
+      team={team}
+      teams={teams}
+      viewer={viewer}
+      orgId={orgId}
+      workspaceName={workspaceName}
+      projects={projects}
+      labels={labels}
+      cycles={cycles}
+      upcoming={upcoming}
+      onBack={onBack}
+      onSelect={onIssue}
+      onNavigate={onNavigate}
+    />
+  );
+}
+function CyclesPage({
+  teams,
+  viewer,
+  workspaceName,
+  onCycle,
+  onSettings,
+  revision,
+  onNavigate,
+}: {
+  teams: Team[];
+  viewer: Viewer;
+  workspaceName: string;
+  onCycle: (c: Cycle) => void;
+  onSettings: (team: Team) => void;
+  revision: number;
+  onNavigate: (view: string, path?: string) => void;
+}) {
+  return (
+    <GraphWorkspaceCycles
+      teams={teams}
+      viewer={viewer}
+      workspaceName={workspaceName}
+      onCycle={onCycle}
+      onSettings={onSettings}
+      onNavigate={onNavigate}
+    />
+  );
+}
+function CycleDetail({
+  cycle,
+  team,
+  teams,
+  viewer,
+  orgId,
+  workspaceName,
+  projects,
+  labels,
+  cycles,
+  revision,
+  onBack,
+  onSelect,
+  onNavigate,
+}: {
+  cycle: Cycle;
+  team?: Team;
+  teams: Team[];
+  viewer: Viewer;
+  orgId: string;
+  workspaceName: string;
+  projects: Project[];
+  labels: { id: string; name: string; color?: string }[];
+  cycles: Cycle[];
+  revision: number;
+  onBack: () => void;
+  onSelect: (i: Issue) => void;
+  onNavigate: (view: string, path?: string) => void;
+}) {
+  return (
+    <GraphCycleDetail
+      cycle={cycle}
+      team={team}
+      teams={teams}
+      viewer={viewer}
+      orgId={orgId}
+      workspaceName={workspaceName}
+      projects={projects}
+      labels={labels}
+      cycles={cycles}
+      onBack={onBack}
+      onSelect={onSelect}
+      onNavigate={onNavigate}
+    />
+  );
+}
+function TeamHome({
+  team,
+  issues,
+  onNavigate,
+  onSelectIssue,
+}: {
+  team?: Team;
+  issues: Issue[];
+  onNavigate: (view: string, path?: string) => void;
+  onSelectIssue: (issue: Issue) => void;
+}) {
+  const teamKey = team?.key;
+  const { open, started } = useMemo(() => {
+    const open: Issue[] = [];
+    let started = 0;
+    for (const i of issues) {
+      if (i.team?.key !== teamKey) continue;
+      if (i.state?.type !== "completed") open.push(i);
+      if (i.state?.type === "started") started++;
+    }
+    return { open, started };
+  }, [issues, teamKey]);
+  return (
+    <section className="max-w-7xl mx-auto w-full p-4">
+      <header
+        className="flex items-center gap-3.75 mb-6.5"
+        data-team-home-head=""
+      >
+        <MobileNavTrigger />
+        <div className="grid place-items-center w-12.5 h-12.5 flex-none rounded-xl bg-accent-soft text-accent font-extrabold">
+          {team?.key.slice(0, 2) || "TM"}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex gap-2 text-[12px] text-muted">
+            <span>Your teams</span>
+            <span>/</span>
+            <b className="text-foreground font-medium">
+              {team?.name || "Team"}
+            </b>
+          </div>
+          <h1 className="text-[27px] tracking-[-.04em] mt-1.5 mr-0 mb-1.5 ml-0 font-semibold leading-normal ">
+            {team?.name || "Team overview"}
+          </h1>
+          {team?.description ? (
+            <Markdown text={team.description} />
+          ) : (
+            <p className="mt-0 mr-0 mb-0 ml-0 text-muted text-[12px]">
+              Your team workspace and current work.
+            </p>
+          )}
+        </div>
+        <div className="flex pl-2.5 max-md:hidden" data-team-member-stack="">
+          {(team?.members?.nodes || []).slice(0, 5).map((m, i) => (
+            <span
+              className="grid place-items-center w-7.5 h-7.5 -ml-2 rounded-[50%] border-2 border-bg"
+              key={m.id}
+              title={m.name || m.email}
+              style={{ zIndex: 6 - i }}
+            >
+              <UserBlobatar user={m} />
+            </span>
+          ))}
+        </div>
+      </header>
+      <div
+        className="border grid grid-cols-4 border-line rounded-lg bg-panel mb-5 max-md:grid-cols-2 max-md:[&>div:nth-child(2)]:border-r-0 max-md:[&>div:nth-child(3)]:border-t max-md:[&>div:nth-child(3)]:border-line max-md:[&>div:nth-child(4)]:border-t max-md:[&>div:nth-child(4)]:border-line"
+        data-team-home-stats=""
+      >
+        <div className="grid gap-2 pt-3.75 pr-3.75 pb-3.75 pl-3.75 border-r border-line last:border-0">
+          <span className="text-muted text-[11px]">Open tasks</span>
+          <b className="text-[20px]">{open.length}</b>
+        </div>
+        <div className="grid gap-2 pt-3.75 pr-3.75 pb-3.75 pl-3.75 border-r border-line last:border-0">
+          <span className="text-muted text-[11px]">In progress</span>
+          <b className="text-[20px]">{started}</b>
+        </div>
+        <div className="grid gap-2 pt-3.75 pr-3.75 pb-3.75 pl-3.75 border-r border-line last:border-0">
+          <span className="text-muted text-[11px]">Members</span>
+          <b className="text-[20px]">{team?.members?.nodes.length || 0}</b>
+        </div>
+        <div className="grid gap-2 pt-3.75 pr-3.75 pb-3.75 pl-3.75 border-r border-line last:border-0">
+          <span className="text-muted text-[11px]">Workflow states</span>
+          <b className="text-[20px]">{team?.states.nodes.length || 0}</b>
+        </div>
+      </div>
+      <div
+        className="grid gap-4 grid-cols-1 md:grid-cols-2"
+        data-team-home-grid=""
+      >
+        <section
+          className="border border-line rounded-xl  shadow-[0_1px_2px_#1b1b1b08] overflow-hidden bg-panel **:data-status-history:max-w-[min(240px,calc(100vw-16px))] **:data-status-menu:max-w-[min(240px,calc(100vw-16px))]"
+          data-issue-card=""
+        >
+          <div
+            className="border-b border-line flex justify-between pt-3 pr-4 pb-3 pl-4 text-[12px]"
+            data-card-head=""
+          >
+            <span>
+              Active tasks{" "}
+              <b className="ml-1.25 text-muted font-normal">{open.length}</b>
+            </span>
+            <button
+              className="text-accent bg-transparent border-0 text-[11px] w-auto pt-0 pr-0 pb-0 pl-0 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+              data-text-action=""
+              onClick={() =>
+                onNavigate(
+                  "Team issues",
+                  `/workspace/team/${team?.key.toLowerCase()}/active`,
+                )
+              }
+            >
+              View team tasks →
+            </button>
+          </div>
+          <IssueList
+            issues={open.slice(0, 6)}
+            onOpen={onSelectIssue}
+            emptyTitle="No open tasks"
+            emptyText="Open team tasks will appear here."
+          />
+        </section>
+        <aside className="grid content-start gap-3">
+          <section
+            className="border border-line rounded-xl shadow-[0_1px_2px_#1b1b1b08] pt-4 pr-4 pb-4 pl-4 bg-panel"
+            data-side-card=""
+          >
+            <span className="text-xs font-semibold normal-case text-muted">
+              Current cycle
+            </span>
+            <h3 className="text-[15px] mt-3 mr-0 mb-1.25 ml-0">
+              {team?.activeCycle?.name || "No active cycle"}
+            </h3>
+            {team?.activeCycle && (
+              <>
+                <p className="text-[11px] text-muted">
+                  {team.activeCycle.startsAt?.slice(0, 10) || "Start unset"} —{" "}
+                  {team.activeCycle.endsAt?.slice(0, 10) || "End unset"}
+                </p>
+                <div
+                  className="block h-1.25 mt-1.75 rounded-[5px] bg-subtle overflow-hidden"
+                  data-progress-track=""
+                >
+                  <i
+                    className="block h-full bg-accent"
+                    style={{
+                      width: `${Math.min(100, Math.max(0, team.activeCycle.progress || 0))}%`,
+                    }}
+                  />
+                </div>
+              </>
+            )}
+            <button
+              className="flex justify-between w-full pt-2.25 pr-0 pb-2.25 pl-0 bg-transparent border-t border-line text-left text-[11px] text-accent border-0 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+              data-text-action=""
+              onClick={() =>
+                onNavigate(
+                  "Team cycles",
+                  `/workspace/team/${team?.key.toLowerCase()}/cycles`,
+                )
+              }
+            >
+              View team cycles →
+            </button>
+          </section>
+          <section
+            className="border border-line rounded-xl shadow-[0_1px_2px_#1b1b1b08] pt-4 pr-4 pb-4 pl-4 bg-panel"
+            data-side-card=""
+          >
+            <span className="text-xs font-semibold normal-case text-muted">
+              Team links
+            </span>
+            <button
+              className="flex justify-between w-full pt-2.25 pr-0 pb-2.25 pl-0 bg-transparent border-t border-line text-left text-[12px] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+              onClick={() => onNavigate("Board")}
+            >
+              Tasks board <span>→</span>
+            </button>
+            <button
+              className="flex justify-between w-full pt-2.25 pr-0 pb-2.25 pl-0 bg-transparent border-t border-line text-left text-[12px] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+              onClick={() => onNavigate("Projects")}
+            >
+              Projects <span>→</span>
+            </button>
+            <button
+              className="flex justify-between w-full pt-2.25 pr-0 pb-2.25 pl-0 bg-transparent border-t border-line text-left text-[12px] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+              onClick={() => onNavigate("Cycles")}
+            >
+              Cycles <span>→</span>
+            </button>
+          </section>
+        </aside>
+      </div>
+    </section>
+  );
+}
 
 /* Command palette: searches the local issue store, projects and teams on every keystroke with no
    network round trip; the server is asked (debounced) only for issues outside the synced set.
    The query lives here, not in App, so typing never re-renders the page behind the palette. */
-function CommandPalette({query:initialQuery,onClose,onIssue,onNavigate}:{query:string;setQuery:(q:string)=>void;issues:Issue[];onClose:()=>void;onIssue:(i:Issue)=>void;onNavigate:(view:string)=>void}){
- const [query,setQuery]=useState(initialQuery),[active,setActive]=useState(0),[remote,setRemote]=useState<Issue[]>([]);
- const deferred=React.useDeferredValue(query);
- const issues=useIssues(),meta=useSyncMeta();
- const issuesRef=useRef(issues);issuesRef.current=issues;useEffect(()=>warmSearchIndex(issues),[issues]);
- const {results}=useIssueSearch(issues,deferred,8);
- const terms=useMemo(()=>searchTerms(deferred),[deferred]);
- const projects=useMemo(()=>terms.length?(meta?.projects.nodes||[]).filter(p=>matchesTerms(p.name,terms)).slice(0,4):[],[meta,terms]);
- const teams=useMemo(()=>terms.length?(meta?.teams.nodes||[]).filter(t=>matchesTerms(`${t.name} ${t.key}`,terms)).slice(0,4):[],[meta,terms]);
- const pages=['Inbox','My issues','Board','Projects','Cycles','Home'].filter(x=>!terms.length||matchesTerms(x,terms));
- const localCount=results.length;
- useEffect(()=>{const term=deferred.trim();setRemote([]);if(term.length<2||localCount>=8)return;let live=true;const timer=window.setTimeout(()=>{gql(`query PaletteSearch($term:String!){searchIssues(term:$term,first:8){nodes ${issueFields}}}`,{term}).then(d=>{if(!live)return;const known=new Set(issuesRef.current.map(i=>i.id));setRemote((d.searchIssues?.nodes||[]).filter((i:Issue)=>!known.has(i.id)).slice(0,5))}).catch(()=>{})},250);return()=>{live=false;window.clearTimeout(timer)}},[deferred,localCount]);
- const go=(path:string)=>{onClose();navigateTo(path)};
- const entries:{key:string;run:()=>void}[]=[...results.map(i=>({key:`i:${i.id}`,run:()=>onIssue(i)})),...remote.map(i=>({key:`r:${i.id}`,run:()=>onIssue(i)})),...projects.map(p=>({key:`p:${p.id}`,run:()=>go(`/workspace/project/${p.id}`)})),...teams.map(t=>({key:`t:${t.id}`,run:()=>go(`/workspace/team/${t.key.toLowerCase()}/active`)})),...pages.map(x=>({key:`n:${x}`,run:()=>onNavigate(x)}))];
- useEffect(()=>setActive(0),[deferred]);
- const listRef=useRef<HTMLDivElement>(null);
- useEffect(()=>{listRef.current?.querySelector('[data-active="true"]')?.scrollIntoView({block:'nearest'})},[active]);
- const at=Math.min(active,Math.max(0,entries.length-1));
- const row=(key:string)=>{const selected=entries[at]?.key===key;return {'data-active':selected?'true':undefined,style:selected?{background:'var(--subtle)'}:undefined,onMouseEnter:()=>{const i=entries.findIndex(e=>e.key===key);if(i>=0)setActive(i)}}};
- const onKeyDown=(e:React.KeyboardEvent)=>{if(e.key==='Escape')onClose();else if(e.key==='ArrowDown'){e.preventDefault();setActive(Math.min(at+1,entries.length-1))}else if(e.key==='ArrowUp'){e.preventDefault();setActive(Math.max(at-1,0))}else if(e.key==='Enter'){e.preventDefault();if(terms.length||active>0)entries[at]?.run()}};
- return bodyLayer(<div className="command-backdrop" role="presentation" onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}><section className="command-palette" role="dialog" aria-label="Command palette" data-results-for={deferred} onMouseDown={e=>e.stopPropagation()}><div className="command-input"><Search size={17}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search tasks or navigate..." aria-label="Search tasks or navigate" onKeyDown={onKeyDown}/><kbd>ESC</kbd></div>
-  <div ref={listRef} style={{maxHeight:'min(60vh,520px)',overflowY:'auto'}}>
-  {terms.length>0&&results.length>0&&<div className="command-results"><p>Tasks</p>{results.map(i=><button key={i.id} {...row(`i:${i.id}`)} onClick={()=>onIssue(i)}><span className="priority" data-p={i.priority}/><b>{i.identifier}</b><span>{i.title}</span></button>)}</div>}
-  {terms.length>0&&remote.length>0&&<div className="command-results"><p>Older tasks</p>{remote.map(i=><button key={i.id} {...row(`r:${i.id}`)} onClick={()=>onIssue(i)}><span className="priority" data-p={i.priority}/><b>{i.identifier}</b><span>{i.title}</span></button>)}</div>}
-  {projects.length>0&&<div className="command-results"><p>Projects</p>{projects.map(p=><button key={p.id} {...row(`p:${p.id}`)} onClick={()=>go(`/workspace/project/${p.id}`)}><FolderKanban size={14}/><span>{p.name}</span></button>)}</div>}
-  {teams.length>0&&<div className="command-results"><p>Teams</p>{teams.map(t=><button key={t.id} {...row(`t:${t.id}`)} onClick={()=>go(`/workspace/team/${t.key.toLowerCase()}/active`)}><Users size={14}/><b>{t.key}</b><span>{t.name}</span></button>)}</div>}
-  <div className="command-results"><p>Navigate</p>{pages.map(x=><button key={x} {...row(`n:${x}`)} onClick={()=>onNavigate(x)}><Command size={14}/><span>{x}</span></button>)}</div>
-  </div><footer>↑↓ to navigate · Enter to select · Esc to close</footer></section></div>)}
+function CommandPalette({
+  query: initialQuery,
+  onClose,
+  onIssue,
+  onNavigate,
+  onCreateInitiative,
+  onOpenInitiative,
+  viewsOnly = false,
+}: {
+  /** O then V: the palette lists only saved views (the view switcher). */
+  viewsOnly?: boolean;
+  query: string;
+  setQuery: (q: string) => void;
+  issues: Issue[];
+  onClose: () => void;
+  onIssue: (i: Issue) => void;
+  onNavigate: (view: string) => void;
+  onCreateInitiative: () => void;
+  onOpenInitiative: (id: string) => void;
+}) {
+  const [initiativeRows, setInitiativeRows] = useState<InitiativeRef[]>([]);
+  useEffect(() => {
+    fetchAllInitiatives()
+      .then(setInitiativeRows)
+      .catch(() => undefined);
+  }, []);
+  const [query, setQuery] = useState(initialQuery),
+    [active, setActive] = useState(0),
+    [remote, setRemote] = useState<Issue[]>([]);
+  const deferred = React.useDeferredValue(query);
+  const issues = useIssues(),
+    meta = useSyncMeta();
+  const issuesRef = useRef(issues);
+  issuesRef.current = issues;
+  useEffect(() => warmSearchIndex(issues), [issues]);
+  const { results: issueResults } = useIssueSearch(issues, deferred, 8);
+  const results = viewsOnly ? [] : issueResults;
+  const terms = useMemo(() => searchTerms(deferred), [deferred]);
+  const projects = useMemo(
+    () =>
+      terms.length && !viewsOnly
+        ? (meta?.projects.nodes || [])
+            .filter((p) => matchesTerms(p.name, terms))
+            .slice(0, 4)
+        : [],
+    [meta, terms, viewsOnly],
+  );
+  const teams = useMemo(
+    () =>
+      terms.length && !viewsOnly
+        ? (meta?.teams.nodes || [])
+            .filter((t) => matchesTerms(`${t.name} ${t.key}`, terms))
+            .slice(0, 4)
+        : [],
+    [meta, terms, viewsOnly],
+  );
+  const initiativeHits = useMemo(
+    () =>
+      terms.length && !viewsOnly
+        ? initiativeRows
+            .filter((i) => matchesTerms(`${i.identifier} ${i.name}`, terms))
+            .slice(0, 4)
+        : [],
+    [initiativeRows, terms, viewsOnly],
+  );
+  const actions = [
+    {
+      key: "a:new-initiative",
+      label: "Create new initiative",
+      hint: "N then I",
+    },
+  ].filter(
+    (a) =>
+      !viewsOnly &&
+      (!terms.length || matchesTerms(`${a.label} initiative`, terms)),
+  );
+  const { views: savedViews } = useViewList();
+  const viewHits = useMemo(
+    () =>
+      viewsOnly
+        ? savedViews
+            .filter((v) => !terms.length || matchesTerms(v.name, terms))
+            .sort(
+              (a, b) =>
+                Number(b.favorite) - Number(a.favorite) ||
+                a.name.localeCompare(b.name),
+            )
+            .slice(0, 50)
+        : terms.length
+          ? savedViews.filter((v) => matchesTerms(v.name, terms)).slice(0, 5)
+          : [],
+    [savedViews, terms, viewsOnly],
+  );
+  const pages = (
+    viewsOnly
+      ? []
+      : [
+          "Inbox",
+          "My issues",
+          "Board",
+          "Projects",
+          "Views",
+          "Initiatives",
+          "Cycles",
+          "Home",
+        ]
+  ).filter((x) => !terms.length || matchesTerms(x, terms));
+  const localCount = results.length;
+  useEffect(() => {
+    const term = deferred.trim();
+    setRemote([]);
+    if (viewsOnly || term.length < 2 || localCount >= 8) return;
+    let live = true;
+    const timer = window.setTimeout(() => {
+      gql(
+        `query PaletteSearch($term:String!){searchIssues(term:$term,first:8){nodes ${issueFields}}}`,
+        { term },
+      )
+        .then((d) => {
+          if (!live) return;
+          const known = new Set(issuesRef.current.map((i) => i.id));
+          setRemote(
+            (d.searchIssues?.nodes || [])
+              .filter((i: Issue) => !known.has(i.id))
+              .slice(0, 5),
+          );
+        })
+        .catch(() => {});
+    }, 250);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+  }, [deferred, localCount, viewsOnly]);
+  const go = (path: string) => {
+    onClose();
+    navigateTo(path);
+  };
+  const entries: { key: string; run: () => void }[] = viewsOnly
+    ? viewHits.map((v) => ({ key: `v:${v.id}`, run: () => go(viewPath(v)) }))
+    : [
+        ...viewHits.map((v) => ({
+          key: `v:${v.id}`,
+          run: () => go(viewPath(v)),
+        })),
+        ...results.map((i) => ({ key: `i:${i.id}`, run: () => onIssue(i) })),
+        ...remote.map((i) => ({ key: `r:${i.id}`, run: () => onIssue(i) })),
+        ...projects.map((p) => ({
+          key: `p:${p.id}`,
+          run: () => go(`/workspace/project/${p.id}`),
+        })),
+        ...teams.map((t) => ({
+          key: `t:${t.id}`,
+          run: () => go(`/workspace/team/${t.key.toLowerCase()}/active`),
+        })),
+        ...initiativeHits.map((i) => ({
+          key: `in:${i.id}`,
+          run: () => onOpenInitiative(i.identifier || i.id),
+        })),
+        ...actions.map((a) => ({ key: a.key, run: onCreateInitiative })),
+        ...pages.map((x) => ({ key: `n:${x}`, run: () => onNavigate(x) })),
+      ];
+  useEffect(() => setActive(0), [deferred]);
+  const listRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  /* Captured during the first render, before the input takes focus, so closing the palette
+   * can put the keyboard back where it was. */
+  const openerRef = useRef<HTMLElement | null>(
+    document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null,
+  );
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+  /* Escape closes from anywhere inside the palette and hands focus back to the opener.
+   * Entries that navigate keep focus at the destination, which is why this is not an
+   * unmount effect. */
+  const closeAndRestore = () => {
+    onClose();
+    const back = openerRef.current;
+    if (back && document.contains(back)) back.focus();
+  };
+  useEffect(() => {
+    listRef.current
+      ?.querySelector('[data-active="true"]')
+      ?.scrollIntoView({ block: "nearest" });
+  }, [active]);
+  const at = Math.min(active, Math.max(0, entries.length - 1));
+  const optionId = (key: string) =>
+    `command-option-${key.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+  const row = (key: string) => {
+    const selected = entries[at]?.key === key;
+    return {
+      id: optionId(key),
+      role: "option" as const,
+      "aria-selected": selected,
+      "data-active": selected ? "true" : undefined,
+      style: selected ? { background: "var(--subtle)" } : undefined,
+      onMouseEnter: () => {
+        const i = entries.findIndex((e) => e.key === key);
+        if (i >= 0) setActive(i);
+      },
+    };
+  };
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeAndRestore();
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActive(Math.min(at + 1, entries.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActive(Math.max(at - 1, 0));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      entries[at]?.run();
+    }
+  };
+  return bodyLayer(
+    <div
+      className="inset-0 pr-4.5 pl-4.5 bg-[#0008] fixed z-100 flex justify-center items-start py-[15vh] px-4.5 shell-phone:p-2"
+      data-command-backdrop=""
+      role="presentation"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) closeAndRestore();
+      }}
+    >
+      <section
+        className="border shadow-(--shadow) overflow-hidden border-line rounded-[10px] bg-panel w-[min(570px,100%)] max-w-xl shell-phone:w-full shell-phone:max-w-none"
+        data-command-palette=""
+        role="dialog"
+        aria-modal="true"
+        aria-label="Command palette"
+        data-results-for={deferred}
+        onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={onKeyDown}
+      >
+        <div
+          className="border-b border-line flex items-center gap-2.5 pt-3.5 pr-3.5 pb-3.5 pl-3.5 text-muted"
+          data-command-input=""
+        >
+          <Search size={17} />
+          <input
+            ref={inputRef}
+            className="flex-1 border-0 bg-transparent text-foreground text-[14px] max-md:text-base outline-none placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] pointer-coarse:text-[16px]"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={
+              viewsOnly ? "Open a view…" : "Search tasks or navigate..."
+            }
+            aria-label={viewsOnly ? "Open a view" : "Search tasks or navigate"}
+            role="combobox"
+            aria-expanded="true"
+            aria-controls="command-palette-list"
+            aria-autocomplete="list"
+            aria-activedescendant={
+              entries[at] ? optionId(entries[at].key) : undefined
+            }
+            onKeyDown={onKeyDown}
+          />
+          <kbd className="text-[10px] text-muted pointer-coarse:hidden shell-phone:hidden">
+            ESC
+          </kbd>
+          <button
+            type="button"
+            className="hidden min-h-11 flex-none items-center rounded-md bg-transparent px-2 text-sm text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:inline-flex pointer-coarse:inline-flex"
+            onClick={closeAndRestore}
+          >
+            Cancel
+          </button>
+        </div>
+        <div
+          ref={listRef}
+          id="command-palette-list"
+          role="listbox"
+          aria-label="Search results"
+          className="max-h-[min(60vh,520px)] overflow-y-auto overscroll-contain shell-phone:max-h-[calc(100dvh-90px)]"
+        >
+          {viewHits.length > 0 && (
+            <div
+              className="pt-1.75 pr-1.75 pb-1.75 pl-1.75"
+              data-command-results=""
+              data-command-views=""
+              role="group"
+            >
+              <p
+                role="presentation"
+                className="pt-1.25 pr-2 pb-1.25 pl-2 text-muted text-[10px] normal-case tracking-widest"
+              >
+                Views
+              </p>
+              {viewHits.map((v) => (
+                <button
+                  className="flex items-center gap-2.25 w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 rounded-md bg-transparent text-left text-[12px] hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                  key={v.id}
+                  {...row(`v:${v.id}`)}
+                  onClick={() => go(viewPath(v))}
+                >
+                  <ViewIcon icon={v.icon} color={v.color} size={14} />
+                  <span className="overflow-hidden text-ellipsis">
+                    {v.name}
+                  </span>
+                  {v.favorite && (
+                    <Star
+                      size={12}
+                      className="text-muted"
+                      fill="currentColor"
+                    />
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+          {viewsOnly && !viewHits.length && (
+            <p className="p-4 text-center text-[12px] text-muted" role="status">
+              No views match.
+            </p>
+          )}
+          {!viewsOnly && terms.length > 0 && results.length > 0 && (
+            <div
+              className="pt-1.75 pr-1.75 pb-1.75 pl-1.75"
+              data-command-results=""
+              role="group"
+            >
+              <p
+                role="presentation"
 
-function SettingsSidebar({workspace,viewer,section,onNavigate,onBack,onLogout,mobile,onCloseMobile}:{workspace:{name:string};viewer:Viewer;section:string;onNavigate:(section:string)=>void;onBack:()=>void;onLogout:()=>void;mobile:boolean;onCloseMobile:()=>void}){
- const [query,setQuery]=useState('');const panel=useRef<HTMLElement>(null);const close=useRef<HTMLButtonElement>(null);
- const groups:[string,[string,string,React.ComponentType<{size?:number}>][]][]=[
-  ['Personal',[['preferences','Preferences',SlidersHorizontal],['profile','Profile',UserRound],['notifications','Notifications',Bell],['api-keys','API keys',KeyRound],['agent-conversations','Agent conversations',MessageCircle],['connections','Connections',Plug]]],
-  ['Tasks',[['issue-labels','Labels',Tags]]],
-  ['Administration',[['workspace','Workspace',Building2],['teams','Teams',Users],['members','Members',UserRound],['model-providers','Model providers',Bot],['extensions','Extensions',Blocks]]],
- ];
- const filtered=groups.map(([group,items])=>[group,items.filter(([id])=>!['workspace','teams','members','model-providers','extensions'].includes(id)||viewer.admin).filter(([,label])=>`${label} ${group}`.toLowerCase().includes(query.trim().toLowerCase()))] as [string,[string,string,React.ComponentType<{size?:number}>][]]).filter(([,items])=>items.length);
- useEffect(()=>{if(!mobile)return;const previous=document.activeElement as HTMLElement|null;close.current?.focus();const onKey=(e:KeyboardEvent)=>{if(e.key==='Escape'){e.preventDefault();onCloseMobile();return}if(e.key!=='Tab'||!panel.current)return;const items=[...panel.current.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),a[href]')].filter(el=>el.offsetParent!==null);if(!items.length)return;const first=items[0],last=items[items.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}};document.addEventListener('keydown',onKey);return()=>{document.removeEventListener('keydown',onKey);previous?.focus()}},[mobile,onCloseMobile]);
- return <><button type="button" className={`settings-drawer-scrim ${mobile?'visible':''}`} aria-label="Close settings navigation" tabIndex={mobile?0:-1} onClick={onCloseMobile}/><aside ref={panel} className={`sidebar settings-sidebar ${mobile?'open':''}`} aria-label="Settings navigation" role={mobile?'dialog':undefined} aria-modal={mobile||undefined}>
-  <div className="settings-sidebar-top"><button type="button" className="settings-back" onClick={onBack}><ArrowLeft size={15}/><span>Back to app</span></button><button ref={close} type="button" className="settings-drawer-close" aria-label="Close settings navigation" onClick={onCloseMobile}><X size={17}/></button></div>
-  <div className="settings-workspace-name"><span className="settings-workspace-mark" aria-hidden="true">{(workspace.name||'W').slice(0,1).toUpperCase()}</span><span><b>{workspace.name||'Workspace'}</b><small>Workspace settings</small></span></div>
-  <label className="settings-search"><Search size={14}/><input aria-label="Search settings" placeholder="Find a setting…" value={query} onChange={e=>setQuery(e.target.value)}/>{query&&<button type="button" aria-label="Clear settings search" onClick={()=>setQuery('')}><X size={13}/></button>}</label>
-  <nav id="settings-navigation" aria-label="Settings sections">{filtered.map(([group,items])=><div className="nav-group" key={group}><p>{group}</p>{items.map(([id,label,Icon])=><button type="button" key={id} className={`nav-item ${section===id?'active':''}`} aria-current={section===id?'page':undefined} onClick={()=>{onNavigate(id);onCloseMobile()}}><Icon size={15}/><span>{label}</span><ChevronRight className="settings-nav-chevron" size={13}/></button>)}</div>)}{!filtered.length&&<div className="settings-search-empty"><Search size={18}/><b>No matching settings</b><p>Try a different name or clear your search.</p><button type="button" onClick={()=>setQuery('')}>Clear search</button></div>}</nav>
-  <div className="sidebar-bottom"><span className="settings-user-avatar" aria-hidden="true">{(viewer.name||viewer.email||'A').slice(0,1).toUpperCase()}</span><span className="settings-user-copy"><b>{viewer.name||'Account'}</b><small>{viewer.email}</small></span><button className="logout-button" onClick={onLogout} aria-label="Log out"><LogOut size={16}/></button></div>
- </aside></>
+                className="pt-1.25 pr-2 pb-1.25 pl-2 text-muted text-[10px] normal-case tracking-widest"
+              >
+                Tasks
+              </p>
+              {results.map((i) => (
+                <button
+                  className="flex items-center gap-2.25 w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 rounded-md bg-transparent text-left text-[12px] hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:text-sm"
+                  key={i.id}
+                  {...row(`i:${i.id}`)}
+                  onClick={() => onIssue(i)}
+                >
+                  <span
+                    className="inline-block w-2 h-2 shrink-0 rounded-[50%] bg-room-muted data-[p=1]:bg-red-500 data-[p=2]:bg-orange-500 data-[p=3]:bg-yellow-500 data-[p=4]:bg-blue-400 last:text-muted last:overflow-hidden last:text-ellipsis data-[p=1]:bg-subtle data-[p=2]:bg-subtle data-[p=3]:bg-subtle data-[p=4]:bg-subtle"
+                    data-p={i.priority}
+                  />
+                  <b className="flex-none whitespace-nowrap">{i.identifier}</b>
+                  <span className="last:text-muted last:overflow-hidden last:text-ellipsis min-w-0">
+                    {i.title}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+          {terms.length > 0 && remote.length > 0 && (
+            <div
+              className="pt-1.75 pr-1.75 pb-1.75 pl-1.75"
+              data-command-results=""
+              role="group"
+            >
+              <p
+                role="presentation"
+
+                className="pt-1.25 pr-2 pb-1.25 pl-2 text-muted text-[10px] normal-case tracking-widest"
+              >
+                Older tasks
+              </p>
+              {remote.map((i) => (
+                <button
+                  className="flex items-center gap-2.25 w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 rounded-md bg-transparent text-left text-[12px] hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:text-sm"
+                  key={i.id}
+                  {...row(`r:${i.id}`)}
+                  onClick={() => onIssue(i)}
+                >
+                  <span
+                    className="inline-block w-2 h-2 shrink-0 rounded-[50%] bg-room-muted data-[p=1]:bg-red-500 data-[p=2]:bg-orange-500 data-[p=3]:bg-yellow-500 data-[p=4]:bg-blue-400 last:text-muted last:overflow-hidden last:text-ellipsis data-[p=1]:bg-subtle data-[p=2]:bg-subtle data-[p=3]:bg-subtle data-[p=4]:bg-subtle"
+                    data-p={i.priority}
+                  />
+                  <b className="flex-none whitespace-nowrap">{i.identifier}</b>
+                  <span className="last:text-muted last:overflow-hidden last:text-ellipsis min-w-0">
+                    {i.title}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+          {projects.length > 0 && (
+            <div
+              className="pt-1.75 pr-1.75 pb-1.75 pl-1.75"
+              data-command-results=""
+              role="group"
+            >
+              <p
+                role="presentation"
+
+                className="pt-1.25 pr-2 pb-1.25 pl-2 text-muted text-[10px] normal-case tracking-widest"
+              >
+                Projects
+              </p>
+              {projects.map((p) => (
+                <button
+                  className="flex items-center gap-2.25 w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 rounded-md bg-transparent text-left text-[12px] hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:text-sm"
+                  key={p.id}
+                  {...row(`p:${p.id}`)}
+                  onClick={() => go(`/workspace/project/${p.id}`)}
+                >
+                  <FolderKanban size={14} />
+                  <span className="last:text-muted last:overflow-hidden last:text-ellipsis">
+                    {p.name}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+          {teams.length > 0 && (
+            <div
+              className="pt-1.75 pr-1.75 pb-1.75 pl-1.75"
+              data-command-results=""
+              role="group"
+            >
+              <p
+                role="presentation"
+
+                className="pt-1.25 pr-2 pb-1.25 pl-2 text-muted text-[10px] normal-case tracking-widest"
+              >
+                Teams
+              </p>
+              {teams.map((t) => (
+                <button
+                  className="flex items-center gap-2.25 w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 rounded-md bg-transparent text-left text-[12px] hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:text-sm"
+                  key={t.id}
+                  {...row(`t:${t.id}`)}
+                  onClick={() =>
+                    go(`/workspace/team/${t.key.toLowerCase()}/active`)
+                  }
+                >
+                  <Users size={14} />
+                  <b>{t.key}</b>
+                  <span className="last:text-muted last:overflow-hidden last:text-ellipsis">
+                    {t.name}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+          {initiativeHits.length > 0 && (
+            <div
+              className="pt-1.75 pr-1.75 pb-1.75 pl-1.75"
+              data-command-results=""
+              role="group"
+            >
+              <p
+                role="presentation"
+                className="pt-1.25 pr-2 pb-1.25 pl-2 text-muted text-[10px] normal-case tracking-widest"
+              >
+                Initiatives
+              </p>
+              {initiativeHits.map((i) => (
+                <button
+                  className="flex items-center gap-2.25 w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 rounded-md bg-transparent text-left text-[12px] hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:text-sm"
+                  key={i.id}
+                  {...row(`in:${i.id}`)}
+                  onClick={() => onOpenInitiative(i.identifier || i.id)}
+                >
+                  <Target size={14} />
+                  <b className="flex-none whitespace-nowrap">{i.identifier}</b>
+                  <span className="last:text-muted last:overflow-hidden last:text-ellipsis min-w-0">
+                    {i.name}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+          {actions.length > 0 && (
+            <div
+              className="pt-1.75 pr-1.75 pb-1.75 pl-1.75"
+              data-command-results=""
+              role="group"
+            >
+              <p
+                role="presentation"
+                className="pt-1.25 pr-2 pb-1.25 pl-2 text-muted text-[10px] normal-case tracking-widest"
+              >
+                Actions
+              </p>
+              {actions.map((a) => (
+                <button
+                  className="flex items-center gap-2.25 w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 rounded-md bg-transparent text-left text-[12px] hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:text-sm"
+                  key={a.key}
+                  {...row(a.key)}
+                  onClick={onCreateInitiative}
+                >
+                  <Plus size={14} />
+                  <span className="flex-1">{a.label}</span>
+                  <kbd className="text-[10px] text-muted pointer-coarse:hidden">
+                    {a.hint}
+                  </kbd>
+                </button>
+              ))}
+            </div>
+          )}
+          <div
+            className="pt-1.75 pr-1.75 pb-1.75 pl-1.75"
+            data-command-results=""
+            role="group"
+          >
+            <p
+              role="presentation"
+
+              className="pt-1.25 pr-2 pb-1.25 pl-2 text-muted text-[10px] normal-case tracking-widest"
+            >
+              Navigate
+            </p>
+            {pages.map((x) => (
+              <button
+                className="flex items-center gap-2.25 w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 rounded-md bg-transparent text-left text-[12px] hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:text-sm"
+                key={x}
+                {...row(`n:${x}`)}
+                onClick={() => onNavigate(x)}
+              >
+                <Command size={14} />
+                <span className="last:text-muted last:overflow-hidden last:text-ellipsis">
+                  {x}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <footer className="pt-2.5 pr-3.5 pb-2.5 pl-3.5 border-t border-line text-muted text-[10px] pointer-coarse:hidden shell-phone:hidden">
+          ↑↓ to navigate · Enter to select · Esc to close
+        </footer>
+      </section>
+    </div>,
+  );
 }
 
-function LegacyWorkspaceSettings({workspace,viewer,onSaved,onTeamsChanged,teams,section}:{workspace:{id:string;name:string;urlKey:string};viewer:Viewer;onSaved:(w:{id:string;name:string;urlKey:string})=>void;onTeamsChanged:(teams:Team[])=>void;teams:Team[];section:string}){const [name,setName]=useState(workspace.name);const [urlKey,setUrlKey]=useState(workspace.urlKey);const [message,setMessage]=useState('');const [teamName,setTeamName]=useState('');const [teamKey,setTeamKey]=useState('');const [teamMessage,setTeamMessage]=useState('');const [teamBusy,setTeamBusy]=useState(false);useEffect(()=>{setName(workspace.name);setUrlKey(workspace.urlKey)},[workspace]);const createTeam=async(e:React.FormEvent)=>{e.preventDefault();if(teamBusy)return;setTeamBusy(true);setTeamMessage('');try{const d=await gql(`mutation($input:TeamCreateInput!){teamCreate(input:$input){success team{id name key description states{nodes{id name color type}} members{nodes{id name email}} activeCycle{id name number startsAt endsAt progress}}}}`,{input:{name:teamName,key:teamKey}});if(!d.teamCreate?.success||!d.teamCreate?.team)throw Error('Team creation was rejected');onTeamsChanged([...teams,d.teamCreate.team]);void getSync()?.pull();setTeamName('');setTeamKey('');setTeamMessage(`Created ${d.teamCreate.team.name} (${d.teamCreate.team.key}).`)}catch(err){setTeamMessage((err as Error).message)}finally{setTeamBusy(false)}};return <section className="settings-page settings-wide settings-legacy-screen"><header className="settings-page-heading"><span className="eyebrow">{section==='api-keys'?'Personal':'Administration'}</span><h1>{section==='api-keys'?'API keys':section==='workspace'?'Workspace':'Settings'}</h1><p>{section==='api-keys'?'Create and manage personal credentials for the CLI, scripts, and integrations.':'Manage your workspace identity and create teams for your organization.'}</p></header><section className={`settings-group workspace-settings-form ${section==='account'?'':'settings-hidden'}`}><h2>My account</h2><p>{viewer.name||'Account'} · {viewer.email||''}</p><p>Role: {viewer.admin?'Workspace admin':'Member'}</p></section>{section==='api-keys'&&<ApiKeysSettings/>}{viewer.admin&&<><section className={`settings-group workspace-settings-form ${section==='workspace'?'':'settings-hidden'}`}><span className="settings-section-kicker">Organization</span><h2>Workspace identity</h2><p>This name and key identify the workspace across Hoja.</p><form onSubmit={async e=>{e.preventDefault();const previous=workspace;setMessage('Saving…');onSaved({...workspace,name,urlKey});try{const d=await gql(`mutation($input:WorkspaceUpdateInput!){workspaceUpdate(input:$input){success organization{id name urlKey}}}`,{input:{name,urlKey}});if(!d.workspaceUpdate.success)throw Error('Only workspace admins can update settings');onSaved(d.workspaceUpdate.organization);setMessage('Workspace settings saved.')}catch(err){onSaved(previous);setMessage(errorText(err))}}}><label>Workspace name<input value={name} onChange={e=>setName(e.target.value)} required/></label><label>Workspace key<input value={urlKey} onChange={e=>setUrlKey(e.target.value)} required/></label>{message&&<p role="status">{message}</p>}<button className="primary">Save settings</button></form></section><form className={`settings-group workspace-settings-form ${section==='workspace'?'':'settings-hidden'}`} onSubmit={createTeam}><h2>Create team</h2><label>Team name<input value={teamName} onChange={e=>setTeamName(e.target.value)} required/></label><label>Team key<input value={teamKey} onChange={e=>setTeamKey(e.target.value)} required pattern="[A-Za-z0-9]+" title="Use letters and numbers only"/></label>{teamMessage&&<p role={teamMessage.startsWith('Created ')?'status':'alert'}>{teamMessage}</p>}<button type="submit" className="primary" disabled={teamBusy||!teamName.trim()||!teamKey.trim()}>{teamBusy?'Creating…':'Create team'}</button></form></>}</section>}
+let teamPeopleCache: { id: string; name?: string; email?: string }[] | null =
+  null;
+const NOTIFICATION_GROUPS = [
+  [
+    "Tasks",
+    [
+      [
+        "issueAssigned",
+        "Assigned to me",
+        "Someone makes you the assignee of a task.",
+      ],
+      ["issueMention", "Mentioned", "Someone @mentions you in a task comment."],
+      [
+        "issueDecision",
+        "Decision requested",
+        "A task you own or follow asks for a decision.",
+      ],
+      [
+        "issueComment",
+        "New comments",
+        "Someone comments on a task you follow.",
+      ],
+      [
+        "issueStatusChanged",
+        "Status changes",
+        "A task you follow moves to another status.",
+      ],
+      [
+        "issueUpdated",
+        "Priority and due date changes",
+        "A task you follow changes priority or due date.",
+      ],
+    ],
+  ],
+  [
+    "Projects",
+    [
+      [
+        "projectLeadAssigned",
+        "Made project lead",
+        "Someone makes you the lead of a project.",
+      ],
+      [
+        "projectMemberAdded",
+        "Added to a project",
+        "Someone adds you as a member of a project.",
+      ],
+      [
+        "projectMention",
+        "Mentioned",
+        "Someone @mentions you in a project update or a reply.",
+      ],
+      [
+        "projectUpdatePosted",
+        "Project updates",
+        "A project you follow posts an update.",
+      ],
+      [
+        "projectUpdateReply",
+        "Replies",
+        "Someone replies to an update you posted or replied to.",
+      ],
+      [
+        "projectUpdated",
+        "Status, target date and lead changes",
+        "A project you follow changes status, target date or lead.",
+      ],
+    ],
+  ],
+  [
+    "Initiatives",
+    [
+      [
+        "initiativeOwnerAssigned",
+        "Made initiative owner",
+        "Someone makes you the owner of an initiative.",
+      ],
+      [
+        "initiativeUpdatePosted",
+        "Initiative updates",
+        "An initiative you follow posts an update.",
+      ],
+      [
+        "initiativeUpdated",
+        "Status, target date and owner changes",
+        "An initiative you follow changes status, target date or owner.",
+      ],
+    ],
+  ],
+  [
+    "Cycles",
+    [
+      ["cycleStarted", "Cycle started", "A cycle you subscribed to starts."],
+      [
+        "cycleCompleted",
+        "Cycle ended",
+        "A cycle you subscribed to ends, with what got done.",
+      ],
+    ],
+  ],
+] as const;
+type NotificationKind =
+  (typeof NOTIFICATION_GROUPS)[number][1][number][0] | "issueCreated";
+type NotificationPrefs = Record<NotificationKind, boolean>;
+const NOTIFICATION_KIND_KEYS: NotificationKind[] = [
+  ...NOTIFICATION_GROUPS.flatMap(([, kinds]) => kinds.map(([k]) => k)),
+  "issueCreated",
+];
+const NOTIFICATION_PREF_FIELDS = NOTIFICATION_KIND_KEYS.join(" ");
+const allNotificationsOn = (): NotificationPrefs =>
+  Object.fromEntries(
+    NOTIFICATION_KIND_KEYS.map((k) => [k, true]),
+  ) as NotificationPrefs;
+const readNotificationPrefs = (
+  d: Record<string, unknown>,
+): NotificationPrefs => {
+  const next = allNotificationsOn();
+  for (const k of Object.keys(next) as NotificationKind[])
+    if (typeof d[k] === "boolean") next[k] = d[k] as boolean;
+  return next;
+};
+let notificationPrefsCache: NotificationPrefs | null = null;
+type SettingsLabel = {
+  id: string;
+  name: string;
+  color?: string;
+  description?: string;
+};
+let labelSettingsCache: { key: string; labels: SettingsLabel[] } | null = null;
+type ProjectStatusRow = {
+  id: string;
+  name: string;
+  category: string;
+  color?: string | null;
+  position: number;
+};
+type ProjectTemplateRow = {
+  id: string;
+  name: string;
+  description?: string | null;
+  defaultState?: string | null;
+  taskSet: string[];
+  icon?: string | null;
+  color?: string | null;
+  lead?: { id: string; name?: string | null } | null;
+  teams: { id: string; name: string; key: string }[];
+};
+const PROJECT_STATUS_QUERY =
+  "{projectStatuses{id name category color position}}";
+const PROJECT_TEMPLATE_QUERY =
+  "{projectTemplates{id name description defaultState taskSet icon color lead{id name} teams{id name key}}}";
 
-type TeamMutate=(layer:Layer<Team>,run:()=>Promise<void>)=>Promise<void>;
-/* One team card: rename, manage members, archive or delete. Every edit overlays the
- * change on the synced team list first (mutate) and rolls it back if the server says no. */
-function TeamEditor({team,admin,pending,mutate,onChanged,onRemoved,people,issueCount,projectCount}:{
- team:Team; admin:boolean; pending?:boolean; mutate?:TeamMutate; onChanged:()=>Promise<void>|void; onRemoved:()=>void;
- people:{id:string;name?:string;email?:string}[]; issueCount:number; projectCount:number}) {
- const [name,setName]=useState(team.name),[key,setKey]=useState(team.key),[description,setDescription]=useState(team.description||'');
- const [busy,setBusy]=useState(false),[message,setMessage]=useState(''),[confirmDelete,setConfirmDelete]=useState(false),[confirmText,setConfirmText]=useState(''),[deleteIssues,setDeleteIssues]=useState(false);
- useEffect(()=>{setName(team.name);setKey(team.key);setDescription(team.description||'')},[team.id,team.name,team.key,team.description]);
- const members=team.members?.nodes||[];
- const candidates=people.filter(p=>!members.some(m=>m.id===p.id));
- const locked=busy||!!pending;
- const run=async(layer:Layer<Team>,fn:()=>Promise<void>)=>{if(mutate)return mutate(layer,fn);await fn();await onChanged()};
- const save=async(e:React.FormEvent)=>{
-  e.preventDefault();if(locked||!admin)return;
-  if(name.trim()===team.name&&key.trim().toUpperCase()===team.key&&(description||'')===(team.description||'')){setMessage('No changes to save.');return}
-  setMessage('Saving…');
-  const input={name:name.trim(),key:key.trim().toUpperCase(),description};
-  try{
-   await run({id:team.id,patch:input},async()=>{
-    const d=await gql(`mutation($id:String!,$input:TeamUpdateInput!){teamUpdate(id:$id,input:$input){success team{id name key description}}}`,{id:team.id,input});
-    if(!d.teamUpdate?.success)throw Error('Team could not be updated.');
-   });
-   setMessage('Team saved.');
-  }catch(err){setMessage(errorText(err))}
- };
- const archive=async()=>{
-  if(locked||!admin)return;
-  if(!await confirmDialog(`Archive ${team.name}? It will be hidden from the sidebar and team lists. Its tasks and projects stay.`))return;
-  setMessage('Archiving…');
-  try{
-   await run({id:team.id,remove:true},async()=>{
-    const d=await gql(`mutation($id:String!){teamArchive(id:$id){success}}`,{id:team.id});
-    if(!d.teamArchive?.success)throw Error('Team could not be archived.');
-   });
-   onRemoved();setMessage('');
-  }catch(err){setMessage(errorText(err))}
- };
- /* Deleting a team removes what only the team owns: its cycles go with it, its projects
-  * stay in the workspace minus this team, and its issues go when deleteIssues is set. */
- const remove=async()=>{
-  if(locked||!admin||confirmText!==team.key)return;
-  const scope=deleteIssues
-   ? `Permanently delete ${team.name} and the tasks it owns, with their comments and attachments? Tasks that are closed and not loaded on this screen are deleted too.`
-   : `Permanently delete ${team.name}? Its cycles are deleted and its ${projectCount} project${projectCount===1?'':'s'} stay in the workspace.`;
-  if(!await confirmDialog(scope, {danger:true}))return;
-  setMessage('Deleting…');setBusy(true);
-  try{
-   const d=await gql(`mutation($id:String!,$issues:Boolean!){teamDelete(id:$id,deleteIssues:$issues){success}}`,{id:team.id,issues:deleteIssues});
-   if(!d.teamDelete?.success)throw Error('Team could not be deleted.');
-   onRemoved();setMessage('');
-  }catch(err){
-   const text=errorText(err);
-   /* The server refuses while the team still owns any work. Ticking the box is the
-    * explicit "delete it anyway" switch: issues go, cycles go, projects stay. */
-   if(!deleteIssues&&/still has/i.test(text)){
-    setDeleteIssues(true);
-    setMessage(`${text} Tick the box below and confirm again: its tasks go with it, its cycles are deleted, and its projects stay in the workspace.`)
-   } else setMessage(text);
-  }finally{setBusy(false)}
- };
- const setMember=async(userId:string,add:boolean)=>{
-  if(locked||!admin)return;
-  const person=people.find(p=>p.id===userId);
-  const next=add?[...members.filter(m=>m.id!==userId),{id:userId,name:person?.name||'',email:person?.email}]:members.filter(m=>m.id!==userId);
-  setMessage(add?'Adding member…':'Removing member…');
-  try{
-   await run({id:team.id,patch:{members:{nodes:next}}},async()=>{
-    const d=await gql(`mutation($t:String!,$u:String!){${add?'teamMemberAdd':'teamMemberRemove'}(teamId:$t,userId:$u){success}}`,{t:team.id,u:userId});
-    const res=add?d.teamMemberAdd:d.teamMemberRemove;
-    if(!res?.success)throw Error(add?'Only workspace admins can add someone to a team.':'Only workspace admins can remove a team member.');
-   });
-   setMessage(add?'Member added.':'Member removed.');
-  }catch(err){setMessage(errorText(err))}
- };
- return <article className="team-card" aria-label={`Team ${team.name}`} aria-busy={pending||undefined}>
-  <header className="team-card-head">
-   <span className="team-card-mark" aria-hidden="true">{(team.key||team.name).slice(0,2).toUpperCase()}</span>
-   <div className="team-card-title"><b>{team.name}</b><small>{team.key} · {members.length} member{members.length===1?'':'s'} · {issueCount} task{issueCount===1?'':'s'} · {projectCount} project{projectCount===1?'':'s'}</small></div>
-   {pending&&<span className="team-card-pending">Creating…</span>}
-  </header>
-  {admin?<form className="team-card-fields" onSubmit={save}>
-   <label>Name<input aria-label={`Name for ${team.name}`} required value={name} onChange={e=>setName(e.target.value)} disabled={locked}/></label>
-   <label>Key<input aria-label={`Key for ${team.name}`} required maxLength={8} pattern="[A-Za-z0-9]+" title="Letters and numbers only" value={key} onChange={e=>setKey(e.target.value.toUpperCase())} disabled={locked}/></label>
-   <label className="team-card-description">Description<input aria-label={`Description for ${team.name}`} value={description} onChange={e=>setDescription(e.target.value)} disabled={locked}/></label>
-   <div className="team-card-actions">
-    <button type="submit" className="primary" disabled={locked||!name.trim()||!key.trim()}>{busy?'Saving…':'Save team'}</button>
-    <button type="button" className="outline" disabled={locked} onClick={()=>void archive()}>Archive</button>
-    {!confirmDelete&&<button type="button" className="outline danger" disabled={locked} onClick={()=>{setConfirmDelete(true);setMessage('')}}>Delete team…</button>}
-   </div>
-  </form>:<p className="team-card-readonly">Only workspace admins can edit teams.</p>}
-  <section className="team-card-members" aria-label={`Members of ${team.name}`}>
-   <div className="team-card-members-head"><b>Members</b><small>Assignees must belong to the team.</small></div>
-   <ul className="team-member-list">
-    {members.map(m=><li key={m.id} className="team-member"><span className="team-member-avatar" aria-hidden="true">{(m.name||m.email||'?').slice(0,1).toUpperCase()}</span><span className="team-member-name">{m.name||m.email}</span>{admin&&<button type="button" className="team-member-remove" aria-label={`Remove ${m.name||m.email} from ${team.name}`} title="Remove from team" disabled={locked} onClick={()=>void setMember(m.id,false)}><X size={13}/></button>}</li>)}
-    {!members.length&&<li className="team-member-empty">No members yet. Anyone you add here can be assigned tasks in this team.</li>}
-   </ul>
-   {admin&&<div className="team-member-add"><span className="settings-field-label">Add member</span><SettingsSelect label={`Add a member to ${team.name}`} value="" disabled={locked||!candidates.length} placeholder={candidates.length?'Choose a person…':'Everyone is already in this team'} options={candidates.map(p=>({value:p.id,label:p.name||p.email||'Workspace member',description:p.name?p.email:'Eligible workspace member',meta:'Add to team'}))} onChange={id=>{if(id)void setMember(id,true)}}/></div>}
-  </section>
-  {confirmDelete&&<section className="team-card-delete" role="group" aria-label={`Delete ${team.name}`}>
-   <p><b>Delete {team.name}?</b> Cycles are deleted with the team. Projects stay in the workspace without this team.</p>
-   <label className="team-card-delete-check"><input type="checkbox" checked={deleteIssues} onChange={e=>setDeleteIssues(e.target.checked)} disabled={busy}/> Also delete this team’s tasks ({issueCount} loaded here) with their comments and attachments</label>
-   <label className="team-card-delete-confirm">Type {team.key} to confirm<input aria-label={`Confirm delete ${team.name}`} value={confirmText} onChange={e=>setConfirmText(e.target.value)} disabled={busy}/></label>
-   <div className="team-card-actions">
-    <button type="button" className="danger" disabled={busy||confirmText!==team.key} onClick={()=>void remove()}>{busy?'Deleting…':'Permanently delete'}</button>
-    <button type="button" className="outline" disabled={busy} onClick={()=>{setConfirmDelete(false);setConfirmText('');setDeleteIssues(false)}}>Cancel</button>
-   </div>
-  </section>}
-  {message&&<p className={message.endsWith('saved.')||message.endsWith('added.')||message.endsWith('removed.')?'team-card-message':'team-card-message error'} role={message.endsWith('saved.')||message.endsWith('added.')||message.endsWith('removed.')||message==='Saving…'||message==='Adding member…'||message==='Removing member…'||message==='Deleting…'||message==='Archiving…'||message==='No changes to save.'?'status':'alert'}>{message}</p>}
- </article>
+/* HOJA-491 SLAs. The pane edits policies the server actually enforces: every
+ * clock below is started, paused and stopped by the events in sla.py, and the
+ * task card reads the same row this pane configures. */
+type SlaPolicyRow = {
+  id: string;
+  name: string;
+  team?: { id: string; key: string } | null;
+  appliesPriorities: number[];
+  firstResponseMinutes?: number | null;
+  resolutionMinutes?: number | null;
+  pauseStates: { id: string; name: string }[];
+  enabled: boolean;
+  cycleBound: boolean;
+  stopsOn: string;
+  businessDaysOnly: boolean;
+};
+const SLA_POLICY_QUERY =
+  "{slaPolicies{id name team{id key} appliesPriorities firstResponseMinutes resolutionMinutes pauseStates{id name} enabled cycleBound stopsOn businessDaysOnly}}";
+
+/* HOJA-492 task templates. The pane edits a store the server expands in
+ * issueCreate: every field here becomes a real default on a real task, and the
+ * "preview" row below is the same expansion the API performs, not a mock. */
+type TaskTemplateRow = {
+  id: string;
+  name: string;
+  description?: string | null;
+  team?: { id: string; key: string } | null;
+  defaultTitle: string;
+  defaultDescription?: string | null;
+  defaultPriority?: number | null;
+  defaultAssignee?: { id: string; name?: string; email?: string } | null;
+  defaultProject?: { id: string; name: string } | null;
+  defaultLabels: { id: string; name: string }[];
+};
+const TASK_TEMPLATE_QUERY =
+  "query TaskTemplates($teamId:String){taskTemplates(teamId:$teamId){id name description defaultTitle defaultDescription defaultPriority team{id key} defaultAssignee{id name email} defaultProject{id name} defaultLabels{id name}}}";
+const TASK_TEMPLATE_FIELDS =
+  "id name description defaultTitle defaultDescription defaultPriority team{id key} defaultAssignee{id name email} defaultProject{id name} defaultLabels{id name}";
+const TASK_TEMPLATE_SELECTION = "taskTemplate{" + TASK_TEMPLATE_FIELDS + "}";
+
+/* HOJA-490. Both panes control something the server actually enforces: every
+ * capability listed here is consulted by the resolver or writer on the call it
+ * names, and the security policy is read in the auth path (browser session,
+ * websocket revalidation and sign-in). Nothing here is a toggle without a
+ * refusal behind it. */
+type WorkspacePermissionRow = {
+  capability: string;
+  label: string;
+  description: string;
+  memberAllowed: boolean;
+};
+type WorkspaceSecurityPolicyRow = {
+  idleTimeoutMinutes?: number | null;
+  allowedSigninMethods: string[];
+  ipAllowlist: string[];
+  updatedAt?: string | null;
+};
+const WORKSPACE_PERMISSIONS_QUERY =
+  "{workspacePermissions{capability label description memberAllowed}}";
+const WORKSPACE_SECURITY_QUERY =
+  "{workspaceSecurityPolicy{idleTimeoutMinutes allowedSigninMethods ipAllowlist updatedAt}}";
+
+function CreateWorkspacePage({
+  onCreated,
+}: {
+  onCreated: (w: { id: string; name: string; urlKey: string }) => Promise<void>;
+}) {
+  const [name, setName] = useState("");
+  const [urlKey, setUrlKey] = useState("");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const create = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setMessage("");
+    try {
+      const d = await gql(
+        `mutation($input:WorkspaceCreateInput!){workspaceCreate(input:$input){success organization{id name urlKey}}}`,
+        { input: { name, urlKey } },
+      );
+      if (!d.workspaceCreate?.success || !d.workspaceCreate?.organization)
+        throw Error("Workspace creation was rejected");
+      await onCreated(d.workspaceCreate.organization);
+    } catch (err) {
+      setMessage((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section
+      className="max-w-275 mt-0 mr-auto mb-0 ml-auto"
+      data-projects-page=""
+    >
+      <header
+        className="flex justify-between items-end mb-6 max-md:items-center max-md:gap-2.5 shell-phone:gap-2.5"
+        data-projects-heading=""
+      >
+        <div>
+          <h1 className="text-[30px] tracking-[-.045em] mt-2.25 mr-0 mb-1 ml-0 max-md:text-3xl font-semibold leading-normal shell-phone:text-[25px]">
+            Create workspace
+          </h1>
+          <p className="mt-1.5 mr-0 mb-0 ml-0 text-muted">
+            Create another workspace under your account.
+          </p>
+        </div>
+      </header>
+      <form
+        className="modal absolute pt-6.25 pr-6.25 pb-6.25 pl-6.25 border border-line rounded-[10px] bg-panel shadow-(--shadow) top-[12%] left-[50%] transform-[translateX(-50%)] w-[min(570px,calc(100%-32px))]"
+        onSubmit={create}
+      >
+        <label className="grid gap-1.75 mt-3.75 text-[12px] font-semibold">
+          Workspace name
+          <input
+            className="w-full border border-line rounded-md bg-bg text-foreground pt-2.25 pr-2.5 pb-2.25 pl-2.5 resize-y max-md:text-base placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+            aria-label="Workspace name"
+            required
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </label>
+        <label className="grid gap-1.75 mt-3.75 text-[12px] font-semibold">
+          Workspace key
+          <input
+            className="w-full border border-line rounded-md bg-bg text-foreground pt-2.25 pr-2.5 pb-2.25 pl-2.5 resize-y max-md:text-base placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+            aria-label="Workspace key"
+            required
+            pattern="[A-Za-z0-9-]+"
+            title="Use letters, numbers, and hyphens"
+            value={urlKey}
+            onChange={(e) => setUrlKey(e.target.value)}
+          />
+        </label>
+        {message && <p role="alert">{message}</p>}
+        <button
+          type="submit"
+          className="inline-flex min-h-11 items-center justify-center gap-1.75 rounded-none bg-accent pl-3.5 pr-3.5 pt-2.25 pb-2.25 text-white font-[650] shadow-[none] transition-colors duration-150 ease-out hover:brightness-110 hover:transition-none active:translate-y-px disabled:cursor-wait disabled:opacity-65 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.65]"
+          data-control-primary=""
+          disabled={busy || !name.trim() || !urlKey.trim()}
+        >
+          {busy ? "Creating…" : "Create workspace"}
+        </button>
+      </form>
+    </section>
+  );
 }
-let teamPeopleCache:{id:string;name?:string;email?:string}[]|null=null;
-function TeamsSettings({teams:teamsProp,onTeamsChanged,viewer}:{teams:Team[];onTeamsChanged:(t:Team[])=>void;viewer:Viewer}){const [name,setName]=useState('');const [key,setKey]=useState('');const [memberIds,setMemberIds]=useState<string[]>([]);const [people,setPeople]=useState<{id:string;name?:string;email?:string}[]>(()=>teamPeopleCache||[]);const [error,setError]=useState('');
- const {teams,push,refresh}=useSyncedTeams(teamsProp,onTeamsChanged);
- // Per-team issue and project counts, straight from the shared stores (cards stay cheap).
- const syncedIssues=useSyncIssues();const syncedProjects=useProjects();
- const issueCounts=useMemo(()=>{const m=new Map<string,number>();for(const i of syncedIssues){const id=i.team?.id;if(id)m.set(id,(m.get(id)||0)+1)}return m},[syncedIssues]);
- const projectCounts=useMemo(()=>{const m=new Map<string,number>();for(const p of syncedProjects)for(const t of p.teams?.nodes||[])m.set(t.id,(m.get(t.id)||0)+1);return m},[syncedProjects]);
- const peopleVersion=useEntityVersion(['member','user']);
- useEffect(()=>{let live=true;gql('query TeamPeople{organizationMembers(first:100){nodes{id name email active}}}').then(d=>{if(!live)return;const active=d.organizationMembers.nodes.filter((m:{active?:boolean})=>m.active!==false);teamPeopleCache=active;setPeople(active)}).catch(e=>{if(live)setError(errorText(e))});return()=>{live=false}},[peopleVersion]);
- const reload=()=>refresh();
- // Optimistic team edit: overlay now, keep it until the sync pull has the server's version; roll back on failure.
- const mutate:TeamMutate=async(layer,run)=>{setError('');const handle=push(layer);try{await run();handle.settleAfter(refresh())}catch(e){handle.drop();if(layer.remove)setError(errorText(e));throw e}};
- const create=async(e:React.FormEvent)=>{e.preventDefault();setError('');const input={name:name.trim(),key:key.trim().toUpperCase(),memberIds};const tempId=`pending-team-${input.key}-${Date.now()}`;
-  const placeholder:Team={id:tempId,name:input.name,key:input.key,states:{nodes:[]},members:{nodes:people.filter(p=>memberIds.includes(p.id)).map(p=>({id:p.id,name:p.name||'',email:p.email}))}};
-  setName('');setKey('');setMemberIds([]);
-  try{await mutate({id:tempId,add:placeholder,replacedBy:t=>t.key===input.key},async()=>{const d=await gql('mutation($input:TeamCreateInput!){teamCreate(input:$input){success team{id key}}}',{input});if(!d.teamCreate?.success)throw Error('Could not create team')})}catch(err){setName(input.name);setKey(input.key);setMemberIds(input.memberIds);setError(errorText(err))}};
- return <section className="settings-page settings-wide"><header className="settings-page-heading"><span className="eyebrow">Administration</span><h1>Teams</h1><p>Shape how your organization works. Manage team identity, membership, and lifecycle in one place.</p></header>{viewer.admin&&<form className="settings-group workspace-settings-form" onSubmit={create}><span className="settings-section-kicker">Team setup</span><h2>Create a new team</h2><p className="settings-section-intro">Give the team a clear identity and choose its initial members.</p><div className="settings-form-grid"><label>Name<input required value={name} onChange={e=>setName(e.target.value)}/></label><label>Key<input required maxLength={8} pattern="[A-Za-z0-9]+" value={key} onChange={e=>setKey(e.target.value)} placeholder="ENG"/></label><fieldset><legend>Members</legend>{people.map(p=><label key={p.id}><input type="checkbox" checked={memberIds.includes(p.id)} onChange={e=>setMemberIds(c=>e.target.checked?[...c,p.id]:c.filter(x=>x!==p.id))}/> {p.name||p.email}</label>)}</fieldset></div><div className="settings-form-actions"><button className="primary">Create team</button><span>Team keys use letters and numbers.</span></div></form>}{error&&<p className="error" role="alert">{error}</p>}<div className="team-card-list">{teams.length?teams.map(t=><TeamEditor key={t.id} team={t} admin={!!viewer.admin} pending={t.id.startsWith('pending-team-')} mutate={mutate} people={people} issueCount={issueCounts.get(t.id)||0} projectCount={projectCounts.get(t.id)||0} onChanged={()=>reload()} onRemoved={()=>void reload()}/>):<p className="team-card-empty">No teams yet. Create one above to start tracking work.</p>}</div></section>}
 
-function WorkspaceSettings({workspace,viewer,onSaved,onProfileSaved,onTeamsChanged,teams,section,theme,onTheme,onFontScale,fontScale,preferenceMessage,onBack}:{workspace:{id:string;name:string;urlKey:string};viewer:Viewer;onSaved:(w:{id:string;name:string;urlKey:string})=>void;onProfileSaved:(name:string)=>void;onTeamsChanged:(teams:Team[])=>void;teams:Team[];section:string;theme:string;onTheme:(theme:string)=>void;onFontScale:(scale:string)=>void;fontScale:string;preferenceMessage:string;onBack:()=>void}){if(section==='preferences')return <section className="settings-page"><header className="settings-page-heading"><button className="settings-mobile-back" onClick={onBack}>← Settings</button><span className="eyebrow">{workspace.name} · Settings</span><h1>Preferences</h1><p>Appearance preferences are saved to your account and follow you across devices.</p></header><div className="settings-group"><h2>Appearance</h2>{preferenceMessage&&<p role={preferenceMessage.startsWith('Could not')?'alert':'status'}>{preferenceMessage}</p>}<div className="setting-row"><div><b>Theme</b><p>Choose the appearance used in this browser.</p><small>Saved to your account</small></div><div className="setting-control theme-control"><button disabled={preferenceMessage==='Saving…'} onClick={()=>onTheme('light')} aria-pressed={theme==='light'} className={theme==='light'?'selected':''}><span className="theme-choice-preview light" aria-hidden="true"><i/><i/><i/></span><span className="theme-choice-copy"><b>Light</b><small>Bright and clear</small></span><Sun size={16}/></button><button disabled={preferenceMessage==='Saving…'} onClick={()=>onTheme('dark')} aria-pressed={theme==='dark'} className={theme==='dark'?'selected':''}><span className="theme-choice-preview dark" aria-hidden="true"><i/><i/><i/></span><span className="theme-choice-copy"><b>Dark</b><small>Low-light focus</small></span><Moon size={16}/></button></div></div><div className="setting-row"><div><b>Font size</b><p>Adjust interface text size.</p><small>Saved to your account</small></div><SettingsSelect label="Font size" value={fontScale} disabled={preferenceMessage==='Saving…'} options={[{value:'90',label:'Compact',description:'Denser interface text for smaller screens',meta:'90%'},{value:'100',label:'Default',description:'The balanced Hoja reading size',meta:'100%'},{value:'110',label:'Large',description:'Larger text across the workspace',meta:'110%'}]} onChange={onFontScale}/></div></div></section>;if(section==='profile')return <ProfileSettings viewer={viewer} onSaved={onProfileSaved}/>;if(section==='notifications')return <NotificationSettings/>;if(section==='model-providers')return viewer.admin?<ModelProvidersSettings/>:<SettingsNotFound onBack={onBack}/>;if(section==='extensions')return viewer.admin?<ExtensionsSettings/>:<SettingsNotFound onBack={onBack}/>;if(section==='agent-conversations')return <AgentConversationsSettings/>;if(section==='connections')return <ConnectorsSettings isAdmin={!!viewer.admin}/>;if(section==='teams')return <TeamsSettings teams={teams} onTeamsChanged={onTeamsChanged} viewer={viewer}/>;if(section==='issue-labels')return <IssueLabelsSettings viewer={viewer}/>;if(['account','api-keys','workspace','members'].includes(section))return <LegacyWorkspaceSettings workspace={workspace} viewer={viewer} onSaved={onSaved} onTeamsChanged={onTeamsChanged} teams={teams} section={section}/>;return <SettingsNotFound onBack={onBack}/> }
-function ProfileSettings({viewer,onSaved}:{viewer:Viewer;onSaved:(name:string)=>void}){const [name,setName]=useState(viewer.name||''),[message,setMessage]=useState(''),[busy,setBusy]=useState(false);const saving=useRef(false);useEffect(()=>{if(!saving.current)setName(viewer.name||'')},[viewer.name]);
- // The new name shows across the app at once; it is restored if the server refuses it.
- const save=async(e:React.FormEvent)=>{e.preventDefault();const previous=viewer.name||'';const next=name;setBusy(true);saving.current=true;setMessage('Saving…');onSaved(next);try{const d=await gql(`mutation($name:String!){profileNameUpdate(name:$name){success user{id name displayName email admin}}}`,{name:next});if(!d.profileNameUpdate.success)throw Error('Name must be 1–80 characters.');onSaved(d.profileNameUpdate.user.name);setMessage('Profile name saved.')}catch(e){onSaved(previous);setMessage(errorText(e))}finally{saving.current=false;setBusy(false)}};
- return <section className="settings-page"><header className="settings-page-heading"><span className="eyebrow">Personal</span><h1>Profile</h1><p>Update your name. Email is managed by your sign-in identity.</p></header><form className="settings-group profile-form" onSubmit={save}><div className="profile-summary"><span className="profile-avatar" aria-hidden="true">{(viewer.name||viewer.email||'A').slice(0,1).toUpperCase()}</span><div><b>{viewer.name||'Your profile'}</b><p>{viewer.email}</p></div><span className="settings-badge">{viewer.admin?'Workspace admin':'Member'}</span></div><div className="settings-form-grid"><label>Display name<input aria-label="Profile display name" required maxLength={80} value={name} onChange={e=>setName(e.target.value)}/></label><label>Email<input aria-label="Profile email" readOnly value={viewer.email||''}/></label>{message&&<p role={message.includes('saved')||message==='Saving…'?'status':'alert'}>{message}</p>}</div><div className="settings-form-actions"><button className="primary" disabled={busy||!name.trim()}>{busy?'Saving…':'Save profile'}</button><span>Your email is managed by your sign-in identity.</span></div></form></section>}
-type NotificationPrefs={issueCreated:boolean;issueUpdated:boolean};
-let notificationPrefsCache:NotificationPrefs|null=null;
-function NotificationSettings(){const [prefs,setPrefs]=useState<NotificationPrefs>(()=>notificationPrefsCache||{issueCreated:true,issueUpdated:true}),[message,setMessage]=useState(()=>notificationPrefsCache?'':'Loading…');const loaded=useRef(!!notificationPrefsCache);
- useEffect(()=>{let live=true;gql('{myNotificationPreferences{success issueCreated issueUpdated}}').then(d=>{if(!live)return;const next={issueCreated:d.myNotificationPreferences.issueCreated,issueUpdated:d.myNotificationPreferences.issueUpdated};notificationPrefsCache=next;loaded.current=true;setPrefs(next);setMessage(m=>m==='Loading…'?'':m)}).catch(e=>{if(live)setMessage(errorText(e))});return()=>{live=false}},[]);
- // Toggle immediately; restore the previous value if the server refuses.
- const change=async(key:keyof NotificationPrefs,enabled:boolean)=>{const previous=prefs[key];setPrefs(p=>({...p,[key]:enabled}));setMessage('Saving…');try{const d=await gql(`mutation($kind:String!,$enabled:Boolean!){notificationPreferenceSet(kind:$kind,enabled:$enabled){success issueCreated issueUpdated}}`,{kind:key,enabled});if(!d.notificationPreferenceSet.success)throw Error('Preference could not be saved');const next={issueCreated:d.notificationPreferenceSet.issueCreated,issueUpdated:d.notificationPreferenceSet.issueUpdated};notificationPrefsCache=next;setPrefs(next);setMessage('Notification preference saved.')}catch(e){setPrefs(p=>({...p,[key]:previous}));setMessage(`Preference could not be saved: ${errorText(e)}`)}};
- return <section className="settings-page"><header className="settings-page-heading"><span className="eyebrow">Personal</span><h1>Notifications</h1><p>Choose which task events appear in your Hoja inbox. Email and push delivery are not available.</p></header><div className="settings-group notification-settings"><span className="settings-section-kicker">Delivery</span><h2>Inbox notifications</h2><p className="settings-section-intro">Choose which activity earns a place in your inbox.</p>{([['issueCreated','Task created for me'],['issueUpdated','Tasks I follow are updated']] as const).map(([key,label])=><div className="setting-row" key={key}><div><b>{label}</b><p>Show this event in your inbox.</p></div><input aria-label={label} className="setting-switch" role="switch" type="checkbox" checked={prefs[key]} disabled={!loaded.current&&message==='Loading…'} onChange={e=>void change(key,e.target.checked)}/></div>)}{message&&<p role={message.includes('could not')?'alert':'status'}>{message}</p>}</div></section>}
-type SettingsLabel={id:string;name:string;color?:string;description?:string};
-function LabelRow({label,admin,pending,onSave,onDelete}:{label:SettingsLabel;admin:boolean;pending?:boolean;onSave:(id:string,input:{name:string;color:string;description:string})=>Promise<void>;onDelete:(id:string)=>void}){const [editing,setEditing]=useState(false),[name,setName]=useState(label.name),[color,setColor]=useState(label.color||'#6b7280'),[description,setDescription]=useState(label.description||''),[message,setMessage]=useState('');
- // Close the editor at once (the list shows the edit); reopen it with the error if the server refuses.
- const save=async(e:React.FormEvent)=>{e.preventDefault();setMessage('');setEditing(false);try{await onSave(label.id,{name:name.trim(),color,description})}catch(err){setEditing(true);setMessage(errorText(err))}};
- if(!editing)return <div className="issue-row label-row" aria-busy={pending||undefined}><span className="priority" style={{background:label.color||undefined}}/><span className="issue-copy"><b>{label.name}</b><small>{pending?'Saving…':label.description||'Workspace task label'}</small></span>{admin&&<><button type="button" className="outline" disabled={pending} onClick={()=>{setName(label.name);setColor(label.color||'#6b7280');setDescription(label.description||'');setEditing(true)}}>Edit</button><button type="button" className="outline" disabled={pending} onClick={()=>onDelete(label.id)}>Delete</button></>}</div>;
- return <form className="issue-row label-row editing" onSubmit={save}><label>Name<input aria-label={`Name for label ${label.name}`} required maxLength={64} value={name} onChange={e=>setName(e.target.value)}/></label><label>Color<input aria-label={`Color for label ${label.name}`} type="color" value={color} onChange={e=>setColor(e.target.value)}/></label><label>Description<input aria-label={`Description for label ${label.name}`} maxLength={240} value={description} onChange={e=>setDescription(e.target.value)}/></label><button className="primary" disabled={!name.trim()}>Save label</button><button type="button" className="outline" onClick={()=>{setEditing(false);setMessage('')}}>Cancel</button>{message&&<small role="alert">{message}</small>}</form>}
-let labelSettingsCache:{key:string;labels:SettingsLabel[]}|null=null;
-function IssueLabelsSettings({viewer}:{viewer:Viewer}){
- const meta=useSyncMeta();const cacheKey=meta?.workspace.id||'';
- const [base,setBase]=useState<SettingsLabel[]>(()=>labelSettingsCache&&labelSettingsCache.key===cacheKey?labelSettingsCache.labels:meta?.issueLabels.nodes||[]);
- const [labels,push]=useOptimisticList(base);
- const [name,setName]=useState(''),[color,setColor]=useState('#6b7280'),[error,setError]=useState('');
- const labelVersion=useEntityVersion(['label']);
- useEffect(()=>{let live=true;gql('{issueLabelSettings{id name color description}}').then(d=>{if(!live)return;setBase(d.issueLabelSettings);if(cacheKey)labelSettingsCache={key:cacheKey,labels:d.issueLabelSettings}}).catch(e=>{if(live)setError(errorText(e))});return()=>{live=false}},[labelVersion,cacheKey]);
- const commit=(next:(b:SettingsLabel[])=>SettingsLabel[])=>setBase(b=>{const out=next(b);if(cacheKey)labelSettingsCache={key:cacheKey,labels:out};return out});
- const create=async(e:React.FormEvent)=>{e.preventDefault();setError('');const input={name:name.trim()||name,color};const tempId=`pending-label-${Date.now()}`;const layer=push({id:tempId,add:{id:tempId,...input}});setName('');
-  try{const d=await gql(`mutation($input:IssueLabelCreateInput!){issueLabelCreate(input:$input){success issueLabel{id name color description}}}`,{input});if(!d.issueLabelCreate.success)throw Error('Only workspace admins can manage labels.');const created:SettingsLabel=d.issueLabelCreate.issueLabel||{id:tempId,...input};commit(b=>b.some(l=>l.id===created.id)?b:[...b,created]);layer.drop()}catch(err){layer.drop();setName(input.name);setError(errorText(err))}};
- const save=async(id:string,input:{name:string;color:string;description:string})=>{const layer=push({id,patch:input});
-  try{const d=await gql(`mutation($id:String!,$input:IssueLabelUpdateInput!){issueLabelUpdate(id:$id,input:$input){success issueLabel{id name color description}}}`,{id,input});if(!d.issueLabelUpdate?.success)throw Error('Label could not be updated.');commit(b=>b.map(l=>l.id===id?{...l,...input,...(d.issueLabelUpdate.issueLabel||{})}:l));layer.drop()}catch(err){layer.drop();throw err}};
- const remove=async(id:string)=>{if(!await confirmDialog('Delete this task label? Existing tasks may lose this label.',{danger:true}))return;setError('');const layer=push({id,remove:true});
-  try{const d=await gql(`mutation($id:String!){issueLabelDelete(id:$id){success}}`,{id});if(!d.issueLabelDelete.success)throw Error('Label deletion was denied.');commit(b=>b.filter(l=>l.id!==id));layer.drop()}catch(err){layer.drop();setError(errorText(err))}};
- return <section className="settings-page"><header className="settings-page-heading"><span className="eyebrow">Tasks</span><h1>Labels</h1><p>Manage workspace task labels.</p></header><div className="settings-group label-settings"><span className="settings-section-kicker">Organization</span><h2>Task labels</h2><p className="settings-section-intro">A shared vocabulary for finding and organizing work.</p>{viewer.admin?<form className="label-create" onSubmit={create}><label>Label name<input aria-label="Task label name" required maxLength={64} value={name} onChange={e=>setName(e.target.value)}/></label><label>Color<input aria-label="Task label color" type="color" value={color} onChange={e=>setColor(e.target.value)}/></label><button className="primary" disabled={!name.trim()}>Create label</button></form>:<p role="status">Only workspace admins can create or delete labels.</p>}{error&&<p role="alert">{error}</p>}<div className="issue-card label-list">{labels.map(l=><LabelRow key={l.id} label={l} admin={!!viewer.admin} pending={l.id.startsWith('pending-label-')} onSave={save} onDelete={id=>void remove(id)}/>)}{!labels.length&&<p>No task labels yet.</p>}</div></div></section>}
-
-function SettingsNotFound({onBack}:{onBack:()=>void}){return <section className="settings-page"><header className="settings-page-heading"><button className="settings-mobile-back" onClick={onBack}>← Settings</button><h1>Page not found</h1><p>This settings page does not exist.</p></header></section>}
-
-function CreateWorkspacePage({onCreated}:{onCreated:(w:{id:string;name:string;urlKey:string})=>Promise<void>}){const [name,setName]=useState('');const [urlKey,setUrlKey]=useState('');const [message,setMessage]=useState('');const [busy,setBusy]=useState(false);const create=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setMessage('');try{const d=await gql(`mutation($input:WorkspaceCreateInput!){workspaceCreate(input:$input){success organization{id name urlKey}}}`,{input:{name,urlKey}});if(!d.workspaceCreate?.success||!d.workspaceCreate?.organization)throw Error('Workspace creation was rejected');await onCreated(d.workspaceCreate.organization)}catch(err){setMessage((err as Error).message)}finally{setBusy(false)}};return <section className="projects-page"><header className="projects-heading"><div><h1>Create workspace</h1><p>Create another workspace under your account.</p></div></header><form className="modal" onSubmit={create}><label>Workspace name<input aria-label="Workspace name" required value={name} onChange={e=>setName(e.target.value)}/></label><label>Workspace key<input aria-label="Workspace key" required pattern="[A-Za-z0-9-]+" title="Use letters, numbers, and hyphens" value={urlKey} onChange={e=>setUrlKey(e.target.value)}/></label>{message&&<p role="alert">{message}</p>}<button type="submit" className="primary" disabled={busy||!name.trim()||!urlKey.trim()}>{busy?'Creating…':'Create workspace'}</button></form></section>}
-
-type OrgMember={id:string;name?:string;email?:string;admin?:boolean;active?:boolean};
-const TEAMS_QUERY=`query Teams{teams{nodes{id name key description states{nodes{id name color type}} members{nodes{id name email}} activeCycle{id name number startsAt endsAt progress}}}}`;
+type OrgMember = {
+  id: string;
+  name?: string;
+  email?: string;
+  admin?: boolean;
+  active?: boolean;
+};
+const TEAMS_QUERY = `query Teams{teams{nodes{id name key description showInitiatives states{nodes{id name color type}} members{nodes{id name avatarSeed email}} activeCycle{id name number startsAt endsAt progress}}}}`;
 /* Teams come from the synced workspace metadata (falls back to the App prop before the first sync).
    After a team mutation the overlay stays until a sync pull (or a GraphQL reload without sync) has the server's version. */
-function useSyncedTeams(teams:Team[],onTeamsChanged?:(t:Team[])=>void){
- const meta=useSyncMeta();const base=meta?.teams.nodes||teams;
- const [view,push]=useOptimisticList(base);
- const refresh=()=>{const sync=getSync();if(sync)return sync.pull();return gql(TEAMS_QUERY).then(d=>onTeamsChanged?.(d.teams.nodes))};
- return {teams:view,push,refresh};
+function useSyncedTeams(teams: Team[], onTeamsChanged?: (t: Team[]) => void) {
+  const meta = useSyncMeta();
+  const base = meta?.teams.nodes || teams;
+  const [view, push] = useOptimisticList(base);
+  const refresh = () => {
+    const sync = getSync();
+    if (sync) return sync.pull();
+    return gql(TEAMS_QUERY).then((d) => onTeamsChanged?.(d.teams.nodes));
+  };
+  return { teams: view, push, refresh };
 }
-let membersCache:{key:string;members:OrgMember[]}|null=null;
-function MembersPage({teams:teamsProp,onTeamsChanged,viewer}:{teams:Team[];onTeamsChanged?:(t:Team[])=>void;revision?:number;viewer:Viewer}){const [inviteTeams,setInviteTeams]=useState<string[]>([]);
- const meta=useSyncMeta();const cacheKey=meta?`${meta.workspace.id}:${meta.viewer.id||''}`:'';
- const [base,setBase]=useState<OrgMember[]>(()=>membersCache&&membersCache.key===cacheKey?membersCache.members:[]);
- const [members,pushMember]=useOptimisticList(base);
- const {teams,push:pushTeam,refresh:refreshTeams}=useSyncedTeams(teamsProp,onTeamsChanged);
- const [error,setError]=useState('');
- const memberVersion=useEntityVersion(['member','user']);
- useEffect(()=>{let live=true;gql(`query Members{organizationMembers{nodes{id name email admin active}}}`).then(d=>{if(!live)return;setBase(d.organizationMembers.nodes);if(cacheKey)membersCache={key:cacheKey,members:d.organizationMembers.nodes}}).catch(e=>{if(live)setError(errorText(e))});return()=>{live=false}},[memberVersion,cacheKey]);
- const [removed,setRemoved]=useState<OrgMember[]>([]);
- useEffect(()=>{if(!viewer.admin)return;let live=true;gql('query RemovedMembers{archivedMembers{id name email active}}').then(d=>{if(live)setRemoved((d.archivedMembers||[]).map((m:any)=>({...m,active:false})))}).catch(()=>{});return()=>{live=false}},[memberVersion,cacheKey,viewer.admin]);
- const restoreMember=async(id:string)=>{setError('');try{const d=await gql(`mutation($id:String!){memberRestore(userId:$id){success user{id active}}}`,{id});if(!d.memberRestore.success)throw Error('Could not restore member.');setRemoved(r=>r.filter(m=>m.id!==id));void getSync()?.pull();}catch(e){setError(errorText(e))}};
- const [pendingBase,setPendingBase]=useState<{id:string;userId:string;name?:string;email?:string}[]>([]);
- const [pendingInvites,pushInvite]=useOptimisticList(pendingBase);
- useEffect(()=>{if(!viewer.admin)return;let live=true;gql('query PendingInvites{pendingMembershipInvitations{userId name email expiresAt}}').then(d=>{if(live)setPendingBase(d.pendingMembershipInvitations.map((p:{userId:string})=>({...p,id:p.userId})))}).catch(()=>{});return()=>{live=false}},[memberVersion,viewer.admin]);
- // Apply a member edit now; commit it into the list when the server accepts, roll back otherwise.
- const editMember=async(id:string,patch:Partial<OrgMember>,run:()=>Promise<void>)=>{setError('');const layer=pushMember({id,patch});try{await run();setBase(b=>b.map(m=>m.id===id?{...m,...patch}:m));layer.drop()}catch(e){layer.drop();setError(errorText(e))}};
- const setMemberActive=(id:string,active:boolean)=>editMember(id,{active},async()=>{const d=await gql(active?`mutation($id:String!){memberReactivate(userId:$id){success}}`:`mutation($id:String!){memberDeactivate(userId:$id){success}}`,{id});if(!(active?d.memberReactivate:d.memberDeactivate).success)throw Error(active?'Could not reactivate member.':'Could not deactivate member. You cannot deactivate yourself or the last admin.')});
- const revokeInvite=async(id:string)=>{setError('');const layer=pushInvite({id,remove:true});try{const d=await gql(`mutation($id:String!){membershipInvitationRevoke(userId:$id){success}}`,{id});if(!d.membershipInvitationRevoke.success)throw Error('Invite could not be revoked.');setPendingBase(p=>p.filter(x=>x.userId!==id));layer.drop()}catch(e){layer.drop();setError(errorText(e))}};
- const [inviteName,setInviteName]=useState('');
- const [inviteEmail,setInviteEmail]=useState('');
- const [inviteResult,setInviteResult]=useState<{email:string;url:string}|null>(null);
- const removeMember=async(id:string,label:string)=>{if(!await confirmDialog(`Remove ${label} from this workspace? Their history is kept and they can be re-invited.`,{danger:true}))return;setError('');try{const d=await gql(`mutation($id:String!){memberArchive(userId:$id){success user{id active}}}`,{id});if(!d.memberArchive.success)throw Error('Could not remove member. You cannot remove yourself or the last admin.');setBase(b=>b.filter(m=>m.id!==id));}catch(e){setError(errorText(e))}};
- const role=(id:string,admin:boolean)=>editMember(id,{admin},async()=>{const d=await gql(`mutation($id:String!,$admin:Boolean!){memberRoleUpdate(userId:$id,admin:$admin){success}}`,{id,admin});if(!d.memberRoleUpdate.success)throw Error(admin?'Role update denied':'The last admin cannot be demoted. Promote another member first.')});
- const toggleTeam=async(teamId:string,userId:string,add:boolean)=>{setError('');const team=teams.find(t=>t.id===teamId);const person=members.find(m=>m.id===userId);if(!team)return;
-  const current=team.members?.nodes||[];const nodes=add?[...current.filter(x=>x.id!==userId),{id:userId,name:person?.name||'',email:person?.email}]:current.filter(x=>x.id!==userId);
-  const layer=pushTeam({id:teamId,patch:{members:{nodes}}});
-  try{const d=await gql(`mutation($t:String!,$u:String!){${add?'teamMemberAdd':'teamMemberRemove'}(teamId:$t,userId:$u){success}}`,{t:teamId,u:userId});if(!d[add?'teamMemberAdd':'teamMemberRemove'].success)throw Error('Team change denied; only workspace admins can change team membership.');layer.settleAfter(refreshTeams())}catch(e){layer.drop();setError(errorText(e))}};
- const [inviting,setInviting]=useState(false);
- const invite=async(e:React.FormEvent)=>{e.preventDefault();if(inviting)return;setError('');setInviteResult(null);setInviting(true);
-  try{const d=await gql(`mutation($input:MemberInviteInput!){memberInvite(input:$input){success user{id name email}}}`,{input:{name:inviteName,email:inviteEmail,teamIds:inviteTeams}});
-   if(!d.memberInvite.success)throw Error('Invite failed; check admin rights or whether this email already exists.');
-   const user=d.memberInvite.user;setBase(b=>b.some(m=>m.id===user.id)?b:[...b,{...user,admin:false,active:true}]);
-   const created=await gql(`mutation($id:String!){membershipInvitationCreate(userId:$id){success inviteCode}}`,{id:user.id});
-   if(!created.membershipInvitationCreate?.success||!created.membershipInvitationCreate.inviteCode)throw Error('Member created, but invite code could not be created. Retry from Members.');
-   setPendingBase(p=>p.some(x=>x.userId===user.id)?p:[...p,{id:user.id,userId:user.id,name:user.name,email:user.email}]);
-   setInviteResult({email:user.email,url:`${location.origin}/#invite=${encodeURIComponent(created.membershipInvitationCreate.inviteCode)}`});
-   setInviteName('');setInviteEmail('');const joined=inviteTeams;setInviteTeams([]);if(joined.length)void refreshTeams()}catch(err){setError(errorText(err))}finally{setInviting(false)}};
- return <section className="settings-page settings-wide"><header className="settings-page-heading"><span className="eyebrow">Administration</span><h1>Workspace members</h1><p>Invite people, assign team access, and manage workspace roles.</p></header><form className="settings-group workspace-settings-form" onSubmit={invite}><span className="settings-section-kicker">Workspace access</span><h2>Invite a member</h2><p className="settings-section-intro">Create a single-use invite and assign team access from the start.</p><div className="settings-form-grid"><label>Name<input required value={inviteName} onChange={e=>setInviteName(e.target.value)}/></label><label>Email<input required type="email" value={inviteEmail} onChange={e=>setInviteEmail(e.target.value)}/></label><fieldset><legend>Teams</legend><p>Assignees must belong to the team. Pick teams now or add them later below.</p>{teams.map(t=><label key={t.id}><input type="checkbox" checked={inviteTeams.includes(t.id)} onChange={e=>setInviteTeams(c=>e.target.checked?[...c,t.id]:c.filter(x=>x!==t.id))}/> {t.name} ({t.key})</label>)}</fieldset></div><div className="settings-form-actions"><button className="primary" disabled={inviting}>Create member</button><span>Invites expire after 72 hours.</span></div>{inviteResult&&<div role="status" className="onboarding-key-row invite-result"><h2>Invite ready for {inviteResult.email}</h2><p>Share this link. It expires in 72 hours and can be used once.</p><label>Invite link<input aria-label="Copy invite link" readOnly value={inviteResult.url}/></label><button type="button" className="outline" onClick={()=>navigator.clipboard?.writeText(inviteResult.url)}>Copy invite link</button></div>}</form>{error&&<p className="error" role="alert">{error}</p>}{pendingInvites.length>0&&<div className="issue-card pending-invites" aria-label="Pending invites"><h2>Pending invites</h2>{pendingInvites.map(p=><div className="issue-row" key={p.userId}><span className="issue-copy"><b>{p.name||p.email}</b><small>{p.email} · Invite not yet accepted</small></span><button type="button" className="outline" onClick={()=>void revokeInvite(p.userId)}>Revoke invite</button></div>)}</div>}<div className="issue-card member-roster"><div className="member-roster-head"><div><h2>People</h2><p>{members.length} workspace {members.length===1?'member':'members'}</p></div><span className="settings-badge">Roles & teams</span></div>{members.map(m=><div className="issue-row member-row" key={m.id}><span className="member-avatar" aria-hidden="true">{(m.name||m.email||'?').slice(0,1).toUpperCase()}</span><span className="issue-copy"><b>{m.name||m.email}</b><small>{m.email}</small></span><span className="member-teams" role="group" aria-label={`Teams for ${m.name||m.email}`}>{teams.map(t=>{const on=!!t.members?.nodes?.some(x=>x.id===m.id);return <button type="button" key={t.id} className={on?"team-chip on":"team-chip"} aria-pressed={on} onClick={()=>toggleTeam(t.id,m.id,!on)}>{t.key}{on?" (member)":""}</button>})}</span><span className="member-role"><SettingsSelect label={`Role for ${m.name||m.email}`} value={m.admin?'admin':'member'} options={[{value:'member',label:'Member',description:'Work in assigned teams',meta:'Team access'},{value:'admin',label:'Admin',description:'Manage the workspace, members, and teams',meta:'Full access'}]} onChange={value=>void role(m.id,value==='admin')}/></span><span className={`member-status ${m.active?'active':'inactive'}`}>{m.active?'Active':'Inactive'}</span>{viewer.admin&&m.id!==viewer.id&&<button type="button" className="outline" onClick={()=>void setMemberActive(m.id,!m.active)}>{m.active?'Deactivate':'Reactivate'}</button>}{viewer.admin&&m.id!==viewer.id&&<button type="button" className="outline danger" onClick={()=>void removeMember(m.id,m.name||m.email||'this member')}>Remove</button>}</div>)}{viewer.admin&&removed.length>0&&<div className="settings-group"><h2>Removed members</h2><p className="settings-section-intro">Removed people keep their task history and can be restored at any time.</p>{removed.map(m=><div className="setting-row" key={m.id}><div><b>{m.name||m.email}</b><p>{m.email}</p></div><div className="settings-control"><span className="member-status inactive">Removed</span><button type="button" className="outline" onClick={()=>void restoreMember(m.id)}>Restore</button></div></div>)}</div>}</div></section>}
-
-
-type LocalProjectView={id:string;name:string;query:string;state:string;projectId:string};
-function ProjectViewsPage({project:given,onBack,onOpenIssue}:{project:Project;onBack:()=>void;onOpenIssue:(issue:Issue)=>void;revision:number}){
- // Issues come from the local store; closed issues older than the sync window are paged on demand.
- const project=useProject(given);const projectIssues=useProjectIssues(project.id,gql,issueFields);const issues=projectIssues.issues,loading=!projectIssues.ready,issueError=projectIssues.error;
- const key=`hoja_project_views_${project.id}`;const [rows,setRows]=useState<LocalProjectView[]>([]),[name,setName]=useState('All tasks'),[query,setQuery]=useState(''),[state,setState]=useState(''),[active,setActive]=useState<string|null>(null),[error,setError]=useState(''),[editing,setEditing]=useState(location.pathname.endsWith('/new'));
- useEffect(()=>{try{const data=JSON.parse(localStorage.getItem(key)||'[]');const scoped:LocalProjectView[]=Array.isArray(data)?data.filter(v=>v.projectId===project.id):[];setRows(scoped);const id=location.pathname.split('/view/')[1];const found=scoped.find(v=>v.id===id);if(found){setActive(found.id);setName(found.name);setQuery(found.query);setState(found.state);setEditing(false)}else if(id&&id!=='new'){setError('Project view not found in this browser.')} }catch{setError('Local project views could not be read in this browser.')}},[key,project.id]);
- const visible=useMemo(()=>{const q=query.trim().toLowerCase();return issues.filter(i=>`${i.identifier} ${i.title}`.toLowerCase().includes(q)&&(!state||i.state?.name===state))},[issues,query,state]);const states=useMemo(()=>[...new Set(issues.map(i=>i.state?.name).filter((x):x is string=>!!x))].sort(),[issues]);
- const cancel=()=>{setEditing(false);setError('');onBack()};const save=(e:React.FormEvent)=>{e.preventDefault();if(!name.trim()){setError('Enter a view name.');return}if(rows.some(v=>v.name.toLowerCase()===name.trim().toLowerCase())){setError('A project view with this name already exists in this browser.');return}const item={id:crypto.randomUUID(),name:name.trim(),query:query.trim(),state,projectId:project.id};try{localStorage.setItem(key,JSON.stringify([...rows,item]));setRows([...rows,item]);setActive(item.id);setEditing(false);setError('');history.replaceState({},'',`/workspace/project/${project.id}/view/${item.id}`)}catch{setError('Could not save the view in browser storage.')}};
- return <section className="project-local-views project-reference"><header className="project-reference-head"><button type="button" onClick={onBack}>← {project.name}</button><span>Views</span></header><nav className="project-reference-tabs" aria-label="Project views"><button type="button" onClick={onBack}>Tasks</button><span aria-current="page">Views</span></nav><div className="project-local-view-body"><header><h1>{editing?'New view':active?rows.find(v=>v.id===active)?.name||'Project views':'Project views'}</h1><button type="button" onClick={()=>{setName('All tasks');setQuery('');setState('');setEditing(true);history.pushState({},'',`/workspace/project/${project.id}/view/new`)}}>New view</button></header><p>Views saved in this browser for this project only; they are not shared or synced between browsers.</p>{editing&&<form onSubmit={save} className="project-view-form"><label>View name<input value={name} maxLength={60} onChange={e=>setName(e.target.value)} required/></label><label>Search tasks<input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Title or identifier"/></label><label>Status<select value={state} onChange={e=>setState(e.target.value)}><option value="">All statuses</option>{states.map(x=><option key={x}>{x}</option>)}</select></label><div><button type="button" onClick={cancel}>Cancel</button><button type="submit" disabled={!name.trim()}>Create view</button></div></form>}{error&&<p role="alert">{error}</p>}{rows.length?<div className="project-local-view-list">{rows.map(v=><button key={v.id} type="button" aria-pressed={active===v.id} onClick={()=>{setActive(v.id);setName(v.name);setQuery(v.query);setState(v.state);setEditing(false);history.pushState({},'',`/workspace/project/${project.id}/view/${v.id}`)}}>{v.name}</button>)}</div>:!editing&&<p role="status">No project views saved in this browser yet.</p>}{issueError&&<p role="alert">{issueError}</p>}{loading&&<p role="status">Loading project tasks…</p>}{!loading&&<section className="project-view-results"><h2>{visible.length} matching project tasks</h2>{visible.map(i=><button key={i.id} type="button" onClick={()=>onOpenIssue(i)}>{i.identifier} · {i.title||'Untitled task'}</button>)}{!visible.length&&<p>No matching project tasks.</p>}{projectIssues.more&&<button type="button" disabled={projectIssues.loading} onClick={projectIssues.loadMore}>{projectIssues.loading?'Loading…':'Load older closed tasks'}</button>}</section>}</div></section>;
+let membersCache: { key: string; members: OrgMember[] } | null = null;
+function MembersPage({
+  teams: teamsProp,
+  onTeamsChanged,
+  viewer,
+  onOpenMember,
+}: {
+  teams: Team[];
+  onTeamsChanged?: (t: Team[]) => void;
+  revision?: number;
+  viewer: Viewer;
+  onOpenMember?: (userId: string) => void;
+}) {
+  const [inviteTeams, setInviteTeams] = useState<string[]>([]);
+  const meta = useSyncMeta();
+  const cacheKey = meta ? `${meta.workspace.id}:${meta.viewer.id || ""}` : "";
+  const [base, setBase] = useState<OrgMember[]>(() =>
+    membersCache && membersCache.key === cacheKey ? membersCache.members : [],
+  );
+  const [members, pushMember] = useOptimisticList(base);
+  const {
+    teams,
+    push: pushTeam,
+    refresh: refreshTeams,
+  } = useSyncedTeams(teamsProp, onTeamsChanged);
+  const [error, setError] = useState("");
+  const memberVersion = useEntityVersion(["member", "user"]);
+  useEffect(() => {
+    let live = true;
+    gql(
+      `query Members{organizationMembers{nodes{id name avatarSeed email admin active}}}`,
+    )
+      .then((d) => {
+        if (!live) return;
+        setBase(d.organizationMembers.nodes);
+        if (cacheKey)
+          membersCache = {
+            key: cacheKey,
+            members: d.organizationMembers.nodes,
+          };
+      })
+      .catch((e) => {
+        if (live) setError(errorText(e));
+      });
+    return () => {
+      live = false;
+    };
+  }, [memberVersion, cacheKey]);
+  const [removed, setRemoved] = useState<OrgMember[]>([]);
+  useEffect(() => {
+    if (!viewer.admin) return;
+    let live = true;
+    gql("query RemovedMembers{archivedMembers{id name email active}}")
+      .then((d) => {
+        if (live)
+          setRemoved(
+            (d.archivedMembers || []).map((m: any) => ({
+              ...m,
+              active: false,
+            })),
+          );
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [memberVersion, cacheKey, viewer.admin]);
+  const restoreMember = async (id: string) => {
+    setError("");
+    try {
+      const d = await gql(
+        `mutation($id:String!){memberRestore(userId:$id){success user{id active}}}`,
+        { id },
+      );
+      if (!d.memberRestore.success) throw Error("Could not restore member.");
+      setRemoved((r) => r.filter((m) => m.id !== id));
+      void getSync()?.pull();
+    } catch (e) {
+      setError(errorText(e));
+    }
+  };
+  const removeMember = async (id: string, label: string) => {
+    if (
+      !(await confirmDialog(
+        `Remove ${label} from this workspace? Their history is kept and they can be restored.`,
+        { danger: true },
+      ))
+    )
+      return;
+    setError("");
+    try {
+      const d = await gql(
+        `mutation($id:String!){memberArchive(userId:$id){success user{id active}}}`,
+        { id },
+      );
+      if (!d.memberArchive.success)
+        throw Error(
+          "Could not remove member. You cannot remove yourself or the last admin.",
+        );
+      setBase((b) => b.filter((m) => m.id !== id));
+    } catch (e) {
+      setError(errorText(e));
+    }
+  };
+  const [pendingBase, setPendingBase] = useState<
+    { id: string; userId: string; name?: string; email?: string }[]
+  >([]);
+  const [pendingInvites, pushInvite] = useOptimisticList(pendingBase);
+  useEffect(() => {
+    if (!viewer.admin) return;
+    let live = true;
+    gql(
+      "query PendingInvites{pendingMembershipInvitations{userId name email expiresAt}}",
+    )
+      .then((d) => {
+        if (live)
+          setPendingBase(
+            d.pendingMembershipInvitations.map((p: { userId: string }) => ({
+              ...p,
+              id: p.userId,
+            })),
+          );
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [memberVersion, viewer.admin]);
+  // Apply a member edit now; commit it into the list when the server accepts, roll back otherwise.
+  const editMember = async (
+    id: string,
+    patch: Partial<OrgMember>,
+    run: () => Promise<void>,
+  ) => {
+    setError("");
+    const layer = pushMember({ id, patch });
+    try {
+      await run();
+      setBase((b) => b.map((m) => (m.id === id ? { ...m, ...patch } : m)));
+      layer.drop();
+    } catch (e) {
+      layer.drop();
+      setError(errorText(e));
+    }
+  };
+  const setMemberActive = (id: string, active: boolean) =>
+    editMember(id, { active }, async () => {
+      const d = await gql(
+        active
+          ? `mutation($id:String!){memberReactivate(userId:$id){success}}`
+          : `mutation($id:String!){memberDeactivate(userId:$id){success}}`,
+        { id },
+      );
+      if (!(active ? d.memberReactivate : d.memberDeactivate).success)
+        throw Error(
+          active
+            ? "Could not reactivate member."
+            : "Could not deactivate member. You cannot deactivate yourself or the last admin.",
+        );
+    });
+  const revokeInvite = async (id: string) => {
+    setError("");
+    const layer = pushInvite({ id, remove: true });
+    try {
+      const d = await gql(
+        `mutation($id:String!){membershipInvitationRevoke(userId:$id){success}}`,
+        { id },
+      );
+      if (!d.membershipInvitationRevoke.success)
+        throw Error("Invite could not be revoked.");
+      setPendingBase((p) => p.filter((x) => x.userId !== id));
+      layer.drop();
+    } catch (e) {
+      layer.drop();
+      setError(errorText(e));
+    }
+  };
+  const [inviteName, setInviteName] = useState("");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteResult, setInviteResult] = useState<{
+    email: string;
+    url: string;
+    emailed: boolean;
+  } | null>(null);
+  const [inviteCopied, setInviteCopied] = useState(false);
+  const role = (id: string, admin: boolean) =>
+    editMember(id, { admin }, async () => {
+      const d = await gql(
+        `mutation($id:String!,$admin:Boolean!){memberRoleUpdate(userId:$id,admin:$admin){success}}`,
+        { id, admin },
+      );
+      if (!d.memberRoleUpdate.success)
+        throw Error(
+          admin
+            ? "Role update denied"
+            : "The last admin cannot be demoted. Promote another member first.",
+        );
+    });
+  const toggleTeam = async (teamId: string, userId: string, add: boolean) => {
+    setError("");
+    const team = teams.find((t) => t.id === teamId);
+    const person = members.find((m) => m.id === userId);
+    if (!team) return;
+    const current = team.members?.nodes || [];
+    const nodes = add
+      ? [
+          ...current.filter((x) => x.id !== userId),
+          { id: userId, name: person?.name || "", email: person?.email },
+        ]
+      : current.filter((x) => x.id !== userId);
+    const layer = pushTeam({ id: teamId, patch: { members: { nodes } } });
+    try {
+      const d = await gql(
+        `mutation($t:String!,$u:String!){${add ? "teamMemberAdd" : "teamMemberRemove"}(teamId:$t,userId:$u){success}}`,
+        { t: teamId, u: userId },
+      );
+      if (!d[add ? "teamMemberAdd" : "teamMemberRemove"].success)
+        throw Error(
+          "Team change denied; only workspace admins can change team membership.",
+        );
+      layer.settleAfter(refreshTeams());
+    } catch (e) {
+      layer.drop();
+      setError(errorText(e));
+    }
+  };
+  const [inviting, setInviting] = useState(false);
+  const invite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (inviting) return;
+    setError("");
+    setInviteResult(null);
+    setInviting(true);
+    try {
+      const d = await gql(
+        `mutation($input:MemberInviteInput!){memberInvite(input:$input){success user{id name avatarSeed email}}}`,
+        {
+          input: { name: inviteName, email: inviteEmail, teamIds: inviteTeams },
+        },
+      );
+      if (!d.memberInvite.success)
+        throw Error(
+          "Invite failed; check admin rights or whether this email already exists.",
+        );
+      const user = d.memberInvite.user;
+      setBase((b) =>
+        b.some((m) => m.id === user.id)
+          ? b
+          : [...b, { ...user, admin: false, active: true }],
+      );
+      const created = await gql(
+        `mutation($id:String!){membershipInvitationCreate(userId:$id){success inviteCode emailQueued}}`,
+        { id: user.id },
+      );
+      if (
+        !created.membershipInvitationCreate?.success ||
+        !created.membershipInvitationCreate.inviteCode
+      )
+        throw Error(
+          "Member created, but invite code could not be created. Retry from Members.",
+        );
+      setPendingBase((p) =>
+        p.some((x) => x.userId === user.id)
+          ? p
+          : [
+              ...p,
+              {
+                id: user.id,
+                userId: user.id,
+                name: user.name,
+                email: user.email,
+              },
+            ],
+      );
+      setInviteCopied(false);
+      setInviteResult({
+        email: user.email,
+        url: `${location.origin}/#invite=${encodeURIComponent(created.membershipInvitationCreate.inviteCode)}`,
+        emailed: created.membershipInvitationCreate.emailQueued === true,
+      });
+      setInviteName("");
+      setInviteEmail("");
+      const joined = inviteTeams;
+      setInviteTeams([]);
+      if (joined.length) void refreshTeams();
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setInviting(false);
+    }
+  };
+  return (
+    <section
+      className="[--settings-accent:#171717] [--settings-accent-strong:#171717] [--settings-accent-soft:#e9e9e9] [--settings-on-accent:#fff] [--settings-ink:#171717] [--settings-muted:#626262] [--settings-line:#dcdcdc] [--settings-card:#fff] [--settings-subtle:#f0f0f0] [--settings-danger:#242424] [--settings-success:#242424] [:root[data-theme=dark]_&]:[--settings-accent:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-strong:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-soft:#2c2c2c] [:root[data-theme=dark]_&]:[--settings-on-accent:#171717] [:root[data-theme=dark]_&]:[--settings-ink:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-muted:#aaa] [:root[data-theme=dark]_&]:[--settings-line:#353535] [:root[data-theme=dark]_&]:[--settings-card:#1b1b1b] [:root[data-theme=dark]_&]:[--settings-subtle:#262626] [:root[data-theme=dark]_&]:[--settings-danger:#eee] [:root[data-theme=dark]_&]:[--settings-success:#d8d8d8] [font-optical-sizing:auto] ml-auto mr-auto w-[min(100%,var(--ds-settings-column-width))] max-w-(--ds-settings-column-width) min-w-0 p-[var(--ds-settings-column-padding)_var(--ds-settings-column-padding)_64px] text-(--settings-ink) font-(family-name:--hoja-font-ui) md:pt-4 shell-phone:pt-0 [@media_(max-width:_700px)]:pt-0 [@media_(min-width:_881px)]:pl-(--ds-settings-column-padding) [@media_(min-width:_881px)]:pr-(--ds-settings-column-padding) "
+      data-settings-page=""
+      data-settings-wide=""
+    >
+      <header
+        className="mt-0 mr-0 mb-8 ml-0 border-0 p-0 [@media_(max-width:_700px)]:mb-6.75 [@media_(max-width:_700px)]:pb-5"
+        data-settings-page-heading=""
+      >
+        <span className="hidden">Administration</span>
+        <h1 className="mt-0 mr-0 mb-2 ml-0 text-(--settings-ink) text-(length:--ds-settings-title-size) font-(--ds-settings-title-weight) leading-(--ds-settings-title-line) tracking-[-.035em] [@media_(max-width:_700px)]:text-(length:--ds-settings-title-size)">
+          Workspace members
+        </h1>
+        <p className="mt-0 mr-0 mb-0 ml-0 max-w-full text-[13px] leading-[1.6] text-(--settings-muted) [@media_(max-width:_700px)]:text-[13px]">
+          Invite people, assign team access, and manage workspace roles.
+        </p>
+      </header>
+      <form
+        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-[10px] bg-(--settings-card) pt-7 pr-7 pb-7 pl-7 text-(--settings-ink) shadow-[none] md:mb-9 static grid gap-3.5 border border-line md:p-7 transform-none shell-phone:pt-3.75 shell-phone:pr-3.75 shell-phone:pb-3.75 shell-phone:pl-3.75 [@media_(max-width:_700px)]:mb-7 [@media_(max-width:_700px)]:pt-5 [@media_(max-width:_700px)]:pr-5 [@media_(max-width:_700px)]:pb-5 [@media_(max-width:_700px)]:pl-5 [@media_(max-width:_700px)]:rounded-[13px]"
+        data-settings-group=""
+        data-workspace-settings-form=""
+        onSubmit={invite}
+      >
+        <span className="hidden">Workspace access</span>
+        <h2 className="mt-0 mr-0 mb-0 ml-0 text-(--settings-ink) text-(length:--ds-settings-section-size) font-(--ds-settings-section-weight) leading-(--ds-settings-section-line) tracking-[-.035em] wrap-break-word">
+          Invite a member
+        </h2>
+        <p
+          className="mt-1.5 mb-5 max-w-147.5 text-[13px] leading-[1.55] text-(--settings-muted) wrap-break-word"
+          data-settings-section-intro=""
+        >
+          Create a single-use invite and assign team access from the start.
+        </p>
+        <div
+          className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-4 [@media_(max-width:_700px)]:gap-3.5"
+          data-settings-form-grid=""
+        >
+          <label className="min-w-0 text-xs wrap-break-word grid gap-1.5">
+            Name
+            <input
+              className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base max-w-full placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
+              required
+              value={inviteName}
+              onChange={(e) => setInviteName(e.target.value)}
+            />
+          </label>
+          <label className="min-w-0 text-xs wrap-break-word grid gap-1.5">
+            Email
+            <input
+              className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base max-w-full placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
+              required
+              type="email"
+              value={inviteEmail}
+              onChange={(e) => setInviteEmail(e.target.value)}
+            />
+          </label>
+          <fieldset className="col-span-full rounded-[10px] border border-line pt-3 pr-3.5 pb-3 pl-3.5 grid gap-2 mt-0 mr-0 mb-0 ml-0">
+            <legend className="pl-1.5 pr-1.5 text-[12px] text-muted pt-0 pb-0 font-[550]">
+              Teams
+            </legend>
+            <p className="mt-0 mr-0 mb-0 ml-0 text-[12px] text-muted wrap-break-word">
+              Assignees must belong to the team. Pick teams now or add them
+              later below.
+            </p>
+            {teams.map((t) => (
+              <label
+                className="min-w-0 text-[13px] flex items-center gap-2 text-foreground flex-row justify-start w-auto justify-self-start wrap-break-word pointer-coarse:min-h-11"
+                key={t.id}
+              >
+                <input
+                  className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm size-3.5 accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 w-4 h-4 mt-0 mr-0 mb-0 ml-0 flex-none max-md:text-base max-w-full placeholder:text-muted focus-visible:outline-accent shell-phone:text-[16px]"
+                  type="checkbox"
+                  checked={inviteTeams.includes(t.id)}
+                  onChange={(e) =>
+                    setInviteTeams((c) =>
+                      e.target.checked
+                        ? [...c, t.id]
+                        : c.filter((x) => x !== t.id),
+                    )
+                  }
+                />{" "}
+                {t.name} ({t.key})
+              </label>
+            ))}
+          </fieldset>
+        </div>
+        <div
+          className="mt-4.5 flex flex-col items-start gap-3.5 md:flex-row md:items-center md:gap-3.5 [@media_(max-width:_700px)]:gap-2.25"
+          data-settings-form-actions=""
+        >
+          <button
+            className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-9 rounded-lg border border-foreground bg-(--settings-accent-strong) pl-3.5 pr-3.5 pt-2.25 pb-2.25 text-[12px] font-[620] text-(--settings-on-accent) shadow-[0_1px_2px_#24242412] hover:bg-foreground/90 hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5]"
+            disabled={inviting}
+          >
+            {inviting ? "Sending invitation…" : "Send invitation"}
+          </button>
+          <span>One-time link, expires in 72 hours.</span>
+        </div>
+        {inviteResult && (
+          <div
+            role="status"
+            className="mt-4.5 rounded-[11px] border border-line bg-(--settings-accent-soft) pt-4 pr-4 pb-4 pl-4"
+            data-invite-result=""
+          >
+            <div>
+              <span aria-hidden="true">
+                {inviteResult.emailed ? "✓" : "link"}
+              </span>
+              <div>
+                <h2 className="mt-0 mr-0 mb-0 ml-0 text-(--settings-ink) text-(length:--ds-settings-section-size) font-(--ds-settings-section-weight) leading-(--ds-settings-section-line) tracking-[-.035em] wrap-break-word">
+                  {inviteResult.emailed
+                    ? `Invite emailed to ${inviteResult.email}`
+                    : `Invite ready for ${inviteResult.email}`}
+                </h2>
+                <p className="wrap-break-word">
+                  {inviteResult.emailed
+                    ? "They can join straight from that email. The link works once and expires in 72 hours."
+                    : "Email is not configured on this server, so send this link yourself. It works once and expires in 72 hours."}
+                </p>
+              </div>
+            </div>
+            <label className="min-w-0 text-xs wrap-break-word grid gap-1.5">
+              Invite link
+              <input
+                className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base max-w-full placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
+                aria-label="Copy invite link"
+                readOnly
+                value={inviteResult.url}
+              />
+            </label>
+            <button
+              type="button"
+              className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-8 rounded-lg border border-line bg-(--settings-card) pl-2.75 pr-2.75 pt-2 pb-2 text-[11px] text-(--settings-ink) hover:bg-subtle hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 hover:bg-(--settings-subtle) disabled:opacity-[.5]"
+              onClick={() => {
+                navigator.clipboard?.writeText(inviteResult.url);
+                setInviteCopied(true);
+              }}
+            >
+              {inviteCopied ? "Link copied" : "Copy link"}
+            </button>
+          </div>
+        )}
+        {inviteResult?.emailed && (
+          <p className="wrap-break-word">
+            Not in their inbox? Ask them to check spam, or send the copied link
+            directly.
+          </p>
+        )}
+      </form>
+      {error && (
+        <p
+          className="block text-(--settings-danger) mt-3 mr-0 mb-3 ml-0 max-w-72 text-xs "
+          role="alert"
+        >
+          {error}
+        </p>
+      )}
+      {pendingInvites.length > 0 && (
+        <div
+          className="mt-4.5 overflow-hidden rounded-none border-0 border-t border-line bg-transparent pt-4.5 shadow-[0_1px_2px_#1b1b1b08] **:data-status-history:max-w-[min(240px,calc(100vw-16px))] **:data-status-menu:max-w-[min(240px,calc(100vw-16px))]"
+          data-issue-card=""
+          data-pending-invites=""
+          aria-label="Pending invites"
+        >
+          <h2 className="mt-0 mr-5 mb-3 ml-5 text-[13px] font-medium leading-6 tracking-tight text-foreground">
+            Pending invites
+          </h2>
+          {pendingInvites.map((p) => (
+            <div
+              className="border-b border-line flex items-center gap-2.5 w-full pt-3.5 pr-4.5 pb-3.5 pl-4.5 bg-panel text-left min-h-14.5 hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 last:border-b-0"
+              data-issue-row=""
+              key={p.userId}
+            >
+              <span className="grid gap-1 flex-1" data-issue-copy="">
+                <b className="font-[550]">{p.name || p.email}</b>
+                <small className="text-[12px] leading-normal text-muted">
+                  {p.email} · Invite not yet accepted
+                </small>
+              </span>
+              <button
+                type="button"
+                className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-8 rounded-lg border border-line bg-(--settings-card) pl-2.75 pr-2.75 pt-2 pb-2 text-[11px] text-(--settings-ink) hover:bg-subtle hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 hover:bg-(--settings-subtle)"
+                onClick={() => void revokeInvite(p.userId)}
+              >
+                Revoke invite
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div
+        className="mt-4.5 overflow-hidden rounded-none border-0 border-t border-line bg-transparent shadow-[0_1px_2px_#1b1b1b08] **:data-status-history:max-w-[min(240px,calc(100vw-16px))] **:data-status-menu:max-w-[min(240px,calc(100vw-16px))]"
+        data-issue-card=""
+        data-member-roster=""
+      >
+        <div
+          className="flex items-center justify-between gap-4 border-b border-line pl-0 pr-0 pt-5 pb-3.5 [@media_(max-width:_700px)]:pt-4 [@media_(max-width:_700px)]:pr-4 [@media_(max-width:_700px)]:pb-4 [@media_(max-width:_700px)]:pl-4"
+          data-member-roster-head=""
+        >
+          <div>
+            <h2 className="mt-0 mr-0 mb-0 ml-0 text-[21px] font-[550] leading-6 tracking-[-.035em] text-foreground">
+              People
+            </h2>
+            <p>
+              {members.length} workspace{" "}
+              {members.length === 1 ? "member" : "members"}
+            </p>
+          </div>
+          <span
+            className="inline-flex w-fit min-h-6.25 items-center whitespace-nowrap rounded-[999px] border border-line bg-(--settings-subtle) pl-2 pr-2 pt-0.5 pb-0.5 text-[11px] font-semibold text-(--settings-muted)"
+            data-settings-badge=""
+          >
+            Roles & teams
+          </span>
+        </div>
+        {members.map((m) => (
+          <div
+            className="grid [@media_(max-width:700px)]:*:data-member-avatar:row-start-1 [@media_(max-width:700px)]:*:data-issue-copy:col-start-2 [@media_(max-width:700px)]:*:data-issue-copy:row-start-1 [@media_(max-width:1100px)]:*:data-member-status:col-start-4 [@media_(max-width:1100px)]:*:data-member-status:row-start-1 [@media_(max-width:700px)]:*:data-member-status:col-start-3 [@media_(max-width:700px)]:[&>button]:row-start-4 [@media_(max-width:700px)]:[&>button:first-of-type]:col-start-2 [@media_(max-width:700px)]:[&>button:first-of-type]:justify-self-start [@media_(max-width:700px)]:[&>button:last-of-type]:col-start-3 grid-cols-[auto_minmax(140px,1.25fr)_minmax(115px,.85fr)_auto_auto_auto] [@media_(max-width:1100px)]:grid-cols-[auto_minmax(140px,1fr)_auto_auto] [@media_(max-width:700px)]:grid-cols-[auto_minmax(0,1fr)_auto] min-h-16.5 w-full items-center gap-3 border-b border-line bg-transparent pl-1 pr-1 pt-4.5 pb-4.5 text-left hover:bg-transparent hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 last:border-b-0 [@media_(max-width:_700px)]:gap-2.5 [@media_(max-width:_700px)]:pt-3.5 [@media_(max-width:_700px)]:pr-3.5 [@media_(max-width:_700px)]:pb-3.5 [@media_(max-width:_700px)]:pl-3.5"
+            data-issue-row=""
+            data-member-row=""
+            key={m.id}
+          >
+            <span
+              className="grid w-7.75 h-7.75 flex-none place-items-center rounded-[50%]"
+              data-member-avatar=""
+              aria-hidden="true"
+            >
+              <UserBlobatar user={m} />
+            </span>
+            <span className="grid gap-1 flex-1 min-w-0" data-issue-copy="">
+              {onOpenMember ? (
+                <button
+                  type="button"
+                  onClick={() => onOpenMember(m.id)}
+                  className="w-fit max-w-full bg-transparent p-0 text-left font-[550] text-foreground [overflow-wrap:anywhere] hover:underline focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11"
+                >
+                  {m.name || m.email}
+                </button>
+              ) : (
+                <b className="font-[550] [overflow-wrap:anywhere]">
+                  {m.name || m.email}
+                </b>
+              )}
+              <small className="text-[12px] leading-normal text-muted [overflow-wrap:anywhere]">
+                {m.email}
+              </small>
+            </span>
+            <span
+              className="flex flex-wrap gap-1.25 min-w-0 [@media_(max-width:1100px)]:col-[2/-1] [@media_(max-width:1100px)]:row-start-2"
+              data-member-teams=""
+              role="group"
+              aria-label={`Teams for ${m.name || m.email}`}
+            >
+              {teams.map((t) => {
+                const on = !!t.members?.nodes?.some((x) => x.id === m.id);
+                return (
+                  <button
+                    type="button"
+                    key={t.id}
+                    className="min-h-7.25 rounded-[7px] border border-line bg-(--settings-card) pl-2 pr-2 pt-0.75 pb-0.75 text-[11px] text-(--settings-muted) aria-pressed:bg-[#e9e9e9] aria-pressed:text-[#171717] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 aria-pressed:border-[#cfcfcf]"
+                    data-team-chip=""
+                    aria-pressed={on}
+                    onClick={() => toggleTeam(t.id, m.id, !on)}
+                  >
+                    {t.key}
+                    {on ? " (member)" : ""}
+                  </button>
+                );
+              })}
+            </span>
+            <span
+              className="[@media_(max-width:1100px)]:col-start-3 [@media_(max-width:1100px)]:row-start-1 [@media_(max-width:700px)]:col-[2/-1] [@media_(max-width:700px)]:row-start-3"
+              data-member-role=""
+            >
+              <SettingsSelect
+                label={`Role for ${m.name || m.email}`}
+                value={m.admin ? "admin" : "member"}
+                options={[
+                  {
+                    value: "member",
+                    label: "Member",
+                    description: "Work in assigned teams",
+                    meta: "Team access",
+                  },
+                  {
+                    value: "admin",
+                    label: "Admin",
+                    description: "Manage the workspace, members, and teams",
+                    meta: "Full access",
+                  },
+                ]}
+                onChange={(value) => void role(m.id, value === "admin")}
+              />
+            </span>
+            <span
+              className="inline-flex items-center gap-1.25 whitespace-nowrap text-[10px] text-(--settings-muted) before:w-1.5 before:h-1.5 before:rounded-[50%] before:content-[''] before:bg-(--settings-muted) data-[active=true]:before:bg-(--settings-success)"
+              data-member-status=""
+              data-active={m.active ? "true" : undefined}
+            >
+              {m.active ? "Active" : "Inactive"}
+            </span>
+            {viewer.admin && m.id !== viewer.id && (
+              <button
+                type="button"
+                className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-8 rounded-lg border border-line bg-(--settings-card) pl-2.75 pr-2.75 pt-2 pb-2 text-[11px] text-(--settings-ink) hover:bg-subtle hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 hover:bg-(--settings-subtle)"
+                onClick={() => void setMemberActive(m.id, !m.active)}
+              >
+                {m.active ? "Deactivate" : "Reactivate"}
+              </button>
+            )}
+            {viewer.admin && m.id !== viewer.id && (
+              <button
+                type="button"
+                className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-8 rounded-lg border border-line bg-(--settings-card) pl-2.75 pr-2.75 pt-2 pb-2 text-[11px] text-(--settings-danger) hover:bg-subtle hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 hover:bg-(--settings-subtle)"
+                onClick={() =>
+                  void removeMember(m.id, m.name || m.email || "this member")
+                }
+              >
+                Remove
+              </button>
+            )}
+          </div>
+        ))}
+        {viewer.admin && removed.length > 0 && (
+          <div
+            className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 [@media_(max-width:_700px)]:mb-7"
+            data-settings-group=""
+          >
+            <h2 className="mt-0 mr-0 mb-0 ml-0 text-(--settings-ink) text-(length:--ds-settings-section-size) font-(--ds-settings-section-weight) leading-(--ds-settings-section-line) tracking-[-.035em]">
+              Removed members
+            </h2>
+            <p
+              className="mt-1.5 mb-5 max-w-147.5 text-[13px] leading-[1.55] text-(--settings-muted)"
+              data-settings-section-intro=""
+            >
+              Removed people keep their task history and can be restored at any
+              time.
+            </p>
+            {removed.map((m) => (
+              <div
+                className="flex min-h-(--ds-settings-row-height) min-w-0 flex-col items-start justify-between gap-5 border-t border-line p-(--ds-settings-row-padding) first-of-type:border-t-0 first-of-type:pt-0 last-of-type:pb-0.5 md:flex-row md:items-center md:gap-5 shell-phone:gap-3 [@media_(max-width:_700px)]:gap-3"
+                data-setting-row=""
+                key={m.id}
+              >
+                <div>
+                  <b className="font-[620]">{m.name || m.email}</b>
+                  <p>{m.email}</p>
+                </div>
+                <div>
+                  <span
+                    className="inline-flex items-center gap-1.25 whitespace-nowrap text-[10px] text-(--settings-muted) before:w-1.5 before:h-1.5 before:rounded-[50%] before:content-[''] before:bg-(--settings-muted)"
+                    data-member-status=""
+                  >
+                    Removed
+                  </span>
+                  <button
+                    type="button"
+                    className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-8 rounded-lg border border-line bg-(--settings-card) pl-2.75 pr-2.75 pt-2 pb-2 text-[11px] text-(--settings-ink) hover:bg-subtle hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 hover:bg-(--settings-subtle) disabled:opacity-[.5]"
+                    onClick={() => void restoreMember(m.id)}
+                  >
+                    Restore
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  );
 }
-type SavedIssueView={id:string;name:string;query:string;state:string};
-type BrowserView=SavedIssueView & {kind?:'issues'|'projects';favorite?:boolean};
-function ViewsPage({orgId,issues,projects,path,onNavigate,onSelect,favoriteOnly=false,basePath='/workspace/views',viewName='Views',title}:{orgId:string;issues:Issue[];projects:Project[];path:string;onNavigate:(view:string,path?:string)=>void;onSelect:(issue:Issue)=>void;favoriteOnly?:boolean;basePath?:string;viewName?:string;title?:string}){
- const [kind,setKind]=useState<'issues'|'projects'>(()=>path.includes('/projects')?'projects':'issues');const key=`hoja_saved_views_${orgId}`;const [saved,setSaved]=useState<BrowserView[]>([]),[name,setName]=useState(''),[query,setQuery]=useState(''),[state,setState]=useState(''),[active,setActive]=useState(''),[editing,setEditing]=useState(path.endsWith('/new')),[error,setError]=useState('');
- useEffect(()=>{const syncKind=()=>setKind(location.pathname.includes('/projects')?'projects':'issues');window.addEventListener('popstate',syncKind);return()=>window.removeEventListener('popstate',syncKind)},[]);
- useEffect(()=>{if(!orgId)return;try{const rows=JSON.parse(localStorage.getItem(key)||'[]');const scoped:BrowserView[]=Array.isArray(rows)?rows:[];setSaved(scoped);const id=location.pathname.split('/').pop();const found=scoped.find(v=>v.id===id);if(found){setActive(found.id);setName(found.name);setQuery(found.query);setState(found.state);setEditing(false)}else if(id&&id!=='new'&&id!=='issues'&&id!=='projects'&&location.pathname.includes('/views/'))setError('Local view not found in this browser.');else setError('')}catch{setSaved([]);setError('Local views could not be read in this browser.')}},[key,orgId]);
- const relevant=saved.filter(v=>(v.kind||'issues')===kind);const shown=favoriteOnly?relevant.filter(v=>v.favorite):relevant;const items:(Issue|Project)[]=kind==='issues'?issues:projects;const statuses=useMemo(()=>[...new Set(items.map(v=>kind==='issues'?(v as Issue).state?.name:(v as Project).state).filter((v):v is string=>!!v))].sort(),[items,kind]);const deferredQuery=React.useDeferredValue(query);const matches=useMemo(()=>{const q=deferredQuery.trim().toLowerCase();return items.filter(v=>{const text=kind==='issues'?`${(v as Issue).identifier} ${(v as Issue).title}`:(v as Project).name;const status=kind==='issues'?(v as Issue).state?.name:(v as Project).state;return text.toLowerCase().includes(q)&&(!state||status===state)})},[items,kind,deferredQuery,state]);const [resultLimit,setResultLimit]=useState(LIST_RENDER_STEP);
- const destination=(k:string)=>`${basePath}/${k}`;const persist=(rows:BrowserView[])=>{try{localStorage.setItem(key,JSON.stringify(rows));setSaved(rows);setError('');return true}catch{setError('Could not save local views in browser storage.');return false}};
- const start=()=>{setName(kind==='issues'?'All tasks':'All projects');setQuery('');setState('');setEditing(true);onNavigate(viewName,`${destination(kind)}/new`)};const save=(e:React.FormEvent)=>{e.preventDefault();if(!name.trim())return;if(relevant.some(v=>v.name.toLowerCase()===name.trim().toLowerCase())){setError('A view with that name already exists in this browser.');return}const row:BrowserView={id:crypto.randomUUID(),name:name.trim(),query:query.trim(),state,kind};if(persist([...saved,row])){setActive(row.id);setEditing(false);history.replaceState({},'',`${destination(kind)}/${row.id}`)}};
- const select=(v:BrowserView)=>{setActive(v.id);setName(v.name);setQuery(v.query);setState(v.state);setEditing(false);onNavigate(viewName,`${destination(v.kind||'issues')}/${v.id}`)};const favorite=(v:BrowserView)=>persist(saved.map(x=>x.id===v.id?{...x,favorite:!x.favorite}:x));
- return <section className="workspace-views-page" aria-label={favoriteOnly?'Favorite views':'Workspace views'}><header className="workspace-views-head"><h1>{title||(favoriteOnly?'Favorite views':'Views')}</h1>{!favoriteOnly&&<button type="button" onClick={start}><Plus size={15}/> New view</button>}</header><nav className="workspace-views-tabs" aria-label="View type"><button type="button" aria-current={kind==='issues'?'page':undefined} onClick={()=>{setKind('issues');onNavigate(viewName,destination('issues'))}}>Tasks</button><button type="button" aria-current={kind==='projects'?'page':undefined} onClick={()=>{setKind('projects');onNavigate(viewName,destination('projects'))}}>Projects</button></nav>{editing&&<form className="workspace-view-form" onSubmit={save}><h2>Create local {kind==='issues'?'issue':'project'} view</h2><label>View name<input value={name} onChange={e=>setName(e.target.value)} required maxLength={60}/></label><label>Filter<input type="search" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Name or identifier"/></label><label>Status<select value={state} onChange={e=>setState(e.target.value)}><option value="">All statuses</option>{statuses.map(x=><option key={x}>{x}</option>)}</select></label><div><button type="button" onClick={()=>{setEditing(false);onNavigate(viewName,destination(kind))}}>Cancel</button><button type="submit" disabled={!name.trim()}>Create view</button></div><p>{matches.length} matching loaded {kind}; this browser-local view is not shared.</p></form>}{error&&<p role="alert" className="workspace-views-error">{error}</p>}{shown.length?<div className="workspace-views-list">{shown.map(v=><div key={v.id}><button type="button" onClick={()=>select(v)}><Layers3 size={17}/><span><b>{v.name}</b><small>{[v.query,v.state].filter(Boolean).join(' · ')||`All ${kind}`}</small></span></button><button type="button" aria-label={`${v.favorite?'Remove favorite':'Favorite'} ${v.name}`} onClick={()=>favorite(v)}>{v.favorite?'★':'☆'}</button></div>)}</div>:!editing&&<div className="workspace-views-empty" role="status"><Layers3 size={44} strokeWidth={1}/><h2>{favoriteOnly?'Favorite views':'Views'}</h2><p>{favoriteOnly?'Favorite a locally saved view to keep it here.':`Create local views using filters to see only the ${kind==='issues'?'tasks':kind} you want. Views are saved only in this browser.`}</p>{!favoriteOnly&&<button type="button" onClick={start}>Create new view</button>}</div>}{active&&<div className="workspace-views-results"><h2>{matches.length} matching loaded {kind}</h2>{kind==='issues'?matches.slice(0,resultLimit).map(x=><button type="button" key={x.id} onClick={()=>onSelect(x as Issue)}>{(x as Issue).identifier} · {(x as Issue).title}</button>):matches.slice(0,resultLimit).map(x=><p key={x.id}>{(x as Project).name}</p>)}{matches.length>resultLimit&&<button type="button" onClick={()=>setResultLimit(l=>l+LIST_RENDER_STEP)}>Show {Math.min(LIST_RENDER_STEP,matches.length-resultLimit)} more of {matches.length-resultLimit} not shown</button>}</div>}</section>;
+
+/* ================================ Views ================================
+ * Saved views run on the server (docs/views.md): the editor previews a draft with viewPreview,
+ * a saved view runs View.issues/projects, and both render through the same list and board as
+ * the team pages (MyIssuesContent) with server paging. The pages here are Linear's: the views
+ * list, the full-page editor, the saved-view page with its menu and details panel, and the
+ * project-scoped versions of each.
+ */
+
+/** What a page needs to act on the tasks it renders. */
+type IssueActions = {
+  onOpen: (issue: Issue) => void;
+  onMoved: (issueId: string, state: IssueState) => Promise<void>;
+  onUpdate: (issueId: string, input: Record<string, unknown>) => Promise<void>;
+  onNew: (stateId?: string) => void;
+  layout: IssueLayout;
+  onLayoutChange: (layout: IssueLayout) => void;
+};
+
+const VIEW_PAGE_SIZE = 50;
+const NO_TEAMS: Team[] = [];
+const NO_LABELS: IssueLabel[] = [];
+const NO_CYCLES: Cycle[] = [];
+
+/** The part of a display document the server applies when it runs a view (which rows, in what
+ * order); the rest (grouping, properties, layout) is applied as the rows render. */
+function runDisplay(
+  display: DisplayDoc,
+  kind: "issue" | "project",
+): DisplayDoc {
+  const out: DisplayDoc = {};
+  if (display.ordering) out.ordering = display.ordering;
+  if (display.reverse !== undefined) out.reverse = display.reverse;
+  if (display.completedWindow) out.completedWindow = display.completedWindow;
+  if (kind === "issue" && display.showSubIssues !== undefined)
+    out.showSubIssues = display.showSubIssues;
+  return out;
+}
+
+type ViewRunTarget = {
+  viewId?: string;
+  preview?: {
+    filters: FilterTree;
+    scope?: string;
+    teamId?: string;
+    projectId?: string;
+    initiativeId?: string;
+  };
+};
+
+type ViewRows<T> = {
+  rows: T[];
+  total: number | null;
+  hasMore: boolean;
+  loading: boolean;
+  error: string;
+  /** The first page for the current documents has arrived. */
+  ready: boolean;
+  loadMore: () => void;
+};
+
+/** A view's rows, page by page from the server. A change of documents starts over (debounced,
+ * so typing a chip value does not fire a request per keystroke); `loadMore` appends the next
+ * keyset page. */
+function useViewRows<T extends { id: string }>(
+  kind: "issue" | "project",
+  fields: string,
+  run: ViewRunTarget | null,
+  display: DisplayDoc,
+  revision = 0,
+): ViewRows<T> {
+  const key = run
+    ? JSON.stringify([kind, fields, run, runDisplay(display, kind), revision])
+    : "";
+  const [state, setState] = useState<{
+    key: string;
+    rows: T[];
+    cursor: string | null;
+    hasMore: boolean;
+    total: number | null;
+    loading: boolean;
+    error: string;
+  }>({
+    key: "",
+    rows: [],
+    cursor: null,
+    hasMore: false,
+    total: null,
+    loading: false,
+    error: "",
+  });
+  const gen = useRef(0);
+  const request = useCallback((k: string, after: string | null) => {
+    const [kd, fd, r, d] = JSON.parse(k) as [
+      "issue" | "project",
+      string,
+      ViewRunTarget,
+      DisplayDoc,
+    ];
+    return runView<T>({
+      kind: kd,
+      fields: fd,
+      first: VIEW_PAGE_SIZE,
+      after,
+      viewId: r.viewId,
+      display: d,
+      preview: r.preview ? { ...r.preview, display: d } : undefined,
+    });
+  }, []);
+  useEffect(() => {
+    if (!key) return;
+    const g = ++gen.current;
+    setState((s) => ({ ...s, loading: true, error: "" }));
+    const timer = window.setTimeout(() => {
+      request(key, null)
+        .then((page) => {
+          if (g !== gen.current) return;
+          setState({
+            key,
+            rows: page.nodes,
+            cursor: page.pageInfo.endCursor,
+            hasMore: page.pageInfo.hasNextPage && page.nodes.length > 0,
+            total: page.totalCount ?? page.nodes.length,
+            loading: false,
+            error: "",
+          });
+        })
+        .catch((e) => {
+          if (g !== gen.current) return;
+          setState((s) => ({
+            ...s,
+            key,
+            loading: false,
+            error: (e as Error).message,
+          }));
+        });
+    }, 200);
+    return () => window.clearTimeout(timer);
+  }, [key, request]);
+  const loadMore = useCallback(() => {
+    if (state.loading || !state.hasMore || state.key !== key) return;
+    const g = gen.current;
+    const k = state.key,
+      after = state.cursor;
+    setState((s) => ({ ...s, loading: true, error: "" }));
+    request(k, after)
+      .then((page) => {
+        if (g !== gen.current) return;
+        setState((s) => {
+          if (s.key !== k) return s;
+          const seen = new Set(s.rows.map((r) => r.id));
+          const fresh = page.nodes.filter((r) => !seen.has(r.id));
+          return {
+            ...s,
+            rows: [...s.rows, ...fresh],
+            cursor: page.pageInfo.endCursor,
+            // A cursor that did not move ends paging rather than loop.
+            hasMore:
+              page.pageInfo.hasNextPage &&
+              fresh.length > 0 &&
+              page.pageInfo.endCursor !== after,
+            total: page.totalCount ?? s.total,
+            loading: false,
+          };
+        });
+      })
+      .catch((e) => {
+        if (g !== gen.current) return;
+        setState((s) => ({
+          ...s,
+          loading: false,
+          error: (e as Error).message,
+        }));
+      });
+  }, [state, key, request]);
+  return {
+    rows: state.rows,
+    total: state.total,
+    hasMore: state.hasMore,
+    loading: state.loading,
+    error: state.error,
+    ready: state.key === key && !state.loading,
+    loadMore,
+  };
+}
+
+/** Server rows, each replaced by the live store's copy when it has one, so a status change made
+ * on this page shows at once instead of on the next run. */
+function useLiveIssues(rows: Issue[]): Issue[] {
+  const synced = useSyncIssues() as Issue[];
+  const byId = useMemo(() => new Map(synced.map((i) => [i.id, i])), [synced]);
+  return useMemo(() => rows.map((r) => byId.get(r.id) || r), [rows, byId]);
+}
+
+/** The filter menu's catalog for task views, from the workspace the store holds. */
+function useWorkspaceIssueCatalog(projects: Project[], base: Issue[]) {
+  const meta = useSyncMeta();
+  const viewerId = meta?.viewer?.id;
+  const teams = meta?.teams.nodes || NO_TEAMS;
+  const states = useMemo(
+    () => [
+      ...new Map(
+        teams.flatMap((t) => t.states.nodes).map((s) => [stateKey(s), s]),
+      ).values(),
+    ],
+    [teams],
+  );
+  const users = useMemo(
+    () =>
+      (meta?.users || [])
+        .map(([id, n]) => ({ id, name: n || "Unknown" }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [meta],
+  );
+  const evalCtx = useMemo<EvalContext>(
+    () => ({
+      viewerId,
+      myTeamIds: new Set(
+        teams
+          .filter((t) => t.members?.nodes.some((m) => m.id === viewerId))
+          .map((t) => t.id),
+      ),
+      parentIds: parentIdsOf(base),
+    }),
+    [viewerId, teams, base],
+  );
+  const catalog = useIssueFilterCatalog({
+    base,
+    issues: base,
+    states,
+    projects,
+    teams,
+    users,
+    labels: meta?.issueLabels.nodes || NO_LABELS,
+    cycles: meta?.cycles.nodes || NO_CYCLES,
+    viewerId,
+    evalCtx,
+  });
+  return { catalog, states, users, teams, meta };
+}
+
+const HEALTH_OPTIONS: ValueOption[] = [
+  { value: "onTrack", label: "On track" },
+  { value: "atRisk", label: "At risk" },
+  { value: "offTrack", label: "Off track" },
+  { value: null, label: "No updates" },
+];
+
+/** The filter menu's catalog for project views. */
+function useProjectFilterCatalog(projects: Project[]): FilterCatalog {
+  const meta = useSyncMeta();
+  return useMemo((): FilterCatalog => {
+    const viewerId = meta?.viewer?.id;
+    const users: ValueOption[] = (meta?.users || [])
+      .filter(([id]) => id !== viewerId)
+      .map(([id, n]) => ({ value: id, label: n || "Unknown" }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+    const statuses = [
+      ...new Set(projects.map((p) => p.state).filter((s): s is string => !!s)),
+    ].sort();
+    return {
+      fields: PROJECT_FILTER_FIELDS,
+      menu: PROJECT_MENU,
+      options: (field) => {
+        switch (field) {
+          case "status":
+            return statuses.map((s) => ({ value: s, label: displayLabel(s) }));
+          case "lead":
+          case "members":
+            return [
+              { value: "me", label: "Current user" },
+              {
+                value: null,
+                label: field === "lead" ? "No lead" : "No members",
+              },
+              ...users,
+            ];
+          case "creator":
+            return [{ value: "me", label: "Current user" }, ...users];
+          case "health":
+            return HEALTH_OPTIONS;
+          case "team":
+            return (meta?.teams.nodes || []).map((t) => ({
+              value: t.id,
+              label: t.name,
+            }));
+          case "initiative":
+            return [{ value: null, label: "No initiative" }];
+          default:
+            return [];
+        }
+      },
+    };
+  }, [meta, projects]);
+}
+
+/* ------------------------------------------------------ project rows */
+
+const PROJECT_VIEW_FIELDS = `{ ${PROJECT_FIELDS} }`;
+
+/** A project view's rows: the projects list's columns, run on the server, with its own filter
+ * bar and display panel (the project variant). */
+function ViewProjectList({
+  rows,
+  filterRoot,
+  onFilterChange,
+  catalog,
+  prefs,
+  canSetDefault,
+  filterRowEnd,
+  toolbarEnd,
+  tabs,
+  onOpen,
+}: {
+  rows: ViewRows<Project>;
+  filterRoot: FilterGroup;
+  onFilterChange: (root: FilterGroup) => void;
+  catalog: FilterCatalog;
+  prefs: ReturnType<typeof useViewPreferences>;
+  canSetDefault: boolean;
+  filterRowEnd?: React.ReactNode;
+  toolbarEnd?: React.ReactNode;
+  tabs?: React.ReactNode;
+  onOpen: (project: Project) => void;
+}) {
+  const [advanced, setAdvanced] = useState(false),
+    [displayOpen, setDisplayOpen] = useState(false);
+  const display = prefs.display;
+  const has = (p: string) => display.visibleProperties.includes(p);
+  const sentinel = useRef<HTMLDivElement | null>(null);
+  const more = useRef(rows.loadMore);
+  more.current = rows.loadMore;
+  const canLoad = rows.hasMore && !rows.loading && !rows.error;
+  useEffect(() => {
+    if (!canLoad) return;
+    const el = sentinel.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) more.current();
+      },
+      { rootMargin: "0px 0px 600px 0px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [canLoad]);
+  return (
+    <div
+      className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 p-4"
+      data-view-project-results=""
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        {tabs}
+        <div className="ml-auto flex flex-none items-center gap-1.5">
+          <AddFilterButton
+            root={filterRoot}
+            onChange={onFilterChange}
+            catalog={catalog}
+            onAdvanced={() => setAdvanced(true)}
+          />
+          <DisplayButton
+            open={displayOpen}
+            onOpenChange={setDisplayOpen}
+            hasOverrides={prefs.hasOverrides}
+          >
+            <DisplayPanel
+              variant="project"
+              layouts={["list"]}
+              display={display}
+              onChange={prefs.update}
+              hasOverrides={prefs.hasOverrides}
+              onReset={prefs.reset}
+              onSetDefault={
+                canSetDefault ? () => void prefs.setDefault() : undefined
+              }
+            />
+          </DisplayButton>
+          {toolbarEnd}
+        </div>
+      </div>
+      {filterRowEnd ? (
+        <div className="flex min-w-0 items-start gap-2 rounded-lg bg-subtle px-2 py-1.5">
+          <div className="min-w-0 flex-1">
+            <FilterChips
+              root={filterRoot}
+              onChange={onFilterChange}
+              catalog={catalog}
+              advanced={advanced}
+              onAdvancedChange={setAdvanced}
+              hideClear
+            />
+          </div>
+          {filterRowEnd}
+        </div>
+      ) : (
+        <FilterChips
+          root={filterRoot}
+          onChange={onFilterChange}
+          catalog={catalog}
+          advanced={advanced}
+          onAdvancedChange={setAdvanced}
+        />
+      )}
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        {rows.rows.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            className="flex min-h-10 w-full min-w-0 items-center gap-3 border-b border-line px-3 text-left text-sm hover:bg-subtle"
+            onClick={() => onOpen(p)}
+            data-view-project-row=""
+          >
+            <FolderKanban size={15} className="flex-none text-muted" />
+            <span className="min-w-0 flex-1 truncate font-medium">
+              {p.name}
+            </span>
+            {has("status") && p.state && (
+              <span className="text-muted">{displayLabel(p.state)}</span>
+            )}
+            {has("health") && p.health && (
+              <span className="text-muted max-md:hidden">
+                {displayLabel(p.health)}
+              </span>
+            )}
+            {has("lead") && p.lead?.name && (
+              <span className="max-w-32 truncate text-muted max-md:hidden">
+                {p.lead.name}
+              </span>
+            )}
+            {has("targetDate") && p.targetDate && (
+              <span className="text-muted max-md:hidden">
+                {new Date(p.targetDate).toLocaleDateString(undefined, {
+                  month: "short",
+                  day: "numeric",
+                })}
+              </span>
+            )}
+            {has("progress") && typeof p.progress === "number" && (
+              <span className="w-10 text-right text-muted tabular-nums">
+                {Math.round(p.progress * 100)}%
+              </span>
+            )}
+          </button>
+        ))}
+        {rows.ready && !rows.rows.length && !rows.error && (
+          <p className="py-16 text-center text-muted" role="status">
+            No projects match this view.
+          </p>
+        )}
+        {(rows.hasMore || rows.error) && (
+          <div
+            ref={sentinel}
+            className="flex items-center justify-center gap-2 py-3 text-sm text-muted"
+          >
+            {rows.error && <span role="alert">{rows.error}</span>}
+            <button
+              type="button"
+              className="rounded px-2 py-1 text-accent hover:bg-subtle shell-phone:min-h-11"
+              disabled={rows.loading}
+              onClick={rows.loadMore}
+            >
+              {rows.loading ? "Loading…" : rows.error ? "Retry" : "Load more"}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** "Tasks | Projects" for the editor and the views list. */
+function ViewKindTabs({
+  kind,
+  onChange,
+}: {
+  kind: "issue" | "project";
+  onChange: (kind: "issue" | "project") => void;
+}) {
+  return (
+    <TaskViewTabs
+      label="View type"
+      views={["Tasks", "Projects"] as const}
+      active={kind === "project" ? "Projects" : "Tasks"}
+      onChange={(v) => onChange(v === "Projects" ? "project" : "issue")}
+    />
+  );
+}
+
+/* ----------------------------------------------------------- the editor */
+
+type EditorScope = { team?: Team; project?: Project };
+
+/** Where a new view in this scope may be saved, the default first. */
+function saveTargets(
+  scope: EditorScope,
+  teams: Team[],
+  viewerId?: string,
+): SaveTarget[] {
+  if (scope.project)
+    return [
+      { kind: "project", projectId: scope.project.id, shared: false },
+      { kind: "project", projectId: scope.project.id, shared: true },
+    ];
+  /* From a team, "Personal" is a team view only its owner sees: it keeps listing the team's
+     tasks (the preview does not widen to the workspace) and stays among the team's views. */
+  if (scope.team)
+    return [
+      { kind: "team", teamId: scope.team.id },
+      { kind: "team", teamId: scope.team.id, personal: true },
+      { kind: "workspace" },
+    ];
+  return [
+    { kind: "personal" },
+    { kind: "workspace" },
+    ...teams
+      .filter(
+        (t) => !viewerId || t.members?.nodes.some((m) => m.id === viewerId),
+      )
+      .map((t) => ({ kind: "team" as const, teamId: t.id })),
+  ];
+}
+
+/** Where an existing view can move to ("Move to ▸"). */
+function moveTargets(
+  view: ServerView,
+  teams: Team[],
+  viewerId?: string,
+): SaveTarget[] {
+  if (view.scope === "project" && view.project?.id)
+    return saveTargets({ project: { id: view.project.id } as Project }, teams);
+  const all = saveTargets({}, teams, viewerId);
+  if (view.scope === "team" && view.team?.id)
+    all.splice(1, 0, { kind: "team", teamId: view.team.id, personal: true });
+  const now = JSON.stringify(targetOf(view));
+  return all.filter((t) => JSON.stringify(t) !== now);
+}
+
+function previewScope(target: SaveTarget): {
+  scope: string;
+  teamId?: string;
+  projectId?: string;
+} {
+  const input = targetInput(target);
+  return {
+    scope: input.scope,
+    teamId: input.teamId,
+    projectId: input.projectId,
+  };
+}
+
+/** The full-page "New view" editor: identity card (icon, name, description, Save to), then the
+ * live result of the draft with the same filter bar, display panel, list and board. */
+function ViewEditorPage({
+  initialKind,
+  allowKinds = true,
+  scope,
+  projects,
+  actions,
+  onCancel,
+  onCreated,
+  pinOnCreate = false,
+  breadcrumb,
+  tabs: tabsOverride,
+}: {
+  /** Replaces the Tasks/Projects tabs (the team page shows its own tab strip). */
+  tabs?: React.ReactNode;
+  initialKind: "issue" | "project";
+  allowKinds?: boolean;
+  scope: EditorScope;
+  projects: Project[];
+  actions: IssueActions;
+  onCancel: () => void;
+  onCreated: (view: ServerView) => void;
+  /** Create the view as a pinned tab of its team (the team page's "Add new view"). */
+  pinOnCreate?: boolean;
+  breadcrumb?: React.ReactNode;
+}) {
+  /* "Save as view" (Alt V) on a list stashes its filters and display for this editor. */
+  const [draft] = useState(() => takeViewDraft());
+  /* A duplicate arrives named: put the caret in the name, selected, so typing renames it. */
+  useEffect(() => {
+    if (!draft?.name) return;
+    const input = document.querySelector<HTMLInputElement>(
+      "[data-view-editor-head] input",
+    );
+    input?.focus();
+    input?.select();
+  }, [draft?.name]);
+  const [kind, setKind] = useState<"issue" | "project">(
+    draft?.kind || initialKind,
+  );
+  const fieldsFor = (k: "issue" | "project") =>
+    k === "project" ? PROJECT_FILTER_FIELDS : ISSUE_FIELDS;
+  const [filterRoot, setFilterRoot] = useState<FilterGroup>(() =>
+    filterTreeToChips(draft?.filters, fieldsFor(draft?.kind || initialKind)),
+  );
+  const [identity, setIdentity] = useState<{
+    name: string;
+    description: string;
+    icon: string | null;
+    color: string | null;
+    touched: boolean;
+  }>({
+    name: draft?.name || "",
+    description: draft?.description || "",
+    icon: draft?.icon || null,
+    color: draft?.color || null,
+    touched: Boolean(draft?.name),
+  });
+  const meta = useSyncMeta();
+  const viewer = meta?.viewer;
+  const teams = meta?.teams.nodes || NO_TEAMS;
+  const targets = useMemo(
+    () => saveTargets(scope, teams, viewer?.id),
+    [scope, teams, viewer?.id],
+  );
+  const draftTarget = draft?.teamId
+    ? targets.find(
+        (t) =>
+          t.kind === "team" &&
+          t.teamId === draft.teamId &&
+          Boolean(t.personal) === (draft.saveTo === "personal"),
+      ) || targets.find((t) => t.kind === "team" && t.teamId === draft.teamId)
+    : draft?.saveTo
+      ? targets.find((t) =>
+          draft.saveTo === "personal"
+            ? t.kind === "personal" || (t.kind === "team" && t.personal)
+            : t.kind === draft.saveTo,
+        )
+      : undefined;
+  const [target, setTarget] = useState<SaveTarget>(
+    () => draftTarget || targets[0],
+  );
+  const [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
+  const base = useMemo(
+    () => (kind === "project" ? PROJECT_DEFAULTS : NO_DISPLAY),
+    [kind],
+  );
+  const draftDisplay = useMemo(
+    () => ({ ...base, ...((draft?.display as DisplayDoc) || {}) }),
+    [base, draft],
+  );
+  const prefs = useViewPreferences(null, draftDisplay);
+  const tree = useMemo(
+    () => chipsToFilterTree(filterRoot, fieldsFor(kind)),
+    [filterRoot, kind],
+  );
+  const run = useMemo<ViewRunTarget>(
+    () => ({ preview: { filters: tree, ...previewScope(target) } }),
+    [tree, target],
+  );
+  const issueRows = useViewRows<Issue>(
+    "issue",
+    issueFields,
+    kind === "issue" ? run : null,
+    prefs.display,
+  );
+  const projectRows = useViewRows<Project>(
+    "project",
+    PROJECT_VIEW_FIELDS,
+    kind === "project" ? run : null,
+    prefs.display,
+  );
+  const liveIssues = useLiveIssues(issueRows.rows);
+  const { catalog: issueCatalog, states } = useWorkspaceIssueCatalog(
+    projects,
+    liveIssues,
+  );
+  const projectCatalog = useProjectFilterCatalog(projects);
+  const catalog = kind === "project" ? projectCatalog : issueCatalog;
+  /* Linear's smart naming: while the name is untouched, the first chip names the view. */
+  const suggestion = useMemo(
+    () =>
+      suggestViewIdentity(
+        filterRoot,
+        catalog,
+        kind === "project" ? "projects" : "tasks",
+      ),
+    [filterRoot, catalog, kind],
+  );
+  const shown = identity.touched
+    ? identity
+    : {
+        ...identity,
+        name: suggestion?.name || "",
+        description: suggestion?.description || "",
+        icon: identity.icon || suggestion?.icon || null,
+      };
+  const placeholder = kind === "project" ? "All projects" : "All tasks";
+  const changeKind = (next: "issue" | "project") => {
+    if (next === kind) return;
+    setKind(next);
+    setFilterRoot(emptyGroup());
+  };
+  /* Ctrl/⌘ Enter creates the view from anywhere in the editor (the name field's Enter does
+     too), so a keyboard path never depends on tab order. */
+  const createRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Enter" || !(e.ctrlKey || e.metaKey) || e.altKey) return;
+      if (document.querySelector('[aria-modal="true"]')) return;
+      e.preventDefault();
+      createRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  const create = async () => {
+    if (busy) return;
+    const name = (shown.name || placeholder).trim();
+    setBusy(true);
+    setError("");
+    try {
+      const created = await createView({
+        name,
+        description: shown.description.trim() || null,
+        icon: shown.icon,
+        color: shown.color,
+        kind,
+        filters: tree,
+        display: displayChanges(prefs.display, mergeDisplay(base)),
+        ...targetInput(target),
+      });
+      const after = draft?.pinAfter;
+      const pinned =
+        after && (created.scope === "team" || created.scope === "project")
+          ? await pinView(
+              created.id,
+              true,
+              after.nextSortOrder != null
+                ? (after.sortOrder + after.nextSortOrder) / 2
+                : after.sortOrder + 1,
+            ).catch(() => created)
+          : (pinOnCreate ||
+                // Saved from a team's list (Alt V): Linear pins it as a team tab (FacetCreate in
+                // linear-capture/s5b-relative-create.jsonl); a personal team view stays unpinned.
+                (draft?.teamId && target.kind === "team" && !target.personal)) &&
+              created.scope === "team"
+            ? await pinView(created.id, true).catch(() => created)
+            : created;
+      onCreated(pinned);
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+    }
+  };
+  createRef.current = () => void create();
+  const tabs =
+    tabsOverride ||
+    (allowKinds ? (
+      <ViewKindTabs kind={kind} onChange={changeKind} />
+    ) : (
+      <span className="flex-1" />
+    ));
+  const card = (
+    <div className="px-4 pt-4" data-view-editor-head="">
+      <ViewIdentityCard
+        icon={shown.icon}
+        color={shown.color}
+        name={shown.name}
+        description={shown.description}
+        namePlaceholder={placeholder}
+        autoFocusName
+        onSubmit={() => void create()}
+        onCancel={onCancel}
+        onChange={(patch) =>
+          setIdentity((old) => ({
+            ...(old.touched ? old : shown),
+            ...patch,
+            touched: true,
+          }))
+        }
+        actions={
+          <>
+            {targets.length > 1 && (
+              <SaveToPicker
+                value={target}
+                options={targets}
+                teams={teams}
+                onChange={setTarget}
+              />
+            )}
+            <button
+              type="button"
+              className="h-7 rounded-md px-2.5 text-sm text-foreground hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
+              onClick={onCancel}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="h-7 rounded-md bg-accent px-2.5 text-sm font-medium text-panel hover:brightness-110 disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11"
+              disabled={busy}
+              onClick={() => void create()}
+              data-view-create=""
+            >
+              {busy ? "Creating…" : "Create view"}
+            </button>
+          </>
+        }
+      />
+      {error && (
+        <p className="mt-2 text-sm text-danger" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+  return (
+    <section
+      className="flex min-h-0 min-w-0 flex-1 flex-col"
+      data-view-editor=""
+      aria-label="New view"
+    >
+      {breadcrumb}
+      {card}
+      {kind === "issue" ? (
+        <MyIssuesContent
+          tabs={tabs}
+          tab="Assigned"
+          issues={liveIssues}
+          states={states}
+          teams={teams}
+          projects={projects}
+          onOpenIssue={actions.onOpen}
+          onNew={actions.onNew}
+          layout={actions.layout}
+          onLayoutChange={actions.onLayoutChange}
+          onMoved={actions.onMoved}
+          onUpdate={actions.onUpdate}
+          filterState={{ root: filterRoot, onChange: setFilterRoot }}
+          displayState={prefs}
+          canSetDefault={false}
+          serverRows={{
+            hasMore: issueRows.hasMore,
+            loading: issueRows.loading,
+            error: issueRows.error,
+            onLoadMore: issueRows.loadMore,
+          }}
+          emptyCopy={
+            issueRows.ready
+              ? ["No matching tasks", "Change the filters to see tasks here."]
+              : ["Loading tasks…", ""]
+          }
+        />
+      ) : (
+        <ViewProjectList
+          rows={projectRows}
+          filterRoot={filterRoot}
+          onFilterChange={setFilterRoot}
+          catalog={projectCatalog}
+          prefs={prefs}
+          canSetDefault={false}
+          tabs={tabs}
+          onOpen={(p) => navigateTo(`/workspace/project/${p.id}`)}
+        />
+      )}
+    </section>
+  );
+}
+
+/* --------------------------------------------------------- saved view */
+
+const DETAILS_KEY = "hoja_view_details_open";
+
+function readFlag(key: string, fallback: boolean): boolean {
+  try {
+    const v = localStorage.getItem(key);
+    return v === null ? fallback : v === "1";
+  } catch {
+    return fallback;
+  }
+}
+
+function writeFlag(key: string, value: boolean) {
+  try {
+    localStorage.setItem(key, value ? "1" : "0");
+  } catch {
+    /* storage blocked: the toggle lasts for this visit */
+  }
+}
+
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** A saved view's page: header (icon, name, star, "…" menu), count line, the rows through the
+ * shared list and board, the unsaved-changes bar and the details panel. */
+function SavedViewPage({
+  ident,
+  projects,
+  actions,
+  revision,
+  onDeleted,
+  breadcrumb,
+}: {
+  ident: string;
+  projects: Project[];
+  actions: IssueActions;
+  revision: number;
+  onDeleted: (view: ServerView) => void;
+  breadcrumb?: (view: ServerView) => React.ReactNode;
+}) {
+  const [view, setView] = useState<ServerView | null>(null),
+    [loadError, setLoadError] = useState("");
+  useEffect(() => {
+    let live = true;
+    setLoadError("");
+    getView(ident)
+      .then((v) => {
+        if (!live) return;
+        setView(v);
+        // Old links (ids, /views/issues/<id>) settle on the slug URL.
+        const path = location.pathname;
+        if (path.startsWith("/workspace/view/") && path !== viewPath(v))
+          history.replaceState(
+            history.state,
+            "",
+            viewPath(v) + location.search,
+          );
+      })
+      .catch((e) => {
+        if (live) setLoadError((e as Error).message);
+      });
+    return () => {
+      live = false;
+    };
+  }, [ident, revision]);
+  if (loadError)
+    return (
+      <section
+        className="p-10 text-center text-muted"
+        role="alert"
+        data-view-page=""
+      >
+        {loadError === "View not found."
+          ? "This view does not exist, or it is not shared with you."
+          : loadError}
+        <div className="mt-3">
+          <button
+            type="button"
+            className="rounded-md border border-line px-2.5 py-1 text-foreground hover:bg-subtle shell-phone:min-h-11"
+            onClick={() => navigateTo("/workspace/views/issues")}
+          >
+            All views
+          </button>
+        </div>
+      </section>
+    );
+  if (!view)
+    return (
+      <section
+        className="p-10 text-center text-muted"
+        role="status"
+        data-view-page=""
+      >
+        Loading view…
+      </section>
+    );
+  // Initiative views run on the server's initiative engine with the shared chips and panel.
+  if (view.kind === "initiative")
+    return (
+      <InitiativeViewBody
+        key={view.id}
+        view={view}
+        onView={setView}
+        onOpenInitiative={(id) =>
+          navigateTo(`/workspace/initiative/${encodeURIComponent(id)}`)
+        }
+        header={
+          <b className="truncate text-[13px] font-medium" data-view-title="">
+            {view.name}
+          </b>
+        }
+      />
+    );
+  return (
+    <SavedViewBody
+      key={view.id}
+      view={view}
+      onView={setView}
+      projects={projects}
+      actions={actions}
+      revision={revision}
+      onDeleted={onDeleted}
+      breadcrumb={breadcrumb?.(view)}
+    />
+  );
+}
+
+function SavedViewBody({
+  view: given,
+  onView: report,
+  projects,
+  actions,
+  revision,
+  onDeleted,
+  breadcrumb,
+  tabs,
+}: {
+  /** The team page's tab strip, when the view is shown as one of its pinned tabs. */
+  tabs?: React.ReactNode;
+  view: ServerView;
+  onView: (view: ServerView) => void;
+  projects: Project[];
+  actions: IssueActions;
+  revision: number;
+  onDeleted: (view: ServerView) => void;
+  breadcrumb?: React.ReactNode;
+}) {
+  /* The page keeps its own copy, so a write shows at once even where the parent's copy is a
+     shared list that refreshes later (the team tabs). */
+  const [view, setLocalView] = useState(given);
+  useEffect(() => setLocalView(given), [given]);
+  const onView = useCallback(
+    (next: ServerView) => {
+      setLocalView(next);
+      report(next);
+    },
+    [report],
+  );
+  const meta = useSyncMeta();
+  const viewer = meta?.viewer;
+  const teams = meta?.teams.nodes || NO_TEAMS;
+  const canEdit = canEditView(view, viewer);
+  const kind: "issue" | "project" =
+    view.kind === "project" ? "project" : "issue";
+  const fields = kind === "project" ? PROJECT_FILTER_FIELDS : ISSUE_FIELDS;
+  /* ---- filters: the saved tree, or this person's unsaved edits of it ---- */
+  const viewerId = viewer?.id;
+  const [filterRoot, setFilterRootState] = useState<FilterGroup>(() =>
+    filterTreeToChips(
+      loadViewEdits(view.id, viewerId)?.filters ?? view.filters,
+      fields,
+    ),
+  );
+  const tree = useMemo(
+    () => chipsToFilterTree(filterRoot, fields),
+    [filterRoot, fields],
+  );
+  const dirty = !sameDocument(tree, view.filters);
+  const setFilterRoot = useCallback(
+    (root: FilterGroup) => {
+      setFilterRootState(root);
+      const next = chipsToFilterTree(root, fields);
+      saveViewEdits(
+        view.id,
+        sameDocument(next, view.filters) ? null : { filters: next },
+        viewerId,
+      );
+    },
+    [view.id, view.filters, fields, viewerId],
+  );
+  const clearEdits = useCallback(() => {
+    setFilterRootState(filterTreeToChips(view.filters, fields));
+    saveViewEdits(view.id, null, viewerId);
+  }, [view.id, view.filters, fields, viewerId]);
+  /* ---- display: the view's default with this person's layer over it ---- */
+  const prefTarget = useMemo(() => ({ viewId: view.id }), [view.id]);
+  const prefs = useViewPreferences(
+    prefTarget,
+    kind === "project" ? PROJECT_DEFAULTS : NO_DISPLAY,
+  );
+  /* ---- rows ---- */
+  const run = useMemo<ViewRunTarget>(
+    () =>
+      dirty
+        ? {
+            preview: {
+              filters: tree,
+              scope: view.scope,
+              teamId: view.team?.id,
+              projectId: view.project?.id,
+              initiativeId: view.initiative?.id,
+            },
+          }
+        : { viewId: view.id },
+    [
+      dirty,
+      tree,
+      view.id,
+      view.scope,
+      view.team?.id,
+      view.project?.id,
+      view.initiative?.id,
+    ],
+  );
+  const issueRows = useViewRows<Issue>(
+    "issue",
+    issueFields,
+    kind === "issue" ? run : null,
+    prefs.display,
+    revision,
+  );
+  const projectRows = useViewRows<Project>(
+    "project",
+    PROJECT_VIEW_FIELDS,
+    kind === "project" ? run : null,
+    prefs.display,
+    revision,
+  );
+  const liveIssues = useLiveIssues(issueRows.rows);
+  const { states, users } = useWorkspaceIssueCatalog(projects, liveIssues);
+  const projectCatalog = useProjectFilterCatalog(projects);
+  const total = kind === "issue" ? issueRows.total : projectRows.total;
+  /* ---- header state ---- */
+  const [editing, setEditing] = useState(false),
+    [identity, setIdentity] = useState({
+      name: view.name,
+      description: view.description || "",
+      icon: view.icon || null,
+      color: view.color || null,
+    }),
+    [busy, setBusy] = useState(false),
+    [notice, setNotice] = useState(""),
+    [detailsOpen, setDetailsOpen] = useState(() =>
+      readFlag(DETAILS_KEY, false),
+    );
+  const fail = (e: unknown) => setNotice((e as Error).message);
+  const flash = (text: string) => {
+    setNotice(text);
+    window.setTimeout(() => setNotice((n) => (n === text ? "" : n)), 2500);
+  };
+  const update = async (input: Partial<ViewInput>) => {
+    setBusy(true);
+    try {
+      const next = await updateView(view.id, input);
+      onView(next);
+      return next;
+    } catch (e) {
+      fail(e);
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  };
+  const saveIdentity = async () => {
+    const name = identity.name.trim();
+    if (!name) return setNotice("A view needs a name.");
+    const next = await update({
+      name,
+      description: identity.description.trim() || null,
+      icon: identity.icon,
+      color: identity.color,
+    });
+    if (next) setEditing(false);
+  };
+  const favorite = useCallback(async () => {
+    try {
+      const fav = await toggleViewFavorite(view.id);
+      onView({ ...view, favorite: fav });
+    } catch (e) {
+      fail(e);
+    }
+  }, [view, onView]);
+  const saveToView = useCallback(async () => {
+    if (!canEdit || !dirty) return;
+    setBusy(true);
+    try {
+      const next = await updateView(view.id, { filters: tree });
+      saveViewEdits(view.id, null, viewerId);
+      if (prefs.hasOverrides) await prefs.setDefault();
+      // The chips follow what the server stored (it may normalise the tree), so the bar goes.
+      setFilterRootState(filterTreeToChips(next.filters, fields));
+      onView(next);
+      flash("View saved");
+    } catch (e) {
+      fail(e);
+    } finally {
+      setBusy(false);
+    }
+  }, [canEdit, dirty, view.id, tree, prefs, onView, viewerId, fields]);
+  const saveAsNew = useCallback(() => {
+    stashViewDraft({
+      kind,
+      filters: tree,
+      display: displayChanges(prefs.display, mergeDisplay()),
+      teamId: view.team?.id,
+      projectId: view.project?.id,
+    });
+    navigateTo(
+      view.scope === "project" && view.project?.id
+        ? `/workspace/project/${view.project.id}/view/new`
+        : `/workspace/views/${kind === "project" ? "projects" : "issues"}/new`,
+    );
+  }, [kind, tree, prefs.display, view.team?.id, view.project?.id, view.scope]);
+  /* Alt F favorites the view on screen and Alt D duplicates it (the menu sits behind the whole
+     sidebar in tab order — 25+ presses, JOBS.md J3); Alt S / Alt V are the list's own keys. */
+  const duplicateRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.altKey || e.metaKey || e.ctrlKey) return;
+      if (e.code !== "KeyF" && e.code !== "KeyD") return;
+      if (
+        isTypingTarget(e.target) ||
+        document.querySelector('[aria-modal="true"]')
+      )
+        return;
+      e.preventDefault();
+      if (e.code === "KeyD") duplicateRef.current();
+      else void favorite();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [favorite]);
+  duplicateRef.current = () => void duplicate();
+  /* Duplicate opens the editor on a draft of the saved view, as Linear does: same name,
+     description, icon, filters, look and visibility; nothing is written until "Create view",
+     and a pinned tab's copy is pinned right after it (SPEC.md §5). */
+  const duplicate = async () => {
+    let pinAfter: { sortOrder: number; nextSortOrder: number | null } | undefined;
+    if (view.pinned && view.sortOrder != null) {
+      const siblings = await listViews(kind).catch(() => [] as ServerView[]);
+      const next = siblings
+        .filter(
+          (v) =>
+            v.pinned &&
+            v.sortOrder != null &&
+            v.sortOrder > (view.sortOrder as number) &&
+            (view.scope === "team"
+              ? v.team?.id === view.team?.id
+              : v.project?.id === view.project?.id),
+        )
+        .map((v) => v.sortOrder as number)
+        .sort((a, b) => a - b)[0];
+      pinAfter = { sortOrder: view.sortOrder, nextSortOrder: next ?? null };
+    }
+    stashViewDraft({
+      kind,
+      filters: view.filters || {},
+      display: view.display || {},
+      teamId: view.team?.id,
+      projectId: view.project?.id,
+      name: view.name,
+      description: view.description,
+      icon: view.icon,
+      color: view.color,
+      saveTo: view.visibility === "private" ? "personal" : view.visibility === "workspace" ? "workspace" : undefined,
+      pinAfter,
+    });
+    // A team view's copy opens the team's editor, so "Personal" there stays a team view.
+    navigateTo(
+      view.scope === "project" && view.project?.id
+        ? `/workspace/project/${view.project.id}/view/new`
+        : view.scope === "team" && view.team?.key
+          ? `/workspace/team/${view.team.key.toLowerCase()}/views/${kind === "project" ? "projects" : "issues"}/new`
+          : `/workspace/views/${kind === "project" ? "projects" : "issues"}/new`,
+    );
+  };
+  const remove = async () => {
+    if (
+      !(await confirmDialog(`Delete the view “${view.name}”?`, {
+        danger: true,
+      }))
+    )
+      return;
+    try {
+      await deleteView(view.id);
+      saveViewEdits(view.id, null, viewerId);
+      onDeleted(view);
+    } catch (e) {
+      fail(e);
+    }
+  };
+  const subscribe = async (onAdded: boolean, onCompleted: boolean) => {
+    try {
+      const subscription = await setViewSubscription(
+        view.id,
+        onAdded,
+        onCompleted,
+      );
+      onView({ ...view, subscription });
+      flash(subscription ? "Subscribed to this view" : "Unsubscribed");
+    } catch (e) {
+      fail(e);
+    }
+  };
+  const menu = (
+    <ViewMenu
+      view={view}
+      canEdit={canEdit}
+      moveOptions={moveTargets(view, teams, viewer?.id)}
+      teams={teams}
+      onEdit={() => {
+        setIdentity({
+          name: view.name,
+          description: view.description || "",
+          icon: view.icon || null,
+          color: view.color || null,
+        });
+        setEditing(true);
+      }}
+      onDuplicate={() => void duplicate()}
+      onMove={(t) => void update(targetInput(t))}
+      onSubscribe={(a, c) => void subscribe(a, c)}
+      onCopyLink={() =>
+        void copyText(view.url || `${location.origin}${viewPath(view)}`).then(
+          (ok) => flash(ok ? "Link copied" : "Could not copy the link"),
+        )
+      }
+      onExport={
+        kind === "issue"
+          ? () =>
+              void exportViewCsv(view.id, view.slugId || "view")
+                .then(() => {
+                  // The export runs the stored view; say so rather than imply the edits went in.
+                  if (dirty)
+                    flash(
+                      "Exported the saved view, without your unsaved filter changes.",
+                    );
+                })
+                .catch(fail)
+          : undefined
+      }
+      onDelete={() => void remove()}
+      onPin={
+        view.scope === "team"
+          ? () =>
+              void pinView(view.id, !view.pinned)
+                .then((next) => {
+                  onView(next);
+                  flash(next.pinned ? "Pinned to the team’s tabs" : "Unpinned");
+                })
+                .catch(fail)
+          : undefined
+      }
+    />
+  );
+  /* ---- details panel: breakdown of the loaded rows ---- */
+  const breakdown = useMemo(() => {
+    const count = (
+      pick: (
+        i: Issue,
+      ) => { value: string | null; label: string; icon?: React.ReactNode }[],
+    ): BreakdownRow[] => {
+      const m = new Map<string, BreakdownRow>();
+      for (const i of liveIssues)
+        for (const k of pick(i)) {
+          const key = k.value ?? "none";
+          const row = m.get(key);
+          if (row) row.count += 1;
+          else
+            m.set(key, {
+              key,
+              value: k.value,
+              label: k.label,
+              count: 1,
+              icon: k.icon,
+            });
+        }
+      return [...m.values()].sort(
+        (a, b) => b.count - a.count || a.label.localeCompare(b.label),
+      );
+    };
+    return {
+      assignee: count((i) => [
+        i.assignee
+          ? {
+              value: i.assignee.id,
+              label: i.assignee.name || "Unknown",
+              icon: (
+                <span className="grid size-4.5 place-items-center">
+                  <UserBlobatar user={i.assignee} />
+                </span>
+              ),
+            }
+          : { value: null, label: "No assignee" },
+      ]),
+      labels: count((i) =>
+        i.labels?.nodes.length
+          ? i.labels.nodes.map((l) => ({
+              value: l.id,
+              label: l.name,
+              icon: (
+                <span
+                  className="block size-2 rounded-full"
+                  style={{ background: l.color || "#a1a1aa" }}
+                />
+              ),
+            }))
+          : [{ value: null, label: "No labels" }],
+      ),
+      project: count((i) => [
+        i.project
+          ? { value: i.project.id, label: i.project.name }
+          : { value: null, label: "No project" },
+      ]),
+    };
+  }, [liveIssues]);
+  const teamName = view.team?.id
+    ? teams.find((t) => t.id === view.team?.id)?.name
+    : undefined;
+  const detailsToggle = (
+    <button
+      type="button"
+      className="grid size-7 flex-none place-items-center rounded-full border border-line bg-panel text-muted hover:bg-subtle hover:text-foreground aria-pressed:bg-subtle aria-pressed:text-foreground focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11 shell-phone:min-w-11"
+      aria-label={detailsOpen ? "Hide view details" : "Show view details"}
+      aria-pressed={detailsOpen}
+      title="View details"
+      onClick={() => {
+        setDetailsOpen(!detailsOpen);
+        writeFlag(DETAILS_KEY, !detailsOpen);
+      }}
+      data-view-details-toggle=""
+    >
+      <PanelRight size={15} />
+    </button>
+  );
+  const unsaved = dirty ? (
+    <UnsavedActions
+      canSave={canEdit}
+      busy={busy}
+      onClear={clearEdits}
+      onSave={() => void saveToView()}
+      onSaveAsNew={saveAsNew}
+    />
+  ) : undefined;
+  const noun = kind === "project" ? "project" : "task";
+  const countLine =
+    total === null ? "…" : `${total} ${total === 1 ? noun : `${noun}s`}`;
+  return (
+    <section
+      className="flex min-h-0 min-w-0 flex-1 flex-col"
+      data-view-page=""
+      data-view-id={view.id}
+      aria-label={view.name}
+    >
+      <header
+        className="flex h-11 min-h-11 flex-none items-center gap-2 border-b border-line px-4"
+        data-view-head=""
+      >
+        {breadcrumb}
+        {canEdit && !editing ? (
+          <ViewIconPicker
+            icon={view.icon}
+            color={view.color}
+            onChange={(patch) => void update(patch)}
+          />
+        ) : (
+          <ViewIcon icon={view.icon} color={view.color} />
+        )}
+        {canEdit && !editing ? (
+          <button
+            type="button"
+            className="min-w-0 truncate rounded px-1 text-sm font-medium text-foreground hover:bg-subtle"
+            title="Rename"
+            onClick={() => {
+              setIdentity({
+                name: view.name,
+                description: view.description || "",
+                icon: view.icon || null,
+                color: view.color || null,
+              });
+              setEditing(true);
+            }}
+          >
+            {view.name}
+          </button>
+        ) : (
+          <h1 className="min-w-0 truncate text-sm font-medium">{view.name}</h1>
+        )}
+        <button
+          type="button"
+          className="grid size-7 place-items-center rounded-md text-muted hover:bg-subtle hover:text-foreground aria-pressed:text-foreground shell-phone:min-h-11 shell-phone:min-w-11"
+          aria-label={
+            view.favorite ? "Remove from favorites" : "Add to favorites"
+          }
+          aria-pressed={view.favorite}
+          title={
+            view.favorite
+              ? "Remove from favorites (Alt F)"
+              : "Add to favorites (Alt F)"
+          }
+          onClick={() => void favorite()}
+          data-view-favorite=""
+        >
+          <Star size={15} fill={view.favorite ? "currentColor" : "none"} />
+        </button>
+        {menu}
+        <span
+          className="ml-auto text-sm text-muted"
+          data-view-count=""
+          aria-live="polite"
+        >
+          {countLine}
+        </span>
+      </header>
+      {notice && (
+        <p
+          className="mx-4 mt-2 text-sm text-muted"
+          role="status"
+          data-view-notice=""
+        >
+          {notice}
+        </p>
+      )}
+      {editing && (
+        <div className="px-4 pt-4">
+          <ViewIdentityCard
+            icon={identity.icon}
+            color={identity.color}
+            name={identity.name}
+            description={identity.description}
+            namePlaceholder="View name"
+            autoFocusName
+            onSubmit={() => void saveIdentity()}
+            onCancel={() => setEditing(false)}
+            onChange={(patch) => setIdentity((old) => ({ ...old, ...patch }))}
+            actions={
+              <>
+                <button
+                  type="button"
+                  className="h-7 rounded-md px-2.5 text-sm hover:bg-subtle shell-phone:min-h-11"
+                  onClick={() => setEditing(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="h-7 rounded-md bg-accent px-2.5 text-sm font-medium text-panel hover:brightness-110 disabled:opacity-60 shell-phone:min-h-11"
+                  disabled={busy || !identity.name.trim()}
+                  onClick={() => void saveIdentity()}
+                >
+                  Save
+                </button>
+              </>
+            }
+          />
+        </div>
+      )}
+      <div className="flex min-h-0 min-w-0 flex-1 max-md:flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {kind === "issue" ? (
+            <MyIssuesContent
+              tabs={tabs || <span className="flex-1" />}
+              tab="Assigned"
+              issues={liveIssues}
+              states={states}
+              teams={teams}
+              projects={projects}
+              onOpenIssue={actions.onOpen}
+              onNew={actions.onNew}
+              layout={actions.layout}
+              onLayoutChange={actions.onLayoutChange}
+              onMoved={actions.onMoved}
+              onUpdate={actions.onUpdate}
+              filterState={{ root: filterRoot, onChange: setFilterRoot }}
+              displayState={prefs}
+              canSetDefault={canEdit}
+              serverRows={{
+                hasMore: issueRows.hasMore,
+                loading: issueRows.loading,
+                error: issueRows.error,
+                onLoadMore: issueRows.loadMore,
+              }}
+              filterRowEnd={unsaved}
+              toolbarEnd={detailsToggle}
+              onSaveView={canEdit ? () => void saveToView() : undefined}
+              onSaveAsView={() => saveAsNew()}
+              emptyCopy={
+                issueRows.ready
+                  ? [
+                      "No tasks in this view",
+                      "Tasks that match its filters will show up here.",
+                    ]
+                  : ["Loading tasks…", ""]
+              }
+            />
+          ) : (
+            <ViewProjectList
+              rows={projectRows}
+              filterRoot={filterRoot}
+              onFilterChange={setFilterRoot}
+              catalog={projectCatalog}
+              prefs={prefs}
+              canSetDefault={canEdit}
+              filterRowEnd={unsaved}
+              toolbarEnd={detailsToggle}
+              onOpen={(p) => navigateTo(`/workspace/project/${p.id}`)}
+            />
+          )}
+        </div>
+        {detailsOpen && (
+          <div className="flex min-h-0 flex-none p-4 pl-0 max-md:pl-4 max-md:pt-0">
+            <ViewDetailsPanel
+              view={view}
+              visibility={visibilityLabel(view, teamName)}
+              owners={users}
+              canChangeOwner={canEdit}
+              onOwner={(ownerId) => void update({ ownerId })}
+              breakdown={breakdown}
+              partial={issueRows.hasMore}
+              onPick={(field, value) =>
+                setFilterRoot(toggleValue(filterRoot, field, value, fields))
+              }
+              onFavorite={() => void favorite()}
+            />
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/* ------------------------------------------------------------ the list */
+
+const LIST_DISPLAY_KEY = "hoja_views_list_display";
+
+type ListDisplay = {
+  ordering: ViewOrdering;
+  descending: boolean;
+  columns: ListColumn[];
+};
+
+function readListDisplay(): ListDisplay {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(LIST_DISPLAY_KEY) || "null");
+    if (parsed && typeof parsed === "object")
+      return {
+        ordering: parsed.ordering || "name",
+        descending: Boolean(parsed.descending),
+        columns: Array.isArray(parsed.columns) ? parsed.columns : ["owner"],
+      };
+  } catch {
+    /* a corrupt value reads as the default */
+  }
+  return { ordering: "name", descending: false, columns: ["owner"] };
+}
+
+/** The views list (workspace, a team's, or the favorites): Tasks/Projects tabs, rows grouped
+ * into Personal, Workspace and team sections, its own small display menu, and the editor at
+ * `…/new`. */
+function ViewsPage({
+  team,
+  projects,
+  actions,
+  favoriteOnly = false,
+  revision = 0,
+}: {
+  team?: Team;
+  projects: Project[];
+  actions: IssueActions;
+  favoriteOnly?: boolean;
+  revision?: number;
+}) {
+  const [path, setPath] = useState(() => location.pathname);
+  useEffect(() => {
+    const sync = () => setPath(location.pathname);
+    window.addEventListener("popstate", sync);
+    return () => window.removeEventListener("popstate", sync);
+  }, []);
+  const base = team
+    ? `/workspace/team/${team.key.toLowerCase()}/views`
+    : "/workspace/views";
+  const kind: "issue" | "project" = path.includes("/projects")
+    ? "project"
+    : "issue";
+  const creating = path.endsWith("/new");
+  const go = (next: string) => {
+    navigateTo(next);
+    setPath(next);
+  };
+  if (creating && !favoriteOnly)
+    return (
+      <ViewEditorPage
+        key={`${kind}-${path}`}
+        initialKind={kind}
+        allowKinds={!team}
+        scope={{ team }}
+        projects={projects}
+        actions={actions}
+        onCancel={() =>
+          go(`${base}/${kind === "project" ? "projects" : "issues"}`)
+        }
+        onCreated={(v) => navigateTo(viewPath(v))}
+        breadcrumb={
+          <nav
+            className="flex h-11 min-h-11 flex-none items-center gap-1.5 border-b border-line px-4 text-sm"
+            aria-label="Breadcrumb"
+          >
+            <button
+              type="button"
+              className="rounded px-1 text-muted hover:bg-subtle hover:text-foreground shell-phone:min-h-11"
+              onClick={() =>
+                go(`${base}/${kind === "project" ? "projects" : "issues"}`)
+              }
+            >
+              {team ? `${team.name} views` : "Views"}
+            </button>
+            <ChevronRight size={13} className="text-muted" />
+            <span>New view</span>
+          </nav>
+        }
+      />
+    );
+  return (
+    <ViewsList
+      key={kind}
+      team={team}
+      kind={kind}
+      favoriteOnly={favoriteOnly}
+      revision={revision}
+      onKind={(k) => go(`${base}/${k === "project" ? "projects" : "issues"}`)}
+      onNew={() =>
+        go(`${base}/${kind === "project" ? "projects" : "issues"}/new`)
+      }
+    />
+  );
+}
+
+function ViewsList({
+  team,
+  kind,
+  favoriteOnly,
+  revision,
+  onKind,
+  onNew,
+}: {
+  team?: Team;
+  kind: "issue" | "project";
+  favoriteOnly: boolean;
+  revision: number;
+  onKind: (kind: "issue" | "project") => void;
+  onNew: () => void;
+}) {
+  const meta = useSyncMeta();
+  const [rows, setRows] = useState<ServerView[] | null>(null),
+    [error, setError] = useState("");
+  const [display, setDisplayState] = useState<ListDisplay>(readListDisplay);
+  const setDisplay = (patch: Partial<ListDisplay>) =>
+    setDisplayState((old) => {
+      const next = { ...old, ...patch };
+      try {
+        localStorage.setItem(LIST_DISPLAY_KEY, JSON.stringify(next));
+      } catch {
+        /* the choice lasts for this visit */
+      }
+      return next;
+    });
+  /* Only the latest read lands: switching Tasks/Projects quickly must not let the slower,
+     older answer replace the list of the tab on screen. */
+  const reads = useRef(0);
+  const load = useCallback(() => {
+    const read = ++reads.current;
+    listViews(kind)
+      .then((r) => {
+        if (read !== reads.current) return;
+        setRows(r);
+        setError("");
+      })
+      .catch((e) => {
+        if (read === reads.current) setError((e as Error).message);
+      });
+  }, [kind]);
+  useEffect(() => {
+    void revision;
+    load();
+    window.addEventListener(VIEWS_CHANGED, load);
+    return () => {
+      reads.current += 1;
+      window.removeEventListener(VIEWS_CHANGED, load);
+    };
+  }, [load, revision]);
+  const shown = useMemo(
+    () =>
+      (rows || []).filter(
+        (v) =>
+          (!team || v.team?.id === team.id) && (!favoriteOnly || v.favorite),
+      ),
+    [rows, team, favoriteOnly],
+  );
+  const sections = useMemo(
+    () =>
+      viewSections(sortViews(shown, display.ordering, display.descending), {
+        team: (id) => meta?.teams.nodes.find((t) => t.id === id)?.name,
+        project: (id) => meta?.projects.nodes.find((p) => p.id === id)?.name,
+      }),
+    [shown, display.ordering, display.descending, meta],
+  );
+  const title = favoriteOnly
+    ? "Favorite views"
+    : team
+      ? `${team.name} views`
+      : "Views";
+  return (
+    <section
+      className="flex min-h-0 min-w-0 flex-1 flex-col text-sm"
+      data-workspace-views-page=""
+      aria-label={title}
+    >
+      <header
+        className="flex h-11 min-h-11 flex-none items-center justify-between border-b border-line px-4"
+        data-workspace-views-head=""
+      >
+        <h1 className="m-0 text-(length:--hoja-title-size) font-(--hoja-title-weight)">
+          {title}
+        </h1>
+        {!favoriteOnly && (
+          <button
+            className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-sm hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11 shell-phone:focus-visible:-outline-offset-2"
+            type="button"
+            onClick={onNew}
+            data-new-view=""
+          >
+            <Plus size={15} /> New view
+          </button>
+        )}
+      </header>
+      <div className="flex items-center gap-2 px-4 py-2.5">
+        <ViewKindTabs kind={kind} onChange={onKind} />
+        <ViewsListDisplay
+          ordering={display.ordering}
+          descending={display.descending}
+          columns={display.columns}
+          onOrdering={(ordering) => setDisplay({ ordering })}
+          onDirection={(descending) => setDisplay({ descending })}
+          onColumns={(columns) => setDisplay({ columns })}
+        />
+      </div>
+      {error && (
+        <p
+          className="px-4 text-muted"
+          role="alert"
+          data-workspace-views-error=""
+        >
+          {error}
+        </p>
+      )}
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
+        {rows === null && !error ? (
+          <p className="p-6 text-center text-muted" role="status">
+            Loading views…
+          </p>
+        ) : sections.length ? (
+          <ViewsTable
+            sections={sections}
+            ordering={display.ordering}
+            descending={display.descending}
+            columns={display.columns}
+            onOrder={(ordering) =>
+              setDisplay(
+                ordering === display.ordering
+                  ? { descending: !display.descending }
+                  : { ordering, descending: false },
+              )
+            }
+            onOpen={(v) => navigateTo(viewPath(v))}
+            onFavorite={(v) =>
+              void toggleViewFavorite(v.id).catch((e) =>
+                setError((e as Error).message),
+              )
+            }
+            onNew={
+              favoriteOnly
+                ? undefined
+                : (section) => {
+                    /* A section's "+" starts the editor saving to that section. */
+                    const [where, id] = section.key.split(":");
+                    if (where === "project" && id)
+                      return navigateTo(`/workspace/project/${id}/view/new`);
+                    stashViewDraft({
+                      kind,
+                      filters: {},
+                      display: {},
+                      ...(where === "team" && id
+                        ? { teamId: id }
+                        : {
+                            saveTo:
+                              where === "workspace" ? "workspace" : "personal",
+                          }),
+                    });
+                    onNew();
+                  }
+            }
+          />
+        ) : (
+          <div
+            className="mx-auto grid min-h-[calc(100dvh-200px)] w-[min(365px,calc(100%-32px))] content-center justify-items-start gap-3.5 text-muted"
+            data-workspace-views-empty=""
+            role="status"
+          >
+            <Layers3 size={44} strokeWidth={1} />
+            <h2 className="m-0 text-[16px] font-semibold text-foreground">
+              {title}
+            </h2>
+            <p className="m-0 mb-2 text-[13px] leading-normal">
+              {favoriteOnly
+                ? "Star a view to keep it here and in the sidebar."
+                : `Views are saved filters over ${kind === "project" ? "projects" : "tasks"}. Keep one to yourself or share it with ${team ? "the team" : "the workspace"}.`}
+            </p>
+            {!favoriteOnly && (
+              <button
+                className="rounded-full bg-accent px-3 py-1.5 text-[12px] text-panel focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11"
+                type="button"
+                onClick={onNew}
+              >
+                Create new view
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/* --------------------------------------------------------- project views */
+
+/** A project's views: the list of views saved for it, the editor at `…/view/new` (Personal or
+ * shared with the workspace), and each view's page. */
+function ProjectViewsPage({
+  project: given,
+  onBack,
+  actions,
+  projects,
+  revision,
+}: {
+  project: Project;
+  onBack: () => void;
+  actions: IssueActions;
+  projects: Project[];
+  revision: number;
+}) {
+  const project = useProject(given);
+  const [path, setPath] = useState(() => location.pathname);
+  useEffect(() => {
+    const sync = () => setPath(location.pathname);
+    window.addEventListener("popstate", sync);
+    return () => window.removeEventListener("popstate", sync);
+  }, []);
+  const ident = decodeURIComponent(path.split("/view/")[1] || "").replace(
+    /\/$/,
+    "",
+  );
+  const base = `/workspace/project/${project.id}/view`;
+  const go = (next: string) => {
+    navigateTo(next);
+    setPath(next);
+  };
+  const crumb = (label?: string) => (
+    <nav
+      className="flex h-11 min-h-11 flex-none items-center gap-1.5 border-b border-line px-4 text-sm"
+      aria-label="Breadcrumb"
+      data-project-reference-head=""
+    >
+      <button
+        type="button"
+        className="rounded px-1 text-muted hover:bg-subtle hover:text-foreground shell-phone:min-h-11"
+        onClick={onBack}
+      >
+        {project.name}
+      </button>
+      <ChevronRight size={13} className="text-muted" />
+      <button
+        type="button"
+        className="rounded px-1 text-muted hover:bg-subtle hover:text-foreground shell-phone:min-h-11"
+        onClick={() => go(base)}
+      >
+        Views
+      </button>
+      {label && (
+        <>
+          <ChevronRight size={13} className="text-muted" />
+          <span className="truncate">{label}</span>
+        </>
+      )}
+    </nav>
+  );
+  let body: React.ReactNode;
+  if (ident === "new")
+    body = (
+      <ViewEditorPage
+        key="new"
+        initialKind="issue"
+        allowKinds={false}
+        scope={{ project }}
+        projects={projects}
+        actions={actions}
+        onCancel={() => go(base)}
+        onCreated={(v) => go(`${base}/${v.slugId || v.id}`)}
+        breadcrumb={crumb("New view")}
+      />
+    );
+  else if (ident)
+    body = (
+      <>
+        {crumb()}
+        <SavedViewPage
+          key={ident}
+          ident={ident}
+          projects={projects}
+          actions={actions}
+          revision={revision}
+          onDeleted={() => go(base)}
+        />
+      </>
+    );
+  else
+    body = (
+      <>
+        {crumb()}
+        <ProjectViewsList
+          project={project}
+          revision={revision}
+          onOpen={(v) => go(`${base}/${v.slugId || v.id}`)}
+          onNew={() => go(`${base}/new`)}
+        />
+      </>
+    );
+  return (
+    <section
+      className="flex min-h-[calc(100dvh-16px)] min-w-0 flex-col"
+      data-project-local-views=""
+      data-project-reference=""
+    >
+      {body}
+    </section>
+  );
+}
+
+function ProjectViewsList({
+  project,
+  revision,
+  onOpen,
+  onNew,
+}: {
+  project: Project;
+  revision: number;
+  onOpen: (view: ServerView) => void;
+  onNew: () => void;
+}) {
+  const [rows, setRows] = useState<ServerView[] | null>(null),
+    [error, setError] = useState("");
+  useEffect(() => {
+    let live = true;
+    const load = () =>
+      listViews(undefined, "project")
+        .then((r) => {
+          if (live) setRows(r.filter((v) => v.project?.id === project.id));
+        })
+        .catch((e) => live && setError((e as Error).message));
+    void revision;
+    void load();
+    window.addEventListener(VIEWS_CHANGED, load);
+    return () => {
+      live = false;
+      window.removeEventListener(VIEWS_CHANGED, load);
+    };
+  }, [project.id, revision]);
+  const [order, setOrder] = useState<{ by: ViewOrdering; descending: boolean }>(
+    {
+      by: "name",
+      descending: false,
+    },
+  );
+  const sections = useMemo(
+    () =>
+      viewSections(sortViews(rows || [], order.by, order.descending), {
+        team: () => undefined,
+        project: () => "Shared with the workspace",
+      }),
+    [rows, order],
+  );
+  return (
+    <div
+      className="grid content-start gap-3 p-4"
+      data-project-local-view-body=""
+    >
+      <div className="flex items-center justify-between gap-2">
+        <p className="m-0 text-muted">
+          Views saved for this project. Personal views are yours; shared views
+          are visible to everyone who can see the project.
+        </p>
+        <button
+          type="button"
+          className="inline-flex flex-none items-center gap-1.5 rounded-md border border-line bg-panel px-2.5 py-1 text-sm hover:bg-subtle shell-phone:min-h-11"
+          onClick={onNew}
+        >
+          <Plus size={14} /> New view
+        </button>
+      </div>
+      {error && (
+        <p className="text-muted" role="alert">
+          {error}
+        </p>
+      )}
+      {rows === null && !error ? (
+        <p className="text-muted" role="status">
+          Loading views…
+        </p>
+      ) : sections.length ? (
+        <ViewsTable
+          sections={sections}
+          ordering={order.by}
+          descending={order.descending}
+          columns={["owner", "updated"]}
+          onOrder={(by) =>
+            setOrder((old) =>
+              old.by === by
+                ? { by, descending: !old.descending }
+                : { by, descending: false },
+            )
+          }
+          onOpen={onOpen}
+          onFavorite={(v) =>
+            void toggleViewFavorite(v.id).catch((e) =>
+              setError((e as Error).message),
+            )
+          }
+        />
+      ) : (
+        <p className="text-muted" role="status">
+          No project views saved yet.
+        </p>
+      )}
+    </div>
+  );
 }

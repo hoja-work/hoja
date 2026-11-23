@@ -13,6 +13,7 @@ fragment UserCore on User {
   active
   isMe
   avatarUrl
+  avatarSeed
 }
 """
 
@@ -136,3 +137,22 @@ def assemble(*fragments: str) -> str:
         seen.add(name)
         parts.append(frag.strip())
     return "\n\n".join(parts)
+
+# A decision's readable shape, shared by every decision query and mutation so the model
+# deserializes the same fields everywhere (docs/decisions.md).
+DECISION_FIELDS = """
+  id
+  question
+  options
+  context
+  status
+  answered
+  askedByAgent
+  askedBy { id name email }
+  answer
+  chosenOption
+  answeredBy { id name email }
+  answeredAt
+  createdAt
+  updatedAt
+"""

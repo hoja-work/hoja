@@ -136,7 +136,7 @@ def test_callback_stores_the_sealed_token_and_lists_the_workspace(tmp_path) -> N
                 follow_redirects=False,
             )
         assert res.status_code == 302
-        assert res.headers["location"] == "/?connector=notion-connected"
+        assert res.headers["location"] == "/workspace/settings/connections?connector=notion-connected"
         listing = client.get(
             "/api/connectors/accounts",
             headers={"Authorization": f"Bearer {admin['token']}"},
@@ -149,7 +149,7 @@ def test_callback_stores_the_sealed_token_and_lists_the_workspace(tmp_path) -> N
     rows = _account_rows(engine, admin["org_id"])
     assert len(rows) == 1
     assert rows[0]["encrypted_refresh_token"] != "secret_notion_access_token"
-    assert decrypt_secret(rows[0]["encrypted_refresh_token"]) == "secret_notion_access_token"
+    assert decrypt_secret(rows[0]["encrypted_refresh_token"], rows[0]["organization_id"]) == "secret_notion_access_token"
 
 
 def test_callback_rejects_forged_state(tmp_path) -> None:
@@ -187,7 +187,8 @@ def test_callback_rejects_an_expired_state(tmp_path) -> None:
                 "exp": int(time.time()) - 1,
                 "nonce": "n",
             }
-        )
+        ),
+        admin["org_id"],
     )
     with TestClient(app) as client:
         res = client.get(
@@ -250,7 +251,7 @@ def test_revoke_discards_the_token_and_says_notion_was_not_called(tmp_path) -> N
                 provider=NOTION_PROVIDER,
                 external_account="Space",
                 scopes="read_content",
-                encrypted_refresh_token=encrypt_secret("secret_notion_access_token"),
+                encrypted_refresh_token=encrypt_secret("secret_notion_access_token", admin["org_id"]),
                 status="active",
                 created_at="2026-11-09T00:00:00+00:00",
                 updated_at="2026-11-09T00:00:00+00:00",
@@ -293,7 +294,7 @@ def test_a_notion_only_account_alone_binds_the_agent_toolset(tmp_path, monkeypat
                 provider=NOTION_PROVIDER,
                 external_account="Space",
                 scopes="read_content",
-                encrypted_refresh_token=encrypt_secret("secret_notion_access_token"),
+                encrypted_refresh_token=encrypt_secret("secret_notion_access_token", admin["org_id"]),
                 status="active",
                 created_at="2026-11-09T00:00:00+00:00",
                 updated_at="2026-11-09T00:00:00+00:00",

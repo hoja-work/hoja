@@ -64,7 +64,7 @@ def _grant(engine, admin, scopes=WORKSPACE_SCOPES, account_id="acct-google"):
                 provider="google_workspace",
                 external_account="owner@chat.test",
                 scopes=scopes,
-                encrypted_refresh_token=encrypt_secret("1//OLD-REFRESH"),
+                encrypted_refresh_token=encrypt_secret("1//OLD-REFRESH", admin["org_id"]),
                 status="active",
                 created_at="t0",
                 updated_at="t0",
@@ -118,7 +118,7 @@ def test_a_chat_upgrade_asks_for_the_three_chat_scopes_and_nothing_else(tmp_path
     # A Meet or Workspace scope here would re-ask for permissions Chat does not use.
     for scope in READ_SCOPES.values():
         assert scope not in query["scope"][0]
-    assert json.loads(decrypt_secret(state))["addon"] == "chat"
+    assert json.loads(decrypt_secret(state, admin["org_id"]))["addon"] == "chat"
 
 
 @respx.mock

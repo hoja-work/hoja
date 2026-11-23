@@ -1,0 +1,3 @@
+/* React Grab ships generic utilities too; never let its dev-only CSS override
+ * the application's responsive layout when loaded asynchronously. */
+@import "react-grab/styles.css" layer(vendor);

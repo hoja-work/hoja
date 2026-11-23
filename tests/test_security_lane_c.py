@@ -58,6 +58,9 @@ def test_refresh_reuse_over_http_revokes_grant_family(tmp_path, monkeypatch) -> 
         first = http.post("/mcp/token", data=form)
         assert first.status_code == 200, first.text
         rotated = first.json()
+        # One retry inside the grace window is a lost response, not a replay.
+        retried = http.post("/mcp/token", data=form)
+        assert retried.status_code == 200, retried.text
         replay = http.post("/mcp/token", data=form)
         assert replay.status_code == 400
         assert replay.json()["error"] == "invalid_grant"

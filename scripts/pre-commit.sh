@@ -104,9 +104,13 @@ fi
 
 # Check exactly what will be committed, so unstaged fixes cannot mask slop in
 # the index and newly registered paths cannot bypass the repository policy.
-if ! python3 "$root/scripts/check_docs.py" --staged; then
+# Resolved next to this hook rather than from the git root: the hook and the
+# scanner ship in the same directory, and a checkout may install the hook from
+# either `scripts/` or `app/scripts/`.
+hook_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+if ! python3 "$hook_dir/check_docs.py" --staged; then
     red "Commit refused: staged documentation failed the anti-slop policy."
-    yellow "Run: python3 scripts/check_docs.py --staged"
+    yellow "Run: python3 $hook_dir/check_docs.py --staged"
     exit 1
 fi
 

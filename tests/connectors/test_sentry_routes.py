@@ -96,7 +96,10 @@ def _seal(pending: dict) -> str:
         "nonce": uuid.uuid4().hex,
     }
     body.update(pending)
-    return encrypt_secret(json.dumps(body))
+    # Crafted exactly as the server does: sealed under the organization the payload
+    # names, and wrapped with the workspace hint the broker routes on.
+    from hoja_server.connector_hosts import wrap_state
+    return wrap_state(encrypt_secret(json.dumps(body), str(body["org"])), body.get("tenant"))
 
 
 GRANT_LIFETIME_SECONDS = 8 * 60 * 60
@@ -183,7 +186,11 @@ def test_start_registers_the_broker_callback_when_one_is_live(tmp_path, broker) 
 def test_start_refuses_a_host_that_is_not_a_workspace(tmp_path, broker) -> None:
     _, app, admin = _setup(tmp_path)
     with _client(app, "https://localhost") as client:
-        assert _start(client, admin["token"]).status_code == 400
+        res = _start(client, admin["token"])
+    # Refused before Sentry is contacted: an unknown host is the answer Settings
+    # renders, not a consent screen that would fail at the provider.
+    assert res.status_code == 409
+    assert res.json()["error"] == "not available on this workspace host"
 
 
 # --- broker ---------------------------------------------------------------------------------
@@ -291,7 +298,7 @@ def test_full_broker_flow_stores_a_sealed_installation_grant(tmp_path, broker) -
                 follow_redirects=False,
             )
     assert res.status_code == 302
-    assert res.headers["location"] == f"{TENANT}/?connector=sentry-connected"
+    assert res.headers["location"] == f"{TENANT}/workspace/settings/connections?connector=sentry-connected"
     sent = json.loads(exchange.calls.last.request.content)
     assert sent["grant_type"] == "authorization_code"
     assert sent["code"] == "c1"
@@ -302,8 +309,8 @@ def test_full_broker_flow_stores_a_sealed_installation_grant(tmp_path, broker) -
     assert row["external_id"] == INSTALLATION
     assert row["owner_user_id"] == admin["user_id"]
     assert set(row["scopes"].split()) == {"event:read", "org:read", "project:read"}
-    assert decrypt_secret(row["encrypted_refresh_token"]) == "refresh-sentry-fixture"
-    assert decrypt_secret(row["encrypted_access_token"]) == "access-sentry-fixture"
+    assert decrypt_secret(row["encrypted_refresh_token"], row["organization_id"]) == "refresh-sentry-fixture"
+    assert decrypt_secret(row["encrypted_access_token"], row["organization_id"]) == "access-sentry-fixture"
     # The exact instant the provider named, not merely "some time after now".
     assert int(row["access_token_expires_at"]) == expires_at
 
@@ -383,7 +390,7 @@ def test_without_a_broker_the_callback_is_the_install_itself(tmp_path) -> None:
                 follow_redirects=False,
             )
     assert done.status_code == 302
-    assert done.headers["location"] == "/?connector=sentry-connected"
+    assert done.headers["location"] == "/workspace/settings/connections?connector=sentry-connected"
     assert len(_rows(engine, admin["org_id"])) == 1
 
 

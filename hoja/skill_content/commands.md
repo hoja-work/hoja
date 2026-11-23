@@ -11,8 +11,36 @@ hoja me                          # human-friendly card
 hoja -o json me                  # JSON for piping
 ```
 
+### `hoja auth login`
+Sign in through the browser and store a refreshable token for the workspace.
+Accepts `acme.example.com`, `https://acme.example.com` or the `/graphql` URL;
+without an argument it reuses the current account's workspace. Falls back to a
+device code when no browser is available (SSH, no display) or with `--device`.
+```bash
+hoja auth login acme.example.com
+hoja auth login acme.example.com --device --read-only --name acme-ro
+```
+
+### `hoja auth logout`
+Revoke the sign-in at the server and delete the local tokens. The account entry
+stays, so `hoja auth login` signs back in to the same workspace.
+```bash
+hoja auth logout            # current account
+hoja auth logout acme
+```
+
+### `hoja auth token`
+Print a fresh access token for the current account. With `--json`, stdout is a
+single JSON object: `access_token`, `token_type`, `expires_at`, `api_url`,
+`mcp_url`, `workspace`, `account`, `source`. Never echo the token itself.
+```bash
+hoja auth token --json
+```
+
 ### `hoja auth status`
-Print which token source resolved (env var, config file, --token flag).
+Show the active account, credential source (`--token`, an environment variable,
+the stored sign-in, or a config-file key), workspace, user, scopes and expiry,
+then the viewer.
 ```bash
 hoja auth status
 ```
@@ -25,7 +53,7 @@ hoja -o json auth accounts      # structured for agent reasoning
 ```
 
 ### `hoja auth add`
-Add a named account. Optionally verifies the token against the upstream API to populate `org_name`. Use `--teams` to declare which team keys the account owns (enables automatic account selection) and `--default` to make it the global default.
+Add a named account that uses an API key (for automation; people should prefer `hoja auth login`). Optionally verifies the token against the upstream API to populate `org_name`. Use `--teams` to declare which team keys the account owns (enables automatic account selection) and `--default` to make it the global default.
 ```bash
 hoja auth add work --token $LINEAR_WORK_TOKEN --teams "ENG,OPS" --default
 hoja auth add personal --token $LINEAR_PERSONAL_TOKEN --token-env LINEAR_PERSONAL_TOKEN
@@ -91,6 +119,7 @@ hoja issue list --cycle current --team ENG
 hoja issue list --contains "auth"            # title/description full-text
 hoja issue list --created-after 2026-05-01
 hoja issue list -n 20                         # limit
+hoja issue list --view "Urgent tasks"         # run a saved view (name, slug or id) on the server
 
 # Read one issue (returns title, description, state, assignee, labels, comments)
 hoja issue get ENG-35
@@ -113,6 +142,12 @@ hoja issue create --team ENG --title "Fix login flow" \
 
 # Update fields
 hoja issue update ENG-35 --title "Better title" --priority 1
+
+# Attribution: nest an existing issue under a parent, move it, or detach it
+hoja issue create --team ENG --title "Wire the retry loop" --parent ENG-35
+hoja issue update ENG-36 --parent ENG-42      # re-parent (identifier or UUID)
+hoja issue update ENG-36 --no-parent          # detach; --parent "" does the same
+hoja issue list --parent ENG-42               # what is nested under ENG-42
 
 # State transition (run `team states ENG` first to see valid names)
 hoja issue state ENG-35 "In Review"
@@ -165,6 +200,60 @@ git log -1 --pretty=%B | hoja comment add ENG-35
 hoja comment edit <COMMENT_ID> "Updated"
 hoja comment delete <COMMENT_ID>
 ```
+
+## Decisions (ask a human)
+
+A decision is a question an agent asks on an issue (docs/decisions.md). While it is open the
+issue reports `decisionNeeded`, a board flags it as waiting on a person, and the agent can
+block until the human answers. Use it instead of burying a question in a comment.
+
+```bash
+hoja decision ask ENG-35 --question "Is View a first-class entity?" \
+    --option view="First-class entity" --option flag="Just a saved filter" \
+    --context "Two Mor label concepts on HOJA-98." --agent claw:run-30d5
+
+hoja decision ask ENG-35 -q "Which repo owns this?" --wait   # ask and block for the answer
+
+hoja decision list ENG-35                 # newest first
+hoja decision list ENG-35 --status open
+hoja decision get <DECISION_ID>           # one poll: status, answered, answer, answeredBy
+hoja decision wait <DECISION_ID> --timeout 900
+hoja decision answer <DECISION_ID> --option view
+hoja decision answer <DECISION_ID> --answer "hoja-cloud"
+hoja decision cancel <DECISION_ID>        # the asker or an admin, while it is open
+```
+
+`answer` is idempotent: replaying the same answer succeeds and writes nothing, while a
+different answer is refused (`ALREADY_ANSWERED`) — the human's first answer stands.
+`wait` exits 0 once the decision is answered or canceled and prints the row; on timeout it
+exits with a usage error that names the poll to retry.
+
+## Decisions (ask a human)
+
+A decision is a question an agent asks on an issue (docs/decisions.md). While it is open the
+issue reports `decisionNeeded`, a board flags it as waiting on a person, and the agent can
+block until the human answers. Use it instead of burying a question in a comment.
+
+```bash
+hoja decision ask ENG-35 --question "Is View a first-class entity?" \
+    --option view="First-class entity" --option flag="Just a saved filter" \
+    --context "Two Mor label concepts on HOJA-98." --agent claw:run-30d5
+
+hoja decision ask ENG-35 -q "Which repo owns this?" --wait   # ask and block for the answer
+
+hoja decision list ENG-35                 # newest first
+hoja decision list ENG-35 --status open
+hoja decision get <DECISION_ID>           # one poll: status, answered, answer, answeredBy
+hoja decision wait <DECISION_ID> --timeout 900
+hoja decision answer <DECISION_ID> --option view
+hoja decision answer <DECISION_ID> --answer "hoja-cloud"
+hoja decision cancel <DECISION_ID>        # the asker or an admin, while it is open
+```
+
+`answer` is idempotent: replaying the same answer succeeds and writes nothing, while a
+different answer is refused (`ALREADY_ANSWERED`) — the human's first answer stands.
+`wait` exits 0 once the decision is answered or canceled and prints the row; on timeout it
+exits with a usage error that names the poll to retry.
 
 ## Labels
 

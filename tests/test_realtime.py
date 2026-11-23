@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import suppress
+
 import pytest
 
 pytest.importorskip("sqlalchemy")
@@ -10,7 +13,7 @@ pytest.importorskip("starlette")
 from sqlalchemy import select
 from starlette.testclient import TestClient
 
-from hoja_server import sync
+from hoja_server import realtime, sync
 from hoja_server.app import create_app
 from hoja_server.db import (
     api_key,
@@ -215,3 +218,90 @@ def test_bootstrap_derived_from_previous_snapshot_matches_full_read(world) -> No
         titles = {r[2] for r in second["issues"]}
         assert "Renamed" in titles and "Brand new" in titles and "Issue 1" not in titles
         assert not titles & {"Hidden", "Hidden renamed"}
+
+
+# --- shutdown ---------------------------------------------------------------------------
+
+
+async def test_the_poll_wait_cannot_lose_a_cancellation(tmp_path) -> None:
+    """Set the kick and cancel in one tick: the wait must raise, not return the result.
+
+    ``asyncio.wait_for`` returns the awaited task's result from its ``except
+    CancelledError`` branch when that task finished in the same loop iteration, so the
+    cancel is silently dropped. ``RealtimeHub._wait_for_kick`` must not have that branch.
+    """
+    engine = make_engine(tmp_path / "hub-cancel.db")
+    migrate(engine)
+    hub = realtime.RealtimeHub(Store(engine), poll_interval=30.0)
+    waiter = asyncio.create_task(hub._wait_for_kick(30.0))
+    await asyncio.sleep(0.01)  # parked on the kick
+    hub._kick.set()  # completion in flight
+    waiter.cancel()  # same tick
+
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+
+
+async def test_the_hub_stops_when_a_wakeup_lands_with_the_cancel(tmp_path) -> None:
+    """A kick in flight must not turn ``stop()`` into a wait that never ends.
+
+    ``asyncio.wait_for`` returns the awaited task's result instead of re-raising when the
+    completion and the cancellation land in the same loop iteration, so the poll loop kept
+    running with its cancel lost and ``stop()`` waited on it forever. Behind a TestClient
+    that is a lifespan that never shuts down: ``wait_shutdown`` blocks until the process is
+    killed, which kept tests/connectors/test_shared_tenancy_isolation.py out of the RLS gate.
+    """
+    engine = make_engine(tmp_path / "hub-stop.db")
+    migrate(engine)
+    hub = realtime.RealtimeHub(Store(engine), poll_interval=30.0)
+    await hub.ensure_started()
+    loops = list(hub._tasks)
+    for _ in range(200):  # wait until the poll loop has polled once and parked on its wait
+        if hub.stats["polls"]:
+            break
+        await asyncio.sleep(0.01)
+    assert hub.stats["polls"] >= 1
+    await asyncio.sleep(0.01)
+
+    this = asyncio.current_task()
+
+    async def fail_if_stop_blocks() -> None:
+        await asyncio.sleep(2.0)
+        assert this is not None
+        this.cancel()  # pre-fix: stop() is blocked in a join that cannot finish
+
+    watchdog = asyncio.create_task(fail_if_stop_blocks())
+    try:
+        hub._kick.set()  # a committed write, delivered in the same tick as the cancel
+        await hub.stop()
+    except asyncio.CancelledError:
+        raise AssertionError("hub.stop() never returned; the poll loop lost its cancellation") from None
+    finally:
+        watchdog.cancel()
+        with suppress(asyncio.CancelledError):
+            await watchdog
+
+    assert all(task.done() for task in loops)
+    assert hub._tasks == []
+
+
+async def test_the_hub_stop_re_cancels_a_task_that_lost_its_cancellation(tmp_path, monkeypatch) -> None:
+    """Shutdown is bounded even if a loop ignores the first cancel (the wait_for race)."""
+    monkeypatch.setattr(realtime, "STOP_JOIN_SECONDS", 0.1)
+    engine = make_engine(tmp_path / "hub-stubborn.db")
+    migrate(engine)
+    hub = realtime.RealtimeHub(Store(engine), poll_interval=30.0)
+
+    async def stubborn() -> None:
+        with suppress(asyncio.CancelledError):
+            await asyncio.sleep(30)  # the first cancel is lost, like the wait_for branch
+        await asyncio.sleep(30)
+
+    task = asyncio.create_task(stubborn())
+    hub._tasks = [task]
+    await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(hub.stop(), timeout=5.0)
+
+    assert task.done()
+    assert task.cancelled()

@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -37,6 +38,7 @@ from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase, FuncMetad
 from mcp.types import ToolAnnotations
 from pydantic import ConfigDict
 
+from hoja_server import agent_policy, observability, tenant_context
 from hoja_server.denials import DENY_HINT
 
 log = logging.getLogger("hoja.mcp")
@@ -73,7 +75,13 @@ READ_TOOLS: dict[str, str] = {
     "cycles": "List cycles (sprints).",
     "cycle": "One cycle by id.",
     "teamCycleCadence": "Whether cycles are enabled for a team, plus its active and upcoming cycles.",
-    "issueLabels": "Issue labels (workspace-wide and per team)." + " Deprecated: prefer the task* equivalent; this name stays as a wire-compatible alias.",
+    "issueLabels": "Issue labels (workspace-wide and per team).",
+    "issueDecisions": (
+        "Decisions (docs/decisions.md) on an issue, newest first. Poll this to read the "
+        "human's answer: an answered row carries answer, chosenOption, answeredBy and answeredAt. "
+        "filter with status: \"open\" | \"answered\" | \"canceled\"." + " Deprecated: prefer the task* equivalent; this name stays as a wire-compatible alias."
+    ),
+    "issueDecision": "One decision by id — the poll target for a single question." + " Deprecated: prefer the task* equivalent; this name stays as a wire-compatible alias.",
     "tasks": (
         "List tasks, newest first. Example filter: "
         '{"team": {"key": {"eq": "ENG"}}, "state": {"type": {"nin": ["completed", "canceled"]}}}. '
@@ -86,6 +94,19 @@ READ_TOOLS: dict[str, str] = {
     "searchTasks": "Text search over task titles, descriptions and identifiers.",
     "myTaskActivity": "Recent activity on tasks involving the signed-in user.",
     "taskLabels": "Task labels (workspace-wide and per team).",
+    "taskDecisions": (
+        "Decisions (docs/decisions.md) on a task, newest first. Poll this to read the "
+        "human's answer: an answered row carries answer, chosenOption, answeredBy and answeredAt."
+    ),
+    "taskDecision": "One decision by id - the poll target for a single question.",
+    "knowledgeDocs": (
+        "List workspace, team, and project knowledge documents (company standards, architecture notes, "
+        "and conventions). Optionally filter by scope ('workspace', 'team', or 'project') and scopeId."
+    ),
+    "knowledgeContext": (
+        "Return the merged Markdown company knowledge context in hierarchy order "
+        "(workspace -> team -> project). Pass teamId and/or projectId to include scoped standards."
+    ),
 }
 
 WRITE_TOOLS: dict[str, str] = {
@@ -95,9 +116,12 @@ WRITE_TOOLS: dict[str, str] = {
         "Runs once with no automatic retry and returns the extension's status and message."
     ),
     "issueCreate": (
-        "Create an issue. For multi-step work, create or reuse one parent issue, then create actionable "
-        "sub-issues with parentId instead of separate root issues; omit parentId for a standalone "
-        "issue or the parent itself. Returns the created issue including its identifier, parent and children."
+        "Create an issue. title and teamId are required unless templateId names a stored task "
+        "template that supplies them (a team-scoped template also supplies the team); an explicit "
+        "value always wins over the template's default. For multi-step work, create or reuse one "
+        "parent issue, then create actionable sub-issues with parentId instead of separate root "
+        "issues; omit parentId for a standalone issue or the parent itself. Returns the created "
+        "issue including its identifier, parent and children."
     ),
     "issueUpdate": (
         "Update an issue: title, description, priority, state (by name), assignee "
@@ -108,7 +132,8 @@ WRITE_TOOLS: dict[str, str] = {
     ),
     "issueArchive": "Archive an issue (reversible; prefer this over delete)." + " Deprecated: prefer the task* equivalent; this name stays as a wire-compatible alias.",
     "issueDelete": "Permanently delete an issue. Confirm with the user first." + " Deprecated: prefer the task* equivalent; this name stays as a wire-compatible alias.",
-    "commentCreate": "Add a comment to an issue.",
+    "commentCreate": "Add a comment to an issue or to a project update. Pass exactly one "
+                    "parent: issueId, or projectUpdateId (the id of a Pulse update).",
     "commentUpdate": "Edit a comment.",
     "commentDelete": "Delete a comment.",
     "issueLabelCreate": "Create a label, optionally scoped to a team." + " Deprecated: prefer the task* equivalent; this name stays as a wire-compatible alias.",
@@ -131,10 +156,57 @@ WRITE_TOOLS: dict[str, str] = {
     "notificationMarkRead": "Mark an inbox notification read.",
     "notificationArchive": "Archive an inbox notification.",
     "notificationMarkAllRead": "Mark every inbox notification read.",
+    "notificationMarkUnread": "Mark an inbox notification unread.",
+    "notificationUnarchive": "Move an inbox notification out of the archive.",
+    "notificationSnooze": "Hide an inbox notification until a time; it returns unread. Null until unsnoozes.",
+    "notificationsMarkReadForIssue": "Mark every inbox notification about one task read (or unread with read: false).",
+    "notificationsArchiveForIssue": "Archive every inbox notification about one task.",
+    "notificationsSnoozeForIssue": "Snooze every inbox notification about one task until a time.",
+    "notificationsArchiveAllRead": "Archive every read inbox notification.",
+    "notificationsMarkReadForSubject": (
+        "Mark every inbox notification about one subject (a task, project, initiative or cycle, "
+        "by the notification's subjectId) read, or unread with read: false."),
+    "notificationsArchiveForSubject": "Archive every inbox notification about one subject (by subjectId).",
+    "notificationsSnoozeForSubject": "Snooze every inbox notification about one subject (by subjectId) until a time.",
+    "projectSubscribe": "Follow a project (id or slugId): its updates, replies and status, target date or lead changes reach the inbox.",
+    "projectUnsubscribe": "Stop following a project. Mentions and being made lead still arrive.",
+    "initiativeSubscribe": "Follow an initiative: its updates and status, target date or owner changes reach the inbox.",
+    "initiativeUnsubscribe": "Stop following an initiative. Being made owner still arrives.",
+    "cycleSubscribe": "Hear when a cycle starts and when it completes.",
+    "cycleUnsubscribe": "Stop hearing about a cycle starting and completing.",
+    "issueDecisionCreate": (
+        "Ask a human a decision on an issue while you work (docs/decisions.md). Pass question, "
+        "optional options (up to 20) [{key,label,description,mediaUrl,mediaType}] and context; the issue is then flagged "
+        "decisionNeeded and appears as 'waiting on me'. Use agent to name this session. "
+        "Returns the decision id to poll with issueDecision."
+    ),
+    "issueDecisionAnswer": (
+        "Answer a decision. With options, pass option (the key or label); answer text defaults to "
+        "the option's label. Without options, answer is required. Answering is idempotent: replaying "
+        "the same answer returns replayed: true, a different answer is refused with ALREADY_ANSWERED."
+    ),
+    "issueDecisionCancel": (
+        "Withdraw an open decision you asked (the asker or an admin only); clears the issue's flag."
+    ),
+    "uploadMedia": (
+        "Upload a screenshot, image, video or document from base64 (dataBase64, filename, optional "
+        "contentType and ttlDays) and optionally attach it to a task via issueId. Returns the stored "
+        "/api/uploads/<id>.<ext> URL ready to embed in task comments or visual decision options (mediaUrl)."
+    ),
+    "issueReviewRequest": (
+        "Submit a review request on an issue in one call: upload or link visual artifacts, move the "
+        "issue to In Review (unless moveToInReview is false), post the summary comment, and optionally "
+        "open a visual decision with up to 20 options [{key,label,description,mediaUrl,mediaType}]."
+        " Deprecated: prefer the task* equivalent; this name stays as a wire-compatible alias."
+    ),
+
     "taskCreate": (
-        "Create a task. For multi-step work, create or reuse one parent task, then create actionable "
-        "sub-tasks with parentId instead of separate root tasks; omit parentId for a standalone "
-        "task or the parent itself. Returns the created task including its identifier, parent and children."
+        "Create a task. title and teamId are required unless templateId names a stored task "
+        "template that supplies them (a team-scoped template also supplies the team); an explicit "
+        "value always wins over the template's default. For multi-step work, create or reuse one "
+        "parent task, then create actionable sub-tasks with parentId instead of separate root tasks; "
+        "omit parentId for a standalone task or the parent itself. Returns the created task including "
+        "its identifier, parent and children."
     ),
     "taskUpdate": (
         "Update a task: title, description, priority, state (by name), assignee "
@@ -148,30 +220,70 @@ WRITE_TOOLS: dict[str, str] = {
     "taskLabelCreate": "Create a task label, optionally scoped to a team.",
     "taskLabelUpdate": "Rename or recolor a task label.",
     "taskLabelDelete": "Delete a task label.",
+    "taskDecisionCreate": (
+        "Ask a human a decision on a task while you work (docs/decisions.md). Pass question, "
+        "optional options (up to 20) [{key,label,description,mediaUrl,mediaType}] and context. "
+        "Returns the decision id to poll."
+    ),
+    "taskDecisionAnswer": "Answer a decision by id (or option key). Idempotent.",
+    "taskDecisionCancel": "Withdraw an open decision (asker or admin only).",
+    "knowledgeDocCreate": (
+        "Create a workspace, team, or project knowledge document (Markdown). "
+        "Enabled documents are automatically fed to Agent Chat, delegated runners, and MCP clients."
+    ),
+    "knowledgeDocUpdate": (
+        "Update a workspace, team, or project knowledge document by id "
+        "(title, body, scope, scopeId, or enabled)."
+    ),
+    "taskReviewRequest": (
+        "Submit a review request on a task in one call: upload or link visual artifacts, move the "
+        "task to In Review (unless moveToInReview is false), post the summary comment, and optionally "
+        "open a visual decision with up to 20 options [{key,label,description,mediaUrl,mediaType}]."
+    ),
 }
 
 DESTRUCTIVE = {"issueDelete", "commentDelete", "issueLabelDelete", "teamMemberRemove",
                "issueArchive", "projectArchive", "initiativeArchive", "teamArchive",
                "taskDelete", "taskLabelDelete", "taskArchive"}
-IDEMPOTENT_PREFIXES = ("notificationMark", "notificationArchive")
+IDEMPOTENT_PREFIXES = ("notificationMark", "notificationArchive", "notificationUnarchive",
+                       "notificationSnooze", "notificationsMark", "notificationsArchive",
+                       "notificationsSnooze", "projectSubscribe", "projectUnsubscribe",
+                       "initiativeSubscribe", "initiativeUnsubscribe", "cycleSubscribe",
+                       "cycleUnsubscribe")
 
 FIELD_HINTS = {
+    # Text fields are Markdown that people read as rendered and agents read raw (hoja_task), so the
+    # guidance asks for prose that reads the same both ways and nothing a field already records.
+    "description": (
+        "Markdown, shown as written. Open with one or two sentences on the outcome; use ## headings "
+        "for sections and a \"- [ ] \" checklist for acceptance criteria. Do not add tracking lines, "
+        "session or run ids, signatures or HTML comments: state, assignee and links are already fields."
+    ),
+    "body": (
+        "Markdown, shown as written. Lead with the result in one sentence, then short paragraphs or a "
+        "list; put paths, commands and identifiers in `inline code`. Do not add signatures, session or "
+        "run ids, or HTML comments."
+    ),
     "teamId": "Team key (e.g. \"ENG\") or id.",
     "teamIds": "Team keys or ids.",
-    "stateId": "Workflow state name (e.g. \"In Progress\") or id. States belong to the task's team.",
+    "stateId": "Workflow state name (e.g. \"In Progress\") or id. States belong to the issue's team.",
     "assigneeId": "\"me\", an email, an exact member name, or a user id.",
     "leadId": "\"me\", an email, an exact member name, or a user id.",
     "ownerId": "\"me\", an email, an exact member name, or a user id.",
     "userId": "\"me\", an email, an exact member name, or a user id.",
-    "labelIds": "Label names or ids. Replaces the task's labels.",
+    "labelIds": "Label names or ids. Replaces the issue's labels.",
     "projectId": "Project name or id.",
     "projectIds": "Project names or ids.",
     "issueId": "Issue identifier (e.g. ENG-12) or id.",
     "parentId": "Parent issue identifier (e.g. ENG-12) or id. Must be in the same team; null detaches.",
+    "templateId": "A stored task template whose defaults fill the fields you leave absent.",
     "priority": "1 urgent, 2 high, 3 medium, 4 low (or those names). On updates use \"none\" to clear; 0 is ignored.",
     "first": "Page size.",
     "after": "Cursor from a previous pageInfo.endCursor.",
     "dueDate": "ISO-8601 date-time.",
+    "issueDecisionId": "Decision id returned by issueDecisionCreate.",
+    "option": "Key (or label) of the chosen option.",
+    "agent": "Free-form agent/session identity, e.g. claw:run-30d5.",
 }
 ID_HINTS = {
     "issue": "Issue identifier (e.g. ENG-12) or id.",
@@ -551,8 +663,21 @@ def _error_text(op: str, errors: list[GraphQLError]) -> str:
     return text
 
 
+def tool_name(op: str) -> str:
+    return "hoja_" + op
+
+
+def write_tool_names() -> frozenset[str]:
+    """Names of the tools that need hoja:write, as ``tools/call`` sends them."""
+    return frozenset(tool_name(op) for op in WRITE_TOOLS)
+
+
 def build_tools(schema: GraphQLSchema, principal: Callable[[bool], dict]) -> list[Tool]:
     """principal(write) -> GraphQL context for the authenticated caller; raises ToolError."""
+    # Tell the policy layer which tool names exist, so a policy cannot grant a
+    # tool this build does not serve (and a new tool is denied by default because
+    # no policy names it).
+    agent_policy.register_tools(READ_TOOLS, WRITE_TOOLS)
     tools = []
     specs = [(op, False, d) for op, d in READ_TOOLS.items()] + [(op, True, d) for op, d in WRITE_TOOLS.items()]
     for op, write, description in specs:
@@ -561,31 +686,86 @@ def build_tools(schema: GraphQLSchema, principal: Callable[[bool], dict]) -> lis
     return tools
 
 
+def _ops_actor(context: dict | None) -> tuple[str | None, str | None]:
+    """Who an MCP call acts as, in the operations vocabulary.
+
+    Always returns one of ``ACTOR_KINDS`` (``human``, ``bot``, ``agent``) —
+    never a credential type like ``api_key``.
+    """
+    if not isinstance(context, dict):
+        return None, None
+    member = context.get("agent_member_id")
+    if member:
+        return "agent", member
+    kind, who, _behalf = tenant_context.current_actor()
+    actor_id = who or context.get("user_id")
+    ctx_kind = context.get("actor_kind") or kind
+    if ctx_kind in ("bot", "agent"):
+        return ctx_kind, actor_id
+    return "human", actor_id
+
+
 def _make_tool(schema: GraphQLSchema, spec: _Spec, principal: Callable[[bool], dict]) -> Tool:
     async def run(args: dict) -> str:
-        context = principal(spec.write)
+        # One operations line per ``tools/call``, written here because this is the
+        # only place that knows the tool name. The MCP SDK runs a call in its own
+        # task, so nothing recorded here can be picked up by the HTTP middleware,
+        # which is why the endpoint suppresses its own line for /mcp.
+        started = time.perf_counter()
+        outcome = "ok"
+        context: dict | None = None
+        try:
+            context = principal(spec.write)
+            # WP12 (T052): an agent principal is checked against its policy before any
+            # resolver runs, so a refusal cannot be talked past by a tool argument and
+            # nothing is read or written first. A human caller returns None here and
+            # keeps exactly the surface it had.
+            store = context.get("store") if isinstance(context, dict) else None
+            if store is not None:
+                refused = agent_policy.dispatch_check(
+                    store.engine, context, spec.op,
+                    write=spec.write, irreversible=spec.op in DESTRUCTIVE,
+                )
+                if refused is not None and not refused.allowed:
+                    raise ToolError(agent_policy.refusal_message(spec.op, refused) + " " + DENY_HINT)
 
-        def internal(query: str, variables: dict | None) -> dict:
-            result = execute(schema, parse(query), variable_values=variables or {}, context_value=context)
-            return result.data or {}
+            def internal(query: str, variables: dict | None) -> dict:
+                result = execute(schema, parse(query), variable_values=variables or {}, context_value=context)
+                return result.data or {}
 
-        flat = spec.assemble(args)
-        flat = _Resolver(internal, context["user_id"]).apply(spec.op, flat)
-        result = execute(schema, spec.document, variable_values=spec.variables(flat), context_value=context)
-        if result.errors:
-            raise ToolError(_error_text(spec.op, result.errors))
-        value = (result.data or {}).get(spec.op)
-        target = flat.get("id") or flat.get("issueId") or flat.get("teamId")
-        if value is None and spec.field.args:
-            subject = f" '{args.get('id', target)}'" if (args.get("id") or target) else ""
-            raise ToolError(f"hoja_{spec.op}: nothing found for{subject}. It may not exist or may not be visible to you.")
-        if value is False or (isinstance(value, dict) and value.get("success") is False):
-            subject = f" for '{args.get('id', target)}'" if (args.get("id") or target) else ""
-            raise ToolError(
-                f"hoja_{spec.op} did not apply{subject}: the target was not found or you are not allowed to change it. "
-                "Nothing was modified."
+            flat = spec.assemble(args)
+            flat = _Resolver(internal, context["user_id"]).apply(spec.op, flat)
+            result = execute(schema, spec.document, variable_values=spec.variables(flat), context_value=context)
+            if result.errors:
+                raise ToolError(_error_text(spec.op, result.errors))
+            value = (result.data or {}).get(spec.op)
+            target = flat.get("id") or flat.get("issueId") or flat.get("teamId")
+            if value is None and spec.field.args:
+                subject = f" '{args.get('id', target)}'" if (args.get("id") or target) else ""
+                raise ToolError(f"hoja_{spec.op}: nothing found for{subject}. It may not exist or may not be visible to you.")
+            if value is False or (isinstance(value, dict) and value.get("success") is False):
+                subject = f" for '{args.get('id', target)}'" if (args.get("id") or target) else ""
+                raise ToolError(
+                    f"hoja_{spec.op} did not apply{subject}: the target was not found or you are not allowed to change it. "
+                    "Nothing was modified."
+                )
+            return json.dumps(result.data, ensure_ascii=False, default=str)
+        except BaseException:
+            # Includes a policy refusal and a cancelled call: either way the
+            # operation did not complete, and the arguments are never logged.
+            outcome = "error"
+            raise
+        finally:
+            actor_kind, actor_id = _ops_actor(context)
+            observability.log_operation(
+                transport="mcp",
+                operation=f"tools/call hoja_{spec.op}",
+                outcome=outcome,
+                started=started,
+                org=context.get("org_id") if isinstance(context, dict) else None,
+                actor_kind=actor_kind,
+                actor_id=actor_id,
             )
-        return json.dumps(result.data, ensure_ascii=False, default=str)
 
     run.__name__ = "hoja_" + spec.op
     destructive = spec.op in DESTRUCTIVE
@@ -598,7 +778,7 @@ def _make_tool(schema: GraphQLSchema, spec: _Spec, principal: Callable[[bool], d
     )
     return Tool(
         fn=run,
-        name="hoja_" + spec.op,
+        name=tool_name(spec.op),
         description=spec.description + ("" if not spec.write else " Requires the hoja:write scope."),
         parameters=spec.parameters,
         fn_metadata=FuncMetadata(arg_model=_RawArgs),

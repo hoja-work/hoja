@@ -8,6 +8,10 @@ user" means:
 * a database that is already set up only ever *matches* an address. Google
   proves who you are; it does not grant access to someone else's workspace.
   An unknown or uninvited address is refused, not created.
+* the one exception is the address the provisioner recorded as the workspace
+  owner (``HOJA_OWNER_EMAIL``). It is authoritative for its own workspace at
+  any time, not only while the database is empty, because otherwise a restored
+  or previously-initialised instance locks its real owner out permanently.
 
 The caller owns the transaction so that "is this instance empty?" and the rows
 that answer it are decided atomically.
@@ -21,6 +25,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
+from hoja_server import addresses
 from hoja_server import schema_sdl  # noqa: F401  (keeps table imports honest)
 from hoja_server.db import (
     global_identity,
@@ -59,6 +64,188 @@ def owner_email() -> str | None:
     return value or None
 
 
+LINKS_ENV = "HOJA_IDENTITY_LINKS"
+
+
+def identity_links() -> dict[str, str]:
+    """Explicit "this Google address is that profile" mappings.
+
+    Format: ``gmail=profile`` pairs separated by ``,`` or ``;``. This is the
+    durable form of an invitation for people whose profile predates Google
+    sign-in: the profile keeps its history and its admin role, and the verified
+    address becomes its credential. Unset means no mappings.
+    """
+    raw = (os.environ.get(LINKS_ENV) or "").strip()
+    links: dict[str, str] = {}
+    for chunk in re.split(r"[;,]", raw):
+        if "=" not in chunk:
+            continue
+        verified, profile = (part.strip().lower() for part in chunk.split("=", 1))
+        if "@" in verified and "@" in profile:
+            links[verified] = profile
+    return links
+
+
+def linked_membership(conn, address: str) -> dict | None:
+    """The active membership already attached to this verified address, if any."""
+    row = conn.execute(
+        select(
+            organization_membership.c.profile_user_id,
+            organization_membership.c.organization_id,
+        )
+        .join(global_identity, global_identity.c.id == organization_membership.c.identity_id)
+        .where(
+            global_identity.c.email == address,
+            organization_membership.c.active.is_(True),
+        )
+        .limit(1)
+    ).first()
+    return {"user_id": row[0], "organization_id": row[1]} if row is not None else None
+
+
+def _claim_profile(conn, *, profile, address: str, stamp: str, owner: bool = False) -> dict:
+    """Attach a verified address to an existing profile, keeping its history.
+
+    The profile's row, admin flag and data stay untouched; only the identity
+    behind its single membership moves. A deactivated profile and a revoked
+    membership are refused: linking a credential is not a way back in.
+    """
+    uid, profile_org, active = profile[0], profile[1], profile[2]
+    if not active:
+        return {"action": ACTION_DENIED, "reason": "account_disabled"}
+    identity = conn.execute(
+        select(global_identity.c.id).where(global_identity.c.email == address)
+    ).first()
+    identity_id = identity[0] if identity is not None else new_id()
+    if identity is None:
+        conn.execute(
+            global_identity.insert().values(id=identity_id, email=address, created_at=stamp)
+        )
+    membership = conn.execute(
+        select(organization_membership.c.id, organization_membership.c.active).where(
+            organization_membership.c.profile_user_id == uid
+        )
+    ).first()
+    if membership is not None and not membership[1]:
+        return {"action": ACTION_DENIED, "reason": "no_membership"}
+    if membership is None:
+        conn.execute(
+            organization_membership.insert().values(
+                id=new_id(),
+                identity_id=identity_id,
+                organization_id=profile_org,
+                profile_user_id=uid,
+                active=True,
+                created_at=stamp,
+            )
+        )
+    else:
+        conn.execute(
+            organization_membership.update()
+            .where(organization_membership.c.id == membership[0])
+            .values(identity_id=identity_id, organization_id=profile_org)
+        )
+    result = {
+        "action": ACTION_LOGIN,
+        "user_id": uid,
+        "organization_id": profile_org,
+        "identity_id": identity_id,
+        "linked": True,
+    }
+    if owner:
+        result["owner"] = True
+    return result
+
+
+def _admit_owner(conn, *, address: str, display: str, stamp: str, org_id: str) -> dict:
+    """Admit the address the provisioner named as this workspace's owner.
+
+    ``HOJA_OWNER_EMAIL`` is written by the provisioner from the address that
+    created (and is billed for) the workspace. Honouring it only while the
+    database was empty made the owner unrecoverable the moment an organization
+    existed: a restored instance, a first-run wizard, or an earlier sign-in from
+    another address left the real owner refused with ``not_invited`` forever.
+
+    The address is not a bypass. Google has already verified it, and it admits
+    no other address. Order matters:
+
+    1. an active membership already attached to this address wins (the state
+       after an identity migration — never create a second profile);
+    2. a profile carrying the address is claimed;
+    3. with no such profile, the single active admin profile is claimed, so the
+       owner keeps the history of the account they already used;
+    4. only a workspace with no admin at all gets a new admin profile.
+    """
+    existing = linked_membership(conn, address)
+    if existing is not None:
+        return {
+            "action": ACTION_LOGIN,
+            "user_id": existing["user_id"],
+            "organization_id": existing["organization_id"],
+            "identity_id": conn.execute(
+                select(global_identity.c.id).where(global_identity.c.email == address)
+            ).scalar_one(),
+            "owner": True,
+            "linked": True,
+        }
+
+    profile = conn.execute(
+        select(user.c.id, user.c.organization_id, user.c.active)
+        .where(user.c.email == address)
+        .limit(1)
+    ).first()
+    if profile is not None:
+        return _claim_profile(conn, profile=profile, address=address, stamp=stamp, owner=True)
+
+    admins = conn.execute(
+        select(user.c.id, user.c.organization_id, user.c.active).where(
+            user.c.admin.is_(True), user.c.active.is_(True)
+        )
+    ).all()
+    if len(admins) == 1:
+        return _claim_profile(conn, profile=admins[0], address=address, stamp=stamp, owner=True)
+    if len(admins) > 1:
+        # Ambiguous: naming the profile is an operator decision (HOJA_IDENTITY_LINKS).
+        return {"action": ACTION_DENIED, "reason": "owner_profile_ambiguous"}
+
+    uid, identity_id = new_id(), new_id()
+    conn.execute(
+        user.insert().values(
+            id=uid,
+            organization_id=org_id,
+            name=display,
+            display_name=display,
+            email=address,
+            active=True,
+            admin=True,
+            timezone="UTC",
+            created_at=stamp,
+            updated_at=stamp,
+        )
+    )
+    conn.execute(
+        global_identity.insert().values(id=identity_id, email=address, created_at=stamp)
+    )
+    conn.execute(
+        organization_membership.insert().values(
+            id=new_id(),
+            identity_id=identity_id,
+            organization_id=org_id,
+            profile_user_id=uid,
+            active=True,
+            created_at=stamp,
+        )
+    )
+    return {
+        "action": ACTION_LOGIN,
+        "user_id": uid,
+        "organization_id": org_id,
+        "identity_id": identity_id,
+        "owner": True,
+        "adopted": True,
+    }
+
+
 def _slugify(text: str) -> str:
     slug = _NON_SLUG.sub("-", text.lower()).strip("-")
     return slug or "workspace"
@@ -85,7 +272,7 @@ def resolve_verified_email(
     ``action`` is one of ``bootstrapped`` (first user, admin), ``login``
     (existing member) or ``denied`` with a ``reason``.
     """
-    address = (email or "").strip().lower()
+    address = addresses.canonical(email)
     if "@" not in address:
         return {"action": ACTION_DENIED, "reason": "invalid_email"}
     if not subject:
@@ -165,7 +352,28 @@ def resolve_verified_email(
             "team_id": tid,
         }
 
-    # Set up already: match, never create a workspace-less account.
+    # Set up already. The provisioned owner address is still authoritative: it
+    # resolves to its own workspace even when the profile rows disagree.
+    mapped = identity_links().get(address)
+    if mapped:
+        # An explicit invitation: this verified address is that existing profile.
+        profile = conn.execute(
+            select(user.c.id, user.c.organization_id, user.c.active)
+            .where(user.c.email == mapped)
+            .limit(1)
+        ).first()
+        if profile is None:
+            # A typo in the mapping must not silently admit anyone else.
+            return {"action": ACTION_DENIED, "reason": "profile_not_found"}
+        return _claim_profile(conn, profile=profile, address=address, stamp=stamp)
+
+    owner = owner_email()
+    if owner and address == owner:
+        return _admit_owner(
+            conn, address=address, display=display, stamp=stamp, org_id=existing_org[0]
+        )
+
+    # Otherwise: match, never create a workspace-less account.
     identity = conn.execute(
         select(global_identity.c.id).where(global_identity.c.email == address)
     ).first()
@@ -215,3 +423,95 @@ def resolve_verified_email(
         "identity_id": identity_id,
         "linked": True,
     }
+
+
+def resolve_member(conn, *, email: str, subject: str, organization_id: str,
+                   now: datetime | None = None) -> dict:
+    """Resolve a verified address within one organization of a shared database.
+
+    The shared tier's counterpart of ``resolve_verified_email``: it never creates
+    a workspace, never consults the per-instance owner or link settings, and
+    admits only an existing active member of ``organization_id``.
+
+    The membership is consulted *before* the email-matched profile, because the
+    two records legitimately disagree: an admin who links an old profile to a
+    verified Google address (``_claim_profile``) keeps that profile's email as it
+    was. Requiring the profile's email to equal the verified address would then
+    refuse a member who is already in the organization — the identity, not the
+    address on the profile row, is what proves membership.
+
+    The membership lookup is scoped by ``organization_id`` on purpose: membership
+    of one workspace never admits a person to another. A person who is not a
+    member here still gets in only through the invite path — a profile in *this*
+    organization that carries the verified address and is not claimed yet.
+    """
+    address = addresses.canonical(email)
+    if "@" not in address:
+        return {"action": ACTION_DENIED, "reason": "invalid_email"}
+    if not subject:
+        return {"action": ACTION_DENIED, "reason": "missing_subject"}
+    stamp = (now or datetime.now(timezone.utc)).isoformat()
+
+    # 1. Membership of *this* organization, found through the verified address.
+    #    One query, scoped by organization, so an identity that belongs to
+    #    another workspace is simply absent here. Several identities can share
+    #    one address (the column is indexed, not unique), so the membership row
+    #    — not an arbitrary identity lookup — supplies the identity the session
+    #    is made for.
+    rows = conn.execute(
+        select(
+            organization_membership.c.identity_id,
+            organization_membership.c.profile_user_id,
+            organization_membership.c.active,
+        )
+        .join(global_identity, global_identity.c.id == organization_membership.c.identity_id)
+        .where(
+            global_identity.c.email == address,
+            organization_membership.c.organization_id == organization_id,
+        )
+        .order_by(organization_membership.c.active.desc())
+    ).all()
+    active_rows = [row for row in rows if row[2]]
+    if rows and not active_rows:
+        return {"action": ACTION_DENIED, "reason": "membership_inactive"}
+    if active_rows:
+        identity_id, profile_user_id = active_rows[0][0], active_rows[0][1]
+        # The membership row can still say active while the profile is disabled
+        # (member removal and partial restores do exactly that). Linking a
+        # credential is not a way back in, so a disabled profile is refused.
+        profile = conn.execute(
+            select(user.c.id).where(
+                user.c.id == profile_user_id,
+                user.c.organization_id == organization_id,
+                user.c.active.is_(True),
+            )
+        ).first()
+        if profile is None:
+            return {"action": ACTION_DENIED, "reason": "account_disabled"}
+        return {"action": ACTION_LOGIN, "user_id": profile[0], "organization_id": organization_id,
+                "identity_id": identity_id}
+
+    # 2. No membership here: the invite path, unchanged. A profile in this
+    #    organization that carries the verified address and is not claimed yet is
+    #    linked. Nothing is written unless the person is actually admitted, so a
+    #    refusal leaves no rows behind.
+    profile = conn.execute(
+        select(user.c.id).where(
+            user.c.organization_id == organization_id, user.c.email == address, user.c.active.is_(True)
+        ).limit(1)
+    ).first()
+    if profile is None:
+        return {"action": ACTION_DENIED, "reason": "not_invited"}
+    claimed = conn.execute(select(organization_membership.c.id).where(
+        organization_membership.c.profile_user_id == profile[0])).first()
+    if claimed is not None:
+        return {"action": ACTION_DENIED, "reason": "profile_linked_elsewhere"}
+    identity = conn.execute(select(global_identity.c.id).where(global_identity.c.email == address)).first()
+    identity_id = identity[0] if identity else new_id()
+    if identity is None:
+        conn.execute(global_identity.insert().values(id=identity_id, email=address, created_at=stamp))
+    conn.execute(organization_membership.insert().values(
+        id=new_id(), identity_id=identity_id, organization_id=organization_id,
+        profile_user_id=profile[0], active=True, created_at=stamp))
+    return {"action": ACTION_LOGIN, "user_id": profile[0], "organization_id": organization_id,
+            "identity_id": identity_id, "linked": True}

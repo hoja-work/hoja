@@ -5,6 +5,7 @@ so we can echo the result back to the user.
 """
 
 from hoja.graphql.fragments import (
+    DECISION_FIELDS,
     CYCLE_CORE,
     ISSUE_CORE,
     ISSUE_FULL,
@@ -36,7 +37,7 @@ ISSUE_UPDATE = (
     mutation IssueUpdate($id: String!, $input: IssueUpdateInput!) {
       issueUpdate(id: $id, input: $input) {
         success
-        issue { ...IssueCore }
+        issue { ...IssueCore parent { id identifier title } }
       }
     }
     """
@@ -158,3 +159,49 @@ PROJECT_ARCHIVE = """
       }
     }
     """
+
+DECISION_CREATE = (
+    """
+    mutation IssueDecisionCreate($input: IssueDecisionCreateInput!) {
+      issueDecisionCreate(input: $input) {
+        success
+        decision {
+          """
+    + DECISION_FIELDS
+    + """
+        }
+      }
+    }
+    """
+)
+
+DECISION_ANSWER = (
+    """
+    mutation IssueDecisionAnswer($id: String!, $input: IssueDecisionAnswerInput!) {
+      issueDecisionAnswer(id: $id, input: $input) {
+        success
+        replayed
+        decision {
+          """
+    + DECISION_FIELDS
+    + """
+        }
+      }
+    }
+    """
+)
+
+DECISION_CANCEL = (
+    """
+    mutation IssueDecisionCancel($id: String!) {
+      issueDecisionCancel(id: $id) {
+        success
+        decision {
+          """
+    + DECISION_FIELDS
+    + """
+        }
+      }
+    }
+    """
+)

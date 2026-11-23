@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
 from collections.abc import Callable, Iterable
+from functools import lru_cache
 from pathlib import Path, PurePosixPath
 
 DOCUMENT_EXTENSIONS = {".md", ".mdx", ".rst"}
@@ -19,6 +21,7 @@ ROOT_DOCUMENTS = {
     "CHANGELOG.md",
     "CODE_OF_CONDUCT.md",
     "CONTRIBUTING.md",
+    "DESIGN.md",
     "GOVERNANCE.md",
     "LICENSE",
     "LICENSE.md",
@@ -37,12 +40,14 @@ DURABLE_DOCS = {
     "docs/dependency-security.md",
     "docs/email-adapter.md",
     "docs/email-delivery.md",
-    "docs/github-linking.md",
     "docs/hoja-mcp.md",
     "docs/extensions.md",
     "docs/webhooks.md",
-    "docs/meetings.md",
     "docs/decisions.md",
+    "docs/github-linking.md",
+    "docs/hierarchy-rendering.md",
+    "docs/sla.md",
+    "docs/workspace-templates.md",
     "docs/views.md",
     "docs/notifications/android-and-ux.md",
 }
@@ -56,8 +61,8 @@ COMPONENT_READMES = {
     "connectors/calendly/README.md",
     "connectors/sentry/README.md",
     "connectors/zoom/README.md",
-    "connectors/github/README.md",
     "connectors/grafana/README.md",
+    "connectors/github/README.md",
     "hoja_server/README.md",
     "vendor/README.md",
 }
@@ -195,30 +200,60 @@ def validate(paths: Iterable[str], read_text: Callable[[str], str]) -> list[str]
     return errors
 
 
-def repository_paths(root: Path, *, staged: bool = False) -> list[str]:
-    command = ["git", "ls-files", "-z", "--cached"]
-    if not staged:
-        command.extend(["--others", "--exclude-standard"])
+@lru_cache(maxsize=None)
+def git_layout(root: Path) -> tuple[Path, str]:
+    """Return the worktree top and ``root``'s prefix inside it ('' when they are the same).
+
+    The policy paths are relative to ``root`` (``app/`` in Hoja Cloud, the repository itself in
+    Hoja OSS). A hook runs with ``GIT_DIR`` exported (githooks(5)), and git then treats the current
+    directory as the worktree top, so the top is found with those variables dropped.
+    """
+    env = {key: value for key, value in os.environ.items() if key not in ("GIT_DIR", "GIT_WORK_TREE")}
     result = subprocess.run(
-        command,
+        ["git", "rev-parse", "--show-toplevel"],
         cwd=root,
+        env=env,
         check=True,
         capture_output=True,
         text=True,
     )
+    top = Path(result.stdout.strip()).resolve()
+    prefix = root.resolve().relative_to(top).as_posix()
+    return top, "" if prefix == "." else prefix
+
+
+def repository_paths(root: Path, *, staged: bool = False) -> list[str]:
+    top, prefix = git_layout(root)
+    command = ["git", "ls-files", "-z", "--cached"]
+    if not staged:
+        command.extend(["--others", "--exclude-standard"])
+    # Run from the worktree top so a hook's exported GIT_DIR and GIT_INDEX_FILE keep their
+    # meaning: the index checked is the one being committed.
+    result = subprocess.run(
+        command,
+        cwd=top,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    lead = f"{prefix}/" if prefix else ""
+    paths = [path[len(lead):] for path in result.stdout.split("\0") if path and path.startswith(lead)]
     # A locally deleted file remains in the index until it is staged. It is not
     # a candidate anymore; CI always evaluates the committed checkout.
     return [
         path
-        for path in result.stdout.split("\0")
-        if path and is_document(path) and (staged or (root / path).is_file())
+        for path in paths
+        if is_document(path) and (staged or (root / path).is_file())
     ]
 
 
 def staged_text(root: Path, path: str) -> str:
+    top, prefix = git_layout(root)
+    # ``git show :<path>`` resolves from the worktree top, not the current directory.
+    full = f"{prefix}/{path}" if prefix else path
     result = subprocess.run(
-        ["git", "show", f":{path}"],
-        cwd=root,
+        ["git", "show", f":{full}"],
+        cwd=top,
         check=True,
         capture_output=True,
     )

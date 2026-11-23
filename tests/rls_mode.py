@@ -2,12 +2,17 @@
 
 With HOJA_TEST_RLS=1 and HOJA_TEST_POSTGRES_URL set, fixtures that build a
 Postgres workspace call ``restrict(owner_url, schema)`` after migrating and
-seeding. It applies the policies a shared-tables deployment uses (the same
-classification as Hoja-Cloud's ``scripts/hoja-rls``: ENABLE, not FORCE; every
-policy admits ``hoja.system``; direct / organization / child tables derived from
-the catalog) and returns a URL for a NOSUPERUSER NOBYPASSRLS role that owns
-nothing. The fixture keeps its owner engine for setup; the app gets the
-restricted URL, so every query the app makes is subject to the policies.
+seeding. It applies the policies a shared-tables deployment uses and returns a
+URL for a NOSUPERUSER NOBYPASSRLS role that owns nothing. The fixture keeps its
+owner engine for setup; the app gets the restricted URL, so every query the app
+makes is subject to the policies.
+
+The policies come from ``hoja_server.rls_policy`` — the module ``/ready`` and
+``hoja-serve migrate`` use — rather than from a second copy here. A test schema
+and a deployed database are therefore bound by the same classification (ENABLE,
+not FORCE; every policy admits ``hoja.system``; direct / organization / child
+tables derived from the catalog), and the tests cannot pass under policies that
+production would not install.
 
 A path that forgets to bind a tenant then fails the existing tests instead of
 failing in production.
@@ -20,73 +25,26 @@ import uuid
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
 
+from hoja_server import rls_policy
 from hoja_server.db import make_engine
 
 ENABLED = bool(os.environ.get("HOJA_TEST_RLS")) and bool(os.environ.get("HOJA_TEST_POSTGRES_URL"))
 
-# Hosted global tables (Hoja-Cloud rls/global-tables.txt): not tenant data.
-GLOBALS = ("global_identity", "identity_credential", "oauth_client", "oauth_state_nonce", "rate_limit_event",
-           "schema_revision", "signup_flow", "signup_identity", "signup_eligibility", "signup_invite",
-           "signup_session", "turnstile_use", "alembic_version")
-
-_CUR = "current_setting('hoja.org_id', true)"
-_SYS = "current_setting('hoja.system', true) = 'on' OR "
-
-
-def _classify_sql(schema: str) -> str:
-    arr = "ARRAY[" + ",".join(f"'{g}'" for g in GLOBALS) + "]::text[]"
-    child = ("'(%sEXISTS (SELECT 1 FROM ' || quote_ident(:schema) || '.%I p WHERE p.%I = %I.%I "
-             f"AND p.organization_id = {_CUR.replace(chr(39), chr(39) * 2)}))'")
-    return f"""
-WITH tabs AS (
-  SELECT c.oid, c.relname::text AS relname,
-         EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid
-                 AND a.attname = 'organization_id' AND NOT a.attisdropped) AS has_org
-  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-  WHERE n.nspname = :schema AND c.relkind IN ('r', 'p')),
-fks AS (
-  SELECT k.conrelid, a.attname::text AS col, a.attnotnull AS notnull,
-         p.relname::text AS parent, pa.attname::text AS pcol
-  FROM pg_constraint k
-  JOIN tabs p ON p.oid = k.confrelid AND p.has_org
-  JOIN pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = k.conkey[1]
-  JOIN pg_attribute pa ON pa.attrelid = k.confrelid AND pa.attnum = k.confkey[1]
-  WHERE k.contype = 'f' AND array_length(k.conkey, 1) = 1),
-cls AS (
-  SELECT t.*, CASE
-      WHEN t.relname = 'organization' THEN 'organization'
-      WHEN t.has_org THEN 'direct'
-      WHEN t.relname = ANY({arr}) THEN 'global'
-      WHEN EXISTS (SELECT 1 FROM fks f WHERE f.conrelid = t.oid) THEN 'child'
-      ELSE 'unresolved' END AS kind
-  FROM tabs t)
-SELECT relname, kind, CASE kind
-    WHEN 'organization' THEN 'id = {_CUR.replace("'", "''")}'
-    WHEN 'direct' THEN 'organization_id = {_CUR.replace("'", "''")}'
-    WHEN 'child' THEN (
-      SELECT string_agg(format({child},
-                               CASE WHEN f.notnull THEN '' ELSE format('%I.%I IS NULL OR ', relname, f.col) END,
-                               f.parent, f.pcol, relname, f.col), ' AND ' ORDER BY f.col)
-      FROM fks f WHERE f.conrelid = cls.oid)
-    ELSE NULL END AS expr
-FROM cls ORDER BY kind, relname
-"""
+# Hosted global tables: the server's own allowlist, not a second copy.
+GLOBALS = rls_policy.GLOBAL_TABLES
 
 
 def classify(owner_url: str, schema: str = "public") -> list[tuple[str, str, str | None]]:
     engine = make_engine(owner_url)
     try:
         with engine.connect() as conn:
-            return [tuple(r) for r in conn.execute(text(_classify_sql(schema)), {"schema": schema}).all()]
+            return [(name, kind, expr) for name, kind, expr in rls_policy.classify(conn, schema)]
     finally:
         engine.dispose()
 
 
 def restrict(owner_url: str, schema: str = "public") -> str:
     """Apply the policies in ``schema`` and return a URL for a restricted role."""
-    rows = classify(owner_url, schema)
-    unresolved = [name for name, kind, _ in rows if kind == "unresolved"]
-    assert not unresolved, f"tables with no tenant classification: {unresolved}"
     role, pw = f"hoja_rls_t_{uuid.uuid4().hex[:8]}", uuid.uuid4().hex
     q = f'"{schema}"'
     engine = make_engine(owner_url)
@@ -97,13 +55,10 @@ def restrict(owner_url: str, schema: str = "public") -> str:
                               f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {q} TO {role}; "
                               f"GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA {q} TO {role}; "
                               f"GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA {q} TO {role}"))
-            for name, kind, expr in rows:
-                if kind == "global":
-                    continue
-                full = _SYS + expr
-                conn.execute(text(f'ALTER TABLE {q}."{name}" ENABLE ROW LEVEL SECURITY; '
-                                  f'CREATE POLICY hoja_tenant ON {q}."{name}" FOR ALL '
-                                  f"USING ({full}) WITH CHECK ({full})"))
+            # Idempotent: migrate() may already have bound this schema.
+            summary = rls_policy.heal(conn, schema)
+            assert not summary["unresolved"], \
+                f"tables with no tenant classification: {summary['unresolved']}"
     finally:
         engine.dispose()
     return make_url(owner_url).set(username=role, password=pw).render_as_string(hide_password=False)

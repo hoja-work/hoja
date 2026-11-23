@@ -6,6 +6,7 @@ it needs at the bottom.
 
 from hoja.graphql.fragments import (
     CYCLE_CORE,
+    DECISION_FIELDS,
     ISSUE_CORE,
     ISSUE_FULL,
     LABEL_CORE,
@@ -242,4 +243,66 @@ SEARCH_ISSUES = (
     }
     """
     + assemble(USER_CORE, STATE_CORE)
+)
+
+# ---------------------------------------------------------------------------
+# Decisions (docs/decisions.md)
+# ---------------------------------------------------------------------------
+
+ISSUE_DECISIONS = (
+    """
+    query IssueDecisions($issueId: String!, $status: String) {
+      issueDecisions(issueId: $issueId, status: $status) {
+        """
+    + DECISION_FIELDS
+    + """
+      }
+    }
+    """
+)
+
+ISSUE_DECISION = (
+    """
+    query IssueDecision($id: String!) {
+      issueDecision(id: $id) {
+        """
+    + DECISION_FIELDS
+    + """
+      }
+    }
+    """
+)
+
+# ---------------------------------------------------------------------------
+# Saved views (docs/views.md)
+# ---------------------------------------------------------------------------
+
+ISSUE_VIEWS = """
+query IssueViews {
+  views(kind: "issue") { id name slugId kind }
+}
+"""
+
+# The cycles a ``CycleFilter`` selects, so ``--view --cycle current`` can name them by id.
+CYCLE_IDS = """
+query CycleIds($filter: CycleFilter, $first: Int) {
+  cycles(filter: $filter, first: $first) { nodes { id } }
+}
+"""
+
+# ``customView.issues`` takes an ``IssueFilter``-shaped ``filter`` (the shape
+# ``hoja.filters`` builds) and ANDs it with the saved view's filters, scope and
+# display; the server translates it to the view grammar or refuses it by path.
+VIEW_ISSUES = (
+    """
+    query ViewIssues($id: String!, $first: Int, $after: String, $filter: JSON) {
+      customView(id: $id) {
+        issues(first: $first, after: $after, filter: $filter) {
+          nodes { ...IssueCore }
+          pageInfo { ...PageInfoCore }
+        }
+      }
+    }
+    """
+    + assemble(ISSUE_CORE, USER_CORE, STATE_CORE, PAGE_INFO)
 )

@@ -63,5 +63,8 @@ def test_non_admin_cannot_edit_labels(tmp_path) -> None:
         with engine.begin() as conn:
             conn.execute(update(user_table).where(user_table.c.id == admin["user_id"]).values(admin=False))
         res = _gql(client, admin["token"], UPDATE, {"id": lid, "i": {"name": "hacked"}})
-        assert res.get("errors") and "Admin access required" in res["errors"][0]["message"], res
+        # HOJA-490: the refusal now names the capability it is missing, because a
+        # workspace can grant label.manage to members without making them admins.
+        assert res.get("errors") and res["errors"][0]["extensions"]["code"] == "FORBIDDEN", res
+        assert "Manage labels" in res["errors"][0]["message"], res
         assert [l["name"] for l in Store(engine).labels(admin["org_id"]) if l["id"] == lid] == ["keep"]

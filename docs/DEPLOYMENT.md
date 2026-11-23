@@ -13,7 +13,10 @@ python -m pip install 'hoja-cli[server]'
 ```
 
 The server extra includes Ariadne, Starlette/FastAPI, Uvicorn, SQLAlchemy,
-SQLite support, and the psycopg 3 binary PostgreSQL driver.
+SQLite support, the psycopg 3 binary PostgreSQL driver, and the MCP SDK the
+`/mcp` endpoint requires. The chat panel is separate: it needs the `agent`
+extra (`python -m pip install 'hoja-cli[server,agent]'`) and reports that
+requirement instead of failing with an ImportError.
 
 The PyPI distribution is `hoja-cli` because the `hoja` project on PyPI belongs
 to unrelated software; the installed commands are `hoja-serve` and `hoja`.
@@ -125,6 +128,51 @@ token = "TOKEN_FROM_A_SECRET_STORE"
 `LINEAR_API_URL` is still read when `HOJA_API_URL` is unset. Both are separate
 from `HOJA_APP_URL`.
 
+## Browser clients and CORS
+
+Hoja's own web UI is served by `hoja-serve`, so its API calls are same-origin
+and need no CORS. A browser client served from a different origin — the Expo
+app's web build on Metro, or a preview deployment — is refused by the browser
+unless the server names that origin:
+
+```bash
+# Exact origins only; comma-separated. Off when unset.
+export HOJA_CORS_ORIGINS='http://localhost:8082,https://preview.example.com'
+hoja-serve serve --host 0.0.0.0 --port 8787
+```
+
+The server allows `GET`, `POST`, and `OPTIONS` with the `Authorization`,
+`Content-Type`, `Accept`, and `If-None-Match` request headers, and exposes
+`ETag` so the sync client can make conditional `/sync/bootstrap` requests.
+Cookie credentials are never allowed cross-origin (`allow_credentials=False`),
+so a hostile origin cannot ride an existing browser session. Wildcards and
+entries with a path are rejected at startup rather than silently ignored.
+
+The Expo web harness sets this variable for its own Metro origin; see
+`mobile/README.md`.
+
+## Sign-in identity in hosted workspaces
+
+`HOJA_OWNER_EMAIL` is the address the provisioner recorded as the workspace
+owner. It is authoritative for its own workspace at any time: when the owner
+signs in and no profile carries that address, the single active admin profile
+is claimed (keeping its history) instead of a second admin being created. Two
+admins and no matching profile is ambiguous, and the owner is refused until the
+profile is named.
+
+Profiles that predate Google sign-in (for example `name@old-domain`) can be
+claimed by a verified Google address with an explicit mapping:
+
+```bash
+HOJA_IDENTITY_LINKS="new@gmail.com=old@domain,other@gmail.com=second@domain"
+```
+
+Pairs may be separated by `,` or `;`. A mapping attaches the verified identity
+to the existing profile's single membership; the profile row, its admin flag
+and its data are untouched, and the old address stops resolving. A mapping to a
+missing or deactivated profile, or to a profile whose membership was revoked, is
+refused. Leave the variable unset to disable mappings.
+
 ## Health, readiness, and operation
 
 - `GET /health` is a process liveness endpoint and returns HTTP 200 without
@@ -143,6 +191,38 @@ Schema changes are ordered and recorded in `schema_revision`. Run
 application instances. The server process does not alter schema on startup, so
 `/health` remains available during a database outage and `/ready` rejects
 traffic until both connectivity and schema currency are confirmed.
+
+## Request correlation and operation logs
+
+Every HTTP response carries `X-Request-Id`. A client may send its own; the value
+is adopted only when it is 1–128 characters drawn from `[A-Za-z0-9._:-]`, and a
+fresh uuid4 is minted otherwise, so a hostile header cannot shape a log line.
+The id is echoed back in `X-Request-Id` and appears on every line written about
+that request, including the `denied ...` warnings for rejected credentials.
+
+`hoja_server.ops` writes exactly one line per operation:
+
+```text
+op request_id=req-1 host=app.example.com org=<org id> actor=human:<user id> transport=graphql operation="mutation CreateIssue [issueCreate]" status=200 outcome=ok duration_ms=41.7
+```
+
+- `transport` is `graphql`, `mcp` or `rest`. For REST, `operation` is
+  `METHOD /path` with no query string, because OAuth and handoff callbacks carry
+  one-shot credentials in the query.
+- `operation` names the GraphQL operation type, its name and its top-level
+  fields, or the MCP JSON-RPC method plus the tool
+  (`tools/call hoja_issueCreate`).
+- `outcome` is `ok` or `error:<code>`. GraphQL answers HTTP 200 when it fails,
+  so the code is read from the first error rather than from the status.
+- `audit_event.request_id` records the same id, which ties an audit row to the
+  operation that produced it. A row written by a system path — a runner loop or
+  a durable agent turn — has no id, because no request caused it.
+- No values are logged: no variables, arguments, bodies, `Authorization` headers
+  or tokens. A field that is not known for the operation prints `-`.
+
+`hoja_server.logging_setup` raises the MCP SDK's session logger to WARNING: its
+`Terminating session: <id>` line is one line per response stream, and over
+stateless HTTP the id is always `None`.
 
 ## Verification
 
