@@ -72,8 +72,19 @@ jobs:
         # it. Leaving it here as well would only add skips that read like the
         # Postgres-gated ones, and would tie this job's runtime to a browser.
         run: >-
-          uv run --frozen --all-extras pytest -q -o faulthandler_timeout=240
+          uv run --frozen --all-extras pytest -q
+          --junit-xml=results.xml
+          -o faulthandler_timeout=240
           --ignore=tests/e2e
+
+      # pytest exits 0 when every test skips, so the exit code above cannot
+      # distinguish "1238 tests passed" from "1238 tests were skipped". This
+      # step makes the difference observable. --allow-skips because the
+      # Postgres-gated cases legitimately skip here; the floor is what carries
+      # the guarantee, and pytest-postgres owns the skip rule for its modules.
+      - name: Assert the suite actually executed
+        if: always()
+        run: python scripts/assert_pg_gate_ran.py results.xml --allow-skips --minimum 1150
 
   pytest-e2e:
     # HOJA-375: playwright was never installed, so every case in tests/e2e
