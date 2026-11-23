@@ -977,7 +977,7 @@ def create_app(
             problem = _query_problem(query)
             if problem:
                 return _bad_request(problem)
-            from hoja_server.agent_chat import read_only_violation
+            from hoja_server.denials import read_only_violation
 
             if read_only_violation(query, access):
                 return JSONResponse(
@@ -1917,7 +1917,10 @@ def create_app(
     # ---- Attachment file uploads (images/files/videos for issue attachments)
     _UPLOAD_MAX_BYTES = 10 * 1024 * 1024
     _UPLOAD_TYPE_PREFIXES = ("image/", "video/")
-    _UPLOAD_TYPE_EXACT = {"application/pdf", "text/plain", "text/markdown"}
+    # application/json carries plugin session traces (`*.trace.json`), which the web app opens in its trace viewer;
+    # without it a self-hosted server refused every trace (HOJA-757-A-2). Served inline as application/json.
+    _UPLOAD_TYPE_EXACT = {"application/pdf", "text/plain", "text/markdown", "application/json"}
+    _UPLOAD_SIDECAR = ".json"
 
     def _uploads_dir() -> Path:
         from hoja_server.db import default_db_dir
@@ -1949,6 +1952,9 @@ def create_app(
             return JSONResponse({"error": "File too large (10 MB max)"}, status_code=413)
         original = (getattr(upload, "filename", "") or "file").split("/")[-1].split("\\")[-1]
         ext = "".join(c for c in Path(original).suffix.lower() if c.isalnum() or c == ".")[:12]
+        # `<id>.json` is the sidecar; a JSON upload must never be stored under (and overwritten by) that name.
+        if ext == _UPLOAD_SIDECAR:
+            ext = ".data.json"
         file_id = secrets.token_hex(16)
         stored = _uploads_dir() / f"{file_id}{ext}"
         stored.write_bytes(body)
@@ -1977,7 +1983,7 @@ def create_app(
         if not store.upload_visible(org, uid, file_id):
             return JSONResponse({"error": "Not found"}, status_code=404)
         candidates = [p for p in _uploads_dir().glob(f"{file_id}.*")
-                      if p.suffix != ".json" and p.name != f"{file_id}.json"]
+                      if p.name != f"{file_id}{_UPLOAD_SIDECAR}"]
         if not candidates:
             return JSONResponse({"error": "Not found"}, status_code=404)
         return FileResponse(
