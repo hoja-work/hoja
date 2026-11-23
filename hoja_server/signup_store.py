@@ -83,6 +83,7 @@ class SignupStore:
         redirect_uri: str,
         return_to: str | None,
         ttl_seconds: int,
+        client_challenge: str | None = None,
         now: datetime | None = None,
     ) -> str:
         moment = _now(now)
@@ -97,6 +98,7 @@ class SignupStore:
                     code_verifier=code_verifier,
                     redirect_uri=redirect_uri,
                     return_to=return_to,
+                    client_challenge=client_challenge,
                     created_at=_utc_iso(moment),
                     expires_at=_utc_iso(moment + timedelta(seconds=ttl_seconds)),
                 )

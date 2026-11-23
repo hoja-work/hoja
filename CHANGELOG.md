@@ -44,6 +44,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     and `T` shortcuts.
   - CLI: `hoja issue list --view <name|slug|id>` runs a saved view on the server. Other
     list flags narrow it, `--cycle current|next|<name>` included.
+- Sign in on your phone (HOJA-733). A signed-in browser shows a QR code (Settings →
+  Connected apps, or the account menu). The Hoja app scans it, and the browser
+  approves the named device. The phone then gets its own session for the same
+  membership. Contract: `docs/mobile-signin.md`.
+  - Each code works once. A second phone claiming it burns it, and redeeming
+    needs the claiming phone's PKCE verifier.
+  - The code rotates every 30 s and expires after 90 s. Only the browser session
+    that made a code can approve it, and API keys and OAuth tokens can never make one.
+  - The workspace IP allowlist is checked against the phone's address.
+  - Revision 95 adds `session_handoff`.
+- Google sign-in from the app without a web view: Android's native account sheet
+  (`POST /auth/google/native`, the ID token's nonce bound to the app's challenge),
+  or a Chrome tab (`/auth/google/start?app_challenge=`, returning to
+  `hoja://auth/finish`). Both transfers are redeemable only with the app's verifier.
+- App sessions last 90 days and renew while used. Settings → Connected apps shows
+  them with a label such as "Pixel 8 · Hoja app · via QR".
+- `/.well-known/assetlinks.json` for Android App Links. It is served when
+  `HOJA_ANDROID_CERT_SHA256` is set.
 - Project members can be managed. `memberIds` on `projectCreate` and `projectUpdate`
   (Linear's field), and a Members picker on the project page. Anyone added follows the
   project and gets "added you to the project" in their inbox (`projectMemberAdded`).
@@ -94,6 +112,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-inviting a removed address also un-archives that same profile.
 - `scripts/test-settings-routes.mjs` (path -> view table) and
   `scripts/ui-probes/settings-e2e.cjs` (browser journeys).
+
+### Security
+
+- Every Google sign-in transfer (`/auth/google/finish?t=`) now works once. Before,
+  a leaked link could be replayed for its full 120 s. Revision 95 adds
+  `identity_transfer_use`.
 
 ### Fixed
 

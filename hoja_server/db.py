@@ -40,7 +40,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 94
+CURRENT_SCHEMA_REVISION = 95
 
 log = logging.getLogger(__name__)
 
@@ -205,6 +205,11 @@ browser_session = Table(
     # timeout. NULL on a pre-59 row reads as created_at (see store.session_idle_ok).
     Column("last_seen_at", String),
     Column("revoked_at", String),
+    # HOJA-733: "app" for a session the mobile app signed in (QR handoff or
+    # Google from the app): 90 days, sliding. NULL/"browser" is a web browser.
+    Column("kind", String),
+    # What Settings -> Connected apps shows, e.g. "Pixel 8 · Hoja app · via QR".
+    Column("label", String),
 )
 
 # --------------------------------------------------------------------------
@@ -248,6 +253,9 @@ signup_flow = Table(
     Column("created_at", String, nullable=False),
     Column("expires_at", String, nullable=False, index=True),
     Column("consumed_at", String),
+    # HOJA-733: S256 challenge from a native app that started this flow in the
+    # system browser; the tenant handoff is then bound to the app's verifier.
+    Column("client_challenge", String),
 )
 
 signup_session = Table(
@@ -589,6 +597,45 @@ schema_revision = Table(
     metadata,
     Column("revision", Integer, primary_key=True),
     Column("applied_at", String, nullable=False),
+)
+
+identity_transfer_use = Table(
+    "identity_transfer_use",
+    metadata,
+    # HOJA-733: a tenant spends each identity-transfer token once. The primary
+    # key is the token hash, so a second redemption fails on insert. Rows past
+    # their token's expiry carry no information and are pruned on redemption.
+    Column("token_hash", String, primary_key=True),
+    Column("expires_at", Float, nullable=False, index=True),
+)
+
+session_handoff = Table(
+    "session_handoff",
+    metadata,
+    # HOJA-733: "Sign in on your phone". A signed-in browser session creates a
+    # row and shows a QR code; a phone claims it (first claim wins, a second
+    # one burns it), the browser approves, the phone redeems with its PKCE
+    # verifier and gets its own session for the same membership. Secrets are
+    # stored as hashes; every transition is a guarded UPDATE.
+    Column("id", String, primary_key=True),
+    Column("secret_hash", String, nullable=False),
+    Column("code", String, nullable=False, unique=True, index=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("user_id", String, ForeignKey("user.id"), nullable=False),
+    Column("identity_id", String),
+    Column("creator_session_id", String, nullable=False, index=True),
+    Column("status", String, nullable=False),
+    Column("challenge", String),
+    Column("device_name", String),
+    Column("platform", String),
+    Column("claim_ip", String),
+    Column("claim_user_agent", String),
+    Column("creator_ip", String),
+    Column("created_at", Float, nullable=False),
+    Column("expires_at", Float, nullable=False, index=True),
+    Column("claimed_at", Float),
+    Column("decided_at", Float),
+    Column("consumed_at", Float),
 )
 
 rate_limit_event = Table(
@@ -3761,6 +3808,19 @@ def _apply_agent_message_tool_calls(conn):
         conn.exec_driver_sql("ALTER TABLE agent_message ADD COLUMN tool_calls TEXT")
 
 
+def _apply_mobile_signin(conn):
+    """Revision 95: QR handoff, single-use transfers, app sessions (HOJA-733)."""
+    identity_transfer_use.create(conn, checkfirst=True)
+    session_handoff.create(conn, checkfirst=True)
+    flow_columns = {c["name"] for c in inspect(conn).get_columns("signup_flow")}
+    if "client_challenge" not in flow_columns:
+        conn.exec_driver_sql("ALTER TABLE signup_flow ADD COLUMN client_challenge VARCHAR")
+    session_columns = {c["name"] for c in inspect(conn).get_columns("browser_session")}
+    for name in ("kind", "label"):
+        if name not in session_columns:
+            conn.exec_driver_sql(f"ALTER TABLE browser_session ADD COLUMN {name} VARCHAR")
+
+
 def _apply_user_avatar_hue(conn):
     """``user.avatar_seed`` gets a hue: "<hue>:<token>" (revision 86).
 
@@ -4198,6 +4258,9 @@ _MIGRATIONS = {
     # 94: a team or project view can be pinned as a tab, in a stored order. Additive columns
     # with a false/null default, so every existing view stays unpinned.
     94: _apply_view_pins,
+    # 95: mobile sign-in (HOJA-733): QR handoff, single-use identity transfers
+    # bound to a native app's PKCE challenge, and labelled 90-day app sessions.
+    95: _apply_mobile_signin,
 }
 
 

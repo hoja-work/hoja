@@ -70,6 +70,7 @@ from hoja_server.db import (
     _seed_demo_issues,
     api_key,
     browser_session,
+    identity_transfer_use,
     gen_session_token,
     gen_token,
     global_identity,
@@ -110,7 +111,8 @@ from hoja_server.signup_gate import (
     SignupGate,
 )
 from hoja_server.signup_store import SignupStore
-from hoja_server.store import Store
+from hoja_server.store import APP_SESSION_DAYS, Store
+from hoja_server import session_handoff as session_handoff_flow
 from hoja_server.writer import Writer
 
 _schema = build_schema()
@@ -335,6 +337,12 @@ def _forwarded_client_ip(forwarded: str | None, peer: str,
         if not any(address in network for network in networks):
             return str(address)
     return hops[0] if hops else peer
+
+
+#: HOJA-733: an app session's cookie outlives any one server-side expiry: the
+#: server slides the session (store.APP_SESSION_DAYS), so the cookie must not
+#: be the thing that signs a phone out. 400 days is the browser ceiling.
+_APP_COOKIE_MAX_AGE = 400 * 24 * 60 * 60
 
 
 class _FailureLimiter:
@@ -2678,6 +2686,16 @@ def create_app(
             headers={"cache-control": "no-store"},
         )
 
+    #: The native app's registered scheme (mobile/app.json "scheme"). Only the app
+    #: holding the matching PKCE verifier can finish a handoff sent here.
+    _APP_CALLBACK = "hoja://auth/finish"
+
+    def _app_challenge(request: Request, tenant_target: str | None) -> str | None:
+        """The native app's S256 challenge, honoured only for a tenant handoff."""
+        if tenant_target is None:
+            return None
+        return identity_transfer.valid_challenge(request.query_params.get("app_challenge"))
+
     def _tenant_transfer_redirect(
         *,
         email: str,
@@ -2687,8 +2705,15 @@ def create_app(
         tenant_target: str,
         source: str,
         request: Request | None = None,
+        client_challenge: str | None = None,
     ) -> Response:
-        """Mint the per-tenant handoff from an already verified identity."""
+        """Mint the per-tenant handoff from an already verified identity.
+
+        A native app's flow (``client_challenge`` set, HOJA-733) returns to the
+        app's ``hoja://auth/finish`` callback instead of the tenant. The app then
+        redeems the tenant's finish URL with its PKCE verifier, so a token taken
+        from the callback by another app that registered ``hoja://`` is refused.
+        """
         master = signup_config.identity_transfer_master
         if not master:
             if request is not None:
@@ -2711,10 +2736,19 @@ def create_app(
             name=name,
             picture=picture,
             email_verified=True,
+            client_challenge=client_challenge,
         )
         _security_log.info(
-            "auth.handoff source=%s target_host=%s", source, target_host
+            "auth.handoff source=%s target_host=%s app=%s",
+            source, target_host, bool(client_challenge),
         )
+        if client_challenge:
+            response = RedirectResponse(
+                f"{_APP_CALLBACK}?host={quote(target_host, safe='')}&t={quote(transfer, safe='')}",
+                status_code=302,
+            )
+            response.delete_cookie(_OIDC_FLOW_COOKIE, path="/")
+            return response
         # Build the handoff from the host, never from the whole target: a target
         # may carry `?invite=<code>`, and concatenating a path onto that both
         # swallows `/auth/google/finish` into the parameter and puts the signed
@@ -2846,7 +2880,8 @@ def create_app(
         url = f"{control_plane}/auth/google/start?return_to={quote(origin, safe='')}"
         return f"{url}&choose_account=1" if ask_account else url
 
-    def _resume_tenant_handoff(identity: dict, tenant_target: str) -> Response | None:
+    def _resume_tenant_handoff(identity: dict, tenant_target: str, *,
+                               client_challenge: str | None = None) -> Response | None:
         """Mint the audience-bound handoff from a live control session.
 
         Google is already done on this host, so the only thing between the
@@ -2866,6 +2901,7 @@ def create_app(
             picture=full_identity.get("picture"),
             tenant_target=tenant_target,
             source="control_session",
+            client_challenge=client_challenge,
         )
 
     async def sign_in_invited(request: Request):
@@ -3144,7 +3180,8 @@ def create_app(
             # entry asks for choose_account=1 only when the person explicitly
             # asked to change accounts (a sign-out or a refusal page), because
             # resuming would otherwise hand them the identity they just left.
-            resumed = _resume_tenant_handoff(identity, tenant_target)
+            resumed = _resume_tenant_handoff(
+                identity, tenant_target, client_challenge=_app_challenge(request, tenant_target))
             if resumed is not None:
                 return resumed
         if not signup_config.configured:
@@ -3173,6 +3210,7 @@ def create_app(
             return_to=(_tenant_transfer_target(request.query_params.get("return_to"))
                        or _safe_return_to(request.query_params.get("return_to"))),
             ttl_seconds=signup_config.flow_ttl_seconds,
+            client_challenge=_app_challenge(request, tenant_target),
         )
         location = google_oidc.authorization_url(
             client_id=signup_config.google_client_id,
@@ -3280,6 +3318,7 @@ def create_app(
                 tenant_target=tenant_target,
                 source="google_callback",
                 request=request,
+                client_challenge=identity_transfer.valid_challenge(flow.get("client_challenge")),
             )
 
         identity = signup_store.upsert_identity(
@@ -3308,6 +3347,275 @@ def create_app(
         response.delete_cookie(_OIDC_FLOW_COOKIE, path="/")
         return response
 
+    # ------------------------------------------------------------------
+    # HOJA-733: mobile sign-in. "Sign in on your phone" (QR handoff) and
+    # Google from the app without a web view. Contract: docs/mobile-signin.md
+    # ------------------------------------------------------------------
+
+    def _app_session_args(request: Request, via: str) -> dict:
+        """A labelled 90-day sliding app session (Settings -> Connected apps shows the label)."""
+        from hoja_server.mcp_oauth import device_label
+
+        name = device_label(request.query_params.get("device")) or "Phone"
+        return {"days": APP_SESSION_DAYS, "kind": "app", "label": f"{name} · Hoja app · {via}"}
+
+    def _handoff_error(exc: session_handoff_flow.HandoffError) -> JSONResponse:
+        return JSONResponse({"error": exc.message, "reason": exc.reason},
+                            status_code=exc.status, headers={"cache-control": "no-store"})
+
+    def _handoff_creator(request: Request):
+        """The browser session that may make and approve codes, or a refusal.
+
+        Only a person in a browser: an API key or OAuth token (an agent, the CLI)
+        must never be able to mint a human session for a phone.
+        """
+        if request.headers.get("authorization"):
+            return None, JSONResponse(
+                {"error": "Sign in on your phone needs a signed-in browser.",
+                 "reason": "browser_session_required"}, status_code=403)
+        uid, _org, _identity_id, is_browser = _auth(request)
+        raw = request.cookies.get("hoja_session")
+        if not uid or not is_browser or not raw:
+            return None, JSONResponse(
+                {"error": "Sign in on your phone needs a signed-in browser.",
+                 "reason": "browser_session_required"}, status_code=403)
+        csrf = _cookie_csrf_error(request, json_only=True)
+        if csrf:
+            return None, csrf
+        session = store.resolve_browser_session(raw)
+        if not session:
+            return None, JSONResponse({"error": "Session expired.", "reason": "browser_session_required"},
+                                      status_code=403)
+        return session, None
+
+    async def handoff_create(request: Request):
+        session, refusal = await run_in_threadpool(_handoff_creator, request)
+        if refusal:
+            return refusal
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+        body = body if isinstance(body, dict) else {}
+        # The QR names this exact origin. Plain http only for a loopback dev
+        # server; everything else is https, whatever the proxy hop says.
+        authority = _signup_host(request).lower()
+        loopback = authority.split(":")[0] in ("localhost", "127.0.0.1")
+        origin = f"{'http' if loopback else 'https'}://{authority}"
+        try:
+            with tenant_context.system():
+                created = await run_in_threadpool(
+                    session_handoff_flow.create, engine, session=session,
+                    creator_ip=_client_ip(request), origin=origin, replaces=body.get("replaces"))
+        except session_handoff_flow.HandoffError as exc:
+            return _handoff_error(exc)
+        _security_log.info("auth.handoff.create org=%s user=%s rotated=%s",
+                           session["organization_id"], session["user_id"], bool(body.get("replaces")))
+        return JSONResponse(created, status_code=201, headers={"cache-control": "no-store"})
+
+    async def handoff_status(request: Request):
+        session, refusal = await run_in_threadpool(_handoff_creator, request)
+        if refusal:
+            return refusal
+        try:
+            with tenant_context.system():
+                result = session_handoff_flow.status(
+                    engine, request.path_params["handoff_id"], creator_session_id=session["id"])
+        except session_handoff_flow.HandoffError as exc:
+            return _handoff_error(exc)
+        return JSONResponse(result, headers={"cache-control": "no-store"})
+
+    async def handoff_decision(request: Request):
+        session, refusal = await run_in_threadpool(_handoff_creator, request)
+        if refusal:
+            return refusal
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+        decision = str((body or {}).get("decision") or "")
+        from hoja_server import permissions as permission_rules
+
+        def approve_check(row: dict):
+            # Membership is re-checked when the session is minted; here the
+            # workspace's network rule is applied to the PHONE's address. An
+            # admin is exempt, exactly as _auth exempts them.
+            policy = _org_security_policy(row["organization_id"])
+            actor = store.get_user(row["organization_id"], row["user_id"])
+            if (policy.get("ipAllowlist") and not (actor and actor.get("admin"))
+                    and not permission_rules.ip_allowed(policy, row.get("claim_ip"))):
+                return session_handoff_flow.HandoffError(
+                    "ip_not_allowed", "This workspace does not allow sign-in from the phone's network.", 403)
+            return None
+
+        try:
+            with tenant_context.system():
+                result = await run_in_threadpool(
+                    session_handoff_flow.decide, engine, request.path_params["handoff_id"], decision,
+                    creator_session_id=session["id"], approve_check=approve_check)
+        except session_handoff_flow.HandoffError as exc:
+            _security_log.info("auth.handoff.decision outcome=%s", exc.reason)
+            return _handoff_error(exc)
+        _security_log.info("auth.handoff.decision outcome=%s", result["status"])
+        return JSONResponse(result, headers={"cache-control": "no-store"})
+
+    async def handoff_claim(request: Request):
+        ip = _client_ip(request)
+        if rate_limit_blocked(engine, "handoff_claim", [ip], 20, 60.0):
+            return JSONResponse({"error": "Too many attempts. Wait a minute.", "reason": "rate_limited"},
+                                status_code=429, headers={"Retry-After": "60"})
+        rate_limit_record(engine, "handoff_claim", [ip], 60.0)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "Expected a JSON object.", "reason": "bad_request"}, status_code=400)
+        try:
+            with tenant_context.system():
+                result = await run_in_threadpool(
+                    session_handoff_flow.claim, engine,
+                    handoff_id=body.get("id"), secret=body.get("secret"),
+                    code=body.get("code") if body.get("id") is None else None,
+                    challenge=body.get("challenge"), name=body.get("deviceName"),
+                    platform=body.get("platform"), ip=ip,
+                    user_agent=request.headers.get("user-agent"))
+        except session_handoff_flow.HandoffError as exc:
+            _security_log.info("auth.handoff.claim outcome=%s ip=%s", exc.reason, ip)
+            return _handoff_error(exc)
+        result["workspace"]["host"] = _signup_host(request).split(":")[0].lower()
+        _security_log.info("auth.handoff.claim outcome=claimed ip=%s", ip)
+        return JSONResponse(result, headers={"cache-control": "no-store"})
+
+    async def handoff_redeem(request: Request):
+        content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+        as_form = content_type == "application/x-www-form-urlencoded"
+        try:
+            body = dict(await request.form()) if as_form else await request.json()
+        except ValueError:
+            body = None
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "Expected a JSON object.", "reason": "bad_request"}, status_code=400)
+        try:
+            with tenant_context.system():
+                result = await run_in_threadpool(
+                    session_handoff_flow.redeem, engine,
+                    handoff_id=str(body.get("id") or ""), verifier=body.get("verifier"))
+        except session_handoff_flow.HandoffError as exc:
+            _security_log.info("auth.handoff.redeem outcome=%s", exc.reason)
+            return _handoff_error(exc)
+        if result["status"] == session_handoff_flow.CLAIMED:
+            return JSONResponse(result, status_code=202, headers={"cache-control": "no-store"})
+        session_token, _details = store.create_session_for_membership(
+            result.get("identity_id"), result["user_id"], result["organization_id"],
+            days=APP_SESSION_DAYS, kind="app", label=session_handoff_flow.session_label(result))
+        if not session_token:
+            # The person left the workspace (or was deactivated) between the
+            # code and the scan: the copy of their session dies with them.
+            _security_log.info("auth.handoff.redeem outcome=membership_gone")
+            return JSONResponse({"error": "That account no longer has access to this workspace.",
+                                 "reason": "membership_gone"}, status_code=403)
+        _security_log.info("auth.handoff.redeem outcome=consumed org=%s user=%s",
+                           result["organization_id"], result["user_id"])
+        response = (RedirectResponse("/", status_code=302) if as_form
+                    else JSONResponse({"status": "consumed", "redirect": "/"},
+                                      headers={"cache-control": "no-store"}))
+        response.set_cookie("hoja_session", session_token, max_age=_APP_COOKIE_MAX_AGE,
+                            **_session_cookie_attrs(request))
+        return response
+
+    async def mobile_pair_page(request: Request):
+        """Where a QR code lands when opened by a phone's own camera, not the app.
+
+        The code is in the fragment, which never reaches this server; the page's
+        script reads it and offers to open the app with it.
+        """
+        return HTMLResponse(signin_pages.pair_page(host=_signup_host(request).split(":")[0].lower()),
+                            headers={"cache-control": "no-store"})
+
+    async def google_native_sign_in(request: Request):
+        """Google ID token from the app's native account sheet -> a transfer bound to the app.
+
+        The ID token's nonce must be the app's PKCE challenge, so a token lifted
+        from another flow cannot be replayed here, and the transfer it buys is
+        redeemable only with the matching verifier.
+        """
+        control_host = _control_plane_host()
+        if control_host and _signup_host(request).split(":")[0].lower() != control_host:
+            return JSONResponse({"error": "Not found.", "reason": "not_control_plane"}, status_code=404)
+        if not signup_config.configured or not signup_config.identity_transfer_master:
+            return JSONResponse({"error": "Google sign-in is not configured.", "reason": "signup_unconfigured"},
+                                status_code=503)
+        ip = _client_ip(request)
+        if rate_limit_blocked(engine, "google_native", [ip], 20, 60.0):
+            return JSONResponse({"error": "Too many attempts. Wait a minute.", "reason": "rate_limited"},
+                                status_code=429, headers={"Retry-After": "60"})
+        rate_limit_record(engine, "google_native", [ip], 60.0)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        body = body if isinstance(body, dict) else {}
+        challenge = identity_transfer.valid_challenge(body.get("challenge"))
+        tenant_target = _tenant_transfer_target(f"https://{str(body.get('host') or '').strip().lower()}/")
+        if not challenge or tenant_target is None:
+            return JSONResponse({"error": "host and challenge are required.", "reason": "bad_request"},
+                                status_code=400)
+        unknown = _unknown_workspace(request, tenant_target)
+        if unknown is not None:
+            return JSONResponse({"error": "There is no workspace at that address.",
+                                 "reason": "unknown_workspace"}, status_code=403)
+        try:
+            jwks = await run_in_threadpool(google_oidc.get_jwks)
+            claims = google_oidc.verify_id_token(
+                str(body.get("idToken") or ""), jwks=jwks,
+                client_id=signup_config.google_client_id, nonce=challenge)
+        except google_oidc.OIDCError as exc:
+            _security_log.info("auth.native outcome=%s", exc.reason)
+            return JSONResponse({"error": "Google sign-in could not be verified.", "reason": exc.reason},
+                                status_code=400)
+        target_host = urlsplit(tenant_target).hostname or ""
+        transfer = identity_transfer.issue(
+            key=identity_transfer.tenant_key(signup_config.identity_transfer_master, target_host),
+            audience=target_host, email=str(claims["email"]).strip().lower(), subject=claims["sub"],
+            name=claims.get("name"), picture=claims.get("picture"), email_verified=True,
+            client_challenge=challenge)
+        _security_log.info("auth.handoff source=google_native target_host=%s app=True", target_host)
+        return JSONResponse({"finishUrl": f"https://{target_host}/auth/google/finish", "transfer": transfer},
+                            headers={"cache-control": "no-store"})
+
+    async def android_asset_links(_request: Request):
+        """Digital Asset Links for the Hoja Android app (HOJA-733).
+
+        Lets Android verify that https://<this host>/m/... links belong to
+        ``work.hoja.mobile``, so no other app can claim them. Served only when
+        ``HOJA_ANDROID_CERT_SHA256`` (comma-separated signing-cert SHA-256
+        fingerprints: the Play app-signing key and the upload key) is set.
+        """
+        prints = [p.strip().upper() for p in os.environ.get("HOJA_ANDROID_CERT_SHA256", "").split(",") if p.strip()]
+        if not prints:
+            return JSONResponse([], status_code=404)
+        return JSONResponse([{
+            "relation": ["delegate_permission/common.handle_all_urls"],
+            "target": {"namespace": "android_app", "package_name": "work.hoja.mobile",
+                       "sha256_cert_fingerprints": prints},
+        }], headers={"cache-control": "public, max-age=3600"})
+
+    def _spend_transfer(token: str, expires_at: int) -> None:
+        """Redeem a transfer at most once; a second use is refused as a replay (HOJA-733)."""
+        from sqlalchemy.exc import IntegrityError
+
+        now = time.time()
+        try:
+            with tenant_context.system(), engine.begin() as conn:
+                conn.execute(identity_transfer_use.delete().where(
+                    identity_transfer_use.c.expires_at < now))
+                conn.execute(identity_transfer_use.insert().values(
+                    token_hash=identity_transfer.token_id(token), expires_at=float(expires_at)))
+        except IntegrityError as exc:
+            raise identity_transfer.TransferError(
+                "replayed", "This sign-in link was already used.") from exc
+
     async def google_sign_in_finish(request: Request):
         """Redeem a handoff token on this tenant origin and sign the person in."""
         host = _signup_host(request).split(":")[0].lower()
@@ -3325,7 +3633,11 @@ def create_app(
                 key=transfer_key,
                 token=request.query_params.get("t"),
                 audience=host,
+                client_verifier=request.query_params.get("v"),
             )
+            # HOJA-733: every transfer is spent once, browser or app. Checked
+            # after the signature so junk cannot fill the table.
+            _spend_transfer(request.query_params.get("t") or "", int(claims["exp"]))
         except identity_transfer.TransferError as exc:
             return _signin_failure(
                 request,
@@ -3398,8 +3710,12 @@ def create_app(
                 f"auth.owner_admitted host={host} adopted={bool(resolved.get('adopted'))}"
                 f" linked={bool(resolved.get('linked'))}"
             )
+        # A transfer bound to an app's challenge was finished by that app: it
+        # gets a labelled 90-day sliding app session (HOJA-733).
+        from_app = "cc" in claims
         session_token, _details = store.create_session_for_membership(
-            resolved["identity_id"], resolved["user_id"], resolved["organization_id"]
+            resolved["identity_id"], resolved["user_id"], resolved["organization_id"],
+            **(_app_session_args(request, "via Google") if from_app else {}),
         )
         if not session_token:
             return _signin_failure(
@@ -3418,7 +3734,7 @@ def create_app(
         response.set_cookie(
             "hoja_session",
             session_token,
-            max_age=14 * 24 * 60 * 60,
+            max_age=_APP_COOKIE_MAX_AGE if from_app else 14 * 24 * 60 * 60,
             **_session_cookie_attrs(request),
         )
         if pending_invite:
@@ -4145,6 +4461,14 @@ def create_app(
             Route("/auth/google/start", google_sign_in_start, methods=["GET"]),
             Route("/auth/google/callback", google_sign_in_callback, methods=["GET"]),
             Route("/auth/google/finish", google_sign_in_finish, methods=["GET"]),
+            Route("/auth/google/native", google_native_sign_in, methods=["POST"]),
+            Route("/auth/handoff", handoff_create, methods=["POST"]),
+            Route("/auth/handoff/claim", handoff_claim, methods=["POST"]),
+            Route("/auth/handoff/redeem", handoff_redeem, methods=["POST"]),
+            Route("/auth/handoff/{handoff_id}", handoff_status, methods=["GET"]),
+            Route("/auth/handoff/{handoff_id}/decision", handoff_decision, methods=["POST"]),
+            Route("/m/pair", mobile_pair_page, methods=["GET"]),
+            Route("/.well-known/assetlinks.json", android_asset_links, methods=["GET"]),
             Route("/auth/google/logout", signup_logout, methods=["POST"]),
             Route("/api/signup/config", signup_public_config, methods=["GET"]),
             Route("/api/signup/status", signup_status, methods=["GET"]),

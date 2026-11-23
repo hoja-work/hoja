@@ -1457,6 +1457,7 @@ function App() {
   useEffect(() => {
     if (!commandOpen) setCommandViews(false);
   }, [commandOpen]);
+  const [phoneSignInOpen, setPhoneSignInOpen] = useState(false);
   /* The app-level "New initiative" dialog: N then I, the command palette and the list. */
   const [initiativeCreate, setInitiativeCreate] = useState<Record<
     string,
@@ -3888,6 +3889,18 @@ function App() {
                       <button
                         type="button"
                         role="menuitem"
+                        onClick={() => {
+                          setOrgMenu(false);
+                          setMobile(false);
+                          setPhoneSignInOpen(true);
+                        }}
+                        className="flex w-full min-h-9 items-center justify-between gap-2 rounded-lg bg-transparent p-2 text-left text-sm text-inherit hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
+                      >
+                        Sign in on your phone
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
                         onClick={logout}
                         className="flex w-full min-h-9 items-center justify-between gap-2 rounded-lg bg-transparent p-2 text-left text-sm text-inherit hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
                       >
@@ -4439,6 +4452,10 @@ function App() {
             }}
           />
         )}
+        <PhoneSignInDialog
+          open={phoneSignInOpen}
+          onClose={() => setPhoneSignInOpen(false)}
+        />
         {commandOpen && (
           <CommandPalette
             viewsOnly={commandViews}
@@ -4555,6 +4572,7 @@ function IssueDetailPage({
   );
 }
 import { InitiativeRoute } from "./initiatives/InitiativeDetail";
+import { PhoneSignInDialog } from "./PhoneSignIn";
 import { InitiativesList } from "./initiatives/InitiativesList";
 import { InitiativeSettings } from "./initiatives/InitiativeSettings";
 import { CreateInitiativeDialog } from "./initiatives/CreateInitiativeDialog";

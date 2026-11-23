@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
+import { Smartphone } from "lucide-react";
+import { PhoneSignInDialog } from "./PhoneSignIn";
 import { ApiKeysSettings } from "./ApiKeysSettings";
 import { ConnectSettings } from "./ConnectSettings";
 
@@ -36,6 +38,9 @@ type Session = {
   lastSeenAt?: string;
   expiresAt: string;
   current: boolean;
+  /** Set for app sessions, e.g. "Pixel 8 · Hoja app · via QR". */
+  label?: string | null;
+  kind?: "browser" | "app" | null;
 };
 
 const APP_FIELDS =
@@ -173,6 +178,7 @@ function AppList({
 
 function YourApps() {
   const [message, setMessage] = useState<string | null>(null);
+  const [phoneOpen, setPhoneOpen] = useState(false);
   const loadApps = useCallback(
     () =>
       gql(`query MyApps{myAuthorizedApps{${APP_FIELDS}}}`).then(
@@ -183,7 +189,7 @@ function YourApps() {
   const loadSessions = useCallback(
     () =>
       gql(
-        "query MySessions{mySessions{id createdAt lastSeenAt expiresAt current}}",
+        "query MySessions{mySessions{id createdAt lastSeenAt expiresAt current label kind}}",
       ).then((d) => d.mySessions as Session[]),
     [],
   );
@@ -253,8 +259,23 @@ function YourApps() {
       <Section
         id="browser-sessions"
         title="Browser sessions"
-        description="Browsers signed in to this workspace as you."
+        description="Browsers and phones signed in to this workspace as you."
       >
+        <button
+          type="button"
+          className={`${button} self-start gap-2`}
+          onClick={() => setPhoneOpen(true)}
+        >
+          <Smartphone size={16} aria-hidden="true" />
+          Sign in on your phone
+        </button>
+        <PhoneSignInDialog
+          open={phoneOpen}
+          onClose={() => {
+            setPhoneOpen(false);
+            sessions.reload();
+          }}
+        />
         {sessions.error && (
           <p role="alert" className={muted}>
             Could not load sessions: {sessions.error}
@@ -269,7 +290,25 @@ function YourApps() {
             {sessions.data.map((s) => (
               <Row
                 key={s.id}
-                title={s.current ? "This browser" : "Browser"}
+                title={
+                  s.label || s.kind === "app" ? (
+                    <span className="inline-flex min-w-0 items-center gap-2">
+                      {s.kind === "app" && (
+                        <Smartphone
+                          size={16}
+                          aria-hidden="true"
+                          className="flex-none text-muted"
+                        />
+                      )}
+                      {s.label || "Hoja app"}
+                      {s.current ? " (this device)" : ""}
+                    </span>
+                  ) : s.current ? (
+                    "This browser"
+                  ) : (
+                    "Browser"
+                  )
+                }
                 detail={`Signed in ${when(s.createdAt)} · Last active ${when(s.lastSeenAt || s.createdAt)}`}
                 action={
                   s.current ? undefined : (

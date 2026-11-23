@@ -10,6 +10,13 @@ session; no Google secret is ever needed on a tenant.
 The token is a bearer value, so it is treated like one: single audience, short
 life, constant-time signature check, no algorithm field to negotiate (there is
 exactly one construction, so `alg=none`-style confusion cannot be expressed).
+
+A native app cannot run Google inside its web view (Google refuses embedded
+browsers), so it runs the control-plane step in the system browser and receives
+the transfer on its `hoja://` callback. A custom scheme can be claimed by any app,
+so that transfer is also bound to a proof key the app holds (PKCE S256, RFC 7636):
+the token carries the challenge, and the tenant redeems it only with the matching
+verifier. Every token also carries a random `jti` so a tenant can spend it once.
 """
 
 from __future__ import annotations
@@ -20,6 +27,7 @@ import hmac
 import json
 import os
 import re
+import secrets
 import time
 
 #: Prefix keeps the format versionable and makes a stray value easy to reject.
@@ -37,6 +45,13 @@ DERIVATION_SALT = b"hoja-identity-transfer-v1"
 
 #: Derived keys are 32 bytes, the HMAC-SHA256 key size.
 DERIVED_KEY_BYTES = 32
+
+
+#: RFC 7636 S256 challenge: base64url of a SHA-256 digest, no padding.
+_CHALLENGE = re.compile(r"[A-Za-z0-9_-]{43}")
+
+#: RFC 7636 verifier: 43-128 unreserved characters.
+_VERIFIER = re.compile(r"[A-Za-z0-9._~-]{43,128}")
 
 
 class TransferError(Exception):
@@ -98,6 +113,21 @@ def tenant_key(master: str | bytes, audience: str) -> str:
     ).decode("ascii").rstrip("=")
 
 
+def valid_challenge(value: str | None) -> str | None:
+    """Return ``value`` if it is an S256 code challenge, else None."""
+    return value if value and _CHALLENGE.fullmatch(value) else None
+
+
+def challenge_for(verifier: str) -> str:
+    """The S256 challenge for a verifier (RFC 7636 section 4.2)."""
+    return _b64e(hashlib.sha256(verifier.encode("ascii")).digest())
+
+
+def token_id(token: str) -> str:
+    """A stable, non-secret handle for spending a token once."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
 def _signature(key: bytes, signing_input: bytes) -> bytes:
     return hmac.new(key, signing_input, hashlib.sha256).digest()
 
@@ -111,10 +141,15 @@ def issue(
     name: str | None = None,
     picture: str | None = None,
     email_verified: bool = False,
+    client_challenge: str | None = None,
     ttl_seconds: int = DEFAULT_TTL_SECONDS,
     now: float | None = None,
 ) -> str:
-    """Mint a transfer token for exactly one audience (a tenant hostname)."""
+    """Mint a transfer token for exactly one audience (a tenant hostname).
+
+    ``client_challenge`` binds the token to a native app's proof key; the tenant
+    then refuses it without the matching verifier.
+    """
     signing_key = _check_key(key)
     if not audience or not email or not subject:
         raise TransferError("claims_missing", "audience, email and subject are required.")
@@ -122,6 +157,8 @@ def issue(
         # A tenant must never have to re-derive this: only verified addresses
         # are ever handed across, so an unverified one is a programming error.
         raise TransferError("email_unverified", "Only a verified address may be transferred.")
+    if client_challenge is not None and not valid_challenge(client_challenge):
+        raise TransferError("challenge_invalid", "client_challenge is not an S256 challenge.")
     moment = time.time() if now is None else now
     payload = {
         "aud": audience.strip().lower(),
@@ -132,7 +169,10 @@ def issue(
         "ev": True,
         "iat": int(moment),
         "exp": int(moment) + max(1, int(ttl_seconds)),
+        "jti": secrets.token_urlsafe(16),
     }
+    if client_challenge:
+        payload["cc"] = client_challenge
     body = _b64e(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"))
     signing_input = f"{PREFIX}.{body}".encode("ascii")
     return f"{PREFIX}.{body}.{_b64e(_signature(signing_key, signing_input))}"
@@ -143,9 +183,12 @@ def redeem(
     key: str | bytes | None,
     token: str | None,
     audience: str,
+    client_verifier: str | None = None,
     now: float | None = None,
 ) -> dict:
     """Verify a transfer token for this origin and return its claims.
+
+    A token bound to a client challenge is only redeemed with its verifier.
 
     Every failure raises :class:`TransferError`; the caller must not learn more
     than ``reason`` (a bad signature and a wrong audience both mean "no").
@@ -179,6 +222,12 @@ def redeem(
         raise TransferError("email_unverified", "Address was never verified.")
     if not claims.get("email") or not claims.get("sub"):
         raise TransferError("claims_missing", "Token is missing email or subject.")
+    bound = claims.get("cc")
+    if bound is not None:
+        if not client_verifier or not _VERIFIER.fullmatch(client_verifier):
+            raise TransferError("verifier_missing", "This sign-in must be finished by the app that started it.")
+        if not hmac.compare_digest(challenge_for(client_verifier), str(bound)):
+            raise TransferError("verifier_mismatch", "This sign-in was started by another app.")
     return claims
 
 

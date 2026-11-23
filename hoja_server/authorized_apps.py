@@ -59,6 +59,10 @@ SDL = gql(
       expiresAt: DateTime!
       "True for the browser making this request."
       current: Boolean!
+      "What signed this session in, e.g. Pixel 8 · Hoja app · via QR. Null for a web browser."
+      label: String
+      "app for the Hoja mobile app (90 days, renewed while used), else browser."
+      kind: String!
     }
 
     extend type Query {
@@ -221,7 +225,8 @@ def r_my_sessions(_, info):
                       browser_session.c.revoked_at.is_(None), browser_session.c.expires_at > now))
             .order_by(browser_session.c.created_at.desc())).mappings().all()
     return [{"id": r["id"], "createdAt": r["created_at"], "lastSeenAt": r["last_seen_at"],
-             "expiresAt": r["expires_at"], "current": r["token_hash"] == current} for r in rows]
+             "expiresAt": r["expires_at"], "current": r["token_hash"] == current,
+             "label": r.get("label"), "kind": r.get("kind") or "browser"} for r in rows]
 
 
 @mutation.field("sessionRevoke")

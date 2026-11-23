@@ -114,6 +114,8 @@ def _normalize_expiry(value: str | None):
 
 
 _MAX_SEARCH_TERM = 256
+#: HOJA-733: how long a mobile-app session lives after its last use (sliding).
+APP_SESSION_DAYS = 90
 _PBKDF2_ITERATIONS = 600_000
 _LEGACY_PBKDF2_ITERATIONS = 310_000
 
@@ -950,7 +952,9 @@ class Store:
                 for item in self.workspaces_for_email(email)]
 
     def create_session_for_membership(self, identity_id: str, profile_user_id: str,
-                                      organization_id: str, days: int = 14) -> tuple[str, dict] | tuple[None, None]:
+                                      organization_id: str, days: int = 14, *,
+                                      kind: str | None = None,
+                                      label: str | None = None) -> tuple[str, dict] | tuple[None, None]:
         selected = self.switch_membership(identity_id, organization_id)
         if not selected or selected["user_id"] != profile_user_id:
             return None, None
@@ -961,7 +965,7 @@ class Store:
             conn.execute(browser_session.insert().values(
                 id=new_id(), token_hash=token_hash(raw), user_id=profile_user_id,
                 organization_id=organization_id, created_at=now.isoformat(),
-                expires_at=expires.isoformat()))
+                expires_at=expires.isoformat(), kind=kind, label=label))
         return raw, {"expires_at": expires.isoformat(), "user_id": profile_user_id,
                      "organization_id": organization_id, "identity_id": identity_id}
 
@@ -1083,10 +1087,19 @@ class Store:
             session["identity_id"] = membership["identity_id"]
         # Record the sighting outside the read connection: a sliding window only
         # slides when the request that used the session is allowed to complete.
+        values = {"last_seen_at": now}
+        if session.get("kind") == "app":
+            # HOJA-733: an app session slides: it lasts APP_SESSION_DAYS from its
+            # last use, so a phone in daily use is never signed out. Written at
+            # most once a day to keep this read path cheap.
+            renewed = datetime.now(timezone.utc) + timedelta(days=APP_SESSION_DAYS)
+            if renewed - datetime.fromisoformat(session["expires_at"]) > timedelta(days=1):
+                values["expires_at"] = renewed.isoformat()
+                session["expires_at"] = values["expires_at"]
         with self.engine.begin() as conn:
             conn.execute(browser_session.update()
                          .where(browser_session.c.id == session["id"])
-                         .values(last_seen_at=now))
+                         .values(**values))
         return session
 
     def revoke_browser_session(self, raw: str) -> None:

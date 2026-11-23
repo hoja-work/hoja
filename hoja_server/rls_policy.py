@@ -52,6 +52,7 @@ GLOBAL_TABLES = frozenset({
     "global_identity",
     "github_delivery",
     "identity_credential",
+    "identity_transfer_use",
     "oauth_client",
     "oauth_state_nonce",
     "rate_limit_event",
