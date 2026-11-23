@@ -171,16 +171,9 @@ html{font-size:calc(16px * var(--font-scale,1))}
 [data-projects-reference-head]>button,[data-empty-projects] button{font:inherit}
 
 /* Agent chat: sit in the app grid like the other full-height pages, with the thread filling the content column. */
-.agent-chat-page{height:100dvh;min-height:0}
+.agent-chat-page{height:100dvh;max-height:100%;min-height:0}
+[data-workspace-page]>.agent-chat-page{height:calc(100dvh - 10px)}
 @media(max-width:880px),(max-width:1000px) and (max-height:500px){[data-workspace-content]:has(.agent-chat-page) .main{min-height:100dvh}.agent-chat-page{height:100dvh}}
-/* Agent chat history lives in the toolbar panel, not a second sidebar beside the app navigation. */
-.agent-chat-page .openui-agent-sidebar-container,.agent-chat-page .openui-agent-sidebar-container__overlay{display:none}
-.agent-chat-page .openui-agent-container:not(.openui-agent-container--mobile) .openui-agent-thread-header,.agent-chat-page .openui-agent-container--mobile .openui-agent-mobile-header{display:block;padding:0;background:var(--bg)}
-.agent-chat-page .openui-agent-thread-header__title{display:none}
-.agent-chat-page .openui-agent-thread-header__actions{display:block;min-height:0}
-/* No smooth scrolling and no scroll anchoring while replies stream: both fight the library's scroll-to-bottom and cause jitter. */
-.agent-chat-page .openui-agent-thread-scroll-area{scroll-behavior:auto;overflow-anchor:none;overscroll-behavior:contain}
-.agent-chat-page .openui-agent-thread-scroll-area--user-message-anchor .openui-agent-thread-messages>*:last-child{min-height:0}
 
 /* Agent composer: use the app's light input border instead of the default focus-black outline */
 
@@ -196,59 +189,8 @@ html{font-size:calc(16px * var(--font-scale,1))}
 /* Native vertical pan must remain possible when a touch gesture starts on a
    Kanban card; HTML drag-and-drop is a fine-pointer interaction. */
 
-/* Agent chat: ChatGPT-style layout. Scoped to .agent-chat-page only. */
-.agent-chat-page{--ag-max:760px;--ag-radius:22px;--ag-bubble:var(--subtle);--ag-ring:color-mix(in srgb,var(--text) 14%,transparent);font-size:15px;color:var(--text)}
-.agent-chat-page .openui-agent-container{width:100%;height:100%;min-height:0;background:var(--bg)}
-.agent-chat-page .openui-agent-thread-chat-panel{width:100%;max-width:100%;left:0;right:0}
-
-/* Message list */
-.agent-chat-page .openui-agent-thread-messages,.agent-chat-page .openui-agent-thread-scroll{padding-inline:clamp(12px,4vw,24px)}
-
-/* Markdown bodies. One system for every quoted-text surface (comments, project updates,
-   descriptions, meeting chat, agent replies). `.agent-chat-reply` stays in the grouped
-   selectors because the agent reply markup is also exercised as a static fixture. */
-/* Headings inside a body are demoted to h3–h6 by the renderer, so they read as local section
-   labels rather than page structure. */
-.agent-chat-page .openui-agent-composer-slot .openui-agent-composer-slot{padding:0;background:none}
-
-/* Composer: single rounded field, send button inside.
-   The library wraps the textarea + action bar in an inner
-   `__input-wrapper` element — that inner element (not the outer
-   `.openui-agent-thread-composer`) is the one that must carry the
-   pill chrome, or it shrink-wraps to its content instead of filling
-   the available width. */
-.agent-chat-page .openui-agent-composer-slot{max-width:100%;min-width:0;width:100%;padding:0 clamp(12px,4vw,24px) 18px;background:linear-gradient(to top,var(--bg) 70%,transparent)}
-.agent-chat-page .openui-agent-thread-composer{position:relative;max-width:var(--ag-max);width:100%;margin:0 auto;padding:0}
-.agent-chat-page .openui-agent-thread-composer__input-wrapper{display:flex;flex-direction:column;gap:6px;width:100%;padding:12px 12px 10px 16px;border-radius:26px;background:var(--panel);box-shadow:0 1px 2px rgb(0 0 0 / .04),0 8px 24px -12px rgb(0 0 0 / .18);border:1px solid var(--ag-ring);transition:box-shadow .15s ease,border-color .15s ease}
-.agent-chat-page .openui-agent-thread-composer__input-wrapper:focus-within{border-color:color-mix(in srgb,var(--text) 28%,transparent);box-shadow:0 1px 2px rgb(0 0 0 / .04),0 10px 30px -10px rgb(0 0 0 / .26)}
-.agent-chat-page .openui-agent-thread-composer__input{width:100%;min-width:0;min-height:24px;max-height:200px;resize:none;border:0;outline:none;background:transparent;padding:8px 0;box-sizing:border-box;font:inherit;line-height:1.5;color:var(--text)}
-.agent-chat-page .openui-agent-thread-composer__input::placeholder{color:var(--muted)}
-.agent-chat-page .openui-agent-thread-composer__action-bar{display:flex;align-items:center;justify-content:flex-end}
-.agent-chat-page .openui-agent-thread-composer__submit-button{flex:0 0 auto;width:34px;height:34px;border-radius:999px;display:grid;place-items:center;border:0;background:var(--text);color:var(--bg);cursor:pointer;transition:opacity .15s ease,transform .1s ease}
-.agent-chat-page .openui-agent-thread-composer__submit-button:hover:not(:disabled){opacity:.85}
-.agent-chat-page .openui-agent-thread-composer__submit-button:active:not(:disabled){transform:scale(.96)}
-.agent-chat-page .openui-agent-thread-composer__submit-button:disabled{opacity:.3;cursor:not-allowed}
-.agent-chat-page .openui-agent-thread-composer__submit-button:focus-visible,.agent-chat-page .openui-agent-thread-composer__input:focus-visible{outline:2px solid var(--muted);outline-offset:2px}
-
-/* Starters and welcome */
-.agent-chat-page .openui-agent-welcome{max-width:var(--ag-max);margin:0 auto;padding-top:clamp(40px,12vh,120px);text-align:center}
-.agent-chat-page .openui-agent-welcome h1,.agent-chat-page .openui-agent-welcome h2{font-size:clamp(22px,3vw,30px);font-weight:600;letter-spacing:-.01em;margin:0 0 8px}
-.agent-chat-page .openui-agent-welcome p{color:var(--muted);margin:0 0 20px}
-.agent-chat-page .openui-agent-conversation-starter{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;max-width:var(--ag-max);margin:0 auto 16px}
-.agent-chat-page .openui-agent-conversation-starter button{padding:8px 14px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--text);font-size:13px;cursor:pointer;transition:background .15s ease,border-color .15s ease}
-.agent-chat-page .openui-agent-conversation-starter button:hover{background:var(--subtle);border-color:var(--ag-ring)}
-
-/* Thread list sidebar */
-.agent-chat-page .openui-agent-thread-button{border-radius:10px}
-.agent-chat-page .openui-agent-thread-button--selected{background:var(--subtle)}
-.agent-chat-page .openui-agent-desktop-welcome-composer{position:relative;max-width:var(--ag-max);margin:0 auto;display:flex;flex-direction:column;gap:6px;padding:10px 10px 10px 16px;border-radius:26px;background:var(--panel);box-shadow:0 1px 2px rgb(0 0 0 / .04),0 8px 24px -12px rgb(0 0 0 / .18);border:1px solid var(--ag-ring)}
-.agent-chat-page .openui-agent-desktop-welcome-composer:focus-within{border-color:color-mix(in srgb,var(--text) 28%,transparent)}
-.agent-chat-page .openui-agent-desktop-welcome-composer__input{width:100%;min-height:24px;max-height:200px;resize:none;border:0;outline:none;background:transparent;padding:8px 0;box-sizing:border-box;font:inherit;line-height:1.5;color:var(--text)}
-.agent-chat-page .openui-agent-desktop-welcome-composer__input::placeholder{color:var(--muted)}
-.agent-chat-page .openui-agent-desktop-welcome-composer__input:focus-visible{outline:none}
-.agent-chat-page .openui-agent-desktop-welcome-composer__action-bar{display:flex;justify-content:flex-end}
-.agent-chat-page .openui-agent-desktop-welcome-composer__submit-button{flex:0 0 auto;width:34px;height:34px;border-radius:999px;display:grid;place-items:center;border:0;background:var(--text);color:var(--bg);cursor:pointer}
-.agent-chat-page .openui-agent-desktop-welcome-composer__submit-button:disabled{opacity:.3;cursor:not-allowed}
+/* Agent chat: smooth scroll behavior without scroll-anchoring jitter while streaming. */
+.agent-chat-page [data-agent-scroll]{scroll-behavior:auto;overflow-anchor:none;overscroll-behavior:contain}
 /* My issues: the list owns vertical scrolling inside the fixed view height. The page shell clips
    (main/workspace-content are overflow:hidden), so without this the rows past the fold are unreachable. */
 

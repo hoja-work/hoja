@@ -1,7 +1,4 @@
-/* Vendor bundles include generic Tailwind utilities (for example .flex).
- * Keep those below our responsive utilities in dev and production alike. */
 @layer theme, base, vendor, components, utilities;
-@import "@openuidev/react-ui/styles/index.css" layer(vendor);
 @import "tailwindcss";
 
 /* Shell tracks use fixed pixels (244px sidebar, 48px header). Keep spacing

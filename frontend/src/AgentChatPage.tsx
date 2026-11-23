@@ -1,531 +1,462 @@
-import React from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowDown } from "lucide-react";
 import {
-  AgentInterface,
-  fetchLLM,
-  openAIAdapter,
-  openAIMessageFormat,
-  restStorage,
-} from "@openuidev/react-ui";
-import { useThread, useThreadList } from "@openuidev/react-headless";
-import { Markdown } from "./markdown";
-import { MobileNavTrigger } from "./mobileNav";
-import { DelegationCard, splitDelegations } from "./DelegationCard";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { History, SquarePen } from "lucide-react";
+  deleteThread,
+  getThreadMessages,
+  listThreads,
+  renameThread,
+  streamChatTurn,
+  type StreamEvent,
+} from "./agent-panel/client";
+import { AskWizard } from "./agent-panel/AskWizard";
+import { ChatHeader } from "./agent-panel/ChatHeader";
+import { Composer } from "./agent-panel/Composer";
+import { MessageItem } from "./agent-panel/MessageItem";
+import { WelcomeScreen } from "./agent-panel/WelcomeScreen";
 import {
-  Popover,
-  PopoverTrigger,
-  PopoverContent,
-} from "./components/ui/popover";
+  makeMessageId,
+  splitAsk,
+  type ChatMessage,
+  type ThreadSummary,
+  type ToolCallRecord,
+} from "./agent-panel/types";
 
-// The shared renderer lives in ./markdown. Re-exported so callers that imported
-// linkIssueIds from here keep working.
+// Preserved exports so callers that imported these from AgentChatPage keep working.
 export { linkIssueIds } from "./markdown";
+export { splitAsk } from "./agent-panel/types";
 
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem("hoja_token");
-  return token && token !== "session"
-    ? { authorization: `Bearer ${token}` }
-    : {};
-}
-
-/* The token is read on every request, not once when this module loads: a sign-in, sign-out or
- * workspace switch after the first import used to keep sending the token from before it. */
-function authedFetch(
-  input: RequestInfo | URL,
-  init?: RequestInit,
-): Promise<Response> {
-  const headers = new Headers(init?.headers);
-  headers.delete("authorization");
-  for (const [name, value] of Object.entries(authHeaders()))
-    headers.set(name, value);
-  return fetch(input, { ...init, headers, credentials: "include" });
-}
-
-// One thread per chat: the library sends threadId on every turn, and the server appends to that thread.
-const llm = fetchLLM({
-  url: "/api/agent/chat",
-  streamAdapter: openAIAdapter(),
-  messageFormat: openAIMessageFormat,
-  fetch: authedFetch,
-});
-
-const storage = restStorage({
-  baseUrl: "/api/agent/threads",
-  messageFormat: openAIMessageFormat,
-  fetch: authedFetch,
-});
-
-type AskOption = { label: string; description?: string };
-type AskQuestion = {
-  question: string;
-  header?: string;
-  options?: AskOption[];
-  multiple?: boolean;
-  allow_other?: boolean;
-};
-
-// The agent's ask_user tool arrives as a ```hoja-ask fenced JSON block at the end of the reply.
-const ASK_BLOCK = /```hoja-ask\n([\s\S]*?)\n```/;
-
-export function splitAsk(content: string): {
-  text: string;
-  questions: AskQuestion[] | null;
-} {
-  const match = content.match(ASK_BLOCK);
-  if (!match) return { text: content, questions: null };
-  try {
-    const parsed = JSON.parse(match[1]) as { questions?: AskQuestion[] };
-    if (!Array.isArray(parsed.questions) || parsed.questions.length === 0)
-      return { text: content, questions: null };
-    return {
-      text: content.replace(ASK_BLOCK, "").trim(),
-      questions: parsed.questions,
-    };
-  } catch {
-    return { text: content.replace(ASK_BLOCK, "").trim(), questions: null };
+function applyStreamEvent(msg: ChatMessage, event: StreamEvent): ChatMessage {
+  if (event.type === "content") {
+    return { ...msg, content: msg.content + event.delta };
   }
-}
-
-type AskAnswer = {
-  picked: string[];
-  other: string;
-  otherOn: boolean;
-  note: string;
-};
-const EMPTY_ANSWER: AskAnswer = {
-  picked: [],
-  other: "",
-  otherOn: false,
-  note: "",
-};
-
-function answerText(q: AskQuestion, a: AskAnswer): string {
-  const values = [...a.picked];
-  if ((a.otherOn || !q.options?.length) && a.other.trim())
-    values.push(a.other.trim());
-  let line = values.join(", ");
-  if (a.note.trim()) line += line ? ` (${a.note.trim()})` : a.note.trim();
-  return line;
-}
-
-// Shows one question at a time in place of the composer; answers are sent together as one user message.
-function AskWizard({ questions }: { questions: AskQuestion[] }) {
-  const processMessage = useThread((s) => s.processMessage);
-  const [step, setStep] = useState(0);
-  const [answers, setAnswers] = useState<AskAnswer[]>(() =>
-    questions.map(() => ({ ...EMPTY_ANSWER })),
-  );
-  const q = questions[step];
-  const a = answers[step];
-  const options = q.options ?? [];
-  const allowOther = options.length === 0 || q.allow_other !== false;
-  const last = step === questions.length - 1;
-  const answered = answerText(q, a) !== "";
-  const update = (patch: Partial<AskAnswer>) =>
-    setAnswers((prev) =>
-      prev.map((x, j) => (j === step ? { ...x, ...patch } : x)),
-    );
-  const toggle = (label: string) => {
-    if (q.multiple)
-      update({
-        picked: a.picked.includes(label)
-          ? a.picked.filter((x) => x !== label)
-          : [...a.picked, label],
-      });
-    else update({ picked: [label], otherOn: false });
-  };
-  const next = () => {
-    if (!answered) return;
-    if (!last) {
-      setStep(step + 1);
-      return;
-    }
-    const body =
-      questions.length === 1
-        ? answerText(q, a)
-        : questions
-            .map(
-              (x, i) =>
-                `${x.header || x.question}: ${answerText(x, answers[i])}`,
-            )
-            .join("\n");
-    void processMessage({ role: "user", content: body });
-  };
-  return (
-    <form
-      className="flex flex-col overflow-auto border border-line gap-2.5 w-full max-w-(--ag-max) mt-0 mr-auto mb-0 ml-auto pt-3.5 pr-3.5 pb-3.5 pl-3.5 border-solid rounded-(--ag-radius) bg-panel shadow-(--shadow) max-h-[60vh]"
-      aria-label="Agent question"
-      onSubmit={(e) => {
-        e.preventDefault();
-        next();
-      }}
-    >
-      <div className="flex items-center justify-between gap-2 min-h-4">
-        {q.header && (
-          <span className="text-[11px] font-semibold uppercase tracking-[.04em] text-muted">
-            {q.header}
-          </span>
-        )}
-        {questions.length > 1 && (
-          <span className="ml-auto text-[12px] text-muted">
-            {step + 1} of {questions.length}
-          </span>
-        )}
-      </div>
-      <fieldset
-        key={step}
-        className="flex flex-col border-0 gap-1.5 mt-0 mr-0 mb-0 ml-0 pt-0 pr-0 pb-0 pl-0 min-w-0"
-      >
-        <legend className="flex flex-col gap-0.5 pt-0 pr-0 pb-0 pl-0 mb-1.5">
-          <span className="font-semibold">{q.question}</span>
-          {q.multiple && (
-            <span className="text-[12px] text-muted">
-              Select all that apply
-            </span>
-          )}
-        </legend>
-        {options.map((o) => (
-          <label
-            key={o.label}
-            className={
-              `flex cursor-pointer items-start border ${a.picked.includes(o.label) ? "border-foreground" : "border-line"}` +
-              " flex gap-2.5 items-start pt-2 pr-2.5 pb-2 pl-2.5 border border-solid border-line rounded-lg cursor-pointer"
-            }
-          >
-            <input
-              className="shell-phone:min-h-11 pointer-coarse:min-h-11 mt-0.75"
-              type={q.multiple ? "checkbox" : "radio"}
-              name={`ask-${step}`}
-              checked={a.picked.includes(o.label)}
-              onChange={() => toggle(o.label)}
-            />
-            <span className="flex flex-col gap-0.5">
-              <span className="">{o.label}</span>
-              {o.description && (
-                <span className="text-[12px] text-muted">{o.description}</span>
-              )}
-            </span>
-          </label>
-        ))}
-        {allowOther && options.length > 0 && (
-          <label
-            className={
-              `flex cursor-pointer items-start border ${a.otherOn ? "border-foreground" : "border-line"}` +
-              " flex gap-2.5 items-start pt-2 pr-2.5 pb-2 pl-2.5 border border-solid border-line rounded-lg cursor-pointer"
-            }
-          >
-            <input
-              className="shell-phone:min-h-11 pointer-coarse:min-h-11 mt-0.75"
-              type={q.multiple ? "checkbox" : "radio"}
-              name={`ask-${step}`}
-              checked={a.otherOn}
-              onChange={() =>
-                update(
-                  q.multiple
-                    ? { otherOn: !a.otherOn }
-                    : { otherOn: true, picked: [] },
-                )
-              }
-            />
-            <span className="flex flex-col gap-0.5">Other</span>
-          </label>
-        )}
-        {allowOther && (options.length === 0 || a.otherOn) && (
-          <textarea
-            className="resize-y border border-line shell-phone:min-h-11 pointer-coarse:min-h-11 w-full pt-2 pr-2.5 pb-2 pl-2.5 border-solid rounded-lg [font:inherit] bg-bg text-foreground"
-            rows={2}
-            placeholder="Write your answer…"
-            value={a.other}
-
-            onChange={(e) => update({ other: e.target.value })}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                next();
-              }
-            }}
-          />
-        )}
-        {options.length > 0 && (
-          <input
-            className="resize-y border border-line shell-phone:min-h-11 pointer-coarse:min-h-11 w-full pt-2 pr-2.5 pb-2 pl-2.5 border-solid rounded-lg [font:inherit] bg-bg text-foreground"
-            type="text"
-            placeholder="Add details (optional)"
-            value={a.note}
-            onChange={(e) => update({ note: e.target.value })}
-          />
-        )}
-      </fieldset>
-      <div className="flex justify-end gap-2">
-        {step > 0 && (
-          <button
-            type="button"
-            className="shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 pt-1.75 pr-3 pb-1.75 pl-3 rounded-md bg-subtle"
-            onClick={() => setStep(step - 1)}
-          >
-            Back
-          </button>
-        )}
-        <button
-          type="submit"
-          className="inline-flex items-center justify-center hover:brightness-110 disabled:opacity-50 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 gap-1.75 rounded-none bg-accent text-white pt-2.25 pr-3.5 pb-2.25 pl-3.5 font-[650] shadow-none hover:filter-[brightness(1.08)] min-h-11 [transition:background-color_.15s_ease,color_.15s_ease,transform_.15s_ease] tracking-[.01em] hover:not-disabled:bg-[color-mix(in_srgb,var(--accent)_84%,var(--text))] hover:not-disabled:filter-none active:not-disabled:transform-[translateY(1px)] disabled:cursor-wait disabled:opacity-65 [html[data-theme=dark]_&]:text-[#171719]"
-          disabled={!answered}
-        >
-          {last ? "Send" : "Next"}
-        </button>
-      </div>
-    </form>
-  );
-}
-
-function AssistantMessage({
-  message,
-}: {
-  message: { id?: string; content?: string | null };
-}) {
-  const { text: withoutCards, delegations } = splitDelegations(
-    message.content ?? "",
-  );
-  const { text, questions } = splitAsk(withoutCards);
-  return (
-    <div className="flex items-start gap-3 w-full max-w-(--ag-max) mt-0 mr-auto mb-0 ml-auto pt-3.5 pr-0 pb-3.5 pl-0">
-      <div className="flex-1 wrap-break-word [&_p]:mb-3 [&_p:last-child]:mb-0 [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_li+li]:mt-1 [&_code]:rounded-md [&_code]:bg-subtle [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-xs [&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-xl [&_pre]:border [&_pre]:border-line [&_pre]:bg-subtle [&_pre]:p-4 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:leading-normal [&_a]:text-foreground [&_a]:underline [&_a]:decoration-line [&_a]:underline-offset-2 [&_a:hover]:decoration-foreground [&_table]:my-2 [&_table]:border-collapse [&_table]:text-xs [&_th]:border [&_th]:border-line [&_th]:px-2.5 [&_th]:py-1.5 [&_th]:text-left [&_td]:border [&_td]:border-line [&_td]:px-2.5 [&_td]:py-1.5 [&_td]:text-left min-w-0 leading-[1.65] wrap-anywhere pt-0 pr-0 pb-0 pl-0">
-        <Markdown text={text} density="compact" />
-        {delegations.map((d) => (
-          <DelegationCard key={d.issueId} delegation={d} />
-        ))}
-        {questions && (
-          <ul className="mt-[.3em] mr-0 mb-[.7em] ml-0 pl-[1.3em] text-muted">
-            {questions.map((q, i) => (
-              <li key={i}>{q.question}</li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function userText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((part) =>
-        part && typeof part === "object" && "text" in part
-          ? String((part as { text: unknown }).text)
-          : "",
-      )
-      .join("");
+  if (event.type === "thinking") {
+    return { ...msg, thinking: (msg.thinking ?? "") + event.delta };
   }
-  return "";
-}
-
-function UserMessage({ message }: { message: { content?: unknown } }) {
-  return (
-    <div className="flex items-start justify-end gap-3 w-full max-w-(--ag-max) mt-0 mr-auto mb-0 ml-auto pt-3.5 pr-0 pb-3.5 pl-0">
-      <div className="whitespace-pre-wrap wrap-break-word max-w-[min(85%,560px)] pt-2.5 pr-4 pb-2.5 pl-4 rounded-(--ag-radius) bg-(--ag-bubble) text-foreground leading-[1.55] wrap-anywhere">
-        {userText(message.content)}
-      </div>
-    </div>
-  );
-}
-
-// While the latest reply is an unanswered ask_user question, the wizard replaces the input box.
-function ComposerSwitch() {
-  const pending = useThread((s) => {
-    const lastMsg = s.messages[s.messages.length - 1];
-    if (
-      s.isRunning ||
-      lastMsg?.role !== "assistant" ||
-      typeof lastMsg.content !== "string"
-    )
-      return null;
-    return lastMsg.content;
-  });
-  const questions = pending ? splitAsk(pending).questions : null;
-  if (questions) return <AskWizard key={pending} questions={questions} />;
-  // Nested default composer keeps the library's input and starters; CSS removes the doubled slot padding.
-  return (
-    <AgentInterface.Composer placeholder="Ask about tasks, projects, or cycles…" />
-  );
-}
-
-// History opens as a panel inside the chat column instead of a second sidebar next to the app navigation.
-function ChatToolbar() {
-  const [open, setOpen] = useState(false);
-  const switchToNewThread = useThreadList((s) => s.switchToNewThread);
-  const title = useThreadList(
-    (s) => s.threads.find((t) => t.id === s.selectedThreadId)?.title,
-  );
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <div className="relative flex items-center border-b border-line sm:px-6 gap-1.5 h-12 pt-0 pr-[clamp(12px,4vw,24px)] pb-0 pl-[clamp(12px,4vw,24px)] border-b-line">
-        <MobileNavTrigger />
-        <span className="flex-1 truncate min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[13px] font-medium text-foreground">
-          {title || "New chat"}
-        </span>
-        <PopoverTrigger asChild>
-          <button
-            type="button"
-            className="inline-flex items-center hover:bg-subtle hover:text-foreground aria-expanded:bg-subtle aria-expanded:text-foreground shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 gap-1.5 h-7.5 pt-0 pr-2.5 pb-0 pl-2.5 rounded-[7px] bg-transparent text-muted text-[13px]"
-            aria-expanded={open}
-            aria-controls="agent-history"
-          >
-            <History size={16} aria-hidden="true" /> History
-          </button>
-        </PopoverTrigger>
-        <button
-          type="button"
-          className="inline-flex items-center hover:bg-subtle hover:text-foreground aria-expanded:bg-subtle aria-expanded:text-foreground shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 gap-1.5 h-7.5 pt-0 pr-2.5 pb-0 pl-2.5 rounded-[7px] bg-transparent text-muted text-[13px]"
-          onClick={() => {
-            switchToNewThread();
-            setOpen(false);
-          }}
-        >
-          <SquarePen size={16} aria-hidden="true" /> New chat
-        </button>
-        {open && (
-          // Closes when a thread title is clicked. The thread buttons inside are the keyboard path, so the container needs no key handler.
-          <PopoverContent
-            align="end"
-            sideOffset={4}
-            onInteractOutside={(event) => {
-              if (
-                event.target instanceof Element &&
-                event.target.closest(
-                  ".openui-agent-thread-button-dropdown-menu",
-                )
-              )
-                event.preventDefault();
-            }}
-            id="agent-history"
-            className="flex max-w-full flex-col overflow-hidden border border-line z-50 w-[min(340px,calc(100vw-24px))] max-h-[min(60vh,480px)] pt-1.5 pr-1.5 pb-1.5 pl-1.5 border-solid rounded-[10px] bg-panel shadow-(--shadow)"
-            role="dialog"
-            aria-label="Chat history"
-            onClick={(e) => {
-              if (
-                (e.target as Element).closest(
-                  ".openui-agent-thread-button-title",
-                )
-              )
-                setOpen(false);
-            }}
-          >
-            <AgentInterface.ThreadList className="min-h-0 flex-1 overflow-y-auto overscroll-contain" />
-          </PopoverContent>
-        )}
-      </div>
-    </Popover>
-  );
-}
-
-// The library's auto-scroll never matches our custom user messages and uses competing smooth scrolls, so we own it:
-// open each thread at the bottom, then stay pinned while content grows unless the user has scrolled away.
-function ScrollFollower() {
-  const isRunning = useThread((s) => s.isRunning);
-  const isLoadingMessages = useThread((s) => s.isLoadingMessages);
-  const threadId = useThreadList((s) => s.selectedThreadId);
-  const stick = useRef(true);
-  const area = () =>
-    document.querySelector<HTMLElement>(
-      ".agent-chat-page .openui-agent-thread-scroll-area",
-    );
-
-  useLayoutEffect(() => {
-    const el = area();
-    if (!el || isLoadingMessages) return;
-    stick.current = true;
-    el.scrollTop = el.scrollHeight;
-  }, [threadId, isLoadingMessages]);
-
-  useEffect(() => {
-    if (!isRunning) return;
-    stick.current = true;
-    const el = area();
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [isRunning]);
-
-  useEffect(() => {
-    const el = area();
-    const content = el?.firstElementChild;
-    if (!el || !content) return;
-    let last = el.scrollTop;
-    const onScroll = () => {
-      // Only an upward move is the user leaving the bottom; growth below never unsticks.
-      if (el.scrollTop < last - 2)
-        stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-      else if (el.scrollHeight - el.scrollTop - el.clientHeight < 80)
-        stick.current = true;
-      last = el.scrollTop;
+  if (event.type === "tool_start") {
+    const existing = msg.toolCalls ?? [];
+    const next: ToolCallRecord = {
+      id: event.id,
+      name: event.name,
+      args: event.args,
+      status: "running",
     };
-    const observer = new ResizeObserver(() => {
-      if (stick.current) {
-        el.scrollTop = el.scrollHeight;
-        last = el.scrollTop;
-      }
-    });
-    observer.observe(content);
-    el.addEventListener("scroll", onScroll, { passive: true });
-    return () => {
-      observer.disconnect();
-      el.removeEventListener("scroll", onScroll);
-    };
-  }, []);
-  return null;
+    const index = existing.findIndex((t) => t.id === event.id);
+    const updated =
+      index >= 0
+        ? existing.map((t, i) => (i === index ? { ...t, ...next } : t))
+        : [...existing, next];
+    return { ...msg, toolCalls: updated };
+  }
+  if (event.type === "tool_end") {
+    const existing = msg.toolCalls ?? [];
+    const status: ToolCallRecord["status"] =
+      event.status === "error" ? "error" : "completed";
+    const index = existing.findIndex((t) => t.id === event.id);
+    const updated =
+      index >= 0
+        ? existing.map((t, i) =>
+            i === index
+              ? {
+                  ...t,
+                  status,
+                  output: event.output ?? t.output,
+                  error: event.error ?? t.error,
+                  durationMs: event.durationMs ?? t.durationMs,
+                }
+              : t,
+          )
+        : [
+            ...existing,
+            {
+              id: event.id,
+              name: event.name,
+              status,
+              output: event.output,
+              error: event.error,
+              durationMs: event.durationMs,
+            },
+          ];
+    return { ...msg, toolCalls: updated };
+  }
+  return msg;
 }
-
-const STARTERS = [
-  {
-    displayText: "Summarize my open tasks",
-    prompt: "Summarize my open tasks.",
-  },
-  {
-    displayText: "What is in progress this cycle?",
-    prompt: "What is in progress in the active cycle?",
-  },
-  {
-    displayText: "What is due this week?",
-    prompt: "What tasks are due this week?",
-  },
-  {
-    displayText: "Find unassigned bugs",
-    prompt: "Find unassigned bugs and list them.",
-  },
-];
 
 export function AgentChatPage({ workspaceName }: { workspaceName: string }) {
-  const name = workspaceName || "Hoja";
+  const [threads, setThreads] = useState<ThreadSummary[]>([]);
+  const [threadsLoading, setThreadsLoading] = useState(true);
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [loadingThread, setLoadingThread] = useState(false);
+  const [threadError, setThreadError] = useState("");
+  const [draft, setDraft] = useState("");
+  const [streamingId, setStreamingId] = useState<string | null>(null);
+  const [showJumpButton, setShowJumpButton] = useState(false);
+
+  const abortRef = useRef<AbortController | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const stickRef = useRef(true);
+  const lastScrollTopRef = useRef(0);
+  const loadGenRef = useRef(0);
+
+  const isRunning = streamingId !== null;
+
+  const refreshThreads = useCallback(async () => {
+    try {
+      const list = await listThreads();
+      setThreads(list);
+    } catch {
+      /* History load failure shouldn't block composing a new chat. */
+    } finally {
+      setThreadsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshThreads();
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, [refreshThreads]);
+
+  const scrollToBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    stickRef.current = true;
+    setShowJumpButton(false);
+    el.scrollTop = el.scrollHeight;
+    lastScrollTopRef.current = el.scrollTop;
+  }, []);
+
+  // Stay pinned to the bottom while streaming unless the user scrolled up.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (el.scrollTop < lastScrollTopRef.current - 2) {
+        stickRef.current = distFromBottom < 72;
+      } else if (distFromBottom < 72) {
+        stickRef.current = true;
+      }
+      lastScrollTopRef.current = el.scrollTop;
+      setShowJumpButton(!stickRef.current && distFromBottom > 120);
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+
+  useEffect(() => {
+    if (stickRef.current) {
+      const el = scrollRef.current;
+      if (el) {
+        el.scrollTop = el.scrollHeight;
+        lastScrollTopRef.current = el.scrollTop;
+      }
+    }
+  }, [messages, loadingThread]);
+
+  const selectThread = useCallback(async (threadId: string) => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setStreamingId(null);
+    setSelectedThreadId(threadId);
+    setThreadError("");
+    setLoadingThread(true);
+    const mine = ++loadGenRef.current;
+    try {
+      const rows = await getThreadMessages(threadId);
+      if (mine !== loadGenRef.current) return;
+      setMessages(rows);
+      stickRef.current = true;
+      setShowJumpButton(false);
+    } catch (e) {
+      if (mine !== loadGenRef.current) return;
+      setThreadError((e as Error).message);
+      setMessages([]);
+    } finally {
+      if (mine === loadGenRef.current) setLoadingThread(false);
+    }
+  }, []);
+
+  const startNewChat = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    loadGenRef.current++;
+    setStreamingId(null);
+    setSelectedThreadId(null);
+    setMessages([]);
+    setThreadError("");
+    setDraft("");
+    stickRef.current = true;
+    setShowJumpButton(false);
+  }, []);
+
+  const sendPrompt = useCallback(
+    async (rawText: string, baseMessages?: ChatMessage[]) => {
+      const prompt = rawText.trim();
+      if (!prompt) return;
+
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      const prior = baseMessages ?? messages;
+      const userMsg: ChatMessage = {
+        id: makeMessageId("user"),
+        role: "user",
+        content: prompt,
+      };
+      const assistantId = makeMessageId("assistant");
+      const assistantPlaceholder: ChatMessage = {
+        id: assistantId,
+        role: "assistant",
+        content: "",
+      };
+
+      const nextHistory = [...prior, userMsg];
+      setMessages([...nextHistory, assistantPlaceholder]);
+      setDraft("");
+      setThreadError("");
+      setStreamingId(assistantId);
+      stickRef.current = true;
+      setShowJumpButton(false);
+
+      const wireMessages = nextHistory.map((m) => ({
+        role: m.role,
+        content: m.content,
+      }));
+
+      let resolvedThreadId = selectedThreadId;
+
+      try {
+        await streamChatTurn({
+          threadId: selectedThreadId,
+          messages: wireMessages,
+          signal: controller.signal,
+          onEvent: (event) => {
+            if (event.type === "thread") {
+              resolvedThreadId = event.threadId;
+              setSelectedThreadId(event.threadId);
+              return;
+            }
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId ? applyStreamEvent(m, event) : m,
+              ),
+            );
+          },
+        });
+      } catch (err) {
+        if (controller.signal.aborted) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId ? { ...m, aborted: true } : m,
+            ),
+          );
+        } else {
+          const message =
+            err instanceof Error ? err.message : "Could not complete request.";
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId ? { ...m, error: message } : m,
+            ),
+          );
+        }
+      } finally {
+        if (abortRef.current === controller) {
+          abortRef.current = null;
+          setStreamingId(null);
+        }
+        // Mark any tool still stuck in "running" as completed/error when stream ends.
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== assistantId || !m.toolCalls?.length) return m;
+            const settled = m.toolCalls.map((tc) =>
+              tc.status === "running"
+                ? {
+                    ...tc,
+                    status: (controller.signal.aborted
+                      ? "error"
+                      : "completed") as ToolCallRecord["status"],
+                  }
+                : tc,
+            );
+            return { ...m, toolCalls: settled };
+          }),
+        );
+        if (resolvedThreadId || !selectedThreadId) {
+          void refreshThreads();
+        }
+      }
+    },
+    [messages, refreshThreads, selectedThreadId],
+  );
+
+  const stopGeneration = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
+
+  const retryLastTurn = useCallback(() => {
+    if (isRunning || messages.length === 0) return;
+    let lastUserIdx = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "user") {
+        lastUserIdx = i;
+        break;
+      }
+    }
+    if (lastUserIdx < 0) return;
+    const prompt = messages[lastUserIdx].content;
+    const prior = messages.slice(0, lastUserIdx);
+    void sendPrompt(prompt, prior);
+  }, [isRunning, messages, sendPrompt]);
+
+  const handleRenameThread = useCallback(
+    async (threadId: string, nextTitle: string) => {
+      const updated = await renameThread(threadId, nextTitle);
+      setThreads((prev) => prev.map((t) => (t.id === threadId ? updated : t)));
+    },
+    [],
+  );
+
+  const handleDeleteThread = useCallback(
+    async (threadId: string) => {
+      await deleteThread(threadId);
+      setThreads((prev) => prev.filter((t) => t.id !== threadId));
+      if (selectedThreadId === threadId) {
+        startNewChat();
+      }
+    },
+    [selectedThreadId, startNewChat],
+  );
+
+  const activeTitle = useMemo(() => {
+    if (selectedThreadId) {
+      const found = threads.find((t) => t.id === selectedThreadId);
+      if (found) return found.title;
+    }
+    const firstUser = messages.find((m) => m.role === "user");
+    return firstUser ? firstUser.content.slice(0, 60) : "New chat";
+  }, [messages, selectedThreadId, threads]);
+
+  // While the latest assistant reply carries an unanswered `hoja-ask` question, show the wizard.
+  const pendingAsk = useMemo(() => {
+    if (isRunning || messages.length === 0) return null;
+    const last = messages[messages.length - 1];
+    if (last.role !== "assistant" || !last.content) return null;
+    const { questions } = splitAsk(last.content);
+    return questions ? { key: last.id, questions } : null;
+  }, [isRunning, messages]);
+
+  const hasMessages = messages.length > 0;
+
   return (
     <section
-      className="agent-chat-page flex-1 h-dvh min-h-0 shell-phone:h-dvh text-[15px] text-foreground"
+      className="agent-chat-page flex min-h-0 flex-1 flex-col overflow-hidden bg-bg text-foreground"
+      data-surface="agent-chat"
+      data-agent-panel=""
       aria-label="Agent chat"
     >
-      <AgentInterface
-        llm={llm}
-        storage={storage}
-        components={{ AssistantMessage, UserMessage }}
-        agentName={`${name} agent`}
-        theme={{ mode: "light" }}
-        starters={STARTERS}
-        scrollOnLoad={false}
-      >
-        <AgentInterface.Sidebar>{null}</AgentInterface.Sidebar>
-        <AgentInterface.ThreadHeader>
-          <ChatToolbar />
-        </AgentInterface.ThreadHeader>
-        <AgentInterface.MobileHeader>
-          <ChatToolbar />
-        </AgentInterface.MobileHeader>
-        <AgentInterface.Welcome
-          title={`Ask the ${name} agent`}
-          description="Search, summarize, and update tasks in your workspace."
-        />
-        <AgentInterface.Composer>
-          <ComposerSwitch />
-          <ScrollFollower />
-        </AgentInterface.Composer>
-      </AgentInterface>
+      <ChatHeader
+        title={activeTitle}
+        isRunning={isRunning}
+        threads={threads}
+        threadsLoading={threadsLoading}
+        selectedThreadId={selectedThreadId}
+        onSelectThread={(id) => void selectThread(id)}
+        onNewChat={startNewChat}
+        onRenameThread={handleRenameThread}
+        onDeleteThread={handleDeleteThread}
+      />
+
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div
+          ref={scrollRef}
+          className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-4 py-4 sm:px-6"
+          data-agent-scroll=""
+        >
+          {loadingThread ? (
+            <div
+              className="flex flex-1 items-center justify-center p-4 text-sm text-muted"
+              role="status"
+            >
+              Loading conversation…
+            </div>
+          ) : threadError ? (
+            <div
+              className="mx-auto my-auto flex max-w-md flex-col items-center gap-3 rounded-xl border border-line bg-panel p-6 text-center"
+              role="alert"
+            >
+              <p className="m-0 text-sm text-danger">{threadError}</p>
+              <button
+                type="button"
+                onClick={startNewChat}
+                className="rounded-lg border border-line bg-panel px-3 py-1.5 text-sm font-medium text-foreground transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none"
+              >
+                Start a new chat
+              </button>
+            </div>
+          ) : !hasMessages ? (
+            <WelcomeScreen
+              workspaceName={workspaceName}
+              onSelectPrompt={(prompt) => void sendPrompt(prompt)}
+              disabled={isRunning}
+            />
+          ) : (
+            <div
+              className="flex flex-col gap-1 pb-4"
+              role="log"
+              aria-label="Conversation"
+              aria-live="polite"
+            >
+              {messages.map((msg, idx) => {
+                const isLast = idx === messages.length - 1;
+                return (
+                  <MessageItem
+                    key={msg.id}
+                    message={msg}
+                    isStreaming={msg.id === streamingId}
+                    canRetry={isLast && msg.role === "assistant" && !isRunning}
+                    onRetry={retryLastTurn}
+                  />
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {showJumpButton && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-2 flex justify-center px-4">
+            <button
+              type="button"
+              onClick={scrollToBottom}
+              className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-line bg-panel px-3 py-1.5 text-xs font-medium text-foreground shadow-md transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none focus-visible:outline-2 focus-visible:outline-accent"
+            >
+              <ArrowDown className="size-3.5" aria-hidden="true" />
+              <span>Jump to latest</span>
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="shrink-0 bg-bg px-4 pt-2 pb-4 sm:px-6">
+        {pendingAsk ? (
+          <AskWizard
+            key={pendingAsk.key}
+            questions={pendingAsk.questions}
+            onSubmit={(answer) => void sendPrompt(answer)}
+            disabled={isRunning}
+          />
+        ) : (
+          <Composer
+            value={draft}
+            onChange={setDraft}
+            onSend={() => void sendPrompt(draft)}
+            onStop={stopGeneration}
+            isRunning={isRunning}
+          />
+        )}
+      </div>
     </section>
   );
 }

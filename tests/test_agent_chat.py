@@ -324,3 +324,97 @@ def test_ask_user_ends_turn_with_question_block(tmp_path) -> None:
     assert calls == ["model"]  # the run stops; no workspace tool runs to ask
     block = ask_block(result.output)
     assert block.strip().startswith("```hoja-ask") and '"Which team?"' in block
+
+
+def test_tool_calls_stream_as_hoja_events_and_persist_on_thread(tmp_path) -> None:
+    class _ToolStub(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers.get("content-length", 0))))
+            answered = any(m.get("role") == "tool" for m in body.get("messages", []))
+            self.send_response(200)
+            self.send_header("content-type", "text/event-stream")
+            self.end_headers()
+            if not answered:
+                delta = {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "call_gql_1",
+                        "type": "function",
+                        "function": {
+                            "name": "graphql",
+                            "arguments": json.dumps({"query": "{ viewer { id } }", "variables": {}}),
+                        },
+                    }],
+                }
+                choices = (
+                    {"index": 0, "delta": delta, "finish_reason": None},
+                    {"index": 0, "delta": {}, "finish_reason": "tool_calls"},
+                )
+            else:
+                choices = (
+                    {"index": 0, "delta": {"role": "assistant", "content": "Checked your viewer id."}, "finish_reason": None},
+                    {"index": 0, "delta": {}, "finish_reason": "stop"},
+                )
+            for choice in choices:
+                chunk = {"id": "x", "object": "chat.completion.chunk", "created": 0, "model": body["model"], "choices": [choice]}
+                self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
+            self.wfile.write(b"data: [DONE]\n\n")
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), _ToolStub)
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    try:
+        _, app, admin = _setup(tmp_path)
+        auth = {"Authorization": f"Bearer {admin['token']}"}
+        with TestClient(app) as client:
+            assert _gql(client, admin["token"], CREATE, {"k": SECRET, "u": f"http://127.0.0.1:{server.server_port}/v1"})["data"]
+            res = client.post("/api/agent/chat", json={"messages": [{"role": "user", "content": "who am i"}]}, headers=auth)
+            assert res.status_code == 200
+            chunks = [json.loads(line[6:])["choices"][0]["delta"] for line in res.text.splitlines() if line.startswith("data: {")]
+            text = "".join(d.get("content", "") for d in chunks)
+            events = [d["hoja_event"] for d in chunks if "hoja_event" in d]
+            assert text == "Checked your viewer id."
+            thread_ev = next(e for e in events if e["type"] == "thread")
+            start_ev = next(e for e in events if e["type"] == "tool_start")
+            end_ev = next(e for e in events if e["type"] == "tool_end")
+            assert start_ev["name"] == "graphql"
+            assert start_ev["args"]["query"] == "{ viewer { id } }"
+            assert end_ev["id"] == start_ev["id"]
+            assert end_ev["status"] == "ok"
+            assert admin["user_id"] in (end_ev["output"] or "")
+
+            # Reloading the thread returns the persisted toolCalls alongside the assistant message.
+            saved = client.get(f"/api/agent/threads/get/{thread_ev['threadId']}", headers=auth).json()
+            assert len(saved) == 2
+            assert saved[1]["role"] == "assistant"
+            assert saved[1]["content"] == "Checked your viewer id."
+            assert len(saved[1]["toolCalls"]) == 1
+            assert saved[1]["toolCalls"][0]["name"] == "graphql"
+            assert saved[1]["toolCalls"][0]["status"] == "ok"
+    finally:
+        server.shutdown()
+
+
+def test_tool_call_redaction_and_schema_summary() -> None:
+    from pydantic_ai.messages import ToolReturnPart
+
+    from hoja_server.agent_chat import format_tool_args, format_tool_result
+
+    redacted = format_tool_args({"query": "{ viewer { id } }", "apiKey": "sk-secret", "nested": {"token": "abc"}})
+    assert redacted["apiKey"] == "[redacted]"
+    assert redacted["nested"]["token"] == "[redacted]"
+
+    status, output, err = format_tool_result("schema", ToolReturnPart("schema", "type Query { a: String }\n" * 500, "c1"))
+    assert status == "ok" and err is None
+    assert "Loaded Hoja GraphQL schema" in (output or "")
+
+    err_status, _, err_msg = format_tool_result(
+        "graphql",
+        ToolReturnPart("graphql", {"errors": [{"message": "Forbidden"}]}, "c2"),
+    )
+    assert err_status == "error" and err_msg == "Forbidden"

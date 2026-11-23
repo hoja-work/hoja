@@ -21,7 +21,8 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Copy, X } from "lucide-react";
+import { ChevronRight, Copy, Wrench, X } from "lucide-react";
+import { Collapsible } from "radix-ui";
 import { confirmDialog } from "../dialogs";
 import { Avatar, IconBtn, Tip } from "../graph/shared";
 import { PropDropdown } from "../graph/tasks";
@@ -57,6 +58,57 @@ const EVENT_LABELS: Record<AgentEvent["kind"], string> = {
   error: "Error",
   prompt: "Prompt",
 };
+
+function CollapsibleActionEvent({
+  event,
+  agentName,
+  timestamp,
+}: {
+  event: AgentEvent;
+  agentName: string;
+  timestamp: string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div
+      className="flex items-start gap-2.5 py-1.5 text-sm text-muted"
+      data-style-hooks="lin-event"
+      data-kind={event.kind}
+    >
+      <Avatar name={agentName} size={18} />
+      <Collapsible.Root
+        open={open}
+        onOpenChange={setOpen}
+        className="min-w-0 flex-1 overflow-hidden rounded-lg border border-line bg-panel"
+      >
+        <Collapsible.Trigger
+          type="button"
+          className="flex w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-left text-xs transition-colors duration-150 ease-out hover:bg-subtle hover:transition-none focus-visible:outline-2 focus-visible:outline-accent"
+        >
+          <Wrench className="size-3.5 shrink-0 text-muted" aria-hidden="true" />
+          <span className="shrink-0 font-medium text-foreground">Action</span>
+          {event.tool && (
+            <code className="min-w-0 truncate rounded bg-subtle px-1.5 py-0.5 font-mono text-xs text-muted">
+              {event.tool}
+            </code>
+          )}
+          <span className="ml-auto flex shrink-0 items-center gap-2">
+            <time className="text-xs text-muted">{timestamp}</time>
+            <ChevronRight
+              className={`size-3.5 text-muted transition-transform duration-150 ${open ? "rotate-90" : ""}`}
+              aria-hidden="true"
+            />
+          </span>
+        </Collapsible.Trigger>
+        <Collapsible.Content className="border-t border-line bg-bg/60 p-2.5">
+          <pre className="m-0 max-h-48 overflow-auto font-mono text-xs text-foreground whitespace-pre-wrap break-words">
+            {event.text}
+          </pre>
+        </Collapsible.Content>
+      </Collapsible.Root>
+    </div>
+  );
+}
 
 function relTime(iso?: string | null): string {
   if (!iso) return "";
@@ -292,13 +344,15 @@ export function AgentDetailPage({
 
   /* While a run is live its transcript moves on the server: re-read it every few seconds
    * (paused while the tab is hidden) instead of showing what was true when the page opened. */
+  const activeId = active?.id;
+  const activeStatus = active?.status;
   useEffect(() => {
-    if (!active) return;
+    if (!activeId) return;
     const id = window.setInterval(() => {
       if (!document.hidden) void load();
     }, LIVE_REFRESH_MS);
     return () => window.clearInterval(id);
-  }, [active?.id, active?.status, load]);
+  }, [activeId, activeStatus, load]);
 
   /* The question the active run is waiting on: its latest elicitation, unless a person's
    * answer to that same ask is already on the transcript. */
@@ -680,41 +734,50 @@ export function AgentDetailPage({
                 onAnswer={answer}
               />
             )}
-            {events.map((e) => (
-              <div
-                key={e.id}
-                className="flex items-start gap-2.5 text-[13px] text-muted pt-1.75 pr-0 pb-1.75 pl-0"
-                data-style-hooks="lin-event"
-                data-kind={e.kind}
-              >
-                <Avatar
-                  name={e.author === "user" ? viewerName || "You" : agent.name}
-                  size={18}
+            {events.map((e) =>
+              e.kind === "action" ? (
+                <CollapsibleActionEvent
+                  key={e.id}
+                  event={e}
+                  agentName={agent.name}
+                  timestamp={relTime(e.at)}
                 />
-                <span>
-                  <b
-                    className={
-                      (e.kind === "error" ? "text-danger" : "text-foreground") +
-                      " block mt-3 mr-0 mb-3 ml-0 font-semibold"
-                    }
-                  >
-                    {e.kind === "prompt" && e.answersAsk
-                      ? "Answer"
-                      : EVENT_LABELS[e.kind]}
-                  </b>
-                  {e.tool ? (
-                    <>
-                      {" "}
-                      <code>{e.tool}</code>
-                    </>
-                  ) : null}{" "}
-                  — {e.text}
-                </span>
-                <time className="flex-none ml-auto text-[12px]">
-                  {relTime(e.at)}
-                </time>
-              </div>
-            ))}
+              ) : (
+                <div
+                  key={e.id}
+                  className="flex items-start gap-2.5 text-[13px] text-muted pt-1.75 pr-0 pb-1.75 pl-0"
+                  data-style-hooks="lin-event"
+                  data-kind={e.kind}
+                >
+                  <Avatar
+                    name={e.author === "user" ? viewerName || "You" : agent.name}
+                    size={18}
+                  />
+                  <span>
+                    <b
+                      className={
+                        (e.kind === "error" ? "text-danger" : "text-foreground") +
+                        " block mt-3 mr-0 mb-3 ml-0 font-semibold"
+                      }
+                    >
+                      {e.kind === "prompt" && e.answersAsk
+                        ? "Answer"
+                        : EVENT_LABELS[e.kind]}
+                    </b>
+                    {e.tool ? (
+                      <>
+                        {" "}
+                        <code>{e.tool}</code>
+                      </>
+                    ) : null}{" "}
+                    — {e.text}
+                  </span>
+                  <time className="flex-none ml-auto text-[12px]">
+                    {relTime(e.at)}
+                  </time>
+                </div>
+              ),
+            )}
             {!events.length && (
               <p className="text-[12px] text-muted">
                 No run has posted an activity for this agent yet.

@@ -18,14 +18,29 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext, ToolOutput
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.mcp import MCPToolset
-from pydantic_ai.messages import ModelRequest, ModelResponse, PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta, UserPromptPart
+from pydantic_ai.messages import (
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    ModelRequest,
+    ModelResponse,
+    PartDeltaEvent,
+    PartStartEvent,
+    RetryPromptPart,
+    TextPart,
+    TextPartDelta,
+    ThinkingPart,
+    ThinkingPartDelta,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from sqlalchemy import and_, select
 from starlette.responses import StreamingResponse
 
-from hoja_server.agent_conversations import save_message, start_conversation
 from hoja_server import agent_members, audit, tenant_context
+from hoja_server.agent_conversations import MAX_TOOL_CALLS_BYTES, save_message, start_conversation
 from hoja_server.agent_prompt import compose_prompt, workspace_snapshot
 from hoja_server.agent_threads import _owned as _owned_thread
 from hoja_server.agent_threads import _title_from
@@ -285,6 +300,162 @@ def _history(messages: list[dict]) -> tuple[str, list]:
     return prompt, turns[:-1]
 
 
+_SECRET_KEY_PARTS = ("token", "secret", "password", "api_key", "apikey", "authorization", "cookie", "credential")
+_MAX_TOOL_ARGS_CHARS = 2000
+_MAX_TOOL_OUTPUT_CHARS = 4000
+
+
+def _redact_value(value, *, depth: int = 0):
+    if depth > 6:
+        return "…"
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            key = str(k)
+            low = key.lower()
+            if any(part in low for part in _SECRET_KEY_PARTS):
+                out[key] = "[redacted]"
+            else:
+                out[key] = _redact_value(v, depth=depth + 1)
+        return out
+    if isinstance(value, list):
+        return [_redact_value(item, depth=depth + 1) for item in value[:50]]
+    if isinstance(value, str) and len(value) > _MAX_TOOL_OUTPUT_CHARS:
+        return value[:_MAX_TOOL_OUTPUT_CHARS] + "… (truncated)"
+    return value
+
+
+def _truncate_str(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "… (truncated)"
+
+
+def format_tool_args(args) -> dict | str | None:
+    if args is None:
+        return None
+    if isinstance(args, str):
+        raw = args.strip()
+        if not raw:
+            return None
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                return _redact_value(parsed)
+        except ValueError:
+            pass
+        return _truncate_str(raw, _MAX_TOOL_ARGS_CHARS)
+    if isinstance(args, dict):
+        return _redact_value(args)
+    return _truncate_str(str(args), _MAX_TOOL_ARGS_CHARS)
+
+
+def format_tool_result(tool_name: str, part) -> tuple[str, str | None, str | None]:
+    """Return (status, output_preview, error_message) for a tool return or retry part."""
+    if isinstance(part, RetryPromptPart):
+        msg = part.content if isinstance(part.content, str) else json.dumps(part.content, default=str)
+        return "error", None, _truncate_str(msg, _MAX_TOOL_OUTPUT_CHARS)
+
+    outcome = getattr(part, "outcome", "success")
+    content = getattr(part, "content", None)
+
+    if tool_name == "schema" and isinstance(content, str):
+        return (
+            "ok" if outcome == "success" else "error",
+            f"Loaded Hoja GraphQL schema ({len(content):,} characters).",
+            None if outcome == "success" else "Failed to load schema.",
+        )
+
+    if isinstance(content, dict):
+        redacted = _redact_value(content)
+        errors = redacted.get("errors") if isinstance(redacted, dict) else None
+        error_msg: str | None = None
+        if isinstance(errors, list) and errors:
+            first = errors[0]
+            error_msg = first.get("message") if isinstance(first, dict) else str(first)
+        serialized = _truncate_str(json.dumps(redacted, indent=2, default=str), _MAX_TOOL_OUTPUT_CHARS)
+        if outcome != "success":
+            return "error", serialized, error_msg or f"Tool {outcome}."
+        if error_msg and not redacted.get("data"):
+            return "error", serialized, _truncate_str(str(error_msg), 500)
+        return "ok", serialized, None
+
+    if isinstance(content, list):
+        redacted = _redact_value(content)
+        serialized = _truncate_str(json.dumps(redacted, indent=2, default=str), _MAX_TOOL_OUTPUT_CHARS)
+        return ("ok" if outcome == "success" else "error"), serialized, (None if outcome == "success" else f"Tool {outcome}.")
+
+    text = "" if content is None else str(content)
+    preview = _truncate_str(text, _MAX_TOOL_OUTPUT_CHARS) if text else None
+    if outcome != "success":
+        return "error", preview, _truncate_str(text or f"Tool {outcome}.", 500)
+    return "ok", preview, None
+
+
+def serialize_tool_calls(records: list[dict]) -> str | None:
+    """Serialize completed tool call traces for persistence within MAX_TOOL_CALLS_BYTES."""
+    if not records:
+        return None
+    cleaned = [
+        {
+            "id": r["id"],
+            "name": r["name"],
+            **({"args": r["args"]} if r.get("args") is not None else {}),
+            "status": r.get("status", "ok"),
+            **({"output": r["output"]} if r.get("output") else {}),
+            **({"error": r["error"]} if r.get("error") else {}),
+            **({"durationMs": r["durationMs"]} if r.get("durationMs") is not None else {}),
+        }
+        for r in records
+    ]
+    encoded = json.dumps(cleaned, separators=(",", ":"), default=str)
+    if len(encoded.encode("utf-8")) <= MAX_TOOL_CALLS_BYTES:
+        return encoded
+    # Trim verbose outputs first so the trace structure still persists cleanly.
+    for item in cleaned:
+        if isinstance(item.get("output"), str) and len(item["output"]) > 400:
+            item["output"] = item["output"][:400] + "… (truncated)"
+    encoded = json.dumps(cleaned, separators=(",", ":"), default=str)
+    if len(encoded.encode("utf-8")) <= MAX_TOOL_CALLS_BYTES:
+        return encoded
+    for item in cleaned:
+        item.pop("output", None)
+    encoded = json.dumps(cleaned, separators=(",", ":"), default=str)
+    return encoded if len(encoded.encode("utf-8")) <= MAX_TOOL_CALLS_BYTES else None
+
+
+def extract_tool_calls_from_messages(messages) -> list[dict]:
+    """Build persisted tool-call trace records from pydantic_ai new_messages()."""
+    by_id: dict[str, dict] = {}
+    ordered: list[dict] = []
+    for message in messages:
+        if isinstance(message, ModelResponse):
+            for part in message.parts:
+                if isinstance(part, ToolCallPart) and part.tool_name != "ask_user":
+                    rec = {
+                        "id": part.tool_call_id,
+                        "name": part.tool_name,
+                        "args": format_tool_args(part.args),
+                        "status": "ok",
+                    }
+                    by_id[part.tool_call_id] = rec
+                    ordered.append(rec)
+        elif isinstance(message, ModelRequest):
+            for part in message.parts:
+                if isinstance(part, (ToolReturnPart, RetryPromptPart)):
+                    cid = getattr(part, "tool_call_id", None)
+                    rec = by_id.get(cid) if cid else None
+                    if rec is None:
+                        continue
+                    status, output, err = format_tool_result(rec["name"], part)
+                    rec["status"] = status
+                    if output:
+                        rec["output"] = output
+                    if err:
+                        rec["error"] = err
+    return ordered
+
+
 def _chunk(completion_id: str, delta: dict, finish: str | None = None) -> str:
     payload = {
         "id": completion_id,
@@ -294,6 +465,10 @@ def _chunk(completion_id: str, delta: dict, finish: str | None = None) -> str:
         "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
     }
     return f"data: {json.dumps(payload)}\n\n"
+
+
+def _event_chunk(completion_id: str, event: dict) -> str:
+    return _chunk(completion_id, {"hoja_event": event})
 
 
 async def stream_reply(
@@ -347,7 +522,11 @@ async def stream_reply(
         else:
             conversation_id = start_conversation(conn, org_id, uid, title=_title_from(prompt))
         save_message(conn, conversation_id, "user", prompt)
+    yield _event_chunk(completion_id, {"type": "thread", "threadId": conversation_id})
     reply_parts: list[str] = []
+    tool_records: list[dict] = []
+    tool_by_id: dict[str, dict] = {}
+    tool_started: dict[str, float] = {}
     # F4: what the agent writes is attributed to the agent, with the person who
     # asked as on_behalf_of. No agent member means the writes stay unattributed
     # rather than borrowing the human's identity.
@@ -364,21 +543,79 @@ async def stream_reply(
     try:
         with (tenant_context.actor("agent", agent_user_id, on_behalf_of=uid)
               if agent_user_id else nullcontext()):
-            # Stream every model turn: run_stream/stream_text stops after the first text response,
-            # so text written after a tool call (the final answer) was never sent to the user.
+            # Stream every model turn and tool execution: run_stream/stream_text stops after
+            # the first text response, so iterating nodes streams both collapsed tool traces
+            # and the final answer written after tool calls.
             async with agent.iter(prompt, message_history=history, deps=deps) as run:
                 async for node in run:
                     if Agent.is_model_request_node(node):
                         async with node.stream(run.ctx) as stream:
                             async for event in stream:
                                 text = None
-                                if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
-                                    text = event.part.content
-                                elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
-                                    text = event.delta.content_delta
+                                thinking = None
+                                if isinstance(event, PartStartEvent):
+                                    if isinstance(event.part, TextPart):
+                                        text = event.part.content
+                                    elif isinstance(event.part, ThinkingPart):
+                                        thinking = event.part.content
+                                elif isinstance(event, PartDeltaEvent):
+                                    if isinstance(event.delta, TextPartDelta):
+                                        text = event.delta.content_delta
+                                    elif isinstance(event.delta, ThinkingPartDelta):
+                                        thinking = event.delta.content_delta
+                                if thinking:
+                                    yield _event_chunk(completion_id, {"type": "thinking", "delta": thinking})
                                 if text:
                                     reply_parts.append(text)
                                     yield _chunk(completion_id, {"content": text})
+                    elif Agent.is_call_tools_node(node):
+                        async with node.stream(run.ctx) as tool_stream:
+                            async for event in tool_stream:
+                                if isinstance(event, FunctionToolCallEvent):
+                                    part = event.part
+                                    if part.tool_name == "ask_user":
+                                        continue
+                                    args = format_tool_args(part.args)
+                                    rec = {
+                                        "id": part.tool_call_id,
+                                        "name": part.tool_name,
+                                        "args": args,
+                                        "status": "running",
+                                    }
+                                    tool_records.append(rec)
+                                    tool_by_id[part.tool_call_id] = rec
+                                    tool_started[part.tool_call_id] = time.monotonic()
+                                    yield _event_chunk(completion_id, {
+                                        "type": "tool_start",
+                                        "id": part.tool_call_id,
+                                        "name": part.tool_name,
+                                        "args": args,
+                                    })
+                                elif isinstance(event, FunctionToolResultEvent):
+                                    part = event.part
+                                    cid = getattr(part, "tool_call_id", None)
+                                    rec = tool_by_id.get(cid) if cid else None
+                                    if rec is None:
+                                        continue
+                                    started = tool_started.pop(cid, None)
+                                    duration_ms = round((time.monotonic() - started) * 1000) if started is not None else None
+                                    status, output, err = format_tool_result(rec["name"], part)
+                                    rec["status"] = status
+                                    if output:
+                                        rec["output"] = output
+                                    if err:
+                                        rec["error"] = err
+                                    if duration_ms is not None:
+                                        rec["durationMs"] = duration_ms
+                                    yield _event_chunk(completion_id, {
+                                        "type": "tool_end",
+                                        "id": rec["id"],
+                                        "name": rec["name"],
+                                        "status": status,
+                                        "output": output,
+                                        "error": err,
+                                        "durationMs": duration_ms,
+                                    })
             if run.result is not None and isinstance(run.result.output, AskUser):
                 block = ask_block(run.result.output)
                 reply_parts.append(block)
@@ -396,7 +633,13 @@ async def stream_reply(
                          actor_kind="agent", actor_id=agent_user_id, on_behalf_of=uid,
                          target_kind="conversation", target_id=conversation_id)
     with store.engine.begin() as conn:
-        save_message(conn, conversation_id, "assistant", "".join(reply_parts))
+        save_message(
+            conn,
+            conversation_id,
+            "assistant",
+            "".join(reply_parts),
+            tool_calls=serialize_tool_calls(tool_records),
+        )
     yield _chunk(completion_id, {}, "stop")
     yield "data: [DONE]\n\n"
 

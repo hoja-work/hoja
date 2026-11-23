@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from sqlalchemy import and_, delete, select, update
 
 from hoja_server.agent_conversations import MAX_MESSAGE_BYTES, save_message, start_conversation
@@ -65,13 +67,35 @@ def create_thread(store, org_id: str, uid: str, messages: list[dict]) -> dict:
     return _thread_json(row)
 
 
+def _parse_tool_calls(raw: str | None) -> list[dict] | None:
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, list) and parsed else None
+
+
 def get_messages(store, org_id: str, uid: str, thread_id: str) -> list[dict] | None:
     with store.engine.connect() as conn:
         if _owned(conn, org_id, uid, thread_id) is None:
             return None
-        rows = conn.execute(select(agent_message.c.role, agent_message.c.content).where(
-            agent_message.c.conversation_id == thread_id).order_by(agent_message.c.created_at, agent_message.c.id)).all()
-    return [{"role": r.role, "content": r.content} for r in rows]
+        rows = conn.execute(select(
+            agent_message.c.role,
+            agent_message.c.content,
+            agent_message.c.tool_calls,
+        ).where(
+            agent_message.c.conversation_id == thread_id,
+        ).order_by(agent_message.c.created_at, agent_message.c.id)).all()
+    out: list[dict] = []
+    for r in rows:
+        item: dict = {"role": r.role, "content": r.content}
+        calls = _parse_tool_calls(r.tool_calls)
+        if calls:
+            item["toolCalls"] = calls
+        out.append(item)
+    return out
 
 
 def update_thread(store, org_id: str, uid: str, thread_id: str, title: str | None) -> dict | None:

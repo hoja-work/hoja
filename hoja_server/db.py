@@ -40,7 +40,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 91
+CURRENT_SCHEMA_REVISION = 92
 
 log = logging.getLogger(__name__)
 
@@ -580,6 +580,7 @@ agent_message = Table(
     Column("conversation_id", String, ForeignKey("agent_conversation.id"), nullable=False, index=True),
     Column("role", String, nullable=False),
     Column("content", Text, nullable=False),
+    Column("tool_calls", Text),
     Column("created_at", String, nullable=False),
 )
 
@@ -3704,6 +3705,13 @@ def _apply_oauth_app_signin(conn):
                                     "token_endpoint_auth_method": "none"})))
 
 
+def _apply_agent_message_tool_calls(conn):
+    """Revision 92: store structured tool-call traces alongside assistant chat messages."""
+    existing = {c["name"] for c in inspect(conn).get_columns("agent_message")}
+    if "tool_calls" not in existing:
+        conn.exec_driver_sql("ALTER TABLE agent_message ADD COLUMN tool_calls TEXT")
+
+
 def _apply_user_avatar_hue(conn):
     """``user.avatar_seed`` gets a hue: "<hue>:<token>" (revision 86).
 
@@ -4129,6 +4137,9 @@ _MIGRATIONS = {
     # 91: Company Knowledge Brain — hierarchical workspace/team/project context
     # docs auto-fed to Agent Chat, delegated runners, and MCP clients.
     91: _apply_workspace_knowledge,
+    # 92: persisted tool-call trace JSON on assistant chat messages, so collapsed
+    # tool calls survive thread reload without mutating message content.
+    92: _apply_agent_message_tool_calls,
 }
 
 

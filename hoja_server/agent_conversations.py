@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from hoja_server.db import agent_conversation, agent_message, new_id, now_iso
 
 MAX_MESSAGE_BYTES = 32 * 1024
+MAX_TOOL_CALLS_BYTES = 32 * 1024
 
 SDL = gql(
     """
@@ -42,13 +43,28 @@ def start_conversation(conn, org_id: str, user_id: str, title: str | None = None
     return cid
 
 
-def save_message(conn, conversation_id: str, role: str, content: str) -> str:
+def save_message(
+    conn,
+    conversation_id: str,
+    role: str,
+    content: str,
+    *,
+    tool_calls: str | None = None,
+) -> str:
     if len(content.encode("utf-8")) > MAX_MESSAGE_BYTES:
         raise ValueError(f"Each message must be at most {MAX_MESSAGE_BYTES} bytes.")
+    if tool_calls is not None and len(tool_calls.encode("utf-8")) > MAX_TOOL_CALLS_BYTES:
+        tool_calls = None
     ts = now_iso()
     mid = new_id()
     conn.execute(agent_message.insert().values(
-        id=mid, conversation_id=conversation_id, role=role, content=content, created_at=ts))
+        id=mid,
+        conversation_id=conversation_id,
+        role=role,
+        content=content,
+        tool_calls=tool_calls,
+        created_at=ts,
+    ))
     conn.execute(agent_conversation.update()
                  .where(agent_conversation.c.id == conversation_id)
                  .values(updated_at=ts))

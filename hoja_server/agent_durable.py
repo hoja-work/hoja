@@ -16,9 +16,10 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import os
+import time
 import uuid
-from contextlib import nullcontext
 from collections.abc import AsyncIterator, Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any
 
@@ -32,16 +33,24 @@ from pydantic_ai.capabilities import ResolveModelId
 from pydantic_ai.durable_exec.dbos import DBOSDurability
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.mcp import MCPToolset
-from pydantic_ai.messages import ModelResponse, PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta
+from pydantic_ai.messages import (
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    ModelResponse,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPart,
+    TextPartDelta,
+    ThinkingPart,
+    ThinkingPartDelta,
+)
 from pydantic_ai.models import Model
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from sqlalchemy import and_, select
 
 from hoja_server import agent_chat as chat
-from hoja_server import agent_members
-from hoja_server import audit
-from hoja_server import tenant_context
+from hoja_server import agent_members, audit, tenant_context
 from hoja_server.agent_conversations import save_message, start_conversation
 from hoja_server.agent_threads import _owned as _owned_thread
 from hoja_server.agent_threads import _title_from
@@ -191,14 +200,62 @@ def _text_of(event) -> str | None:
     return None
 
 
+def _thinking_of(event) -> str | None:
+    if isinstance(event, PartStartEvent) and isinstance(event.part, ThinkingPart):
+        return event.part.content
+    if isinstance(event, PartDeltaEvent) and isinstance(event.delta, ThinkingPartDelta):
+        return event.delta.content_delta
+    return None
+
+
+_tool_started_at: dict[str, tuple[str, float]] = {}
+
+
 async def _forward_text(ctx: RunContext[chat.AgentDeps], events) -> None:
-    """Runs live inside each model-request step; pushes text deltas to the waiting SSE response."""
+    """Runs live inside each model-request/tool step; pushes deltas and tool events to the waiting SSE response."""
     sink = ctx.deps.sink
     async for event in events:
+        if sink is None:
+            continue
+        loop, queue = sink
         text = _text_of(event)
-        if text and sink is not None:
-            loop, queue = sink
-            loop.call_soon_threadsafe(queue.put_nowait, text)
+        if text:
+            loop.call_soon_threadsafe(queue.put_nowait, ("content", text))
+            continue
+        thinking = _thinking_of(event)
+        if thinking:
+            loop.call_soon_threadsafe(queue.put_nowait, ("event", {"type": "thinking", "delta": thinking}))
+            continue
+        if isinstance(event, FunctionToolCallEvent) and event.part.tool_name != "ask_user":
+            part = event.part
+            _tool_started_at[part.tool_call_id] = (part.tool_name, time.monotonic())
+            loop.call_soon_threadsafe(queue.put_nowait, ("event", {
+                "type": "tool_start",
+                "id": part.tool_call_id,
+                "name": part.tool_name,
+                "args": chat.format_tool_args(part.args),
+            }))
+            continue
+        if isinstance(event, FunctionToolResultEvent):
+            part = event.part
+            cid = getattr(part, "tool_call_id", None)
+            if not cid:
+                continue
+            meta = _tool_started_at.pop(cid, None)
+            tool_name = meta[0] if meta else getattr(part, "tool_name", None)
+            if not tool_name or tool_name == "ask_user":
+                continue
+            duration_ms = round((time.monotonic() - meta[1]) * 1000) if meta else None
+            status, output, err = chat.format_tool_result(tool_name, part)
+            loop.call_soon_threadsafe(queue.put_nowait, ("event", {
+                "type": "tool_end",
+                "id": cid,
+                "name": tool_name,
+                "status": status,
+                "output": output,
+                "error": err,
+                "durationMs": duration_ms,
+            }))
 
 
 class _PrincipalAuth(httpx.Auth):
@@ -275,10 +332,10 @@ def _graphql_runner(context: dict):
 
 
 @DBOS.step(name=f"{AGENT_NAME}.save_reply")
-async def _save_reply(conversation_id: str, content: str) -> str:
+async def _save_reply(conversation_id: str, content: str, tool_calls: str | None = None) -> str:
     assert _runtime is not None
     with _runtime.store.engine.begin() as conn:
-        return save_message(conn, conversation_id, "assistant", content)
+        return save_message(conn, conversation_id, "assistant", content, tool_calls=tool_calls)
 
 
 def _reply_text(result) -> str:
@@ -328,11 +385,13 @@ async def agent_turn(turn: dict) -> dict:
                      actor_id=agent_user_id, on_behalf_of=turn["user_id"],
                      target_kind="conversation", target_id=turn["conversation_id"],
                      runner="durable")
+    tool_calls_json: str | None = None
     try:
         with actor_context:
             result = await agent.run(prompt, message_history=history, deps=deps,
                                      model=MODEL_PREFIX + turn["provider_id"])
         text = _reply_text(result)
+        tool_calls_json = chat.serialize_tool_calls(chat.extract_tool_calls_from_messages(result.new_messages()))
         if isinstance(result.output, chat.AskUser):
             ask = chat.ask_block(result.output)
     except UnexpectedModelBehavior:
@@ -346,7 +405,7 @@ async def agent_turn(turn: dict) -> dict:
                          target_kind="conversation", target_id=turn["conversation_id"],
                          runner="durable")
     cards = chat.delegation_blocks(deps.delegations) if deps.delegations else ""
-    await _save_reply(turn["conversation_id"], text + (ask or "") + cards)
+    await _save_reply(turn["conversation_id"], text + (ask or "") + cards, tool_calls_json)
     return {"text": text, "ask": ask, "delegations": cards or None}
 
 
@@ -382,8 +441,9 @@ async def stream_reply(store, org_id: str, uid: str, messages: list[dict], base_
                 save_message(conn, conversation_id, role, msg.parts[-1].content)
         user_message_id = save_message(conn, conversation_id, "user", prompt)
 
+    yield chat._event_chunk(completion_id, {"type": "thread", "threadId": conversation_id})
     workflow_id = f"agent-turn-{user_message_id}"
-    queue: asyncio.Queue[str] = asyncio.Queue()
+    queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
     _sinks[workflow_id] = (asyncio.get_running_loop(), queue)
     turn = {
         "conversation_id": conversation_id,
@@ -396,6 +456,12 @@ async def stream_reply(store, org_id: str, uid: str, messages: list[dict], base_
         "access": base_context.get("access", "read_write"),
         "principal": connector.principal if connector is not None else None,
     }
+    def _emit_item(item: tuple[str, Any]) -> str:
+        kind, payload = item
+        if kind == "event":
+            return chat._event_chunk(completion_id, payload)
+        return chat._chunk(completion_id, {"content": payload})
+
     try:
         with SetWorkflowID(workflow_id):
             handle = await DBOS.start_workflow_async(agent_turn, turn)
@@ -404,12 +470,12 @@ async def stream_reply(store, org_id: str, uid: str, messages: list[dict], base_
             getter = asyncio.ensure_future(queue.get())
             done, _ = await asyncio.wait({getter, result_task}, return_when=asyncio.FIRST_COMPLETED)
             if getter in done:
-                yield chat._chunk(completion_id, {"content": getter.result()})
+                yield _emit_item(getter.result())
                 continue
             getter.cancel()
             break
         while not queue.empty():
-            yield chat._chunk(completion_id, {"content": queue.get_nowait()})
+            yield _emit_item(queue.get_nowait())
         try:
             outcome = result_task.result()
         except Exception:
