@@ -54,7 +54,7 @@ export function ConnectionMap({ nodes }: { nodes: ConnectionNode[] }) {
     "merge-gate",
     "sentry",
     "github-review-request",
-  ]);
+  ]).filter((n) => n.state !== "off" || n.kind === "checks");
   return (
     <section
       aria-label="Connections"

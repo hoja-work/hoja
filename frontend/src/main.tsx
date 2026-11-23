@@ -57,6 +57,7 @@ import {
   Tags,
   LayoutTemplate,
   Target,
+  Trophy,
   UserRound,
   Users,
   X,
@@ -103,6 +104,8 @@ import { ConnectorsSettings } from "./ConnectorsSettings";
 import { AgentConversationsSettings } from "./AgentConversationsSettings";
 import { AgentsSurface } from "./agents/AgentsSurface";
 import { ProjectRepository } from "./agents/ProjectRepository";
+import { LeaderboardPage } from "./profiles/LeaderboardPage";
+import { MemberProfilePage } from "./profiles/MemberProfilePage";
 import {
   setWorkspaceAgentsEnabled,
   useAgentsSurfaceEnabled,
@@ -476,6 +479,7 @@ const sections = [
       ["Initiatives", Target],
       ["Projects", FolderKanban],
       ["Views", ListFilter],
+      ["Leaderboard", Trophy],
     ],
   ],
   ["Favorites", [["Favorite views", Layers3]]],
@@ -517,6 +521,8 @@ const SHELL_VIEWS = new Set([
   "Board",
   "Cycles",
   "Members",
+  "Leaderboard",
+  "Member profile",
   "Settings",
   "Issue detail",
   "Initiative detail",
@@ -1493,6 +1499,26 @@ function App() {
       "Initiative detail",
       `/workspace/initiative/${encodeURIComponent(id)}`,
     );
+  const openMember = (userId: string) =>
+    navigate("Member profile", `/workspace/member/${encodeURIComponent(userId)}`);
+  const openTaskByRef = (identifier: string, title: string) => {
+    const existing = issues.find(
+      (i) => i.identifier.toLowerCase() === identifier.toLowerCase(),
+    );
+    if (existing) {
+      openIssue(existing);
+      return;
+    }
+    const slug = title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)/g, "");
+    setActiveIssue(null);
+    navigate(
+      "Issue detail",
+      `/workspace/task/${encodeURIComponent(identifier)}${slug ? `/${slug}` : ""}`,
+    );
+  };
   const openIssue = (issue: Issue, returnProjectId?: string) => {
     if (returnProjectId) {
       setIssueReturn({
@@ -2787,6 +2813,7 @@ function App() {
           onTeamsChanged={setTeams}
           revision={revision}
           viewer={viewer}
+          onOpenMember={openMember}
         />
       ) : (
         <WorkspaceSettings
@@ -2817,12 +2844,40 @@ function App() {
           }}
         />
       )
+    ) : view === "Leaderboard" ? (
+      <LeaderboardPage
+        key={workspace.id}
+        viewerId={viewer.id}
+        onOpenMember={openMember}
+        onOpenTask={openTaskByRef}
+      />
+    ) : view === "Member profile" ? (
+      <MemberProfilePage
+        key={`${workspace.id}:${window.location.pathname}`}
+        userId={
+          window.location.pathname.includes("/member/")
+            ? decodeURIComponent(
+                window.location.pathname.split("/member/")[1]?.split("/")[0] ||
+                  viewer.id ||
+                  "",
+              )
+            : viewer.id || ""
+        }
+        viewerId={viewer.id}
+        onBack={() => navigate("Members", "/workspace/members")}
+        onOpenLeaderboard={() => navigate("Leaderboard", "/workspace/leaderboard")}
+        onOpenTask={openTaskByRef}
+        onOpenSettingsProfile={() =>
+          navigate("Settings", "/workspace/settings/profile")
+        }
+      />
     ) : view === "Members" ? (
       <MembersPage
         teams={teams}
         onTeamsChanged={setTeams}
         revision={revision}
         viewer={viewer}
+        onOpenMember={openMember}
       />
     ) : view === "Projects" ? (
       <ProjectsPage
@@ -6226,6 +6281,7 @@ function KanbanCard({
   parentIdent,
   rollup,
   subtasks = [],
+  compact = false,
 }: {
   issue: Issue;
   teams: Team[];
@@ -6243,6 +6299,7 @@ function KanbanCard({
   parentIdent?: string;
   rollup?: { done: number; total: number };
   subtasks?: Issue[];
+  compact?: boolean;
 }) {
   const [subtasksOpen, setSubtasksOpen] = useState(false);
   const [stackMounted, setStackMounted] = useState(false);
@@ -6320,7 +6377,7 @@ function KanbanCard({
     ? { duration: 0 }
     : { type: "spring" as const, stiffness: 200, damping: 30 };
   const parentHeight = cardHeights[0] || 210;
-  const collapsedStackOffset = 5;
+  const collapsedStackOffset = 8;
   const startsStatusGroup = (index: number) =>
     index === 0 ||
     (subtasks[index].state?.id || subtasks[index].state?.name) !==
@@ -6479,8 +6536,17 @@ function KanbanCard({
               : `Open ${issue.identifier}: ${issue.title}`
           }
         >
-          <strong className="text-sm font-medium">{issue.title}</strong>
+          <strong
+            className={
+              compact
+                ? "truncate text-xs font-medium text-muted"
+                : "text-sm font-medium"
+            }
+          >
+            {issue.title}
+          </strong>
         </button>
+        {!compact && (
         <div
           className="flex flex-col min-w-0 mt-1 text-[12px] text-muted [&>label]:gap-2 [&>div]:gap-2 [&>label]:h-7 [&>div]:h-7 [&>label]:px-2.25 [&>div]:px-2.25 [&>label]:rounded-lg [&>div]:rounded-lg **:data-status-picker:min-w-0 **:data-status-picker:self-center **:data-status-picker-trigger:w-auto **:data-status-picker-trigger:max-w-full **:data-status-picker-trigger:h-auto **:data-status-picker-trigger:p-0 **:data-status-picker-trigger:border-0 **:data-status-picker-trigger:bg-transparent **:data-status-picker-trigger:text-inherit **:data-status-picker-trigger:gap-2 [&>label:hover]:[transition:none] [&>div:hover]:[transition:none] [&>label:focus-within]:[transition:none]"
           data-kanban-card-props=""
@@ -6569,6 +6635,7 @@ function KanbanCard({
             />
           </div>
         </div>
+        )}
       </div>
       {subtasks.map((child, index) => {
         const beforeDivider =
@@ -6737,14 +6804,29 @@ function KanbanCard({
             <motion.div
               className="absolute pointer-events-auto pb-6"
               style={{ width: stackPosition.width }}
-              initial={{ top: stackPosition.top, left: stackPosition.left }}
+              initial={{
+                top: stackPosition.top,
+                left: stackPosition.left,
+                width: stackPosition.width,
+              }}
               animate={
                 subtasksOpen
-                  ? {
-                      top: window.innerHeight / 4,
-                      left: (window.innerWidth - stackPosition.width) / 2,
+                  ? (() => {
+                      const expandedWidth = Math.min(
+                        Math.max(stackPosition.width, 460),
+                        window.innerWidth - 32,
+                      );
+                      return {
+                        top: Math.max(48, window.innerHeight / 5),
+                        left: (window.innerWidth - expandedWidth) / 2,
+                        width: expandedWidth,
+                      };
+                    })()
+                  : {
+                      top: stackPosition.top,
+                      left: stackPosition.left,
+                      width: stackPosition.width,
                     }
-                  : { top: stackPosition.top, left: stackPosition.left }
               }
               transition={spring}
               onAnimationComplete={() => {
@@ -7124,6 +7206,7 @@ function Kanban({
                       }
                       rollup={rollups.get(issue.id)}
                       subtasks={subtasksByParent.get(issue.id)}
+                      compact={group.state.type === "completed"}
                       onDragStart={(e, task = issue) => {
                         setDragged(task.id);
                         setDropLine(null);
@@ -9683,6 +9766,23 @@ function ProjectDetails({
     setTab(v);
   };
   const [detailMenu, setDetailMenu] = useState(false);
+  const [propsOpen, setPropsOpen] = useState(() => {
+    try {
+      return localStorage.getItem("hoja_project_properties_open") === "true";
+    } catch {
+      return false;
+    }
+  });
+  const togglePropsOpen = () =>
+    setPropsOpen((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("hoja_project_properties_open", String(next));
+      } catch {
+        /* ignore storage failures */
+      }
+      return next;
+    });
   const [editOpen, setEditOpen] = useState(false);
   const leadIdOf = (p: Project) => {
     const matches = members.filter((m) => m.name === p.lead?.name);
@@ -9905,6 +10005,22 @@ function ProjectDetails({
           id={project.id}
           onError={(m) => setStatus(m)}
         />
+        {tab === "Overview" && (
+          <button
+            className={`flex-none inline-flex items-center gap-1.5 pt-1.25 pr-2 pb-1.25 pl-2 rounded-[5px] border border-line text-[12px] max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 ${
+              propsOpen
+                ? "bg-subtle text-foreground font-medium"
+                : "bg-panel text-muted hover:bg-subtle hover:text-foreground"
+            }`}
+            type="button"
+            aria-expanded={propsOpen}
+            aria-label={propsOpen ? "Hide project properties" : "Show project properties"}
+            onClick={togglePropsOpen}
+          >
+            <SlidersHorizontal size={13} aria-hidden="true" />
+            Properties
+          </button>
+        )}
         <button
           className="flex-none pt-1.25 pr-1.25 pb-1.25 pl-1.25 rounded-[5px] bg-transparent text-[12px] max-w-full font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
           type="button"
@@ -9998,6 +10114,7 @@ function ProjectDetails({
               </h1>
             </div>
           </header>
+          {propsOpen && (
           <div
             className="border absolute right-2.75 top-22.5 min-w-65 max-w-96.25 grid content-start gap-4 pt-4 pr-3.25 pb-4 pl-3.25 border-line rounded-[10px] bg-panel max-lg:static max-lg:w-auto max-lg:max-w-none max-lg:min-w-0 max-lg:mt-5 max-lg:mr-3.5 max-lg:mb-5 max-lg:ml-3.5 shell-phone:mt-0 shell-phone:mb-4 shell-phone:pt-3 shell-phone:pb-3 shell-phone:order-2 md:col-start-2 md:row-start-3 md:row-span-6 [@media_(max-width:900px)]:w-auto [@media_(max-width:900px)]:max-w-none [@media_(max-width:900px)]:min-w-0 [@media_(max-width:900px)]:mt-5 [@media_(max-width:900px)]:mr-3.5 [@media_(max-width:900px)]:mb-5 [@media_(max-width:900px)]:ml-3.5 shell-phone:mr-2.5 shell-phone:mb-4.5 shell-phone:ml-2.5 shell-phone:pt-3.25 shell-phone:pr-3.25 shell-phone:pb-3.25 shell-phone:pl-3.25 w-[calc(38%-11px)]"
             data-project-reference-properties=""
@@ -10060,6 +10177,7 @@ function ProjectDetails({
               {editOpen ? "Close editor" : "Edit project"}
             </button>
           </div>
+          )}
           {editOpen && (
             <form
               className="border shadow-(--ui-shadow-card) bg-panel border-line static top-auto left-auto w-[calc(62%-87px)] max-w-none mt-7 mr-auto mb-5 ml-10.75 pt-5.5 pr-6 pb-5.5 pl-6 overflow-visible shell-phone:pt-4 shell-phone:pr-4 shell-phone:pb-4 shell-phone:pl-4 relative max-lg:w-auto max-lg:mt-5 max-lg:mr-3.5 max-lg:mb-5 max-lg:ml-3.5 transform-none max-h-none rounded-(--ui-radius-card) shell-phone:order-6 shell-phone:order-7 md:col-start-1 md:row-start-7 shell-phone:pt-4.5 shell-phone:pb-4.5 shell-phone:ml-2.5 shell-phone:mr-2.5 [@media_(max-width:900px)]:w-auto [@media_(max-width:900px)]:mt-5 [@media_(max-width:900px)]:mr-3.5 [@media_(max-width:900px)]:mb-5 [@media_(max-width:900px)]:ml-3.5"
@@ -16810,11 +16928,13 @@ function MembersPage({
   teams: teamsProp,
   onTeamsChanged,
   viewer,
+  onOpenMember,
 }: {
   teams: Team[];
   onTeamsChanged?: (t: Team[]) => void;
   revision?: number;
   viewer: Viewer;
+  onOpenMember?: (userId: string) => void;
 }) {
   const [inviteTeams, setInviteTeams] = useState<string[]>([]);
   const meta = useSyncMeta();
@@ -17325,7 +17445,17 @@ function MembersPage({
               <UserBlobatar user={m} />
             </span>
             <span className="grid gap-1 flex-1" data-issue-copy="">
-              <b className="font-[550]">{m.name || m.email}</b>
+              {onOpenMember ? (
+                <button
+                  type="button"
+                  onClick={() => onOpenMember(m.id)}
+                  className="w-fit bg-transparent p-0 text-left font-[550] text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-accent"
+                >
+                  {m.name || m.email}
+                </button>
+              ) : (
+                <b className="font-[550]">{m.name || m.email}</b>
+              )}
               <small className="text-[12px] leading-normal text-muted">
                 {m.email}
               </small>

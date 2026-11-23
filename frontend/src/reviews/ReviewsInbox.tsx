@@ -647,7 +647,7 @@ export function ReviewsInbox({
       hint: "",
       count: inbox.items.length,
     },
-    ...REVIEW_SOURCES.map((s) => ({
+    ...REVIEW_SOURCES.filter((s) => s.connected).map((s) => ({
       id: s.id as InboxFilter,
       label: s.label,
       connected: s.connected,

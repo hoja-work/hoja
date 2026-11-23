@@ -13,6 +13,7 @@ import {
   PropertiesPanel,
 } from "./detail";
 import { StateGlyph } from "./stateGlyph";
+import { TaskUsageSection } from "../profiles/TaskUsageSection";
 import React, {
   memo,
   useCallback,
@@ -7139,6 +7140,8 @@ export function GraphIssueDetail({
                 </span>
               )}
             </div>
+
+            <TaskUsageSection issueId={detail.id} />
 
             <div
               className={styleClasses(

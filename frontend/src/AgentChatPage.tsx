@@ -494,6 +494,21 @@ const STARTERS = [
 
 export function AgentChatPage({ workspaceName }: { workspaceName: string }) {
   const name = workspaceName || "Hoja";
+  const [mode, setMode] = useState<"light" | "dark">(() =>
+    document.documentElement.dataset.theme === "dark" ? "dark" : "light",
+  );
+  useEffect(() => {
+    const sync = () =>
+      setMode(
+        document.documentElement.dataset.theme === "dark" ? "dark" : "light",
+      );
+    const observer = new MutationObserver(sync);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+    return () => observer.disconnect();
+  }, []);
   return (
     <section
       className="agent-chat-page flex-1 h-dvh min-h-0 shell-phone:h-[calc(100dvh-60px)] text-[15px] text-foreground"
@@ -504,7 +519,7 @@ export function AgentChatPage({ workspaceName }: { workspaceName: string }) {
         storage={storage}
         components={{ AssistantMessage, UserMessage }}
         agentName={`${name} agent`}
-        theme={{ mode: "light" }}
+        theme={{ mode }}
         starters={STARTERS}
         scrollOnLoad={false}
       >

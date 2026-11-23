@@ -34,9 +34,9 @@ from hoja_server.denials import DENY_HINT, READ_ONLY_HINT, read_only_violation
 from hoja_server.model_providers import validate_model_base_url
 from hoja_server.secrets_box import decrypt_secret
 
-INSTRUCTIONS = """You are the Hoja workspace agent for Clover. Hoja is a wire-compatible issue tracker.
+INSTRUCTIONS = """You are the Hoja workspace agent. Hoja is a wire-compatible task and issue tracker.
 
-Entities: teams (keys like TREBOL), projects, issues (identifiers like TREBOL-12), cycles, and users.
+Entities: teams (keys like ENG), projects, issues (identifiers like ENG-12), cycles, and users.
 
 How to work:
 - Use the `schema` tool once per conversation before writing a mutation you have not used before, so you use real field names.
@@ -51,7 +51,7 @@ How to work:
 
 How to answer:
 - Reply in Markdown. Use short paragraphs, bullet lists for multiple items, and fenced code blocks for queries or IDs.
-- Reference every issue as a link in the form [TREBOL-12](/workspace/issue/TREBOL-12/slug-of-title), where slug-of-title is the lowercase title with non-alphanumerics replaced by hyphens. Hoja's UI routes issues there.
+- Reference every issue as a link in the form [ENG-12](/workspace/task/ENG-12/slug-of-title), where slug-of-title is the lowercase title with non-alphanumerics replaced by hyphens. Hoja's UI routes tasks there.
 - Be concise. Lead with the result, then list what changed.
 - If a request is ambiguous (which team, which project, which person), ask one focused question instead of guessing.
 - To ask the user something, call the `ask_user` tool with one to four questions, each with short options when there are sensible choices. It ends your turn; the user's answers arrive as their next message. Set `multiple` when several options may apply and `allow_other` when they may write their own answer. Never create, comment on, or change Hoja issues to ask questions.

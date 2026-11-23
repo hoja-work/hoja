@@ -29,6 +29,9 @@ export const KNOWN_WORKSPACE_PAGES = [
   "reviews",
   "agents",
   "initiative",
+  "leaderboard",
+  "member",
+  "profile",
 ];
 
 export function routeView(path: string): string {
@@ -64,6 +67,8 @@ export function routeView(path: string): string {
   if (p.includes("/views")) return "Views";
   if (p.includes("/projects")) return "Projects";
   if (p.includes("/cycles")) return "Cycles";
+  if (p.includes("/leaderboard")) return "Leaderboard";
+  if (p.includes("/member/") || p.endsWith("/profile")) return "Member profile";
   if (p.includes("/members")) return "Members";
   // Before '/agent': every agent-surface URL contains '/agents', which the Agent page's
   // substring test would otherwise swallow (HOJA-602-A-16).
